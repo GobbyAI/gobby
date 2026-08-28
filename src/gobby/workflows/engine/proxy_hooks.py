@@ -7,7 +7,10 @@ import logging
 from dataclasses import dataclass
 
 from gobby.adapters.capabilities import get_provider_capabilities
-from gobby.hooks.effect_deadline import remaining_blocking_effect_seconds
+from gobby.hooks.effect_deadline import (
+    BlockingEffectDeadline,
+    remaining_blocking_effect_seconds,
+)
 from gobby.hooks.events import HookEvent
 from gobby.integrations.rtk import resolve_rtk
 from gobby.storage.definitions.rules import RuleDefinitionRow
@@ -105,7 +108,7 @@ class ProxyHooksMixin:
         invocations: list[ProxyHookInvocation],
         event: HookEvent,
         *,
-        blocking_deadline: float | None,
+        blocking_deadline: BlockingEffectDeadline | None,
     ) -> bool:
         try:
             capabilities = get_provider_capabilities(event.source)
@@ -144,7 +147,7 @@ class ProxyHooksMixin:
         invocation: ProxyHookInvocation,
         event: HookEvent,
         *,
-        blocking_deadline: float | None,
+        blocking_deadline: BlockingEffectDeadline | None,
     ) -> bool:
         tool_input = event.data.get("tool_input")
         if not isinstance(tool_input, dict):

@@ -13,7 +13,6 @@
       "frontend_build": "cd web && npm run build",
       "frontend_lint": "cd web && npm run lint",
       "frontend_tests": "cd web && npm test",
-      "guard_tests": "DATABASE_URL=\"${DATABASE_URL:-postgresql://${GOBBY_POSTGRES_TEST_USER:-gobby_test}:${GOBBY_POSTGRES_TEST_PASSWORD:-gobby_test}@127.0.0.1:${GOBBY_POSTGRES_TEST_PORT:-60892}/${GOBBY_POSTGRES_TEST_DB:-gobby_test}}\" GOBBY_TEST_PROTECT=1 uv run pytest {test_files} -v",
       "ts_check": "cd web && npm run type-check"
     }
   },

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowEvaluationTimeout, WorkflowHookHandler
@@ -39,7 +40,7 @@ def test_stalled_to_thread_dependency_respects_evaluation_timeout(tmp_path: Path
     async def evaluate(
         _event: HookEvent,
         *,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> HookResponse:
         del blocking_deadline
         await asyncio.to_thread(block)

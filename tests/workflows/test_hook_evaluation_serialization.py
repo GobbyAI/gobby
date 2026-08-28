@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.hooks.effect_deadline import (
+    BlockingEffectDeadline,
+    remaining_blocking_effect_seconds,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -76,7 +82,7 @@ async def test_same_session_evaluations_are_serialized(tmp_path) -> None:
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> HookResponse:
         del session_id, variables, eval_context, blocking_deadline
         name = str(event.data["name"])
@@ -117,6 +123,58 @@ async def test_same_session_evaluations_are_serialized(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_same_session_lock_wait_extends_blocking_effect_deadline(tmp_path) -> None:
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    observed_remaining: list[float] = []
+
+    async def evaluate(
+        *,
+        event: HookEvent,
+        session_id: str,
+        variables: dict[str, Any],
+        eval_context: dict[str, Any] | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
+    ) -> HookResponse:
+        del session_id, variables, eval_context
+        if event.data["name"] == "first":
+            first_entered.set()
+            await release_first.wait()
+        else:
+            observed_remaining.append(
+                remaining_blocking_effect_seconds(blocking_deadline, maximum=1.0)
+            )
+        return HookResponse(decision="allow")
+
+    handler = _handler_with_fake_engine(evaluate)
+    first = asyncio.create_task(
+        handler._evaluate_rules(
+            _event(HookEventType.BEFORE_TOOL, data={"name": "first"}, cwd=str(tmp_path))
+        )
+    )
+    await asyncio.wait_for(first_entered.wait(), timeout=1)
+
+    deadline = BlockingEffectDeadline(time.monotonic() - 0.05)
+    with patch("gobby.workflows.hooks.monotonic", side_effect=[100.0, 100.1]):
+        second = asyncio.create_task(
+            handler._evaluate_rules(
+                _event(
+                    HookEventType.BEFORE_TOOL,
+                    data={"name": "second"},
+                    cwd=str(tmp_path),
+                ),
+                blocking_deadline=deadline,
+            )
+        )
+        await drain_asyncio_tasks(cycles=2)
+        release_first.set()
+        await asyncio.gather(first, second)
+
+    assert len(observed_remaining) == 1
+    assert observed_remaining[0] > 0
+
+
+@pytest.mark.asyncio
 async def test_different_sessions_evaluate_concurrently(tmp_path) -> None:
     entered: set[str] = set()
     both_entered = asyncio.Event()
@@ -128,7 +186,7 @@ async def test_different_sessions_evaluate_concurrently(tmp_path) -> None:
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> HookResponse:
         del event, variables, eval_context, blocking_deadline
         entered.add(session_id)
@@ -180,7 +238,7 @@ async def test_session_end_cleanup_waits_for_queued_same_session_event(tmp_path)
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> HookResponse:
         del session_id, variables, eval_context, blocking_deadline
         if event.event_type == HookEventType.SESSION_END:
@@ -221,7 +279,7 @@ async def test_session_end_cleanup_waits_for_queued_same_session_event(tmp_path)
 @pytest.mark.asyncio
 async def test_loaded_skill_observer_persists_before_next_same_session_event(
     db: HubDatabase,
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     # session_variables.session_id is a native uuid column
     platform_session_id = "11111111-1111-4111-8111-111111111111"
@@ -259,7 +317,7 @@ async def test_loaded_skill_observer_persists_before_next_same_session_event(
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> HookResponse:
         if event.event_type == HookEventType.AFTER_TOOL:
             assert variables["loaded_skills"] == ["code-index"]

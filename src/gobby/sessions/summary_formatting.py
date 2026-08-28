@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.tool_error_tracker import normalize_open_tool_error_records
-from gobby.llm.sdk_utils import head_with_breadcrumb
 
 if TYPE_CHECKING:
     from gobby.sessions.analyzer import HandoffContext
@@ -15,21 +14,13 @@ _OPEN_TOOL_ERRORS_RETRIEVAL = (
     'get_variable(name="open_tool_errors", session_id=<current>), then select the record by '
     'error_id="{error_id}"'
 )
-_TRANSCRIPT_CONTENT_RETRIEVAL = (
-    "Call get_handoff_context (gobby-sessions) with the current session to retrieve the full "
-    "stored content."
-)
 
 
 def _stored_transcript_preview(content: str, preview_chars: int) -> str:
-    """Render a bounded head with an exact retrieval operation when content is longer."""
+    """Render a bounded transcript head when content is longer."""
     if len(content) <= preview_chars:
         return content
-    return head_with_breadcrumb(
-        content,
-        budget=preview_chars + len(_TRANSCRIPT_CONTENT_RETRIEVAL) + 2,
-        breadcrumb=_TRANSCRIPT_CONTENT_RETRIEVAL,
-    )
+    return f"{content[:preview_chars]}\n... [truncated]"
 
 
 def format_unresolved_errors(records: list[dict[str, Any]]) -> str:

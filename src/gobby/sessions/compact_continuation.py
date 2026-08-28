@@ -20,22 +20,19 @@ from gobby.sessions.compact_markers import (
     COMPACT_RESUME_EXCLUDED_SKILLS,
     COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS,
     COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
-    COMPACT_SELF_CONTINUE_FRESH_SECONDS,
-    COMPACT_SELF_CONTINUE_INTRO,
-    COMPACT_SELF_CONTINUE_PROMPT,
-    COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS,
-    COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS,
-    COMPACT_SELF_CONTINUE_VARIABLE,
-    COMPACT_SELF_INTERRUPT_WARNING,
+    HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
+    HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS,
+    HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS,
+    HANDOFF_COMPACT_CONTINUE_VARIABLE,
     LOADING_SKILLS_NAME,
     WORKFLOW_REQUESTED_SKILLS_VARIABLE,
 )
+from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.storage.hub.protocol import SessionVariableMutation
 from gobby.storage.session_models import Session
 from gobby.terminals.lookup import manager_for_terminal_context
-from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -47,13 +44,10 @@ __all__ = [
     "COMPACT_RESUME_EXCLUDED_SKILLS",
     "COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE",
     "COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS",
-    "COMPACT_SELF_CONTINUE_FRESH_SECONDS",
-    "COMPACT_SELF_CONTINUE_INTRO",
-    "COMPACT_SELF_CONTINUE_PROMPT",
-    "COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS",
-    "COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
-    "COMPACT_SELF_INTERRUPT_WARNING",
-    "COMPACT_SELF_CONTINUE_VARIABLE",
+    "HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS",
+    "HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS",
+    "HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+    "HANDOFF_COMPACT_CONTINUE_VARIABLE",
     "CodexRolloutCursor",
     "CodexRolloutObservationError",
     "LOADING_SKILLS_NAME",
@@ -62,7 +56,7 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-_COMPACT_SELF_CONTINUATION_TASKS: set[asyncio.Task[Any]] = set()
+_HANDOFF_COMPACT_CONTINUATION_TASKS: set[asyncio.Task[Any]] = set()
 
 _CODEX_COMPACT_READY_STATUS_LINE = "• Context compacted"
 _CODEX_COMPACT_READY_POLL_SECONDS = 0.25
@@ -186,37 +180,34 @@ class CompactResumeSkillTiers(TypedDict):
     advisory: list[str]
 
 
-def mark_compact_self_continuation_pending(
+def mark_handoff_compact_continuation_pending(
     db: HubDatabase,
     session_id: str,
     *,
-    prompt: str = COMPACT_SELF_CONTINUE_PROMPT,
-    summary_session_id: str | None = None,
+    prompt: str | None = None,
     attempt_id: str | None = None,
     now: datetime | None = None,
 ) -> bool:
     """Store the pending continuation marker on the compacting session."""
     payload = {
-        "prompt": prompt,
+        "prompt": prompt or build_handoff_continue_prompt(),
         "created_at": _format_timestamp(now or datetime.now(UTC)),
     }
-    if summary_session_id:
-        payload["summary_session_id"] = summary_session_id
     if attempt_id:
         payload["attempt_id"] = attempt_id
     try:
-        _merge_session_variable(db, session_id, COMPACT_SELF_CONTINUE_VARIABLE, payload)
+        _merge_session_variable(db, session_id, HANDOFF_COMPACT_CONTINUE_VARIABLE, payload)
         return True
     except Exception:
         logger.warning(
-            "Failed to mark compact_self continuation pending for session %s",
+            "Failed to mark set_handoff compact continuation pending for session %s",
             session_id,
             exc_info=True,
         )
         return False
 
 
-def persist_compact_resume_required_skills(
+def persist_handoff_resume_skills(
     db: HubDatabase,
     session_id: str,
 ) -> CompactResumeSkillTiers:
@@ -239,19 +230,6 @@ def persist_compact_resume_required_skills(
     return skill_tiers
 
 
-def build_compact_self_continue_prompt(
-    *,
-    summary_session_id: str | None = None,
-) -> str:
-    """Build the single-line post-compact continuation trigger.
-
-    Skill reload tiers ride the SessionStart injected context (the
-    inject-compact-handoff rule reads the persisted tier variables); the typed
-    prompt stays one paste line so terminal submission is reliable.
-    """
-    return _build_wait_for_summary_directive(summary_session_id)
-
-
 def consume_compact_handoff_marker(db: HubDatabase, session_id: str) -> bool:
     """Consume the one-shot compact marker after successful in-place reactivation.
 
@@ -263,7 +241,7 @@ def consume_compact_handoff_marker(db: HubDatabase, session_id: str) -> bool:
     return _pop_session_variable(db, session_id, COMPACT_HANDOFF_MARKER_VARIABLE) is not None
 
 
-def clear_compact_self_continuation_pending(
+def clear_handoff_compact_continuation_pending(
     db: HubDatabase,
     session_id: str,
     *,
@@ -274,28 +252,28 @@ def clear_compact_self_continuation_pending(
         removed = _pop_session_variable(
             db,
             session_id,
-            COMPACT_SELF_CONTINUE_VARIABLE,
+            HANDOFF_COMPACT_CONTINUE_VARIABLE,
             expected_attempt_id=attempt_id,
         )
         return attempt_id is None or removed is not None
     except Exception:
         logger.warning(
-            "Failed to clear compact_self continuation pending for session %s",
+            "Failed to clear set_handoff compact continuation pending for session %s",
             session_id,
             exc_info=True,
         )
         return False
 
 
-def consume_compact_self_continuation_pending(
+def consume_handoff_compact_continuation_pending(
     db: HubDatabase,
     session_id: str,
     *,
     now: datetime | None = None,
-    fresh_seconds: int = COMPACT_SELF_CONTINUE_FRESH_SECONDS,
+    fresh_seconds: int = HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
 ) -> str | None:
     """Consume a fresh pending marker and return its prompt."""
-    pending = _take_compact_self_continuation_pending(
+    pending = _take_handoff_compact_continuation_pending(
         db,
         session_id,
         now=now,
@@ -304,12 +282,12 @@ def consume_compact_self_continuation_pending(
     return pending[0] if pending is not None else None
 
 
-def _take_compact_self_continuation_pending(
+def _take_handoff_compact_continuation_pending(
     db: HubDatabase,
     session_id: str,
     *,
     now: datetime | None = None,
-    fresh_seconds: int = COMPACT_SELF_CONTINUE_FRESH_SECONDS,
+    fresh_seconds: int = HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
     expected_attempt_id: str | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     """Atomically take a fresh marker while retaining its exact payload."""
@@ -317,12 +295,12 @@ def _take_compact_self_continuation_pending(
         value = _pop_session_variable(
             db,
             session_id,
-            COMPACT_SELF_CONTINUE_VARIABLE,
+            HANDOFF_COMPACT_CONTINUE_VARIABLE,
             expected_attempt_id=expected_attempt_id,
         )
     except Exception:
         logger.warning(
-            "Failed to consume compact_self continuation pending for session %s",
+            "Failed to consume set_handoff compact continuation pending for session %s",
             session_id,
             exc_info=True,
         )
@@ -344,35 +322,35 @@ def _take_compact_self_continuation_pending(
 
     prompt = value.get("prompt")
     resolved_prompt = (
-        prompt if isinstance(prompt, str) and prompt.strip() else COMPACT_SELF_CONTINUE_PROMPT
+        prompt if isinstance(prompt, str) and prompt.strip() else build_handoff_continue_prompt()
     )
     return resolved_prompt, value
 
 
-def schedule_compact_self_continuation(
+def schedule_handoff_compact_continuation(
     session: Any,
     prompt: str,
     *,
     loop: Any | None = None,
-    delay_seconds: float = COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS,
+    delay_seconds: float = HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS,
 ) -> bool:
     """Schedule a best-effort tmux prompt send without blocking SessionStart."""
     session_id = getattr(session, "id", "unknown")
     ctx = parse_terminal_context_value(getattr(session, "terminal_context", None))
     if ctx is None:
-        logger.debug("Cannot schedule compact_self continuation; no terminal context")
+        logger.debug("Cannot schedule set_handoff compact continuation; no terminal context")
         return False
 
     target = ctx.get("tmux_pane") or ctx.get("tmux_session")
     if not target:
         logger.debug(
-            "Cannot schedule compact_self continuation for session %s; no tmux target",
+            "Cannot schedule set_handoff compact continuation for session %s; no tmux target",
             session_id,
         )
         return False
 
     tmux = manager_for_terminal_context(ctx)
-    coro = _send_compact_self_continuation(
+    coro = _send_handoff_compact_continuation(
         tmux,
         str(target),
         prompt,
@@ -382,7 +360,7 @@ def schedule_compact_self_continuation(
     return _schedule_coroutine(coro, loop=loop)
 
 
-def schedule_codex_compact_self_continuation_readiness(
+def schedule_codex_handoff_compact_continuation_readiness(
     db: HubDatabase,
     *,
     pending_session_id: str,
@@ -426,7 +404,7 @@ def schedule_codex_compact_self_continuation_readiness(
     return _schedule_coroutine(coro, loop=loop)
 
 
-def consume_and_schedule_compact_self_continuation(
+def consume_and_schedule_handoff_compact_continuation(
     db: HubDatabase,
     *,
     pending_session_id: str | None,
@@ -435,17 +413,17 @@ def consume_and_schedule_compact_self_continuation(
 ) -> bool:
     """Consume a fresh marker and schedule its continuation prompt.
 
-    Compaction is in-place on one pane. compact_self may persist the marker on
+    Compaction is in-place on one pane. set_handoff may persist the marker on
     the MCP-resolved row while PostCompact arrives on the provider hook row;
     both identify the same terminal process, so a unique same-pane marker is
     still this compact's continuation.
     """
     if not pending_session_id:
         return False
-    pending = _take_compact_self_continuation_pending(db, pending_session_id)
+    pending = _take_handoff_compact_continuation_pending(db, pending_session_id)
     source_session_id = pending_session_id
     if pending is None:
-        sibling = _take_same_terminal_compact_self_continuation_pending(
+        sibling = _take_same_terminal_handoff_compact_continuation_pending(
             db,
             pending_session_id,
             target_session,
@@ -454,25 +432,25 @@ def consume_and_schedule_compact_self_continuation(
             return False
         source_session_id, pending = sibling
     prompt, payload = pending
-    if schedule_compact_self_continuation(target_session, prompt, loop=loop):
+    if schedule_handoff_compact_continuation(target_session, prompt, loop=loop):
         return True
     try:
         _restore_session_variable_if_absent(
             db,
             source_session_id,
-            COMPACT_SELF_CONTINUE_VARIABLE,
+            HANDOFF_COMPACT_CONTINUE_VARIABLE,
             payload,
         )
     except Exception:
         logger.warning(
-            "Failed to restore compact_self continuation pending for session %s",
+            "Failed to restore set_handoff compact continuation pending for session %s",
             source_session_id,
             exc_info=True,
         )
     return False
 
 
-def _take_same_terminal_compact_self_continuation_pending(
+def _take_same_terminal_handoff_compact_continuation_pending(
     db: HubDatabase,
     pending_session_id: str,
     target_session: Any,
@@ -492,11 +470,11 @@ def _take_same_terminal_compact_self_continuation_pending(
                AND s.status <> 'deleted'
                AND jsonb_typeof(sv.variables -> %s) = 'object'
             """,
-            (pending_session_id, COMPACT_SELF_CONTINUE_VARIABLE),
+            (pending_session_id, HANDOFF_COMPACT_CONTINUE_VARIABLE),
         )
     except Exception:
         logger.warning(
-            "Failed listing same-terminal compact_self markers for session %s",
+            "Failed listing same-terminal set_handoff compact markers for session %s",
             pending_session_id,
             exc_info=True,
         )
@@ -511,13 +489,13 @@ def _take_same_terminal_compact_self_continuation_pending(
     ]
     if len(matching) != 1:
         return None
-    taken = _take_compact_self_continuation_pending(db, matching[0].id)
+    taken = _take_handoff_compact_continuation_pending(db, matching[0].id)
     if taken is None:
         return None
     return matching[0].id, taken
 
 
-async def _send_compact_self_continuation(
+async def _send_handoff_compact_continuation(
     tmux: Any,
     target: str,
     prompt: str,
@@ -531,31 +509,33 @@ async def _send_compact_self_continuation(
         ok = await tmux.dispatch_keys(target, f"{prompt}\n", literal=True)
     except Exception:
         logger.warning(
-            "Failed to send compact_self continuation prompt for session %s",
+            "Failed to send set_handoff compact continuation prompt for session %s",
             session_id,
             exc_info=True,
         )
         return False
     if not ok:
-        logger.warning("tmux send-keys returned false for compact_self continuation %s", session_id)
+        logger.warning(
+            "tmux send-keys returned false for set_handoff compact continuation %s", session_id
+        )
         return False
     # A composer still settling the bracketed paste can swallow the Enter that
     # send_keys appended; this second Enter submits in that case and is a no-op
     # on an already-submitted (empty) composer. Delivery already succeeded, so
     # a retry failure is logged, never propagated.
-    await asyncio.sleep(COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS)
+    await asyncio.sleep(HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS)
     try:
         retry_ok = await tmux.dispatch_keys(target, "Enter", literal=False)
     except Exception:
         retry_ok = False
         logger.warning(
-            "Failed follow-up Enter for compact_self continuation %s",
+            "Failed follow-up Enter for set_handoff compact continuation %s",
             session_id,
             exc_info=True,
         )
     if not retry_ok:
         logger.warning(
-            "tmux follow-up Enter returned false for compact_self continuation %s",
+            "tmux follow-up Enter returned false for set_handoff compact continuation %s",
             session_id,
         )
     return True
@@ -570,7 +550,7 @@ async def _continue_after_codex_compaction_ready(
     before_command: str,
     poll_seconds: float,
     attempt_id: str | None = None,
-    fresh_seconds: int = COMPACT_SELF_CONTINUE_FRESH_SECONDS,
+    fresh_seconds: int = HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
 ) -> None:
     """Consume and submit only after Codex renders a fresh completion marker."""
     baseline_count = _count_codex_compact_ready_status_lines(before_command)
@@ -590,7 +570,7 @@ async def _continue_after_codex_compaction_ready(
                 exc_info=True,
             )
             return
-        pending_payload = variables.get(COMPACT_SELF_CONTINUE_VARIABLE)
+        pending_payload = variables.get(HANDOFF_COMPACT_CONTINUE_VARIABLE)
         if pending_payload is None:
             return
         if attempt_id is not None and (
@@ -630,7 +610,7 @@ async def _continue_after_codex_compaction_ready(
             if poll_seconds > 0:
                 await asyncio.sleep(poll_seconds)
             pending = await asyncio.to_thread(
-                _take_compact_self_continuation_pending,
+                _take_handoff_compact_continuation_pending,
                 db,
                 pending_session_id,
                 expected_attempt_id=attempt_id,
@@ -638,7 +618,7 @@ async def _continue_after_codex_compaction_ready(
             if pending is None:
                 return
             prompt, payload = pending
-            sent = await _send_compact_self_continuation(
+            sent = await _send_handoff_compact_continuation(
                 tmux,
                 target,
                 prompt,
@@ -650,7 +630,7 @@ async def _continue_after_codex_compaction_ready(
                     _restore_session_variable_if_absent,
                     db,
                     pending_session_id,
-                    COMPACT_SELF_CONTINUE_VARIABLE,
+                    HANDOFF_COMPACT_CONTINUE_VARIABLE,
                     payload,
                 )
             return
@@ -690,8 +670,8 @@ def _schedule_coroutine(coro: Any, *, loop: Any | None = None) -> bool:
         running_loop = asyncio.get_running_loop()
         # Fire-and-forget: the coroutine logs its own failures and must not block startup.
         task = running_loop.create_task(coro)
-        _COMPACT_SELF_CONTINUATION_TASKS.add(task)
-        task.add_done_callback(_COMPACT_SELF_CONTINUATION_TASKS.discard)
+        _HANDOFF_COMPACT_CONTINUATION_TASKS.add(task)
+        task.add_done_callback(_HANDOFF_COMPACT_CONTINUATION_TASKS.discard)
         return True
     except RuntimeError:
         pass
@@ -707,7 +687,9 @@ def _schedule_coroutine(coro: Any, *, loop: Any | None = None) -> bool:
                 asyncio.run_coroutine_threadsafe(coro, loop)
                 return True
             except Exception:
-                logger.debug("Failed to schedule compact_self continuation on loop", exc_info=True)
+                logger.debug(
+                    "Failed to schedule set_handoff compact continuation on loop", exc_info=True
+                )
                 # Scheduling failed before ownership transferred to an event loop.
                 coro.close()
                 return False
@@ -721,7 +703,7 @@ def _schedule_coroutine(coro: Any, *, loop: Any | None = None) -> bool:
     try:
         thread.start()
     except Exception:
-        logger.debug("Failed to start compact_self continuation thread", exc_info=True)
+        logger.debug("Failed to start set_handoff compact continuation thread", exc_info=True)
         # The fallback thread never took ownership, so close the coroutine explicitly.
         coro.close()
         return False
@@ -732,7 +714,7 @@ def _run_coroutine_thread(coro: Any) -> None:
     try:
         asyncio.run(coro)
     except Exception:
-        logger.debug("Failed to run compact_self continuation task", exc_info=True)
+        logger.debug("Failed to run set_handoff compact continuation task", exc_info=True)
 
 
 def _merge_session_variable(
@@ -832,20 +814,6 @@ def _prepare_compact_resume_skill_tiers(
     return {"required": required, "advisory": advisory}
 
 
-def _build_wait_for_summary_directive(summary_session_id: str | None) -> str:
-    if summary_session_id:
-        return (
-            COMPACT_SELF_CONTINUE_INTRO + "If startup context contains "
-            f"`{INJECTED_CONTEXT_BEGIN}`, use that injected context directly and continue. "
-            "Only if the injected context is missing or incomplete, call "
-            "`gobby-sessions.wait_for_summary("
-            f'session_id="{summary_session_id}"'
-            ")`. If it returns `completed=false`, repeat the same wait call. "
-            "Once complete, use the returned `context` and continue."
-        )
-    return COMPACT_SELF_CONTINUE_PROMPT
-
-
 def _extend_unique_strings(target: list[str], values: Any) -> None:
     for value in _iter_strings(values):
         if value not in target:
@@ -927,7 +895,7 @@ def _load_variables(raw: Any) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         preview = raw[:80].replace("\n", "\\n")
         logger.warning(
-            "Corrupt compact_self continuation variables JSON ignored: %s; preview=%r",
+            "Corrupt set_handoff compact continuation variables JSON ignored: %s; preview=%r",
             exc,
             preview,
         )

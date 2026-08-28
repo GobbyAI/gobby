@@ -585,7 +585,7 @@ async def call_mcp_tool(
         # Set project context from session_id or stdio proxy headers
         ctx_token = await request_context._set_context_for_request(server, arguments, request)
         # Note: session_id is NOT stripped from arguments — tools like
-        # get_session and get_handoff_context use it as their own parameter.
+        # get_session and other lookup tools use it as their own parameter.
         # request_context._set_context_for_request reads it non-destructively via .get().
         # InternalToolRegistry.call strips unknown kwargs via signature inspection.
         try:

@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.servers.routes.mcp.hooks import _run_adapter_hook
@@ -66,7 +67,7 @@ async def test_concurrent_sync_evaluations_keep_daemon_loop_responsive(tmp_path:
     async def blocking_evaluation(
         _event: HookEvent,
         *,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> HookResponse:
         del blocking_deadline
         nonlocal started
@@ -117,7 +118,7 @@ async def test_internal_timeout_cancels_evaluation_and_releases_session_lock(
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> HookResponse:
         del event, session_id, variables, eval_context, blocking_deadline
         try:
@@ -156,7 +157,7 @@ async def test_internal_timeout_cancels_evaluation_and_releases_session_lock(
             session_id: str,
             variables: dict[str, Any],
             eval_context: dict[str, Any] | None = None,
-            blocking_deadline: float | None = None,
+            blocking_deadline: BlockingEffectDeadline | None = None,
         ) -> HookResponse:
             del event, session_id, variables, eval_context, blocking_deadline
             return HookResponse(decision="allow")
@@ -182,7 +183,7 @@ async def test_timeout_while_waiting_for_session_lock_never_executes_queued_even
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> HookResponse:
         del session_id, variables, eval_context, blocking_deadline
         name = str(event.data["name"])
@@ -243,7 +244,7 @@ def test_rule_evaluator_propagates_workflow_timeout_without_logging() -> None:
             self,
             _event: HookEvent,
             *,
-            blocking_deadline: float | None = None,
+            blocking_deadline: BlockingEffectDeadline | None = None,
         ) -> HookResponse:
             del blocking_deadline
             self.calls += 1

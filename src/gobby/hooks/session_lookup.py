@@ -22,6 +22,7 @@ from gobby.sessions.compact_identity import resolve_compact_continuation
 from gobby.sessions.tmux_window_naming import schedule_tmux_window_rename
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._constants import TERMINAL_SESSION_STATUSES
+from gobby.storage.sessions._contested_expiry import session_has_active_native_subagent
 from gobby.tasks.state_semantics import serialize_task_state
 
 if TYPE_CHECKING:
@@ -302,6 +303,41 @@ class SessionLookupService:
                 project_id=project_id,
             )
 
+    def _bind_inherited_tty_native_subagent(
+        self,
+        event: HookEvent,
+        *,
+        machine_id: str | None,
+    ) -> str | None:
+        """Bind child-conversation hooks to the live parent that owns this TTY."""
+        cwd = hook_cwd(event.data, event.cwd)
+        raw_terminal_context = event.data.get("terminal_context")
+        terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
+        terminal_context = enrich_terminal_context_with_cwd(terminal_context, cwd)
+        owner = self._session_manager.find_live_interactive_pane_owner(
+            terminal_context,
+            machine_id,
+        )
+        if owner is None:
+            return None
+        is_subagent_event = event.event_type in {
+            HookEventType.SUBAGENT_START,
+            HookEventType.SUBAGENT_STOP,
+        }
+        if not is_subagent_event and not session_has_active_native_subagent(
+            self._session_manager.db,
+            owner.id,
+        ):
+            return None
+        self._logger.info(
+            "Bound native subagent hook %s to live pane owner %s (external_id=%s source=%s)",
+            event.event_type.name,
+            owner.id,
+            event.session_id,
+            event.source.value,
+        )
+        return owner.id
+
     def _resolve_uncached_session_id(
         self,
         external_id: str,
@@ -382,6 +418,25 @@ class SessionLookupService:
             return compact_session_id
 
         if event.event_type in NON_MATERIALIZING_EVENTS:
+            self._logger.info(
+                "Skipping auto-registration for orphaned %s: "
+                "external_id=%s not found in DB "
+                "(machine_id=%s, project_id=%s, source=%s).",
+                event.event_type.name,
+                external_id,
+                machine_id,
+                project_id,
+                event.source.value,
+            )
+            return None
+
+        bound_parent_id = self._bind_inherited_tty_native_subagent(
+            event,
+            machine_id=machine_id,
+        )
+        if bound_parent_id is not None:
+            return bound_parent_id
+        if event.event_type in {HookEventType.SUBAGENT_START, HookEventType.SUBAGENT_STOP}:
             self._logger.info(
                 "Skipping auto-registration for orphaned %s: "
                 "external_id=%s not found in DB "

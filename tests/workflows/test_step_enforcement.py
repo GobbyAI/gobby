@@ -839,7 +839,7 @@ class TestStepMCPToolBlocking:
             (["gobby-tasks:claim_task"], [], "allow"),
             (
                 ["gobby-tasks:claim_task"],
-                ["gobby-sessions:compact_self"],
+                ["gobby-sessions:set_handoff"],
                 "block",
             ),
             ("all", [], "allow"),
@@ -847,7 +847,7 @@ class TestStepMCPToolBlocking:
         ids=["restrictive-allowlist", "explicit-block", "all-tools"],
     )
     @pytest.mark.asyncio
-    async def test_compact_self_step_enforcement(
+    async def test_set_handoff_step_enforcement(
         self,
         db: "HubDatabase",
         manager: AgentDefinitionManager,
@@ -880,7 +880,7 @@ class TestStepMCPToolBlocking:
                 "tool_name": "mcp__gobby__call_tool",
                 "tool_input": {
                     "server_name": "gobby-sessions",
-                    "tool_name": "compact_self",
+                    "tool_name": "set_handoff",
                 },
             }
         )

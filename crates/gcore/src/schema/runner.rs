@@ -25,11 +25,11 @@ use runner_adoption::{
 pub(crate) const ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM: &str =
     "855576453641152d2ef9199dc418fcc3dd2ad69e78eff924b05a7b3b122cf398";
 pub(crate) const PREDECESSOR_BASELINE_CHECKSUM: &str =
-    "f4cbda62b6ab0cdf426c581693f26373968b02578387abf843baab4e600c3aa0";
+    "4e2bb4de8059488a7887b62b5e509ce308c0ebf2d319862c8b3d7c6175cb662e";
 pub(crate) const PARENT_BASELINE_CHECKSUM: &str =
-    "2d3f79a8a6aef0426d6604956d3edc2d8c5e89e01b6bced2643a88e55da342e5";
+    "4a476c5d0177ea09c21ad7d4627e3d2d74f4cea36ce65f8a257170f84d74a9a9";
 pub(crate) const WORKTREE_BASELINE_CHECKSUM: &str =
-    "648d01b53b9f77338894de16557f4c7c75e8c1bbca4146d263bd690723955440";
+    "8d1ce43a829b982ead6bcb382471a6e593f47effff27ac56e0ee2cbffcb127c9";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ApplyReport {

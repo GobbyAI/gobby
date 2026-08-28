@@ -16,7 +16,7 @@ import { SettingsSection, type SettingsSectionFields } from "./SettingsSection";
  * `database_url`, `postgres_install_mode`) and the auto-generated
  * `auth.session_secret` are intentionally absent — they are dropped from the
  * overlay. Rows the legacy form rendered as a free-text fallback get real
- * editors here: `cors_origins`, the sandbox path lists, `digest.candidates`,
+ * editors here: `cors_origins`, the sandbox path lists,
  * and code-index summary candidates become string lists, while `search.mode`
  * and `ui.mode` become bounded selects.
  */
@@ -73,11 +73,6 @@ const OWNED_PATHS: readonly string[] = [
   "bin_freshness.interval_seconds",
   "bin_freshness.jitter_seconds",
   "bin_freshness.github_timeout_seconds",
-  // Digest
-  "digest.enabled",
-  "digest.profile",
-  "digest.candidates",
-  "digest.timeout",
   // Sandboxing
   "web_chat_sandbox.enabled",
   "web_chat_sandbox.extra_read_paths",
@@ -457,42 +452,6 @@ function BinFreshnessGroup({ fields }: { fields: SettingsSectionFields }) {
   );
 }
 
-function DigestGroup({ fields }: { fields: SettingsSectionFields }) {
-  return (
-    <Subsection
-      title="Digest"
-      hint="Periodic LLM digest generation and its capability profile."
-    >
-      <SwitchConfigField
-        fields={fields}
-        path="digest.enabled"
-        label="Enable digest generation"
-        ariaLabel="Enable digest generation"
-      />
-      <SchemaSelectField
-        fields={fields}
-        path="digest.profile"
-        label="Capability profile"
-        ariaLabel="Digest capability profile"
-      />
-      <StringListConfigField
-        fields={fields}
-        path="digest.candidates"
-        label="Provider/model candidates"
-        ariaLabel="Digest candidate"
-        addLabel="Add digest candidate"
-        placeholder="provider/model"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="digest.timeout"
-        label="Timeout (seconds)"
-        ariaLabel="Digest timeout (seconds)"
-      />
-    </Subsection>
-  );
-}
-
 function WebChatSandboxGroup({ fields }: { fields: SettingsSectionFields }) {
   return (
     <Subsection
@@ -601,7 +560,6 @@ export function RuntimeInfrastructureSection() {
           <SearchGroup fields={fields} />
           <CodeIndexGroup fields={fields} />
           <BinFreshnessGroup fields={fields} />
-          <DigestGroup fields={fields} />
           <WebChatSandboxGroup fields={fields} />
           <AgentSandboxGroup fields={fields} />
           <DirectoriesGroup fields={fields} />

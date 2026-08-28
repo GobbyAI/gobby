@@ -5,15 +5,14 @@ Rules that were merged into context-handoff (preserve-context-on-compact)
 are tested there instead.
 
 Active memory-lifecycle rules:
-- digest-on-plan-turn-end: mcp_call on provider-specific plan boundaries
-- digest-catch-up-on-turn-start: mcp_call on turn_start to catch up undigested prior turns
+- judge-shadow-relevance-on-response: background mcp_call on turn_end
 - reset-memory-tracking-on-start: set_variable on session_start
 - increment-parent-turn-seq: set_variable on turn_start
 - load-memory-guidance-on-initial-turn: load_skill on the initial turn_start
 - check-memory-guidance-on-initial-stop: acknowledged block on the first turn_end
 - remind-memory-guidance-on-later-turns: inject_context on later parent turn_starts
 - queue-task-memory-review-after-close: set_variable on after_tool close_task
-- review-closed-task-memories-before-compact: acknowledged block on before_tool compact_self
+- review-closed-task-memories-before-handoff: acknowledged block on before_tool set_handoff
 - review-closed-task-memories-on-stop: acknowledged block on turn_end
 - guard-plan-memory-writes: one-time block on create_memory and update_memory
 - search-memories-on-claim: inject_context on after_tool claim_task/create_task claims
@@ -30,7 +29,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.definitions.rules import RuleDefinitionManager
@@ -43,16 +41,14 @@ from gobby.workflows.sync_rules import sync_bundled_rules
 pytestmark = pytest.mark.unit
 
 MEMORY_RULES = {
-    "digest-on-response",
-    "digest-catch-up-on-turn-start",
-    "digest-on-plan-turn-end",
+    "judge-shadow-relevance-on-response",
     "reset-memory-tracking-on-start",
     "increment-parent-turn-seq",
     "load-memory-guidance-on-initial-turn",
     "check-memory-guidance-on-initial-stop",
     "remind-memory-guidance-on-later-turns",
     "queue-task-memory-review-after-close",
-    "review-closed-task-memories-before-compact",
+    "review-closed-task-memories-before-handoff",
     "review-closed-task-memories-on-stop",
     "guard-plan-memory-writes",
     "search-memories-on-claim",
@@ -150,12 +146,12 @@ class TestMemoryLifecycleSync:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# digest-on-plan-turn-end
+# judge-shadow-relevance-on-response
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class TestDigestOnPlanTurnEnd:
-    """Build a digest at each provider-specific plan turn boundary."""
+class TestShadowRelevanceOnResponse:
+    """Judge pending shadow-memory rows independently at turn end."""
 
     def test_event_and_effect(
         self,
@@ -163,83 +159,14 @@ class TestDigestOnPlanTurnEnd:
         manager: RuleDefinitionManager,
     ) -> None:
         _sync_bundled(db)
-        row = manager.get_by_name("digest-on-plan-turn-end")
+        row = manager.get_by_name("judge-shadow-relevance-on-response")
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.event.value == "after_tool"
+        assert body.event.value == "turn_end"
         assert body.effects[0].type == "mcp_call"
         assert body.effects[0].server == "gobby-memory"
-        assert body.effects[0].tool == "build_turn_and_digest"
+        assert body.effects[0].tool == "judge_shadow_relevance"
         assert body.effects[0].background is True
-
-    @pytest.mark.parametrize(
-        ("tool_name", "matches"),
-        [
-            ("ExitPlanMode", True),
-            ("AskUserQuestion", True),
-            ("request_user_input", True),
-            ("ExitSpecMode", True),
-            ("AskUser", True),
-            ("Bash", False),
-        ],
-    )
-    def test_matches_plan_boundaries(
-        self,
-        db: HubDatabase,
-        manager: RuleDefinitionManager,
-        tool_name: str,
-        matches: bool,
-    ) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("digest-on-plan-turn-end")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.when is not None
-
-        native_event = {
-            "hook_type": "PostToolUse",
-            "input_data": {
-                "session_id": "codex-session-123",
-                "cwd": "/project",
-                "tool_name": tool_name,
-            },
-            "source": "codex",
-        }
-        event = CodexHooksAdapter().translate_to_hook_event(native_event)
-
-        assert event is not None
-        assert event.event_type == HookEventType.AFTER_TOOL
-        assert event.data["tool_name"] == tool_name
-        assert SafeExpressionEvaluator({"event": event}, {}).evaluate(body.when) is matches
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# digest-catch-up-on-turn-start
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestDigestCatchUpOnTurnStart:
-    """Drain undigested backlog in bounded batches at each turn_start."""
-
-    def test_event_and_effect(
-        self,
-        db: HubDatabase,
-        manager: RuleDefinitionManager,
-    ) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("digest-catch-up-on-turn-start")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.effects is not None
-        effect = body.effects[0]
-
-        assert body.event.value == "turn_start"
-        assert body.when is None
-        assert effect.type == "mcp_call"
-        assert effect.server == "gobby-memory"
-        assert effect.tool == "build_turn_and_digest"
-        assert effect.arguments == {"catch_up": True}
-        assert effect.background is True
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -364,7 +291,7 @@ def _review_variables(*pending: dict[str, str], **overrides: Any) -> dict[str, A
     return variables
 
 
-def _sessions_tool_event(tool_name: str = "compact_self") -> HookEvent:
+def _sessions_tool_event(tool_name: str = "set_handoff") -> HookEvent:
     """A `gobby-sessions` call as the before_tool gate sees it."""
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
@@ -761,9 +688,9 @@ class TestPostCloseMemoryReviewRules:
     def test_before_compact_review_mirrors_the_stop_gate(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
-        """compact_self right after close_task must not defer the review past the context."""
+        """set_handoff right after close_task must not defer the review past the context."""
         _sync_bundled(db)
-        row = manager.get_by_name("review-closed-task-memories-before-compact")
+        row = manager.get_by_name("review-closed-task-memories-before-handoff")
         assert row is not None
         assert row.priority == 1
         body = RuleDefinitionBody.model_validate(row.definition_json)
@@ -772,24 +699,24 @@ class TestPostCloseMemoryReviewRules:
         assert body.event.value == "before_tool"
         when = body.when or ""
         assert "event.data.get('mcp_server') == 'gobby-sessions'" in when
-        assert "event.data.get('mcp_tool') == 'compact_self'" in when
+        assert "event.data.get('mcp_tool') == 'set_handoff'" in when
         assert "_memory_pending_task_reviews" in when
         assert "_memory_review_stop_delivered" in when
         assert len(effects) == 1
         assert effects[0].type == "block"
-        assert effects[0].mcp_tools == ["gobby-sessions:compact_self"]
+        assert effects[0].mcp_tools == ["gobby-sessions:set_handoff"]
         assert effects[0].acknowledge_variable == "_memory_review_stop_delivered"
         reason = effects[0].reason or ""
         assert "{% for item in variables.get('_memory_pending_task_reviews') or [] %}" in reason
         assert "review_task_memories" in reason
         assert "source_task_id" in reason
-        assert "retry `gobby-sessions:compact_self`" in reason
+        assert "retry `gobby-sessions:set_handoff`" in reason
 
     @pytest.mark.asyncio
-    async def test_compact_self_delivers_pending_review_once_and_settles_the_stop_gate(
+    async def test_set_handoff_delivers_pending_review_once_and_settles_the_stop_gate(
         self, db: HubDatabase
     ) -> None:
-        """The manual-compact bypass skips turn_end, so the review lands on compact_self."""
+        """The manual-compact bypass skips turn_end, so the review lands on set_handoff."""
         _sync_bundled(db)
         pending = [
             _pending_review("#42", "Implemented layered memory guidance."),
@@ -808,7 +735,7 @@ class TestPostCloseMemoryReviewRules:
         assert "#42 (task_id `task-42`): Implemented layered memory guidance." in reason
         assert "#43 (task_id `task-43`): Documented the review tool." in reason
         assert "gobby-memory:review_task_memories(task_id, changes_summary)" in reason
-        assert "retry `gobby-sessions:compact_self`" in reason
+        assert "retry `gobby-sessions:set_handoff`" in reason
         assert variables["_memory_review_stop_delivered"] is True
         assert variables["_memory_pending_task_reviews"] == pending
         assert retry.decision == "allow"
@@ -819,11 +746,9 @@ class TestPostCloseMemoryReviewRules:
     @pytest.mark.parametrize(
         ("overrides", "tool_name"),
         [
-            pytest.param(
-                {"_memory_pending_task_reviews": []}, "compact_self", id="nothing_pending"
-            ),
-            pytest.param({"_memory_review_stop_delivered": True}, "compact_self", id="delivered"),
-            pytest.param({}, "get_handoff_context", id="other_sessions_tool"),
+            pytest.param({"_memory_pending_task_reviews": []}, "set_handoff", id="nothing_pending"),
+            pytest.param({"_memory_review_stop_delivered": True}, "set_handoff", id="delivered"),
+            pytest.param({}, "get_handoff", id="other_sessions_tool"),
         ],
     )
     async def test_compact_gate_stays_silent_without_an_undelivered_review(
@@ -847,14 +772,14 @@ class TestPostCloseMemoryReviewRules:
     @pytest.mark.parametrize(
         "rearmed_channel",
         [
-            pytest.param(HookEventType.BEFORE_TOOL, id="before_tool_compact_self"),
+            pytest.param(HookEventType.BEFORE_TOOL, id="before_tool_set_handoff"),
             pytest.param(HookEventType.STOP, id="turn_end"),
         ],
     )
     async def test_later_close_rearms_both_gates_after_compact_delivery(
         self, db: HubDatabase, rearmed_channel: HookEventType
     ) -> None:
-        """A close after a compact_self delivery re-arms both delivery channels."""
+        """A close after a set_handoff delivery re-arms both delivery channels."""
         _sync_bundled(db)
         variables = _review_variables(
             _pending_review("#42", "Earlier closure."), _gobby_feedback_epoch_reviewed=True

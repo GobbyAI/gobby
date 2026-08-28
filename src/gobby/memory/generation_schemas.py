@@ -2,16 +2,6 @@
 
 from typing import Any
 
-TURN_RECORD_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "turn_markdown": {"type": "string"},
-        "title_candidate": {"type": "string"},
-    },
-    "required": ["turn_markdown", "title_candidate"],
-    "additionalProperties": False,
-}
-
 DREAM_ACTIONS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -124,5 +114,4 @@ __all__ = [
     "RELATIONSHIP_DELETION_SCHEMA",
     "RELATIONSHIP_EXTRACTION_SCHEMA",
     "SHADOW_RELEVANCE_SCHEMA",
-    "TURN_RECORD_SCHEMA",
 ]

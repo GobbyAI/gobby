@@ -56,7 +56,7 @@ describe("horizontal overflow guards (#20050)", () => {
     const rules = [
       makeRule({
         id: "r1",
-        name: "auto-compact-after-task-close-with-a-very-long-name",
+        name: "structured-handoff-with-a-very-long-name",
         event: "after_tool",
         group: "context-handoff",
       }),

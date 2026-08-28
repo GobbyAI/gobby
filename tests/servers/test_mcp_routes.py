@@ -2652,14 +2652,14 @@ class TestMCPProxy:
             [
                 FakeInternalRegistry(
                     name="gobby-sessions",
-                    tools=[{"name": "wait_for_summary", "description": "Wait for a summary"}],
+                    tools=[{"name": "get_handoff", "description": "Wait for a summary"}],
                 ),
             ]
         )
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/api/mcp/gobby-sessions/tools/wait_for_summary",
+                "/api/mcp/gobby-sessions/tools/get_handoff",
                 json={"session_id": "sess-123"},
             )
 
@@ -2682,14 +2682,14 @@ class TestMCPProxy:
             [
                 FakeInternalRegistry(
                     name="gobby-sessions",
-                    tools=[{"name": "wait_for_summary", "description": "Wait for a summary"}],
+                    tools=[{"name": "get_handoff", "description": "Wait for a summary"}],
                 ),
             ]
         )
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/api/mcp/gobby-sessions/tools/wait_for_summary",
+                "/api/mcp/gobby-sessions/tools/get_handoff",
                 headers={MCP_WRAPPER_PROTOCOL_VERSION_HEADER: "0"},
                 json={"session_id": "sess-123"},
             )
@@ -2725,14 +2725,14 @@ class TestMCPProxy:
             [
                 FakeInternalRegistry(
                     name="gobby-sessions",
-                    tools=[{"name": "wait_for_summary", "description": "Wait for a summary"}],
+                    tools=[{"name": "get_handoff", "description": "Wait for a summary"}],
                 ),
             ]
         )
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/api/mcp/gobby-sessions/tools/wait_for_summary",
+                "/api/mcp/gobby-sessions/tools/get_handoff",
                 headers={
                     MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
                     TERMINAL_CONTEXT_HEADER: json.dumps(terminal_context),
@@ -2744,7 +2744,7 @@ class TestMCPProxy:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert data["result"] == {"tool": "wait_for_summary"}
+        assert data["result"] == {"tool": "get_handoff"}
         resolved_session = session_storage.get(session.id)
         assert resolved_session is not None
         assert resolved_session.status == "active"

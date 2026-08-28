@@ -3853,6 +3853,50 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
+      "name": "session_feedback.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "session_feedback.disposition",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "session_feedback.evidence",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_feedback.frequency",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_feedback.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "session_feedback.impact",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_feedback.kind",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_feedback.reviewed",
+      "definition": "boolean|bool|NO|false|NEVER"
+    },
+    {
+      "name": "session_feedback.session_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "session_feedback.source",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_feedback.suggestion",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "session_skills.created_at",
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
@@ -3915,10 +3959,6 @@
     {
       "name": "session_summary_revisions.source_context_hash",
       "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "session_summary_revisions.source_digest_turn_count",
-      "definition": "integer|int4|YES||NEVER"
     },
     {
       "name": "session_summary_revisions.summary_markdown",
@@ -4053,10 +4093,6 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
-      "name": "sessions.digest_markdown",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
       "name": "sessions.external_id",
       "definition": "text|text|NO||NEVER"
     },
@@ -4067,6 +4103,10 @@
     {
       "name": "sessions.had_edits",
       "definition": "boolean|bool|YES|false|NEVER"
+    },
+    {
+      "name": "sessions.handoff_markdown",
+      "definition": "text|text|YES||NEVER"
     },
     {
       "name": "sessions.id",
@@ -4089,14 +4129,6 @@
       "definition": "integer|int4|YES||NEVER"
     },
     {
-      "name": "sessions.last_digest_input_hash",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "sessions.last_digested_pair_index",
-      "definition": "integer|int4|NO|0|NEVER"
-    },
-    {
       "name": "sessions.last_prompt_cache_creation_tokens",
       "definition": "integer|int4|YES||NEVER"
     },
@@ -4111,10 +4143,6 @@
     {
       "name": "sessions.last_prompt_uncached_input_tokens",
       "definition": "integer|int4|YES||NEVER"
-    },
-    {
-      "name": "sessions.last_turn_markdown",
-      "definition": "text|text|YES||NEVER"
     },
     {
       "name": "sessions.machine_id",
@@ -4167,10 +4195,6 @@
     {
       "name": "sessions.status",
       "definition": "text|text|YES|'active'::text|NEVER"
-    },
-    {
-      "name": "sessions.summary_digest_turn_count",
-      "definition": "integer|int4|YES||NEVER"
     },
     {
       "name": "sessions.summary_generated_at",
@@ -7067,6 +7091,42 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
+      "name": "session_feedback.session_feedback_disposition_nonblank",
+      "definition": "CHECK (disposition IS NULL OR btrim(disposition) <> ''::text)"
+    },
+    {
+      "name": "session_feedback.session_feedback_evidence_nonblank",
+      "definition": "CHECK (btrim(evidence) <> ''::text)"
+    },
+    {
+      "name": "session_feedback.session_feedback_frequency_nonblank",
+      "definition": "CHECK (btrim(frequency) <> ''::text)"
+    },
+    {
+      "name": "session_feedback.session_feedback_impact_nonblank",
+      "definition": "CHECK (btrim(impact) <> ''::text)"
+    },
+    {
+      "name": "session_feedback.session_feedback_kind_nonblank",
+      "definition": "CHECK (btrim(kind) <> ''::text)"
+    },
+    {
+      "name": "session_feedback.session_feedback_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "session_feedback.session_feedback_session_id_fkey",
+      "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE"
+    },
+    {
+      "name": "session_feedback.session_feedback_source_nonblank",
+      "definition": "CHECK (btrim(source) <> ''::text)"
+    },
+    {
+      "name": "session_feedback.session_feedback_suggestion_nonblank",
+      "definition": "CHECK (suggestion IS NULL OR btrim(suggestion) <> ''::text)"
+    },
+    {
       "name": "session_skills.session_skills_pkey",
       "definition": "PRIMARY KEY (id)"
     },
@@ -7083,12 +7143,8 @@
       "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE"
     },
     {
-      "name": "session_summary_revisions.session_summary_revisions_digest_turn_count_nonnegative",
-      "definition": "CHECK (source_digest_turn_count IS NULL OR source_digest_turn_count >= 0)"
-    },
-    {
       "name": "session_summary_revisions.session_summary_revisions_generation_mode_valid",
-      "definition": "CHECK (generation_mode = ANY (ARRAY['agent_authored'::text, 'full'::text, 'delta'::text, 'digest_fallback'::text, 'noop'::text]))"
+      "definition": "CHECK (generation_mode = ANY (ARRAY['agent_authored'::text, 'full'::text, 'noop'::text]))"
     },
     {
       "name": "session_summary_revisions.session_summary_revisions_id_session_id_unique",
@@ -7181,10 +7237,6 @@
     {
       "name": "sessions.sessions_project_id_fkey",
       "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) DEFERRABLE"
-    },
-    {
-      "name": "sessions.sessions_summary_digest_turn_count_nonnegative",
-      "definition": "CHECK (summary_digest_turn_count IS NULL OR summary_digest_turn_count >= 0)"
     },
     {
       "name": "sessions.sessions_summary_revision_fk",
@@ -8727,6 +8779,14 @@
       "definition": "CREATE INDEX idx_secrets_category ON $schema.secrets USING btree (category)"
     },
     {
+      "name": "idx_session_feedback_session_created",
+      "definition": "CREATE INDEX idx_session_feedback_session_created ON $schema.session_feedback USING btree (session_id, created_at DESC)"
+    },
+    {
+      "name": "idx_session_feedback_unreviewed",
+      "definition": "CREATE INDEX idx_session_feedback_unreviewed ON $schema.session_feedback USING btree (created_at) WHERE (reviewed = false)"
+    },
+    {
       "name": "idx_session_skills_session",
       "definition": "CREATE INDEX idx_session_skills_session ON $schema.session_skills USING btree (session_id)"
     },
@@ -9297,6 +9357,10 @@
     {
       "name": "secrets_pkey",
       "definition": "CREATE UNIQUE INDEX secrets_pkey ON $schema.secrets USING btree (id)"
+    },
+    {
+      "name": "session_feedback_pkey",
+      "definition": "CREATE UNIQUE INDEX session_feedback_pkey ON $schema.session_feedback USING btree (id)"
     },
     {
       "name": "session_skills_pkey",

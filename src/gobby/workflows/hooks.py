@@ -6,8 +6,10 @@ import threading
 from _thread import LockType
 from collections.abc import Callable
 from copy import deepcopy
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 from gobby.workflows.block_audit import audit_source_block, audit_source_block_sync
@@ -433,7 +435,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         self,
         event: HookEvent,
         *,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> HookResponse:
         """Evaluate rules for a hook event using the RuleEngine.
 
@@ -453,7 +455,12 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
             try:
                 if eval_lock_state:
-                    await self._acquire_eval_lock(eval_lock_state.lock)
+                    if blocking_deadline is not None:
+                        lock_wait_started = monotonic()
+                        await self._acquire_eval_lock(eval_lock_state.lock)
+                        blocking_deadline.extend(monotonic() - lock_wait_started)
+                    else:
+                        await self._acquire_eval_lock(eval_lock_state.lock)
                     eval_lock_acquired = True
 
                 self._sync_tool_context(event, session_id)
@@ -781,7 +788,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         self,
         event: HookEvent,
         *,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> HookResponse:
         """Evaluate rules asynchronously for callers that already own the loop."""
         enabled, timeout = self._resolve_policy()
@@ -807,7 +814,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         self,
         event: HookEvent,
         *,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> HookResponse:
         """Evaluate rules for a hook event.
 
@@ -847,7 +854,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         self,
         event: HookEvent,
         *,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> HookResponse:
         """Handle a hook event by evaluating declarative rules."""
         return self.evaluate(event, blocking_deadline=blocking_deadline)

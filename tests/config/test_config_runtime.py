@@ -82,8 +82,8 @@ class FakeRepository:
                     "profile_defaults": {"feature_low": overrides[FEATURE_LOW_PROFILE_DEFAULT_KEY]}
                 }
             }
-        if "digest.candidates" in overrides:
-            candidate["digest"] = {"candidates": overrides["digest.candidates"]}
+        if "session_summary.candidates" in overrides:
+            candidate["session_summary"] = {"candidates": overrides["session_summary.candidates"]}
         return DaemonConfig.model_validate(candidate)
 
 
@@ -266,7 +266,7 @@ async def test_sparse_profile_override_propagates_to_omitted_feature_candidates(
                 1,
                 values={
                     FEATURE_LOW_PROFILE_DEFAULT_KEY: low_candidates,
-                    "digest.candidates": ["claude/haiku"],
+                    "session_summary.candidates": ["claude/haiku"],
                 },
                 overrides={FEATURE_LOW_PROFILE_DEFAULT_KEY: low_candidates},
             )
@@ -276,7 +276,9 @@ async def test_sparse_profile_override_propagates_to_omitted_feature_candidates(
 
     await runtime.start()
 
-    assert candidate_labels(runtime.snapshot.active.digest.candidates) == tuple(low_candidates)
+    assert candidate_labels(runtime.snapshot.active.session_summary.candidates) == tuple(
+        low_candidates
+    )
     assert repository.candidate_inputs[-1] == {FEATURE_LOW_PROFILE_DEFAULT_KEY: low_candidates}
     await runtime.close()
 
@@ -308,7 +310,7 @@ async def test_live_profile_override_updates_inherited_feature_candidates() -> N
 
     await runtime.reconcile_revision(2)
 
-    assert candidate_labels(runtime.snapshot.active.digest.candidates) == tuple(updated)
+    assert candidate_labels(runtime.snapshot.active.session_summary.candidates) == tuple(updated)
     assert runtime.snapshot.active_overrides == {FEATURE_LOW_PROFILE_DEFAULT_KEY: updated}
     await runtime.close()
 
@@ -324,11 +326,11 @@ async def test_explicit_feature_candidates_override_profile_default() -> None:
                 1,
                 values={
                     FEATURE_LOW_PROFILE_DEFAULT_KEY: profile_candidates,
-                    "digest.candidates": explicit_candidates,
+                    "session_summary.candidates": explicit_candidates,
                 },
                 overrides={
                     FEATURE_LOW_PROFILE_DEFAULT_KEY: profile_candidates,
-                    "digest.candidates": explicit_candidates,
+                    "session_summary.candidates": explicit_candidates,
                 },
             )
         ]
@@ -337,7 +339,9 @@ async def test_explicit_feature_candidates_override_profile_default() -> None:
 
     await runtime.start()
 
-    assert candidate_labels(runtime.snapshot.active.digest.candidates) == tuple(explicit_candidates)
+    assert candidate_labels(runtime.snapshot.active.session_summary.candidates) == tuple(
+        explicit_candidates
+    )
     await runtime.close()
 
 

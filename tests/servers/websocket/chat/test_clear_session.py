@@ -408,7 +408,7 @@ class TestCommitWebChatClearSuccessorTransaction:
         sessions = SessionManager(hub_db)
         predecessor = _web_chat_row(sessions, project.id, "predecessor")
         hub_db.execute(
-            "UPDATE sessions SET summary_markdown = %s WHERE id = %s",
+            "UPDATE sessions SET handoff_markdown = %s WHERE id = %s",
             (HANDOFF, predecessor.id),
         )
         predecessor = sessions.get(predecessor.id)
@@ -417,6 +417,8 @@ class TestCommitWebChatClearSuccessorTransaction:
             hub_db,
             predecessor.id,
             attempt_id=ATTEMPT_ID,
+            handoff_markdown=HANDOFF,
+            observations=[],
             terminal_context=None,
             chat_context={"model": "claude-opus", "mode": "normal"},
         )
@@ -442,8 +444,8 @@ class TestCommitWebChatClearSuccessorTransaction:
         marker = SessionVariableManager(hub_db).get_variables(predecessor.id)
         assert marker[CLEAR_ATTEMPT_VARIABLE]["consumed_by"] == successor.id
         seeded = SessionVariableManager(hub_db).get_variables(successor.id)
-        assert seeded.get("clear_handoff_inject_pending") is True
-        assert HANDOFF in str(seeded.get("handoff_summary_injectable") or "")
+        assert seeded == {}
+        assert refreshed_pred.handoff_markdown == HANDOFF
 
     def test_failed_insert_rolls_back_predecessor(self, hub_db: HubDatabase) -> None:
         project = LocalProjectManager(hub_db).create(
@@ -456,6 +458,8 @@ class TestCommitWebChatClearSuccessorTransaction:
             hub_db,
             predecessor.id,
             attempt_id=ATTEMPT_ID,
+            handoff_markdown=HANDOFF,
+            observations=[],
             terminal_context=None,
             chat_context=None,
         )
@@ -504,13 +508,15 @@ class TestCommitWebChatClearSuccessorTransaction:
             project_id=project.id,
         )
         hub_db.execute(
-            "UPDATE sessions SET summary_markdown = %s WHERE id = %s",
+            "UPDATE sessions SET handoff_markdown = %s WHERE id = %s",
             (HANDOFF, predecessor.id),
         )
         stage_clear_attempt(
             hub_db,
             predecessor.id,
             attempt_id=ATTEMPT_ID,
+            handoff_markdown=HANDOFF,
+            observations=[],
             terminal_context=None,
             chat_context=None,
         )

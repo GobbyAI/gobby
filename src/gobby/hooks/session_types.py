@@ -7,6 +7,7 @@ stack relies on. The runtime implementation is the canonical
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.sessions.contested_expiry import ContestedExpiryCause
@@ -16,6 +17,7 @@ from gobby.storage.sessions._update_sentinel import UNSET, UnsetType
 if TYPE_CHECKING:
     from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
     from gobby.storage.hub.protocol import HubDatabase
+    from gobby.terminal_ownership import TerminalIdentity
 
 
 class HookSessionManager(Protocol):
@@ -152,6 +154,14 @@ class HookSessionManager(Protocol):
     ) -> bool: ...
 
     def mark_had_edits(self, session_id: str) -> Session | None: ...
+
+    def find_by_terminal_identity(self, identity: TerminalIdentity) -> Sequence[Session]: ...
+
+    def find_live_interactive_pane_owner(
+        self,
+        terminal_context: dict[str, Any] | None,
+        machine_id: str | None,
+    ) -> Session | None: ...
 
     def find_parent(
         self,

@@ -44,14 +44,12 @@ from gobby.config.hooks import HookTimeoutConfig
 from gobby.config.persistence import MemoryBackupConfig, MemoryConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
-    DigestConfig,
     MessageTrackingConfig,
     SessionLifecycleConfig,
     SessionSummaryConfig,
 )
 from gobby.config.tasks import (
     DEFAULT_WORKFLOW_TIMEOUT_SECONDS,
-    CompactHandoffConfig,
     GobbyTasksConfig,
     TaskExpansionConfig,
     TaskValidationConfig,
@@ -1007,33 +1005,6 @@ class TestProjectVerificationSynthesisConfig:
         )
 
 
-class TestDigestConfig:
-    """Tests for DigestConfig."""
-
-    def test_default_values(self) -> None:
-        """Test default digest config."""
-        config = DigestConfig()
-        assert config.enabled is True
-        assert config.profile == FeatureProfile.LOW
-        assert "claude/haiku" in candidate_labels(config.candidates)
-        assert config.timeout == 30
-        assert config.num_pairs == 50
-
-    def test_timeout_validation(self) -> None:
-        """Test digest timeout must be positive."""
-        with pytest.raises(ValidationError):
-            DigestConfig(timeout=0)
-
-    def test_num_pairs_validation(self) -> None:
-        with pytest.raises(ValidationError):
-            DigestConfig(num_pairs=0)
-
-    def test_rejects_removed_session_title_section(self) -> None:
-        """Legacy session_title config is a hard validation failure."""
-        with pytest.raises(ValidationError, match="session_title config has been removed"):
-            DaemonConfig(session_title={"provider": "local"})
-
-
 class TestWebSocketBroadcastConfig:
     """Tests for WebSocketBroadcastConfig."""
 
@@ -1168,22 +1139,6 @@ class TestMemoryConfig:
 # Additional tests for config module decomposition coverage (gt-dfa0d7)
 # These tests verify all config classes can be instantiated correctly
 # ==============================================================================
-
-
-class TestCompactHandoffConfig:
-    """Tests for CompactHandoffConfig."""
-
-    def test_default_values(self) -> None:
-        """Test default compact handoff config."""
-        config = CompactHandoffConfig()
-        assert config.enabled is True
-        assert config.refresh_timeout_seconds == 300.0
-
-    def test_custom_values(self) -> None:
-        """Test custom compact handoff config."""
-        config = CompactHandoffConfig(enabled=False, refresh_timeout_seconds=45.0)
-        assert config.enabled is False
-        assert config.refresh_timeout_seconds == 45.0
 
 
 class TestToolSummarizerConfig:
@@ -1366,7 +1321,6 @@ class TestDaemonConfigComposition:
         assert isinstance(config.telemetry, TelemetrySettings)
 
         # Session
-        assert isinstance(config.compact_handoff, CompactHandoffConfig)
         assert isinstance(config.session_summary, SessionSummaryConfig)
         assert isinstance(config.session_lifecycle, SessionLifecycleConfig)
         assert isinstance(config.message_tracking, MessageTrackingConfig)
@@ -1384,7 +1338,6 @@ class TestDaemonConfigComposition:
         # LLM
         assert "llm_providers" not in DaemonConfig.model_fields
         assert not hasattr(config, "llm_providers")
-        assert isinstance(config.digest, DigestConfig)
         assert isinstance(config.recommend_tools, RecommendToolsConfig)
 
         # Hooks
@@ -1466,7 +1419,6 @@ class TestAllConfigClassesInstantiate:
         configs = [
             WebSocketSettings(),
             TelemetrySettings(),
-            CompactHandoffConfig(),
             SessionSummaryConfig(),
             ToolSummarizerConfig(),
             RecommendToolsConfig(),
@@ -1475,7 +1427,6 @@ class TestAllConfigClassesInstantiate:
             ProjectVerificationSynthesisConfig(),
             MCPClientProxyConfig(),
             GobbyTasksConfig(),
-            DigestConfig(),
             WebSocketBroadcastConfig(),
             WebhookEndpointConfig(name="test", url="https://test.com"),  # Required
             WebhooksConfig(),
@@ -1492,6 +1443,6 @@ class TestAllConfigClassesInstantiate:
             DaemonConfig(),
         ]
 
-        assert len(configs) == 26
+        assert len(configs) == 24
         for config in configs:
             assert config is not None

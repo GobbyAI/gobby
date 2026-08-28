@@ -16,7 +16,7 @@ from gobby.servers.websocket.chat.session_registry import (
     WEB_CHAT_WAKE_PROMPT,
     WebChatSessionRegistry,
 )
-from gobby.sessions.compact_continuation import build_compact_self_continue_prompt
+from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.engine.core import RuleEngine
@@ -69,7 +69,7 @@ class TestWebChatSessionRegistry:
         }
         assert [call.args[0] for call in session.send_message.call_args_list] == [
             "/compact",
-            build_compact_self_continue_prompt(summary_session_id="db-id"),
+            build_handoff_continue_prompt(),
         ]
 
     @pytest.mark.asyncio
@@ -133,7 +133,7 @@ class TestWebChatSessionRegistry:
         await queued_task
         assert [call.args[0] for call in session.send_message.call_args_list] == [
             "/compact",
-            build_compact_self_continue_prompt(summary_session_id="db-id"),
+            build_handoff_continue_prompt(),
         ]
 
     @pytest.mark.asyncio
@@ -205,7 +205,7 @@ class TestWebChatSessionRegistry:
             await queued_task
         assert [call.args[0] for call in session.send_message.call_args_list] == [
             "/compact",
-            build_compact_self_continue_prompt(summary_session_id="db-id"),
+            build_handoff_continue_prompt(),
             WEB_CHAT_WAKE_PROMPT,
         ]
 
@@ -451,16 +451,16 @@ class TestWebChatLifecycle:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_after_tool_close_task_with_remaining_epic_queues_compact_self(
+    async def test_after_tool_close_task_with_remaining_epic_does_not_queue_handoff(
         self,
         temp_db,
         sample_project,
     ) -> None:
-        """Closing one claimed task while another epic remains queues compact_self.
+        """Closing one claimed task leaves handoff authoring to the active agent.
 
         The setup wires task/session managers, a _web_chat_session, WorkflowHookHandler,
         RuleEngine, and _LifecycleHost before firing the AFTER_TOOL close_task hook.
-        Expected outcome: one gobby-sessions compact_self MCP call using caller context.
+        Expected outcome: no automatic session handoff call.
         """
         sync_bundled_rules(temp_db, get_bundled_rules_path())
 
@@ -540,18 +540,6 @@ class TestWebChatLifecycle:
         compact_calls = [
             call
             for call in host.captured_mcp_calls
-            if call.get("server") == "gobby-sessions" and call.get("tool") == "compact_self"
+            if call.get("server") == "gobby-sessions" and call.get("tool") == "set_handoff"
         ]
-        assert compact_calls == [
-            {
-                "server": "gobby-sessions",
-                "tool": "compact_self",
-                "arguments": {
-                    "rule_name": "auto-compact-after-task-close",
-                },
-                "background": True,
-                "inject_result": False,
-                "block_on_failure": False,
-                "block_on_success": False,
-            }
-        ]
+        assert compact_calls == []

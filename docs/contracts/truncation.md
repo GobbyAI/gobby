@@ -27,7 +27,7 @@ When a payload is too large to inline, use exactly one of:
 1. **Return the full text.**
 2. **Offload and point** — persist the full bytes; the inline value is an
    envelope, breadcrumb, or path, not a chopped body. Reuse
-   `ToolResultOffloader` / `gobby-results`, `get_handoff_context`,
+   `ToolResultOffloader` / `gobby-results`, `get_handoff`,
    `get_agent_capture`, or `get_session_messages`.
 3. **Omit a whole item** that does not fit (a whole memory, message, or
    contributor), with a deterministic continuation path. Never half-cut one

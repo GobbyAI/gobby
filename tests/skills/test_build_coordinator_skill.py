@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from gobby.sessions.compact_markers import COMPACT_SELF_INTERRUPT_WARNING
 from gobby.skills.loader import SkillLoader
 from gobby.skills.parser import parse_skill_file
 
@@ -15,6 +14,12 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILL_DIR = REPO_ROOT / "src/gobby/install/shared/skills/build-coordinator"
 SKILLS_ROOT = REPO_ROOT / "src/gobby/install/shared/skills"
+HANDOFF_INTERRUPT_WARNING = (
+    "In a terminal session that call comes back as a rejected or cancelled tool use "
+    "attributed to the user. That is the daemon interrupting the turn to deliver the "
+    "compaction command, never a refusal: do not stop, do not ask the user about it, "
+    "and resume from the continuation prompt."
+)
 
 
 def _body() -> str:
@@ -136,7 +141,7 @@ def test_build_coordinator_orders_compaction_before_agent_waits() -> None:
 
     monitor_idx = normalized.index("Check target build state, dispatch eligibility")
     bugs_idx = normalized.index("Work the highest-priority actionable coordination bug")
-    compact_idx = normalized.index("Use `gobby-sessions:compact_self` when context pressure")
+    compact_idx = normalized.index("Use `gobby-sessions:set_handoff` when context pressure")
     wait_idx = normalized.index("Use `gobby-agents:wait_for_agent` as the last idle action")
 
     assert monitor_idx < bugs_idx < compact_idx < wait_idx
@@ -148,16 +153,16 @@ def test_build_coordinator_orders_compaction_before_agent_waits() -> None:
     assert "end the turn" in normalized
 
 
-def test_build_coordinator_documents_compact_self_tool_path() -> None:
+def test_build_coordinator_documents_set_handoff_tool_path() -> None:
     body = _body()
     normalized = _normalized_body()
 
-    assert "gobby-sessions:compact_self" in body
+    assert "gobby-sessions:set_handoff" in body
     assert 'list_tools(server_name="gobby-sessions")' not in body
-    assert 'get_tool_schema(server_name="gobby-sessions", tool_name="compact_self")' in body
-    assert 'call_tool("gobby-sessions", "compact_self", {})' in body
+    assert 'get_tool_schema(server_name="gobby-sessions", tool_name="set_handoff")' in body
+    assert 'tool_name="set_handoff"' in body
     assert "top-level `call_tool.session_id`" in body
-    assert COMPACT_SELF_INTERRUPT_WARNING in normalized
+    assert HANDOFF_INTERRUPT_WARNING in normalized
 
 
 def test_build_coordinator_requires_restart_after_dispatch_affecting_fixes() -> None:
@@ -171,7 +176,7 @@ def test_build_coordinator_requires_restart_after_dispatch_affecting_fixes() -> 
     assert "Stop or keep blocked the affected build targets" in normalized
     assert "record their run IDs, task refs, workspace paths, and isolation metadata" in normalized
     assert "Restart the daemon after notifying active agents" in normalized
-    assert "Verify daemon health, call `gobby-sessions:compact_self`" in normalized
+    assert "Verify daemon health, call `gobby-sessions:set_handoff`" in normalized
     assert "uses the expected isolation and workspace metadata" in normalized
     assert "file or keep open a child build bug for stale daemon behavior" in normalized
 

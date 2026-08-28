@@ -1,7 +1,7 @@
 """Terminal interaction tools for tmux-backed sessions.
 
-Exposes send_keys, capture_output, compact_self, and clear_self as MCP tools on
-gobby-sessions, enabling orchestration (heartbeat, pipelines, other agents)
+Exposes send_keys, capture_output, and structured handoff tools on gobby-sessions,
+enabling orchestration (heartbeat, pipelines, other agents)
 to interact with running terminal sessions.
 """
 
@@ -14,21 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
-from gobby.mcp_proxy.tools.sessions._terminal_handoff import (
-    _COMPACT_HANDOFF_FALLBACK_MAX_CHARS,
-    _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS,
-    _capture_handoff_configs,
-    _compact_handoff_digest_fallback_markdown,
-    _compact_handoff_refresh_timeout_seconds,
-    _compact_handoff_transcript_tail_markdown,
-    _has_summary_refresh_source,
-    _mark_compact_handoff_ready,
-    _persist_compact_handoff_fallback,
-    _refresh_compact_handoff_context,
-    _run_compact_handoff_background_refresh,
-    _schedule_compact_handoff_background_refresh,
-    _valid_existing_summary_markdown,
-)
+from gobby.mcp_proxy.tools.sessions._handoff import FEEDBACK_OBSERVATION_INPUT_SCHEMA
 from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
     _CLI_COMPACT_COMMANDS,
     _CLI_COMPACT_INTERRUPT_KEYS,
@@ -56,16 +42,22 @@ from gobby.mcp_proxy.tools.sessions._terminal_transcripts import (
     _capture_transcript_tail,
     _read_transcript_tail_lines,
 )
-from gobby.mcp_proxy.tools.sessions._terminal_webchat import _compact_live_web_chat_fallback
 from gobby.sessions.compact_continuation import (
     CODEX_COMPACT_READY_CAPTURE_LINES,
     CodexRolloutCursor,
     CodexRolloutObservationError,
-    build_compact_self_continue_prompt,
-    clear_compact_self_continuation_pending,
-    mark_compact_self_continuation_pending,
-    persist_compact_resume_required_skills,
-    schedule_codex_compact_self_continuation_readiness,
+    clear_handoff_compact_continuation_pending,
+    mark_handoff_compact_continuation_pending,
+    persist_handoff_resume_skills,
+    schedule_codex_handoff_compact_continuation_readiness,
+)
+from gobby.sessions.handoff import (
+    FeedbackObservation,
+    build_handoff_continue_prompt,
+    normalize_feedback_observations,
+    render_handoff_markdown,
+    restore_handoff_attempt,
+    stage_handoff_attempt,
 )
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.session_activity import reconcile_compact_session_activity
@@ -73,9 +65,6 @@ from gobby.terminal_context import parse_terminal_context_value, terminal_contex
 from gobby.terminals.lookup import manager_for_terminal_context
 
 if TYPE_CHECKING:
-    from gobby.config.app import DaemonConfig
-    from gobby.config.sessions import SessionSummaryConfig
-    from gobby.config.tasks import CompactHandoffConfig
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
     from gobby.storage.hub.protocol import HubDatabase
@@ -87,35 +76,22 @@ __all__ = [
     "_CLI_COMPACT_COMMANDS",
     "_CLI_COMPACT_INTERRUPT_KEYS",
     "_CODEX_INTERRUPT_SETTLE_SECONDS",
-    "_COMPACT_HANDOFF_FALLBACK_MAX_CHARS",
     "_COMPACTION_REJECTION_CAPTURE_LINES",
     "_COMPACTION_REJECTION_ERROR_CODE",
     "_COMPACTION_REJECTION_SETTLE_SECONDS",
     "_DEFAULT_COMPACT_INTERRUPT_KEY",
-    "_DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS",
     "_TRANSCRIPT_TAIL_MAX_BYTES",
     "_capture_pane_snapshot",
     "_capture_transcript_tail",
-    "_compact_handoff_digest_fallback_markdown",
-    "_compact_handoff_refresh_timeout_seconds",
-    "_compact_handoff_transcript_tail_markdown",
     "_compact_interrupt_key",
-    "_compact_live_web_chat_fallback",
     "_detect_compaction_rejection",
     "_fresh_output_delta",
-    "_has_summary_refresh_source",
-    "_mark_compact_handoff_ready",
-    "_persist_compact_handoff_fallback",
     "_read_transcript_tail_lines",
-    "_refresh_compact_handoff_context",
     "_resolve_session_for_compaction",
     "_resolve_tmux_target",
-    "_run_compact_handoff_background_refresh",
-    "_schedule_compact_handoff_background_refresh",
     "_send_compaction_command",
     "_send_terminal_compaction_command",
     "_send_tmux_keys",
-    "_valid_existing_summary_markdown",
     "asyncio",
     "manager_for_terminal_context",
     "LocalAgentRunManager",
@@ -251,7 +227,7 @@ def _resolve_session_for_compaction(
     session_id: str,
     session_manager: SessionManager,
 ) -> tuple[str | None, Any | None, str | None]:
-    """Resolve a user-facing session ref for compact_self."""
+    """Resolve a user-facing session ref for handoff compaction."""
     resolved_id = session_id
     resolver = getattr(session_manager, "resolve_session_reference", None)
     if callable(resolver):
@@ -306,7 +282,7 @@ def _backfill_tmux_context_from_sibling(
         )
     except Exception as exc:
         logger.debug(
-            "Failed finding sibling terminal sessions for compact_self session %s: %s",
+            "Failed finding sibling terminal sessions for handoff compaction %s: %s",
             session_id,
             exc,
             exc_info=True,
@@ -336,7 +312,7 @@ def _backfill_tmux_context_from_sibling(
             )
         except Exception as exc:
             logger.debug(
-                "Failed backfilling tmux context into compact_self session %s: %s",
+                "Failed backfilling tmux context for handoff compaction %s: %s",
                 session_id,
                 exc,
                 exc_info=True,
@@ -351,28 +327,14 @@ def register_terminal_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
     db: HubDatabase,
-    llm_service_resolver: Callable[[], Any | None] | None = None,
-    memory_manager_resolver: Callable[[], Any | None] | None = None,
-    session_summary_config: SessionSummaryConfig | None = None,
-    compact_handoff_config: CompactHandoffConfig | None = None,
-    config_resolver: Callable[[], DaemonConfig | None] | None = None,
     web_chat_session_registry: WebChatSessionRegistry | None = None,
     terminal_manager: Any | None = None,
     terminal_runtime_registry: Any | None = None,
     write_coordinator: Any | None = None,
 ) -> None:
-    """Register send_keys, capture_output, compact_self, and clear_self tools."""
+    """Register terminal control and structured handoff tools."""
 
     agent_run_manager = LocalAgentRunManager(db)
-    from gobby.mcp_proxy.tools.sessions._terminal_clear import register_clear_self_tool
-
-    register_clear_self_tool(
-        registry,
-        session_manager=session_manager,
-        db=db,
-        agent_run_manager=agent_run_manager,
-        web_chat_session_registry=web_chat_session_registry,
-    )
 
     @registry.tool(
         name="send_keys",
@@ -453,49 +415,59 @@ def register_terminal_tools(
             }
         return {"success": True}
 
-    @registry.tool(
-        name="compact_self",
-        description=(
-            "Compact your own context. In a terminal session this call does not "
-            "return normally: the Gobby daemon interrupts your active turn and "
-            "types the provider-specific compaction command into your pane, so "
-            "your CLI reports the call as rejected or cancelled and attributes "
-            "it to the user. That attribution is wrong — the daemon did it, and "
-            "the compaction is proceeding. Do not stop, and do not ask the user "
-            "what happened; a continuation prompt carrying your handoff summary "
-            "arrives automatically once compaction finishes. For Codex, "
-            "`Error: interrupted` and `Conversation interrupted` are likewise "
-            "expected when followed by `Context compacted`. Web-chat sessions "
-            "compact through the live daemon ChatSession registry and do return "
-            "normally. Designed to be called at workflow handoff boundaries — "
-            "e.g. /gobby plan calls this after spawning plan-adversary so the "
-            "coordinator's bulky requirements-gathering context is summarized "
-            "away while the sub-agent runs."
-        ),
-    )
-    async def compact_self(rule_name: str | None = None) -> dict[str, Any]:
+    async def set_handoff(
+        current_state: str,
+        next_steps: list[str],
+        key_decisions: list[str] | None = None,
+        blockers: list[str] | None = None,
+        notes: list[str] | None = None,
+        references: list[str] | None = None,
+        gobby_feedback: list[dict[str, Any]] | None = None,
+        clear_session: bool = False,
+    ) -> dict[str, Any]:
+        try:
+            markdown = render_handoff_markdown(
+                current_state=current_state,
+                next_steps=next_steps,
+                key_decisions=key_decisions or (),
+                blockers=blockers or (),
+                notes=notes or (),
+                references=references or (),
+            )
+            observations = normalize_feedback_observations(gobby_feedback)
+        except ValueError as exc:
+            return {"success": False, "error": str(exc), "error_code": "invalid_handoff"}
+
+        if clear_session:
+            from gobby.mcp_proxy.tools.sessions._terminal_clear import execute_clear_session
+
+            return await execute_clear_session(
+                markdown,
+                observations,
+                session_manager=session_manager,
+                db=db,
+                agent_run_manager=agent_run_manager,
+                web_chat_session_registry=web_chat_session_registry,
+            )
+        return await _compact_with_handoff(markdown, observations)
+
+    async def _compact_with_handoff(
+        handoff_markdown: str,
+        observations: list[FeedbackObservation],
+    ) -> dict[str, Any]:
         from gobby.utils.session_context import get_current_session_id
 
         session_id = get_current_session_id()
         if not session_id:
             return {
                 "compacted": False,
-                "reason": "compact_self requires current MCP SessionContext",
+                "reason": "set_handoff requires current MCP SessionContext",
             }
-        if rule_name:
-            logger.info("Compacting session %s (triggered by rule %s)", session_id, rule_name)
         resolved_session_id, session, error = _resolve_session_for_compaction(
             session_id,
             session_manager,
         )
         if error:
-            web_chat_fallback = await _compact_live_web_chat_fallback(
-                web_chat_session_registry,
-                session_id,
-                resolved_session_id,
-            )
-            if web_chat_fallback is not None:
-                return web_chat_fallback
             return {"compacted": False, "reason": error}
         assert resolved_session_id is not None
         assert session is not None
@@ -509,12 +481,40 @@ def register_terminal_tools(
                     "compacted": False,
                     "reason": "web_chat session registry is not available",
                 }
+            compact_target = resolved_session_id
             if (
                 resolved_session_id != session_id
                 and web_chat_session_registry.find_session(resolved_session_id)[1] is None
             ):
-                return await web_chat_session_registry.compact_session(session_id)
-            return await web_chat_session_registry.compact_session(resolved_session_id)
+                compact_target = session_id
+            resume_skills = persist_handoff_resume_skills(db, resolved_session_id)
+            attempt_id = uuid4().hex
+            attempt_state = None
+            try:
+                attempt_state = stage_handoff_attempt(
+                    db,
+                    resolved_session_id,
+                    attempt_id=attempt_id,
+                    markdown=handoff_markdown,
+                    observations=observations,
+                    clear_session=False,
+                )
+                result = await web_chat_session_registry.compact_session(
+                    compact_target,
+                    handoff_attempt_id=attempt_id,
+                )
+            except Exception as exc:
+                if attempt_state is not None:
+                    restore_handoff_attempt(db, attempt_state)
+                return {"compacted": False, "reason": str(exc), "error_code": "dispatch_failed"}
+            if not result.get("compacted"):
+                restore_handoff_attempt(db, attempt_state)
+                return result
+            result["attempt_id"] = attempt_id
+            result["handoff_staged"] = True
+            if any(resume_skills.values()):
+                result["resume_skills"] = resume_skills
+            return result
 
         if session_type != "terminal":
             return {
@@ -562,11 +562,11 @@ def register_terminal_tools(
             pane_probe = await tmux.snapshot_lines(target, lines=1)
         except Exception as exc:
             logger.warning(
-                "Failed verifying compact_self tmux target %s for session %s",
+                "Failed verifying handoff-compaction tmux target %s for session %s",
                 target,
                 resolved_session_id,
                 extra={
-                    "event": "compact_self_tmux_target_verification_failed",
+                    "event": "handoff_compact_tmux_target_verification_failed",
                     "session_id": resolved_session_id,
                     "tmux_target": target,
                     "error_type": type(exc).__name__,
@@ -609,7 +609,7 @@ def register_terminal_tools(
                 )
             except CodexRolloutObservationError as exc:
                 logger.warning(
-                    "Cannot observe Codex interruption for compact_self session %s: %s",
+                    "Cannot observe Codex interruption for handoff compaction %s: %s",
                     resolved_session_id,
                     exc,
                 )
@@ -620,46 +620,24 @@ def register_terminal_tools(
                     "error_code": "codex_interrupt_observation_unavailable",
                 }
 
-        operation_config = config_resolver() if config_resolver is not None else None
-        operation_session_summary_config, operation_compact_handoff_config = (
-            _capture_handoff_configs(
-                None,
-                session_summary_config=(
-                    operation_config.session_summary
-                    if operation_config is not None
-                    else session_summary_config
-                ),
-                compact_handoff_config=(
-                    operation_config.compact_handoff
-                    if operation_config is not None
-                    else compact_handoff_config
-                ),
+        resume_skills = persist_handoff_resume_skills(db, resolved_session_id)
+        continuation_prompt = build_handoff_continue_prompt()
+        compact_attempt_id = uuid4().hex
+        try:
+            attempt_state = stage_handoff_attempt(
+                db,
+                resolved_session_id,
+                attempt_id=compact_attempt_id,
+                markdown=handoff_markdown,
+                observations=observations,
+                clear_session=False,
             )
-        )
-        memory_manager = memory_manager_resolver() if memory_manager_resolver is not None else None
-        refresh_result = await _refresh_compact_handoff_context(
-            resolved_session_id,
-            session,
-            session_manager,
-            db,
-            llm_service_resolver() if llm_service_resolver is not None else None,
-            operation_session_summary_config,
-            memory_manager=memory_manager,
-            config=operation_config,
-            compact_handoff_config=operation_compact_handoff_config,
-        )
-        if not refresh_result.get("success"):
+        except Exception as exc:
             return {
                 "compacted": False,
-                "reason": "handoff context refresh failed before compaction: "
-                f"{refresh_result.get('error', 'unknown error')}",
+                "reason": f"failed to stage handoff: {exc}",
+                "error_code": "staging_failed",
             }
-
-        resume_skills = persist_compact_resume_required_skills(db, resolved_session_id)
-        continuation_prompt = build_compact_self_continue_prompt(
-            summary_session_id=resolved_session_id,
-        )
-        compact_attempt_id = uuid4().hex if source == "codex" else None
         observe_codex_interrupt: Callable[[], bool | None] | None = None
         if codex_rollout_cursor is not None:
 
@@ -668,7 +646,7 @@ def register_terminal_tools(
                     return codex_rollout_cursor.saw_fresh_turn_aborted()
                 except CodexRolloutObservationError as exc:
                     logger.warning(
-                        "Lost Codex interrupt observation for compact_self session %s: %s",
+                        "Lost Codex interrupt observation for handoff compaction %s: %s",
                         resolved_session_id,
                         exc,
                     )
@@ -679,7 +657,7 @@ def register_terminal_tools(
         if source == "codex":
 
             def schedule_codex_readiness(before_command: str | None) -> bool:
-                return schedule_codex_compact_self_continuation_readiness(
+                return schedule_codex_handoff_compact_continuation_readiness(
                     db,
                     pending_session_id=resolved_session_id,
                     target_session=session,
@@ -688,32 +666,41 @@ def register_terminal_tools(
                 )
 
             schedule_continuation_readiness = schedule_codex_readiness
-        ok, reason, continuation_pending, failure_detail = await _send_terminal_compaction_command(
-            tmux,
-            target,
-            command,
-            resolved_session_id,
-            cli_source=source,
-            mark_continuation_pending=lambda: mark_compact_self_continuation_pending(
-                db,
+        try:
+            send_result = await _send_terminal_compaction_command(
+                tmux,
+                target,
+                command,
                 resolved_session_id,
-                prompt=continuation_prompt,
-                summary_session_id=resolved_session_id,
-                attempt_id=compact_attempt_id,
-            ),
-            clear_continuation_pending=lambda: clear_compact_self_continuation_pending(
-                db,
-                resolved_session_id,
-                attempt_id=compact_attempt_id,
-            ),
-            schedule_continuation_readiness=schedule_continuation_readiness,
-            continuation_readiness_capture_lines=(
-                CODEX_COMPACT_READY_CAPTURE_LINES if source == "codex" else None
-            ),
-            observe_codex_interrupt=observe_codex_interrupt,
-        )
+                cli_source=source,
+                mark_continuation_pending=lambda: mark_handoff_compact_continuation_pending(
+                    db,
+                    resolved_session_id,
+                    prompt=continuation_prompt,
+                    attempt_id=compact_attempt_id,
+                ),
+                clear_continuation_pending=lambda: clear_handoff_compact_continuation_pending(
+                    db,
+                    resolved_session_id,
+                    attempt_id=compact_attempt_id,
+                ),
+                schedule_continuation_readiness=schedule_continuation_readiness,
+                continuation_readiness_capture_lines=(
+                    CODEX_COMPACT_READY_CAPTURE_LINES if source == "codex" else None
+                ),
+                observe_codex_interrupt=observe_codex_interrupt,
+            )
+        except Exception as exc:
+            restore_handoff_attempt(db, attempt_state)
+            return {
+                "compacted": False,
+                "reason": str(exc),
+                "error_code": "dispatch_failed",
+            }
+        ok, reason, continuation_pending, failure_detail = send_result
 
         if not ok:
+            restore_handoff_attempt(db, attempt_state)
             if source == "codex":
                 try:
                     session_manager.update_status(resolved_session_id, "active")
@@ -730,18 +717,6 @@ def register_terminal_tools(
             if failure_detail is not None:
                 failure_result.update(failure_detail)
             return failure_result
-        background_refresh_scheduled = False
-        if refresh_result.get("background_refresh_needed"):
-            background_refresh_scheduled = _schedule_compact_handoff_background_refresh(
-                resolved_session_id,
-                session_manager,
-                db,
-                llm_service_resolver() if llm_service_resolver is not None else None,
-                operation_session_summary_config,
-                operation_compact_handoff_config,
-                memory_manager=memory_manager,
-                config=operation_config,
-            )
         result = {
             "compacted": True,
             "command": command,
@@ -749,19 +724,61 @@ def register_terminal_tools(
             "via": "tmux",
             "interrupted": True,
             "continuation_pending": continuation_pending,
+            "attempt_id": compact_attempt_id,
+            "handoff_staged": True,
         }
         if any(resume_skills.values()):
-            result["compact_resume_required_skills"] = resume_skills
-        if refresh_result.get("refreshed"):
-            result["handoff_context_refreshed"] = True
-            result["handoff_summary_length"] = refresh_result.get("summary_length")
-        if refresh_result.get("fallback"):
-            result["handoff_context_fallback"] = True
-        if refresh_result.get("timed_out"):
-            result["handoff_context_refresh_timed_out"] = True
-        if background_refresh_scheduled:
-            result["handoff_context_background_refresh_scheduled"] = True
+            result["resume_skills"] = resume_skills
         return result
+
+    registry.register(
+        name="set_handoff",
+        description=(
+            "Persist a structured handoff, optionally record Gobby feedback, then compact "
+            "the current session or clear into a successor when clear_session=true. "
+            "Requires nonblank current_state and at least one nonblank next step. In a "
+            "terminal session the daemon interrupts the active turn and submits the provider "
+            "command; provider cancellation or rejection immediately after this call is the "
+            "expected dispatch signal. The continuation must call get_handoff()."
+        ),
+        brief="Store a structured handoff and compact or clear the current session.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "current_state": {"type": "string"},
+                "next_steps": {"type": "array", "items": {"type": "string"}},
+                "key_decisions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": [],
+                },
+                "blockers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": [],
+                },
+                "notes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": [],
+                },
+                "references": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": [],
+                },
+                "gobby_feedback": {
+                    "type": "array",
+                    "items": FEEDBACK_OBSERVATION_INPUT_SCHEMA,
+                    "default": [],
+                },
+                "clear_session": {"type": "boolean", "default": False},
+            },
+            "required": ["current_state", "next_steps"],
+            "additionalProperties": False,
+        },
+        func=set_handoff,
+    )
 
     @registry.tool(
         name="capture_output",

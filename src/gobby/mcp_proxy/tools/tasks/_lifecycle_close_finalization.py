@@ -408,6 +408,9 @@ def _cleanup_closed_claim(
         ctx.session_var_manager.merge_variables(evaluation.edit_session_id, updates)
         if commit_shas and not remaining:
             ctx.session_manager.clear_had_edits(evaluation.edit_session_id)
+        from gobby.sessions.title_lifecycle import recompute_automatic_title
+
+        recompute_automatic_title(ctx.session_manager, evaluation.edit_session_id)
     except Exception as exc:
         logger.warning("Failed to clean closed-task claim state: %s", exc)
 

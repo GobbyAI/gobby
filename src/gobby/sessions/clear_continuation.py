@@ -1,23 +1,31 @@
-"""Attempt lifecycle, successor resolution, and seeding for clear_self."""
+"""Attempt lifecycle and successor resolution for clear-session handoffs."""
 
 from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, TypeGuard
 from uuid import uuid4
 
-from gobby.hooks.context_limits import handoff_summary_inject_budget_for
 from gobby.sessions.compact_continuation import (
     _format_timestamp,
     _load_variables,
     _parse_timestamp,
     _row_variables,
-    schedule_compact_self_continuation,
+    schedule_handoff_compact_continuation,
+)
+from gobby.sessions.handoff import (
+    PENDING_HANDOFF_VARIABLE,
+    FeedbackObservation,
+    HandoffAttemptState,
+    restore_handoff_attempt,
+    stage_handoff_attempt,
 )
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
+from gobby.sessions.title_lifecycle import clear_successor_title
 from gobby.storage.hub.protocol import (
     HubDatabase,
     SessionLineageMutation,
@@ -28,24 +36,16 @@ from gobby.storage.hub.protocol import (
 )
 from gobby.storage.session_models import Session
 from gobby.storage.sessions._lineage_guard import sanitize_parent_session_id
-from gobby.storage.sessions._title_defaults import (
-    PROVISIONAL_TITLE_SOURCE,
-    format_provisional_session_title,
-)
 from gobby.utils.datetime import utc_now
-from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN, strip_injected_context
-from gobby.workflows.state_manager import SessionVariableManager
 
 __all__ = [
     "CLEAR_ATTEMPT_VARIABLE",
     "CLEAR_HANDOFF_TTL_SECONDS",
     "ClearContinuationResolution",
-    "build_clear_self_continue_prompt",
     "clear_failed_attempt",
     "commit_web_chat_clear_successor",
     "resolve_clear_continuation",
-    "schedule_clear_self_continuation",
-    "seed_clear_handoff_variables",
+    "schedule_handoff_continuation",
     "stage_clear_attempt",
     "take_clear_handoff_marker",
 ]
@@ -55,16 +55,6 @@ logger = logging.getLogger(__name__)
 CLEAR_HANDOFF_TTL_SECONDS = 600
 CLEAR_ATTEMPT_VARIABLE = "clear_attempt"
 MAX_CLEAR_CONTINUATION_CANDIDATES = 250
-
-_SUMMARY_FIELDS = (
-    "summary_markdown",
-    "summary_path",
-    "summary_revision_id",
-    "summary_source_context_hash",
-    "summary_digest_turn_count",
-    "summary_generation_mode",
-    "summary_generated_at",
-)
 
 
 @dataclass
@@ -81,15 +71,15 @@ def stage_clear_attempt(
     session_id: str,
     *,
     attempt_id: str,
+    handoff_markdown: str,
+    observations: Sequence[FeedbackObservation],
     terminal_context: dict[str, Any] | None,
     chat_context: dict[str, Any] | None,
-) -> dict[str, Any]:
+) -> HandoffAttemptState:
     """Write the one-shot clear-attempt marker on the predecessor row.
 
-    Returns the prior summary state captured for failure restoration.
     ``handoff_ready`` status is never set.
     """
-    prior = _capture_summary_state(db, session_id)
     marker = {
         "attempt_id": attempt_id,
         "created_at": _format_timestamp(datetime.now(UTC)),
@@ -97,27 +87,15 @@ def stage_clear_attempt(
         "chat": _chat_payload(chat_context),
         "consumed_by": None,
     }
-    now = utc_now().isoformat()
-    with db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-        row = conn.execute(
-            "SELECT variables FROM session_variables WHERE session_id = %s",
-            (session_id,),
-        ).fetchone()
-        variables = _load_variables(_row_variables(row))
-        variables[CLEAR_ATTEMPT_VARIABLE] = marker
-        payload = json.dumps(variables)
-        if row:
-            conn.execute(
-                "UPDATE session_variables SET variables = %s, updated_at = %s WHERE session_id = %s",
-                (payload, now, session_id),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO session_variables (session_id, variables, updated_at) "
-                "VALUES (%s, %s, %s)",
-                (session_id, payload, now),
-            )
-    return prior
+    return stage_handoff_attempt(
+        db,
+        session_id,
+        attempt_id=attempt_id,
+        markdown=handoff_markdown,
+        observations=observations,
+        clear_session=True,
+        additional_markers={CLEAR_ATTEMPT_VARIABLE: marker},
+    )
 
 
 def resolve_clear_continuation(
@@ -264,76 +242,37 @@ def clear_failed_attempt(
     session_id: str,
     *,
     attempt_id: str,
-    prior_summary_state: dict[str, Any] | None = None,
+    attempt_state: HandoffAttemptState | None = None,
 ) -> bool:
-    """Compare-and-clear an unconsumed marker and restore prior summary state."""
-    if prior_summary_state is None:
-        prior_summary_state = _capture_summary_state(db, session_id)
+    """Compare-and-clear an unconsumed marker and restore staged state."""
     try:
-        with db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",
+        if attempt_state is None:
+            row = db.fetchone(
+                "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
-            ).fetchone()
-            if row is None:
-                return False
+            )
             variables = _load_variables(_row_variables(row))
             marker = _marker_from_variables(variables)
             if not _unconsumed_attempt(marker, attempt_id):
                 return False
-            variables.pop(CLEAR_ATTEMPT_VARIABLE, None)
-            now = utc_now()
-            conn.execute(
-                "UPDATE session_variables SET variables = %s, updated_at = %s "
-                "WHERE session_id = %s",
-                (json.dumps(variables), now.isoformat(), session_id),
+            feedback_ids = marker.get("feedback_ids")
+            attempt_state = HandoffAttemptState(
+                session_id=session_id,
+                attempt_id=attempt_id,
+                prior_handoff_markdown=marker.get("prior_handoff_markdown"),
+                prior_markers={},
+                missing_markers=frozenset({CLEAR_ATTEMPT_VARIABLE, PENDING_HANDOFF_VARIABLE}),
+                feedback_ids=tuple(item for item in feedback_ids or () if isinstance(item, str)),
             )
-            conn.execute(
-                """
-                UPDATE sessions
-                   SET summary_markdown = %s,
-                       summary_path = %s,
-                       summary_revision_id = %s,
-                       summary_source_context_hash = %s,
-                       summary_digest_turn_count = %s,
-                       summary_generation_mode = %s,
-                       summary_generated_at = %s,
-                       updated_at = %s
-                 WHERE id = %s
-                """,
-                (
-                    prior_summary_state.get("summary_markdown"),
-                    prior_summary_state.get("summary_path"),
-                    prior_summary_state.get("summary_revision_id"),
-                    prior_summary_state.get("summary_source_context_hash"),
-                    prior_summary_state.get("summary_digest_turn_count"),
-                    prior_summary_state.get("summary_generation_mode"),
-                    prior_summary_state.get("summary_generated_at"),
-                    now,
-                    session_id,
-                ),
-            )
-            return True
+        return restore_handoff_attempt(db, attempt_state)
     except Exception:
         logger.warning(
-            "Failed clearing clear_self attempt %s for session %s",
+            "Failed clearing handoff attempt %s for session %s",
             attempt_id,
             session_id,
             exc_info=True,
         )
         return False
-
-
-def seed_clear_handoff_variables(
-    session_manager: Any,
-    successor_session_id: str,
-    predecessor: Any,
-) -> None:
-    """Seed successor injection variables after a successful atomic take."""
-    SessionVariableManager(session_manager.db).merge_variables(
-        successor_session_id,
-        _clear_handoff_seed_payload(predecessor),
-    )
 
 
 class _ClearCommitAborted(Exception):
@@ -445,7 +384,7 @@ def _commit_web_chat_clear_successor_rows(
         (project_id,),
     ).fetchone()
     next_seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
-    title = format_provisional_session_title(source)
+    title, title_source = clear_successor_title(conn, predecessor, next_seq_num)
     conn.execute(
         """
         INSERT INTO sessions (
@@ -468,7 +407,7 @@ def _commit_web_chat_clear_successor_rows(
             source,
             project_id,
             title,
-            PROVISIONAL_TITLE_SOURCE,
+            title_source,
             None,
             predecessor.git_branch,
             sanitized_parent,
@@ -517,7 +456,7 @@ def _commit_web_chat_clear_successor_rows(
         INSERT INTO session_variables (session_id, variables, updated_at)
         VALUES (%s, %s, %s)
         """,
-        (successor_id, json.dumps(_clear_handoff_seed_payload(predecessor)), now.isoformat()),
+        (successor_id, json.dumps({}), now.isoformat()),
     )
     succ_row = conn.execute(
         "SELECT * FROM sessions WHERE id = %s",
@@ -528,27 +467,7 @@ def _commit_web_chat_clear_successor_rows(
     return Session.from_row(succ_row)
 
 
-def _clear_handoff_seed_payload(predecessor: Any) -> dict[str, Any]:
-    summary = strip_injected_context(getattr(predecessor, "summary_markdown", None) or "")
-    return {
-        "handoff_summary_injectable": _bound_clear_handoff_summary(summary, predecessor),
-        "clear_handoff_inject_pending": True,
-    }
-
-
-def build_clear_self_continue_prompt(*, predecessor_ref: str) -> str:
-    """Continuation prompt sent to the successor terminal after /clear lands."""
-    return (
-        "Continue where you last left off. The previous turn called "
-        "`gobby-sessions:clear_self`. If startup context contains "
-        f"`{INJECTED_CONTEXT_BEGIN}`, use that injected context directly and continue. "
-        "Only if the injected context is missing or incomplete, call "
-        f'`gobby-sessions.get_handoff_context(session_id="{predecessor_ref}")` '
-        "and continue."
-    )
-
-
-def schedule_clear_self_continuation(
+def schedule_handoff_continuation(
     session: Any,
     prompt: str,
     *,
@@ -559,27 +478,7 @@ def schedule_clear_self_continuation(
     kwargs: dict[str, Any] = {"loop": loop}
     if delay_seconds is not None:
         kwargs["delay_seconds"] = delay_seconds
-    return schedule_compact_self_continuation(session, prompt, **kwargs)
-
-
-def _capture_summary_state(db: HubDatabase, session_id: str) -> dict[str, Any]:
-    row = db.fetchone(
-        """
-        SELECT summary_markdown, summary_path, summary_revision_id,
-               summary_source_context_hash, summary_digest_turn_count,
-               summary_generation_mode, summary_generated_at
-          FROM sessions
-         WHERE id = %s
-        """,
-        (session_id,),
-    )
-    if row is None:
-        return {}
-    prior: dict[str, Any] = {}
-    for field in _SUMMARY_FIELDS:
-        value = row[field]
-        prior[field] = value.isoformat() if isinstance(value, datetime) else value
-    return prior
+    return schedule_handoff_compact_continuation(session, prompt, **kwargs)
 
 
 def _chat_payload(chat_context: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -622,20 +521,3 @@ def _identity_matches(
         return True
     stored_context = marker.get("terminal_context") or session.terminal_context
     return terminal_process_contexts_match(stored_context, terminal_context)
-
-
-def _bound_clear_handoff_summary(summary: str, session: Any) -> str:
-    budget = handoff_summary_inject_budget_for(getattr(session, "source", None))
-    if len(summary) <= budget:
-        return summary
-    seq_num = getattr(session, "seq_num", None)
-    ref = f"#{seq_num}" if seq_num else (getattr(session, "id", "") or "")
-    ref_clause = f' with session ref "{ref}"' if ref else ""
-    breadcrumb = (
-        f"Clear handoff is {len(summary)} chars and exceeds the inline "
-        "handoff budget. Call get_handoff_context (gobby-sessions)"
-        f"{ref_clause} to load the full handoff."
-    )
-    if len(breadcrumb) <= budget:
-        return breadcrumb
-    return breadcrumb[:budget]

@@ -81,10 +81,6 @@ function makeConfigValues(): Record<string, unknown> {
       transcript_processing_batch_size: 10,
       transcript_archive_dir: "~/.gobby/session_transcripts",
     },
-    compact_handoff: {
-      enabled: true,
-      refresh_timeout_seconds: 300,
-    },
     chat_history: {
       max_message_chars: 2000,
       max_total_chars: 30000,

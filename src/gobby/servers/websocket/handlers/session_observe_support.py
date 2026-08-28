@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_VALID_FALLBACK_CONTEXTS = {"auto", "summary", "digest", "none"}
+_VALID_FALLBACK_CONTEXTS = {"auto", "summary", "handoff", "none"}
 
 
 def _is_terminal_session(session: Any) -> bool:
@@ -245,13 +245,13 @@ def _resolve_fallback_inject_context(source_session: Any, requested_mode: str) -
     summary_markdown = _normalize_optional_markdown(
         _as_str(getattr(source_session, "summary_markdown", None))
     )
-    digest_markdown = _normalize_optional_markdown(
-        _as_str(getattr(source_session, "digest_markdown", None))
+    handoff_markdown = _normalize_optional_markdown(
+        _as_str(getattr(source_session, "handoff_markdown", None))
     )
 
     if requested_mode == "summary":
-        return summary_markdown or digest_markdown
-    if requested_mode == "digest":
-        return digest_markdown
+        return summary_markdown
+    if requested_mode == "handoff":
+        return handoff_markdown
 
-    return summary_markdown or digest_markdown
+    return summary_markdown or handoff_markdown

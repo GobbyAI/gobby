@@ -91,7 +91,7 @@ def test_build_coordinator_turns_manual_coordination_into_build_fixes() -> None:
         "fix_actionable_coordination_bug",
         "monitor_agents",
         "check_context_health",
-        "compact_self_before_agent_wait",
+        "set_handoff_before_agent_wait",
         "wait_for_agent_once_to_subscribe",
         "end_turn_until_wake",
         "recheck_wait_for_agent_then_sweep",

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.session_materialize import activate_deferred_session
@@ -189,7 +190,14 @@ def test_session_start_context_injection(mock_hook_manager: Any) -> None:
             wraps=handlers._compose_session_response,
         ) as compose,
     ):
-        assert activate_deferred_session(mock_hook_manager, activity, 123.0) is None
+        assert (
+            activate_deferred_session(
+                mock_hook_manager,
+                activity,
+                BlockingEffectDeadline(123.0),
+            )
+            is None
+        )
 
     assert compose.call_args.kwargs["task_id"] == task_id
     context = activity.metadata["_startup_context"]

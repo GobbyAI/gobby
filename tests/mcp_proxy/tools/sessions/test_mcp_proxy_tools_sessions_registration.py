@@ -17,7 +17,7 @@ from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.utils.session_context import session_context_for_test
 
 
-def test_sessions_registry_forwards_memory_manager_resolver() -> None:
+def test_sessions_registry_keeps_memory_resolver_out_of_handoff_dispatch() -> None:
     memory_manager_resolver = MagicMock()
     with patch(
         "gobby.mcp_proxy.tools.sessions._factory.register_terminal_tools"
@@ -30,10 +30,8 @@ def test_sessions_registry_forwards_memory_manager_resolver() -> None:
 
     assert registry.name == "gobby-sessions"
     assert registry.get_tool("get_session") is not None
-    assert registry.get_tool("get_handoff_context") is not None
-    assert register_terminal_tools.call_args.kwargs["memory_manager_resolver"] is (
-        memory_manager_resolver
-    )
+    assert registry.get_tool("get_handoff") is not None
+    assert "memory_manager_resolver" not in register_terminal_tools.call_args.kwargs
 
     config = MagicMock()
     config.get_gobby_tasks_config.return_value.enabled = False

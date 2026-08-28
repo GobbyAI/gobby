@@ -1,4 +1,4 @@
-"""Task-claim reassignment for a clear_self successor."""
+"""Task-claim reassignment for a clear-session successor."""
 
 from __future__ import annotations
 

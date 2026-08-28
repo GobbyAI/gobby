@@ -17,7 +17,6 @@ prompts:
 
     Plan-coverage contract:
     - The contract reference is docs/contracts/plan-coverage.md.
-    - New epic plans must ship a .coverage-ledger.yaml companion before expansion.
     - Leaves must carry structured covers:<plan-id>:<section-id>:<item-id> labels.
     - Free-form plan-ref: labels are not honored.
     - First run `gobby-tasks-ops:run_expansion_qa_coverage` with

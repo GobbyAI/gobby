@@ -587,7 +587,7 @@ gobby sessions list [--project PROJECT] [--status STATUS] [--source SOURCE] [--l
 gobby sessions show SESSION [--json]
 gobby sessions messages SESSION [--limit N] [--role ROLE] [--offset N] [--json]
 gobby sessions stats
-gobby sessions create-handoff [NOTES] [--session-id SESSION] [--output db|file|all] [--path DIR]
+gobby sessions summarize [NOTES] [--session-id SESSION] [--output db|file|all] [--path DIR]
 gobby sessions delete SESSION
 ```
 

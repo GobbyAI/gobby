@@ -44,11 +44,6 @@ const SESSION_LIFECYCLE_PATHS = [
   "session_lifecycle.transcript_archive_dir",
 ];
 
-const COMPACT_HANDOFF_PATHS = [
-  "compact_handoff.enabled",
-  "compact_handoff.refresh_timeout_seconds",
-];
-
 const CHAT_HISTORY_PATHS = [
   "chat_history.max_message_chars",
   "chat_history.max_total_chars",
@@ -84,7 +79,6 @@ const VALIDATION_DETECTION_PATH = "validation_detection";
 const OWNED_PATHS: readonly string[] = [
   ...SESSION_LIFECYCLE_PATHS,
   ...SESSION_SUMMARY_PATHS,
-  ...COMPACT_HANDOFF_PATHS,
   ...CHAT_HISTORY_PATHS,
   ...MESSAGE_TRACKING_PATHS,
   ...VERIFICATION_DEFAULTS_PATHS,
@@ -229,29 +223,6 @@ function SessionSummaryGroup({ fields }: { fields: SettingsSectionFields }) {
   );
 }
 
-function CompactHandoffGroup({ fields }: { fields: SettingsSectionFields }) {
-  return (
-    <Subsection
-      title="Compact handoff"
-      hint="Context carried across /compact and compact_self."
-    >
-      <SwitchConfigField
-        fields={fields}
-        path="compact_handoff.enabled"
-        label="Enable compact handoff"
-        ariaLabel="Enable compact handoff"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="compact_handoff.refresh_timeout_seconds"
-        label="Handoff refresh timeout (seconds)"
-        ariaLabel="Handoff refresh timeout (seconds)"
-        step={1}
-      />
-    </Subsection>
-  );
-}
-
 function ChatHistoryGroup({ fields }: { fields: SettingsSectionFields }) {
   return (
     <Subsection
@@ -385,7 +356,6 @@ export function ProjectsSessionsSection() {
           <ProjectSelectionGroup projectSelection={projectSelection} />
           <SessionLifecycleGroup fields={fields} />
           <SessionSummaryGroup fields={fields} />
-          <CompactHandoffGroup fields={fields} />
           <ChatHistoryGroup fields={fields} />
           <MessageTrackingGroup fields={fields} />
           <VerificationDefaultsGroup fields={fields} />

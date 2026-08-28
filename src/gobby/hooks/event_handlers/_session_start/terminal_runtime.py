@@ -9,6 +9,7 @@ from typing import Any
 import psycopg
 
 from gobby.sessions.handoff_identity import terminal_contexts_match
+from gobby.storage.sessions._contested_expiry import session_has_active_native_subagent
 
 STALE_TERMINAL_SESSION_SCAN_LIMIT = 200
 TMUX_COMMAND_TIMEOUT_SECONDS = 1.0
@@ -77,6 +78,20 @@ def session_start_is_nested_cli_child(
         return False
     owner_source = _source_for_pane_command(pane_command)
     return owner_source is not None and owner_source != cli_source
+
+
+def session_start_is_native_subagent_child(
+    session_manager: Any,
+    terminal_context: dict[str, Any] | None,
+    machine_id: str | None,
+) -> bool:
+    """Return whether this SessionStart is a native subagent inheriting the parent TTY."""
+    if session_manager is None:
+        return False
+    owner = session_manager.find_live_interactive_pane_owner(terminal_context, machine_id)
+    if owner is None:
+        return False
+    return session_has_active_native_subagent(session_manager.db, owner.id)
 
 
 def expire_stale_terminal_sessions_for_context(

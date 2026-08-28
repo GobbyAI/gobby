@@ -6,6 +6,10 @@ from copy import deepcopy
 from typing import Any
 
 from gobby.adapters.acp_hook_adapter import ACPHookAdapter
+from gobby.adapters.base import (
+    ADAPTER_EMPTY_BLOCK_REASON_SENTINEL,
+    normalize_adapter_response_reason,
+)
 from gobby.adapters.capabilities import (
     GROK_EVENT_MAP,
     GROK_HOOK_ALIASES,
@@ -17,6 +21,9 @@ from gobby.adapters.degradation import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_outcome
+
+_GROK_STOP_HOOKS = frozenset({"stop", "subagent_stop"})
+_GROK_POLICY_BLOCK_REASON = "Blocked by Gobby hook"
 
 
 class GrokAdapter(ACPHookAdapter):
@@ -101,6 +108,26 @@ class GrokAdapter(ACPHookAdapter):
             )
         return event
 
+    def _stop_keep_working_context(
+        self, response: HookResponse, hook_type: str | None, canonical_hook: str
+    ) -> dict[str, Any]:
+        context = response.context or ""
+        return {
+            "continue": True,
+            "hookSpecificOutput": {
+                "hookEventName": ("Stop" if canonical_hook == "stop" else "SubagentStop"),
+                "additionalContext": truncate_context_for_adapter(
+                    context,
+                    provider=self.source,
+                    hook_type=hook_type,
+                    destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
+                    contributor_sizes={"response.context": len(context)},
+                    event_logger=self._event_logger(),
+                    **persist_kwargs_from_hook_response(response, self._hook_manager),
+                ),
+            },
+        }
+
     def translate_from_hook_response(
         self, response: HookResponse, hook_type: str | None = None
     ) -> dict[str, Any]:
@@ -113,37 +140,31 @@ class GrokAdapter(ACPHookAdapter):
         }:
             return {"decision": "allow", "continue": True}
 
-        if canonical_hook in {"stop", "subagent_stop"} and response.decision in {
-            "deny",
-            "block",
-        }:
-            from gobby.adapters.base import normalize_adapter_response_reason
-
-            reason = normalize_adapter_response_reason(
-                response,
-                adapter_name=self.__class__.__name__,
-                hook_type=hook_type,
-                logger=self._event_logger(),
-            )
-            result: dict[str, Any] = {
-                "continue": True,
-                "decision": "block",
-                "reason": reason or "Blocked by Gobby hook",
-            }
-            if response.context:
-                result["hookSpecificOutput"] = {
-                    "hookEventName": ("Stop" if canonical_hook == "stop" else "SubagentStop"),
-                    "additionalContext": truncate_context_for_adapter(
-                        response.context,
-                        provider=self.source,
-                        hook_type=hook_type,
-                        destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
-                        contributor_sizes={"response.context": len(response.context)},
-                        event_logger=self._event_logger(),
-                        **persist_kwargs_from_hook_response(response, self._hook_manager),
-                    ),
+        if canonical_hook in _GROK_STOP_HOOKS:
+            if response.decision in {"deny", "block"}:
+                reason = normalize_adapter_response_reason(
+                    response,
+                    adapter_name=self.__class__.__name__,
+                    hook_type=hook_type,
+                    logger=self._event_logger(),
+                )
+                if reason == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL:
+                    reason = None
+                if response.context and not reason:
+                    return self._stop_keep_working_context(response, hook_type, canonical_hook)
+                result: dict[str, Any] = {
+                    "continue": True,
+                    "decision": "block",
+                    "reason": reason or _GROK_POLICY_BLOCK_REASON,
                 }
-            return result
+                if response.context:
+                    result["hookSpecificOutput"] = self._stop_keep_working_context(
+                        response, hook_type, canonical_hook
+                    )["hookSpecificOutput"]
+                return result
+            if response.context:
+                return self._stop_keep_working_context(response, hook_type, canonical_hook)
+            return {"continue": True}
 
         result = super().translate_from_hook_response(response, hook_type)
         if canonical_hook not in {"pre_tool_use", "stop", "subagent_stop"}:

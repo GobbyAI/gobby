@@ -33,7 +33,7 @@ function session(id: string, title: string): GobbySession {
     updated_at: "2026-01-01T00:00:00Z",
     seq_num: null,
     summary_markdown: null,
-    digest_markdown: null,
+    handoff_markdown: null,
     git_branch: null,
     usage_input_tokens: 0,
     usage_output_tokens: 0,

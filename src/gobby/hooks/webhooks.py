@@ -21,6 +21,7 @@ import httpx
 from gobby.config.url_validation import validate_endpoint_url
 from gobby.hooks.effect_deadline import (
     BLOCKING_EFFECT_BUDGET_SECONDS,
+    BlockingEffectDeadline,
     new_blocking_effect_deadline,
     remaining_blocking_effect_seconds,
 )
@@ -250,7 +251,7 @@ class WebhookDispatcher:
         self,
         endpoint: WebhookEndpointConfig,
         payload: dict[str, Any],
-        deadline: float,
+        deadline: BlockingEffectDeadline,
         *,
         client: httpx.AsyncClient | None = None,
     ) -> WebhookResult:
@@ -281,7 +282,7 @@ class WebhookDispatcher:
         self,
         event: HookEvent,
         *,
-        deadline: float | None = None,
+        deadline: BlockingEffectDeadline | None = None,
     ) -> list[WebhookResult]:
         """Trigger webhooks for a hook event.
 

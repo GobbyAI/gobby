@@ -60,7 +60,6 @@ from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
     ChatHistoryConfig,
-    DigestConfig,
     MemoryUsefulnessConfig,
     MessageTrackingConfig,
     SessionLifecycleConfig,
@@ -68,7 +67,7 @@ from gobby.config.sessions import (
 )
 from gobby.config.skills import SkillsConfig
 from gobby.config.system_loops import SystemLoopsConfig
-from gobby.config.tasks import CompactHandoffConfig, GobbyTasksConfig, WorkflowConfig
+from gobby.config.tasks import GobbyTasksConfig, WorkflowConfig
 from gobby.config.terminal_host import TerminalHostConfig
 from gobby.config.terminals import TerminalConfig
 from gobby.config.tmux import TmuxConfig
@@ -89,7 +88,6 @@ from gobby.search.models import SearchConfig
 from gobby.telemetry.config import TelemetrySettings
 
 __all__ = [
-    "CompactHandoffConfig",
     "DaemonConfig",
     "GobbyTasksConfig",
     "WorkflowConfig",
@@ -157,11 +155,6 @@ class DaemonConfig(BaseModel):
     def reject_removed_session_title_config(cls, data: Any) -> Any:
         """Reject removed config sections explicitly."""
         if isinstance(data, dict):
-            if "session_title" in data:
-                raise ValueError(
-                    "session_title config has been removed. Use digest.profile, "
-                    "digest.candidates, and digest.timeout instead."
-                )
             if "conductor" in data:
                 raise ValueError(
                     "conductor config has been removed. Remove the top-level conductor section."
@@ -258,10 +251,6 @@ class DaemonConfig(BaseModel):
         default_factory=SessionSummaryConfig,
         description="Session summary generation configuration",
     )
-    compact_handoff: CompactHandoffConfig = Field(
-        default_factory=CompactHandoffConfig,
-        description="Compact handoff context configuration",
-    )
     mcp_client_proxy: MCPClientProxyConfig = Field(
         default_factory=MCPClientProxyConfig,
         description="MCP client proxy configuration",
@@ -288,13 +277,9 @@ class DaemonConfig(BaseModel):
         default_factory=CommunicationsConfig,
         description="Communications channel configuration",
     )
-    digest: DigestConfig = Field(
-        default_factory=DigestConfig,
-        description="Rolling digest and title generation configuration",
-    )
     memory_usefulness: MemoryUsefulnessConfig = Field(
         default_factory=MemoryUsefulnessConfig,
-        description="Digest-pass memory-usefulness judge configuration (#17195)",
+        description="Turn-end memory-usefulness judge configuration (#17195)",
     )
     recommend_tools: RecommendToolsConfig = Field(
         default_factory=RecommendToolsConfig,

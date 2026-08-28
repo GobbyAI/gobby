@@ -766,14 +766,51 @@ class TestGrokCurrentHookContract:
         assert "hookSpecificOutput" not in result
         assert "additionalContext" not in result
 
-    def test_allowing_stop_has_no_force_stop_fields(self) -> None:
+    @pytest.mark.parametrize("hook_type", ["stop", "subagent_stop"])
+    def test_allowing_stop_has_no_force_stop_fields(self, hook_type: str) -> None:
         result = GrokAdapter().translate_from_hook_response(
-            HookResponse(decision="allow"), hook_type="stop"
+            HookResponse(decision="allow"), hook_type=hook_type
         )
 
-        assert result.get("decision") == "allow"
-        assert result.get("continue") is True
+        assert result == {"continue": True}
+        assert "decision" not in result
         assert "stopReason" not in result
+
+    @pytest.mark.parametrize(
+        ("hook_type", "event_name"),
+        [("stop", "Stop"), ("subagent_stop", "SubagentStop")],
+    )
+    def test_stop_allow_with_context_is_additional_context_only(
+        self, hook_type: str, event_name: str
+    ) -> None:
+        result = GrokAdapter().translate_from_hook_response(
+            HookResponse(decision="allow", context="briefing"),
+            hook_type=hook_type,
+        )
+
+        assert result == {
+            "continue": True,
+            "hookSpecificOutput": {
+                "hookEventName": event_name,
+                "additionalContext": "briefing",
+            },
+        }
+        assert "decision" not in result
+        assert "reason" not in result
+
+    def test_stop_block_without_reason_keeps_working_via_context(self) -> None:
+        result = GrokAdapter().translate_from_hook_response(
+            HookResponse(decision="block", context="briefing"),
+            hook_type="stop",
+        )
+
+        assert result == {
+            "continue": True,
+            "hookSpecificOutput": {
+                "hookEventName": "Stop",
+                "additionalContext": "briefing",
+            },
+        }
 
     def test_pre_tool_use_omits_context_fields(self) -> None:
         result = GrokAdapter().translate_from_hook_response(
@@ -797,9 +834,11 @@ class TestGrokCurrentHookContract:
             HookResponse(decision="block"), hook_type="subagent_stop"
         )
 
-        assert result["continue"] is True
-        assert result["decision"] == "block"
-        assert result["reason"]
+        assert result == {
+            "continue": True,
+            "decision": "block",
+            "reason": "Blocked by Gobby hook",
+        }
 
     @pytest.mark.parametrize(
         "hook_type",

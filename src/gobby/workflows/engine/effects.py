@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.hooks.background_tasks import create_background_task
 from gobby.hooks.effect_deadline import (
     BLOCKING_EFFECT_BUDGET_SECONDS,
+    BlockingEffectDeadline,
     remaining_blocking_effect_seconds,
 )
 from gobby.hooks.events import HookEvent
@@ -457,7 +458,7 @@ class EffectsMixin(DeliveryFormattingMixin):
             BLOCKING_EFFECT_BUDGET_SECONDS,
         )
         deadline = ctx.get("_blocking_deadline")
-        if not isinstance(deadline, (int, float)) or isinstance(deadline, bool):
+        if not isinstance(deadline, BlockingEffectDeadline):
             deadline = None
         timeout = remaining_blocking_effect_seconds(deadline, maximum=maximum)
         if timeout <= 0:

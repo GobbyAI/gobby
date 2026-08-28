@@ -70,8 +70,10 @@ from gobby.tasks.acceptance_artifacts import (
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.close_verdict_memo import TaskCloseVerdictMemo
 from gobby.tasks.commits import collect_commit_diff_text
-from gobby.tasks.criteria_contract import split_validation_criteria
-from gobby.tasks.epic_guards import evaluate_epic_guards
+from gobby.tasks.criteria_contract import (
+    operational_actions_from_command,
+    split_validation_criteria,
+)
 from gobby.tasks.generation_schemas import TASK_CLOSE_VALIDATION_SCHEMA
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence, task_requires_tdd
@@ -143,10 +145,10 @@ def _apply_escalated_close_gate(
     evaluation: CloseEvaluation,
     override_justification: str | None,
 ) -> None:
-    """Gate 14 for an escalated task: require justification, then skip review."""
+    """Gate 13 for an escalated task: require justification, then skip review."""
     if not (override_justification or "").strip():
         evaluation.fail(
-            14,
+            13,
             "criteria_review",
             "task_escalated",
             "Escalated tasks require override_justification for deliberate closure.",
@@ -158,7 +160,7 @@ def _apply_escalated_close_gate(
         )
         return
     evaluation.validation_reset_reason = "escalated_deliberate_close"
-    evaluation.pass_gate(14, "criteria_review", _DELIBERATE_CLOSE_SKIP, skipped=True)
+    evaluation.pass_gate(13, "criteria_review", _DELIBERATE_CLOSE_SKIP, skipped=True)
 
 
 async def _evaluate_close(
@@ -292,7 +294,6 @@ async def _evaluate_close(
             (10, "validation_commands"),
             (11, "acceptance_artifacts"),
             (12, "tdd_evidence"),
-            (13, "epic_guards"),
         ):
             evaluation.pass_gate(
                 item,
@@ -304,7 +305,7 @@ async def _evaluate_close(
             _apply_escalated_close_gate(evaluation, override_justification)
             return evaluation
         evaluation.pass_gate(
-            14,
+            13,
             "criteria_review",
             "Skipped for an epic or structural parent.",
             skipped=True,
@@ -565,7 +566,7 @@ async def _evaluate_close(
             error_type="validation_diff_unavailable",
         )
         return evaluation.fail(
-            14,
+            13,
             "criteria_review",
             infra.error_type or "validation_diff_unavailable",
             infra.message or str(exc),
@@ -574,22 +575,13 @@ async def _evaluate_close(
 
     acceptance_details: dict[str, object]
     tdd_details: dict[str, object]
-    guard_details: dict[str, object]
-    # Gate 13's own details keep the guard runner's stdout for diagnostics; the
-    # facts handed to the criteria review must not, because they fingerprint
-    # the review and a fresh pytest duration per attempt makes the memoized
-    # verdict unreachable (#20866).
-    guard_review_facts: dict[str, object]
     test_bodies = "Named acceptance tests: none."
     if reason in NO_WORK_CLOSE_REASONS:
         acceptance_details = {"findings": [], "test_references": [], "evidence_files": []}
         tdd_details = {"findings": [], "red_runs": [], "green_runs": []}
-        guard_details = {"paths": [], "source_task_ids": []}
-        guard_review_facts = dict(guard_details)
         for item, name in (
             (11, "acceptance_artifacts"),
             (12, "tdd_evidence"),
-            (13, "epic_guards"),
         ):
             evaluation.pass_gate(
                 item,
@@ -637,7 +629,7 @@ async def _evaluate_close(
         ):
             tdd = evaluate_tdd_evidence(artifacts.tests, transcript)
             tdd_details = tdd.details()
-            # Gate 12 and gate 14 both ask whether the loop was followed rather than
+            # Gate 12 and gate 13 both ask whether the loop was followed rather than
             # whether the deliverable is sound, so a justified deliberate close waives
             # them together. The delivery gates above stay hard: a waived close still
             # proves the work is committed, in scope, clean, and validated.
@@ -670,31 +662,6 @@ async def _evaluate_close(
                 skipped=True,
             )
 
-        guards = await evaluate_epic_guards(
-            task_manager=ctx.task_manager,
-            task=task,
-            repo_path=repo_path,
-            closing_commit_shas=commit_shas,
-        )
-        guard_details = guards.details()
-        guard_review_facts = guards.review_facts()
-        if not guards.passed:
-            return evaluation.fail(
-                13,
-                "epic_guards",
-                guards.error_type or "epic_guard_failed",
-                guards.message,
-                details=guard_details,
-                extra={"epic_guards": guard_details},
-            )
-        evaluation.pass_gate(
-            13,
-            "epic_guards",
-            guards.message,
-            details=guard_details,
-            skipped=guards.skipped,
-        )
-
     if task.is_escalated:
         _apply_escalated_close_gate(evaluation, override_justification)
         return evaluation
@@ -708,7 +675,7 @@ async def _evaluate_close(
             message="The task-close criteria reviewer is not configured.",
         )
         return evaluation.fail(
-            14,
+            13,
             "criteria_review",
             "validation_provider_unavailable",
             infra.message or "The task-close criteria reviewer is not configured.",
@@ -741,9 +708,16 @@ async def _evaluate_close(
             "attributed_paths": sorted(evaluation.edited_paths),
             "claim_started_at": evaluation.claim_started_at,
             "validation_commands": command_gate.details,
+            "transcript_operational_actions": sorted(
+                {
+                    action
+                    for run in transcript.validation_runs
+                    if run.outcome == "success"
+                    for action in operational_actions_from_command(run.command)
+                }
+            ),
             "acceptance_artifacts": acceptance_details,
             "tdd_evidence": tdd_details,
-            "epic_guards": guard_review_facts,
         },
         validation_config=ctx.validation_config,
         reason=reason,
@@ -763,13 +737,13 @@ async def _evaluate_close(
             else llm_result.message or "Criteria review did not pass."
         )
         return evaluation.fail(
-            14,
+            13,
             "criteria_review",
             llm_result.error_type or "validation_failed",
             message,
             extra=llm_result.extra,
         )
-    evaluation.pass_gate(14, "criteria_review", "Task-close criteria review passed.")
+    evaluation.pass_gate(13, "criteria_review", "Task-close criteria review passed.")
     evaluation.extra.update(llm_result.extra)
     return evaluation
 

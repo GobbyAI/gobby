@@ -219,7 +219,6 @@ _PER_OPERATION_ROUTES: Mapping[str, _ConsumerRoute] = {
     "chat_history": _route("chat history", "request ConfigRuntime.capture"),
     "clones_dir": _route("clone operations", "operation ConfigRuntime.capture"),
     "communications": _route("communications tools", "operation ConfigRuntime.capture"),
-    "compact_handoff": _route("session compaction", "operation ConfigRuntime.capture"),
     "context_window_overrides": _route("session routes", "request ConfigRuntime.capture"),
     "cron": _route("cron scheduler", "iteration ConfigRuntime.capture"),
     "daemon_health_check_interval": _route("health loop", "iteration ConfigRuntime.capture"),

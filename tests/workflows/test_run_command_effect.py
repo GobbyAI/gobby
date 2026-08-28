@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.skills.materialization import (
     NodeRuntimeResult,
@@ -414,7 +415,10 @@ class TestRunCommandDeadlines:
                 _effect(timeout_seconds=5.0),
                 _ROW,
                 {},
-                {"event": _event(), "_blocking_deadline": time.monotonic() + 0.2},
+                {
+                    "event": _event(),
+                    "_blocking_deadline": BlockingEffectDeadline(time.monotonic() + 0.2),
+                },
                 {},
                 context_parts,
                 [],
@@ -438,7 +442,10 @@ class TestRunCommandDeadlines:
                 _effect(),
                 _ROW,
                 {},
-                {"event": _event(), "_blocking_deadline": time.monotonic() - 1},
+                {
+                    "event": _event(),
+                    "_blocking_deadline": BlockingEffectDeadline(time.monotonic() - 1),
+                },
                 {},
                 context_parts,
                 [],

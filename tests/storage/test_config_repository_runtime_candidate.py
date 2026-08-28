@@ -15,7 +15,7 @@ def test_runtime_candidate_inherits_sparse_profile_default() -> None:
         {},
     )
 
-    assert candidate_labels(config.digest.candidates) == LOW_CANDIDATES
+    assert candidate_labels(config.session_summary.candidates) == LOW_CANDIDATES
 
 
 @pytest.mark.unit
@@ -23,9 +23,9 @@ def test_runtime_candidate_preserves_explicit_feature_candidates() -> None:
     config = ConfigRepository(MagicMock()).runtime_candidate(
         {
             "ai.generation.profile_defaults.feature_low": list(LOW_CANDIDATES),
-            "digest.candidates": ["claude/haiku"],
+            "session_summary.candidates": ["claude/haiku"],
         },
         {},
     )
 
-    assert candidate_labels(config.digest.candidates) == ("claude/haiku",)
+    assert candidate_labels(config.session_summary.candidates) == ("claude/haiku",)

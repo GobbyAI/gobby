@@ -13,7 +13,7 @@ from gobby.communications.native_plan_actions import encode_native_plan_option
 from gobby.communications.session_events import route_session_status_transition
 from gobby.sessions.compact_markers import (
     COMPACT_NOTIFICATION_STARTED_AT_VARIABLE,
-    COMPACT_SELF_CONTINUE_FRESH_SECONDS,
+    HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
 )
 from gobby.sessions.status_events import SessionStatusTransition
 from gobby.sessions.transcript_render_models import RenderedMessage, RenderedToolCall
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_COMPACTION_TOOL_NAMES = {"compact_self", "wait_for_summary"}
+_COMPACTION_TOOL_NAMES = {"set_handoff", "get_handoff"}
 _QUESTION_TOOL_NAME = "request_user_input"
 _REPLY_AFFORDANCE = "Reply to any part of this message with custom instructions."
 
@@ -202,7 +202,7 @@ class SessionNotificationService:
             self._pending.pop(session_id, None)
 
     async def _evaluate_at_deadline(self, session_id: str, started_at: datetime) -> None:
-        deadline = started_at.timestamp() + COMPACT_SELF_CONTINUE_FRESH_SECONDS
+        deadline = started_at.timestamp() + HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS
         delay = max(0.0, deadline - self._now().timestamp())
         if delay:
             await self._sleep(delay)

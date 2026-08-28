@@ -512,7 +512,7 @@ def test_db_loader_pages_in_sql_without_hierarchy_sort(
         raise AssertionError("coverage loading must page in SQL, not via hierarchy sort")
 
     monkeypatch.setattr(
-        "gobby.storage.tasks._queries.order_tasks_hierarchically",
+        "gobby.storage.tasks._ordering.order_tasks_hierarchically",
         _forbidden,
     )
 

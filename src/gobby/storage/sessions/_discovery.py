@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -10,6 +11,8 @@ from gobby.storage.sql_dialect import newer_than_now_expr
 from gobby.terminal_ownership import (
     TERMINAL_OWNER_STATUSES,
     TerminalIdentity,
+    is_interactive_terminal_claim,
+    terminal_session_creation_order,
     terminal_session_identity,
 )
 
@@ -31,6 +34,8 @@ if TYPE_CHECKING:
 
 class _ManagerState(Protocol):
     db: HubDatabase
+
+    def find_by_terminal_identity(self, identity: TerminalIdentity) -> list[Session]: ...
 
 
 class _DiscoveryMixin:
@@ -57,6 +62,28 @@ class _DiscoveryMixin:
             for row in rows
             if terminal_session_identity(session := Session.from_row(row)) == identity
         ]
+
+    def find_live_interactive_pane_owner(
+        self: _ManagerState,
+        terminal_context: dict[str, Any] | None,
+        machine_id: str | None,
+    ) -> Session | None:
+        """Return the oldest live interactive owner of this tmux identity."""
+        if not isinstance(terminal_context, dict) or not machine_id:
+            return None
+        identity = terminal_session_identity(
+            SimpleNamespace(machine_id=machine_id, terminal_context=terminal_context)
+        )
+        if identity is None:
+            return None
+        live: list[Session] = [
+            session
+            for session in self.find_by_terminal_identity(identity)
+            if session.status in {"active", "paused"} and is_interactive_terminal_claim(session)
+        ]
+        if not live:
+            return None
+        return min(live, key=terminal_session_creation_order)
 
     def find_by_external_id(
         self: _ManagerState,

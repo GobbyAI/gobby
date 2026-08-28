@@ -400,29 +400,3 @@ def test_grok_session_deferral_contract(
     assert rebound_session is not None
     assert rebound_session.id == original_internal_id
     assert _session_count(postgres_db, external_id=grok_external_id, source="grok") == 1
-
-    variable_manager.merge_variables(
-        grok_session.id,
-        {"compact_handoff_inject_pending": True},
-    )
-    compact_prompt = cli_events.user_prompt_submit(
-        grok_external_id,
-        prompt="continue",
-        source="grok",
-        project_id=PROJECT_ID,
-        cwd=project_dir,
-    )
-    assert "additionalContext" not in compact_prompt.get("hookSpecificOutput", {})
-    compact_variables = variable_manager.get_variables(grok_session.id)
-    compact_briefing = _component_text(compact_variables["grok_pending_briefing"])
-    assert "Continuation Context" in compact_briefing
-    assert compact_variables["compact_handoff_inject_pending"] is False
-    compact_delivery = cli_events.grok_pre_tool_use(
-        grok_external_id,
-        "read_file",
-        _envelope_id("compact-delivery"),
-        project_id=PROJECT_ID,
-        cwd=project_dir,
-    )
-    assert compact_delivery["decision"] == "deny"
-    assert "Continuation Context" in compact_delivery["reason"]

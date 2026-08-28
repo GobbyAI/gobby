@@ -393,9 +393,6 @@ Manifest rules:
 - Plan authors write narrative sections; plan review writes the final manifest
   before expansion.
 
-New epic plans also carry a `.coverage-ledger.yaml` companion file before
-expansion.
-
 ### What Plans Should Not Contain
 
 Plans should not include explicit TDD wrapper tasks. When TDD is enabled,

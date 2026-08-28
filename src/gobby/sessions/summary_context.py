@@ -12,13 +12,9 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.tool_error_tracker import load_open_tool_errors
 from gobby.sessions.summary_transcripts import (
-    TRANSCRIPT_FALLBACK_MAX_CHARS,
-    _digest_markdown_for_summary,
-    _extract_digest_turns,
     _format_transcript_fallback_summary,
     _strip_injected_context_from_value,
     _summary_source_text,
-    _truncate_markdown,
 )
 from gobby.sessions.workspace_context import _session_git_paths
 from gobby.storage.hub.protocol import HubDatabase
@@ -126,7 +122,6 @@ async def _build_summary_prompt_context(
     )
     from gobby.workflows.git_utils import get_file_changes, get_git_diff_summary
 
-    digest_markdown = _digest_markdown_for_summary(session)
     source = getattr(session, "source", None) or "claude"
     if source == "unknown" and any(
         isinstance(turn.get("content"), (str, list))
@@ -135,48 +130,40 @@ async def _build_summary_prompt_context(
         for turn in turns
     ):
         source = "qwen"
-    first_digest_turn, recent_digest_turns = _extract_digest_turns(digest_markdown)
-    if digest_markdown:
-        transcript_summary = _truncate_markdown(
-            digest_markdown,
-            TRANSCRIPT_FALLBACK_MAX_CHARS,
+    parser: Any
+    if source == "qwen":
+        from gobby.sessions.transcripts.qwen import QwenTranscriptParser
+
+        parser = QwenTranscriptParser(session_id=getattr(session, "id", None))
+    elif source == "grok":
+        from gobby.sessions.transcripts.grok import GrokTranscriptParser
+
+        parser = GrokTranscriptParser()
+    elif source == "codex":
+        from gobby.sessions.transcripts.codex import CodexTranscriptParser
+
+        parser = CodexTranscriptParser()
+    elif source == "droid":
+        from gobby.sessions.transcripts.droid import DroidTranscriptParser
+
+        parser = DroidTranscriptParser(
+            session_id=getattr(session, "id", None),
+            transcript_path=getattr(session, "transcript_path", None),
         )
-        last_messages_str = recent_digest_turns
     else:
-        parser: Any
-        if source == "qwen":
-            from gobby.sessions.transcripts.qwen import QwenTranscriptParser
+        from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 
-            parser = QwenTranscriptParser(session_id=getattr(session, "id", None))
-        elif source == "grok":
-            from gobby.sessions.transcripts.grok import GrokTranscriptParser
+        parser = ClaudeTranscriptParser()
 
-            parser = GrokTranscriptParser()
-        elif source == "codex":
-            from gobby.sessions.transcripts.codex import CodexTranscriptParser
-
-            parser = CodexTranscriptParser()
-        elif source == "droid":
-            from gobby.sessions.transcripts.droid import DroidTranscriptParser
-
-            parser = DroidTranscriptParser(
-                session_id=getattr(session, "id", None),
-                transcript_path=getattr(session, "transcript_path", None),
-            )
-        else:
-            from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
-
-            parser = ClaudeTranscriptParser()
-
-        last_turns = _strip_injected_context_from_value(parser.extract_turns_since_clear(turns))
-        transcript_summary = _format_transcript_fallback_summary(
-            last_turns,
-            format_turns_for_llm,
-        )
-        last_messages = _strip_injected_context_from_value(
-            parser.extract_last_messages(turns, num_pairs=2)
-        )
-        last_messages_str = format_turns_for_llm(last_messages) if last_messages else ""
+    last_turns = _strip_injected_context_from_value(parser.extract_turns_since_clear(turns))
+    transcript_summary = _format_transcript_fallback_summary(
+        last_turns,
+        format_turns_for_llm,
+    )
+    last_messages = _strip_injected_context_from_value(
+        parser.extract_last_messages(turns, num_pairs=2)
+    )
+    last_messages_str = format_turns_for_llm(last_messages) if last_messages else ""
 
     resolved_db = _summary_context_db(db, session_manager)
     run_db_fn = _facade_attr("_run_db")
@@ -239,8 +226,6 @@ async def _build_summary_prompt_context(
         "structured_context": _format_structured_context(structured_handoff_ctx),
         "claimed_tasks": claimed_tasks,
         "session_memories": session_memories,
-        "first_digest_turn": first_digest_turn,
-        "recent_digest_turns": recent_digest_turns,
         "external_id": session.id[:12],
         "session_id": session.id,
         "session_source": source,
@@ -251,13 +236,10 @@ async def _build_summary_prompt_context(
 def _source_hash_payload(
     *,
     session: Any,
-    digest_markdown: str,
     summary_context: dict[str, Any],
     prompt_template: str | None,
 ) -> dict[str, Any]:
     return {
-        "digest_markdown": digest_markdown,
-        "last_turn_markdown": _summary_source_text(getattr(session, "last_turn_markdown", None)),
         "last_assistant_content": _summary_source_text(
             getattr(session, "last_assistant_content", None)
         ),

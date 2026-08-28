@@ -1,46 +1,65 @@
-"""Default title helpers for newly registered sessions."""
+"""Deterministic persisted session-title helpers."""
 
 from __future__ import annotations
 
-import re
+from typing import Any
 
 PROVISIONAL_TITLE_SOURCE = "provisional"
-HANDOFF_TITLE_SOURCE = "handoff"
-DIGEST_TITLE_SOURCE = "llm"
+TASK_TITLE_SOURCE = "task"
 MANUAL_TITLE_SOURCE = "manual"
 
-_PROVIDER_LABELS = {
-    "agent-sdk": "Agent SDK",
+_PROVIDER_TITLE_LABELS = {
     "agy": "AGY",
     "claude": "Claude",
-    "claude code": "Claude",
+    "claude_code": "Claude Code",
     "codex": "Codex",
-    "dispatcher_launcher": "Dispatcher",
     "droid": "Droid",
     "grok": "Grok",
     "pipeline": "Pipeline",
     "qwen": "Qwen",
+    "system": "System",
     "unknown": "Unknown",
-    "web_launcher": "Web",
 }
-_UNKNOWN_PROVIDER_RE = re.compile(r"[^a-z0-9._-]+")
 
 
 def manual_title_source(title: object) -> str | None:
-    """Return the manual source marker for a non-blank explicit title."""
+    """Return the manual source marker for a nonblank explicit title."""
     return MANUAL_TITLE_SOURCE if isinstance(title, str) and title.strip() else None
 
 
-def _normalize_provider_label(source: str) -> str:
-    normalized = source.strip().lower()
-    if normalized in _PROVIDER_LABELS:
-        return _PROVIDER_LABELS[normalized]
-    fallback = _UNKNOWN_PROVIDER_RE.sub("-", normalized).strip("-")
-    if not fallback:
-        return _PROVIDER_LABELS["unknown"]
-    return re.sub(r"[-_.]+", " ", fallback).title()
+def project_name_for_session_title(executor: Any, project_id: str) -> str:
+    """Return the authoritative project name used in automatic session titles."""
+    row = executor.execute(
+        "SELECT name FROM projects WHERE id = %s",
+        (project_id,),
+    ).fetchone()
+    if row is None or not str(row["name"] or "").strip():
+        raise ValueError(f"Project {project_id} has no usable name for session title generation")
+    return str(row["name"]).strip()
 
 
-def format_provisional_session_title(source: str) -> str:
-    """Return the readable placeholder title used before digest title synthesis."""
-    return _normalize_provider_label(source)
+def provider_title_label(source: str) -> str:
+    """Return a concise display label for a session provider source."""
+    normalized = source.strip()
+    if not normalized:
+        return "Unknown"
+    return _PROVIDER_TITLE_LABELS.get(normalized.lower(), normalized)
+
+
+def format_provisional_session_title(
+    project_name: str,
+    session_seq_num: int,
+    source: str,
+) -> str:
+    """Return the deterministic title for a session without an open claim."""
+    return f"({project_name.strip()}-S#{session_seq_num}): {provider_title_label(source)}"
+
+
+def format_task_session_title(
+    project_name: str,
+    session_seq_num: int,
+    task_seq_num: int,
+    title: str,
+) -> str:
+    """Return the deterministic title for a successfully claimed task."""
+    return f"({project_name.strip()}-S#{session_seq_num}): Task #{task_seq_num} - {title.strip()}"

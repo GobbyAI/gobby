@@ -1,4 +1,4 @@
-"""Tests for compact_self continuation marker delivery."""
+"""Tests for set_handoff continuation marker delivery."""
 
 from __future__ import annotations
 
@@ -15,27 +15,26 @@ from unittest.mock import patch
 import pytest
 
 from gobby.sessions.compact_continuation import (
-    _COMPACT_SELF_CONTINUATION_TASKS,
+    _HANDOFF_COMPACT_CONTINUATION_TASKS,
     COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE,
     COMPACT_RESUME_EXCLUDED_SKILLS,
     COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
-    COMPACT_SELF_CONTINUE_VARIABLE,
-    COMPACT_SELF_INTERRUPT_WARNING,
+    HANDOFF_COMPACT_CONTINUE_VARIABLE,
     WORKFLOW_REQUESTED_SKILLS_VARIABLE,
     CodexRolloutCursor,
     CodexRolloutObservationError,
     _continue_after_codex_compaction_ready,
     _merge_session_variable,
     _pop_session_variable,
-    build_compact_self_continue_prompt,
-    clear_compact_self_continuation_pending,
-    consume_and_schedule_compact_self_continuation,
-    consume_compact_self_continuation_pending,
-    mark_compact_self_continuation_pending,
-    persist_compact_resume_required_skills,
-    schedule_codex_compact_self_continuation_readiness,
-    schedule_compact_self_continuation,
+    clear_handoff_compact_continuation_pending,
+    consume_and_schedule_handoff_compact_continuation,
+    consume_handoff_compact_continuation_pending,
+    mark_handoff_compact_continuation_pending,
+    persist_handoff_resume_skills,
+    schedule_codex_handoff_compact_continuation_readiness,
+    schedule_handoff_compact_continuation,
 )
+from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleEffect
@@ -161,23 +160,23 @@ async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() ->
             return_value=tmux,
         ),
         patch(
-            "gobby.sessions.compact_continuation.COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+            "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
             0.0,
         ),
     ):
-        assert schedule_compact_self_continuation(session, prompt, delay_seconds=0)
+        assert schedule_handoff_compact_continuation(session, prompt, delay_seconds=0)
         await send_started.wait()
 
-        assert len(_COMPACT_SELF_CONTINUATION_TASKS) == 1
+        assert len(_HANDOFF_COMPACT_CONTINUATION_TASKS) == 1
         assert tmux.sent_keys == [("%12", f"{prompt}\n", True)]
-        task = next(iter(_COMPACT_SELF_CONTINUATION_TASKS))
+        task = next(iter(_HANDOFF_COMPACT_CONTINUATION_TASKS))
 
         release_send.set()
         await task
         await drain_asyncio_tasks()
 
     assert tmux.sent_keys[-1] == ("%12", "Enter", False)
-    assert not _COMPACT_SELF_CONTINUATION_TASKS
+    assert not _HANDOFF_COMPACT_CONTINUATION_TASKS
 
 
 @pytest.mark.asyncio
@@ -185,7 +184,7 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
     session_db: HubDatabase,
 ) -> None:
     prompt = "Continue the claimed task."
-    mark_compact_self_continuation_pending(
+    mark_handoff_compact_continuation_pending(
         session_db,
         SESSION_ID,
         prompt=prompt,
@@ -212,7 +211,7 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
     tmux = ReadinessTmux()
 
     with patch(
-        "gobby.sessions.compact_continuation.COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+        "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
         0.0,
     ):
         await _continue_after_codex_compaction_ready(
@@ -232,7 +231,7 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
         ("%12", "Enter", False),
     ]
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
-    assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in variables
 
 
 @pytest.mark.asyncio
@@ -240,7 +239,7 @@ async def test_codex_readiness_stops_when_attempt_marker_is_replaced(
     session_db: HubDatabase,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    mark_compact_self_continuation_pending(
+    mark_handoff_compact_continuation_pending(
         session_db,
         SESSION_ID,
         attempt_id="newer-attempt",
@@ -263,7 +262,7 @@ async def test_codex_readiness_stops_when_attempt_marker_is_replaced(
         )
 
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
-    marker = variables[COMPACT_SELF_CONTINUE_VARIABLE]
+    marker = variables[HANDOFF_COMPACT_CONTINUE_VARIABLE]
     assert marker["attempt_id"] == "newer-attempt"
     assert "Timed out waiting for Codex compact readiness" not in caplog.text
 
@@ -272,7 +271,7 @@ async def test_codex_readiness_stops_when_attempt_marker_is_replaced(
 async def test_codex_readiness_does_not_take_marker_replaced_during_capture(
     session_db: HubDatabase,
 ) -> None:
-    mark_compact_self_continuation_pending(
+    mark_handoff_compact_continuation_pending(
         session_db,
         SESSION_ID,
         attempt_id="older-attempt",
@@ -280,7 +279,7 @@ async def test_codex_readiness_does_not_take_marker_replaced_during_capture(
 
     class RacingTmux(_FakeTmux):
         async def capture_pane(self, pane_id: str, *, lines: int) -> str:
-            mark_compact_self_continuation_pending(
+            mark_handoff_compact_continuation_pending(
                 session_db,
                 SESSION_ID,
                 attempt_id="newer-attempt",
@@ -300,7 +299,7 @@ async def test_codex_readiness_does_not_take_marker_replaced_during_capture(
     )
 
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
-    marker = variables[COMPACT_SELF_CONTINUE_VARIABLE]
+    marker = variables[HANDOFF_COMPACT_CONTINUE_VARIABLE]
     assert marker["attempt_id"] == "newer-attempt"
     assert tmux.sent_keys == []
 
@@ -310,7 +309,7 @@ async def test_codex_readiness_stops_when_tmux_pane_disappears(
     session_db: HubDatabase,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    mark_compact_self_continuation_pending(
+    mark_handoff_compact_continuation_pending(
         session_db,
         SESSION_ID,
         attempt_id="current-attempt",
@@ -333,7 +332,7 @@ async def test_codex_readiness_stops_when_tmux_pane_disappears(
         )
 
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
-    marker = variables[COMPACT_SELF_CONTINUE_VARIABLE]
+    marker = variables[HANDOFF_COMPACT_CONTINUE_VARIABLE]
     assert marker["attempt_id"] == "current-attempt"
     assert "Timed out waiting for Codex compact readiness" not in caplog.text
 
@@ -341,7 +340,7 @@ async def test_codex_readiness_stops_when_tmux_pane_disappears(
 @pytest.mark.asyncio
 async def test_codex_send_failure_restores_pending_marker(session_db: HubDatabase) -> None:
     prompt = "Continue the claimed task."
-    mark_compact_self_continuation_pending(session_db, SESSION_ID, prompt=prompt)
+    mark_handoff_compact_continuation_pending(session_db, SESSION_ID, prompt=prompt)
 
     class FailingTmux(_FakeTmux):
         async def capture_pane(self, pane_id: str, *, lines: int) -> str:
@@ -363,7 +362,7 @@ async def test_codex_send_failure_restores_pending_marker(session_db: HubDatabas
     )
 
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
-    assert variables[COMPACT_SELF_CONTINUE_VARIABLE]["prompt"] == prompt
+    assert variables[HANDOFF_COMPACT_CONTINUE_VARIABLE]["prompt"] == prompt
 
 
 @pytest.mark.asyncio
@@ -371,7 +370,7 @@ async def test_codex_detects_fresh_marker_when_old_marker_scrolls_out(
     session_db: HubDatabase,
 ) -> None:
     prompt = "Continue the claimed task."
-    mark_compact_self_continuation_pending(session_db, SESSION_ID, prompt=prompt)
+    mark_handoff_compact_continuation_pending(session_db, SESSION_ID, prompt=prompt)
     before_command = "old\n• Context compacted\nshared one\nshared two"
 
     class RollingTmux(_FakeTmux):
@@ -383,7 +382,7 @@ async def test_codex_detects_fresh_marker_when_old_marker_scrolls_out(
     tmux = RollingTmux()
 
     with patch(
-        "gobby.sessions.compact_continuation.COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+        "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
         0.0,
     ):
         await _continue_after_codex_compaction_ready(
@@ -406,7 +405,7 @@ async def test_codex_ignores_compaction_marker_text_in_prose(
     session_db: HubDatabase,
 ) -> None:
     prompt = "Continue the claimed task."
-    mark_compact_self_continuation_pending(session_db, SESSION_ID, prompt=prompt)
+    mark_handoff_compact_continuation_pending(session_db, SESSION_ID, prompt=prompt)
     before_command = "Earlier output\n›"
 
     class ProseTmux(_FakeTmux):
@@ -426,7 +425,7 @@ async def test_codex_ignores_compaction_marker_text_in_prose(
     tmux = ProseTmux()
 
     with patch(
-        "gobby.sessions.compact_continuation.COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+        "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
         0.0,
     ):
         await _continue_after_codex_compaction_ready(
@@ -447,7 +446,7 @@ async def test_codex_ignores_compaction_marker_text_in_prose(
 def test_codex_readiness_rejects_missing_baseline(session_db: HubDatabase) -> None:
     session = SimpleNamespace(terminal_context={"tmux_pane": "%12"})
 
-    assert not schedule_codex_compact_self_continuation_readiness(
+    assert not schedule_codex_handoff_compact_continuation_readiness(
         session_db,
         pending_session_id=SESSION_ID,
         target_session=session,
@@ -506,56 +505,52 @@ def test_pop_session_variable_serializes_with_workflow_write(
     assert manager.get_variables(SESSION_ID) == {"workflow": True}
 
 
-def test_pending_marker_stores_summary_session_id(session_db: HubDatabase) -> None:
-    assert mark_compact_self_continuation_pending(
-        session_db,
-        SESSION_ID,
-        summary_session_id=SOURCE_SESSION_ID,
-    )
+def test_pending_marker_stores_pull_prompt(session_db: HubDatabase) -> None:
+    assert mark_handoff_compact_continuation_pending(session_db, SESSION_ID)
 
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
-    assert variables[COMPACT_SELF_CONTINUE_VARIABLE]["summary_session_id"] == SOURCE_SESSION_ID
+    assert "get_handoff()" in variables[HANDOFF_COMPACT_CONTINUE_VARIABLE]["prompt"]
 
 
 def test_clear_pending_marker_removes_only_matching_compact_attempt(
     session_db: HubDatabase,
 ) -> None:
     sv_mgr = SessionVariableManager(session_db)
-    assert mark_compact_self_continuation_pending(
+    assert mark_handoff_compact_continuation_pending(
         session_db,
         SESSION_ID,
         attempt_id="first-attempt",
     )
-    assert mark_compact_self_continuation_pending(
+    assert mark_handoff_compact_continuation_pending(
         session_db,
         SESSION_ID,
         attempt_id="newer-attempt",
     )
 
-    assert not clear_compact_self_continuation_pending(
+    assert not clear_handoff_compact_continuation_pending(
         session_db,
         SESSION_ID,
         attempt_id="first-attempt",
     )
-    marker = sv_mgr.get_variables(SESSION_ID)[COMPACT_SELF_CONTINUE_VARIABLE]
+    marker = sv_mgr.get_variables(SESSION_ID)[HANDOFF_COMPACT_CONTINUE_VARIABLE]
     assert marker["attempt_id"] == "newer-attempt"
-    assert clear_compact_self_continuation_pending(
+    assert clear_handoff_compact_continuation_pending(
         session_db,
         SESSION_ID,
         attempt_id="newer-attempt",
     )
-    assert COMPACT_SELF_CONTINUE_VARIABLE not in sv_mgr.get_variables(SESSION_ID)
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in sv_mgr.get_variables(SESSION_ID)
 
 
 def test_pending_marker_expires_from_its_creation_time(session_db: HubDatabase) -> None:
     created_at = datetime(2026, 7, 28, 12, 0, tzinfo=UTC)
-    assert mark_compact_self_continuation_pending(
+    assert mark_handoff_compact_continuation_pending(
         session_db,
         SESSION_ID,
         now=created_at,
     )
 
-    prompt = consume_compact_self_continuation_pending(
+    prompt = consume_handoff_compact_continuation_pending(
         session_db,
         SESSION_ID,
         now=datetime(2026, 7, 28, 12, 0, 2, tzinfo=UTC),
@@ -564,7 +559,7 @@ def test_pending_marker_expires_from_its_creation_time(session_db: HubDatabase) 
 
     assert prompt is None
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
-    assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in variables
 
 
 def test_failed_schedule_restores_exact_pending_marker(session_db: HubDatabase) -> None:
@@ -575,20 +570,20 @@ def test_failed_schedule_restores_exact_pending_marker(session_db: HubDatabase) 
         "created_at": created_at,
         "summary_session_id": SOURCE_SESSION_ID,
     }
-    sv_mgr.merge_variables(SESSION_ID, {COMPACT_SELF_CONTINUE_VARIABLE: payload})
+    sv_mgr.merge_variables(SESSION_ID, {HANDOFF_COMPACT_CONTINUE_VARIABLE: payload})
 
     with patch(
-        "gobby.sessions.compact_continuation.schedule_compact_self_continuation",
+        "gobby.sessions.compact_continuation.schedule_handoff_compact_continuation",
         return_value=False,
     ):
-        scheduled = consume_and_schedule_compact_self_continuation(
+        scheduled = consume_and_schedule_handoff_compact_continuation(
             session_db,
             pending_session_id=SESSION_ID,
             target_session=SimpleNamespace(id=SESSION_ID),
         )
 
     assert scheduled is False
-    assert sv_mgr.get_variables(SESSION_ID)[COMPACT_SELF_CONTINUE_VARIABLE] == payload
+    assert sv_mgr.get_variables(SESSION_ID)[HANDOFF_COMPACT_CONTINUE_VARIABLE] == payload
 
 
 def test_failed_schedule_does_not_replace_newer_pending_marker(session_db: HubDatabase) -> None:
@@ -601,24 +596,24 @@ def test_failed_schedule_does_not_replace_newer_pending_marker(session_db: HubDa
         "prompt": "new prompt",
         "created_at": datetime.now(UTC).isoformat(),
     }
-    sv_mgr.merge_variables(SESSION_ID, {COMPACT_SELF_CONTINUE_VARIABLE: old_payload})
+    sv_mgr.merge_variables(SESSION_ID, {HANDOFF_COMPACT_CONTINUE_VARIABLE: old_payload})
 
     def fail_after_new_marker(*_args: object, **_kwargs: object) -> bool:
-        sv_mgr.merge_variables(SESSION_ID, {COMPACT_SELF_CONTINUE_VARIABLE: new_payload})
+        sv_mgr.merge_variables(SESSION_ID, {HANDOFF_COMPACT_CONTINUE_VARIABLE: new_payload})
         return False
 
     with patch(
-        "gobby.sessions.compact_continuation.schedule_compact_self_continuation",
+        "gobby.sessions.compact_continuation.schedule_handoff_compact_continuation",
         side_effect=fail_after_new_marker,
     ):
-        scheduled = consume_and_schedule_compact_self_continuation(
+        scheduled = consume_and_schedule_handoff_compact_continuation(
             session_db,
             pending_session_id=SESSION_ID,
             target_session=SimpleNamespace(id=SESSION_ID),
         )
 
     assert scheduled is False
-    assert sv_mgr.get_variables(SESSION_ID)[COMPACT_SELF_CONTINUE_VARIABLE] == new_payload
+    assert sv_mgr.get_variables(SESSION_ID)[HANDOFF_COMPACT_CONTINUE_VARIABLE] == new_payload
 
 
 def test_in_place_compact_consumes_pending_on_same_terminal_row(
@@ -656,13 +651,13 @@ def test_in_place_compact_consumes_pending_on_same_terminal_row(
             json.dumps(terminal_context),
         ),
     )
-    assert mark_compact_self_continuation_pending(session_db, marked_id)
+    assert mark_handoff_compact_continuation_pending(session_db, marked_id)
 
     with patch(
-        "gobby.sessions.compact_continuation.schedule_compact_self_continuation",
+        "gobby.sessions.compact_continuation.schedule_handoff_compact_continuation",
         return_value=True,
     ) as mock_schedule:
-        scheduled = consume_and_schedule_compact_self_continuation(
+        scheduled = consume_and_schedule_handoff_compact_continuation(
             session_db,
             pending_session_id=SESSION_ID,
             target_session=SimpleNamespace(
@@ -674,7 +669,7 @@ def test_in_place_compact_consumes_pending_on_same_terminal_row(
     assert scheduled is True
     mock_schedule.assert_called_once()
     variables = SessionVariableManager(session_db).get_variables(marked_id)
-    assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in variables
 
 
 def test_in_place_compact_does_not_steal_pending_from_other_terminal(
@@ -705,9 +700,9 @@ def test_in_place_compact_does_not_steal_pending_from_other_terminal(
             ),
         ),
     )
-    assert mark_compact_self_continuation_pending(session_db, marked_id)
+    assert mark_handoff_compact_continuation_pending(session_db, marked_id)
 
-    scheduled = consume_and_schedule_compact_self_continuation(
+    scheduled = consume_and_schedule_handoff_compact_continuation(
         session_db,
         pending_session_id=SESSION_ID,
         target_session=SimpleNamespace(
@@ -723,7 +718,7 @@ def test_in_place_compact_does_not_steal_pending_from_other_terminal(
 
     assert scheduled is False
     variables = SessionVariableManager(session_db).get_variables(marked_id)
-    assert COMPACT_SELF_CONTINUE_VARIABLE in variables
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE in variables
 
 
 def test_persist_compact_resume_skills_keeps_core_and_active_task_requirements(
@@ -741,7 +736,7 @@ def test_persist_compact_resume_skills_keeps_core_and_active_task_requirements(
         },
     )
 
-    skill_tiers = persist_compact_resume_required_skills(db, SESSION_ID)
+    skill_tiers = persist_handoff_resume_skills(db, SESSION_ID)
 
     assert skill_tiers == {
         "required": [
@@ -773,7 +768,7 @@ def test_no_task_compaction_omits_historical_loaded_language_skills(
         },
     )
 
-    first_tiers = persist_compact_resume_required_skills(db, SESSION_ID)
+    first_tiers = persist_handoff_resume_skills(db, SESSION_ID)
 
     assert first_tiers == {
         "required": [
@@ -804,7 +799,7 @@ def test_no_task_compaction_omits_historical_loaded_language_skills(
     )
     assert sv_mgr.get_variables(SESSION_ID)["loaded_skills"] == ["rust", "typescript"]
 
-    second_tiers = persist_compact_resume_required_skills(db, SESSION_ID)
+    second_tiers = persist_handoff_resume_skills(db, SESSION_ID)
 
     assert second_tiers == first_tiers
 
@@ -824,7 +819,7 @@ def test_meta_skills_never_enter_resume_tiers(session_db: HubDatabase) -> None:
         },
     )
 
-    skill_tiers = persist_compact_resume_required_skills(db, SESSION_ID)
+    skill_tiers = persist_handoff_resume_skills(db, SESSION_ID)
 
     assert skill_tiers == {
         "required": ["tasks"],
@@ -835,17 +830,11 @@ def test_meta_skills_never_enter_resume_tiers(session_db: HubDatabase) -> None:
 
 
 def test_reload_directive_normalized() -> None:
-    """The typed trigger is one paste line; skill tiers ride the injected context."""
-    prompt = build_compact_self_continue_prompt(summary_session_id=SOURCE_SESSION_ID)
+    """The typed trigger is one paste line and requires pull-only recovery."""
+    prompt = build_handoff_continue_prompt()
 
-    assert prompt.startswith("Continue where you last left off.")
-    assert COMPACT_SELF_INTERRUPT_WARNING in prompt
-    assert "`<!-- gobby:injected-context:begin -->`" in prompt
-    assert prompt.index("use that injected context directly") < prompt.index(
-        "gobby-sessions.wait_for_summary"
-    )
-    assert f'gobby-sessions.wait_for_summary(session_id="{SOURCE_SESSION_ID}")' in prompt
-    assert "`completed=false`" in prompt
+    assert "get_handoff()" in prompt
+    assert "injected context" not in prompt
     assert "\n" not in prompt
     assert "Required tier" not in prompt
     assert "Advisory tier" not in prompt
@@ -881,8 +870,8 @@ async def test_load_skill_effect_flows_to_persisted_resume_prompt(
 
     sv_mgr = SessionVariableManager(session_db)
     sv_mgr.merge_variables(SESSION_ID, variables)
-    skill_tiers = persist_compact_resume_required_skills(session_db, SESSION_ID)
-    prompt = build_compact_self_continue_prompt()
+    skill_tiers = persist_handoff_resume_skills(session_db, SESSION_ID)
+    prompt = build_handoff_continue_prompt()
 
     assert skill_tiers == {
         "required": ["python", "plan"],

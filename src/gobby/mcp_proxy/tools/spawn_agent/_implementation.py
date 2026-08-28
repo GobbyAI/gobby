@@ -498,7 +498,7 @@ async def spawn_agent_impl(
     if isinstance(base_commit_sha, str) and base_commit_sha:
         effective_initial_variables["base_commit_sha"] = base_commit_sha
 
-    # 11. Build resume metadata without seeding the digest-owned session title.
+    # 11. Build resume metadata without seeding an automatic session title.
     agent_display_name = requested_agent_name
 
     stage_name = effective_initial_variables.get("stage_name")

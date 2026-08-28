@@ -23,7 +23,7 @@ from gobby.hooks.agent_run_ingress import (
 from gobby.hooks.broadcaster import schedule_hook_broadcast
 from gobby.hooks.dispatchers import mcp as mcp_dispatcher
 from gobby.hooks.dispatchers import webhook as webhook_dispatcher
-from gobby.hooks.effect_deadline import new_blocking_effect_deadline
+from gobby.hooks.effect_deadline import BlockingEffectDeadline, new_blocking_effect_deadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.factory import HookManagerFactory
 from gobby.hooks.health_gate import ensure_daemon_ready, ensure_daemon_ready_async
@@ -339,7 +339,7 @@ class HookManager:
     def _handle_after_daemon_ready(
         self,
         event: HookEvent,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> HookResponse:
         """Run hook handling after the daemon readiness gate has passed."""
         if blocking_deadline is None:
@@ -655,14 +655,14 @@ class HookManager:
     def _evaluate_workflow_rules(
         self,
         event: HookEvent,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> tuple[str | None, HookResponse | None]:
         """Evaluate workflow rules and dispatch mcp_call effects."""
         return self._create_rule_evaluator(blocking_deadline).evaluate(event)
 
     def _create_rule_evaluator(
         self,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> WorkflowRuleEvaluator:
         """Create a rule evaluator bound to the manager's current dependencies."""
 
@@ -686,7 +686,7 @@ class HookManager:
     def _evaluate_blocking_webhooks(
         self,
         event: HookEvent,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> HookResponse | None:
         """Evaluate blocking webhooks before handler execution."""
         return webhook_dispatcher.evaluate_blocking_webhooks(
@@ -716,7 +716,7 @@ class HookManager:
         mcp_calls: list[dict[str, Any]],
         event: HookEvent,
         *,
-        deadline: float | None = None,
+        deadline: BlockingEffectDeadline | None = None,
     ) -> list[dict[str, Any]]:
         """Dispatch mcp_call effects from rule engine evaluation."""
         return mcp_dispatcher.dispatch_mcp_calls(

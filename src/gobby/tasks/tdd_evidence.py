@@ -13,12 +13,24 @@ from gobby.tasks.acceptance_artifacts import (
     validation_run_covers_test,
     validation_run_names_test,
 )
-from gobby.tasks.epic_guards import is_test_convention_path
 from gobby.tasks.transcript_evidence import (
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptValidationRun,
 )
+
+
+def is_test_convention_path(path: str) -> bool:
+    """A test module in any language or any file under a test directory."""
+    pure = PurePosixPath(path)
+    name = pure.name.casefold()
+    return (
+        any(part.casefold() in {"test", "tests", "__tests__"} for part in pure.parts[:-1])
+        or name.startswith("test_")
+        or "_test." in name
+        or ".test." in name
+        or ".spec." in name
+    )
 
 
 @dataclass(frozen=True, slots=True)

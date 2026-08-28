@@ -23,7 +23,7 @@ function makeGobbySession(overrides: Partial<GobbySession> = {}): GobbySession {
     updated_at: "2026-05-01T00:00:00Z",
     seq_num: 1,
     summary_markdown: null,
-    digest_markdown: null,
+    handoff_markdown: null,
     git_branch: null,
     usage_input_tokens: 0,
     usage_output_tokens: 0,

@@ -3,7 +3,7 @@
 Verifies that workflow action functions are exposed as MCP tools:
 - gobby-memory: backup_memories, restore_memories
 - gobby-tasks: backup_tasks, restore_tasks
-- gobby-sessions: set_handoff_context, get_handoff_context, capture_baseline_dirty_files
+- gobby-sessions: set_handoff, get_handoff, capture_baseline_dirty_files
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def mock_session_manager():
     session = MagicMock()
     session.project_id = "11111111-1111-4111-8111-111111110123"
     session.transcript_path = "/tmp/test.jsonl"
-    session.digest_markdown = None
+    session.handoff_markdown = None
     manager.get = MagicMock(return_value=session)
     return manager
 
@@ -193,21 +193,21 @@ class TestTaskBackupRestore:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# gobby-sessions: set_handoff_context (replaced generate_handoff + extract_handoff_context)
+# gobby-sessions: set_handoff (replaced generate_handoff + extract_handoff_context)
 # ═══════════════════════════════════════════════════════════════════════
 
 
 class TestSessionSetHandoffContext:
-    """Verify set_handoff_context is registered on gobby-sessions and callable."""
+    """Verify set_handoff is registered on gobby-sessions and callable."""
 
     def test_tool_registered(self, session_registry) -> None:
-        assert "set_handoff_context" in session_registry._tools
+        assert "set_handoff" in session_registry._tools
 
     @pytest.mark.asyncio
     async def test_agent_authored_path(self, session_registry) -> None:
         with session_context_for_test("sess-1"):
             result = await session_registry.call(
-                "set_handoff_context",
+                "set_handoff",
                 {"content": "## Test handoff"},
             )
         assert result["success"] is True

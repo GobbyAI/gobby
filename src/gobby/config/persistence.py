@@ -590,7 +590,7 @@ class MemoryConfig(BaseModel):
             "Purely observational; independent of recall_signal_logging (#17196)."
         ),
     )
-    digest_shadow_usefulness: bool = Field(
+    shadow_relevance_judging: bool = Field(
         default=False,
         description=(
             "Judge the complete returned recall candidate set during the digest pass "
@@ -640,8 +640,8 @@ class MemoryConfig(BaseModel):
     @model_validator(mode="after")
     def validate_digest_shadow_signal_hub(self) -> "MemoryConfig":
         """Require the durable signal hub whenever shadow judging is enabled."""
-        if self.digest_shadow_usefulness and not self.recall_signal_hub:
-            raise ValueError("digest_shadow_usefulness requires recall_signal_hub=true")
+        if self.shadow_relevance_judging and not self.recall_signal_hub:
+            raise ValueError("shadow_relevance_judging requires recall_signal_hub=true")
         return self
 
     @field_validator("recall_drift_interval_hours")

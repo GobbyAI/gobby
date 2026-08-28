@@ -1,4 +1,4 @@
-"""Live-wrapper rebinding for web-chat clear_self successors."""
+"""Live-wrapper rebinding for web-chat clear-session successors."""
 
 from __future__ import annotations
 

@@ -513,7 +513,7 @@ async def _assistant_message(
         if session is not None:
             for value in (
                 getattr(session, "last_assistant_content", None),
-                getattr(session, "last_turn_markdown", None),
+                getattr(session, "handoff_markdown", None),
             ):
                 if isinstance(value, str) and value.strip():
                     return value.strip()

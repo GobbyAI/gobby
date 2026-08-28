@@ -1729,7 +1729,7 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
     );
-    assert_eq!(MIGRATIONS.len(), 33);
+    assert_eq!(MIGRATIONS.len(), 36);
     assert_eq!(MIGRATIONS[0].version, 376);
     assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
     assert_eq!(MIGRATIONS[1].version, 377);
@@ -2396,7 +2396,7 @@ fn migration_receipt_count(
 }
 
 #[test]
-fn migration_408_on_a_407_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
+fn migration_411_on_a_410_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2404,15 +2404,15 @@ fn migration_408_on_a_407_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
         return Ok(());
     };
 
-    let through_407 = &MIGRATIONS[..MIGRATIONS.len() - 1];
+    let through_410 = &MIGRATIONS[..MIGRATIONS.len() - 1];
     assert_eq!(
-        through_407.last().map(|migration| migration.version),
-        Some(407)
+        through_410.last().map(|migration| migration.version),
+        Some(410)
     );
     let hub =
-        SchemaRunner::with_migrations_for_test(&mut client, "public", through_407)?.apply()?;
+        SchemaRunner::with_migrations_for_test(&mut client, "public", through_410)?.apply()?;
     assert!(hub.baseline_applied);
-    assert_eq!(hub.migrations_applied, through_407.len());
+    assert_eq!(hub.migrations_applied, through_410.len());
     let legacy_columns: Vec<String> = client
         .query(
             "SELECT column_name FROM information_schema.columns
@@ -2431,7 +2431,7 @@ fn migration_408_on_a_407_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
     let repeat = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert_eq!(repeat.migrations_applied, 0);
 
-    let fresh = SchemaRunner::new(&mut client, "fresh_408")?.apply()?;
+    let fresh = SchemaRunner::new(&mut client, "fresh_411")?.apply()?;
     assert!(fresh.baseline_applied);
     assert_eq!(fresh.migrations_applied, MIGRATIONS.len());
 

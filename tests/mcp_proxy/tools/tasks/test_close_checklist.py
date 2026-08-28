@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterator
-from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -23,7 +21,6 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.storage.tasks import Task
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
 from gobby.tasks.close_checklist import CloseGateResult
-from gobby.tasks.epic_guards import EpicGuardResult
 from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
 
 pytestmark = pytest.mark.unit
@@ -46,7 +43,12 @@ def _committed_manifest_is_current() -> Iterator[None]:
         yield
 
 
-def _task(*, escalated: bool, tdd_required: bool = False) -> Task:
+def _task(
+    *,
+    escalated: bool,
+    tdd_required: bool = False,
+    validation_criteria: str | None = None,
+) -> Task:
     task = Task(
         id="00000000-0000-4000-8000-000000000101",
         project_id="00000000-0000-4000-8000-000000000201",
@@ -57,7 +59,8 @@ def _task(*, escalated: bool, tdd_required: bool = False) -> Task:
         created_at=datetime(2026, 8, 23, 12, tzinfo=UTC),
         updated_at=datetime(2026, 8, 23, 12, tzinfo=UTC),
         claimed_by_session_id=SESSION_ID,
-        validation_criteria=(
+        validation_criteria=validation_criteria
+        or (
             "Recall injects nothing when the batched read raises.\n"
             "Acceptance artifacts:\n"
             f"- test: `{NAMED_TEST.reference}`"
@@ -112,16 +115,39 @@ def _transcript() -> TranscriptEvidence:
     )
 
 
+def _operational_transcript() -> TranscriptEvidence:
+    return TranscriptEvidence(
+        validation_runs=(
+            *_transcript().validation_runs,
+            TranscriptValidationRun(
+                session_id=SESSION_ID,
+                source="claude",
+                command="uv run gobby restart --wait",
+                categories=("config",),
+                matcher_id="gobby-restart",
+                label="gobby restart",
+                outcome="success",
+                started_at=NOW,
+                completed_at=NOW,
+                order=2,
+                exit_code=0,
+            ),
+        ),
+        sessions=(SESSION_ID,),
+    )
+
+
 async def _evaluate(
     task: Task,
     *,
     override_justification: str | None,
     review: AsyncMock | None = None,
-    guards: EpicGuardResult | None = None,
     artifacts: AcceptanceArtifactResult | None = None,
     close_root: CloseWorktreeRoot = NO_WORKTREE,
     project_path: str | None = None,
     acceptance_evaluator: MagicMock | None = None,
+    transcript: TranscriptEvidence | None = None,
+    changes_summary: str = "Implemented and tested.",
 ) -> CloseEvaluation:
     review = review or AsyncMock(
         return_value=ValidationResult(
@@ -139,9 +165,6 @@ async def _evaluate(
         evidence_files=(),
     )
     with (
-        patch.object(lifecycle, "evaluate_epic_guards", AsyncMock(return_value=guards))
-        if guards is not None
-        else nullcontext(),
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
         patch.object(lifecycle, "resolve_close_worktree_root", return_value=close_root),
@@ -158,7 +181,7 @@ async def _evaluate(
         patch.object(
             lifecycle,
             "_derive_close_transcript_evidence",
-            AsyncMock(return_value=_transcript()),
+            AsyncMock(return_value=transcript or _transcript()),
         ),
         patch.object(
             lifecycle,
@@ -177,7 +200,7 @@ async def _evaluate(
             _ctx(task),
             task_id=task.id,
             reason="completed",
-            changes_summary="Implemented and tested.",
+            changes_summary=changes_summary,
             commit_sha="abc123",
             project_path=project_path,
             response_detail="diagnostic",
@@ -270,7 +293,7 @@ async def test_justified_deliberate_close_waives_tdd_evidence() -> None:
     """A human who decided the task closes must be able to close it.
 
     Gate 12 asks whether the loop was followed, not whether the deliverable is
-    sound, so it belongs with gate 14 under the deliberate-close waiver. The
+    sound, so it belongs with gate 13 under the deliberate-close waiver. The
     delivery gates stay hard and are asserted below.
     """
     evaluation = await _evaluate(
@@ -280,8 +303,8 @@ async def test_justified_deliberate_close_waives_tdd_evidence() -> None:
 
     assert evaluation.error is None
     assert evaluation.ready is True
-    waived = {gate.item: gate.status for gate in evaluation.gates if gate.item in {12, 14}}
-    assert waived == {12: "skipped", 14: "skipped"}
+    waived = {gate.item: gate.status for gate in evaluation.gates if gate.item in {12, 13}}
+    assert waived == {12: "skipped", 13: "skipped"}
     delivery = {gate.item: gate.status for gate in evaluation.gates if 7 <= gate.item <= 11}
     assert sorted(delivery) == [7, 8, 9, 10, 11], "the delivery gates still ran"
     assert "failed" not in delivery.values()
@@ -313,15 +336,7 @@ async def test_unescalated_close_with_justification_still_fails_tdd_evidence() -
 
 
 @pytest.mark.asyncio
-async def test_criteria_review_sees_guard_identity_without_its_stdout() -> None:
-    """The facts handed to the criteria review must repeat for an unchanged close.
-
-    checklist_facts feeds the review prompt and both fingerprints, so a fact
-    that moves on every attempt makes the memoized verdict unreachable and no
-    repeat close can ever be served from it (#20866). The guard runner's stdout
-    is exactly that: a fresh pytest duration per run. Gate 13's own details
-    keep it for diagnostics, because a guard that fails never reaches gate 14.
-    """
+async def test_criteria_review_receives_successful_transcript_operational_actions() -> None:
     review = AsyncMock(
         return_value=ValidationResult(
             can_close=True,
@@ -331,44 +346,19 @@ async def test_criteria_review_sees_guard_identity_without_its_stdout() -> None:
             extra={"verdict": {"status": "valid"}},
         )
     )
-    guards = EpicGuardResult(
-        passed=True,
-        skipped=False,
-        error_type=None,
-        message="Epic guards passed.",
-        paths=("tests/memory/test_recall.py",),
-        source_task_ids=("00000000-0000-4000-8000-000000000102",),
-        command="uv run pytest 'tests/memory/test_recall.py'",
-        output="4 passed in 3.71s\n",
-        fingerprint="guardfingerprint",
-    )
 
     evaluation = await _evaluate(
-        _task(escalated=False),
+        _task(
+            escalated=False,
+            validation_criteria="Restart the daemon and verify the service is healthy.",
+        ),
         override_justification=None,
         review=review,
-        guards=guards,
-        # No named acceptance test, so gate 12 has nothing to demand and the
-        # evaluation reaches gate 14, which is what this test is about.
-        artifacts=AcceptanceArtifactResult(
-            passed=True,
-            tests=(),
-            findings=(),
-            evidence_files=(),
-        ),
+        transcript=_operational_transcript(),
     )
 
     assert evaluation.error is None
     await_args = review.await_args
-    assert await_args is not None, "the criteria review must have run"
+    assert await_args is not None
     facts = cast(dict[str, Any], await_args.kwargs["checklist_facts"])
-    guard_facts = cast(dict[str, Any], facts["epic_guards"])
-    guard_output = guards.output
-    assert guard_output is not None
-    assert "output" not in guard_facts
-    assert guard_output not in json.dumps(facts, default=str)
-    assert guard_facts["paths"] == ["tests/memory/test_recall.py"]
-    assert guard_facts["fingerprint"] == "guardfingerprint"
-    assert guard_facts["command"] == "uv run pytest 'tests/memory/test_recall.py'"
-    gate_details = _gate(evaluation, 13).details
-    assert gate_details["output"] == guards.output, "gate 13 keeps the runner output"
+    assert facts["transcript_operational_actions"] == ["restart:daemon,gobby"]

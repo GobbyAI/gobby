@@ -145,7 +145,7 @@ async def test_call_tool_sends_intent_on_each_http_shape() -> None:
         )
         await proxy.call_tool(
             "gobby-sessions",
-            "wait_for_summary",
+            "get_handoff",
             {"session_id": "session", "intent": "target-value"},
             intent=long_intent,
         )
@@ -194,7 +194,7 @@ async def test_stdio_final_wait_envelope_stays_within_shared_cap() -> None:
 
     result = await call_tool(
         server_name="gobby-sessions",
-        tool_name="wait_for_summary",
+        tool_name="get_handoff",
         arguments={"timeout_seconds": 999_999},
         intent="find completion",
     )

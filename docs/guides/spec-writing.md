@@ -199,11 +199,6 @@ covers:<plan-id>:<section-id>:<item-id>
 
 Free-form `plan-ref:` labels are ignored by the coverage contract.
 
-Every new epic plan also needs a `.coverage-ledger.yaml` companion in
-`.gobby/plans/` before expansion. The ledger records the expected coverage
-mapping during the bootstrap period and is rechecked against the managed
-coverage manifest at task-stage transitions and close-time validation.
-
 ## Task Manifest
 
 Plan authors stop after the narrative sections. The approved plan eventually
@@ -261,9 +256,7 @@ Before presenting or expanding a plan:
 4. Confirm every acceptance item has a valid artifact reference.
 5. Confirm dependencies name existing section IDs.
 6. Remove filler test tasks duplicated by TDD-required implementation leaves.
-7. Confirm the bootstrap `.coverage-ledger.yaml` companion exists for new epic
-   plans before expansion.
-8. Run `uv run gobby plans validate <plan-file>`.
+7. Run `uv run gobby plans validate <plan-file>`.
 
 Use `uv run gobby tasks expand validate-plan <plan-file>` only when validating
 the task-expansion CLI path itself.

@@ -4,10 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from gobby.sessions.compact_markers import (
-    COMPACT_SELF_CONTINUE_INTRO,
-    COMPACT_SELF_INTERRUPT_WARNING,
-)
 from gobby.skills.loader import SkillLoader
 
 pytestmark = pytest.mark.unit
@@ -16,8 +12,11 @@ SHARED_CONTENT_DIR = Path(__file__).resolve().parents[2] / "src/gobby/install/sh
 SKILL_ROOT = SHARED_CONTENT_DIR / "skills"
 SKILL_DIR = SKILL_ROOT / "plan"
 SKILL_PATH = SKILL_DIR / "SKILL.md"
-AUTO_COMPACT_RULE_PATH = (
-    SHARED_CONTENT_DIR / "workflows/rules/context-handoff/auto-compact-after-task-close.yaml"
+HANDOFF_INTERRUPT_WARNING = (
+    "In a terminal session that call comes back as a rejected or cancelled tool use "
+    "attributed to the user. That is the daemon interrupting the turn to deliver the "
+    "compaction command, never a refusal: do not stop, do not ask the user about it, "
+    "and resume from the continuation prompt."
 )
 
 
@@ -30,15 +29,6 @@ def body() -> str:
     return SKILL_PATH.read_text()
 
 
-def test_compact_self_interrupt_warning_is_canonical() -> None:
-    assert COMPACT_SELF_INTERRUPT_WARNING == (
-        "In a terminal session that call comes back as a rejected or cancelled tool use "
-        "attributed to the user. That is the daemon interrupting the turn to deliver the "
-        "compaction command, never a refusal: do not stop, do not ask the user about it, "
-        "and resume from the continuation prompt."
-    )
-
-
 @pytest.mark.parametrize(
     ("skill_name", "expected_count"),
     [
@@ -48,25 +38,17 @@ def test_compact_self_interrupt_warning_is_canonical() -> None:
         ("plan", 2),
     ],
 )
-def test_compact_self_interrupt_warning_is_shared_by_skills(
+def test_set_handoff_interrupt_warning_is_shared_by_skills(
     skill_name: str,
     expected_count: int,
 ) -> None:
     skill_body = _normalize_prose((SKILL_ROOT / skill_name / "SKILL.md").read_text())
 
-    assert skill_body.count(COMPACT_SELF_INTERRUPT_WARNING) == expected_count
-
-
-def test_compact_self_interrupt_warning_is_shared_by_runtime_surfaces() -> None:
-    rule_body = _normalize_prose(AUTO_COMPACT_RULE_PATH.read_text())
-    intro = _normalize_prose(COMPACT_SELF_CONTINUE_INTRO)
-
-    assert COMPACT_SELF_INTERRUPT_WARNING in rule_body
-    assert COMPACT_SELF_INTERRUPT_WARNING in intro
+    assert skill_body.count(HANDOFF_INTERRUPT_WARNING) == expected_count
 
 
 def test_plan_skill_version(body: str) -> None:
-    assert 'version: "4.1.0"' in body
+    assert 'version: "4.1.1"' in body
 
 
 def test_plan_investigates_before_recommending_depth(body: str) -> None:
@@ -78,17 +60,19 @@ def test_plan_investigates_before_recommending_depth(body: str) -> None:
         ]
     )
     investigate = section.index("Investigate the request and repository")
-    classify = section.index("Determine whether the proposed implementation is a major change")
-    recommend = section.index("Recommend **Full** only for a major change")
+    classify = section.index("Classify the work kind before considering breadth or risk")
+    recommend = section.index("Recommend **Full** only for those complex feature")
     ask = section.index("Ask the user to choose")
 
     assert investigate < classify < recommend < ask
     for signal in (
-        "subsystem redesign or rework",
         "complex new feature with multiple dependent deliverables",
-        "broad migration or architecture/security-model change",
-        "bug fixes, maintenance, localized features or refactors",
-        "none independently makes a change major",
+        "complex refactor or subsystem rework",
+        "broad migration or architecture/security-model rework",
+        "Bug fixes and maintenance always recommend **Lightweight**",
+        "regardless of breadth, risk, affected subsystems",
+        "Strong signals determine whether Gobby planning is offered",
+        "do not promote bug fixes or maintenance to Full",
     ):
         assert signal in section
     assert "honor that choice without asking again" in section
@@ -257,11 +241,11 @@ def test_plan_compacts_after_every_review_agent_launch(body: str) -> None:
         (adversary, "plan-adversary-taskless"),
     ):
         launch = phase.index(f"`{agent}` without `task_id`")
-        compact = phase.index("`gobby-sessions:compact_self`", launch)
+        compact = phase.index("`gobby-sessions:set_handoff`", launch)
         wait = phase.index("**Waiting on Spawned Runs**", compact)
 
         assert launch < compact < wait
-        assert COMPACT_SELF_INTERRUPT_WARNING in phase[compact:]
+        assert HANDOFF_INTERRUPT_WARNING in phase[compact:]
 
 
 def test_spawned_run_waiting_policy_is_shared_and_wake_driven(body: str) -> None:
@@ -282,7 +266,7 @@ def test_spawned_run_waiting_policy_is_shared_and_wake_driven(body: str) -> None
     assert "Bash sleep heartbeat" in normalized
     assert "only supported resume mechanism" in normalized
     assert "get_agent_result(run_id)` only if" in normalized
-    assert "mandatory post-launch `gobby-sessions:compact_self`" in normalized
+    assert "mandatory post-launch `gobby-sessions:set_handoff`" in normalized
     assert "already known to be terminal skips subscribing and waiting" in normalized
     assert "timeout_seconds" not in section
     assert "background watcher" not in section

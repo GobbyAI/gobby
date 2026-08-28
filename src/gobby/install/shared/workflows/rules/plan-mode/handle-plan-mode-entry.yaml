@@ -22,9 +22,13 @@ rules:
 
           For localized, low-risk work, continue with normal conversational Plan Mode and do not prompt for Gobby planning.
 
+          Strong signals determine whether Gobby planning is offered; they do not select the depth or promote bug fixes and maintenance to Full.
+
           When a strong signal exists, recommend one depth and ask the user to choose:
+          - Always recommend **Lightweight** for bug fixes and maintenance, regardless of breadth, risk, affected subsystems, API/schema/security involvement, or coordination needs.
+          - Recommend **Full** only for complex new features and complex refactors, reworks, or migrations.
           - **Full:** artifact-first plan, validation, enhancement, separately approved adversarial review, and optional build handoff.
-          - **Lightweight:** Gobby elicitation and improved decision-complete formatting, with no artifact, review, or build workflow.
+          - **Lightweight:** Gobby elicitation, a decision-complete plan artifact, and base validation; enhancement and adversarial review are skipped by default, with optional build handoff still available.
 
           Do not load the `plan` skill until the user chooses Gobby planning or explicitly invokes `$gobby plan` or `/gobby plan`.
       - type: set_variable

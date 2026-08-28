@@ -19,17 +19,12 @@ def apply_in_place_compact_context_loss(handler: Any, session_id: str | None) ->
     if not session_id or handler._session_manager is None:
         return
 
-    from gobby.hooks.event_handlers._session_start.handoff import (
-        _variable_enabled,
-    )
     from gobby.hooks.event_handlers._session_start.materialize import (
         _reset_agent_context_injection,
     )
-    from gobby.sessions.compact_markers import COMPACT_HANDOFF_INJECT_PENDING_VARIABLE
     from gobby.workflows.state_manager import SessionVariableManager
 
     sv_mgr = SessionVariableManager(handler._session_manager.db)
-    current = sv_mgr.get_variables(session_id)
     _reset_agent_context_injection(handler, session_id)
 
     updates: dict[str, Any] = {
@@ -39,8 +34,6 @@ def apply_in_place_compact_context_loss(handler: Any, session_id: str | None) ->
         "workflow_requested_skills": [],
         "injected_memory_ids": [],
     }
-    if _variable_enabled(current.get("auto_inject_handoff"), default=True):
-        updates[COMPACT_HANDOFF_INJECT_PENDING_VARIABLE] = True
     sv_mgr.merge_variables(session_id, updates)
 
     session = handler._session_manager.get(session_id)

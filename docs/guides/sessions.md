@@ -17,7 +17,7 @@ gobby sessions show #42
 gobby sessions messages #42 --limit 25
 
 # Create a handoff summary for the current active session
-gobby sessions create-handoff --output db "Paused before review"
+gobby sessions summarize --output db "Paused before review"
 ```
 
 ```python
@@ -31,7 +31,7 @@ call_tool("gobby-sessions", "get_current_session", {
 })
 
 # Read the latest handoff-ready context.
-call_tool("gobby-sessions", "get_handoff_context", {})
+call_tool("gobby-sessions", "get_handoff", {})
 ```
 
 ## Mental Model
@@ -148,13 +148,13 @@ Show aggregate counts by status and source.
 gobby sessions stats [--project TEXT]
 ```
 
-### `gobby sessions create-handoff`
+### `gobby sessions summarize`
 
 Create a handoff summary for a session. If `--session-id` is omitted, Gobby uses
 the current project's most recent active session.
 
 ```bash
-gobby sessions create-handoff [OPTIONS] [NOTES]
+gobby sessions summarize [OPTIONS] [NOTES]
 ```
 
 | Option | Description |
@@ -203,9 +203,9 @@ with `get_tool_schema` before writing examples or automating calls.
 | `get_usage_breakdown` | Aggregate token usage by source and model. |
 | `get_session_messages` | Read rendered transcript messages. |
 | `search_session_messages` | Search rendered transcript messages by substring. |
-| `set_handoff_context` | Set or generate handoff context for the current session. |
-| `get_handoff_context` | Retrieve handoff context directly or from the latest same-project `handoff_ready` session. |
-| `wait_for_summary` | Wait for a session's `summary_markdown` to become available. |
+| `set_handoff` | Set or generate handoff context for the current session. |
+| `get_handoff` | Retrieve handoff context directly or from the latest same-project `handoff_ready` session. |
+| `get_handoff` | Wait for a session's `summary_markdown` to become available. |
 | `register_session` | Register hookless clients such as SDK-driven agents. |
 | `get_session_commits` | List commits made during a session timeframe. |
 | `mark_loop_complete` | Mark an autonomous loop complete to prevent session chaining. |
@@ -214,7 +214,7 @@ with `get_tool_schema` before writing examples or automating calls.
 | `get_transcript_status` | Check archive availability and transcript file stats. |
 | `send_keys` | Send keystrokes to a session-backed tmux terminal. |
 | `capture_output` | Capture recent tmux output. |
-| `compact_self` | Trigger the current CLI's compaction command. |
+| `set_handoff` | Trigger the current CLI's compaction command. |
 
 ### Finding Your Own Session
 
@@ -253,28 +253,31 @@ call_tool("gobby-sessions", "get_session_commits", {
 
 ### Creating And Reading Handoffs
 
-`set_handoff_context` operates on the current session context. Pass `content`
-for an agent-authored handoff, or omit it to generate a summary from transcript
-state.
+`set_handoff` operates on the current session context. It requires a nonblank
+current state and at least one nonblank next step. Optional entries reject blanks;
+references are deduplicated in their original order. `gobby_feedback` is stored in
+`session_feedback` and never rendered into the handoff.
 
 ```python
-call_tool("gobby-sessions", "set_handoff_context", {
-    "content": "## Handoff\n\nCurrent state and next steps.",
-    "set_handoff_ready": True
+call_tool("gobby-sessions", "set_handoff", {
+    "current_state": "The storage migration and MCP schemas are complete.",
+    "next_steps": ["Run the web-chat smoke test", "Commit and close the task"],
+    "key_decisions": ["Continuation recovery is pull-only"],
+    "references": ["#21140"],
+    "clear_session": False
 })
 ```
 
 ```python
-call_tool("gobby-sessions", "get_handoff_context", {
-    "session_id": "#42",
-    "link_child_session_id": "#43"
-})
+call_tool("gobby-sessions", "get_handoff", {})
 ```
 
-When no `session_id` is provided, `get_handoff_context` falls back to the latest
-`handoff_ready` session in the caller's current project. It can also search by
-explicit `project_id` and `source`. If no project can be resolved, the lookup
-fails closed instead of returning a session from another project.
+`clear_session=false` compacts in place. `clear_session=true` creates a successor,
+preserves task claims, and binds that successor to the predecessor. The continuation
+prompt calls `get_handoff`, which consumes only the pending marker created by
+`set_handoff`. A second call is empty. Manual provider compact and `/clear` operations
+create no marker, so they also return an empty handoff. Persisted `handoff_markdown`
+remains visible in the UI after consumption.
 
 ### Hookless Registration
 
@@ -315,29 +318,26 @@ permission dialogs, or stalled terminals.
 
 ```mermaid
 sequenceDiagram
-    participant Parent
+    participant Session
     participant Gobby
-    participant Child
+    participant Continuation
 
-    Parent->>Gobby: set_handoff_context or create-handoff
-    Gobby->>Gobby: store summary_markdown
-    Gobby->>Gobby: mark parent handoff_ready
-    Child->>Gobby: get_handoff_context
-    Gobby->>Child: return context
-    Gobby->>Gobby: optionally link child to parent
+    Session->>Gobby: set_handoff(structured fields, clear_session)
+    Gobby->>Gobby: atomically stage Markdown, feedback, and marker
+    Gobby->>Session: dispatch provider compact or clear
+    Continuation->>Gobby: get_handoff()
+    Gobby->>Continuation: consume marker and return Markdown + skill tiers
 ```
 
-Handoffs are summary records, not separate session objects. A parent session is
-marked `handoff_ready`, and a successor reads `summary_markdown` through
-`get_handoff_context`. If `link_child_session_id` is provided, Gobby records the
-parent-child relationship.
+Provider dispatch failure restores the previous handoff, deletes feedback rows from
+that attempt, and clears its marker. Archival `summary_markdown` remains independently
+generated from the full transcript at session end.
 
 ### Compaction Is In-Place
 
-CLI context compaction is not a parent/child handoff. The provider preserves
+CLI context compaction preserves
 its external session ID across a compact, so the compact restart reactivates
-the **same** session row: `handoff_ready` flips back to `active`, and the
-stored `summary_markdown` is injected into the continuing session. Identity,
+the **same** session row. Identity,
 session variables, workflow instances, claimed tasks, parent linkage, and
 agent-run ownership all carry through unchanged because no transfer happens.
 
@@ -349,32 +349,15 @@ laptop slept mid-compact), the restart revives the same row; if the row is
 missing entirely, the start degrades to a normal `startup` registration with a
 structured warning in the daemon log.
 
-Claude and Codex emit `SessionStart(source=compact)` after compact. That
-restart consumes `handoff_source` and injects the continuation through
-`inject-compact-handoff`.
-
-Grok `/compact` is the same context loss but never emits SessionStart. Grok
-`post_compact` runs `apply_in_place_compact_context_loss` on the live row:
-the same summary prep and `handoff_source` consume as compact SessionStart,
-plus compact context-loss tracking resets (`unlocked_tools`, skill-load
-lists, memory injection ids) and agent-preamble rehydrate. It does not
-reset `plan_mode` and does not fire pipelines. When `auto_inject_handoff`
-is on, it arms `compact_handoff_inject_pending`. The next `turn_start` /
-`user_prompt_submit` (`BEFORE_AGENT`) fires `inject-compact-handoff-on-prompt`,
-which renders the marked continuation block plus wiki, profile, and task and
-clears the one-shot. Gobby stashes that passive-hook render as Grok briefing;
-the next envelope-backed `PreToolUse` denies once with the briefing and asks
-Grok to retry the same tool call. A tool-free turn receives the same briefing
-through one blocking `Stop` / `SubagentStop`. ghook acknowledges delivery by
-removing the inbox envelope after its provider action is written and flushed.
-`wait_for_summary` remains the continuation-prompt fallback when the marked
-render is absent.
+Claude and Codex emit `SessionStart(source=compact)` after compact. Grok reports
+the same context loss through `post_compact`. Both paths reset context-epoch tracking
+and preserve the pending `set_handoff` marker for explicit retrieval.
 
 ### Handoff Boundaries
 
-The successor model receives the generated or agent-authored `summary_markdown`
-as its continuation context. The full source transcript remains a separately
-stored session record that can be queried or restored from the source session.
+The continuation model receives authored `handoff_markdown` only after calling
+`get_handoff`. The full source transcript and archival summary remain separately
+stored records.
 
 Provider-owned runtime state remains with the source tool. This includes prompt
 caches, native conversation state, and provider-private or encrypted
@@ -420,11 +403,11 @@ stop or turn-end event does not release the agent run.
 ### Handoff Is Empty
 
 1. Confirm the session has `summary_markdown`.
-2. Create or update handoff context with `gobby sessions create-handoff` or
-   `set_handoff_context`.
+2. Create or update handoff context with `gobby sessions summarize` or
+   `set_handoff`.
 3. Confirm the target status is `handoff_ready`. A session may always read its
    own summary regardless of status (post-compact self-reads).
-4. Pass `session_id` to `get_handoff_context` when multiple handoff-ready
+4. Pass `session_id` to `get_handoff` when multiple handoff-ready
    sessions exist.
 
 ### Hooks Are Not Updating Sessions
@@ -446,7 +429,7 @@ stop or turn-end event does not release the agent run.
 
 - [tasks.md](./tasks.md) - Task management
 - [agents.md](./agents.md) - Agent spawning and agent-run termination
-- [memory.md](./memory.md) - Persistent memory and session digests
+- [memory.md](./memory.md) - Persistent memory and shadow-relevance judging
 - [mcp-tools.md](./mcp-tools.md) - MCP tool reference
 - [rules.md](./rules.md) - Semantic workflow events
 - [hook-schemas.md](./hook-schemas.md) - Raw hook mappings

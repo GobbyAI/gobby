@@ -13,8 +13,8 @@ from gobby.sessions.transcripts.base import TokenUsage
 DAEMON_WAKE_BODY = "Message from Gobby daemon: New activity available. Continue the assigned goal."
 WAIT_DIRECTIVE_BODY = (
     "Continue where you last left off. The previous turn called "
-    "`gobby-sessions:compact_self`. If startup context is missing, call "
-    'gobby-sessions.wait_for_summary(session_id="fixture"). If it returns '
+    "`gobby-sessions:set_handoff`. If startup context is missing, call "
+    'gobby-sessions.get_handoff(session_id="fixture"). If it returns '
     "`completed=false`, repeat the same wait call. Once complete, continue."
 )
 _MID_TURN_INJECTION = "The user sent a message while you were working"

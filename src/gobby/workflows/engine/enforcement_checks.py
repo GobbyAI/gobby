@@ -565,8 +565,8 @@ class EnforcementCheckMixin:
                             reason=reason,
                         )
 
-                # Self-compaction preserves the active agent and is capability-neutral.
-                if mcp_tool_name == "compact_self":
+                # Structured handoff preserves the active agent and is capability-neutral.
+                if mcp_tool_name == "set_handoff":
                     return None
 
                 if mcp_key and step.allowed_mcp_tools != "all":

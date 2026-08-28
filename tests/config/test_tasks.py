@@ -19,16 +19,6 @@ pytestmark = pytest.mark.unit
 # =============================================================================
 
 
-class TestCompactHandoffConfigImport:
-    """Test that CompactHandoffConfig can be imported from the tasks module."""
-
-    def test_import_from_tasks_module(self) -> None:
-        """Test importing CompactHandoffConfig from config.tasks (RED phase target)."""
-        from gobby.config.tasks import CompactHandoffConfig
-
-        assert CompactHandoffConfig is not None
-
-
 class TestPatternCriteriaConfigImport:
     """Test that PatternCriteriaConfig can be imported from the tasks module."""
 
@@ -77,31 +67,6 @@ class TestWorkflowConfigImport:
         from gobby.config.tasks import WorkflowConfig
 
         assert WorkflowConfig is not None
-
-
-# =============================================================================
-# CompactHandoffConfig Tests
-# =============================================================================
-
-
-class TestCompactHandoffConfigDefaults:
-    """Test CompactHandoffConfig default values."""
-
-    def test_default_instantiation(self) -> None:
-        """Test CompactHandoffConfig creates with all defaults."""
-        from gobby.config.tasks import CompactHandoffConfig
-
-        config = CompactHandoffConfig()
-        assert config.enabled is True
-        assert config.refresh_timeout_seconds == 300.0
-
-    def test_disabled_handoff(self) -> None:
-        """Test CompactHandoffConfig with disabled handoff."""
-        from gobby.config.tasks import CompactHandoffConfig
-
-        config = CompactHandoffConfig(enabled=False, refresh_timeout_seconds=45.0)
-        assert config.enabled is False
-        assert config.refresh_timeout_seconds == 45.0
 
 
 # =============================================================================
@@ -496,17 +461,6 @@ class TestWorkflowConfigValidation:
 # =============================================================================
 # Baseline Tests (import from app.py)
 # =============================================================================
-
-
-class TestCompactHandoffConfigFromAppPy:
-    """Verify that tests pass when importing from app.py (reference implementation)."""
-
-    def test_import_from_app_py(self) -> None:
-        """Test importing CompactHandoffConfig from app.py works (baseline)."""
-        from gobby.config.app import CompactHandoffConfig
-
-        config = CompactHandoffConfig()
-        assert config.enabled is True
 
 
 class TestPatternCriteriaConfigFromTasksModule:

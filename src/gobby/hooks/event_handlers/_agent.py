@@ -8,13 +8,8 @@ from typing import Any, Literal
 import psycopg
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
-from gobby.hooks.events import HookEvent, HookResponse, SessionSource
-from gobby.hooks.handoff_titles import extract_codex_handoff_title
+from gobby.hooks.events import HookEvent, HookResponse
 from gobby.skills.formatting import skill_fetch_directive
-from gobby.storage.sessions._title_defaults import (
-    HANDOFF_TITLE_SOURCE,
-    PROVISIONAL_TITLE_SOURCE,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -86,31 +81,6 @@ def _load_agent_prompt(
 class AgentEventHandlerMixin(EventHandlersBase):
     """Mixin for handling agent-related events."""
 
-    def _seed_codex_handoff_title(
-        self,
-        event: HookEvent,
-        session_id: str,
-        prompt: str,
-    ) -> None:
-        if event.source != SessionSource.CODEX or self._session_manager is None:
-            return
-
-        try:
-            session = self._session_manager.get(session_id)
-            if session is None or session.title_source != PROVISIONAL_TITLE_SOURCE:
-                return
-
-            title = extract_codex_handoff_title(prompt)
-            if title is None:
-                return
-            self._session_manager.update_title(
-                session_id,
-                title,
-                title_source=HANDOFF_TITLE_SOURCE,
-            )
-        except Exception as exc:
-            self.logger.warning("Failed to seed Codex handoff title: %s", exc)
-
     def _set_attention_metadata(
         self,
         event: HookEvent,
@@ -153,7 +123,6 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         if session_id:
             self.logger.debug("BEFORE_AGENT: session %s, prompt_len=%s", session_id, len(prompt))
-            self._seed_codex_handoff_title(event, session_id, prompt)
 
             # A new parent turn cannot inherit live subagents from the previous
             # turn. Reset both values together to recover from missed stop hooks.

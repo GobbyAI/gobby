@@ -108,7 +108,10 @@ async def test_blank_closure_reason_normalizes_to_completed(
 def test_bundled_template_declares_and_renders_closure_reason() -> None:
     template = _TEMPLATE_PATH.read_text(encoding="utf-8")
 
+    assert 'version: "3.2"' in template
     assert "closure_reason:" in template
     assert "{{ closure_reason | untrusted }}" in template
+    assert "transcript_operational_actions" in template
+    assert "Diff and\ntest evidence alone cannot satisfy those actions." in template
     for reason in sorted(NO_WORK_CLOSE_REASONS):
         assert f"`{reason}`" in template

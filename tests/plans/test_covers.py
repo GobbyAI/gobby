@@ -315,13 +315,13 @@ def test_validate_covers_behavior_referenced_by_path() -> None:
     item = _item(
         "A1.1",
         artifact_kind=ArtifactKind.behavior,
-        artifact_ref='"header fields present" in `.gobby/plans/plan.coverage-ledger.yaml`',
-        prose='behavior: "header fields present" in `.gobby/plans/plan.coverage-ledger.yaml`',
+        artifact_ref='"header fields present" in `.gobby/plans/coverage/plan.coverage.yaml`',
+        prose='behavior: "header fields present" in `.gobby/plans/coverage/plan.coverage.yaml`',
     )
 
     result = validate_covers(
         CoversRecord("plan", "A1", "A1.1"),
-        ".gobby/plans/plan.coverage-ledger.yaml contains the header fields.",
+        ".gobby/plans/coverage/plan.coverage.yaml contains the header fields.",
         "#leaf",
         _plan_doc("A1", item),
     )

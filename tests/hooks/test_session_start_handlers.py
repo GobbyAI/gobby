@@ -18,6 +18,7 @@ from gobby.hooks.event_handlers._session_start.flow import _log_session_start_ti
 from gobby.hooks.event_handlers._session_start.materialize import session_start_should_defer
 from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     expire_stale_terminal_sessions_for_context,
+    session_start_is_native_subagent_child,
 )
 from gobby.hooks.events import HookEventType
 from gobby.storage.hub.protocol import HubDatabase
@@ -73,6 +74,82 @@ def test_session_start_should_not_defer_nested_cli(monkeypatch: pytest.MonkeyPat
     )
 
     assert session_start_should_defer(event, None, "startup") is False
+
+
+def test_session_start_is_native_subagent_child_requires_live_parent_with_subagent() -> None:
+    parent = SimpleNamespace(id="parent-live", status="active", agent_run_id=None, agent_depth=0)
+    session_manager = MagicMock()
+    session_manager.find_live_interactive_pane_owner.return_value = parent
+    session_manager.db.fetchone.return_value = {
+        "variables": {"subagent_count": 1, "is_subagent": True}
+    }
+    terminal_context = {
+        "tmux_pane": "%90",
+        "tmux_socket_path": "/tmp/tmux-501/default",
+    }
+
+    assert (
+        session_start_is_native_subagent_child(
+            session_manager,
+            terminal_context,
+            "21000000-0000-4000-8000-000000000009",
+        )
+        is True
+    )
+
+    session_manager.db.fetchone.return_value = None
+    assert (
+        session_start_is_native_subagent_child(
+            session_manager,
+            terminal_context,
+            "21000000-0000-4000-8000-000000000009",
+        )
+        is False
+    )
+    session_manager.find_live_interactive_pane_owner.return_value = None
+    session_manager.db.fetchone.return_value = {
+        "variables": {"subagent_count": 1, "is_subagent": True}
+    }
+    assert (
+        session_start_is_native_subagent_child(
+            session_manager,
+            terminal_context,
+            "21000000-0000-4000-8000-000000000009",
+        )
+        is False
+    )
+
+
+def test_session_start_skips_native_subagent_inheriting_tty(
+    mock_dependencies: dict[str, Any],
+    mock_empty_session_variable_manager: MagicMock,
+) -> None:
+    parent = SimpleNamespace(id="parent-live", status="active", agent_run_id=None, agent_depth=0)
+    storage = mock_dependencies["session_storage"]
+    storage.get.return_value = None
+    storage.find_live_interactive_pane_owner.return_value = parent
+    storage.db.fetchone.return_value = {"variables": {"subagent_count": 1, "is_subagent": True}}
+    handlers = EventHandlers(**mock_dependencies)
+    event = make_event(
+        HookEventType.SESSION_START,
+        session_id="01a04561-child",
+        source="grok",
+        data={
+            "source": "startup",
+            "cwd": "/work",
+            "terminal_context": {
+                "tmux_pane": "%90",
+                "tmux_socket_path": "/tmp/tmux-501/default",
+            },
+        },
+    )
+    event.machine_id = "21000000-0000-4000-8000-000000000009"
+
+    response = handlers.handle_session_start(event)
+
+    assert response.decision == "allow"
+    storage.register_session.assert_not_called()
+    storage.register.assert_not_called()
 
 
 def _agent_activation_context() -> AgentActivationResult:
@@ -369,7 +446,7 @@ class TestSessionStartPreCreatedSession:
         mock_session.agent_depth = 0
         mock_session.agent_run_id = None
         mock_session.title = "Useful synthesized title"
-        mock_session.digest_markdown = None
+        mock_session.handoff_markdown = None
         mock_session.terminal_context = None
 
         updated_session = MagicMock()
@@ -379,7 +456,7 @@ class TestSessionStartPreCreatedSession:
         updated_session.agent_depth = 0
         updated_session.agent_run_id = None
         updated_session.title = "Useful synthesized title"
-        updated_session.digest_markdown = None
+        updated_session.handoff_markdown = None
         updated_session.terminal_context = {"tmux_pane": "%77", "parent_pid": 123}
 
         mock_dependencies["session_storage"].get.return_value = mock_session
@@ -429,7 +506,7 @@ class TestSessionStartPreCreatedSession:
         mock_session.agent_depth = 0
         mock_session.agent_run_id = None
         mock_session.title = None
-        mock_session.digest_markdown = None
+        mock_session.handoff_markdown = None
         mock_session.terminal_context = None
 
         updated_session = MagicMock()
@@ -439,7 +516,7 @@ class TestSessionStartPreCreatedSession:
         updated_session.agent_depth = 0
         updated_session.agent_run_id = None
         updated_session.title = None
-        updated_session.digest_markdown = None
+        updated_session.handoff_markdown = None
         updated_session.terminal_context = {
             "tmux_pane": "%77",
             "parent_pid": 123,
@@ -749,7 +826,7 @@ class TestSessionStartPreCreatedSession:
                 handlers, "_activate_default_agent", return_value=_agent_activation_context()
             ),
             patch(
-                "gobby.hooks.event_handlers._session_start.consume_and_schedule_compact_self_continuation",
+                "gobby.hooks.event_handlers._session_start.consume_and_schedule_handoff_compact_continuation",
                 return_value=False,
             ),
         ):
@@ -803,7 +880,7 @@ class TestSessionStartPreCreatedSession:
                 handlers, "_activate_default_agent", return_value=_agent_activation_context()
             ),
             patch(
-                "gobby.hooks.event_handlers._session_start.consume_and_schedule_compact_self_continuation",
+                "gobby.hooks.event_handlers._session_start.consume_and_schedule_handoff_compact_continuation",
                 return_value=False,
             ),
         ):
@@ -883,7 +960,7 @@ class TestSessionStartPreCreatedSession:
                 handlers, "_activate_default_agent", return_value=_agent_activation_context()
             ),
             patch(
-                "gobby.hooks.event_handlers._session_start.consume_and_schedule_compact_self_continuation",
+                "gobby.hooks.event_handlers._session_start.consume_and_schedule_handoff_compact_continuation",
                 return_value=False,
             ),
         ):

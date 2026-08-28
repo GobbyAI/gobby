@@ -194,7 +194,7 @@ for the authoritative signature before calling a tool.
 | `memory_dream` | Review stale memories, apply a validated plan, and snapshot mutations. |
 | `memory_dream_status` | Return status and summary for a memory dream run. |
 | `memory_dream_revert` | Revert a memory dream run from its snapshots. |
-| `build_turn_and_digest` | System lifecycle tool for turn records and session digest updates. |
+| `judge_shadow_relevance` | System lifecycle tool for independent turn-end shadow-relevance judging. |
 
 When a memory call exceeds the inline MCP result budget, the proxy returns an
 offload envelope containing a `result_id`. Page the raw result with
@@ -400,8 +400,8 @@ sequenceDiagram
     RuleEngine-->>Agent: memory skill on the initial turn, concise reminder later
     Agent->>Memory: search_memories(query) when the work needs prior knowledge
     Agent-->>User: response
-    RuleEngine-->>Agent: post-close review request on turn_end or before compact_self (when tasks closed)
-    RuleEngine->>Memory: build_turn_and_digest on turn_end
+    RuleEngine-->>Agent: post-close review request on turn_end or before set_handoff (when tasks closed)
+    RuleEngine->>Memory: judge_shadow_relevance on turn_end
 ```
 
 Current bundled memory rules:
@@ -412,11 +412,9 @@ Current bundled memory rules:
 | `check-memory-guidance-on-initial-stop` | `turn_end` | Blocks the first turn end once until the `memory` skill is loaded or its fetch failed. |
 | `remind-memory-guidance-on-later-turns` | `turn_start` | Injects a concise memory reminder once per later parent turn. |
 | `queue-task-memory-review-after-close` | `after_tool` | Queues completed worked leaves closed through `close_task` for one review. |
-| `review-closed-task-memories-before-compact` | `before_tool` | Blocks `gobby-sessions:compact_self` once per queued closure set with the same request, so a compaction right after `close_task` cannot defer the review past the closing context (the manual-compact bypass skips the `turn_end` gate); silent once every queued closure is reviewed. |
+| `review-closed-task-memories-before-handoff` | `before_tool` | Blocks `gobby-sessions:set_handoff` once per queued closure set, so a handoff right after `close_task` cannot defer the review past the closing context; silent once every queued closure is reviewed. |
 | `review-closed-task-memories-on-stop` | `turn_end` | Blocks once per queued closure set with a `review_task_memories` request; silent once every queued closure is reviewed. |
-| `digest-on-response` | `turn_end` | Builds a turn record and appends to the session digest in the background. |
-| `digest-catch-up-on-turn-start` | `turn_start` | Drains one bounded batch of undigested turns after an outage or interrupted digest. |
-| `digest-on-plan-turn-end` | `after_tool` | Builds a digest when plan mode ends through supported plan tools. |
+| `judge-shadow-relevance-on-response` | `turn_end` | Judges pending shadow-memory recall candidates in the background. |
 | `guard-plan-memory-writes` | `before_tool` | Blocks the first plan-time `create_memory` or `update_memory` call until the agent confirms that the write is a durable preference or finalized decision rather than plan evidence. |
 | `reset-memory-tracking-on-start` | `session_start` | Clears injected review-lesson tracking after clear, compact, or selected resume events. |
 | `increment-parent-turn-seq` | `turn_start` | Increments the parent session turn sequence counter. |

@@ -954,7 +954,7 @@ _MIGRATED_TABLES = ("terminals", "agent_runs")
 def _terminal_catalog(
     connection: psycopg.Connection[Any], schema: str
 ) -> dict[str, list[tuple[Any, ...]]]:
-    """Name-keyed column, constraint, and index definitions for the 408 tables."""
+    """Name-keyed column, constraint, and index definitions for the 411 tables."""
 
     def normalized(rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
         return [
@@ -1003,11 +1003,11 @@ def _terminal_catalog(
 
 
 @pytest.mark.integration
-def test_migration_408_matches_baseline(postgres_database_url: str) -> None:
-    """A hub upgraded from the 407 shape equals a fresh apply, and re-applying is a no-op."""
+def test_migration_411_matches_baseline(postgres_database_url: str) -> None:
+    """A hub upgraded from the 410 shape equals a fresh apply, and re-applying is a no-op."""
     with (
-        isolated_test_schema(postgres_database_url, "fresh408") as fresh_schema,
-        isolated_test_schema(postgres_database_url, "hub407") as migrated_schema,
+        isolated_test_schema(postgres_database_url, "fresh411") as fresh_schema,
+        isolated_test_schema(postgres_database_url, "hub410") as migrated_schema,
     ):
         apply_schema(postgres_database_url, schema=fresh_schema)
         apply_schema(postgres_database_url, schema=migrated_schema)
@@ -1019,7 +1019,7 @@ def test_migration_408_matches_baseline(postgres_database_url: str) -> None:
             connection.execute("DROP TABLE terminals CASCADE")
             connection.execute("ALTER TABLE agent_runs DROP COLUMN terminal_id")
             connection.execute("ALTER TABLE agent_runs ADD COLUMN tmux_session_name text")
-            connection.execute("DELETE FROM schema_migrations WHERE version = 408")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 411")
 
         apply_schema(postgres_database_url, schema=migrated_schema)
 
@@ -1027,11 +1027,11 @@ def test_migration_408_matches_baseline(postgres_database_url: str) -> None:
             fresh = _terminal_catalog(connection, fresh_schema)
             migrated = _terminal_catalog(connection, migrated_schema)
             receipt = connection.execute(
-                sql.SQL("SELECT filename FROM {}.schema_migrations WHERE version = 408").format(
+                sql.SQL("SELECT filename FROM {}.schema_migrations WHERE version = 411").format(
                     sql.Identifier(migrated_schema)
                 )
             ).fetchone()
-        assert receipt == ("408_terminals.sql",)
+        assert receipt == ("411_terminals.sql",)
         assert migrated == fresh
         assert not any(column[1] == "tmux_session_name" for column in migrated["columns"])
         assert ("agent_runs", "terminal_id", "uuid", "uuid", "YES", "") in migrated["columns"]

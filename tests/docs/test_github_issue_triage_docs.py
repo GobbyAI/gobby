@@ -27,7 +27,7 @@ def test_github_issue_triage_doc_has_mermaid_architecture_source() -> None:
     for term in (
         "GitHub issues webhook",
         "gh_triage_deliveries",
-        "Reconciliation cron",
+        "External issue sync coordinator recovery scan",
         "VectorStore/Qdrant",
         "triage-agent + triage-judgment",
         "Create or update linked Gobby task",

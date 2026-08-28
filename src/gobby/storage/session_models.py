@@ -52,9 +52,9 @@ class Session:
     # Bumped only by confirmed agent/user activity, never by lifecycle status
     # writes — the trustworthy idle-decision timestamp (updated_at is not).
     last_activity: datetime | None = None
+    handoff_markdown: str | None = None
     summary_revision_id: str | None = None
     summary_source_context_hash: str | None = None
-    summary_digest_turn_count: int | None = None
     summary_generation_mode: str | None = None
     summary_generated_at: datetime | None = None
     title_source: str | None = None
@@ -89,16 +89,8 @@ class Session:
     seq_num: int | None = None
     # Edit history tracking
     had_edits: bool = False
-    # Rolling conversation digest
-    digest_markdown: str | None = None
-    # Per-turn detailed record (overwritten each turn)
-    last_turn_markdown: str | None = None
     # Persisted chat mode (plan, accept_edits, normal, bypass)
     chat_mode: str = "plan"
-    # Idempotency guard for digest pipeline
-    last_digest_input_hash: str | None = None
-    # Explicit cursor across the transcript's digestible user/assistant pairs
-    last_digested_pair_index: int = 0
     # Stats fields
     message_count: int = 0
     turn_count: int = 0
@@ -141,6 +133,7 @@ class Session:
             transcript_path=row["transcript_path"],
             summary_path=row["summary_path"],
             summary_markdown=row["summary_markdown"],
+            handoff_markdown=cls._get_optional(row, "handoff_markdown"),
             git_branch=row["git_branch"],
             parent_session_id=row["parent_session_id"],
             created_at=row["created_at"],
@@ -148,7 +141,6 @@ class Session:
             last_activity=cls._get_optional(row, "last_activity"),
             summary_revision_id=cls._get_optional(row, "summary_revision_id"),
             summary_source_context_hash=cls._get_optional(row, "summary_source_context_hash"),
-            summary_digest_turn_count=cls._get_optional(row, "summary_digest_turn_count"),
             summary_generation_mode=cls._get_optional(row, "summary_generation_mode"),
             summary_generated_at=cls._get_optional(row, "summary_generated_at"),
             agent_depth=row["agent_depth"] or 0,
@@ -181,19 +173,7 @@ class Session:
             terminal_context=cls._parse_terminal_context(row["terminal_context"]),
             seq_num=row["seq_num"] if "seq_num" in row.keys() else None,
             had_edits=bool(row["had_edits"]) if "had_edits" in row.keys() else False,
-            digest_markdown=row["digest_markdown"] if "digest_markdown" in row.keys() else None,
-            last_turn_markdown=row["last_turn_markdown"]
-            if "last_turn_markdown" in row.keys()
-            else None,
             chat_mode=row["chat_mode"] if "chat_mode" in row.keys() else "plan",
-            last_digest_input_hash=row["last_digest_input_hash"]
-            if "last_digest_input_hash" in row.keys()
-            else None,
-            last_digested_pair_index=(
-                int(row["last_digested_pair_index"] or 0)
-                if "last_digested_pair_index" in row.keys()
-                else 0
-            ),
             message_count=row["message_count"] if "message_count" in row.keys() else 0,
             turn_count=row["turn_count"] if "turn_count" in row.keys() else 0,
             tool_call_count=row["tool_call_count"] if "tool_call_count" in row.keys() else 0,
@@ -288,9 +268,9 @@ class Session:
             "transcript_path": self.transcript_path,
             "summary_path": self.summary_path,
             "summary_markdown": self.summary_markdown,
+            "handoff_markdown": self.handoff_markdown,
             "summary_revision_id": self.summary_revision_id,
             "summary_source_context_hash": self.summary_source_context_hash,
-            "summary_digest_turn_count": self.summary_digest_turn_count,
             "summary_generation_mode": self.summary_generation_mode,
             "summary_generated_at": self.summary_generated_at,
             "git_branch": self.git_branch,
@@ -320,11 +300,7 @@ class Session:
             "is_local": self.is_local,
             "terminal_context": self.terminal_context,
             "had_edits": self.had_edits,
-            "digest_markdown": self.digest_markdown,
-            "last_turn_markdown": self.last_turn_markdown,
             "chat_mode": self.chat_mode,
-            "last_digest_input_hash": self.last_digest_input_hash,
-            "last_digested_pair_index": self.last_digested_pair_index,
             "message_count": self.message_count,
             "turn_count": self.turn_count,
             "tool_call_count": self.tool_call_count,

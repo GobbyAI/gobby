@@ -274,7 +274,7 @@ class ChatSessionMixin:
         handler = getattr(self, "event_handlers", None)
         session_manager = getattr(self, "session_manager", None)
         db = getattr(session_manager, "db", None)
-        if handler is None or db is None:
+        if handler is None or session_manager is None or db is None:
             return
         sv_mgr = SessionVariableManager(db)
         predecessor_vars = sv_mgr.get_variables(predecessor_id)
@@ -285,6 +285,11 @@ class ChatSessionMixin:
             predecessor_id,
             predecessor_vars,
         )
+        predecessor = session_manager.get(predecessor_id)
+        if predecessor is not None:
+            from gobby.sessions.title_lifecycle import apply_clear_successor_title
+
+            apply_clear_successor_title(session_manager, successor_id, predecessor)
 
     async def _create_chat_session_inner(
         self,

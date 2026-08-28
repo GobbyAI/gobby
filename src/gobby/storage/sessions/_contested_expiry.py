@@ -87,6 +87,19 @@ def read_session_variables(db: HubDatabase, session_id: str) -> dict[str, Any] |
     return _stored_variables(row)
 
 
+def session_has_active_native_subagent(db: HubDatabase, session_id: str) -> bool:
+    """Return whether a native Claude/Codex/Grok subagent is in flight on this session."""
+    variables = read_session_variables(db, session_id)
+    if not variables:
+        return False
+    raw_count = variables.get("subagent_count") or 0
+    try:
+        count = int(raw_count)
+    except (TypeError, ValueError):
+        count = 0
+    return count > 0 or bool(variables.get("is_subagent"))
+
+
 def _stored_variables(row: Mapping[str, Any] | Any) -> dict[str, Any]:
     raw = row["variables"] if isinstance(row, Mapping) else row[0]
     if isinstance(raw, str):
@@ -95,6 +108,7 @@ def _stored_variables(row: Mapping[str, Any] | Any) -> dict[str, Any]:
 
 
 __all__ = [
+    "session_has_active_native_subagent",
     "clear_contested_terminal_expiry",
     "read_session_variables",
     "record_contested_terminal_expiry",

@@ -9,7 +9,6 @@ from typing import Any, cast
 import pytest
 
 from gobby.hooks._normalization_shell import canonicalize_shell_tool_name, is_shell_tool
-from gobby.memory.digest import _extract_digest_pairs
 from gobby.sessions.transcripts.base import TokenUsage, TranscriptParser, raw_lines_from_texts
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -837,35 +836,6 @@ def test_observational_scans_leave_parser_state_untouched() -> None:
     assert droid.snapshot_state() == droid_control.snapshot_state()
     assert droid_messages == droid_fresh_messages
     assert _parse_events(droid, droid_following) == _parse_events(droid_control, droid_following)
-
-    digest_turns = [
-        {
-            "type": "response_item",
-            "timestamp": timestamp,
-            "payload": {
-                "type": "message",
-                "role": role,
-                "content": [
-                    {
-                        "type": "input_text" if role == "user" else "output_text",
-                        "text": text,
-                    }
-                ],
-            },
-        }
-        for role, text in (("user", "one"), ("assistant", "done"), ("user", "two"))
-    ]
-    reused = CodexTranscriptParser(session_id="digest")
-    reused_counts = (
-        len(_extract_digest_pairs(reused, digest_turns)),
-        len(_extract_digest_pairs(reused, digest_turns[:2])),
-    )
-    fresh_counts = (
-        len(_extract_digest_pairs(CodexTranscriptParser(session_id="digest"), digest_turns)),
-        len(_extract_digest_pairs(CodexTranscriptParser(session_id="digest"), digest_turns[:2])),
-    )
-
-    assert reused_counts == fresh_counts
 
 
 def _private_state(parser: TranscriptParser) -> dict[str, Any]:

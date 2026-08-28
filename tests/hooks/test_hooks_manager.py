@@ -15,6 +15,7 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.session_lookup import NON_MATERIALIZING_EVENTS
@@ -586,6 +587,68 @@ class TestHookManagerBeforeAgent:
         activate.assert_called_once()
         assert first_prompt.metadata.get("_platform_session_id")
 
+    def test_first_codex_prompt_persists_provisional_title_and_terminal_identity(
+        self,
+        hook_manager_with_mocks: HookManager,
+        temp_dir: Path,
+    ) -> None:
+        manager = hook_manager_with_mocks
+        external_id = "codex-first-prompt-terminal-context"
+        start = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id=external_id,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"source": "startup", "cwd": str(temp_dir)},
+            machine_id=LOCAL_MACHINE_ID,
+        )
+        assert manager.handle(start).decision == "allow"
+        assert "_platform_session_id" not in start.metadata
+
+        terminal_context = {
+            "parent_pid": 30769,
+            "tty": "/dev/ttys091",
+            "tmux_pane": "%91",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+            "tmux_window_id": "@42",
+            "tmux_session": "gobby",
+            "term_program": "tmux",
+        }
+        first_prompt = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=external_id,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "prompt": "Fix the hook regression",
+                "cwd": str(temp_dir),
+                "terminal_context": terminal_context,
+            },
+            machine_id=LOCAL_MACHINE_ID,
+        )
+
+        with patch(
+            "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
+        ) as schedule_rename:
+            response = manager.handle(first_prompt)
+
+        assert response.decision == "allow"
+        session_id = first_prompt.metadata["_platform_session_id"]
+        session = manager._session_manager.get(session_id)
+        assert session is not None
+        assert session.title == "Codex"
+        assert session.title_source == "provisional"
+        assert session.terminal_context is not None
+        for key, value in {**terminal_context, "cwd": str(temp_dir)}.items():
+            assert session.terminal_context[key] == value
+        assert session.terminal_context["parent_name"] == "codex"
+        assert isinstance(session.terminal_context["parent_create_time"], float)
+        schedule_rename.assert_called_once()
+        scheduled_session, scheduled_title = schedule_rename.call_args.args
+        assert scheduled_session.id == session_id
+        assert scheduled_session.ref == session.ref
+        assert scheduled_title == "Codex"
+
     def test_before_agent_allows(
         self,
         hook_manager_with_mocks: HookManager,
@@ -1004,7 +1067,7 @@ class TestHookManagerBlockedObservability:
         observed: list[HookResponse] = []
         handler = MagicMock()
 
-        def blocking(_event: HookEvent, _deadline: float) -> HookResponse:
+        def blocking(_event: HookEvent, _deadline: BlockingEffectDeadline) -> HookResponse:
             order.append("blocking")
             return blocked
 
@@ -1045,7 +1108,7 @@ class TestHookManagerBlockedObservability:
         assert copied_event.event_type == HookEventType.SESSION_START
         assert copied_event.metadata["_synthetic_session_start"] is True
         assert copied_event.session_id == event.session_id
-        assert isinstance(blocking_webhooks.call_args.args[1], float)
+        assert isinstance(blocking_webhooks.call_args.args[1], BlockingEffectDeadline)
         handler.assert_not_called()
 
     def test_observer_failures_cannot_mutate_original_block(
@@ -1676,7 +1739,7 @@ class TestHookManagerSessionLookup:
         session_id = registered.id
 
         manager._session_manager.db.execute(
-            "UPDATE sessions SET title = %s, digest_markdown = %s WHERE id = %s",
+            "UPDATE sessions SET title = %s, handoff_markdown = %s WHERE id = %s",
             ("Recovered Codex Title", None, session_id),
         )
 
@@ -2543,7 +2606,10 @@ def test_copied_session_start_uses_deferred_identity_schema(
     )
     evaluated: list[HookEvent] = []
 
-    def evaluate(copied_or_live: HookEvent, _deadline: float) -> tuple[str | None, None]:
+    def evaluate(
+        copied_or_live: HookEvent,
+        _deadline: BlockingEffectDeadline,
+    ) -> tuple[str | None, None]:
         evaluated.append(copied_or_live)
         if copied_or_live.metadata.get("_synthetic_session_start"):
             return "copied-rule-context", None
@@ -2613,7 +2679,10 @@ def test_copied_session_start_rule_block_gates_live_response(
     blocked = HookResponse(decision="block", reason="copied startup blocked")
     handler = MagicMock(return_value=HookResponse(decision="allow"))
 
-    def evaluate(copied_or_live: HookEvent, _deadline: float) -> tuple[None, HookResponse | None]:
+    def evaluate(
+        copied_or_live: HookEvent,
+        _deadline: BlockingEffectDeadline,
+    ) -> tuple[None, HookResponse | None]:
         if copied_or_live.metadata.get("_synthetic_session_start"):
             return None, blocked
         pytest.fail("live rules ran after copied SessionStart blocked")
@@ -2659,7 +2728,7 @@ def test_concurrent_first_hooks_materialize_and_copy_once(
         barrier.wait(timeout=5)
         responses.append(manager.handle(event))
 
-    def evaluate(event: HookEvent, _deadline: float) -> tuple[None, None]:
+    def evaluate(event: HookEvent, _deadline: BlockingEffectDeadline) -> tuple[None, None]:
         evaluated.append(event)
         return None, None
 
@@ -2788,7 +2857,10 @@ def test_first_activity_startup_context_provider_matrix(
         machine_id=LOCAL_MACHINE_ID,
     )
 
-    def evaluate(copied_or_live: HookEvent, _deadline: float) -> tuple[str | None, None]:
+    def evaluate(
+        copied_or_live: HookEvent,
+        _deadline: BlockingEffectDeadline,
+    ) -> tuple[str | None, None]:
         if copied_or_live.metadata.get("_synthetic_session_start"):
             return "copied-rule-context", None
         return None, None

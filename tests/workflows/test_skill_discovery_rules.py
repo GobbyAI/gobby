@@ -2797,7 +2797,7 @@ class TestRequirePlanSkillCondition:
         "file_path",
         [
             "/project/.gobby/plans/wiki-output-design.md",
-            "/project/.gobby/plans/wiki-output-design.coverage-ledger.yaml",
+            "/project/.gobby/plans/coverage/wiki-output-design.coverage.yaml",
             "/project/.gobby/plans/completed/coderabbit-fixes.md",
             ".gobby/plans/wiki-output-design.md",
             "C:\\project\\.gobby\\plans\\wiki-output-design.md",
@@ -3684,6 +3684,36 @@ class TestCodeIndexNavigationRules:
         assert "If that call fails, its recorded failure fails this rule open" in response.reason
 
     @pytest.mark.asyncio
+    async def test_search_over_non_source_targets_is_not_redirected(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        allowed = (
+            "git log --oneline | grep handoff",
+            "grep -n '^#' .gobby/plans/herdr-terminal-client.md",
+            "grep needle docs/research/gobby-feedback/inbox/2026-08-27T183821-claude.md",
+        )
+
+        for loaded in (False, True):
+            variables = self._variables(loaded=loaded)
+            for command in allowed:
+                response = await engine.evaluate(
+                    self._normalized_bash_event(command),
+                    session_id=SESSION_ID,
+                    variables=variables,
+                )
+                assert response.decision == "allow", (loaded, command)
+
+            redirected = await engine.evaluate(
+                self._normalized_bash_event("grep needle src/gobby/x.py"),
+                session_id=SESSION_ID,
+                variables=variables,
+            )
+            assert redirected.decision == "block", loaded
+            assert redirected.reason is not None
+            expected_rule = "prefer-gcode-for-code-search" if loaded else "require-code-index-skill"
+            assert expected_rule in redirected.reason
+
+    @pytest.mark.asyncio
     async def test_code_index_skill_proxy_error_fails_open_until_matching_success(
         self,
         db,
@@ -3970,11 +4000,11 @@ class TestCodeIndexNavigationRules:
         command_template = (
             "cd {root} && "
             "echo alpha > first.txt && "
-            "grep alpha first.txt && "
+            "grep -r alpha . && "
             "echo beta > second.txt && "
-            "grep beta second.txt | head -1 && "
+            "grep -r beta . | head -1 && "
             "echo gamma > third.txt && "
-            "grep gamma third.txt"
+            "grep -r gamma ."
         )
         expected_names = ("first.txt", "second.txt", "third.txt")
 

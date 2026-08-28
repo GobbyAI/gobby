@@ -1,5 +1,6 @@
 """Focused tests for session storage behavior."""
 
+import json
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import replace
@@ -801,6 +802,105 @@ class TestSessionManagerLifecycle:
         assert getattr(ownership_changes[0], "session_id", None) == older.id
         assert getattr(ownership_changes[0], "terminal_owner_session_id", None) == newer.id
         assert ("session_expired", older.id) in notifications
+
+    def test_live_parent_with_native_subagent_keeps_pane_from_stray_child(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        terminal_context = {
+            "tmux_pane": "%90",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+            "parent_pid": 64881,
+        }
+        parent = session_manager.register(
+            external_id="01a0446c-parent",
+            machine_id=LOCAL_MACHINE_ID,
+            source="grok",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        child = session_manager.register(
+            external_id="01a04561-child",
+            machine_id=LOCAL_MACHINE_ID,
+            source="grok",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        session_manager.db.execute(
+            """
+            INSERT INTO session_variables (session_id, variables)
+            VALUES (%s, %s::jsonb)
+            ON CONFLICT (session_id)
+            DO UPDATE SET variables = EXCLUDED.variables
+            """,
+            (parent.id, json.dumps({"subagent_count": 1, "is_subagent": True})),
+        )
+        caplog.set_level("INFO", logger="gobby.storage.sessions")
+        monkeypatch.setattr(
+            "gobby.storage.sessions._terminal_revival.resolve_pane_ownership",
+            lambda *_args, **_kwargs: pytest.fail(
+                "native-subagent parent must not lose via process inspect"
+            ),
+        )
+
+        revived = session_manager.revive_expired_terminal_session(child.id)
+
+        assert revived is not None
+        live_parent = session_manager.get(parent.id)
+        assert live_parent is not None
+        assert live_parent.status == "active"
+        stray = session_manager.get(child.id)
+        assert stray is not None
+        assert stray.status == "expired"
+        assert [
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "terminal_session_owner_superseded"
+            and getattr(record, "session_id", None) == parent.id
+        ] == []
+
+    def test_two_live_interactive_sessions_requested_wins_without_native_subagent(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        terminal_context = {
+            "tmux_pane": "%91",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+            "parent_pid": 64881,
+            "parent_create_time": 100.0,
+        }
+        older = session_manager.register(
+            external_id="replacement-older",
+            machine_id=LOCAL_MACHINE_ID,
+            source="grok",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        newer = session_manager.register(
+            external_id="replacement-newer",
+            machine_id=LOCAL_MACHINE_ID,
+            source="grok",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        monkeypatch.setattr(
+            "gobby.storage.sessions._terminal_revival.resolve_pane_ownership",
+            _same_pid_process_resolve,
+        )
+
+        revived = session_manager.revive_expired_terminal_session(newer.id)
+
+        assert revived is not None
+        assert revived.status == "active"
+        assert revived.id == newer.id
+        superseded = session_manager.get(older.id)
+        assert superseded is not None
+        assert superseded.status == "expired"
 
     def test_revive_keeps_older_live_session_over_newer_handoff_ghost(
         self,

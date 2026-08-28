@@ -3,7 +3,7 @@ tags: [tool-hygiene, enforcement, python, testing, gobby, default]
 rules:
   require-pytest-guard-env:
     description: >-
-      Require the guard_tests env prefix (GOBBY_TEST_PROTECT=1 and a test
+      Require the test env prefix (GOBBY_TEST_PROTECT=1 and a test
       DATABASE_URL) on agent pytest runs in the gobby repo. Scoped to the
       gobby project by UUID; inert everywhere else.
     event: before_tool
@@ -23,8 +23,7 @@ rules:
       command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+|python3?\\s+-m\\s+)?pytest(?=$|[\\s;&|<>()])"
       command_not_pattern: "(?s)(?=.*GOBBY_TEST_PROTECT=1)(?=.*DATABASE_URL=)"
       reason: >-
-        Run pytest through the project's guard prefix (verification.custom.guard_tests
-        in .gobby/project.json):
+        Run pytest through the test env prefix:
         DATABASE_URL="${DATABASE_URL:-postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test}"
         GOBBY_TEST_PROTECT=1 uv run pytest <targets>.
         Without GOBBY_TEST_PROTECT=1, DB-backed tests skip silently and read as

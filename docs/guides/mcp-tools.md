@@ -502,36 +502,36 @@ contract and [spec-writing.md](./spec-writing.md) for the authoring flow.
 | `search_session_messages` | Search rendered transcript messages by substring. |
 | `get_session_commits` | Git commits made during a session timeframe. |
 | `get_usage_breakdown` | Token usage broken down by source and model over a period. |
-| `set_handoff_context` | Set handoff context (agent-authored or auto-fallback). Optional `to_session` peer delivery. |
-| `get_handoff_context` | Read handoff context from a session. |
-| `wait_for_summary` | Wait for a session's `summary_markdown` to become available. |
+| `set_handoff` | Set handoff context (agent-authored or auto-fallback). Optional `to_session` peer delivery. |
+| `get_handoff` | Read handoff context from a session. |
+| `get_handoff` | Wait for a session's `summary_markdown` to become available. |
 | `mark_loop_complete` | Mark the autonomous loop as complete to prevent session chaining. |
 | `capture_baseline_dirty_files` | Capture current dirty files as the session-aware commit-detection baseline. |
 | `restore_session_transcript` | Restore a transcript from the gzip archive for CLI resume. |
 | `get_transcript_status` | Check if a transcript archive exists and read its file stats. |
 | `send_keys` | Send keystrokes to a session's tmux terminal. |
 | `capture_output` | Capture the last N lines of a session's tmux terminal output. |
-| `compact_self` | Trigger context compaction in the calling session via the appropriate slash command. |
+| `set_handoff` | Trigger context compaction in the calling session via the appropriate slash command. |
 
-Session handoff generation is CLI-driven (`gobby sessions create-handoff`);
+Session handoff generation is CLI-driven (`gobby sessions summarize`);
 the MCP surface focuses on context manipulation.
 
 ### Example: Session Handoff
 
 ```python
 # Author a handoff in the current session
-call_tool("gobby-sessions", "set_handoff_context", {
+call_tool("gobby-sessions", "set_handoff", {
     "content": "Refactored auth/middleware.py; tests green; PR #123 open.",
     "set_handoff_ready": True,
 })
 
 # In a successor session, read the most recent handoff_ready context
-call_tool("gobby-sessions", "get_handoff_context", {})
+call_tool("gobby-sessions", "get_handoff", {})
 ```
 
 CLI context compaction does not create a successor: the compact restart
 reactivates the same session row in place, and the caller may read its own
-summary through `get_handoff_context` regardless of status.
+summary through `get_handoff` regardless of status.
 
 ---
 
@@ -567,8 +567,7 @@ and the optional FalkorDB knowledge graph.
 
 | Tool | Description |
 | :--- | :--- |
-| `bootstrap_session_title` | Set a heuristic session title from the first meaningful prompt. |
-| `build_turn_and_digest` | Build a turn record from the last response and append it to the session digest. |
+| `judge_shadow_relevance` | Judge pending shadow-memory recall candidates after a completed turn. |
 
 ### Backup, Restore, and Maintenance
 

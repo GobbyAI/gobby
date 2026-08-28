@@ -17,25 +17,12 @@ from gobby.cli.utils import get_install_dir
 from gobby.install.bin_freshness_models import is_at_least_version
 from gobby.utils.deps import get_ghook_version
 
-from .hook_commands import build_hook_command, set_gobby_hook_timeouts
+from .hook_commands import rewrite_hook_template_commands, set_gobby_hook_timeouts
 from .shared import install_global_hooks, install_shared_content
 
 logger = logging.getLogger(__name__)
 
 _MIN_GHOOK_VERSION_FOR_GROK: Final[str] = "0.5.0"
-
-_HOOK_TYPE_MAP = {
-    "SessionStart": "session_start",
-    "SessionEnd": "session_end",
-    "UserPromptSubmit": "user_prompt_submit",
-    "PreToolUse": "pre_tool_use",
-    "PostToolUse": "post_tool_use",
-    "PostToolUseFailure": "post_tool_use_failure",
-    "PreCompact": "pre_compact",
-    "PostCompact": "post_compact",
-    "Stop": "stop",
-    "Notification": "notification",
-}
 
 
 def _grok_ghook_support_error() -> str | None:
@@ -128,7 +115,7 @@ def install_grok(
     with open(source_hooks_template) as f:
         hook_config = json.load(f)
 
-    _rewrite_grok_hook_commands(hook_config, hooks_dir)
+    rewrite_hook_template_commands(hook_config, cli_name="grok", hooks_dir=hooks_dir)
     set_gobby_hook_timeouts(hook_config, timeout=hook_timeout_seconds)
 
     with open(gobby_hook_file, "w") as f:
@@ -245,31 +232,6 @@ def uninstall_grok(project_path: Path, mode: str = "global") -> dict[str, Any]:
     files_removed.append(str(hook_file))
     result["success"] = True
     return result
-
-
-def _rewrite_grok_hook_commands(hook_config: dict[str, Any], hooks_dir: Path) -> None:
-    hooks = hook_config.get("hooks")
-    if not isinstance(hooks, dict):
-        return
-
-    for grok_hook, native_hook in _HOOK_TYPE_MAP.items():
-        if grok_hook not in hooks:
-            continue
-        command = build_hook_command("grok", native_hook, hooks_dir)
-        _rewrite_commands(hooks[grok_hook], command)
-
-
-def _rewrite_commands(node: Any, command: str) -> None:
-    if isinstance(node, list):
-        for item in node:
-            _rewrite_commands(item, command)
-        return
-    if not isinstance(node, dict):
-        return
-    if isinstance(node.get("command"), str):
-        node["command"] = command
-    for value in node.values():
-        _rewrite_commands(value, command)
 
 
 __all__ = ["install_grok", "uninstall_grok"]

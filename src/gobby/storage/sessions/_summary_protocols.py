@@ -26,7 +26,6 @@ class SummaryUpdateHost(Protocol):
         summary_markdown: str,
         generation_mode: str,
         source_context_hash: str | None = None,
-        source_digest_turn_count: int | None = None,
         previous_revision_id: str | None = None,
         metadata_json: Mapping[str, Any] | None = None,
         summary_path: str | None | UnsetType = UNSET,

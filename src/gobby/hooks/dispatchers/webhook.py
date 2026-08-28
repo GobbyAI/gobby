@@ -11,7 +11,7 @@ import concurrent.futures
 import logging
 
 from gobby.hooks.background_tasks import create_background_task
-from gobby.hooks.effect_deadline import new_blocking_effect_deadline
+from gobby.hooks.effect_deadline import BlockingEffectDeadline, new_blocking_effect_deadline
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.logging_utils import block_tool_name_from_event_data, log_structured_block
 from gobby.hooks.webhooks import WebhookDispatcher, WebhookResult
@@ -45,7 +45,7 @@ def evaluate_blocking_webhooks(
     logger: logging.Logger,
     loop: asyncio.AbstractEventLoop | None,
     *,
-    deadline: float | None = None,
+    deadline: BlockingEffectDeadline | None = None,
 ) -> HookResponse | None:
     """Evaluate blocking webhooks before handler execution.
 
@@ -91,7 +91,7 @@ def dispatch_webhooks_sync(
     logger: logging.Logger,
     blocking_only: bool = False,
     *,
-    deadline: float | None = None,
+    deadline: BlockingEffectDeadline | None = None,
 ) -> list[WebhookResult]:
     """Dispatch webhooks synchronously (for blocking webhooks).
 

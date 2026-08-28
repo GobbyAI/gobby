@@ -10,7 +10,6 @@ from gobby.cli.tasks import expand as expand_module
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.hooks import factory as hook_factory
-from gobby.mcp_proxy.tools.sessions import _terminal_handoff as terminal_handoff
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _OPERATIONAL_CONSUMERS = (
@@ -20,7 +19,6 @@ _OPERATIONAL_CONSUMERS = (
     "src/gobby/cli/tasks/_utils/config.py",
     "src/gobby/cli/tasks/expand.py",
     "src/gobby/hooks/factory.py",
-    "src/gobby/mcp_proxy/tools/sessions/_terminal_handoff.py",
 )
 
 
@@ -75,22 +73,6 @@ def test_command_reads_one_revision(monkeypatch: pytest.MonkeyPatch) -> None:
     assert expansion_arguments == [
         {"task_manager": task_manager, "llm_service": llm_service, "config": config}
     ]
-
-    config_reads: list[None] = []
-
-    def resolve_config() -> DaemonConfig:
-        config_reads.append(None)
-        return config
-
-    summary_config, compact_config = terminal_handoff._capture_handoff_configs(
-        resolve_config,
-        session_summary_config=None,
-        compact_handoff_config=None,
-    )
-
-    assert config_reads == [None]
-    assert summary_config is config.session_summary
-    assert compact_config is config.compact_handoff
 
 
 def test_hook_config_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
