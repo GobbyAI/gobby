@@ -100,14 +100,17 @@ async def sweep_tmux_terminals(
     Returns the live panes keyed by ``locator_key`` so callers can decorate
     inventory rows with pane metadata that is not persisted. Rows owned by
     Gobby (agent and web spawns) are left to their lifecycle; a pending Gobby
-    row whose session name matches a pane is a spawn still being promoted.
+    row whose spawn key (the tmux session name until ``promote_to_live`` records
+    it as ``session_name``) matches a pane is a spawn still being promoted.
     """
     rows = manager.list_live_by_machine(machine_id)
     by_key = {row.locator_key: row for row in rows if row.locator_key}
     pending_names = {
-        row.session_name
+        name
         for row in rows
-        if row.ownership == "gobby" and row.state == "pending" and row.session_name
+        if row.ownership == "gobby" and row.state == "pending"
+        for name in (row.session_name, row.spawn_key)
+        if name
     }
     seen: dict[str, TmuxPaneInfo] = {}
     swept_sockets: set[str] = set()

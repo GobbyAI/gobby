@@ -150,16 +150,14 @@ async def test_sweep_leaves_gobby_owned_rows_to_their_lifecycle(
         session_name="gobby-live",
         title="agent title",
     )
+    # A pending agent spawn carries only its spawn_key: the tmux session is
+    # named by it, and session_name is recorded by promote_to_live afterwards.
     manager.create_pending(
         terminal_id=str(uuid.uuid4()),
         project_id=sample_project["id"],
         backend="tmux",
         ownership="gobby",
         spawn_key="gobby-spawning",
-    )
-    temp_db.execute(
-        "UPDATE terminals SET session_name = %s WHERE spawn_key = %s",
-        ("gobby-spawning", "gobby-spawning"),
     )
     spawning = pane(GOBBY_SOCKET, "%3", session_name="gobby-spawning")
 
