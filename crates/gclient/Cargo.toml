@@ -6,7 +6,6 @@ rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
 description = "Gobby terminal workspace client"
 license = "Apache-2.0"
-license-file = "LICENSE"
 repository = "https://github.com/GobbyAI/gobby"
 homepage = "https://gobby.ai"
 keywords = ["gobby", "terminal", "tui"]

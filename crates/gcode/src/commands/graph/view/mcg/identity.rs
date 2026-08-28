@@ -31,6 +31,20 @@ pub(crate) struct McgSeed {
     pub file: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum McgSeedSelector<'a> {
+    File(&'a str),
+    Module(&'a str),
+}
+
+impl<'a> McgSeedSelector<'a> {
+    pub(crate) fn value(self) -> &'a str {
+        match self {
+            Self::File(value) | Self::Module(value) => value,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum McgSeedError {
     Missing {
@@ -60,11 +74,18 @@ impl fmt::Display for McgSeedError {
 impl std::error::Error for McgSeedError {}
 
 pub(crate) fn resolve_mcg_seed(
-    seed: &str,
+    selector: McgSeedSelector<'_>,
     identity: &McgIdentity,
 ) -> Result<McgSeed, McgSeedError> {
-    if identity.visible_files.contains(seed) {
-        return Ok(closed_file_seed(seed, "file", identity));
+    let seed = selector.value();
+    if matches!(selector, McgSeedSelector::File(_)) {
+        return identity
+            .visible_files
+            .contains(seed)
+            .then(|| closed_file_seed(seed, "file", identity))
+            .ok_or_else(|| McgSeedError::Missing {
+                input: seed.to_string(),
+            });
     }
     let providers = identity.providers_for(seed);
     match providers.as_slice() {

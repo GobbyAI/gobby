@@ -1,7 +1,10 @@
 use crate::{commands, config, freshness, output};
 use clap::Parser as _;
+use std::path::Path;
 
-use crate::cli::{self, Cli, Command, EmbeddingsCommand, GraphCommand, VectorCommand};
+use crate::cli::{
+    self, Cli, Command, EmbeddingsCommand, GraphCommand, GraphViewSeed, VectorCommand,
+};
 
 mod usage;
 
@@ -71,6 +74,48 @@ fn ensure_symbol_fresh(ctx: &config::Context, disabled: bool, id: &str) -> anyho
         warn_if_busy(ctx, freshness::ensure_symbol_fresh(ctx, id)?);
     }
     Ok(())
+}
+
+fn resolve_exact_file(ctx: &config::Context, cwd: &Path, file: &str) -> anyhow::Result<String> {
+    Ok(commands::scope::resolve_path_input(
+        ctx,
+        cwd,
+        commands::scope::ScopedPathInput::ExactFile(file),
+    )?)
+}
+
+fn resolve_filters(
+    ctx: &config::Context,
+    cwd: &Path,
+    paths: &[String],
+) -> anyhow::Result<Vec<String>> {
+    Ok(paths
+        .iter()
+        .map(|path| {
+            commands::scope::resolve_path_input(
+                ctx,
+                cwd,
+                commands::scope::ScopedPathInput::Filter(path),
+            )
+        })
+        .collect::<Result<_, _>>()?)
+}
+
+fn resolve_globs(
+    ctx: &config::Context,
+    cwd: &Path,
+    globs: &[String],
+) -> anyhow::Result<Vec<String>> {
+    Ok(globs
+        .iter()
+        .map(|glob| {
+            commands::scope::resolve_path_input(
+                ctx,
+                cwd,
+                commands::scope::ScopedPathInput::Glob(glob),
+            )
+        })
+        .collect::<Result<_, _>>()?)
 }
 
 fn warn_if_busy(ctx: &config::Context, status: freshness::FreshnessStatus) {
@@ -302,6 +347,7 @@ fn run() -> anyhow::Result<()> {
         cli.quiet,
         service_config_selection(&cli.command),
     )?;
+    let cwd = std::env::current_dir()?;
 
     match cli.command {
         // These commands are handled before Context::resolve(); this arm keeps the
@@ -316,6 +362,7 @@ fn run() -> anyhow::Result<()> {
             skip_if_locked,
         } => commands::index::run(
             &ctx,
+            &cwd,
             path,
             files,
             full,
@@ -343,7 +390,10 @@ fn run() -> anyhow::Result<()> {
                     file,
                     allow_missing_indexed_file,
                 },
-        } => commands::graph::sync_file(&ctx, &file, allow_missing_indexed_file, format),
+        } => {
+            let file = resolve_exact_file(&ctx, &cwd, &file)?;
+            commands::graph::sync_file(&ctx, &file, allow_missing_indexed_file, format)
+        }
         Command::Graph {
             command: GraphCommand::Clear { project_id: None },
         } => commands::graph::clear(&ctx, format),
@@ -374,6 +424,7 @@ fn run() -> anyhow::Result<()> {
                     allow_missing_indexed_file,
                 },
         } => {
+            let file = resolve_exact_file(&ctx, &cwd, &file)?;
             if !allow_missing_indexed_file {
                 ensure_file_fresh(&ctx, cli.allow_stale, &file)?;
             }
@@ -417,6 +468,7 @@ fn run() -> anyhow::Result<()> {
         Command::Graph {
             command: GraphCommand::File { file },
         } => {
+            let file = resolve_exact_file(&ctx, &cwd, &file)?;
             ensure_file_fresh(&ctx, cli.allow_stale, &file)?;
             commands::graph::file(&ctx, &file, format)
         }
@@ -435,6 +487,10 @@ fn run() -> anyhow::Result<()> {
                     limit,
                 },
         } => {
+            let file = file
+                .as_deref()
+                .map(|file| resolve_exact_file(&ctx, &cwd, file))
+                .transpose()?;
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::graph::graph_blast_radius(
                 &ctx,
@@ -446,8 +502,11 @@ fn run() -> anyhow::Result<()> {
             )
         }
         Command::Graph {
-            command: GraphCommand::View(args),
+            command: GraphCommand::View(mut args),
         } => {
+            if let GraphViewSeed::File(file) = &mut args.seed {
+                *file = resolve_exact_file(&ctx, &cwd, file)?;
+            }
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::graph::view(&ctx, &args, format)
         }
@@ -461,6 +520,7 @@ fn run() -> anyhow::Result<()> {
             language,
             token_budget: _,
         } => {
+            let paths = resolve_filters(&ctx, &cwd, &paths)?;
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::search::search(
                 &ctx,
@@ -488,6 +548,7 @@ fn run() -> anyhow::Result<()> {
             with_graph,
             token_budget: _,
         } => {
+            let paths = resolve_filters(&ctx, &cwd, &paths)?;
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::search::search_symbol(
                 &ctx,
@@ -513,6 +574,7 @@ fn run() -> anyhow::Result<()> {
             language,
             token_budget: _,
         } => {
+            let paths = resolve_filters(&ctx, &cwd, &paths)?;
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::search::search_text(
                 &ctx,
@@ -536,6 +598,7 @@ fn run() -> anyhow::Result<()> {
             language,
             token_budget: _,
         } => {
+            let paths = resolve_filters(&ctx, &cwd, &paths)?;
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::search::search_content(
                 &ctx,
@@ -570,6 +633,8 @@ fn run() -> anyhow::Result<()> {
             offset,
             token_budget: _,
         } => {
+            let paths = resolve_filters(&ctx, &cwd, &paths)?;
+            let glob = resolve_globs(&ctx, &cwd, &glob)?;
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::grep::run(
                 &ctx,
@@ -598,6 +663,7 @@ fn run() -> anyhow::Result<()> {
             offset,
             token_budget: _,
         } => {
+            let file = resolve_exact_file(&ctx, &cwd, &file)?;
             ensure_file_fresh(&ctx, cli.allow_stale, &file)?;
             commands::symbols::outline(
                 &ctx,
@@ -614,9 +680,10 @@ fn run() -> anyhow::Result<()> {
             commands::symbols::symbol(&ctx, &id, format)
         }
         Command::SymbolAt { location, line } => {
-            let file = commands::symbol_at::requested_file_for_freshness(&ctx, &location, line)?;
+            let file =
+                commands::symbol_at::requested_file_for_freshness(&ctx, &cwd, &location, line)?;
             ensure_file_fresh(&ctx, cli.allow_stale, &file)?;
-            commands::symbol_at::run(&ctx, &location, line, format)
+            commands::symbol_at::run(&ctx, &cwd, &location, line, format)
         }
         Command::Symbols {
             ids,
@@ -636,12 +703,14 @@ fn run() -> anyhow::Result<()> {
             commands::symbols::kinds(&ctx, limit, offset, effective_token_budget, format)
         }
         Command::Tree {
+            paths,
             limit,
             offset,
             token_budget: _,
         } => {
+            let paths = resolve_filters(&ctx, &cwd, &paths)?;
             ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::symbols::tree(&ctx, limit, offset, effective_token_budget, format)
+            commands::symbols::tree(&ctx, &paths, limit, offset, effective_token_budget, format)
         }
         Command::Callers {
             symbol_name,
@@ -697,6 +766,7 @@ fn run() -> anyhow::Result<()> {
             offset,
             token_budget: _,
         } => {
+            let file = resolve_exact_file(&ctx, &cwd, &file)?;
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::graph::imports(&ctx, &file, limit, offset, effective_token_budget, format)
         }

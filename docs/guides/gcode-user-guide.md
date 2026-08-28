@@ -252,10 +252,12 @@ Get the project's file tree with symbol counts per file:
 
 ```bash
 gcode tree
+gcode tree crates/gcode/src 'tests/**/*.rs'
 ```
 
-Useful for understanding project structure at a glance. Content-only text files
-appear with a zero symbol count once indexed.
+Useful for understanding project structure at a glance or scoping it to files,
+directory prefixes, and globs. Multiple paths use OR semantics. Content-only
+text files appear with a zero symbol count once indexed.
 
 ## Code Documentation
 

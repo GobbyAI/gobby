@@ -9,6 +9,7 @@ use crate::index::languages;
 use crate::models::Symbol;
 use crate::output::{self, Format};
 use crate::savings;
+use crate::search::fts;
 use crate::utils::short_id;
 use crate::visibility;
 
@@ -30,7 +31,7 @@ pub fn outline(
     verbose: bool,
 ) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let file = scope::normalize_file_arg(ctx, file);
+    let file = file.to_string();
     let symbols = visibility::visible_symbols_for_file(&mut conn, ctx, &file)?;
 
     if symbols.is_empty() && !ctx.quiet {
@@ -359,6 +360,7 @@ pub fn kinds(
 
 pub fn tree(
     ctx: &Context,
+    paths: &[String],
     limit: Option<usize>,
     offset: usize,
     token_budget: Option<usize>,
@@ -375,6 +377,7 @@ pub fn tree(
             })
         })
         .collect();
+    let files = filter_tree_files(files, paths)?;
 
     let groups = tree_groups(&files);
     let (total, limit, groups) = token_budget::window(groups, offset, limit);
@@ -417,12 +420,30 @@ pub fn tree(
                 page.next_offset,
             );
             if rendered.is_empty() {
-                Ok(())
+                output::print_text("No results.")
             } else {
                 output::print_text(&rendered)
             }
         }
     }
+}
+
+fn filter_tree_files(
+    files: Vec<serde_json::Value>,
+    paths: &[String],
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let patterns = fts::compile_patterns(&fts::expand_paths(paths))?;
+    if patterns.is_empty() {
+        return Ok(files);
+    }
+    Ok(files
+        .into_iter()
+        .filter(|file| {
+            file["file_path"]
+                .as_str()
+                .is_some_and(|path| patterns.iter().any(|pattern| pattern.matches(path)))
+        })
+        .collect())
 }
 
 /// Format file summary rows as a directory tree.
@@ -631,6 +652,57 @@ mod tests {
         })];
 
         assert_eq!(format_tree_text(&files), ".\n  lib.rs [rust] (1 symbols)");
+    }
+
+    #[test]
+    fn tree_filters_files_directories_globs_and_multiple_paths_before_paging() {
+        let files = vec![
+            serde_json::json!({
+                "file_path": "src/lib.rs",
+                "language": "rust",
+                "symbol_count": 3,
+            }),
+            serde_json::json!({
+                "file_path": "src/commands/grep.rs",
+                "language": "rust",
+                "symbol_count": 7,
+            }),
+            serde_json::json!({
+                "file_path": "tests/cli.rs",
+                "language": "rust",
+                "symbol_count": 2,
+            }),
+        ];
+
+        let exact_and_glob = filter_tree_files(
+            files.clone(),
+            &["src/lib.rs".to_string(), "tests/*.rs".to_string()],
+        )
+        .expect("filter exact file and glob");
+        assert_eq!(
+            exact_and_glob
+                .iter()
+                .filter_map(|file| file["file_path"].as_str())
+                .collect::<Vec<_>>(),
+            vec!["src/lib.rs", "tests/cli.rs"]
+        );
+
+        let directory = filter_tree_files(files.clone(), &["src".to_string()])
+            .expect("filter directory prefix");
+        assert_eq!(directory.len(), 2);
+
+        let paged = filter_tree_files(files, &["tests".to_string()]).expect("filter before paging");
+        let groups = tree_groups(&paged);
+        let (total, _, page) = token_budget::window(groups, 0, Some(1));
+        assert_eq!(total, 1, "filtering must happen before directory paging");
+        assert_eq!(page.len(), 1);
+    }
+
+    #[test]
+    fn tree_filter_rejects_invalid_glob() {
+        let error = filter_tree_files(Vec::new(), &["[".to_string()])
+            .expect_err("invalid glob should fail");
+        assert!(error.to_string().contains("invalid path glob `[`"));
     }
 
     #[test]

@@ -22,6 +22,7 @@ pub(crate) enum RunIndexLockedOutput {
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     ctx: &Context,
+    cwd: &std::path::Path,
     path: Option<String>,
     files: Option<Vec<String>>,
     full: bool,
@@ -34,8 +35,15 @@ pub fn run(
     let explicit_files: Vec<std::path::PathBuf> = files
         .unwrap_or_default()
         .into_iter()
-        .map(std::path::PathBuf::from)
-        .collect();
+        .map(|file| {
+            crate::commands::scope::resolve_path_input(
+                &target_ctx,
+                cwd,
+                crate::commands::scope::ScopedPathInput::ExactFile(&file),
+            )
+            .map(std::path::PathBuf::from)
+        })
+        .collect::<Result<_, _>>()?;
     let request = IndexRequest {
         project_root: target_ctx.project_root.clone(),
         path_filter: if explicit_files.is_empty() {

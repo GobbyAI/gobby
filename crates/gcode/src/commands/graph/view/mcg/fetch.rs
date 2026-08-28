@@ -19,7 +19,7 @@ use super::super::{
     CandidateEndpoint, CandidateEndpointKind, ViewEdgeCandidate, hint_for_availability,
     local_machine_id, non_empty, visible_map_for_candidates,
 };
-use super::identity::{McgIdentity, close_endpoint, resolve_mcg_seed};
+use super::identity::{McgIdentity, McgSeedSelector, close_endpoint, resolve_mcg_seed};
 use super::{McgHopFetch, assign_leiden_communities, walk_mcg};
 
 /// Import edge → walk candidate. The module endpoint's `file` is the unique
@@ -127,15 +127,27 @@ fn load_identity(ctx: &Context) -> anyhow::Result<McgIdentity> {
     Ok(McgIdentity::from_resolution(&visible, &resolver, &imports))
 }
 
-pub(crate) fn run(ctx: &Context, args: &GraphViewArgs, format: Format) -> anyhow::Result<()> {
+pub(crate) fn run(
+    ctx: &Context,
+    args: &GraphViewArgs,
+    selector: McgSeedSelector<'_>,
+    format: Format,
+) -> anyhow::Result<()> {
     let facts = CodewikiFacts::from_context(ctx.clone());
     let hint = hint_for_availability(ctx, &facts.graph_availability());
     if !matches!(facts.graph_availability(), GraphAvailability::Available) {
         let seed = ViewSeed {
-            id: args.seed.clone(),
-            name: args.seed.clone(),
-            kind: "file".to_string(),
-            file: Some(args.seed.clone()),
+            id: selector.value().to_string(),
+            name: selector.value().to_string(),
+            kind: match selector {
+                McgSeedSelector::File(_) => "file",
+                McgSeedSelector::Module(_) => "module",
+            }
+            .to_string(),
+            file: match selector {
+                McgSeedSelector::File(file) => Some(file.to_string()),
+                McgSeedSelector::Module(_) => None,
+            },
         };
         return print_view(
             &super::super::empty_view_payload(ctx, args, seed, hint)?,
@@ -144,7 +156,7 @@ pub(crate) fn run(ctx: &Context, args: &GraphViewArgs, format: Format) -> anyhow
     }
 
     let identity = load_identity(ctx)?;
-    let resolved = resolve_mcg_seed(&args.seed, &identity)?;
+    let resolved = resolve_mcg_seed(selector, &identity)?;
     let seed = ViewSeed {
         id: resolved.input.clone(),
         name: resolved.input.clone(),

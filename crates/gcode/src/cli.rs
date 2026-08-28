@@ -291,6 +291,9 @@ pub(crate) enum Command {
     },
     /// File tree with symbol counts
     Tree {
+        /// Project file, directory, or glob filter (repeatable; OR semantics)
+        #[arg(value_name = "PATH")]
+        paths: Vec<String>,
         #[arg(long, value_parser = positive_usize)]
         limit: Option<usize>,
         #[arg(long, default_value = "0")]
@@ -501,9 +504,16 @@ impl GraphViewKind {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum GraphViewSeed {
+    File(String),
+    Module(String),
+    Symbol(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct GraphViewArgs {
     pub view: GraphViewKind,
-    pub seed: String,
+    pub seed: GraphViewSeed,
     pub depth: Option<u32>,
     pub incoming_limit: Option<usize>,
     pub outgoing_limit: Option<usize>,
@@ -516,12 +526,25 @@ impl GraphViewArgs {
 }
 
 #[derive(Args, Clone, Debug)]
+#[command(group(
+    ArgGroup::new("seed")
+        .required(true)
+        .multiple(false)
+        .args(["file", "module", "symbol"])
+))]
 struct GraphViewArgsRaw {
     /// View kind: fcg, mcg, or class-hierarchy
     #[arg(long, value_enum)]
     view: GraphViewKind,
-    /// Symbol query for fcg/class-hierarchy, or file/module for mcg
-    seed: String,
+    /// Project file seed (mcg only)
+    #[arg(long, value_name = "FILE")]
+    file: Option<String>,
+    /// Module seed (mcg only)
+    #[arg(long, value_name = "MODULE")]
+    module: Option<String>,
+    /// Symbol query seed (fcg and class-hierarchy only)
+    #[arg(long, value_name = "SYMBOL")]
+    symbol: Option<String>,
     /// Hop depth (1..=16). Omitted: 8 for class-hierarchy, 1 for fcg/mcg
     #[arg(
         long,
@@ -552,9 +575,41 @@ impl FromArgMatches for GraphViewArgs {
                 "--incoming-limit and --outgoing-limit cannot be used with --view=class-hierarchy",
             ));
         }
+        let seed = match (raw.file, raw.module, raw.symbol) {
+            (Some(file), None, None) => GraphViewSeed::File(file),
+            (None, Some(module), None) => GraphViewSeed::Module(module),
+            (None, None, Some(symbol)) => GraphViewSeed::Symbol(symbol),
+            _ => {
+                return Err(clap::Error::raw(
+                    clap::error::ErrorKind::MissingRequiredArgument,
+                    "exactly one of --file, --module, or --symbol is required",
+                ));
+            }
+        };
+        let selector_is_valid = matches!(
+            (raw.view, &seed),
+            (
+                GraphViewKind::Mcg,
+                GraphViewSeed::File(_) | GraphViewSeed::Module(_)
+            ) | (
+                GraphViewKind::Fcg | GraphViewKind::ClassHierarchy,
+                GraphViewSeed::Symbol(_)
+            )
+        );
+        if !selector_is_valid {
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::ArgumentConflict,
+                match raw.view {
+                    GraphViewKind::Mcg => "--view=mcg requires --file or --module",
+                    GraphViewKind::Fcg | GraphViewKind::ClassHierarchy => {
+                        "--view=fcg and --view=class-hierarchy require --symbol"
+                    }
+                },
+            ));
+        }
         Ok(Self {
             view: raw.view,
-            seed: raw.seed,
+            seed,
             depth: raw.depth,
             incoming_limit: raw.incoming_limit,
             outgoing_limit: raw.outgoing_limit,

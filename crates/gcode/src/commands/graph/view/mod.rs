@@ -8,7 +8,7 @@ mod render;
 use anyhow::Context as _;
 use std::collections::HashSet;
 
-use crate::cli::GraphViewArgs;
+use crate::cli::{GraphViewArgs, GraphViewKind, GraphViewSeed};
 use crate::codewiki_facts::GraphAvailability;
 use crate::config::Context;
 use crate::db;
@@ -382,16 +382,22 @@ fn empty_view_payload(
 }
 
 pub(crate) fn run(ctx: &Context, args: &GraphViewArgs, format: Format) -> anyhow::Result<()> {
-    match args.view {
-        crate::cli::GraphViewKind::Mcg => mcg::run(ctx, args, format),
-        crate::cli::GraphViewKind::Fcg => {
-            let symbol = resolve_view_seed(ctx, &args.seed).context("resolve graph view seed")?;
+    match (args.view, &args.seed) {
+        (GraphViewKind::Mcg, GraphViewSeed::File(file)) => {
+            mcg::run(ctx, args, mcg::McgSeedSelector::File(file), format)
+        }
+        (GraphViewKind::Mcg, GraphViewSeed::Module(module)) => {
+            mcg::run(ctx, args, mcg::McgSeedSelector::Module(module), format)
+        }
+        (GraphViewKind::Fcg, GraphViewSeed::Symbol(seed)) => {
+            let symbol = resolve_view_seed(ctx, seed).context("resolve graph view seed")?;
             fcg::run(ctx, args, &symbol, format)
         }
-        crate::cli::GraphViewKind::ClassHierarchy => {
-            let symbol = resolve_view_seed(ctx, &args.seed).context("resolve graph view seed")?;
+        (GraphViewKind::ClassHierarchy, GraphViewSeed::Symbol(seed)) => {
+            let symbol = resolve_view_seed(ctx, seed).context("resolve graph view seed")?;
             class_hierarchy::run(ctx, args, &symbol, format)
         }
+        _ => anyhow::bail!("invalid graph view selector for {}", args.view.as_str()),
     }
 }
 
