@@ -132,3 +132,33 @@ tests named in 1.4 — `tests/test_runner_lifecycle_restart_replay.py::TestAgent
 if the default revert in 1.3 turns it red). A carved-out test must fail for the
 behavioural reason recorded at `518cec5c41` (an assertion or mock-call failure),
 never at collection.
+
+## Landing status
+
+Landed on `0.5.0` through `0.5.0-test` (`.gobby/plans/herdr-foundation-landing.md`,
+epic #21120):
+
+- **P1** — vendored herdr sources and the `gobby-terminal` crate import.
+- **P2** — the `terminals` table, `agent_runs.terminal_id`, `TerminalRuntime`, and the
+  tmux runtime behind it. The DDL shipped as migration **411** (`411_terminals.sql`),
+  not 408: `0.5.0` landed 408–410 while the landing epic was in flight, so leaf 2.1's
+  merge of `0.5.0` renumbered it. The "pins stay at 407 until migration 408 lands"
+  wording under *Landing worktree* describes leaf 1.1 historically.
+- **§3.1/§3.2** — the `gterm` host and the control/frame protocols.
+- **P4, opt-in only** — `NativeTerminalRuntime`, the native web proxy, and the
+  `gobby-client` crate skeleton, behind `backend: native` with `tmux` as the shipped
+  default (see *Backend status*).
+
+Not landed, owned by the follow-on epic (working title *herdr client completion*,
+planned on the landed tree):
+
+- the `gclient` workspace and herdr UI parity;
+- native launches as the default backend and the honest flip gate;
+- the parity suites and their weekly producer;
+- the E1 stack test's host-driven assertions (the tautological clauses were deleted
+  in leaf 1.3; the surviving clauses assert tmux rows, roster, attention, and
+  finalisation through the isolated daemon).
+
+`.gobby/plans/herdr-terminal-client-qa-fixes.md` is superseded by the follow-on epic
+and is kept only as source material. The live-window evidence for the landing is
+`docs/evidence/herdr-foundation-landing.md`.
