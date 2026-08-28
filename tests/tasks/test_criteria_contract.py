@@ -91,3 +91,9 @@ def test_release_install_and_smoke_outcome_phrasing_is_operational() -> None:
     )
 
     assert required_operational_actions(criteria) == ("install", "smoke")
+
+
+def test_nominal_operational_requirements_are_detected() -> None:
+    criteria = "Release ghook installation, daemon restart, and live smoke checks are required."
+
+    assert required_operational_actions(criteria) == ("install", "restart", "smoke")

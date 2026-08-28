@@ -12,17 +12,19 @@ _OPERATIONAL_REQUIREMENTS = {
         r"\b(?:install(?:ed|ing)?|installation)\s+(?:the\s+)?"
         r"(?:release|binary|artifact|package|build|executable|service|plugin|skill)\b|"
         r"\b(?:release|binary|artifact|package|build|executable|service|plugin|skill)\b"
-        r"(?:\s+[\w.-]+){0,4}\s+(?:is\s+|was\s+)?installed\b",
+        r"(?:\s+[\w.-]+){0,4}\s+(?:(?:is\s+|was\s+)?installed|installation)\b",
         re.IGNORECASE,
     ),
     "restart": re.compile(
         r"\brestart(?:ed|ing)?\s+(?:the\s+)?(?:daemon|service|server|app(?:lication)?)\b|"
-        r"\b(?:daemon|service|server|app(?:lication)?)\s+(?:is\s+|was\s+)?restarted\b",
+        r"\b(?:daemon|service|server|app(?:lication)?)\s+"
+        r"(?:(?:is\s+|was\s+)?restarted|restart)\b",
         re.IGNORECASE,
     ),
     "smoke": re.compile(
         r"\b(?:run|perform|execute|complete)\s+(?:a\s+)?(?:live[- ]+)?"
         r"smoke(?:[- ]+(?:tests?|checks?|probes?))?\b|"
+        r"\blive[- ]+smoke[- ]+(?:tests?|checks?|probes?)\b|"
         r"\b(?:live[- ]+)?smoke(?:[- ]+(?:tests?|checks?|probes?))?\s+"
         r"(?:passes|passed|succeeds|succeeded|completes|completed|shows|show|verifies|verified)\b",
         re.IGNORECASE,
