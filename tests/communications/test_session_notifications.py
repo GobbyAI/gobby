@@ -213,7 +213,7 @@ async def test_live_native_plan_menu_replaces_continue_with_exact_choices() -> N
 async def test_restart_recovery_waits_600_seconds_and_reports_compaction_failure() -> None:
     summary_call = RenderedToolCall(
         id="compact-call",
-        tool_name="compact_self",
+        tool_name="set_handoff",
         server_name="gobby-sessions",
         tool_type="mcp",
         arguments={},

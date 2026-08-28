@@ -1462,7 +1462,7 @@ async def test_execute_merge_workspace_resolves_represented_docs_guides_readme_q
         "Documentation guides for using Gobby's features.\n\n"
         "## Quick Links\n\n"
         '- **Create a task**: `gobby tasks create "Title"` or `create_task` MCP tool\n'
-        "- **Session handoff**: `gobby sessions create-handoff` or `create_handoff` MCP tool\n"
+        "- **Session handoff**: `gobby sessions summarize` or `create_handoff` MCP tool\n"
     )
     readme.write_text(base_readme)
     _git(repo, "add", "docs/guides/README.md")
@@ -1480,15 +1480,15 @@ async def test_execute_merge_workspace_resolves_represented_docs_guides_readme_q
         "## Quick Links\n\n"
         '- **Create a task**: `gobby tasks create "Title"` or '
         '`create_task(title="Title", category="docs")`\n'
-        "- **Session handoff**: `gobby sessions create-handoff` or "
-        "`set_handoff_context` MCP tool\n"
+        "- **Session handoff**: `gobby sessions summarize` or "
+        "`set_handoff` MCP tool\n"
         "\n_Last verified: 2026-05-06_\n"
     )
     (integration_path / "docs" / "guides" / "README.md").write_text(integration_readme)
     _git(integration_path, "add", "docs/guides/README.md")
     _git(integration_path, "commit", "-m", "refresh guide index quick links")
 
-    task_readme = base_readme.replace("create_handoff", "set_handoff_context")
+    task_readme = base_readme.replace("create_handoff", "set_handoff")
     (task_path / "docs" / "guides" / "README.md").write_text(task_readme)
     (task_path / "docs" / "guides" / "mcp-tools.md").write_text("mcp tools\n")
     _git(task_path, "add", "docs/guides/README.md", "docs/guides/mcp-tools.md")

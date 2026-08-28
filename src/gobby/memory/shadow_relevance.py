@@ -308,7 +308,7 @@ async def judge_shadow_candidate_relevance(
 ) -> int:
     """Judge up to eight durable recall requests for one session."""
     memory_config = getattr(memory_manager, "config", None)
-    if not getattr(memory_config, "digest_shadow_usefulness", False):
+    if not getattr(memory_config, "shadow_relevance_judging", False):
         return 0
     if llm_service is None or not callable(getattr(llm_service, "call_json_feature", None)):
         return 0

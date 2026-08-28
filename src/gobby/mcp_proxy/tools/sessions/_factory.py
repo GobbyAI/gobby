@@ -53,7 +53,7 @@ def create_session_messages_registry(
         db: Database for dependency injection (optional)
         worktree_manager: Worktree manager for context enrichment (optional)
         transcript_reader: TranscriptReader for JSONL + gzip fallback reads (optional)
-        web_chat_session_registry: Live web-chat registry for compact_self (optional)
+        web_chat_session_registry: Live web-chat registry for handoff compact/clear (optional)
 
     Returns:
         InternalToolRegistry with all session tools registered
@@ -67,10 +67,6 @@ def create_session_messages_registry(
         config = config_resolver() if config_resolver is not None else None
         return config if config is not None else startup_config
 
-    initial_config = _config()
-    session_summary_config = getattr(initial_config, "session_summary", None)
-    compact_handoff_config = getattr(initial_config, "compact_handoff", None)
-
     # --- Message Tools ---
     # Register if transcript_reader or session_manager is available
     if transcript_reader is not None or session_manager is not None:
@@ -79,18 +75,7 @@ def create_session_messages_registry(
     # --- Handoff Tools ---
     # Only register if session_manager is available
     if session_manager is not None:
-        register_handoff_tools(
-            registry,
-            session_manager,
-            llm_service_resolver=llm_service_resolver,
-            transcript_processor=transcript_processor,
-            session_summary_config_resolver=lambda: (
-                getattr(config, "session_summary", None)
-                if (config := _config()) is not None
-                else None
-            ),
-            inter_session_message_manager=inter_session_message_manager,
-        )
+        register_handoff_tools(registry, session_manager)
 
     # --- Session CRUD Tools ---
     # Only register if session_manager is available
@@ -128,11 +113,6 @@ def create_session_messages_registry(
             registry,
             session_manager,
             db,
-            llm_service_resolver=llm_service_resolver,
-            memory_manager_resolver=memory_manager_resolver,
-            session_summary_config=session_summary_config,
-            compact_handoff_config=compact_handoff_config,
-            config_resolver=_config,
             web_chat_session_registry=web_chat_session_registry,
         )
 

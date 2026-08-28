@@ -1,10 +1,9 @@
-"""Transcript and digest helpers for session summary generation."""
+"""Transcript helpers for archival session summary generation."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -21,10 +20,8 @@ from gobby.utils.injected_context import strip_injected_context
 
 logger = logging.getLogger("gobby.sessions.summarize")
 
-TURN_PATTERN = re.compile(r"^### Turn \d+", re.MULTILINE)
 TRANSCRIPT_FALLBACK_MAX_TURNS = 80
 TRANSCRIPT_FALLBACK_MAX_CHARS = 24_000
-DIGEST_FALLBACK_MAX_CHARS = 24_000
 TRANSCRIPT_TAIL_RETRY_DELAY_SECONDS = 0.2
 TRANSCRIPT_TAIL_CHUNK_BYTES = 65_536
 
@@ -34,10 +31,7 @@ class TranscriptWindow(NamedTuple):
     truncated: bool
 
 
-_HANDOFF_RETRIEVAL = (
-    "get_handoff_context (gobby-sessions) retrieves the full stored content for the current "
-    "session.\n... [truncated]"
-)
+_TRUNCATION_MARKER = "\n... [truncated]"
 
 
 async def _read_transcript(
@@ -215,32 +209,6 @@ def _summary_source_text(value: str | None) -> str:
     return strip_injected_context(value).strip()
 
 
-def _digest_markdown_for_summary(session: Any) -> str:
-    """Return digest context with the latest completed turn when digest lags."""
-    digest_markdown = strip_injected_context(
-        _summary_source_text(getattr(session, "digest_markdown", None))
-    )
-    pending_turns = [
-        strip_injected_context(_summary_source_text(getattr(session, "last_turn_markdown", None))),
-        strip_injected_context(
-            _summary_source_text(getattr(session, "last_assistant_content", None))
-        ),
-    ]
-
-    summary_parts = [digest_markdown] if digest_markdown else []
-    next_turn = len(TURN_PATTERN.findall(digest_markdown)) + 1
-    for turn_markdown in pending_turns:
-        if not turn_markdown:
-            continue
-        joined_summary = "\n\n".join(summary_parts)
-        if turn_markdown in joined_summary:
-            continue
-        summary_parts.append(f"### Turn {next_turn}\n{turn_markdown}")
-        next_turn += 1
-
-    return "\n\n".join(summary_parts)
-
-
 def _strip_injected_context_from_value(value: Any) -> Any:
     if isinstance(value, str):
         return strip_injected_context(value)
@@ -252,16 +220,14 @@ def _strip_injected_context_from_value(value: Any) -> Any:
 
 
 def _truncate_markdown(value: str, max_chars: int) -> str:
-    """Bound inline context and identify how to retrieve the stored full content."""
+    """Bound transcript context used as summary-model input."""
     if max_chars <= 0:
         return ""
     if len(value) <= max_chars:
         return value
-    if max_chars <= len(_HANDOFF_RETRIEVAL):
-        return _HANDOFF_RETRIEVAL[:max_chars]
-    separator = "\n\n"
-    head_chars = max_chars - len(separator) - len(_HANDOFF_RETRIEVAL)
-    return f"{value[:head_chars]}{separator}{_HANDOFF_RETRIEVAL}"
+    if max_chars <= len(_TRUNCATION_MARKER):
+        return _TRUNCATION_MARKER[:max_chars]
+    return f"{value[: max_chars - len(_TRUNCATION_MARKER)]}{_TRUNCATION_MARKER}"
 
 
 def _format_transcript_fallback_summary(
@@ -274,23 +240,15 @@ def _format_transcript_fallback_summary(
     return _truncate_markdown(formatted, TRANSCRIPT_FALLBACK_MAX_CHARS)
 
 
-def _format_deterministic_summary(handoff_ctx: Any, digest_markdown: str) -> str:
-    """Build deterministic markdown when provider generation is unavailable."""
+def _format_transcript_summary(handoff_ctx: Any) -> str:
+    """Build deterministic Markdown from analyzed transcript state."""
     from gobby.sessions.formatting import format_handoff_as_markdown
 
     base_markdown = format_handoff_as_markdown(handoff_ctx)
-    current_state_parts: list[str] = []
-    if digest_markdown:
-        digest_section = _truncate_markdown(digest_markdown, DIGEST_FALLBACK_MAX_CHARS)
-        current_state_parts.append(f"### Session Digest\n\n{digest_section}")
-    if base_markdown:
-        current_state_parts.append(base_markdown)
-    if not current_state_parts:
+    if not base_markdown:
         return ""
-
-    current_state = "\n\n".join(current_state_parts)
     return (
-        f"## Current State\n\n{current_state}\n\n"
+        f"## Current State\n\n{base_markdown}\n\n"
         "## Next Steps\n\nContinue from the captured session state."
     )
 
@@ -303,44 +261,3 @@ async def async_enumerate[T](
     async for item in aiter:
         yield idx, item
         idx += 1
-
-
-def _extract_digest_turns(digest_markdown: str | None) -> tuple[str, str]:
-    """Extract first and last digest turns from rolling digest markdown.
-
-    Args:
-        digest_markdown: The session's rolling digest_markdown field.
-
-    Returns:
-        Tuple of (first_turn_text, recent_turns_text). Empty strings if unavailable.
-    """
-    if not digest_markdown:
-        return "", ""
-
-    # Split on ### Turn N headings
-    parts = TURN_PATTERN.split(digest_markdown)
-    headings = TURN_PATTERN.findall(digest_markdown)
-
-    if not headings:
-        # No turn structure - return first 500 chars as first turn
-        return _truncate_markdown(digest_markdown.strip(), 500), ""
-
-    # parts[0] is content before first heading (preamble), parts[1:] are turn contents
-    # Pair headings with their content
-    turns: list[str] = []
-    for i, heading in enumerate(headings):
-        content = parts[i + 1] if (i + 1) < len(parts) else ""
-        turns.append(f"{heading}\n{content.strip()}")
-
-    first_turn = turns[0] if turns else ""
-    # Last 2 turns for recent context
-    recent = turns[-2:] if len(turns) >= 2 else turns
-    recent_turns = "\n\n".join(recent)
-
-    # Truncate to avoid blowing up the prompt
-    if len(first_turn) > 800:
-        first_turn = _truncate_markdown(first_turn, 800)
-    if len(recent_turns) > 1500:
-        recent_turns = _truncate_markdown(recent_turns, 1500)
-
-    return first_turn, recent_turns

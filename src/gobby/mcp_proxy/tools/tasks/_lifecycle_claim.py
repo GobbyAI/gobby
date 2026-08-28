@@ -169,6 +169,13 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         except Exception as e:
             logger.debug("Best-effort session variable setting failed: %s", e)
 
+        try:
+            from gobby.sessions.title_lifecycle import update_title_for_claim
+
+            update_title_for_claim(ctx.session_manager, resolved_session_id, updated)
+        except Exception as e:
+            logger.warning("Failed to update session title after claiming %s: %s", task_id, e)
+
         return {"success": True, "task_id": resolved_id}
 
     registry.register(

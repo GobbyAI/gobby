@@ -63,7 +63,7 @@ def detect_context_compact_guidance(
                 "unknown",
                 (
                     "Context usage has been unknown for 10 non-plan turns. "
-                    "Call `gobby-sessions:compact_self` at the next clean boundary."
+                    "Call `gobby-sessions:set_handoff` with `clear_session=false` and a concise structured handoff at the next clean boundary."
                 ),
             )
         return
@@ -81,7 +81,7 @@ def detect_context_compact_guidance(
             "strong",
             (
                 f"Context pressure is {_percent(ratio)}. "
-                "Call `gobby-sessions:compact_self` at the next clean boundary."
+                "Call `gobby-sessions:set_handoff` with `clear_session=false` and a concise structured handoff at the next clean boundary."
             ),
         )
         return
@@ -92,7 +92,7 @@ def detect_context_compact_guidance(
             "soft",
             (
                 f"Context pressure is {_percent(ratio)}. "
-                "Consider calling `gobby-sessions:compact_self` at the next natural pause "
+                "Consider calling `gobby-sessions:set_handoff` with `clear_session=false` and a concise structured handoff at the next natural pause "
                 "in your work."
             ),
         )
@@ -135,7 +135,7 @@ def detect_mid_turn_context_compact_guidance(
             "strong",
             (
                 f"Context pressure is {_percent(ratio)}. "
-                "Call `gobby-sessions:compact_self` at the next clean boundary."
+                "Call `gobby-sessions:set_handoff` with `clear_session=false` and a concise structured handoff at the next clean boundary."
             ),
         )
         return
@@ -145,7 +145,7 @@ def detect_mid_turn_context_compact_guidance(
         "soft",
         (
             f"Context pressure is {_percent(ratio)}. "
-            "Consider calling `gobby-sessions:compact_self` at the next natural pause "
+            "Consider calling `gobby-sessions:set_handoff` with `clear_session=false` and a concise structured handoff at the next natural pause "
             "in your work."
         ),
     )

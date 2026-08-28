@@ -65,7 +65,7 @@ class TestMemoryConfigDefaults:
         assert config.dream.prompt_path == "memory/dream"
         assert config.dream.schedule_cron == "0 2 * * *"
         assert config.dream.min_action_confidence == 0.72
-        assert config.digest_shadow_usefulness is False
+        assert config.shadow_relevance_judging is False
         assert "digest_memory_usefulness" not in MemoryConfig.model_fields
 
 
@@ -123,18 +123,18 @@ class TestMemoryConfigValidation:
         with pytest.raises(ValidationError):
             MemoryConfig(crossref_max_links=0)
 
-    def test_digest_shadow_usefulness_requires_signal_hub(self) -> None:
+    def test_shadow_relevance_judging_requires_signal_hub(self) -> None:
         """Shadow judging cannot start without its durable request source."""
         from gobby.config.persistence import MemoryConfig
 
         with pytest.raises(ValidationError, match="recall_signal_hub"):
-            MemoryConfig(digest_shadow_usefulness=True)
+            MemoryConfig(shadow_relevance_judging=True)
 
         config = MemoryConfig(
-            digest_shadow_usefulness=True,
+            shadow_relevance_judging=True,
             recall_signal_hub=True,
         )
-        assert config.digest_shadow_usefulness is True
+        assert config.shadow_relevance_judging is True
 
 
 class TestMemoryKnowledgeGraphConfig:

@@ -484,7 +484,7 @@ describe("useSessionDetail", () => {
               session_type: "terminal",
               status: sessionFetchCount === 1 ? "active" : "expired",
               summary_markdown: null,
-              digest_markdown: digest,
+              handoff_markdown: digest,
             },
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
@@ -528,7 +528,7 @@ describe("useSessionDetail", () => {
     act(() => ws.simulateOpen());
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
-    expect(result.current.session?.digest_markdown).toBeNull();
+    expect(result.current.session?.handoff_markdown).toBeNull();
     expect(result.current.messages[0].content).toBe("Initial output");
 
     vi.useFakeTimers();
@@ -543,7 +543,7 @@ describe("useSessionDetail", () => {
       await Promise.resolve();
     });
 
-    expect(result.current.session?.digest_markdown).toBe("## Updated digest");
+    expect(result.current.session?.handoff_markdown).toBe("## Updated digest");
     expect(result.current.session?.status).toBe("expired");
     expect(result.current.messages[0].content).toBe("Initial output");
 

@@ -1,46 +1,22 @@
-"""Default title helpers for newly registered sessions."""
+"""Deterministic persisted session-title helpers."""
 
 from __future__ import annotations
 
-import re
-
 PROVISIONAL_TITLE_SOURCE = "provisional"
-HANDOFF_TITLE_SOURCE = "handoff"
-DIGEST_TITLE_SOURCE = "llm"
+TASK_TITLE_SOURCE = "task"
 MANUAL_TITLE_SOURCE = "manual"
-
-_PROVIDER_LABELS = {
-    "agent-sdk": "Agent SDK",
-    "agy": "AGY",
-    "claude": "Claude",
-    "claude code": "Claude",
-    "codex": "Codex",
-    "dispatcher_launcher": "Dispatcher",
-    "droid": "Droid",
-    "grok": "Grok",
-    "pipeline": "Pipeline",
-    "qwen": "Qwen",
-    "unknown": "Unknown",
-    "web_launcher": "Web",
-}
-_UNKNOWN_PROVIDER_RE = re.compile(r"[^a-z0-9._-]+")
 
 
 def manual_title_source(title: object) -> str | None:
-    """Return the manual source marker for a non-blank explicit title."""
+    """Return the manual source marker for a nonblank explicit title."""
     return MANUAL_TITLE_SOURCE if isinstance(title, str) and title.strip() else None
 
 
-def _normalize_provider_label(source: str) -> str:
-    normalized = source.strip().lower()
-    if normalized in _PROVIDER_LABELS:
-        return _PROVIDER_LABELS[normalized]
-    fallback = _UNKNOWN_PROVIDER_RE.sub("-", normalized).strip("-")
-    if not fallback:
-        return _PROVIDER_LABELS["unknown"]
-    return re.sub(r"[-_.]+", " ", fallback).title()
+def format_provisional_session_title(seq_num: int) -> str:
+    """Return the deterministic title for a session without an open claim."""
+    return f"(gobby): S#{seq_num}"
 
 
-def format_provisional_session_title(source: str) -> str:
-    """Return the readable placeholder title used before digest title synthesis."""
-    return _normalize_provider_label(source)
+def format_task_session_title(seq_num: int, title: str) -> str:
+    """Return the deterministic title for a successfully claimed task."""
+    return f"(gobby): Task #{seq_num} - {title.strip()}"

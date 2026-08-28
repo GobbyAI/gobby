@@ -77,7 +77,7 @@ async def dispatch_mcp_calls(
 
         # Inject event context into arguments.
         # Skip the call when no platform session_id could be resolved —
-        # downstream tools like build_turn_and_digest require a valid
+        # downstream lifecycle tools require a valid
         # session_id and fail with "session_id is required" when passed None.
         if "session_id" not in arguments:
             platform_sid = event.metadata.get("_platform_session_id")

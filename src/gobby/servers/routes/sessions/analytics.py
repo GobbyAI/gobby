@@ -92,19 +92,16 @@ def register_analytics_routes(
             except RemoteSessionOwnershipError as exc:
                 raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-            from gobby.sessions.summary_generation import generate_summary
-            from gobby.sessions.transcripts import get_parser
+            from gobby.sessions.summarize import generate_session_summaries
 
-            transcript_processor = get_parser(session.source or "claude", session_id=session_id)
-
-            result = await generate_summary(
-                session_manager=server.session_manager,
+            result = await generate_session_summaries(
                 session_id=session_id,
+                session_manager=server.session_manager,
                 llm_service=server.llm_service,
                 session_summary_config=(
                     server.config.session_summary if server.config is not None else None
                 ),
-                transcript_processor=transcript_processor,
+                db=getattr(server.session_manager, "db", None),
             )
 
             if result and result.get("error"):

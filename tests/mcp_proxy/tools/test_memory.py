@@ -3,7 +3,7 @@
 Focuses on:
 - removed image/screenshot ingestion tools
 - backup_memories / restore_memories
-- build_turn_and_digest
+- judge_shadow_relevance
 - rebuild_crossrefs / rebuild_knowledge_graph
 - reindex_embeddings
 - search_knowledge_graph edge cases
@@ -364,17 +364,17 @@ class TestBackupMemories:
         assert "Backup failed" in result["error"]
 
 
-# ─── build_turn_and_digest ──────────────────────────────────────────────
+# ─── judge_shadow_relevance ──────────────────────────────────────────────
 
 
-class TestBuildTurnAndDigest:
-    """Tests for build_turn_and_digest tool."""
+class TestJudgeShadowRelevance:
+    """Tests for judge_shadow_relevance tool."""
 
     @pytest.mark.asyncio
     async def test_no_session_id(self, mock_memory_manager: MagicMock) -> None:
         """Returns error when session_id is empty."""
         registry = create_memory_registry(lambda: mock_memory_manager)
-        result = await registry.call("build_turn_and_digest", {"session_id": ""})
+        result = await registry.call("judge_shadow_relevance", {"session_id": ""})
         assert result["success"] is False
         assert "required" in result["error"]
 
@@ -382,107 +382,22 @@ class TestBuildTurnAndDigest:
     async def test_success(
         self,
         mock_memory_manager: MagicMock,
-        mock_session_manager: MagicMock,
     ) -> None:
-        """Successful turn and digest build."""
+        """Successful relevance judging returns the completed count."""
         with patch(
-            "gobby.mcp_proxy.tools.memory._build_turn_and_digest",
+            "gobby.mcp_proxy.tools.memory.judge_shadow_candidate_relevance",
             new_callable=AsyncMock,
-            return_value={"turn_number": 1, "title": "Test"},
+            return_value=2,
         ):
-            registry = create_memory_registry(
-                lambda: mock_memory_manager, session_manager=mock_session_manager
-            )
-            result = await registry.call("build_turn_and_digest", {"session_id": "sess-123"})
-
-        assert result["success"] is True
-        assert result["turn_number"] == 1
-        assert result["title"] == "Test"
-
-    @pytest.mark.asyncio
-    async def test_forwards_catch_up(
-        self,
-        mock_memory_manager: MagicMock,
-        mock_session_manager: MagicMock,
-    ) -> None:
-        with patch(
-            "gobby.mcp_proxy.tools.memory._build_turn_and_digest",
-            new_callable=AsyncMock,
-            return_value=None,
-        ) as build_digest:
             registry = create_memory_registry(
                 lambda: mock_memory_manager,
-                session_manager=mock_session_manager,
+                llm_service_resolver=lambda: MagicMock(),
+                startup_config=MagicMock(),
             )
-            await registry.call(
-                "build_turn_and_digest",
-                {"session_id": "sess-123", "catch_up": True},
-            )
-
-        build_digest.assert_awaited_once()
-        await_args = build_digest.await_args
-        assert await_args is not None
-        assert await_args.kwargs["catch_up"] is True
-
-    @pytest.mark.asyncio
-    async def test_digest_contract_error_returns_failure(
-        self,
-        mock_memory_manager: MagicMock,
-        mock_session_manager: MagicMock,
-    ) -> None:
-        """Digest contract errors from the pipeline surface as tool failures."""
-        with patch(
-            "gobby.mcp_proxy.tools.memory._build_turn_and_digest",
-            new_callable=AsyncMock,
-            return_value={"error": "memory.turn_record returned invalid JSON contract"},
-        ):
-            registry = create_memory_registry(
-                lambda: mock_memory_manager, session_manager=mock_session_manager
-            )
-            result = await registry.call("build_turn_and_digest", {"session_id": "sess-123"})
-
-        assert result["success"] is False
-        assert "invalid JSON contract" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_returns_none_skipped(
-        self,
-        mock_memory_manager: MagicMock,
-        mock_session_manager: MagicMock,
-    ) -> None:
-        """Returns skipped when result is None."""
-        with patch(
-            "gobby.mcp_proxy.tools.memory._build_turn_and_digest",
-            new_callable=AsyncMock,
-            return_value=None,
-        ):
-            registry = create_memory_registry(
-                lambda: mock_memory_manager, session_manager=mock_session_manager
-            )
-            result = await registry.call("build_turn_and_digest", {"session_id": "sess-123"})
+            result = await registry.call("judge_shadow_relevance", {"session_id": "sess-123"})
 
         assert result["success"] is True
-        assert result["skipped"] is True
-
-    @pytest.mark.asyncio
-    async def test_exception(
-        self,
-        mock_memory_manager: MagicMock,
-        mock_session_manager: MagicMock,
-    ) -> None:
-        """Returns error on exception."""
-        with patch(
-            "gobby.mcp_proxy.tools.memory._build_turn_and_digest",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("LLM failed"),
-        ):
-            registry = create_memory_registry(
-                lambda: mock_memory_manager, session_manager=mock_session_manager
-            )
-            result = await registry.call("build_turn_and_digest", {"session_id": "sess-123"})
-
-        assert result["success"] is False
-        assert "LLM failed" in result["error"]
+        assert result["completed"] == 2
 
 
 # ─── rebuild_crossrefs ──────────────────────────────────────────────────

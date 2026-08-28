@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 pub const BASELINE_VERSION: i32 = 375;
 pub const BASELINE_CHECKSUM: &str =
-    "ec222a7f8b3c486abfff05eda4ed02995d272a132ad2fdadb1dd90edbccb2ce1";
+    "84eb875cb839f6f61219f3f3fd54a5befc3abf38f01461d96780e956dc1864d8";
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");
@@ -231,12 +231,36 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "16d605b267c6f21c9d3ec5499acdc99a96c865504133eaf55d0485daf513931d",
         sql: include_str!("../../assets/schema/migrations/407_interactive_session_id_nullable.sql"),
     },
+    EmbeddedMigration {
+        version: 408,
+        filename: "408_structured_session_handoffs.sql",
+        checksum: "d97ade871e8581eeca2199114a874b673ff9f937b8772c1fb9f58d0d9267061a",
+        sql: include_str!("../../assets/schema/migrations/408_structured_session_handoffs.sql"),
+    },
+    EmbeddedMigration {
+        version: 409,
+        filename: "409_remove_digest_config.sql",
+        checksum: "6d091a00162b4b8b5178bd559eda220fedc9f082430007132e2299f8d9fe3ff5",
+        sql: include_str!("../../assets/schema/migrations/409_remove_digest_config.sql"),
+    },
+    EmbeddedMigration {
+        version: 410,
+        filename: "410_normalize_session_feedback_constraints.sql",
+        checksum: "1c5c9f07ff0ae970a97ce158672204844558053e5b5a9eef3c5a4be496af3c97",
+        sql: include_str!(
+            "../../assets/schema/migrations/410_normalize_session_feedback_constraints.sql"
+        ),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 
 /// Receipts written before in-place asset edits. Live hubs keep those
 /// checksums; the improved bodies are what new applies stamp.
 pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[
+    (
+        375,
+        "ec222a7f8b3c486abfff05eda4ed02995d272a132ad2fdadb1dd90edbccb2ce1",
+    ),
     (
         375,
         "ece3754752dbc72aaff4bbd3ebaa91a41305e4899e180012f8429c4f7467b1bf",

@@ -3,7 +3,6 @@ Session configuration module.
 
 Contains session-related Pydantic config models:
 - SessionSummaryConfig: Session summary (handoff) generation settings
-- DigestConfig: Rolling digest and title generation settings
 - MessageTrackingConfig: Session message tracking settings
 - SessionLifecycleConfig: Session lifecycle management settings
 
@@ -16,7 +15,6 @@ from gobby.config.feature_base import FeatureDefaultConfig
 
 __all__ = [
     "ChatHistoryConfig",
-    "DigestConfig",
     "SessionSummaryConfig",
     "MessageTrackingConfig",
     "SessionLifecycleConfig",
@@ -87,48 +85,13 @@ Be concise. Focus on what the next agent needs to know to continue effectively."
     )
 
 
-class DigestConfig(FeatureDefaultConfig):
-    """Rolling digest and title generation configuration."""
-
-    enabled: bool = Field(
-        default=True,
-        description="Enable background digest and title generation",
-    )
-    timeout: int = Field(
-        default=30,
-        gt=0,
-        description="Timeout in seconds for digest/title LLM calls (default 30s).",
-    )
-    num_pairs: int = Field(
-        default=50,
-        gt=0,
-        description="Maximum transcript pairs consumed in one digest pass (default 50).",
-    )
-    catch_up_num_pairs: int = Field(
-        default=5,
-        gt=0,
-        description=(
-            "Maximum transcript pairs consumed per catch-up batch at turn start "
-            "or by the backlog sweep (default 5)."
-        ),
-    )
-    backlog_sweep_min_undigested: int = Field(
-        default=10,
-        gt=0,
-        description=(
-            "Daemon sweep threshold: sweep sessions whose turn_count exceeds the "
-            "digest pair cursor by at least this many (default 10)."
-        ),
-    )
-
-
 class MemoryUsefulnessConfig(FeatureDefaultConfig):
-    """Digest-pass memory-usefulness judge configuration (#17195).
+    """Turn-end memory-usefulness judge configuration (#17195).
 
     Routes the de-biased usefulness judge (contract §4). Configure candidates
     to a model family different from the coding agents whose transcripts are
     judged; the resolved candidate is recorded as judge_model on every label
-    row. Enablement lives on memory.digest_shadow_usefulness.
+    row. Enablement lives on memory.shadow_relevance_judging.
     """
 
     timeout: int = Field(

@@ -45,15 +45,6 @@ ADDITIONAL_CONTEXT_LIMIT = 9_950
 # Reserved under the ship limit for overflow instruction + adapter metadata.
 INLINE_CONTEXT_HEADROOM = 450
 
-# Reserved under the ship limit for first-prompt preamble, task/wiki/skill
-# companions, metadata, and the handoff breadcrumb.
-HANDOFF_COMPANION_RESERVE = 5_450
-
-# Budget for a single large handoff/summary contributor injected inline via
-# additionalContext. Derived from the default ship limit minus companion reserve.
-# The full summary stays available on demand via get_handoff_context.
-HANDOFF_SUMMARY_INJECT_BUDGET: int = ADDITIONAL_CONTEXT_LIMIT - HANDOFF_COMPANION_RESERVE
-
 
 @dataclass(frozen=True, slots=True)
 class MarkdownSection:
@@ -172,8 +163,7 @@ def head_with_breadcrumb(text: str, *, budget: int, breadcrumb: str) -> str:
     Truncates at a clean boundary — the last blank-line break, else the last
     newline, before ``budget`` — so the injected head never ends mid-sentence.
     When ``text`` already fits within ``budget`` it is returned verbatim with no
-    breadcrumb. The breadcrumb should tell the reader how to retrieve the full
-    text (e.g. via the get_handoff_context MCP tool).
+    breadcrumb. The breadcrumb should identify the available durable source.
     """
     if budget <= 0:
         return ""

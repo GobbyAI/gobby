@@ -19,7 +19,7 @@ from gobby.mcp_proxy.tools.worktrees._helpers import (
     install_provider_hooks,
     resolve_project_context,
 )
-from gobby.sessions.compact_continuation import consume_and_schedule_compact_self_continuation
+from gobby.sessions.compact_continuation import consume_and_schedule_handoff_compact_continuation
 from gobby.sessions.context_usage import normalize_context_usage_source
 from gobby.sessions.token_usage import typed_json_token_usage
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
@@ -258,7 +258,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
                     exc_info=True,
                 )
             try:
-                consume_and_schedule_compact_self_continuation(
+                consume_and_schedule_handoff_compact_continuation(
                     self._session_manager.db,
                     pending_session_id=session_id,
                     target_session=session,
@@ -266,7 +266,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 )
             except Exception:
                 self.logger.warning(
-                    "POST_COMPACT: failed to schedule compact_self continuation for session %s",
+                    "POST_COMPACT: failed to schedule set_handoff compact continuation for session %s",
                     session_id,
                     exc_info=True,
                 )

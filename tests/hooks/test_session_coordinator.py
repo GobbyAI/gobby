@@ -7,7 +7,7 @@ from hook_manager.py. They should initially fail with ImportError.
 Test categories:
 1. Session registration - Track registered sessions with daemon
 2. Session lookup - Find sessions by various keys
-3. Session status updates - Track title synthesis and state changes
+3. Session status updates - Track title lifecycle and state changes
 4. Lifecycle transitions - Complete agent runs, release worktrees
 5. Session cleanup - Handle session expiration
 6. Concurrent operations - Thread safety

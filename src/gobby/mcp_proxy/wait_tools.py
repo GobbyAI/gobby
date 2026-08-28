@@ -11,7 +11,7 @@ from mcp.server.mcpserver import Context
 WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
 WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS = 30.0
 MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS = 300.0
-WAIT_TOOL_NAMES = ("wait_for_output", "wait_for_summary")
+WAIT_TOOL_NAMES = ("wait_for_output",)
 MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS = 300.0
 MCP_WRAPPER_PROTOCOL_VERSION = "1"
 MCP_WRAPPER_PROTOCOL_VERSION_HEADER = "X-Gobby-MCP-Wrapper-Protocol-Version"
@@ -22,7 +22,7 @@ EXTENDED_TIMEOUT_TOOL_NAMES = (
     "expand_task",
     "merge_resolve",
     "suggest_next_task",
-    "compact_self",
+    "set_handoff",
     "recall_review_context",
     "rebuild_knowledge_graph",
     # Worktree merges allow a 60s git subprocess and perform additional git,

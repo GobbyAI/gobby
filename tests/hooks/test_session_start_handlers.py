@@ -369,7 +369,7 @@ class TestSessionStartPreCreatedSession:
         mock_session.agent_depth = 0
         mock_session.agent_run_id = None
         mock_session.title = "Useful synthesized title"
-        mock_session.digest_markdown = None
+        mock_session.handoff_markdown = None
         mock_session.terminal_context = None
 
         updated_session = MagicMock()
@@ -379,7 +379,7 @@ class TestSessionStartPreCreatedSession:
         updated_session.agent_depth = 0
         updated_session.agent_run_id = None
         updated_session.title = "Useful synthesized title"
-        updated_session.digest_markdown = None
+        updated_session.handoff_markdown = None
         updated_session.terminal_context = {"tmux_pane": "%77", "parent_pid": 123}
 
         mock_dependencies["session_storage"].get.return_value = mock_session
@@ -429,7 +429,7 @@ class TestSessionStartPreCreatedSession:
         mock_session.agent_depth = 0
         mock_session.agent_run_id = None
         mock_session.title = None
-        mock_session.digest_markdown = None
+        mock_session.handoff_markdown = None
         mock_session.terminal_context = None
 
         updated_session = MagicMock()
@@ -439,7 +439,7 @@ class TestSessionStartPreCreatedSession:
         updated_session.agent_depth = 0
         updated_session.agent_run_id = None
         updated_session.title = None
-        updated_session.digest_markdown = None
+        updated_session.handoff_markdown = None
         updated_session.terminal_context = {
             "tmux_pane": "%77",
             "parent_pid": 123,
@@ -749,7 +749,7 @@ class TestSessionStartPreCreatedSession:
                 handlers, "_activate_default_agent", return_value=_agent_activation_context()
             ),
             patch(
-                "gobby.hooks.event_handlers._session_start.consume_and_schedule_compact_self_continuation",
+                "gobby.hooks.event_handlers._session_start.consume_and_schedule_handoff_compact_continuation",
                 return_value=False,
             ),
         ):
@@ -803,7 +803,7 @@ class TestSessionStartPreCreatedSession:
                 handlers, "_activate_default_agent", return_value=_agent_activation_context()
             ),
             patch(
-                "gobby.hooks.event_handlers._session_start.consume_and_schedule_compact_self_continuation",
+                "gobby.hooks.event_handlers._session_start.consume_and_schedule_handoff_compact_continuation",
                 return_value=False,
             ),
         ):
@@ -883,7 +883,7 @@ class TestSessionStartPreCreatedSession:
                 handlers, "_activate_default_agent", return_value=_agent_activation_context()
             ),
             patch(
-                "gobby.hooks.event_handlers._session_start.consume_and_schedule_compact_self_continuation",
+                "gobby.hooks.event_handlers._session_start.consume_and_schedule_handoff_compact_continuation",
                 return_value=False,
             ),
         ):

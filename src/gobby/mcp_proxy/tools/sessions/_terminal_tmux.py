@@ -208,7 +208,7 @@ async def _send_terminal_compaction_command(
         if not continuation_pending:
             return (
                 False,
-                "failed to persist compact_self continuation before compaction",
+                "failed to persist handoff continuation before compaction",
                 False,
                 None,
             )
@@ -289,7 +289,7 @@ async def _send_terminal_compaction_command(
         if not continuation_pending:
             return (
                 False,
-                "failed to persist compact_self continuation before compaction",
+                "failed to persist handoff continuation before compaction",
                 False,
                 None,
             )
@@ -316,7 +316,7 @@ async def _send_terminal_compaction_command(
         readiness_before_command
     ):
         logger.warning(
-            "Failed to schedule compact_self continuation readiness for session %s; "
+            "Failed to schedule handoff continuation readiness for session %s; "
             "SessionStart fallback remains pending",
             session_id,
         )

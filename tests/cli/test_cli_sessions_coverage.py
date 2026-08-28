@@ -344,7 +344,7 @@ def test_create_handoff(
         new_callable=AsyncMock,
         return_value={"success": True, "full_length": 100},
     ):
-        result = runner.invoke(sessions, ["create-handoff", "-s", "s1", "--output", "db"])
+        result = runner.invoke(sessions, ["summarize", "-s", "s1", "--output", "db"])
 
     assert result.exit_code == 0
     assert "Created handoff context" in result.output
@@ -417,7 +417,7 @@ def test_create_handoff_full_llm_error(
         new_callable=AsyncMock,
         side_effect=Exception("Config error"),
     ):
-        result = runner.invoke(sessions, ["create-handoff", "-s", "s1", "--output", "db"])
+        result = runner.invoke(sessions, ["summarize", "-s", "s1", "--output", "db"])
 
     # Should gracefully fall back to code-only summary
     assert result.exit_code == 0
@@ -428,7 +428,7 @@ def test_create_handoff_full_llm_error(
 def test_create_handoff_no_session(mock_session_manager, mock_resolve_session) -> None:
     mock_session_manager.get.return_value = None
     runner = CliRunner()
-    result = runner.invoke(sessions, ["create-handoff", "-s", "missing"])
+    result = runner.invoke(sessions, ["summarize", "-s", "missing"])
     assert result.exit_code == 1
     assert "Session not found" in result.output
 
@@ -462,7 +462,7 @@ def test_create_handoff_no_transcript_path(mock_session_manager, mock_resolve_se
     )
     mock_session_manager.get.return_value = session
     runner = CliRunner()
-    result = runner.invoke(sessions, ["create-handoff", "-s", "s1"])
+    result = runner.invoke(sessions, ["summarize", "-s", "s1"])
     assert result.exit_code == 0
     assert "has no transcript path" in result.output
 
@@ -498,7 +498,7 @@ def test_create_handoff_transcript_not_found(mock_session_manager, mock_resolve_
 
     with patch("pathlib.Path.exists", return_value=False):
         runner = CliRunner()
-        result = runner.invoke(sessions, ["create-handoff", "-s", "s1"])
+        result = runner.invoke(sessions, ["summarize", "-s", "s1"])
 
     assert result.exit_code == 0
     assert "Transcript file not found" in result.output
@@ -625,7 +625,7 @@ def test_create_handoff_full_success(mock_session_manager, mock_resolve_session)
         mock_analyzer.return_value.extract_handoff_context.return_value = mock_ctx
 
         runner = CliRunner()
-        result = runner.invoke(sessions, ["create-handoff", "-s", "s1", "--output", "db"])
+        result = runner.invoke(sessions, ["summarize", "-s", "s1", "--output", "db"])
 
         assert result.exit_code == 0
         assert "Created handoff context" in result.output
@@ -701,7 +701,7 @@ def test_create_handoff_notes_persist_to_db_and_file(
         result = runner.invoke(
             sessions,
             [
-                "create-handoff",
+                "summarize",
                 "-s",
                 "s1",
                 "--output",

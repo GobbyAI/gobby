@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
-from gobby.sessions.compact_continuation import consume_and_schedule_compact_self_continuation
+from gobby.sessions.compact_continuation import consume_and_schedule_handoff_compact_continuation
 from gobby.sessions.tmux_window_naming import schedule_tmux_window_rename
 
 from .types import AgentActivationResult
@@ -23,7 +23,7 @@ __all__ = [
     "Path",
     "SUMMARY_GENERATION_TIMEOUT_S",
     "SessionStartMixin",
-    "consume_and_schedule_compact_self_continuation",
+    "consume_and_schedule_handoff_compact_continuation",
     "schedule_tmux_window_rename",
 ]
 

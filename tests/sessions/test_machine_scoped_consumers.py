@@ -15,11 +15,9 @@ from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
 from gobby.cli.sessions import sessions
 from gobby.hooks.event_handlers._session_start.transcripts import derive_transcript_path
 from gobby.mcp_proxy.tools.sessions._factory import create_session_messages_registry
-from gobby.mcp_proxy.tools.sessions._summary_metadata import compact_summary_metadata_matches
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes.sessions.analytics import register_analytics_routes
 from gobby.sessions.summarize import generate_session_summaries
-from gobby.sessions.summary_generation import generate_summary
 from gobby.sessions.transcript_paths import find_transcript_on_disk
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.storage.session_models import Session
@@ -46,9 +44,8 @@ def _remote_session() -> Session:
         parent_session_id=None,
         created_at=now,
         updated_at=now,
-        digest_markdown="## Turn 1\nRemote turn",
+        handoff_markdown="## Turn 1\nRemote turn",
         summary_source_context_hash="stored-hash",
-        summary_digest_turn_count=1,
     )
 
 
@@ -144,15 +141,14 @@ async def test_on_demand_summary_refuses_remote_sessions() -> None:
             return_value=LOCAL_MACHINE_ID,
         ),
         patch(
-            "gobby.sessions.summary_generation.Path.exists",
+            "gobby.sessions.summarize.Path.exists",
             side_effect=AssertionError("remote transcript was probed"),
         ),
     ):
-        result = await generate_summary(
+        result = await generate_session_summaries(
             session_manager=manager,
             session_id=session.id,
             llm_service=MagicMock(),
-            transcript_processor=MagicMock(),
             session_summary_config=MagicMock(),
         )
 
@@ -252,7 +248,7 @@ async def test_session_filesystem_surfaces_refuse_remote_owner() -> None:
     ):
         cli_result = CliRunner().invoke(
             sessions,
-            ["create-handoff", "-s", session.id, "--output", "db"],
+            ["summarize", "-s", session.id, "--output", "db"],
         )
 
     assert cli_result.exit_code == 1
@@ -273,21 +269,3 @@ async def test_session_filesystem_surfaces_refuse_remote_owner() -> None:
 
     assert commits_result["success"] is False
     assert "remote machine" in commits_result["error"]
-
-    with (
-        patch(
-            "gobby.sessions.machine_scope.get_machine_id",
-            return_value=LOCAL_MACHINE_ID,
-        ),
-        patch(
-            "gobby.sessions.workspace_context.resolve_session_workspace",
-            side_effect=AssertionError("remote workspace was resolved"),
-        ),
-        pytest.raises(PermissionError, match="remote machine"),
-    ):
-        await compact_summary_metadata_matches(
-            session=session,
-            session_manager=manager,
-            db=None,
-            session_summary_config=None,
-        )

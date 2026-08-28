@@ -41,8 +41,7 @@ function history(): string {
   return (
     Array.from(
       { length: HISTORY_LINES },
-      (_, i) =>
-        `${ESC}[3${i % 8}mhistory-line-${i + 1}${PAD}${ESC}[0m`,
+      (_, i) => `${ESC}[3${i % 8}mhistory-line-${i + 1}${PAD}${ESC}[0m`,
     ).join("\r\n") + `${ESC}[0m`
   );
 }
@@ -218,7 +217,9 @@ async function measure(
 
   return page.evaluate(async () => {
     const find = () =>
-      document.querySelector<HTMLElement>('[data-testid="terminal-view"] .wterm');
+      document.querySelector<HTMLElement>(
+        '[data-testid="terminal-view"] .wterm',
+      );
     // Every wait here is driven by animation frames. write() renders through
     // rAF, so frames are the clock the renderer actually runs on, and a wall
     // timer would only add a second clock to reason about. What is reported is
@@ -270,10 +271,7 @@ async function measure(
       firstNum: numberOf(rowsEls[0]),
       lastScrollbackNum: numberOf(rowsEls[rowsEls.length - 1]),
       gridRows: grid.length,
-      lastGridNum: Math.max(
-        ...Array.from(grid, (el) => numberOf(el)),
-        -1,
-      ),
+      lastGridNum: Math.max(...Array.from(grid, (el) => numberOf(el)), -1),
     };
   });
 }
@@ -319,7 +317,9 @@ for (const core of ["ghostty", "fallback"] as const) {
     console.log(
       `RESULT core=${core} lines=${HISTORY_LINES} median_ms=${median?.toFixed(1)} all=${times
         .map((t) => t.toFixed(0))
-        .join(",")} rows=${samples[0]?.rows} nodes=${samples[0]?.nodes} vw=${vw || "default"} cols=${samples[0]?.cols}`,
+        .join(
+          ",",
+        )} rows=${samples[0]?.rows} nodes=${samples[0]?.nodes} vw=${vw || "default"} cols=${samples[0]?.cols}`,
     );
     console.log(
       `COVERAGE core=${core} sent=${HISTORY_LINES} scrollback=${samples[0]?.rows}` +

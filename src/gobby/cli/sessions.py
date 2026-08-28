@@ -115,8 +115,8 @@ def _format_turns_for_llm(turns: list[dict[str, Any]]) -> str:
     return "\n\n".join(formatted)
 
 
-def _append_handoff_notes(markdown: str, notes: str | None) -> str:
-    """Append operator notes to a handoff markdown artifact."""
+def _append_summary_notes(markdown: str, notes: str | None) -> str:
+    """Append operator notes to an archival summary artifact."""
     if not notes:
         return markdown
 
@@ -409,7 +409,7 @@ def renumber_sessions(project_ref: str, apply_changes: bool) -> None:
         click.echo("No changes written. Re-run with --apply to mutate refs.")
 
 
-@sessions.command("create-handoff")
+@sessions.command("summarize")
 @click.option("--session-id", "-s", help="Session ID (defaults to current active session)")
 @click.option(
     "--output",
@@ -423,16 +423,16 @@ def renumber_sessions(project_ref: str, apply_changes: bool) -> None:
     default=".gobby/session_summaries/",
     help="Directory path for file output",
 )
-@click.option("--notes", "notes_option", help="Additional notes to include in the handoff")
+@click.option("--notes", "notes_option", help="Additional notes to include in the summary")
 @click.argument("notes_arg", required=False)
-def create_handoff(
+def summarize_session(
     session_id: str | None,
     output: str,
     output_path: str,
     notes_option: str | None,
     notes_arg: str | None,
 ) -> None:
-    """Create handoff context for a session.
+    """Create a transcript-based archival summary for a session.
 
     Extracts structured context from the session transcript:
     - Active gobby-task
@@ -611,7 +611,7 @@ def create_handoff(
         full_markdown = format_handoff_as_markdown(handoff_ctx)
 
     if full_markdown:
-        full_markdown = _append_handoff_notes(full_markdown, operator_notes)
+        full_markdown = _append_summary_notes(full_markdown, operator_notes)
 
     # Determine what to save
     save_to_db = output in ("db", "all")

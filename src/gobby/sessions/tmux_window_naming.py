@@ -13,8 +13,8 @@ from gobby.agents.tmux.session_manager import (
     TmuxSessionManager,
 )
 from gobby.hooks.background_tasks import create_background_task
-from gobby.memory.title_heuristics import normalize_title_candidate
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
+from gobby.storage.sessions._title_defaults import format_provisional_session_title
 from gobby.terminal_ownership import (
     TERMINAL_INACTIVE_STATUSES,
     TERMINAL_OWNER_STATUSES,
@@ -69,87 +69,21 @@ def schedule_tmux_window_rename(
         logger.debug("Failed to run tmux rename synchronously", exc_info=True)
 
 
-def _synthesize_fallback_title(session: object, terminal_context: dict[str, Any]) -> str:
-    """Synthesize a fallback title for a session that still has no title.
-
-    Deliberately never derives from terminal paths (cwd / project_path /
-    workspace_path / repo_path basename): a path basename is indistinguishable
-    from a real title and is exactly what made title-less sessions masquerade as
-    the project directory (the original ``#N gobby`` bug). Falls back to the
-    session ``source`` (e.g. ``claude``), then a neutral ``"untitled"`` label.
-
-    Persisted sessions receive a canonical provisional title at registration
-    and a digest title after successful full turns, so this branch is only a
-    defensive fallback for terminal window naming.
-
-    Args:
-        session: The session object
-        terminal_context: Parsed terminal context dict (unused; retained for the
-            stable call signature shared with ``_resolve_window_title``)
-
-    Returns:
-        A fallback title string
-    """
-    session_source = getattr(session, "source", None)
-    if session_source:
-        return str(session_source)
-
-    return "untitled"
+def _synthesize_fallback_title(session: object) -> str:
+    seq_num = getattr(session, "seq_num", None)
+    return format_provisional_session_title(seq_num) if isinstance(seq_num, int) else "(gobby)"
 
 
 def _contains_unresolved_session_ref(value: Any) -> bool:
     return isinstance(value, str) and _UNRESOLVED_SESSION_REF_RE.search(value.lower()) is not None
 
 
-def _strip_window_ref_prefix(title: str, ref: str | None) -> str:
-    title = title.strip()
-    if not ref:
-        return title
-    if title == ref:
-        return ""
-    prefix_re = re.compile(rf"^(?:{re.escape(ref)}(?::\s*|\s+))+")
-    return prefix_re.sub("", title).strip()
-
-
-def _sanitize_tmux_window_title(value: str) -> str:
-    """Return a tmux-safe window title while preserving readable punctuation."""
-    return re.sub(r"\s+", " ", re.sub(r"\s*:\s*", " - ", value)).strip()
-
-
-def _session_ref_for_window_title(session: Any) -> str | None:
-    seq_num = getattr(session, "seq_num", None)
-    if isinstance(seq_num, int) and seq_num > 0:
-        return f"#{seq_num}"
-
-    ref = getattr(session, "ref", None)
-    if not isinstance(ref, str):
-        return None
-    ref = ref.strip()
-    if not ref or _contains_unresolved_session_ref(ref):
-        return None
-    return ref
-
-
 def _resolve_window_title(session: Any, terminal_context: dict[str, Any], title: str) -> str:
-    """Resolve the final tmux window title: fallback when empty, ref-prefixed.
-
-    Prepends the session ref (e.g. ``#3605``) so the window reads ``#N title``.
-    """
-    ref = _session_ref_for_window_title(session)
-    if not title or _contains_unresolved_session_ref(title):
-        title = _synthesize_fallback_title(session, terminal_context)
-    title = _strip_window_ref_prefix(str(title), ref)
-    resolved_title = normalize_title_candidate(title)
-    if not resolved_title:
-        fallback_title = _strip_window_ref_prefix(
-            _synthesize_fallback_title(session, terminal_context),
-            ref,
-        )
-        resolved_title = normalize_title_candidate(fallback_title) or ""
-    resolved_title = _sanitize_tmux_window_title(resolved_title)
-    if ref:
-        return f"{ref} {resolved_title}".strip()
-    return resolved_title
+    """Return persisted titles verbatim, with a deterministic provisional fallback."""
+    del terminal_context
+    if title and not _contains_unresolved_session_ref(title):
+        return title
+    return _synthesize_fallback_title(session)
 
 
 def _tmux_manager_for_session(session: Any, terminal_context: dict[str, Any]) -> TmuxSessionManager:
@@ -246,7 +180,7 @@ async def _managed_window_name_needs_repair(
 
 
 async def _rename_tmux_window(session: Any, title: str) -> None:
-    """Rename the tmux window for a session after title synthesis.
+    """Rename the tmux window after a persisted title update.
 
     Uses the tmux server recorded in terminal context when present. Falls back
     to the default user server for user sessions and Gobby's isolated socket for

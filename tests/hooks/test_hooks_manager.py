@@ -1739,7 +1739,7 @@ class TestHookManagerSessionLookup:
         session_id = registered.id
 
         manager._session_manager.db.execute(
-            "UPDATE sessions SET title = %s, digest_markdown = %s WHERE id = %s",
+            "UPDATE sessions SET title = %s, handoff_markdown = %s WHERE id = %s",
             ("Recovered Codex Title", None, session_id),
         )
 

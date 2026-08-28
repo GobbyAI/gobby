@@ -102,7 +102,7 @@ loop order is:
    the owning session when a child bug is already claimed.
 4. Resume or launch build automation only after known blocking bugs for the
    immediate dispatch path are fixed or explicitly documented as non-blocking.
-5. Use `gobby-sessions:compact_self` when context pressure or handoff risk is
+5. Use `gobby-sessions:set_handoff` with `clear_session=false` when context pressure is
    high or when you have not compacted recently. Always compact after completing a coordination bug task
    before the next coordinator-loop iteration or agent wait.
 6. Use `gobby-agents:wait_for_agent` as the last idle action only when agents
@@ -156,7 +156,8 @@ the affected path:
    IDs, task refs, workspace paths, and isolation metadata.
 3. Restart the daemon after notifying active agents and giving them a short head
    start when active agents exist.
-4. Verify daemon health, call `gobby-sessions:compact_self`, and run another
+4. Verify daemon health, call `gobby-sessions:set_handoff` with structured state and
+   `clear_session=false`, and run another
    full status sweep.
 5. Confirm the next eligible spawned agent uses the expected isolation and
    workspace metadata before treating the fix as effective.
@@ -178,12 +179,13 @@ when a user decision is genuinely required.
 ## Compaction
 
 Compact at handoff boundaries and before context size starts degrading
-decisions. If `gobby-sessions:compact_self` is not leased in the current context,
-call `get_tool_schema(server_name="gobby-sessions", tool_name="compact_self")`
-directly. Then call `call_tool("gobby-sessions", "compact_self", {})`.
+decisions. If `gobby-sessions:set_handoff` is not leased in the current context,
+call `get_tool_schema(server_name="gobby-sessions", tool_name="set_handoff")`
+directly. Then call `set_handoff` with concise `current_state`, actionable
+`next_steps`, and `clear_session=false`.
 
 Pass the current Gobby session ref as the top-level `call_tool.session_id`, not
-inside `arguments`. Set `rule_name` only when a workflow or rule specifically
+inside `arguments`.
 requires attribution.
 
 In a terminal session that call comes back as a rejected or cancelled tool use

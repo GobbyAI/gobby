@@ -176,7 +176,7 @@ def _activate_without_competitors(
 
 
 def _is_ended_terminal_sibling(session: Session) -> bool:
-    """Later same-pane rows that already finished must not block compact_self."""
+    """Later same-pane rows that already finished must not block handoff compaction."""
     return session.status in {"handoff_ready", "expired"}
 
 
@@ -200,8 +200,7 @@ def _has_durable_activity(session: Session) -> bool:
     )
     retained_content = (
         session.summary_markdown,
-        session.digest_markdown,
-        session.last_turn_markdown,
+        session.handoff_markdown,
         session.last_assistant_content,
         session.original_prompt,
         session.workflow_name,

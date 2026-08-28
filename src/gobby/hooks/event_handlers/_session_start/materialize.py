@@ -14,11 +14,10 @@ from gobby.hooks.terminal_context import (
     is_gobby_acp_child,
 )
 from gobby.sessions.clear_continuation import (
-    build_clear_self_continue_prompt,
-    schedule_clear_self_continuation,
-    seed_clear_handoff_variables,
+    schedule_handoff_continuation,
     take_clear_handoff_marker,
 )
+from gobby.sessions.handoff import build_handoff_continue_prompt
 
 from .agents import _seed_parent_turn_seq, _seed_wiki_overview_var
 from .claims import preserve_task_claim_state
@@ -66,18 +65,18 @@ def session_start_should_defer(
     return not session_start_is_nested_cli_child(event.source.value, terminal_context)
 
 
-def _consume_pending_compact_self_continuation(
+def _consume_pending_handoff_compact_continuation(
     handler: Any,
     *,
     session_source: str,
     pending_session_id: str | None,
     target_session: Any,
 ) -> bool:
-    """Consume compact_self markers after a confirmed compact restart."""
+    """Consume provider compact markers after a confirmed compact restart."""
     if session_source != "compact" or not handler._session_manager:
         return False
     return bool(
-        _compat_module().consume_and_schedule_compact_self_continuation(
+        _compat_module().consume_and_schedule_handoff_compact_continuation(
             handler._session_manager.db,
             pending_session_id=pending_session_id,
             target_session=target_session,
@@ -167,14 +166,6 @@ def _bind_clear_successor(
         )
         return
     try:
-        seed_clear_handoff_variables(handler._session_manager, successor_id, predecessor)
-    except Exception as exc:
-        handler.logger.warning(
-            "Failed to seed clear handoff variables for successor %s: %s",
-            successor_id,
-            exc,
-        )
-    try:
         predecessor_vars: dict[str, Any] = {}
         sv_mgr: Any | None = None
         try:
@@ -198,9 +189,18 @@ def _bind_clear_successor(
             exc,
         )
     try:
-        predecessor_ref = str(getattr(predecessor, "ref", None) or predecessor_id)
-        prompt = build_clear_self_continue_prompt(predecessor_ref=predecessor_ref)
-        schedule_clear_self_continuation(
+        from gobby.sessions.title_lifecycle import apply_clear_successor_title
+
+        apply_clear_successor_title(handler._session_manager, successor_id, predecessor)
+    except Exception as exc:
+        handler.logger.warning(
+            "Failed to set clear-successor title for session %s: %s",
+            successor_id,
+            exc,
+        )
+    try:
+        prompt = build_handoff_continue_prompt()
+        schedule_handoff_continuation(
             session_obj,
             prompt,
             loop=getattr(handler._session_coordinator, "_event_loop", None),
@@ -376,7 +376,7 @@ def activate_materialized_session(
         additional_context.append(f"You are working on task: {task_title} ({event.task_id})")
 
     if session_obj:
-        _consume_pending_compact_self_continuation(
+        _consume_pending_handoff_compact_continuation(
             handler,
             session_source=session_source,
             pending_session_id=session_id,

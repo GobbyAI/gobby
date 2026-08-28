@@ -40,12 +40,6 @@ const SCHEMA: Record<string, unknown> = {
         max_tokens: { type: "integer", minimum: 1 },
       },
     },
-    DigestConfig: {
-      type: "object",
-      properties: {
-        profile: { $ref: "#/$defs/FeatureProfile" },
-      },
-    },
     UIConfig: {
       type: "object",
       properties: {
@@ -56,7 +50,6 @@ const SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
     code_index: { $ref: "#/$defs/CodeIndexConfig" },
-    digest: { $ref: "#/$defs/DigestConfig" },
     ui: { $ref: "#/$defs/UIConfig" },
   },
 };
@@ -124,12 +117,6 @@ function makeConfigValues(): Record<string, unknown> {
       interval_seconds: 3600,
       jitter_seconds: 30,
       github_timeout_seconds: 10,
-    },
-    digest: {
-      profile: "feature_mid",
-      candidates: ["anthropic/claude-sonnet"],
-      enabled: false,
-      timeout: 120,
     },
     web_chat_sandbox: {
       enabled: true,
@@ -273,21 +260,6 @@ describe("RuntimeInfrastructureSection", () => {
     expect(
       screen.queryByLabelText("Qdrant collection prefix"),
     ).not.toBeInTheDocument();
-  });
-
-  it("renders the digest rows with a schema-enum profile select", () => {
-    renderSection(makeContext());
-
-    expect(
-      screen.getByRole("switch", { name: "Enable digest generation" }),
-    ).not.toBeChecked();
-    const profile = screen.getByLabelText("Digest capability profile");
-    expect(profile).toHaveValue("feature_mid");
-    expect(within(profile).getAllByRole("option")).toHaveLength(3);
-    expect(screen.getByLabelText("Digest candidate item 1")).toHaveValue(
-      "anthropic/claude-sonnet",
-    );
-    expect(screen.getByLabelText("Digest timeout (seconds)")).toHaveValue(120);
   });
 
   it("renders the sandbox path editors as string lists", () => {

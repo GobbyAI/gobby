@@ -94,7 +94,7 @@ class TestContextInjection:
         event.metadata["_platform_session_id"] = None
 
         results = await dispatch_mcp_calls(
-            [{"server": "gobby-memory", "tool": "build_turn_and_digest", "arguments": {}}],
+            [{"server": "gobby-memory", "tool": "judge_shadow_relevance", "arguments": {}}],
             event,
             call_tool,
             logging.getLogger("test"),
@@ -115,7 +115,7 @@ class TestContextInjection:
         del event.metadata["_platform_session_id"]
 
         results = await dispatch_mcp_calls(
-            [{"server": "gobby-memory", "tool": "build_turn_and_digest", "arguments": {}}],
+            [{"server": "gobby-memory", "tool": "judge_shadow_relevance", "arguments": {}}],
             event,
             call_tool,
             logging.getLogger("test"),
@@ -210,7 +210,7 @@ class TestContextInjection:
             return {"success": True}
 
         await dispatch_mcp_calls(
-            [{"server": "gobby-sessions", "tool": "compact_self", "arguments": {}}],
+            [{"server": "gobby-sessions", "tool": "set_handoff", "arguments": {}}],
             _make_event(platform_session_id="plat-123"),
             call_tool,
             logging.getLogger("test"),

@@ -263,7 +263,7 @@ class TestDispatchMcpCallsNoEventLoop:
             [
                 {
                     "server": "gobby-sessions",
-                    "tool": "set_handoff_context",
+                    "tool": "set_handoff",
                     "arguments": {"full": True},
                     "inject_result": True,
                 }
@@ -285,7 +285,7 @@ class TestDispatchMcpCallsNoEventLoop:
         calls = [
             {
                 "server": "gobby-sessions",
-                "tool": "set_handoff_context",
+                "tool": "set_handoff",
                 "arguments": {"full": True},
                 "background": False,
             }
@@ -301,12 +301,12 @@ class TestDispatchMcpCallsNoEventLoop:
         stub.logger.debug.assert_any_call(
             "dispatch_mcp_calls: %s/%s (background=%s)",
             "gobby-sessions",
-            "set_handoff_context",
+            "set_handoff",
             False,
         )
         call_args = proxy.call_tool.call_args[0]
         assert call_args[0] == "gobby-sessions"
-        assert call_args[1] == "set_handoff_context"
+        assert call_args[1] == "set_handoff"
         assert call_args[2]["full"] is True
         assert call_args[2]["session_id"] == "plat-456"
 
@@ -341,7 +341,7 @@ class TestDispatchMcpCallsNoEventLoop:
         calls = [
             {
                 "server": "gobby-sessions",
-                "tool": "set_handoff_context",
+                "tool": "set_handoff",
                 "arguments": {},
                 "background": False,
             }
@@ -356,7 +356,7 @@ class TestDispatchMcpCallsNoEventLoop:
         assert log_args[:4] == (
             "dispatch_mcp_calls: %s/%s failed: %s: %s",
             "gobby-sessions",
-            "set_handoff_context",
+            "set_handoff",
             "RuntimeError",
         )
         assert str(log_args[4]) == "connection refused"
@@ -371,7 +371,7 @@ class TestDispatchMcpCallsNoEventLoop:
         calls = [
             {
                 "server": "gobby-sessions",
-                "tool": "set_handoff_context",
+                "tool": "set_handoff",
                 "arguments": {"compact": True},
             },
             {

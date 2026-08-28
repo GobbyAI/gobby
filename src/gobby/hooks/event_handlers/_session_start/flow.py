@@ -26,7 +26,7 @@ from .handoff import (
 )
 from .materialize import (
     _CONTEXT_MODE_METADATA_KEY,
-    _consume_pending_compact_self_continuation,
+    _consume_pending_handoff_compact_continuation,
     _reset_agent_context_injection,
     _schedule_tmux_window_rename_for_session,
     session_start_should_defer,
@@ -636,7 +636,7 @@ def handle_pre_created_session(
         if claimed_ctx:
             additional_context.append(claimed_ctx)
 
-    _consume_pending_compact_self_continuation(
+    _consume_pending_handoff_compact_continuation(
         handler,
         session_source=session_source,
         pending_session_id=session_id,

@@ -30,7 +30,7 @@ function makeSession(overrides: Partial<GobbySession> = {}): GobbySession {
     transcript_path: null,
     summary_path: null,
     summary_markdown: null,
-    digest_markdown: null,
+    handoff_markdown: null,
     git_branch: null,
     usage_input_tokens: 0,
     usage_output_tokens: 0,

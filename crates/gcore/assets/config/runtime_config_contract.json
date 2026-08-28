@@ -1018,28 +1018,6 @@
       "visibility": "public"
     },
     {
-      "activation": "live",
-      "default": true,
-      "description": "Enable compact handoff context extraction and injection",
-      "key": "compact_handoff.enabled",
-      "machineExport": false,
-      "namespace": "compact_handoff",
-      "secrecy": "none",
-      "type": "boolean",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 300.0,
-      "description": "Maximum seconds compact_self waits for pre-compact handoff summary refresh before falling back to the latest digest.",
-      "key": "compact_handoff.refresh_timeout_seconds",
-      "machineExport": false,
-      "namespace": "compact_handoff",
-      "secrecy": "none",
-      "type": "number",
-      "visibility": "public"
-    },
-    {
       "activation": "restart_required",
       "default": [
         "http://localhost:*",
@@ -1331,94 +1309,6 @@
         "string",
         "null"
       ],
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 10,
-      "description": "Daemon sweep threshold: sweep sessions whose turn_count exceeds the digest pair cursor by at least this many (default 10).",
-      "key": "digest.backlog_sweep_min_undigested",
-      "machineExport": false,
-      "namespace": "digest",
-      "secrecy": "none",
-      "type": "integer",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": [
-        {
-          "candidate": "codex/gpt-5.6-luna",
-          "reasoning_effort": null
-        },
-        {
-          "candidate": "claude/haiku",
-          "reasoning_effort": null
-        }
-      ],
-      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
-      "key": "digest.candidates",
-      "machineExport": false,
-      "namespace": "digest",
-      "secrecy": "none",
-      "type": [
-        "string"
-      ],
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 5,
-      "description": "Maximum transcript pairs consumed per catch-up batch at turn start or by the backlog sweep (default 5).",
-      "key": "digest.catch_up_num_pairs",
-      "machineExport": false,
-      "namespace": "digest",
-      "secrecy": "none",
-      "type": "integer",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": true,
-      "description": "Enable background digest and title generation",
-      "key": "digest.enabled",
-      "machineExport": false,
-      "namespace": "digest",
-      "secrecy": "none",
-      "type": "boolean",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 50,
-      "description": "Maximum transcript pairs consumed in one digest pass (default 50).",
-      "key": "digest.num_pairs",
-      "machineExport": false,
-      "namespace": "digest",
-      "secrecy": "none",
-      "type": "integer",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": "feature_low",
-      "description": "Provider-agnostic capability profile requested by this feature.",
-      "key": "digest.profile",
-      "machineExport": false,
-      "namespace": "digest",
-      "secrecy": "none",
-      "type": "string",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 30,
-      "description": "Timeout in seconds for digest/title LLM calls (default 30s).",
-      "key": "digest.timeout",
-      "machineExport": false,
-      "namespace": "digest",
-      "secrecy": "none",
-      "type": "integer",
       "visibility": "public"
     },
     {
@@ -2692,17 +2582,6 @@
     },
     {
       "activation": "live",
-      "default": false,
-      "description": "Judge the complete returned recall candidate set during the digest pass and persist label_source='digest_shadow' evidence. Requires recall_signal_hub so every judged request and candidate is durable.",
-      "key": "memory.digest_shadow_usefulness",
-      "machineExport": false,
-      "namespace": "memory",
-      "secrecy": "none",
-      "type": "boolean",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
       "default": [
         {
           "candidate": "codex/gpt-5.6-terra",
@@ -3218,6 +3097,17 @@
       "default": false,
       "description": "Append observational recall/search ranking signal events to a dedicated JSONL file (default ~/.gobby/logs/recall_signal.jsonl). Purely observational; search, recall, and injection behavior are unchanged.",
       "key": "memory.recall_signal_logging",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Judge the complete returned recall candidate set during the digest pass and persist label_source='digest_shadow' evidence. Requires recall_signal_hub so every judged request and candidate is durable.",
+      "key": "memory.shadow_relevance_judging",
       "machineExport": false,
       "namespace": "memory",
       "secrecy": "none",
@@ -4939,6 +4829,7 @@
       "activation": "live",
       "default": [
         "uv run",
+        "rtk",
         "poetry run",
         "pipenv run",
         "pdm run",

@@ -2,7 +2,6 @@
 Task management configuration module.
 
 Contains task-related Pydantic config models:
-- CompactHandoffConfig: Compact handoff context configuration
 - PatternCriteriaConfig: Pattern-specific validation criteria templates
 - TaskExpansionConfig: Task breakdown/expansion settings
 - TaskValidationConfig: Task completion validation settings
@@ -24,7 +23,6 @@ from gobby.config.url_validation import validate_optional_endpoint_url
 DEFAULT_WORKFLOW_TIMEOUT_SECONDS = 90.0
 
 __all__ = [
-    "CompactHandoffConfig",
     "FileExtractionConfig",
     "PatternCriteriaConfig",
     "TaskExpansionConfig",
@@ -34,23 +32,6 @@ __all__ = [
     "WorkflowVariablesConfig",
     "merge_workflow_variables",
 ]
-
-
-class CompactHandoffConfig(BaseModel):
-    """Compact handoff context configuration for /compact command."""
-
-    enabled: bool = Field(
-        default=True,
-        description="Enable compact handoff context extraction and injection",
-    )
-    refresh_timeout_seconds: float = Field(
-        default=300.0,
-        gt=0,
-        description=(
-            "Maximum seconds compact_self waits for pre-compact handoff summary refresh "
-            "before falling back to the latest digest."
-        ),
-    )
 
 
 class PatternCriteriaConfig(BaseModel):

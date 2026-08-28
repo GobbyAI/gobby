@@ -274,7 +274,7 @@ async def test_arguments_session_id_stays_in_target_arguments(
 
 
 @pytest.mark.asyncio
-async def test_compact_self_uses_wrapper_session_without_nested_session_id(
+async def test_set_handoff_uses_wrapper_session_without_nested_session_id(
     resolving_tool_proxy: tuple[ToolProxyService, MagicMock, MagicMock],
 ) -> None:
     proxy, mcp_manager, _ = resolving_tool_proxy
@@ -282,7 +282,7 @@ async def test_compact_self_uses_wrapper_session_without_nested_session_id(
 
     result = await proxy.call_tool(
         "gobby-sessions",
-        "compact_self",
+        "set_handoff",
         arguments={"rule_name": "build-coordinator-handoff"},
         session_id="#7",
         enforce_workflow=False,
@@ -291,7 +291,7 @@ async def test_compact_self_uses_wrapper_session_without_nested_session_id(
     assert result["success"] is True
     mcp_manager.call_tool.assert_awaited_once_with(
         "gobby-sessions",
-        "compact_self",
+        "set_handoff",
         {"rule_name": "build-coordinator-handoff"},
         session_id=SESSION_UUID_7,
     )

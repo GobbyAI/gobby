@@ -27,20 +27,20 @@ def _context_window(model: str, *, provider: str | None = None) -> int:
     return value
 
 
-def test_summary_fallback_context_uses_digest_when_summary_missing() -> None:
-    """Explicit summary fallback should use digest markdown when summary is absent."""
+def test_handoff_and_auto_fallback_use_handoff_when_summary_missing() -> None:
     source_session = MagicMock()
     source_session.summary_markdown = "   "
-    source_session.digest_markdown = "## Digest fallback"
+    source_session.handoff_markdown = "## Handoff fallback"
 
-    assert _resolve_fallback_inject_context(source_session, "summary") == "## Digest fallback"
+    assert _resolve_fallback_inject_context(source_session, "summary") is None
+    assert _resolve_fallback_inject_context(source_session, "handoff") == "## Handoff fallback"
+    assert _resolve_fallback_inject_context(source_session, "auto") == "## Handoff fallback"
 
 
-def test_summary_fallback_context_ignores_whitespace_summary_and_digest() -> None:
-    """Explicit summary fallback should ignore whitespace-only summary and digest markdown."""
+def test_summary_fallback_context_ignores_whitespace_summary_and_handoff() -> None:
     source_session = MagicMock()
     source_session.summary_markdown = "   "
-    source_session.digest_markdown = "\n\t "
+    source_session.handoff_markdown = "\n\t "
 
     assert _resolve_fallback_inject_context(source_session, "summary") is None
 
@@ -999,7 +999,7 @@ class TestContinueInChatTerminalKill:
         source_session.chat_mode = "accept_edits"
         source_session.model = "gpt-5.4"
         source_session.summary_markdown = "## Summary fallback"
-        source_session.digest_markdown = "## Digest fallback"
+        source_session.handoff_markdown = "## Handoff fallback"
         source_session.terminal_context = None
 
         converted_session = MagicMock()
@@ -1077,7 +1077,7 @@ class TestContinueInChatTerminalKill:
         source_session.chat_mode = "accept_edits"
         source_session.model = "gpt-5.4"
         source_session.summary_markdown = None
-        source_session.digest_markdown = "## Digest fallback"
+        source_session.handoff_markdown = "## Handoff fallback"
         source_session.terminal_context = None
 
         converted_session = MagicMock()
@@ -1131,7 +1131,7 @@ class TestContinueInChatTerminalKill:
                 },
             )
 
-        assert host._pending_inject_contexts["source-uuid"] == "## Digest fallback"
+        assert host._pending_inject_contexts["source-uuid"] == "## Handoff fallback"
         payload = ws.send.await_args_list[0].args[0]
         response = json.loads(payload)
         assert response["conversation_id"] == "source-uuid"
@@ -1155,7 +1155,7 @@ class TestContinueInChatTerminalKill:
         source_session.chat_mode = "plan"
         source_session.model = "sonnet"
         source_session.summary_markdown = "## Summary fallback"
-        source_session.digest_markdown = "## Digest fallback"
+        source_session.handoff_markdown = "## Handoff fallback"
         source_session.terminal_context = None
 
         session_manager = MagicMock()
@@ -1230,7 +1230,7 @@ class TestContinueInChatTerminalKill:
         source_session.chat_mode = "accept_edits"
         source_session.model = "gpt-5.4"
         source_session.summary_markdown = None
-        source_session.digest_markdown = None
+        source_session.handoff_markdown = None
         source_session.terminal_context = None
 
         converted_session = MagicMock()

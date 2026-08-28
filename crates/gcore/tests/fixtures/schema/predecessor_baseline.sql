@@ -1510,18 +1510,37 @@ CREATE TABLE session_stop_signals (
     acknowledged_at timestamp with time zone
 );
 
+CREATE TABLE session_feedback (
+    id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    source text NOT NULL,
+    kind text NOT NULL,
+    evidence text NOT NULL,
+    impact text NOT NULL,
+    frequency text NOT NULL,
+    suggestion text,
+    disposition text,
+    reviewed boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT session_feedback_source_nonblank CHECK ((btrim(source) <> ''::text)),
+    CONSTRAINT session_feedback_kind_nonblank CHECK ((btrim(kind) <> ''::text)),
+    CONSTRAINT session_feedback_evidence_nonblank CHECK ((btrim(evidence) <> ''::text)),
+    CONSTRAINT session_feedback_impact_nonblank CHECK ((btrim(impact) <> ''::text)),
+    CONSTRAINT session_feedback_frequency_nonblank CHECK ((btrim(frequency) <> ''::text)),
+    CONSTRAINT session_feedback_suggestion_nonblank CHECK (((suggestion IS NULL) OR (btrim(suggestion) <> ''::text))),
+    CONSTRAINT session_feedback_disposition_nonblank CHECK (((disposition IS NULL) OR (btrim(disposition) <> ''::text)))
+);
+
 CREATE TABLE session_summary_revisions (
     id uuid NOT NULL,
     session_id uuid NOT NULL,
     summary_markdown text NOT NULL,
     generation_mode text NOT NULL,
     source_context_hash text,
-    source_digest_turn_count integer,
     previous_revision_id uuid,
     metadata_json jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT session_summary_revisions_digest_turn_count_nonnegative CHECK (((source_digest_turn_count IS NULL) OR (source_digest_turn_count >= 0))),
-    CONSTRAINT session_summary_revisions_generation_mode_valid CHECK ((generation_mode = ANY (ARRAY['agent_authored'::text, 'full'::text, 'delta'::text, 'digest_fallback'::text, 'noop'::text])))
+    CONSTRAINT session_summary_revisions_generation_mode_valid CHECK ((generation_mode = ANY (ARRAY['agent_authored'::text, 'full'::text, 'noop'::text])))
 );
 
 CREATE TABLE session_tasks (
@@ -1559,9 +1578,9 @@ machine_id uuid NOT NULL,
     transcript_path text,
     summary_path text,
     summary_markdown text,
+    handoff_markdown text,
     summary_revision_id uuid,
     summary_source_context_hash text,
-    summary_digest_turn_count integer,
     summary_generation_mode text,
     summary_generated_at timestamp with time zone,
     git_branch text,
@@ -1593,11 +1612,7 @@ machine_id uuid NOT NULL,
     model text,
     is_local boolean DEFAULT false NOT NULL,
     had_edits boolean DEFAULT false,
-    digest_markdown text,
-    last_turn_markdown text,
     chat_mode text DEFAULT 'plan'::text,
-    last_digest_input_hash text,
-    last_digested_pair_index integer DEFAULT 0 NOT NULL,
     message_count integer DEFAULT 0,
     turn_count integer DEFAULT 0,
     tool_call_count integer DEFAULT 0,
@@ -1611,8 +1626,7 @@ machine_id uuid NOT NULL,
     CONSTRAINT sessions_context_usage_confidence_valid CHECK (((context_usage_confidence IS NULL) OR (context_usage_confidence = ANY (ARRAY['reported'::text, 'estimated'::text, 'unknown'::text])))),
     CONSTRAINT sessions_context_usage_ratio_range CHECK (((context_usage_ratio IS NULL) OR ((context_usage_ratio >= (0)::double precision) AND (context_usage_ratio <= (1)::double precision)))),
     CONSTRAINT sessions_context_usage_tokens_nonnegative CHECK ((((usage_input_tokens IS NULL) OR (usage_input_tokens >= 0)) AND ((usage_output_tokens IS NULL) OR (usage_output_tokens >= 0)) AND ((usage_cache_creation_tokens IS NULL) OR (usage_cache_creation_tokens >= 0)) AND ((usage_cache_read_tokens IS NULL) OR (usage_cache_read_tokens >= 0)) AND ((context_window IS NULL) OR (context_window >= 0)) AND ((context_used_tokens IS NULL) OR (context_used_tokens >= 0)) AND ((last_prompt_input_tokens IS NULL) OR (last_prompt_input_tokens >= 0)) AND ((last_prompt_uncached_input_tokens IS NULL) OR (last_prompt_uncached_input_tokens >= 0)) AND ((last_prompt_cache_read_tokens IS NULL) OR (last_prompt_cache_read_tokens >= 0)) AND ((last_prompt_cache_creation_tokens IS NULL) OR (last_prompt_cache_creation_tokens >= 0)) AND ((last_completion_output_tokens IS NULL) OR (last_completion_output_tokens >= 0)))),
-    CONSTRAINT sessions_parent_session_not_self CHECK (((parent_session_id IS NULL) OR (parent_session_id <> id))),
-    CONSTRAINT sessions_summary_digest_turn_count_nonnegative CHECK (((summary_digest_turn_count IS NULL) OR (summary_digest_turn_count >= 0)))
+    CONSTRAINT sessions_parent_session_not_self CHECK (((parent_session_id IS NULL) OR (parent_session_id <> id)))
 );
 
 CREATE TABLE skill_files (
@@ -2586,6 +2600,9 @@ ALTER TABLE ONLY session_skills
 ALTER TABLE ONLY session_stop_signals
     ADD CONSTRAINT session_stop_signals_pkey PRIMARY KEY (session_id);
 
+ALTER TABLE ONLY session_feedback
+    ADD CONSTRAINT session_feedback_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY session_summary_revisions
     ADD CONSTRAINT session_summary_revisions_id_session_id_unique UNIQUE (id, session_id);
 
@@ -3104,6 +3121,10 @@ CREATE UNIQUE INDEX idx_session_skills_unique ON session_skills USING btree (ses
 
 CREATE INDEX idx_session_summary_revisions_previous ON session_summary_revisions USING btree (previous_revision_id);
 
+CREATE INDEX idx_session_feedback_session_created ON session_feedback USING btree (session_id, created_at DESC);
+
+CREATE INDEX idx_session_feedback_unreviewed ON session_feedback USING btree (created_at) WHERE (reviewed = false);
+
 CREATE INDEX idx_session_summary_revisions_session_created ON session_summary_revisions USING btree (session_id, created_at DESC);
 
 CREATE INDEX idx_session_tasks_session ON session_tasks USING btree (session_id);
@@ -3533,6 +3554,9 @@ ALTER TABLE ONLY session_skills
 
 ALTER TABLE ONLY session_stop_signals
     ADD CONSTRAINT session_stop_signals_session_id_fkey FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE;
+
+ALTER TABLE ONLY session_feedback
+    ADD CONSTRAINT session_feedback_session_id_fkey FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE;
 
 ALTER TABLE ONLY session_summary_revisions
     ADD CONSTRAINT session_summary_revisions_previous_same_session_fk FOREIGN KEY (previous_revision_id, session_id) REFERENCES session_summary_revisions(id, session_id) ON DELETE SET NULL (previous_revision_id) DEFERRABLE;
@@ -4027,6 +4051,8 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE session_skills TO gobby_daemon_runtim
 GRANT ALL ON SEQUENCE session_skills_id_seq TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE session_stop_signals TO gobby_daemon_runtime;
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE session_feedback TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE session_summary_revisions TO gobby_daemon_runtime;
 

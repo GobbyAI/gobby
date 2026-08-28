@@ -32,7 +32,7 @@ export interface GobbySession {
   transcript_path?: string | null;
   summary_path?: string | null;
   summary_markdown: string | null;
-  digest_markdown: string | null;
+  handoff_markdown: string | null;
   git_branch: string | null;
   usage_input_tokens: number;
   usage_output_tokens: number;

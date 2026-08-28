@@ -498,7 +498,7 @@ class RuleEngine(
                         evaluation.context_parts.append(_step_transition_msg)
 
                 # Deferred overrides — these used to early-return, but that skipped rule
-                # evaluation entirely, preventing mcp_call effects (like digest-on-response)
+                # evaluation entirely, preventing background mcp_call effects
                 # from being collected. Now we record the override and let the loop run.
                 override_decision: str | None = None
                 override_reason: str | None = None

@@ -410,10 +410,9 @@ These are set during execution, not initialized from definitions:
 | `session_task` | string | Current task ref or UUID used by task-aware rules |
 | `baseline_dirty_files` | list | Dirty files captured as the session baseline |
 | `session_edited_files` | list | Files edited by this session |
-| `full_session_summary` | string | Previous session summary (for handoff), full untruncated text |
-| `handoff_summary_injectable` | string | Budget-bounded copy of the handoff summary for inline `additionalContext` injection; carries a `get_handoff_context` breadcrumb when truncated. Rules inject this rather than `full_session_summary` to avoid Claude Code's ~10K char hard truncation. |
-| `session_summary` | string | Session summary set alongside `full_session_summary` on handoff/compact |
-| `compact_handoff_inject_pending` | bool | One-shot Grok compact rehydrate flag. `apply_in_place_compact_context_loss` sets it on Grok `post_compact` when `auto_inject_handoff` is on. `inject-compact-handoff-on-prompt` injects the marked continuation on the next `turn_start` and clears it. |
+| `set_handoff_pending` | object | One-shot attempt marker written only by `set_handoff` and consumed by `get_handoff`. |
+| `compact_resume_required_skills` | list | Required skill tier returned with the pulled handoff. |
+| `compact_resume_advisory_skills` | list | Advisory skill tier returned with the pulled handoff. |
 | `grok_pending_briefing` | list | Ordered, id-deduplicated context components waiting for acknowledged Grok PreToolUse/Stop delivery. |
 | `grok_pending_turn_context` | list | Bounded per-turn context components; oldest entries drop at 32 components or 16,384 serialized UTF-8 bytes. |
 | `grok_pending_delivery` | object | Briefing components claimed by one durable ghook inbox envelope until acknowledgment settles. |

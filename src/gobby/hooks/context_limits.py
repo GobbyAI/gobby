@@ -7,7 +7,6 @@ from typing import Any
 from gobby.hooks.events import SessionSource, parse_session_source
 from gobby.llm.sdk_utils import (
     ADDITIONAL_CONTEXT_LIMIT,
-    HANDOFF_COMPANION_RESERVE,
     INLINE_CONTEXT_HEADROOM,
 )
 
@@ -30,11 +29,6 @@ def additional_context_limit_for(provider: SessionSource | str | None) -> int:
 def inline_context_budget_for(provider: SessionSource | str | None) -> int:
     """Return the memory-inline budget, leaving room under the ship limit."""
     return max(0, additional_context_limit_for(provider) - INLINE_CONTEXT_HEADROOM)
-
-
-def handoff_summary_inject_budget_for(provider: SessionSource | str | None) -> int:
-    """Return the inline handoff-summary budget for one provider."""
-    return max(0, additional_context_limit_for(provider) - HANDOFF_COMPANION_RESERVE)
 
 
 def _provider_key(provider: SessionSource | str | None) -> str | None:

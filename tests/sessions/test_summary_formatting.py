@@ -257,7 +257,7 @@ class TestFormatTurnsForLlm:
         ]
         result = format_turns_for_llm(turns)
         assert "[Result: " + "x" * 200 in result
-        assert "get_handoff_context (gobby-sessions)" in result
+        assert "get_handoff (gobby-sessions)" in result
         assert "x" * 500 not in result
 
 

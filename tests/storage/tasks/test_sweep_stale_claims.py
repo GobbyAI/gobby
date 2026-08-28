@@ -14,10 +14,10 @@ import pytest
 from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     expire_stale_terminal_sessions_for_context,
 )
-from gobby.sessions.compact_continuation import mark_compact_self_continuation_pending
+from gobby.sessions.compact_continuation import mark_handoff_compact_continuation_pending
 from gobby.sessions.compact_markers import (
-    COMPACT_SELF_CONTINUE_FRESH_SECONDS,
-    COMPACT_SELF_CONTINUE_VARIABLE,
+    HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
+    HANDOFF_COMPACT_CONTINUE_VARIABLE,
 )
 from gobby.sessions.contested_expiry import (
     CONTESTED_TERMINAL_EXPIRY_VARIABLE,
@@ -246,7 +246,7 @@ def _backdate_compact_marker(temp_db: HubDatabase, session_id: str, seconds: int
          WHERE session_id = %s
         """,
         (
-            [COMPACT_SELF_CONTINUE_VARIABLE, "created_at"],
+            [HANDOFF_COMPACT_CONTINUE_VARIABLE, "created_at"],
             stale.isoformat(),
             session_id,
         ),
@@ -292,7 +292,7 @@ def test_sweep_preserves_claim_while_compact_marker_is_fresh(
     session_id = str(uuid.uuid4())
     _make_session(temp_db, sample_project, session_id, "handoff_ready")
     task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
-    assert mark_compact_self_continuation_pending(temp_db, session_id)
+    assert mark_handoff_compact_continuation_pending(temp_db, session_id)
     # Lifecycle status can be transiently stale before SessionStart consumes the
     # marker; a fresh marker means the owner is resuming and keeps its claim.
     temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (session_id,))
@@ -313,8 +313,8 @@ def test_sweep_reclaims_claim_once_compact_marker_is_stale(
     session_id = str(uuid.uuid4())
     _make_session(temp_db, sample_project, session_id, "handoff_ready")
     task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
-    assert mark_compact_self_continuation_pending(temp_db, session_id)
-    _backdate_compact_marker(temp_db, session_id, COMPACT_SELF_CONTINUE_FRESH_SECONDS + 60)
+    assert mark_handoff_compact_continuation_pending(temp_db, session_id)
+    _backdate_compact_marker(temp_db, session_id, HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS + 60)
     temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (session_id,))
 
     with caplog.at_level(logging.INFO, logger="gobby.storage.tasks._automation"):

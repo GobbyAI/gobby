@@ -260,7 +260,7 @@ export interface SessionObservationMeta {
 }
 
 export type SessionInteractionMode = "none" | "observe" | "proxy";
-export type FallbackContextMode = "auto" | "summary" | "digest" | "none";
+export type FallbackContextMode = "auto" | "summary" | "handoff" | "none";
 
 export interface SwappedSessionTarget {
   sessionId: string;

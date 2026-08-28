@@ -9,7 +9,7 @@ import pytest
 from gobby.ai import AIAdapterStyle, AICapability, AICapabilityRegistry, CapabilityBinding
 from gobby.config.app import DaemonConfig
 from gobby.config.persistence import MemoryKnowledgeGraphConfig
-from gobby.config.sessions import DigestConfig
+from gobby.config.sessions import SessionSummaryConfig
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import create_llm_service
 from gobby.llm.service import LLMService
@@ -79,7 +79,7 @@ def test_direct_provider_accessors_are_not_public(llm_config: DaemonConfig) -> N
 async def test_call_feature_delegates_to_text_generation(llm_config: DaemonConfig) -> None:
     fake_generation = FakeTextGeneration()
     service = LLMService(llm_config, text_generation=fake_generation)
-    config = DigestConfig(candidates=["claude/haiku"])
+    config = SessionSummaryConfig(candidates=["claude/haiku"])
 
     def validate_output(text: str) -> str | None:
         return None if text else "empty"

@@ -72,7 +72,7 @@ Sources: [`crates/ghook/src/args.rs`](crates/ghook/src/args.rs),
   lineage, agent run, workflow state, task activity, edit history, sandbox policy, approved tools,
   and model.
 - Tracks cumulative input, output, and cache tokens; context-window occupancy; turn, message, and
-  tool counts; rolling digests; summaries; and provenance.
+  tool counts; structured handoffs; archival summaries; feedback; and provenance.
 - Lifecycle includes active, paused, handoff-ready, expired, tombstoned, and cleanup behavior.
 - Incremental transcript ingestion, normalized messages, windowed and searchable reads, archives,
   gzip seek indexes, recovery, restore, and status inspection.
@@ -90,7 +90,7 @@ Sources: [`src/gobby/storage/session_models.py`](src/gobby/storage/session_model
 - Variables, workflows, task claims, agent-run ownership, parent linkage, and session identity
   survive the handoff.
 - Clear creates a new session and can inject the previous session's summary.
-- `compact_self` supports terminal and web-chat sessions, verifies terminal ownership, refreshes
+- `set_handoff` supports terminal and web-chat sessions, verifies terminal ownership, refreshes
   summaries, records required skill reloads, and delivers a continuation command.
 - Restart injects a bounded continuation summary and required or advisory skill instructions.
 - Context-pressure observers use persisted occupancy, deduplicate guidance by compaction epoch, and
@@ -306,7 +306,7 @@ Sources: [`src/gobby/mcp_proxy/tools/cron.py`](src/gobby/mcp_proxy/tools/cron.py
   moves, and promote or demote operations.
 - Hybrid recall combining keyword, Qdrant vector, and FalkorDB graph results.
 - Automatic prompt recall, deferred and chunked overflow retrieval, duplicate suppression, capture
-  nudges, turn digests, and session digests.
+  nudges, and independent turn-end shadow-relevance judging.
 - Semantic cross-references and entity knowledge graphs.
 - Graph search, clustering, co-occurrence densification, rebuild, reconciliation, invalidation,
   and embedding reindex.

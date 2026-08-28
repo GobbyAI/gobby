@@ -109,14 +109,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "mark_transcript_processed": "(self, session_id: 'str') -> 'Session | None'",
     "move_to_project": "(self, session_id: 'str', project_id: 'str') -> 'Session | None'",
     "pause_inactive_active_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
-    "persist_digest_state": "(self, session_id: 'str', *, last_turn_markdown: "
-    "'str', digest_markdown: 'str', last_digest_input_hash: 'str', "
-    "last_digested_pair_index: 'int', "
-    "title: 'str | None' = None, title_source: 'str | None' = None) -> "
-    "'Session | None'",
     "persist_summary_state": "(self, session_id: 'str', *, summary_markdown: 'str', "
     "generation_mode: 'str', source_context_hash: 'str | None' = None, "
-    "source_digest_turn_count: 'int | None' = None, "
     "previous_revision_id: 'str | None' = None, "
     "metadata_json: 'Mapping[str, Any] | None' = None, "
     "summary_path: 'str | None | UnsetType' = UNSET) -> 'Session | None'",
@@ -170,11 +164,6 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "update_approved_tools": "(self, session_id: 'str', tools: 'set[str]') -> 'None'",
     "update_chat_mode": "(self, session_id: 'str', chat_mode: 'str') -> 'None'",
     "update_context_usage": "(self, session_id: 'str', snapshot: 'ContextUsageSnapshot') -> 'bool'",
-    "update_digest_markdown": "(self, session_id: 'str', digest_markdown: 'str') -> "
-    "'Session | None'",
-    "update_last_digest_input_hash": "(self, session_id: 'str', hash_value: 'str') -> 'None'",
-    "update_last_turn_markdown": "(self, session_id: 'str', last_turn_markdown: 'str') "
-    "-> 'Session | None'",
     "update_model": "(self, session_id: 'str', model: 'str') -> 'Session | None'",
     "update_parent_session_id": "(self, session_id: 'str', parent_session_id: 'str | None') "
     "-> 'Session | None'",

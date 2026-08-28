@@ -297,7 +297,7 @@ class TestGobbyDaemonToolsCallTool:
 
         result = await tools_handler.call_tool(
             server_name="gobby-sessions",
-            tool_name="wait_for_summary",
+            tool_name="get_handoff",
             arguments={"timeout_seconds": 999_999},
             intent="find completion",
         )
@@ -455,14 +455,14 @@ class TestGobbyDaemonToolsCallTool:
 
         result = await tools_handler.call_tool(
             server_name="gobby-sessions",
-            tool_name="wait_for_summary",
+            tool_name="get_handoff",
             arguments={"session_id": "session-123", "timeout_seconds": 300},
         )
 
         assert result == {"completed": False, "timeout_seconds": 300.0}
         tools_handler.tool_proxy.call_tool.assert_awaited_once_with(
             "gobby-sessions",
-            "wait_for_summary",
+            "get_handoff",
             {"session_id": "session-123", "timeout_seconds": 300},
             None,
             wrapper_originated=True,
@@ -512,7 +512,7 @@ class TestGobbyDaemonToolsCallTool:
             result = await asyncio.wait_for(
                 tools_handler.call_tool(
                     server_name="gobby-sessions",
-                    tool_name="wait_for_summary",
+                    tool_name="get_handoff",
                     arguments={"session_id": "session-123", "timeout_seconds": 600},
                 ),
                 timeout=0.2,
@@ -524,7 +524,7 @@ class TestGobbyDaemonToolsCallTool:
             "effective_timeout_seconds": 0.02,
             "mcp_wrapper_timeout": True,
             "background_call_continues": True,
-            "tool_name": "wait_for_summary",
+            "tool_name": "get_handoff",
             "_mcp_metadata": {
                 "requested_timeout_seconds": 600.0,
                 "effective_timeout_seconds": 0.02,
@@ -533,7 +533,7 @@ class TestGobbyDaemonToolsCallTool:
         }
         tools_handler.tool_proxy.call_tool.assert_awaited_once_with(
             "gobby-sessions",
-            "wait_for_summary",
+            "get_handoff",
             {"session_id": "session-123", "timeout_seconds": 0.02},
             None,
             wrapper_originated=True,

@@ -87,7 +87,6 @@ function SessionEntryRow({
   const isPaused = entry.status !== "active";
   const displayLabel = getSessionDisplayTitle({
     title: entry.label,
-    seq_num: entry.seqNum,
   });
 
   return (

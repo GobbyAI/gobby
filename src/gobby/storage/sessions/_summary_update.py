@@ -11,7 +11,6 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions._summary_protocols import SummaryUpdateHost as _SummaryUpdateHost
 from gobby.utils.datetime import utc_now
 
-from ._title_update import apply_title_mutation
 from ._update_sentinel import UNSET, UnsetType, is_set
 
 
@@ -38,7 +37,6 @@ def _summary_revision_from_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "summary_markdown": row["summary_markdown"],
         "generation_mode": row["generation_mode"],
         "source_context_hash": row["source_context_hash"],
-        "source_digest_turn_count": row["source_digest_turn_count"],
         "previous_revision_id": row["previous_revision_id"],
         "metadata_json": _decode_metadata_json(row["metadata_json"]),
         "created_at": row["created_at"],
@@ -53,15 +51,11 @@ class _SummaryUpdateMixin:
         summary_markdown: str,
         generation_mode: str,
         source_context_hash: str | None = None,
-        source_digest_turn_count: int | None = None,
         previous_revision_id: str | None = None,
         metadata_json: Mapping[str, Any] | None = None,
         summary_path: str | None | UnsetType = UNSET,
     ) -> Session | None:
         """Persist summary markdown, source metadata, and a revision row atomically."""
-        if source_digest_turn_count is not None and source_digest_turn_count < 0:
-            raise ValueError("source_digest_turn_count must be non-negative")
-
         now = utc_now()
         revision_id = str(uuid.uuid4())
 
@@ -80,10 +74,9 @@ class _SummaryUpdateMixin:
                 """
                 INSERT INTO session_summary_revisions (
                     id, session_id, summary_markdown, generation_mode,
-                    source_context_hash, source_digest_turn_count,
-                    previous_revision_id, metadata_json
+                    source_context_hash, previous_revision_id, metadata_json
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
                 """,
                 (
                     revision_id,
@@ -91,7 +84,6 @@ class _SummaryUpdateMixin:
                     summary_markdown,
                     generation_mode,
                     source_context_hash,
-                    source_digest_turn_count,
                     previous_id,
                     _encode_metadata_json(metadata_json),
                 ),
@@ -103,7 +95,6 @@ class _SummaryUpdateMixin:
                     summary_markdown = %s,
                     summary_revision_id = %s,
                     summary_source_context_hash = %s,
-                    summary_digest_turn_count = %s,
                     summary_generation_mode = %s,
                     summary_generated_at = %s,
                     updated_at = %s
@@ -115,7 +106,6 @@ class _SummaryUpdateMixin:
                     summary_markdown,
                     revision_id,
                     source_context_hash,
-                    source_digest_turn_count,
                     generation_mode,
                     now,
                     now,
@@ -126,66 +116,6 @@ class _SummaryUpdateMixin:
         updated = self.get(session_id)
         if updated is not None:
             self._notify_session_change("session_updated", session_id)
-        return updated
-
-    def persist_digest_state(
-        self: _SummaryUpdateHost,
-        session_id: str,
-        *,
-        last_turn_markdown: str,
-        digest_markdown: str,
-        last_digest_input_hash: str,
-        last_digested_pair_index: int,
-        title: str | None = None,
-        title_source: str | None = None,
-    ) -> Session | None:
-        """Persist digest fields, optionally updating title metadata atomically."""
-        current = self.get(session_id)
-        if current is None:
-            return None
-        if title_source is not None and title_source not in self._VALID_TITLE_SOURCES:
-            raise ValueError(
-                f"Invalid title_source {title_source!r}. Must be one of: "
-                f"{', '.join(sorted(self._VALID_TITLE_SOURCES))}"
-            )
-
-        now = utc_now()
-        assignments = [
-            "last_turn_markdown = %s",
-            "digest_markdown = %s",
-            "last_digest_input_hash = %s",
-            "last_digested_pair_index = %s",
-            "updated_at = %s",
-        ]
-        values: list[Any] = [
-            last_turn_markdown,
-            digest_markdown,
-            last_digest_input_hash,
-            last_digested_pair_index,
-            now,
-        ]
-
-        with self.db.transaction() as conn:
-            conn.execute(
-                f"UPDATE sessions SET {', '.join(assignments)} WHERE id = %s",  # nosec B608
-                (*values, session_id),
-            )
-            mutation = apply_title_mutation(
-                conn,
-                session_id,
-                title_is_set=title is not None,
-                title=title,
-                title_source_is_set=title_source is not None,
-                title_source=title_source,
-                updated_at=now,
-            )
-
-        updated = self.get(session_id)
-        if updated is None:
-            return None
-        self._notify_session_change("session_updated", session_id)
-        if mutation is not None and mutation.title_changed:
-            self._run_title_change_side_effects(updated, updated.title or "")
         return updated
 
     def update_summary(
@@ -201,7 +131,6 @@ class _SummaryUpdateMixin:
                 summary_markdown=summary_markdown,
                 generation_mode="agent_authored",
                 source_context_hash=None,
-                source_digest_turn_count=None,
                 metadata_json={"source": "update_summary"},
                 summary_path=summary_path,
             )
@@ -214,7 +143,6 @@ class _SummaryUpdateMixin:
                 summary_markdown=summary_markdown,
                 summary_revision_id=None,
                 summary_source_context_hash=None,
-                summary_digest_turn_count=None,
                 summary_generation_mode=None,
                 summary_generated_at=None,
             )
@@ -232,62 +160,6 @@ class _SummaryUpdateMixin:
         if updated is not None:
             self._notify_session_change("session_updated", session_id)
         return updated
-
-    def update_digest_markdown(
-        self: _SummaryUpdateHost, session_id: str, digest_markdown: str
-    ) -> Session | None:
-        """Update session rolling digest markdown."""
-        now = utc_now()
-        with self.db.transaction():
-            self.db.execute(
-                """
-                UPDATE sessions
-                SET digest_markdown = %s,
-                    updated_at = %s
-                WHERE id = %s
-                """,
-                (digest_markdown, now, session_id),
-            )
-        updated = self.get(session_id)
-        if updated is not None:
-            self._notify_session_change("session_updated", session_id)
-        return updated
-
-    def update_last_turn_markdown(
-        self: _SummaryUpdateHost, session_id: str, last_turn_markdown: str
-    ) -> Session | None:
-        """Update session last turn markdown record."""
-        now = utc_now()
-        with self.db.transaction():
-            self.db.execute(
-                """
-                UPDATE sessions
-                SET last_turn_markdown = %s,
-                    updated_at = %s
-                WHERE id = %s
-                """,
-                (last_turn_markdown, now, session_id),
-            )
-        session = self.get(session_id)
-        if session is not None:
-            self._notify_session_change("session_updated", session_id)
-        return session
-
-    def update_last_digest_input_hash(
-        self: _SummaryUpdateHost, session_id: str, hash_value: str
-    ) -> None:
-        """Update the last digest input hash for idempotency."""
-        now = utc_now()
-        with self.db.transaction():
-            self.db.execute(
-                """
-                UPDATE sessions
-                SET last_digest_input_hash = %s,
-                    updated_at = %s
-                WHERE id = %s
-                """,
-                (hash_value, now, session_id),
-            )
 
     def get_summary_revision(
         self: _SummaryUpdateHost,

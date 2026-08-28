@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.hooks.context_limits import handoff_summary_inject_budget_for
 from gobby.sessions.clear_continuation import resolve_clear_continuation
 from gobby.sessions.compact_continuation import (
     COMPACT_HANDOFF_MARKER_VARIABLE,
@@ -21,13 +20,7 @@ from gobby.sessions.compact_markers import (
 )
 from gobby.sessions.handoff_identity import terminal_contexts_match
 from gobby.sessions.tmux_context import parse_terminal_context_value
-from gobby.utils.injected_context import strip_injected_context
 
-_HANDOFF_SUMMARY_VARIABLES = (
-    "session_summary",
-    "full_session_summary",
-    "handoff_summary_injectable",
-)
 _TERMINAL_IDENTITY_FIELDS = ("tmux_pane", "tmux_session", "tty", "parent_pid")
 
 
@@ -373,13 +366,7 @@ def prepare_compact_continuation_variables(
     session_id: str | None,
     session_source: str,
 ) -> None:
-    """Refresh same-row summary and skill variables for an in-place compact restart.
-
-    Replaces the bounded summary variables from the row's current summary,
-    clears stale injection values when no usable summary exists (or injection
-    is disabled), normalizes the required-skill reload list, and consumes the
-    one-shot compact marker.
-    """
+    """Normalize skill tiers and consume the provider compact identity marker."""
     if session_source != "compact" or not session_id or not handler._session_manager:
         return
 
@@ -393,67 +380,8 @@ def prepare_compact_continuation_variables(
         COMPACT_NOTIFICATION_STARTED_AT_VARIABLE,
         datetime.now(UTC).isoformat(),
     )
-    auto_inject = _variable_enabled(current_vars.get("auto_inject_handoff"), default=True)
-
-    session = handler._session_manager.get(session_id)
-    summary_markdown = ""
-    if session is not None and session.summary_markdown:
-        summary_markdown = strip_injected_context(session.summary_markdown)
-
-    if auto_inject and summary_markdown:
-        sv_mgr.merge_variables(
-            session_id,
-            {
-                "session_summary": summary_markdown,
-                "full_session_summary": summary_markdown,
-                "handoff_summary_injectable": _bound_handoff_summary(summary_markdown, session),
-            },
-        )
-    else:
-        stale = {name: "" for name in _HANDOFF_SUMMARY_VARIABLES if current_vars.get(name)}
-        if stale:
-            sv_mgr.merge_variables(session_id, stale)
-
     _normalize_compact_resume_required_skills(sv_mgr, session_id, current_vars)
     consume_compact_handoff_marker(db, session_id)
-
-
-def _variable_enabled(value: Any, *, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int | float):
-        return value != 0
-    if isinstance(value, str):
-        normalized = value.strip().casefold()
-        if normalized in {"false", "0", "no", "off", ""}:
-            return False
-        if normalized in {"true", "1", "yes", "on"}:
-            return True
-    return default
-
-
-def _bound_handoff_summary(summary: str, session: Any) -> str:
-    """Bound a pre-compaction summary for inline injection, with a retrieval breadcrumb.
-
-    The full summary stays available via the get_handoff_context MCP tool; this
-    only caps the copy injected into provider context. Returns the summary
-    unchanged when it already fits within the budget.
-    """
-    budget = handoff_summary_inject_budget_for(getattr(session, "source", None))
-    if len(summary) <= budget:
-        return summary
-
-    seq_num = getattr(session, "seq_num", None)
-    ref = f"#{seq_num}" if seq_num else (getattr(session, "id", "") or "")
-    ref_clause = f' with your own session ref "{ref}"' if ref else ""
-    breadcrumb = (
-        f"Pre-compaction summary is {len(summary)} chars and exceeds the inline "
-        "handoff budget. Call get_handoff_context (gobby-sessions)"
-        f"{ref_clause} to load the full summary."
-    )
-    if len(breadcrumb) <= budget:
-        return breadcrumb
-    return breadcrumb[:budget]
 
 
 def _normalize_compact_resume_required_skills(

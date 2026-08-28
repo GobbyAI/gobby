@@ -145,7 +145,7 @@ the user changes the cap. Start it only after explicit enhancement approval.
    and pass `artifact_path`, round number, cap, and parent session id. No
    evidence is prepared for enhancement; `prepare_plan_review_round` and
    `bind_evidence_run` belong to adversary rounds only.
-2. Immediately call `gobby-sessions:compact_self`, then use **Waiting on
+2. Immediately call `gobby-sessions:set_handoff` with `clear_session=false`, then use **Waiting on
    Spawned Runs**. In a terminal session that call comes back as a rejected or
    cancelled tool use attributed to the user. That is the daemon interrupting
    the turn to deliver the compaction command, never a refusal: do not stop, do
@@ -189,7 +189,7 @@ Start only after explicit adversarial-review approval.
    session id to the adversary role.
 2. Bind the spawned run with `bind_evidence_run`. Expire the evidence if spawn
    or bind fails. After a successful bind, immediately call
-   `gobby-sessions:compact_self`, then use **Waiting on Spawned Runs**. In a
+   `gobby-sessions:set_handoff` with `clear_session=false`, then use **Waiting on Spawned Runs**. In a
    terminal session that call comes back as a rejected or cancelled tool use
    attributed to the user. That is the daemon interrupting the turn to deliver
    the compaction command, never a refusal: do not stop, do not ask the user
@@ -384,7 +384,7 @@ severity, `check_key` ascending, and `finding_id` ascending.
 ## Waiting on Spawned Runs
 
 Use this same policy for enhancer and adversary runs after completing the
-mandatory post-launch `gobby-sessions:compact_self` call:
+mandatory post-launch `gobby-sessions:set_handoff` call:
 
 1. Keep doing useful independent work while the run is active.
 2. When the enhancer or parent adversary run is active and no actionable

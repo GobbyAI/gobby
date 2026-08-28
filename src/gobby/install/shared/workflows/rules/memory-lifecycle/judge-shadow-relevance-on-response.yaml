@@ -1,0 +1,13 @@
+tags: [memory-lifecycle, memory, lifecycle, gobby, default]
+
+rules:
+  judge-shadow-relevance-on-response:
+    description: "Judge pending shadow-memory recall candidates after an agent response"
+    event: turn_end
+    enabled: true
+    priority: 11
+    effects:
+      - type: mcp_call
+        server: gobby-memory
+        tool: judge_shadow_relevance
+        background: true

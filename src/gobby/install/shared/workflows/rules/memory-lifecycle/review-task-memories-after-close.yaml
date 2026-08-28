@@ -19,20 +19,20 @@ rules:
         variable: _memory_review_stop_delivered
         value: false
 
-  review-closed-task-memories-before-compact:
-    description: "Request the pending memory review before compaction defers it past the closing context"
+  review-closed-task-memories-before-handoff:
+    description: "Request the pending memory review before a handoff defers it past the closing context"
     event: before_tool
     enabled: true
     priority: 1
     when: >
       event.data.get('mcp_server') == 'gobby-sessions'
-      and event.data.get('mcp_tool') == 'compact_self'
+      and event.data.get('mcp_tool') == 'set_handoff'
       and bool(variables.get('_memory_pending_task_reviews'))
       and not variables.get('_memory_review_stop_delivered')
     effects:
       - type: block
         mcp_tools:
-          - "gobby-sessions:compact_self"
+          - "gobby-sessions:set_handoff"
         acknowledge_variable: _memory_review_stop_delivered
         reason: |
           Before compacting, closed task(s) need one bounded memory review while
@@ -41,7 +41,7 @@ rules:
           {% endfor %}For each, call `gobby-memory:review_task_memories(task_id, changes_summary)`;
           update/delete stale entries or record durable knowledge only when warranted.
           Most tasks need no memory write. Use the returned `source_task_id` for any
-          new memory. Then retry `gobby-sessions:compact_self`.
+          new memory. Then retry `gobby-sessions:set_handoff`.
 
   review-closed-task-memories-on-stop:
     description: "Request one bounded memory review continuation for pending closures"

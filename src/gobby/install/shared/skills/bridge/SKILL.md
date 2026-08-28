@@ -160,7 +160,8 @@ the turn is blocked, and every wait must be a tool call.
 - Checkpoint commits of accumulated verified work (same task ref) are fine
   at any time; never close the task mid-session.
 - Under context pressure (~10+ rounds): checkpoint commit, then call
-  `gobby-sessions:compact_self`. In a terminal session that call comes back as a
+  `gobby-sessions:set_handoff` with concise current state and next steps and
+  `clear_session=false`. In a terminal session that call comes back as a
   rejected or cancelled tool use attributed to the user. That is the daemon
   interrupting the turn to deliver the compaction command, never a refusal: do
   not stop, do not ask the user about it, and resume from the continuation

@@ -111,14 +111,9 @@ class TranscriptProcessingMixin:
     async def _process_pending_transcripts(self, active: DaemonConfig) -> int:
         """Process transcripts for expired sessions.
 
-        Runs memory extraction and summary generation as separate steps
-        OUTSIDE _process_session_transcript so they execute even when the
-        JSONL file has already been deleted: a purged-but-digest-backed session
-        still regenerates its summary (and its mirror wiki file) from the stored
-        digest. For those recovery cases transcript_processed is only set once
-        the summary is valid, allowing retry on the next cycle. The normal
-        on-disk path is unchanged (processed once a summary exists, or when the
-        LLM is unavailable).
+        Runs summary generation outside `_process_session_transcript` after the
+        transcript parser persists authoritative stats. Missing transcripts are
+        finalized without an archival summary.
         """
         config = active.session_lifecycle
         # Synchronous psycopg: a pool checkout runs its runtime-role check and
@@ -139,92 +134,26 @@ class TranscriptProcessingMixin:
             agent_depth = getattr(session, "agent_depth", 0) or 0
             source = getattr(session, "source", "") or ""
 
-            digest = getattr(session, "digest_markdown", None)
-
             # Step 1: Process transcript (reads JSONL, stores messages, aggregates usage)
             try:
                 await self._process_session_transcript(session.id, session.transcript_path)
             except Exception as e:
                 logger.error("Failed to process transcript for %s: %s", session.id, e)
 
-            if agent_depth > 0 and source == "codex":
-                memory_manager = self.memory_manager
-                llm_service = self.llm_service
-                if memory_manager is None:
-                    logger.info(
-                        "Skipped spawned Codex digest for %s: memory manager unavailable",
-                        session.id,
-                    )
-                elif llm_service is None:
-                    logger.info(
-                        "Skipped spawned Codex digest for %s: LLM service unavailable",
-                        session.id,
-                    )
-                else:
-                    from gobby.memory.digest import build_turn_and_digest
-
-                    try:
-                        digest_result = await build_turn_and_digest(
-                            memory_manager=memory_manager,
-                            session_manager=self.session_manager,
-                            session_id=session.id,
-                            llm_service=llm_service,
-                            db=self.db,
-                            config=active,
-                        )
-                    except Exception:
-                        logger.warning(
-                            "Spawned Codex digest failed for %s; deferring transcript processing",
-                            session.id,
-                            exc_info=True,
-                        )
-                        continue
-                    if digest_result is None:
-                        logger.info(
-                            "Skipped spawned Codex digest for %s: "
-                            "no undigested turns or digest disabled",
-                            session.id,
-                        )
-                    elif digest_result.get("error") or digest_result.get("cancelled"):
-                        reason = digest_result.get("error") or digest_result.get("reason")
-                        logger.warning(
-                            "Spawned Codex digest failed for %s: %s; "
-                            "deferring transcript processing",
-                            session.id,
-                            reason or "unknown digest failure",
-                        )
-                        continue
-                    elif digest_result.get("tail_withheld"):
-                        logger.info(
-                            "Spawned Codex digest deferred for %s: transcript tail still in flight",
-                            session.id,
-                        )
-                        continue
-
             skip_llm = agent_depth > 0 or source in ("pipeline", "cron")
 
-            # If the transcript file is gone we can't (re)parse it, but a
-            # digest-backed session can still synthesize its summary/wiki from
-            # the stored digest. Only short-circuit when there's nothing left to
-            # do (no usable digest, ephemeral/subagent, or LLM unavailable);
-            # otherwise fall through to digest-backed artifact generation.
+            # Missing transcripts leave archival summaries empty.
             transcript_missing = not session.transcript_path or not os.path.exists(
                 session.transcript_path
             )
-            has_usable_digest = bool(digest and digest.strip())
-            if transcript_missing and (skip_llm or not self.llm_service or not has_usable_digest):
+            if transcript_missing:
                 self.session_manager.mark_transcript_processed(session.id)
                 processed += 1
                 logger.info(
-                    "Marked session %s as processed (transcript file missing, no further processing possible)",
+                    "Marked session %s as processed (transcript file missing)",
                     session.id,
                 )
                 continue
-            if transcript_missing:
-                logger.info(
-                    "Transcript gone for %s; regenerating digest-backed artifacts (summary/wiki) from the stored digest",
-                    session.id,
-                )
 
             if not skip_llm:
                 # Parsing persists authoritative transcript stats. Refresh before
@@ -253,15 +182,7 @@ class TranscriptProcessingMixin:
             except Exception as e:
                 logger.warning("Artifact generation failed for %s: %s", session.id, e)
 
-            # Step 3: Decide whether the session is settled enough to mark processed.
-            #   - LLM unavailable: nothing more we can do, finalize.
-            #   - Transcript gone (digest-backed recovery): finalize once the
-            #     summary is valid. The summary is the durable artifact (persisted
-            #     to the hub); the flat wiki file is a best-effort mirror that
-            #     _generate_artifacts_if_needed already (re)wrote in step 2, so a
-            #     transient summary failure retries next cycle without looping on
-            #     the free local file write.
-            #   - Normal on-disk path: unchanged (gated on summary presence).
+            # Step 3: Finalize when summary work is complete or unavailable.
             refreshed = self.session_manager.get(session.id)
             if not self.llm_service:
                 should_mark = bool(refreshed)
@@ -274,7 +195,7 @@ class TranscriptProcessingMixin:
                 logger.debug("Processed transcript for session %s", session.id)
             else:
                 logger.info(
-                    "Deferring transcript_processed for %s — digest-backed artifacts not yet complete",
+                    "Deferring transcript_processed for %s — archival summary incomplete",
                     session.id,
                 )
 
@@ -330,11 +251,7 @@ class TranscriptProcessingMixin:
         ):
             return
 
-        digest_markdown = getattr(session, "digest_markdown", None)
-        has_digest = bool(digest_markdown and digest_markdown.strip())
-
-        # Digest-backed sessions can regenerate without a readable transcript.
-        if not has_digest and not session.transcript_path:
+        if not session.transcript_path:
             return
 
         try:

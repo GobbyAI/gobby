@@ -48,7 +48,7 @@ const STATUS_MODE_OPTIONS = [
 
 function resolveSessionSummaryMarkdown(
   ...sessions: Array<
-    | Pick<GobbySession, "summary_markdown" | "digest_markdown">
+    | Pick<GobbySession, "summary_markdown" | "handoff_markdown">
     | null
     | undefined
   >
@@ -59,8 +59,8 @@ function resolveSessionSummaryMarkdown(
     }
   }
   for (const session of sessions) {
-    if (session?.digest_markdown?.trim()) {
-      return session.digest_markdown;
+    if (session?.handoff_markdown?.trim()) {
+      return session.handoff_markdown;
     }
   }
   return null;

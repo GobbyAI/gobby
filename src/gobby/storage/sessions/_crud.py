@@ -206,7 +206,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                     and existing_seq_num is not None
                     and not str(existing.title or "").strip()
                 ):
-                    registration_title = format_provisional_session_title(source)
+                    registration_title = format_provisional_session_title(existing_seq_num)
                     registration_title_source = PROVISIONAL_TITLE_SOURCE
                 if existing.parent_session_id == existing.id:
                     repair_self_parent_session(conn, session_id=existing.id, now=now)
@@ -271,7 +271,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                         manual_title_source if is_set(manual_title_source) else None
                     )
                     if insert_title is None:
-                        insert_title = format_provisional_session_title(source)
+                        insert_title = format_provisional_session_title(next_seq_num)
                         insert_title_source = PROVISIONAL_TITLE_SOURCE
                     conn.execute(
                         """
@@ -345,7 +345,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                         and conflicting_seq_num is not None
                         and not str(conflicting.title or "").strip()
                     ):
-                        registration_title = format_provisional_session_title(source)
+                        registration_title = format_provisional_session_title(conflicting_seq_num)
                         registration_title_source = PROVISIONAL_TITLE_SOURCE
                     session = update_existing_session(
                         self,

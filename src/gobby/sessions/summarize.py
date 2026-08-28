@@ -1,16 +1,11 @@
-"""Shared session summary generation.
-
-Single entry point for producing summary_markdown at session boundaries.
-Used by:
-- MCP set_handoff_context (automated fallback path)
-- hook_manager._dispatch_session_summaries (graceful exit via /clear, /exit, /compact)
-- SessionLifecycleManager (expired sessions safety net)
-"""
+"""Transcript-based archival session summary generation."""
 
 from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
+import json
 import logging
 import threading
 from collections.abc import Awaitable, Callable, Sequence
@@ -31,52 +26,25 @@ from gobby.sessions.machine_scope import (
 )
 from gobby.sessions.summary_context import (
     _build_summary_prompt_context,
-    _get_claimed_tasks,
-    _get_session_memories,
-    _looks_like_mock,
     _source_hash_payload,
-    _summary_context_db,
     load_summary_prompt_template,
 )
 from gobby.sessions.summary_generation import (
-    _generate_delta_summary,
     _generate_full_summary,
     _persist_summary_markdown,
     _write_files,
 )
-from gobby.sessions.summary_refresh import (
-    choose_summary_refresh,
-    coerce_digest_turn_count,
-    digest_turn_count,
-    source_context_hash,
-)
 from gobby.sessions.summary_transcripts import (
-    DIGEST_FALLBACK_MAX_CHARS,
-    TRANSCRIPT_FALLBACK_MAX_CHARS,
-    TRANSCRIPT_FALLBACK_MAX_TURNS,
-    TURN_PATTERN,
     TranscriptWindow,
-    _digest_markdown_for_summary,
-    _extract_digest_turns,
-    _format_deterministic_summary,
-    _format_transcript_fallback_summary,
+    _format_transcript_summary,
     _read_first_user_goal,
-    _read_transcript,
     _read_transcript_window,
-    _strip_injected_context_from_value,
-    _summary_source_text,
-    _truncate_markdown,
-    async_enumerate,
 )
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import TranscriptReadError
-from gobby.sessions.workspace_context import (
-    enrich_git_context as _enrich_git_context,
-)
-from gobby.sessions.workspace_context import (
-    resolve_session_workspace,
-)
+from gobby.sessions.workspace_context import enrich_git_context as _enrich_git_context
+from gobby.sessions.workspace_context import resolve_session_workspace
 from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
@@ -89,7 +57,6 @@ class _SummaryCoreResult:
 
 
 class SummarySourceContext(NamedTuple):
-    digest_markdown: str
     window: TranscriptWindow
     turns: list[dict[str, Any]]
     handoff_ctx: HandoffContext
@@ -98,66 +65,16 @@ class SummarySourceContext(NamedTuple):
     source_hash: str
 
 
-_SummaryTaskKey = tuple[asyncio.AbstractEventLoop, str]
-_summary_tasks: dict[_SummaryTaskKey, asyncio.Task[_SummaryCoreResult]] = {}
-_summary_tasks_lock = threading.Lock()
-
-
-def _remove_summary_task(
-    key: _SummaryTaskKey,
-    task: asyncio.Task[_SummaryCoreResult],
-) -> None:
-    with _summary_tasks_lock:
-        if _summary_tasks.get(key) is task:
-            del _summary_tasks[key]
-    if not task.cancelled():
-        task.exception()
-
-
-__all__ = [
-    "DIGEST_FALLBACK_MAX_CHARS",
-    "FeatureConfigProtocol",
-    "LLMServiceProtocol",
-    "SessionManagerProtocol",
-    "SessionSummaryConfigProtocol",
-    "TRANSCRIPT_FALLBACK_MAX_CHARS",
-    "TRANSCRIPT_FALLBACK_MAX_TURNS",
-    "TURN_PATTERN",
-    "_build_summary_prompt_context",
-    "_digest_markdown_for_summary",
-    "_enrich_git_context",
-    "_extract_digest_turns",
-    "_format_deterministic_summary",
-    "_format_transcript_fallback_summary",
-    "_generate_delta_summary",
-    "_generate_full_summary",
-    "_get_claimed_tasks",
-    "_get_session_memories",
-    "_looks_like_mock",
-    "_persist_summary_markdown",
-    "_read_transcript",
-    "_resolve_run_db",
-    "_run_db",
-    "_source_hash_payload",
-    "_strip_injected_context_from_value",
-    "_summary_context_db",
-    "_summary_source_text",
-    "_truncate_markdown",
-    "_write_files",
-    "async_enumerate",
-    "generate_session_summaries",
-    "load_summary_prompt_template",
-]
-
-
 class SessionManagerProtocol(Protocol):
     def get(self, session_id: str) -> Any: ...
+
     def update_summary(
         self,
         session_id: str,
         summary_path: str | None = ...,
         summary_markdown: str | None = ...,
     ) -> Any: ...
+
     def persist_summary_state(
         self,
         session_id: str,
@@ -165,10 +82,10 @@ class SessionManagerProtocol(Protocol):
         summary_markdown: str,
         generation_mode: str,
         source_context_hash: str | None = ...,
-        source_digest_turn_count: int | None = ...,
         metadata_json: dict[str, Any] | None = ...,
         summary_path: str | None = ...,
     ) -> Any: ...
+
     def update_status(self, session_id: str, status: str) -> Any: ...
 
 
@@ -199,6 +116,11 @@ class LLMServiceProtocol(Protocol):
     ) -> str: ...
 
 
+_SummaryTaskKey = tuple[asyncio.AbstractEventLoop, str]
+_summary_tasks: dict[_SummaryTaskKey, asyncio.Task[_SummaryCoreResult]] = {}
+_summary_tasks_lock = threading.Lock()
+
+
 async def _run_db(
     run_db: Callable[..., Awaitable[Any]] | None,
     func: Callable[..., Any],
@@ -218,21 +140,15 @@ def _resolve_run_db(
 ) -> Callable[..., Awaitable[Any]] | None:
     if explicit_run_db is not None:
         return explicit_run_db
-
     resolved_db = db or getattr(session_manager, "db", None)
     if resolved_db is None:
         return None
-
     try:
         from gobby import app_context as app_context_module
-
-        get_app_context = app_context_module.get_app_context
-    except (ImportError, AttributeError) as exc:
+    except ImportError as exc:
         logger.debug("Unable to resolve app context for run_db reuse: %s", exc)
         return None
-
-    app_context = get_app_context()
-
+    app_context = app_context_module.get_app_context()
     if (
         app_context is not None
         and getattr(app_context, "database", None) is resolved_db
@@ -251,26 +167,19 @@ async def build_summary_source_context(
     run_db: Any = None,
 ) -> SummarySourceContext | None:
     """Build the canonical transcript-derived source payload for a summary."""
-    digest_markdown = _digest_markdown_for_summary(session)
     transcript_path = getattr(session, "transcript_path", None)
     path = Path(transcript_path) if transcript_path else None
-    source = getattr(session, "source", None) or "claude"
-    window = TranscriptWindow(turns=[], truncated=False)
-
-    if path is not None and path.exists():
-        window = await _read_transcript_window(
-            path,
-            source=source,
-            max_records=SUMMARY_ANALYZER_MAX_RECORDS,
-        )
-    elif not digest_markdown:
+    if path is None or not path.exists():
         return None
-
+    source = getattr(session, "source", None) or "claude"
+    window = await _read_transcript_window(
+        path,
+        source=source,
+        max_records=SUMMARY_ANALYZER_MAX_RECORDS,
+    )
     parser_source = _summary_parser_source(source, window.turns)
     initial_goal = (
-        await _read_first_user_goal(path, source=parser_source)
-        if path is not None and window.truncated
-        else None
+        await _read_first_user_goal(path, source=parser_source) if window.truncated else None
     )
     if parser_source == "claude":
         turns = window.turns
@@ -282,10 +191,7 @@ async def build_summary_source_context(
         )
         turns = analyzer_turns_from_transcript(parser, window.turns)
 
-    handoff_ctx = TranscriptAnalyzer().extract_handoff_context(
-        turns,
-        initial_goal=initial_goal,
-    )
+    handoff_ctx = TranscriptAnalyzer().extract_handoff_context(turns, initial_goal=initial_goal)
     cwd = resolve_session_workspace(session, transcript_path)
     await _enrich_git_context(handoff_ctx, cwd)
     db_runner = _resolve_run_db(run_db, db=db, session_manager=session_manager)
@@ -307,16 +213,15 @@ async def build_summary_source_context(
         )
         or ""
     )
-    source_hash = source_context_hash(
-        _source_hash_payload(
-            session=session,
-            digest_markdown=digest_markdown,
-            summary_context=summary_context,
-            prompt_template=prompt_template,
-        )
+    payload = _source_hash_payload(
+        session=session,
+        summary_context=summary_context,
+        prompt_template=prompt_template,
     )
+    source_hash = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
     return SummarySourceContext(
-        digest_markdown=digest_markdown,
         window=window,
         turns=turns,
         handoff_ctx=handoff_ctx,
@@ -342,31 +247,22 @@ def _summary_parser_source(source: str, turns: list[dict[str, Any]]) -> str:
 async def _generate_session_summary_core(
     session_id: str,
     session_manager: SessionManagerProtocol,
-    llm_service: LLMServiceProtocol | None = None,
-    session_summary_config: SessionSummaryConfigProtocol | None = None,
-    db: HubDatabase | None = None,
-    run_db: Callable[..., Awaitable[Any]] | None = None,
+    llm_service: LLMServiceProtocol | None,
+    session_summary_config: SessionSummaryConfigProtocol | None,
+    db: HubDatabase | None,
+    run_db: Callable[..., Awaitable[Any]] | None,
 ) -> _SummaryCoreResult:
     db_runner = _resolve_run_db(run_db, db=db, session_manager=session_manager)
-
     session = await _run_db(db_runner, session_manager.get, session_id)
-    if not session:
-        return _SummaryCoreResult(
-            result={"success": False, "error": "No session found", "session_id": session_id},
-            full_markdown="",
-        )
-
+    if session is None:
+        return _SummaryCoreResult({"success": False, "error": "No session found"}, "")
     try:
         require_local_session_ownership(session)
     except RemoteSessionOwnershipError as exc:
-        return _SummaryCoreResult(
-            result={"success": False, "error": str(exc), "session_id": session_id},
-            full_markdown="",
-        )
+        return _SummaryCoreResult({"success": False, "error": str(exc)}, "")
 
-    transcript_path = getattr(session, "transcript_path", None)
     try:
-        source_context = await build_summary_source_context(
+        source = await build_summary_source_context(
             session,
             db=db,
             session_manager=session_manager,
@@ -374,184 +270,92 @@ async def _generate_session_summary_core(
             run_db=db_runner,
         )
     except TranscriptReadError as exc:
+        return _SummaryCoreResult({"success": False, "error": str(exc)}, "")
+    if source is None:
         return _SummaryCoreResult(
-            result={
-                "success": False,
-                "error": str(exc),
-                "session_id": session_id,
-            },
-            full_markdown="",
+            {"success": False, "error": "Transcript file not found", "session_id": session_id},
+            "",
         )
 
-    if source_context is None:
-        if not transcript_path:
-            return _SummaryCoreResult(
-                result={
-                    "success": False,
-                    "error": "No transcript path for session",
-                    "session_id": session_id,
-                },
-                full_markdown="",
-            )
-        return _SummaryCoreResult(
-            result={
-                "success": False,
-                "error": "Transcript file not found",
-                "path": transcript_path,
-            },
-            full_markdown="",
-        )
-
-    digest_markdown = source_context.digest_markdown
-    turns = source_context.turns
-    handoff_ctx = source_context.handoff_ctx
-    summary_context = source_context.summary_context
-    full_prompt_template = source_context.prompt_template
-    source_hash = source_context.source_hash
-    cwd = resolve_session_workspace(session, transcript_path)
-    current_digest_turn_count = digest_turn_count(digest_markdown)
-    decision = choose_summary_refresh(
-        current_source_hash=source_hash,
-        current_digest_turn_count=current_digest_turn_count,
-        previous_source_hash=getattr(session, "summary_source_context_hash", None),
-        previous_digest_turn_count=getattr(session, "summary_digest_turn_count", None),
-        previous_summary_valid=is_summary_markdown_valid(
-            getattr(session, "summary_markdown", None)
-        ),
-        digest_markdown=digest_markdown,
-    )
-
-    full_error: str | None = None
-    delta_error: str | None = None
-    generation_mode = decision.mode
-    full_markdown = getattr(session, "summary_markdown", None) if decision.mode == "noop" else None
-
-    if decision.mode == "delta":
-        full_markdown, delta_error = await _generate_delta_summary(
+    existing = getattr(session, "summary_markdown", None)
+    if getattr(
+        session, "summary_source_context_hash", None
+    ) == source.source_hash and is_summary_markdown_valid(existing):
+        full_markdown = str(existing)
+        generation_mode = "noop"
+        generation_error = None
+    else:
+        cwd = resolve_session_workspace(session, getattr(session, "transcript_path", None))
+        generated, generation_error = await _generate_full_summary(
             session=session,
-            previous_summary=getattr(session, "summary_markdown", "") or "",
-            new_digest_turns=decision.new_digest_turns,
-            summary_context=summary_context,
-            llm_service=llm_service,
-            session_summary_config=session_summary_config,
-            db=db,
-            session_manager=session_manager,
-        )
-        if not is_summary_markdown_valid(full_markdown):
-            logger.warning(
-                "Delta summary merge failed for %s (%s), falling back to full generation",
-                session_id,
-                delta_error,
-            )
-            generation_mode = "full"
-
-    if decision.mode == "full" or (
-        generation_mode == "full" and not is_summary_markdown_valid(full_markdown)
-    ):
-        full_markdown, full_error = await _generate_full_summary(
-            session=session,
-            turns=turns,
-            handoff_ctx=handoff_ctx,
+            turns=source.turns,
+            handoff_ctx=source.handoff_ctx,
             llm_service=llm_service,
             session_summary_config=session_summary_config,
             db=db,
             session_manager=session_manager,
             run_db=db_runner,
-            summary_context=summary_context,
-            prompt_template=full_prompt_template,
+            summary_context=source.summary_context,
+            prompt_template=source.prompt_template,
             project_path=str(cwd),
         )
+        full_markdown = generated or _format_transcript_summary(source.handoff_ctx)
+        generation_mode = "full"
+        if is_summary_markdown_valid(full_markdown):
+            await _persist_summary_markdown(
+                session_id=session_id,
+                session_manager=session_manager,
+                db_runner=db_runner,
+                summary_markdown=full_markdown,
+                generation_mode=generation_mode,
+                source_hash=source.source_hash,
+                metadata={"generation_error": generation_error},
+            )
 
-    if decision.mode != "noop" and not is_summary_markdown_valid(full_markdown):
-        logger.warning(
-            "Full LLM summary failed for %s (%s), falling back to code-only",
-            session_id,
-            full_error,
-        )
-        full_markdown = _format_deterministic_summary(handoff_ctx, digest_markdown)
-        generation_mode = "digest_fallback"
+    valid = is_summary_markdown_valid(full_markdown)
+    wiki_result: dict[str, Any] = {"written": False, "skipped": "invalid_summary"}
+    if valid:
+        try:
+            from gobby.sessions.session_wiki_file import write_session_wiki_page
 
-    summary_is_valid = is_summary_markdown_valid(full_markdown)
+            wiki_result = await asyncio.to_thread(
+                write_session_wiki_page,
+                session,
+                full_markdown,
+            )
+        except Exception as exc:
+            logger.warning("Session wiki file write failed for session %s: %s", session_id, exc)
+            wiki_result = {"written": False, "skipped": "error", "error": str(exc)}
 
-    # Persist to database
-    if decision.mode != "noop" and summary_is_valid:
-        summary_text = full_markdown if isinstance(full_markdown, str) else ""
-        metadata = {
-            "reason": decision.reason,
-            "delta_error": delta_error,
-            "full_error": full_error,
-        }
-        await _persist_summary_markdown(
-            session_id=session_id,
-            session_manager=session_manager,
-            db_runner=db_runner,
-            summary_markdown=summary_text,
-            generation_mode=generation_mode,
-            source_hash=source_hash,
-            digest_turns=current_digest_turn_count,
-            metadata=metadata,
-        )
-
-    summary_length = len(full_markdown) if full_markdown else 0
-    if decision.mode == "noop":
-        logger.debug(
-            "Session summary unchanged for %s (mode=noop, reason=%s, output_chars=%s)",
-            session_id,
-            decision.reason,
-            summary_length,
-        )
-    else:
-        logger.debug(
-            "Session summary generated for %s (mode=%s, reason=%s, output_chars=%s)",
-            session_id,
-            generation_mode,
-            decision.reason,
-            summary_length,
-        )
-
-    # Tail: the session wiki page IS the summary. Write the redacted
-    # summary_markdown to the flat session-wiki file gwiki ingests. Best-effort
-    # so a wiki-file failure never breaks summary generation, and hung here so
-    # every summary-producing caller (lifecycle/background, dispatcher,
-    # CLI/server/MCP refresh) emits the file with no caller drift. Written
-    # whenever the summary is valid — including noop refreshes, which restores a
-    # missing flat file without re-running the summary LLM.
-    final_summary = full_markdown if isinstance(full_markdown, str) else ""
-    session_wiki_result: dict[str, Any] = {"written": False, "skipped": "invalid_summary"}
-    try:
-        from gobby.sessions.session_wiki_file import write_session_wiki_page
-
-        session_wiki_result = await asyncio.to_thread(
-            write_session_wiki_page,
-            session,
-            final_summary,
-        )
-    except Exception as e:  # Wiki persistence must not break an otherwise valid summary.
-        logger.warning("Session wiki file write failed for session %s: %s", session_id, e)
-        session_wiki_result = {"written": False, "skipped": "error", "error": str(e)}
-
-    result = {
-        "success": summary_is_valid,
+    result: dict[str, Any] = {
+        "success": valid,
         "session_id": session_id,
-        "compact_length": 0,  # Kept for API compatibility
-        "full_length": len(full_markdown) if full_markdown else 0,
-        "full_error": full_error,
-        "delta_error": delta_error,
+        "full_length": len(full_markdown),
         "generation_mode": generation_mode,
-        "refresh_reason": decision.reason,
-        "source_context_hash": source_hash,
-        "source_digest_turn_count": current_digest_turn_count,
-        "session_wiki_file": session_wiki_result,
+        "generation_error": generation_error,
+        "source_context_hash": source.source_hash,
+        "session_wiki_file": wiki_result,
         "context_summary": {
-            "has_active_task": bool(handoff_ctx.active_gobby_task),
-            "files_modified_count": len(handoff_ctx.files_modified),
-            "git_commits_count": len(handoff_ctx.git_commits),
-            "has_initial_goal": bool(handoff_ctx.initial_goal),
+            "has_active_task": bool(source.handoff_ctx.active_gobby_task),
+            "files_modified_count": len(source.handoff_ctx.files_modified),
+            "git_commits_count": len(source.handoff_ctx.git_commits),
+            "has_initial_goal": bool(source.handoff_ctx.initial_goal),
         },
     }
-    if not summary_is_valid:
+    if not valid:
         result["error"] = "Unable to generate a valid session summary"
-    return _SummaryCoreResult(result=result, full_markdown=final_summary)
+    return _SummaryCoreResult(result, full_markdown if valid else "")
+
+
+def _remove_summary_task(
+    key: _SummaryTaskKey,
+    task: asyncio.Task[_SummaryCoreResult],
+) -> None:
+    with _summary_tasks_lock:
+        if _summary_tasks.get(key) is task:
+            del _summary_tasks[key]
+    if not task.cancelled():
+        task.exception()
 
 
 async def generate_session_summaries(
@@ -563,40 +367,11 @@ async def generate_session_summaries(
     write_file: bool = False,
     output_path: str = ".gobby/session_summaries",
     set_handoff_ready: bool = False,
-    compact_only: bool = False,
-    full_only: bool = False,
     run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> dict[str, Any]:
-    """Generate summary_markdown for a session.
-
-    Concurrent requests for one session on the same event loop share load,
-    generation, persistence, and wiki output. Joiners reuse the originator's
-    LLM service, summary configuration, database, session manager, and database
-    runner. Different event loops generate independently. Status transitions
-    and optional file output remain caller-specific.
-
-    Args:
-        session_id: Platform session ID (UUID).
-        session_manager: SessionManager instance.
-        llm_service: LLM service for generating summaries.
-        session_summary_config: Feature config for summary generation.
-        db: Database for prompt template loading.
-        write_file: Write summary files to disk.
-        output_path: Directory for summary files.
-        set_handoff_ready: Update session status to handoff_ready. Only
-            synchronous, deliberate handoff paths may pass True; delayed or
-            background refreshes must leave lifecycle status to the
-            synchronous lifecycle handlers.
-        compact_only: Ignored (kept for API compatibility).
-        full_only: Ignored (kept for API compatibility).
-        run_db: Optional bounded executor bridge for hub database storage calls.
-
-    Returns:
-        Dict with success status, markdown lengths, and context summary.
-    """
-    if not session_manager:
+    """Generate or reuse a full transcript-based archival summary."""
+    if session_manager is None:
         return {"success": False, "error": "Session manager not available"}
-
     db_runner = _resolve_run_db(run_db, db=db, session_manager=session_manager)
     loop = asyncio.get_running_loop()
     task_key = (loop, session_id)
@@ -605,25 +380,20 @@ async def generate_session_summaries(
         if task is None:
             task = loop.create_task(
                 _generate_session_summary_core(
-                    session_id=session_id,
-                    session_manager=session_manager,
-                    llm_service=llm_service,
-                    session_summary_config=session_summary_config,
-                    db=db,
-                    run_db=db_runner,
+                    session_id,
+                    session_manager,
+                    llm_service,
+                    session_summary_config,
+                    db,
+                    db_runner,
                 )
             )
             _summary_tasks[task_key] = task
             task.add_done_callback(partial(_remove_summary_task, task_key))
-        else:
-            logger.debug("Joining in-flight session summary generation for %s", session_id)
 
     core_result = await asyncio.shield(task)
-    summary_is_valid = bool(core_result.result.get("success"))
-
-    if set_handoff_ready and summary_is_valid:
+    if set_handoff_ready and core_result.result.get("success"):
         await _run_db(db_runner, session_manager.update_status, session_id, "handoff_ready")
-
     files_written = await _write_files(
         session_id=session_id,
         full_markdown=core_result.full_markdown,
@@ -633,67 +403,4 @@ async def generate_session_summaries(
     )
     result = copy.deepcopy(core_result.result)
     result["files_written"] = files_written
-    return result
-
-
-async def refresh_session_summary_to_watermark(
-    *,
-    session_id: str,
-    minimum_digest_turn_count: int,
-    session_manager: SessionManagerProtocol,
-    llm_service: LLMServiceProtocol | None = None,
-    session_summary_config: SessionSummaryConfigProtocol | None = None,
-    db: HubDatabase | None = None,
-) -> dict[str, Any]:
-    """Run a scheduled refresh and catch up after joining stale in-flight work."""
-    result = await generate_session_summaries(
-        session_id=session_id,
-        session_manager=session_manager,
-        llm_service=llm_service,
-        session_summary_config=session_summary_config,
-        db=db,
-        set_handoff_ready=False,
-    )
-    observed = coerce_digest_turn_count(result.get("source_digest_turn_count"))
-    if result.get("success") and observed is not None and observed >= minimum_digest_turn_count:
-        return result
-
-    if not result.get("success"):
-        reason = result.get("error") or result.get("refresh_reason") or "unknown"
-        logger.warning(
-            "Scheduled session summary refresh skipped for %s (target_digest_turns=%s, reason=%s)",
-            session_id,
-            minimum_digest_turn_count,
-            reason,
-        )
-        return result
-
-    logger.debug(
-        "Scheduled session summary refresh for %s joined stale generation "
-        "(target_digest_turns=%s, observed_digest_turns=%s); retrying",
-        session_id,
-        minimum_digest_turn_count,
-        observed,
-    )
-    result = await generate_session_summaries(
-        session_id=session_id,
-        session_manager=session_manager,
-        llm_service=llm_service,
-        session_summary_config=session_summary_config,
-        db=db,
-        set_handoff_ready=False,
-    )
-    observed = coerce_digest_turn_count(result.get("source_digest_turn_count"))
-    if result.get("success") and observed is not None and observed >= minimum_digest_turn_count:
-        return result
-
-    reason = result.get("error") or result.get("refresh_reason") or "no_watermark_progress"
-    logger.warning(
-        "Scheduled session summary refresh did not reach its watermark for %s "
-        "(target_digest_turns=%s, observed_digest_turns=%s, reason=%s)",
-        session_id,
-        minimum_digest_turn_count,
-        observed,
-        reason,
-    )
     return result

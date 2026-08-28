@@ -1813,63 +1813,6 @@ def _register_grok_session(
     )
 
 
-def test_grok_continuation_prompt_captures_rule_context_as_briefing(
-    manager_with_mocks: HookManager,
-    session_manager: SessionManager,
-    sample_project: dict[str, Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    session_id = _register_grok_session(session_manager, sample_project["id"], monkeypatch)
-    session_manager.update_stats(session_id, message_count=1)
-    from gobby.workflows.state_manager import SessionVariableManager
-
-    variables = SessionVariableManager(session_manager.db)
-    variables.merge_variables(session_id, {"compact_handoff_inject_pending": True})
-    mocks = cast(Any, manager_with_mocks)
-    mocks._session_manager = session_manager
-    mocks._database = session_manager.db
-    mocks._record_machine_ingress = MagicMock()
-    mocks._record_session_activity_pulse = MagicMock()
-
-    def resolve(event: HookEvent, *, apply_session_mutations: bool = True) -> str:
-        event.metadata["_platform_session_id"] = session_id
-        return session_id
-
-    def enrich(
-        _event: HookEvent,
-        response: HookResponse,
-        *,
-        workflow_context: str | None = None,
-    ) -> None:
-        response.context = workflow_context
-
-    mocks._session_lookup.resolve.side_effect = resolve
-    mocks._evaluate_workflow_rules = MagicMock(return_value=("continuation handoff", None))
-    mocks._evaluate_blocking_webhooks = MagicMock(return_value=None)
-    mocks._get_event_handler = MagicMock(return_value=lambda _event: HookResponse(decision="allow"))
-    mocks._enricher.enrich.side_effect = enrich
-    event = HookEvent(
-        event_type=HookEventType.BEFORE_AGENT,
-        session_id="grok-hook-manager",
-        source=SessionSource.GROK,
-        timestamp=datetime.now(UTC),
-        data={"source_event_id": "continuation-envelope"},
-        project_id=sample_project["id"],
-    )
-
-    with patch("gobby.hooks.hook_manager.reconcile_session_activation"):
-        response = manager_with_mocks._handle_after_daemon_ready(event)
-
-    assert response.context is None
-    assert variables.get_variables(session_id)["grok_pending_briefing"] == [
-        {
-            "id": "turn:continuation-envelope",
-            "text": "continuation handoff",
-            "message_ids": [],
-        }
-    ]
-
-
 @pytest.mark.parametrize("gate_kind", ["workflow", "webhook"])
 def test_grok_preserve_original_gate_flushes_pending_context(
     gate_kind: str,

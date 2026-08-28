@@ -465,7 +465,7 @@ class TestSessionLifecycleManager:
         session.external_id = "ext-s1"
         session.agent_depth = 0
         session.source = "claude"
-        session.digest_markdown = None
+        session.handoff_markdown = None
         session.turn_count = 0
         session.summary_markdown = "valid summary"
         session.project_id = None
@@ -545,105 +545,6 @@ class TestSessionLifecycleManager:
             assert processed == 1
             mock_sum.assert_not_awaited()
             manager.session_manager.mark_transcript_processed.assert_called_once_with("s-sub")
-
-    @pytest.mark.asyncio
-    async def test_process_pending_transcripts_digests_spawned_codex_session(
-        self,
-        tmp_path: Path,
-        mock_db: MagicMock,
-        mock_config: SessionLifecycleConfig,
-    ) -> None:
-        """Expired spawned Codex sessions get a final transcript digest before processing."""
-        memory_manager = SimpleNamespace(config=SimpleNamespace(enabled=True))
-        with patch(_SESSION_MANAGER_PATCH):
-            manager = SessionLifecycleManager(
-                mock_db,
-                static_session_capture(
-                    mock_config,
-                    services=_memory_services(memory_manager),
-                ),
-            )
-        llm_service = _set_llm_service(manager, object())
-        session = SimpleNamespace(
-            id="spawned-codex",
-            transcript_path=str(tmp_path / "codex.jsonl"),
-            external_id="codex-child",
-            agent_depth=1,
-            source="codex",
-            digest_markdown=None,
-        )
-        manager.session_manager.get_pending_transcript_sessions.return_value = [session]
-        Path(session.transcript_path).write_text('{"type": "event_msg"}\n')
-
-        digest = AsyncMock(return_value={"turn_num": 1, "digest_length": 120})
-        with (
-            patch.object(manager, "_process_session_transcript", new_callable=AsyncMock) as process,
-            patch.object(
-                manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
-            ) as mock_sum,
-            patch("gobby.memory.digest.build_turn_and_digest", digest),
-        ):
-            processed = await manager._process_pending_transcripts(manager._capture_active())
-
-        assert processed == 1
-        process.assert_awaited_once_with("spawned-codex", session.transcript_path)
-        assert digest.await_count == 1
-        digest.assert_awaited_once_with(
-            memory_manager=memory_manager,
-            session_manager=manager.session_manager,
-            session_id="spawned-codex",
-            llm_service=llm_service,
-            db=mock_db,
-            config=manager._capture_active(),
-        )
-        mock_sum.assert_not_awaited()
-        manager.session_manager.mark_transcript_processed.assert_called_once_with("spawned-codex")
-
-    @pytest.mark.asyncio
-    async def test_process_pending_transcripts_retries_spawned_codex_digest_failure(
-        self,
-        tmp_path: Path,
-        mock_db: MagicMock,
-        mock_config: SessionLifecycleConfig,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """A concrete digest failure stays pending and logs its reason for diagnosis."""
-        memory_manager = SimpleNamespace(config=SimpleNamespace(enabled=True))
-        with patch(_SESSION_MANAGER_PATCH):
-            manager = SessionLifecycleManager(
-                mock_db,
-                static_session_capture(
-                    mock_config,
-                    services=_memory_services(memory_manager),
-                ),
-            )
-        _set_llm_service(manager, object())
-        session = SimpleNamespace(
-            id="spawned-codex",
-            transcript_path=str(tmp_path / "codex.jsonl"),
-            external_id="codex-child",
-            agent_depth=1,
-            source="codex",
-            digest_markdown=None,
-        )
-        manager.session_manager.get_pending_transcript_sessions.return_value = [session]
-        Path(session.transcript_path).write_text('{"type": "event_msg"}\n')
-
-        with (
-            patch.object(manager, "_process_session_transcript", new_callable=AsyncMock),
-            patch(
-                "gobby.memory.digest.build_turn_and_digest",
-                new_callable=AsyncMock,
-                return_value={"error": "provider unavailable"},
-            ),
-            caplog.at_level("WARNING", logger="gobby.sessions.transcript_processing"),
-        ):
-            processed = await manager._process_pending_transcripts(manager._capture_active())
-
-        assert processed == 0
-        manager.session_manager.mark_transcript_processed.assert_not_called()
-        assert "provider unavailable" in caplog.text
-        assert "deferring transcript processing" in caplog.text
 
     @pytest.mark.asyncio
     async def test_process_pending_transcripts_skips_pipeline_sessions(
@@ -823,8 +724,8 @@ class TestSessionLifecycleManager:
         those without are deferred for retry.
         """
         _digest = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
-        s1 = MagicMock(id="s1", agent_depth=0, source="claude", digest_markdown=_digest)
-        s2 = MagicMock(id="s2", agent_depth=0, source="claude", digest_markdown=_digest)
+        s1 = MagicMock(id="s1", agent_depth=0, source="claude", handoff_markdown=_digest)
+        s2 = MagicMock(id="s2", agent_depth=0, source="claude", handoff_markdown=_digest)
         manager.session_manager.get_pending_transcript_sessions.return_value = [s1, s2]
 
         # Enable llm_service so the summary-gating logic activates
@@ -868,16 +769,10 @@ class TestSessionLifecycleManager:
             assert mock_proc.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_missing_transcript_with_digest_regenerates_artifacts(
+    async def test_missing_transcript_with_handoff_marks_processed_without_summary(
         self, manager: SessionLifecycleManager
     ) -> None:
-        """A purged transcript with a usable digest regenerates artifacts.
-
-        Instead of short-circuiting, the loop falls through to
-        _generate_artifacts_if_needed so the summary (and its mirror wiki file)
-        are rebuilt from the stored digest; once the summary is valid the
-        session is finalized.
-        """
+        """A handoff never substitutes for a missing archival transcript."""
         digest = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
         session = MagicMock(spec=Session)
         session.id = "s1"
@@ -885,7 +780,7 @@ class TestSessionLifecycleManager:
         session.external_id = "ext-s1"
         session.agent_depth = 0
         session.source = "claude"
-        session.digest_markdown = digest
+        session.handoff_markdown = digest
         manager.session_manager.get_pending_transcript_sessions.return_value = [session]
         _set_llm_service(manager, MagicMock())
 
@@ -908,66 +803,16 @@ class TestSessionLifecycleManager:
         ):
             processed = await manager._process_pending_transcripts(manager._capture_active())
 
-        mock_gen.assert_awaited_once_with(
-            "s1", manager._capture_active().session_summary
-        )  # did NOT short-circuit
+        mock_gen.assert_not_awaited()
         manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
-        assert manager.session_manager.get.call_args.args == ("s1",)
-        assert session.digest_markdown == digest
+        assert session.handoff_markdown == digest
         assert processed == 1
 
     @pytest.mark.asyncio
-    async def test_missing_transcript_valid_summary_without_fresh_wiki_marks_processed(
-        self,
-        manager: SessionLifecycleManager,
-    ) -> None:
-        """Valid summary is sufficient; the wiki mirror is optional."""
-        digest = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
-        session = MagicMock(spec=Session)
-        session.id = "s1"
-        session.transcript_path = "/nonexistent/missing-s1.jsonl"
-        session.external_id = "ext-s1"
-        session.agent_depth = 0
-        session.source = "claude"
-        session.digest_markdown = digest
-        manager.session_manager.get_pending_transcript_sessions.return_value = [session]
-        _set_llm_service(manager, MagicMock())
-
-        refreshed = MagicMock()
-        refreshed.turn_count = 3
-        refreshed.summary_markdown = "valid summary"
-        manager.session_manager.get.return_value = refreshed
-
-        with (
-            patch.object(manager, "_process_session_transcript", new_callable=AsyncMock),
-            patch.object(
-                manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
-            ) as mock_gen,
-            patch(
-                "gobby.sessions.transcript_processing.is_summary_markdown_valid", return_value=True
-            ),
-            patch(
-                "gobby.sessions.transcript_processing.session_wiki_path_is_fresh",
-                return_value=False,
-            ),
-        ):
-            processed = await manager._process_pending_transcripts(manager._capture_active())
-
-        mock_gen.assert_awaited_once_with("s1", manager._capture_active().session_summary)
-        manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
-        assert manager.session_manager.get.call_args.args == ("s1",)
-        assert processed == 1
-
-    @pytest.mark.asyncio
-    async def test_missing_transcript_invalid_summary_stays_unprocessed(
+    async def test_missing_transcript_invalid_summary_marks_processed(
         self, manager: SessionLifecycleManager
     ) -> None:
-        """A digest-backed recovery defers until the summary itself is valid.
-
-        The flat wiki file is a best-effort mirror written inside
-        _generate_artifacts_if_needed; only the durable summary gates
-        finalization, so an invalid summary retries on the next cycle.
-        """
+        """Missing transcripts may leave archival summaries empty."""
         digest = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
         session = MagicMock(spec=Session)
         session.id = "s1"
@@ -975,7 +820,7 @@ class TestSessionLifecycleManager:
         session.external_id = "ext-s1"
         session.agent_depth = 0
         session.source = "claude"
-        session.digest_markdown = digest
+        session.handoff_markdown = digest
         manager.session_manager.get_pending_transcript_sessions.return_value = [session]
         _set_llm_service(manager, MagicMock())
 
@@ -995,13 +840,10 @@ class TestSessionLifecycleManager:
         ):
             processed = await manager._process_pending_transcripts(manager._capture_active())
 
-        mock_gen.assert_awaited_once_with(
-            "s1", manager._capture_active().session_summary
-        )  # synthesis was attempted...
-        manager.session_manager.mark_transcript_processed.assert_not_called()  # ...but deferred
-        assert manager.session_manager.get.call_args.args == ("s1",)
+        mock_gen.assert_not_awaited()
+        manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
         assert refreshed.summary_markdown is None
-        assert processed == 0
+        assert processed == 1
 
     @pytest.mark.asyncio
     async def test_missing_transcript_no_digest_marks_processed(
@@ -1014,7 +856,7 @@ class TestSessionLifecycleManager:
         session.external_id = "ext-s1"
         session.agent_depth = 0
         session.source = "claude"
-        session.digest_markdown = None
+        session.handoff_markdown = None
         manager.session_manager.get_pending_transcript_sessions.return_value = [session]
         _set_llm_service(manager, MagicMock())
 
@@ -1029,7 +871,7 @@ class TestSessionLifecycleManager:
         mock_gen.assert_not_awaited()  # short-circuited — nothing to synthesize
         manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
         assert manager.session_manager.get.call_count == 0
-        assert session.digest_markdown is None
+        assert session.handoff_markdown is None
         assert processed == 1
 
     @pytest.mark.asyncio
@@ -1393,11 +1235,11 @@ class TestGenerateArtifactsIfNeeded:
     async def test_sentinel_summary_does_not_count_as_existing_summary(
         self, manager: SessionLifecycleManager
     ) -> None:
-        """Provider failure sentinels are retried instead of treated as summaries."""
+        """Provider failure sentinels stay empty when the transcript is missing."""
         _set_llm_service(manager, MagicMock())
         session = MagicMock()
         session.summary_markdown = "Session summary generation failed: provider unavailable"
-        session.digest_markdown = "### Turn 1\nDigest source"
+        session.handoff_markdown = "### Turn 1\nDigest source"
         session.transcript_path = None
         manager.session_manager.get.return_value = session
 
@@ -1409,9 +1251,8 @@ class TestGenerateArtifactsIfNeeded:
                 "sess-1", manager._capture_active().session_summary
             )
 
-        mock_gen.assert_awaited_once()
-        assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
-        assert session.digest_markdown.startswith("### Turn")
+        mock_gen.assert_not_awaited()
+        assert session.handoff_markdown.startswith("### Turn")
         assert session.transcript_path is None
 
     @pytest.mark.asyncio
@@ -1470,16 +1311,11 @@ class TestGenerateArtifactsIfNeeded:
     async def test_valid_summary_missing_wiki_file_still_triggers(
         self, manager: SessionLifecycleManager
     ) -> None:
-        """Valid summary but missing flat wiki file still triggers generation.
-
-        The artifact gate must proceed when the flat wiki file is absent even
-        though the summary is already valid, so the summary flow no-ops the
-        summary and restores the missing mirror file.
-        """
+        """A missing transcript prevents restoring a missing wiki mirror."""
         _set_llm_service(manager, MagicMock())
         session = MagicMock()
         session.summary_markdown = "## Current State\nvalid summary"
-        session.digest_markdown = "### Turn 1\na\n### Turn 2\nb\n### Turn 3\nc"
+        session.handoff_markdown = "### Turn 1\na\n### Turn 2\nb\n### Turn 3\nc"
         session.transcript_path = None
         manager.session_manager.get.return_value = session
 
@@ -1500,9 +1336,11 @@ class TestGenerateArtifactsIfNeeded:
                 "sess-1", manager._capture_active().session_summary
             )
 
-        mock_gen.assert_awaited_once()
-        assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
+        mock_gen.assert_not_awaited()
         assert session.transcript_path is None
+        assert session.summary_markdown == "## Current State\nvalid summary"
+        assert session.handoff_markdown.startswith("### Turn 1")
+        assert manager.session_manager.get.call_args.args == ("sess-1",)
 
 
 class TestPurgeSoftDeletedDefinitions:
@@ -2113,7 +1951,7 @@ class TestProcessPendingTranscriptsArchive:
         session.external_id = "ext-123"
         session.agent_depth = 0
         session.source = "claude"
-        session.digest_markdown = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
+        session.handoff_markdown = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
         manager.session_manager.get_pending_transcript_sessions.return_value = [session]
 
         with (
@@ -2196,115 +2034,3 @@ class TestStartStopIdempotent:
         await manager.stop()
         assert manager._expire_task is None
         assert manager._process_task is None
-
-
-class TestDigestBacklogSweep:
-    """Tests for the digest backlog sweep in the expire loop."""
-
-    def _armed_manager(
-        self,
-        mock_db: MagicMock,
-        mock_config: SessionLifecycleConfig,
-    ) -> SessionLifecycleManager:
-        with patch(_SESSION_MANAGER_PATCH):
-            swept = SessionLifecycleManager(
-                mock_db,
-                static_session_capture(
-                    mock_config,
-                    services=_memory_services(MagicMock()),
-                ),
-            )
-        _set_llm_service(swept, MagicMock())
-        swept._running = True
-        return swept
-
-    @pytest.mark.asyncio
-    async def test_sweep_drains_bounded_batches_per_session(
-        self,
-        mock_db: MagicMock,
-        mock_config: SessionLifecycleConfig,
-    ) -> None:
-        swept = self._armed_manager(mock_db, mock_config)
-        mock_db.fetchall.return_value = [{"id": "session-a"}, {"id": "session-b"}]
-
-        build = AsyncMock(
-            side_effect=[
-                {"turn_num": 1},
-                {"turn_num": 2},
-                {"turn_num": 3},
-                None,
-            ]
-        )
-        with patch("gobby.memory.digest.build_turn_and_digest", build):
-            await swept._sweep_digest_backlogs(
-                swept._capture_active(),
-                max_batches_per_session=2,
-            )
-
-        session_calls = [call.kwargs["session_id"] for call in build.await_args_list]
-        assert session_calls[:3] == ["session-a", "session-a", "session-b"]
-        assert session_calls.count("session-a") == 2
-        assert all(call.kwargs["catch_up"] is True for call in build.await_args_list)
-        query, params = mock_db.fetchall.call_args.args
-        assert "turn_count - COALESCE(last_digested_pair_index, 0)" in query
-        assert params[0] == swept._capture_active().digest.backlog_sweep_min_undigested
-
-    @pytest.mark.asyncio
-    async def test_sweep_stops_session_on_error_result(
-        self,
-        mock_db: MagicMock,
-        mock_config: SessionLifecycleConfig,
-    ) -> None:
-        swept = self._armed_manager(mock_db, mock_config)
-        mock_db.fetchall.return_value = [{"id": "session-a"}]
-
-        build = AsyncMock(return_value={"error": "provider outage"})
-        with patch("gobby.memory.digest.build_turn_and_digest", build):
-            await swept._sweep_digest_backlogs(swept._capture_active())
-
-        assert build.await_count == 1
-
-    @pytest.mark.asyncio
-    async def test_sweep_stops_session_on_tail_withheld(
-        self,
-        mock_db: MagicMock,
-        mock_config: SessionLifecycleConfig,
-    ) -> None:
-        swept = self._armed_manager(mock_db, mock_config)
-        mock_db.fetchall.return_value = [{"id": "session-a"}]
-
-        build = AsyncMock(return_value={"turn_num": 1, "tail_withheld": True})
-        with patch("gobby.memory.digest.build_turn_and_digest", build):
-            await swept._sweep_digest_backlogs(swept._capture_active())
-
-        assert build.await_count == 1
-
-    @pytest.mark.asyncio
-    async def test_sweep_skips_without_memory_services(
-        self,
-        mock_db: MagicMock,
-        mock_config: SessionLifecycleConfig,
-    ) -> None:
-        with patch(_SESSION_MANAGER_PATCH):
-            bare = SessionLifecycleManager(mock_db, static_session_capture(mock_config))
-        bare._running = True
-
-        await bare._sweep_digest_backlogs(bare._capture_active())
-
-        assert mock_db.fetchall.call_count == 0
-        assert bare._running is True
-
-    @pytest.mark.asyncio
-    async def test_sweep_skips_when_digest_disabled(
-        self,
-        mock_db: MagicMock,
-        mock_config: SessionLifecycleConfig,
-    ) -> None:
-        swept = self._armed_manager(mock_db, mock_config)
-        config = swept._capture_active().model_copy(deep=True)
-        config.digest.enabled = False
-
-        await swept._sweep_digest_backlogs(config)
-
-        assert mock_db.fetchall.call_count == 0
-        assert config.digest.enabled is False

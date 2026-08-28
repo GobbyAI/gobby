@@ -20,7 +20,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_wait_tool_names_only_include_implemented_tools() -> None:
-    assert WAIT_TOOL_NAMES == ("wait_for_output", "wait_for_summary")
+    assert WAIT_TOOL_NAMES == ("wait_for_output",)
 
 
 def test_wait_for_agent_uses_ordinary_client_guard() -> None:
@@ -72,7 +72,7 @@ async def test_heartbeat_failure_does_not_replace_tool_result() -> None:
         result = await call_with_wait_heartbeat(
             tool_call(),
             ctx=ctx,
-            tool_name="wait_for_summary",
+            tool_name="wait_for_output",
             timeout=1.0,
         )
 
@@ -98,7 +98,7 @@ async def test_heartbeat_failure_does_not_replace_tool_exception() -> None:
         await call_with_wait_heartbeat(
             call,
             ctx=ctx,
-            tool_name="wait_for_summary",
+            tool_name="wait_for_output",
             timeout=1.0,
         )
 

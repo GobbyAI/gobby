@@ -29,11 +29,9 @@ from gobby.mcp_proxy.tools.memory_scope import (
     memory_owned_by_current_project,
 )
 from gobby.mcp_proxy.tools.memory_write import register_memory_write_tools
-from gobby.memory.digest import (
-    build_turn_and_digest as _build_turn_and_digest,
-)
 from gobby.memory.manager import MemoryManager
 from gobby.memory.scoring import undecay
+from gobby.memory.shadow_relevance import judge_shadow_candidate_relevance
 from gobby.storage.memories import MemoryType, validate_memory_type
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
@@ -708,51 +706,32 @@ def create_memory_registry(
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    # NOTE: DB rules invoke this tool at turn-end and Codex turn-start catch-up boundaries.
-    # It is NOT called directly from Python code. Keep both lifecycle rules in sync with this API.
     @registry.tool(
-        name="build_turn_and_digest",
+        name="judge_shadow_relevance",
         description=(
-            "Build a detailed turn record, append it to the session digest, and synthesize "
-            "a title. Lifecycle rules invoke it at turn-end and for Codex turn-start catch-up."
+            "Judge pending shadow-memory recall candidates for the current session. "
+            "The turn-end lifecycle rule invokes this independently of session summaries."
         ),
     )
-    async def build_turn_and_digest_tool(
+    async def judge_shadow_relevance_tool(
         session_id: str = "",
-        prompt_text: str | None = None,
-        catch_up: bool = False,
     ) -> dict[str, Any]:
-        """
-        Build turn record and append to digest after agent response.
-
-        Reads the last user/assistant exchange from the transcript,
-        generates a structured turn record via LLM, appends it to the
-        session's rolling digest, and synthesizes a title via
-        ``build_turn_and_digest``.
-
-        Args:
-            session_id: Platform session ID (injected by dispatch layer)
-            prompt_text: Optional user prompt (usually None for stop events)
-            catch_up: Drain a bounded undigested backlog batch at turn start,
-                excluding the active turn
-        """
+        """Process pending durable shadow-recall rows for one completed turn."""
         if not session_id:
             return {"success": False, "error": "session_id is required"}
         try:
-            result = await _build_turn_and_digest(
-                memory_manager=_memory_manager(),
-                session_manager=session_manager,
+            manager = _memory_manager()
+            llm_service = _llm_service()
+            config = _config()
+            if llm_service is None or config is None:
+                return {"success": True, "skipped": True, "reason": "judge unavailable"}
+            completed = await judge_shadow_candidate_relevance(
+                memory_manager=manager,
+                llm_service=llm_service,
+                config=config,
                 session_id=session_id,
-                prompt_text=prompt_text,
-                llm_service=_llm_service(),
-                config=_config(),
-                catch_up=catch_up,
             )
-            if result is None:
-                return {"success": True, "skipped": True, "reason": "disabled or no content"}
-            if "error" in result:
-                return {"success": False, "error": result["error"]}
-            return {"success": True, **result}
+            return {"success": True, "completed": completed}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

@@ -481,7 +481,7 @@ class TestRuleDefinitionBody:
                 RuleEffect(
                     type="mcp_call",
                     server="gobby-sessions",
-                    tool="set_handoff_context",
+                    tool="set_handoff",
                 )
             ],
             group="context-handoff",

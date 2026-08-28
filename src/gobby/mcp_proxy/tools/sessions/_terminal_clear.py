@@ -1,4 +1,4 @@
-"""clear_self MCP tool: stage a durable handoff, then send /clear."""
+"""Clear-session dispatch for the structured set_handoff tool."""
 
 from __future__ import annotations
 
@@ -17,14 +17,15 @@ from gobby.mcp_proxy.tools.sessions._terminal_webchat import (
     _clear_live_web_chat_fallback,
     _find_live_web_chat_session,
 )
-from gobby.sessions.clear_continuation import (
-    build_clear_self_continue_prompt,
-    clear_failed_attempt,
-    stage_clear_attempt,
-)
+from gobby.sessions.clear_continuation import clear_failed_attempt, stage_clear_attempt
 from gobby.sessions.compact_continuation import (
     CodexRolloutCursor,
     CodexRolloutObservationError,
+)
+from gobby.sessions.handoff import (
+    FeedbackObservation,
+    HandoffAttemptState,
+    build_handoff_continue_prompt,
 )
 from gobby.terminal_context import (
     parse_terminal_context_value,
@@ -33,7 +34,6 @@ from gobby.terminal_context import (
 from gobby.utils.session_context import get_current_session_id
 
 if TYPE_CHECKING:
-    from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.hub.protocol import HubDatabase
@@ -43,49 +43,16 @@ logger = logging.getLogger(__name__)
 
 CLEAR_COMMAND = "/clear"
 
-__all__ = ["CLEAR_COMMAND", "execute_clear_self", "register_clear_self_tool"]
-
-
-def register_clear_self_tool(
-    registry: InternalToolRegistry,
-    *,
-    session_manager: SessionManager,
-    db: HubDatabase,
-    agent_run_manager: LocalAgentRunManager,
-    web_chat_session_registry: WebChatSessionRegistry | None = None,
-) -> None:
-    """Register clear_self on the gobby-sessions terminal tool surface."""
-
-    @registry.tool(
-        name="clear_self",
-        description=(
-            "Clear your own context and continue from a caller-authored handoff. "
-            "Requires a non-empty `handoff`; empty or whitespace is an error, and "
-            "there is no digest or summarizer fallback. In a terminal session this "
-            "call does not return normally: the Gobby daemon interrupts your active "
-            "turn and types `/clear` into your pane, so your CLI reports the call "
-            "as rejected or cancelled. That attribution is wrong — the daemon did "
-            "it. Do not stop, and do not ask the user what happened. Agent-run "
-            "sessions are rejected. Web-chat sessions clear through the live "
-            "daemon ChatSession registry and do return normally."
-        ),
-    )
-    async def clear_self(handoff: str) -> dict[str, Any]:
-        return await execute_clear_self(
-            handoff,
-            session_manager=session_manager,
-            db=db,
-            agent_run_manager=agent_run_manager,
-            web_chat_session_registry=web_chat_session_registry,
-        )
+__all__ = ["CLEAR_COMMAND", "execute_clear_session"]
 
 
 def _error(message: str, error_code: str) -> dict[str, Any]:
     return {"success": False, "error": message, "error_code": error_code}
 
 
-async def execute_clear_self(
-    handoff: str,
+async def execute_clear_session(
+    handoff_markdown: str,
+    observations: list[FeedbackObservation],
     *,
     session_manager: SessionManager,
     db: HubDatabase,
@@ -93,13 +60,13 @@ async def execute_clear_self(
     web_chat_session_registry: WebChatSessionRegistry | None = None,
 ) -> dict[str, Any]:
     """Stage a clear attempt, then deliver /clear through the compaction sender."""
-    if not isinstance(handoff, str) or not handoff.strip():
-        return _error("clear_self requires a non-empty handoff", "handoff_required")
+    if not handoff_markdown.strip():
+        return _error("set_handoff requires rendered handoff content", "handoff_required")
 
     session_id = get_current_session_id()
     if not session_id:
         return _error(
-            "clear_self requires current MCP SessionContext",
+            "set_handoff requires current MCP SessionContext",
             "session_context_required",
         )
 
@@ -108,8 +75,9 @@ async def execute_clear_self(
         session_manager,
     )
     if error:
-        web_result = await _clear_web_chat_self(
-            handoff,
+        web_result = await _clear_web_chat_session(
+            handoff_markdown,
+            observations,
             db=db,
             session_manager=session_manager,
             agent_run_manager=agent_run_manager,
@@ -130,8 +98,9 @@ async def execute_clear_self(
                 f"Session {resolved_session_id} is deleted",
                 "session_deleted",
             )
-        web_result = await _clear_web_chat_self(
-            handoff,
+        web_result = await _clear_web_chat_session(
+            handoff_markdown,
+            observations,
             db=db,
             session_manager=session_manager,
             agent_run_manager=agent_run_manager,
@@ -152,7 +121,7 @@ async def execute_clear_self(
         )
     if agent_run_manager.get_by_session(resolved_session_id) is not None:
         return _error(
-            "clear_self is not supported for agent-run sessions",
+            "set_handoff(clear_session=true) is not supported for agent-run sessions",
             "agent_run_unsupported",
         )
     if getattr(session, "status", None) == "deleted":
@@ -196,11 +165,11 @@ async def execute_clear_self(
         pane_probe = await tmux.capture_pane(target, lines=1)
     except Exception as exc:
         logger.warning(
-            "Failed verifying clear_self tmux target %s for session %s",
+            "Failed verifying clear-session tmux target %s for session %s",
             target,
             resolved_session_id,
             extra={
-                "event": "clear_self_tmux_target_verification_failed",
+                "event": "clear_session_tmux_target_verification_failed",
                 "session_id": resolved_session_id,
                 "tmux_target": target,
                 "error_type": type(exc).__name__,
@@ -227,27 +196,21 @@ async def execute_clear_self(
 
     attempt_id = uuid4().hex
     staged = False
-    prior_summary_state: dict[str, Any] = {}
+    attempt_state: HandoffAttemptState | None = None
     try:
-        prior_summary_state = stage_clear_attempt(
+        attempt_state = stage_clear_attempt(
             db,
             resolved_session_id,
             attempt_id=attempt_id,
+            handoff_markdown=handoff_markdown,
+            observations=observations,
             terminal_context=parse_terminal_context_value(session.terminal_context),
             chat_context=None,
         )
         staged = True
-        updated = session_manager.update_summary(
-            resolved_session_id,
-            summary_markdown=handoff,
-        )
-        if updated is None:
-            raise RuntimeError(
-                f"failed to persist clear_self handoff for session {resolved_session_id}"
-            )
     except Exception as exc:
         logger.warning(
-            "Failed staging clear_self handoff for session %s",
+            "Failed staging clear-session handoff for session %s",
             resolved_session_id,
             exc_info=True,
         )
@@ -256,10 +219,10 @@ async def execute_clear_self(
                 db,
                 resolved_session_id,
                 attempt_id=attempt_id,
-                prior_summary_state=prior_summary_state,
+                attempt_state=attempt_state,
             )
         return _error(
-            f"failed to stage clear_self handoff: {exc}",
+            f"failed to stage clear-session handoff: {exc}",
             "staging_failed",
         )
 
@@ -268,7 +231,7 @@ async def execute_clear_self(
             db,
             resolved_session_id,
             attempt_id=attempt_id,
-            prior_summary_state=prior_summary_state,
+            attempt_state=attempt_state,
         )
 
     try:
@@ -310,8 +273,9 @@ async def execute_clear_self(
     }
 
 
-async def _clear_web_chat_self(
-    handoff: str,
+async def _clear_web_chat_session(
+    handoff_markdown: str,
+    observations: list[FeedbackObservation],
     *,
     db: HubDatabase,
     session_manager: SessionManager,
@@ -349,31 +313,27 @@ async def _clear_web_chat_self(
 
     if agent_run_manager.get_by_session(predecessor_id) is not None:
         return _error(
-            "clear_self is not supported for agent-run sessions",
+            "set_handoff(clear_session=true) is not supported for agent-run sessions",
             "agent_run_unsupported",
         )
 
     attempt_id = uuid4().hex
     staged = False
-    prior_summary_state: dict[str, Any] = {}
+    attempt_state: HandoffAttemptState | None = None
     try:
-        prior_summary_state = stage_clear_attempt(
+        attempt_state = stage_clear_attempt(
             db,
             predecessor_id,
             attempt_id=attempt_id,
+            handoff_markdown=handoff_markdown,
+            observations=observations,
             terminal_context=None,
             chat_context=_web_chat_attempt_context(live, db_session),
         )
         staged = True
-        updated = session_manager.update_summary(
-            predecessor_id,
-            summary_markdown=handoff,
-        )
-        if updated is None:
-            raise RuntimeError(f"failed to persist clear_self handoff for session {predecessor_id}")
     except Exception as exc:
         logger.warning(
-            "Failed staging web_chat clear_self handoff for session %s",
+            "Failed staging web-chat clear handoff for session %s",
             predecessor_id,
             exc_info=True,
         )
@@ -382,10 +342,10 @@ async def _clear_web_chat_self(
                 db,
                 predecessor_id,
                 attempt_id=attempt_id,
-                prior_summary_state=prior_summary_state,
+                attempt_state=attempt_state,
             )
         return _error(
-            f"failed to stage clear_self handoff: {exc}",
+            f"failed to stage web-chat clear handoff: {exc}",
             "staging_failed",
         )
 
@@ -394,14 +354,14 @@ async def _clear_web_chat_self(
             web_chat_session_registry,
             *session_ids,
             attempt_id=attempt_id,
-            continuation_prompt=build_clear_self_continue_prompt(predecessor_ref=predecessor_id),
+            continuation_prompt=build_handoff_continue_prompt(),
         )
     except Exception as exc:
         clear_failed_attempt(
             db,
             predecessor_id,
             attempt_id=attempt_id,
-            prior_summary_state=prior_summary_state,
+            attempt_state=attempt_state,
         )
         logger.warning(
             "Failed clearing live web_chat session %s",
@@ -415,7 +375,7 @@ async def _clear_web_chat_self(
             db,
             predecessor_id,
             attempt_id=attempt_id,
-            prior_summary_state=prior_summary_state,
+            attempt_state=attempt_state,
         )
         return _error(
             f"No live web_chat session found for {predecessor_id}",
@@ -443,7 +403,7 @@ async def _clear_web_chat_self(
         db,
         predecessor_id,
         attempt_id=attempt_id,
-        prior_summary_state=prior_summary_state,
+        attempt_state=attempt_state,
     )
     return _error(
         str(result.get("reason") or "web chat clear failed"),
@@ -476,7 +436,7 @@ def _codex_interrupt_observer(
         cursor = CodexRolloutCursor.at_eof(getattr(session, "transcript_path", None))
     except CodexRolloutObservationError as exc:
         logger.warning(
-            "Cannot observe Codex interruption for clear_self session %s: %s",
+            "Cannot observe Codex interruption for clear-session handoff %s: %s",
             getattr(session, "id", None),
             exc,
         )
@@ -487,7 +447,7 @@ def _codex_interrupt_observer(
             return cursor.saw_fresh_turn_aborted()
         except CodexRolloutObservationError as observe_exc:
             logger.warning(
-                "Lost Codex interrupt observation for clear_self session %s: %s",
+                "Lost Codex interrupt observation for clear-session handoff %s: %s",
                 getattr(session, "id", None),
                 observe_exc,
             )

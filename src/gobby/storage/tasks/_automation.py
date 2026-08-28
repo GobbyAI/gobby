@@ -5,8 +5,8 @@ from datetime import timedelta
 from typing import Any
 
 from gobby.sessions.compact_markers import (
-    COMPACT_SELF_CONTINUE_FRESH_SECONDS,
-    COMPACT_SELF_CONTINUE_VARIABLE,
+    HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
+    HANDOFF_COMPACT_CONTINUE_VARIABLE,
 )
 from gobby.sessions.contested_expiry import (
     CONTESTED_EXPIRY_CAUSES,
@@ -131,17 +131,17 @@ def release_task_claim(
         "tasks.labels",
         "live-session",
     )
-    compact_cutoff = now - timedelta(seconds=COMPACT_SELF_CONTINUE_FRESH_SECONDS)
+    compact_cutoff = now - timedelta(seconds=HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS)
     revival_cutoff = now - timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS)
     params: list[Any] = [now, task_id, expected_owner_session_id]
     params.extend(live_session_params)
     params.extend(
         (
-            COMPACT_SELF_CONTINUE_VARIABLE,
-            COMPACT_SELF_CONTINUE_VARIABLE,
-            COMPACT_SELF_CONTINUE_VARIABLE,
+            HANDOFF_COMPACT_CONTINUE_VARIABLE,
+            HANDOFF_COMPACT_CONTINUE_VARIABLE,
+            HANDOFF_COMPACT_CONTINUE_VARIABLE,
             compact_cutoff.isoformat(),
-            COMPACT_SELF_CONTINUE_VARIABLE,
+            HANDOFF_COMPACT_CONTINUE_VARIABLE,
             now.isoformat(),
             CONTESTED_TERMINAL_EXPIRY_VARIABLE,
             CONTESTED_TERMINAL_EXPIRY_VARIABLE,

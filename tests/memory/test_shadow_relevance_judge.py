@@ -17,7 +17,6 @@ from gobby.memory.shadow_relevance import (
     _build_shadow_prompt,
     judge_shadow_candidate_relevance,
 )
-from gobby.storage.hub.protocol import HubDatabase
 
 
 def _content_hash(content: str) -> str:
@@ -26,7 +25,7 @@ def _content_hash(content: str) -> str:
 
 class FakeMemoryManager:
     def __init__(self, contents: dict[str, str], *, enabled: bool = True) -> None:
-        self.config = SimpleNamespace(digest_shadow_usefulness=enabled)
+        self.config = SimpleNamespace(shadow_relevance_judging=enabled)
         self.contents = contents
 
     async def aget_memory(
@@ -372,99 +371,3 @@ async def test_shadow_poll_caps_each_pass_at_eight_calls() -> None:
     assert completed == 8
     assert len(llm.calls) == 8
     assert len(store.label_batches) == 8
-
-
-class _FakeDigestSession:
-    transcript_path = None
-    digest_markdown = ""
-    last_digest_input_hash = None
-    title = "Existing Title"
-    title_source = "llm"
-    source = "claude"
-
-
-class _FakeDigestSessionManager:
-    def __init__(self) -> None:
-        self.session = _FakeDigestSession()
-        self.persist_calls: list[dict[str, Any]] = []
-
-    def get(self, session_id: str) -> Any:
-        del session_id
-        return self.session
-
-    def persist_digest_state(self, session_id: str, **kwargs: Any) -> Any:
-        del session_id
-        self.persist_calls.append(kwargs)
-        return self.session
-
-
-class _FakeDigestLLM:
-    async def call_json_feature(
-        self,
-        feature_config: Any,
-        prompt: str,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        del feature_config, prompt, kwargs
-        return {
-            "turn_markdown": "User asked; agent answered.",
-            "title_candidate": "Real Work Title",
-        }
-
-
-@pytest.mark.asyncio
-async def test_digest_drives_shadow_poll_without_legacy_result_payload(
-    temp_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from gobby.config.sessions import DigestConfig
-    from gobby.memory import digest as digest_mod
-
-    seen: dict[str, Any] = {}
-
-    async def fake_judge(**kwargs: Any) -> int:
-        seen.update(kwargs)
-        return 2
-
-    monkeypatch.setattr(digest_mod, "judge_shadow_candidate_relevance", fake_judge)
-    scheduled: list[tuple[Any, str]] = []
-
-    def schedule_background_task(coroutine: Any, *, name: str) -> None:
-        scheduled.append((coroutine, name))
-
-    memory_manager = SimpleNamespace(
-        config=SimpleNamespace(enabled=True, digest_shadow_usefulness=True),
-        db=temp_db,
-        schedule_background_task=schedule_background_task,
-    )
-    session_manager = _FakeDigestSessionManager()
-    config = SimpleNamespace(
-        digest=DigestConfig(),
-        memory_usefulness=_config().memory_usefulness,
-    )
-    llm_service = _FakeDigestLLM()
-
-    result = await digest_mod.build_turn_and_digest(
-        memory_manager=memory_manager,
-        session_manager=session_manager,
-        session_id="session-shadow-digest",
-        prompt_text="please investigate the failing recall pipeline in this repo",
-        llm_service=llm_service,
-        db=temp_db,
-        config=config,
-    )
-
-    assert result is not None
-    assert result["turn_num"] == 1
-    assert "memory_usefulness" not in result
-    assert len(session_manager.persist_calls) == 1
-    assert "Turn 1" in session_manager.persist_calls[0]["digest_markdown"]
-    assert seen == {}
-    assert scheduled[0][1] == "memory-shadow-judge-session-shadow-digest"
-    await scheduled[0][0]
-    assert seen == {
-        "memory_manager": memory_manager,
-        "llm_service": llm_service,
-        "config": config,
-        "session_id": "session-shadow-digest",
-    }

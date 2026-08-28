@@ -303,7 +303,7 @@ def dispatch_mcp_calls(
         # Skip the call when no platform session_id could be resolved —
         # ``_platform_session_id`` may be absent or None when
         # SessionLookupService.resolve() failed to map the external id, and
-        # downstream tools like build_turn_and_digest require a valid session_id.
+        # downstream lifecycle tools require a valid session_id.
         if "session_id" not in arguments:
             platform_sid = event.metadata.get("_platform_session_id")
             if isinstance(platform_sid, str) and platform_sid:

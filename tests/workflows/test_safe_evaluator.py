@@ -413,25 +413,23 @@ class TestMcpResultHas:
         ctx: dict[str, Any] = {
             "variables": {
                 "mcp_results": {
-                    "gobby-sessions": {"wait_for_summary": {"completed": True, "result": "ok"}}
+                    "gobby-sessions": {"get_handoff": {"completed": True, "result": "ok"}}
                 }
             }
         }
         ev = _build_evaluator(ctx)
         assert (
-            ev.evaluate("mcp_result_has('gobby-sessions', 'wait_for_summary', 'completed', True)")
+            ev.evaluate("mcp_result_has('gobby-sessions', 'get_handoff', 'completed', True)")
             is True
         )
 
     def test_returns_false_when_field_doesnt_match(self) -> None:
         ctx: dict[str, Any] = {
-            "variables": {
-                "mcp_results": {"gobby-sessions": {"wait_for_summary": {"completed": False}}}
-            }
+            "variables": {"mcp_results": {"gobby-sessions": {"get_handoff": {"completed": False}}}}
         }
         ev = _build_evaluator(ctx)
         assert (
-            ev.evaluate("mcp_result_has('gobby-sessions', 'wait_for_summary', 'completed', True)")
+            ev.evaluate("mcp_result_has('gobby-sessions', 'get_handoff', 'completed', True)")
             is False
         )
 
@@ -439,7 +437,7 @@ class TestMcpResultHas:
         ctx: dict[str, Any] = {"variables": {}}
         ev = _build_evaluator(ctx)
         assert (
-            ev.evaluate("mcp_result_has('gobby-sessions', 'wait_for_summary', 'completed', True)")
+            ev.evaluate("mcp_result_has('gobby-sessions', 'get_handoff', 'completed', True)")
             is False
         )
 
@@ -758,7 +756,7 @@ class TestCombinedExpressions:
         assert result is True  # evaluate() wraps result in bool(); "abc" is truthy
 
     def test_string_strip_method(self) -> None:
-        """Test .strip() on strings — used in lifecycle title synthesis."""
+        """Test .strip() on strings used by workflow conditions."""
         from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
         ctx: dict[str, Any] = {"s": "  hello  "}
@@ -815,8 +813,8 @@ class TestCombinedExpressions:
         # No '.', so partition returns ('Makefile', '', '') — tail is empty
         assert ev3.evaluate("path.partition('.')[2] == ''") is True
 
-    def test_lifecycle_title_synthesis_expression(self) -> None:
-        """Test the exact expression from session-lifecycle.yaml for title synthesis."""
+    def test_prompt_filter_expression(self) -> None:
+        """Test prompt filtering with length and slash-command checks."""
         from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
         ctx: dict[str, Any] = {"event": {"data": {"prompt": "Fix the login bug"}}}

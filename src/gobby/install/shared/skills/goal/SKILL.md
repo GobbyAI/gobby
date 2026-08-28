@@ -164,9 +164,9 @@ On approval, set `status: active` and ask where it runs:
    the tree is complete → go to Completion.
 2. Claim the leaf. Implement per its contract, validate, commit, close.
 3. Append a Progress Log entry (iteration, leaf ref, outcome).
-4. Closing a leaf while the anchor stays claimed triggers automatic
-   compaction. If it did not fire, call `gobby-sessions:compact_self`
-   directly: pass the current session ref as the top-level
+4. After closing a leaf while the anchor stays claimed, call
+   `gobby-sessions:set_handoff` with concise current state, next steps, and
+   `clear_session=false`: pass the current session ref as the top-level
    `call_tool.session_id`, not inside `arguments`. In a terminal session that call
    comes back as a rejected or cancelled tool use attributed to the user. That is
    the daemon interrupting the turn to deliver the compaction command, never a
@@ -263,7 +263,8 @@ Suspend — on an external stop signal, user cancel, or a blown budget:
 
 1. Set `status: suspended` and record exact state in the Progress Log (open
    leaves, running workers, blockers).
-2. `gobby-sessions:set_handoff_context` with the same state.
+2. `gobby-sessions:set_handoff` with the same state, actionable next steps, and
+   `clear_session=true`.
 3. Stop workers you spawned or record their run ids as intentionally live.
 4. Clear `auto_task_ref` and `goal_file`, unclaim the anchor, notify the user.
 
@@ -335,7 +336,8 @@ during the run is fixed, committed, and closed under the coordination epic.
 3. Work the highest-priority actionable coordination bug yourself; resume
    automation only after blocking bugs are fixed. Daemon or build-system
    fixes pass the Post-Fix Daemon Restart Gate before releasing blockers.
-4. compact_self after finishing a coordination bug or on context pressure.
+4. Call `set_handoff(clear_session=false)` after finishing a coordination bug or on
+   context pressure.
 5. Idle only when workers are running and nothing is actionable: subscribe once
    by calling wait_for_agent(run_id). If the run remains active, end the turn.
    On the daemon wake, re-call wait_for_agent(run_id) first for the terminal

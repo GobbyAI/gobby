@@ -31,8 +31,7 @@ def _make_session(**overrides: Any) -> Session:
         "seq_num": 42,
         "model": "claude-sonnet-4-6",
         "had_edits": True,
-        "digest_markdown": "# Digest\nRolling digest...",
-        "last_turn_markdown": "# Turn\nLast turn details...",
+        "handoff_markdown": "# Handoff\nCurrent state...",
         "usage_input_tokens": 50000,
         "usage_output_tokens": 10000,
         "context_window": 200000,
@@ -85,8 +84,7 @@ class TestSessionToBrief:
 
         brief = session.to_brief()
         assert "summary_markdown" not in brief
-        assert "digest_markdown" not in brief
-        assert "last_turn_markdown" not in brief
+        assert "handoff_markdown" not in brief
         assert "original_prompt" not in brief
 
     def test_to_brief_excludes_paths(self) -> None:
@@ -122,7 +120,6 @@ class TestSessionToBrief:
         assert "context_injected" not in brief
         assert "terminal_context" not in brief
         assert "chat_mode" not in brief
-        assert "last_digest_input_hash" not in brief
 
     def test_to_brief_ref_fallback_without_seq_num(self) -> None:
         """to_brief ref falls back to truncated UUID when seq_num is None."""

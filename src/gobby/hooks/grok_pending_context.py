@@ -158,12 +158,7 @@ def mark_briefing_turn(handler: PendingContextHandler, event: HookEvent) -> None
     if session_id is None:
         return
     session = handler._session_manager.get(session_id)
-    variables = SessionVariableManager(handler._session_manager.db).get_variables(session_id)
-    if (
-        not _has_prior_session_activity(session)
-        or variables.get("compact_handoff_inject_pending")
-        or variables.get("clear_handoff_inject_pending")
-    ):
+    if not _has_prior_session_activity(session):
         event.metadata["_grok_briefing_turn"] = True
 
 

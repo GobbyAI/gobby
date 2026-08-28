@@ -157,7 +157,7 @@ links to the guide that owns that topic.
 - **List ready work**: `gobby tasks ready` or `list_ready_tasks` MCP tool
 - **Spawn an agent**: `gobby agents spawn "Prompt" --session <session-id>` or `spawn_agent` MCP tool
 - **Create memory**: `gobby memory create "Content"` or `create_memory` MCP tool
-- **Session handoff**: `gobby sessions create-handoff` or `set_handoff_context` MCP tool
+- **Session handoff**: `gobby sessions summarize` or `set_handoff` MCP tool
 - **Check daemon health**: `gobby status` or `/api/admin/status`
 - **Set up a private Telegram bot**:
   [Telegram DM-only quick path](telegram.md#quick-path-a-private-dm-bot)
