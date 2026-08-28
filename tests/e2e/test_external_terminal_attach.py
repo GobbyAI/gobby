@@ -333,14 +333,30 @@ def _seed_session(
     *,
     cwd: str,
 ) -> str:
+    """Register the external pane's CLI session and materialize its row.
+
+    A startup SessionStart is stateless since #20968: the session row, and
+    with it external terminal discovery, materializes on the first activity
+    event, which carries the same terminal context.
+    """
     external_id = f"ext-cli-{uuid.uuid4().hex[:8]}"
+    terminal_context = tmux.context()
     cli_events.session_start(
         session_id=external_id,
         machine_id=MACHINE_ID,
         cli_source="claude",
         project_id=E2E_PROJECT_ID,
         cwd=cwd,
-        terminal_context=tmux.context(),
+        terminal_context=terminal_context,
+    )
+    cli_events.user_prompt_submit(
+        external_id,
+        "SHOW_PROMPT",
+        source="claude",
+        machine_id=MACHINE_ID,
+        cwd=cwd,
+        project_id=E2E_PROJECT_ID,
+        terminal_context=terminal_context,
     )
     return external_id
 
