@@ -23,7 +23,7 @@ use super::gate::{
 };
 use super::runner::{
     ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM, PARENT_BASELINE_CHECKSUM, PREDECESSOR_BASELINE_CHECKSUM,
-    SchemaRunner, WORKTREE_BASELINE_CHECKSUM,
+    SchemaRunner, WORKTREE_BASELINE_CHECKSUM, auth_schema_for, render_sql_for_schema,
 };
 use super::sql_splitter::split_sql_statements;
 use super::verify::catalog_manifest;
@@ -2441,4 +2441,26 @@ fn migration_408_on_a_407_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
     );
     SchemaRunner::new(&mut client, "public")?.verify()?;
     Ok(())
+}
+
+#[test]
+fn render_gives_each_non_public_hub_its_own_agent_auth_schema() {
+    let sql = "CREATE SCHEMA IF NOT EXISTS gobby_agent_auth;\n\
+               CREATE OR REPLACE FUNCTION gobby_agent_auth.heartbeat_daemon() \
+               SET search_path = gobby_agent_auth, pg_temp AS $$ \
+               SELECT 1 FROM public.machines $$;";
+    assert_eq!(auth_schema_for("public"), "gobby_agent_auth");
+    assert_eq!(render_sql_for_schema(sql, "public"), sql);
+
+    let rendered = render_sql_for_schema(sql, "gobby_test_1_2_w_abc");
+    assert_eq!(
+        auth_schema_for("gobby_test_1_2_w_abc"),
+        "gobby_test_1_2_w_abc_agent_auth"
+    );
+    assert!(!rendered.contains("gobby_agent_auth"));
+    assert!(!rendered.contains("public."));
+    assert!(rendered.contains("CREATE SCHEMA IF NOT EXISTS gobby_test_1_2_w_abc_agent_auth;"));
+    assert!(rendered.contains("gobby_test_1_2_w_abc_agent_auth.heartbeat_daemon()"));
+    assert!(rendered.contains("search_path = gobby_test_1_2_w_abc_agent_auth, pg_temp"));
+    assert!(rendered.contains("FROM gobby_test_1_2_w_abc.machines"));
 }

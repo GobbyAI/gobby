@@ -11,7 +11,6 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from gobby.storage.hub.protocol import Transaction
 from gobby.storage.managed_credential_types import (
-    AUTH_SCHEMA,
     CredentialAuthorizationError,
     CredentialIssuanceError,
     GrantRevocationSink,
@@ -33,6 +32,9 @@ class _InteractiveCredentialHost(Protocol):
     _machine_id: UUID
     _grant_revocations: GrantRevocationSink | None
     _interactive_grant_expiry: dict[InteractiveGrantExpiryKey, datetime]
+
+    @property
+    def auth_schema(self) -> str: ...
 
     def heartbeat(self) -> None: ...
 
@@ -116,7 +118,7 @@ class InteractiveCredentialMixin:
             # material does not exist yet.
             with self._database.transaction() as txn:
                 row = txn.execute(
-                    f"""SELECT * FROM {AUTH_SCHEMA}.issue_or_reuse_interactive_principal(
+                    f"""SELECT * FROM {self.auth_schema}.issue_or_reuse_interactive_principal(
                         %s, %s, %s, %s, %s, %s, %s
                     )""",
                     (
@@ -194,7 +196,7 @@ class InteractiveCredentialMixin:
             )
             with self._database.transaction() as txn:
                 row = txn.execute(
-                    f"""SELECT * FROM {AUTH_SCHEMA}.rotate_interactive_principal(
+                    f"""SELECT * FROM {self.auth_schema}.rotate_interactive_principal(
                         %s, %s, %s, %s, %s, %s, %s, %s
                     )""",
                     (
@@ -262,7 +264,7 @@ class InteractiveCredentialMixin:
         generation: int | None = None,
     ) -> RevocationOutcome:
         row = self._database.fetchone(
-            f"""SELECT * FROM {AUTH_SCHEMA}.lookup_interactive_principal(
+            f"""SELECT * FROM {self.auth_schema}.lookup_interactive_principal(
                 %s::text, %s::uuid, %s::uuid, %s::integer
             )""",
             (deployment_token, self._machine_id, project_id, generation),
@@ -302,7 +304,7 @@ class InteractiveCredentialMixin:
         generation: int,
     ) -> bool:
         row = self._database.fetchone(
-            f"""SELECT * FROM {AUTH_SCHEMA}.lookup_interactive_principal(
+            f"""SELECT * FROM {self.auth_schema}.lookup_interactive_principal(
                 %s::text, %s::uuid, %s::uuid, %s::integer
             )""",
             (deployment_token, self._machine_id, project_id, generation),
@@ -368,7 +370,7 @@ class InteractiveCredentialMixin:
         )
         ciphertext = secret_store.seal(password.encode("utf-8"), aad=aad.encode("utf-8"))
         stored = txn.execute(
-            f"""SELECT {AUTH_SCHEMA}.replace_interactive_credential_material(
+            f"""SELECT {self.auth_schema}.replace_interactive_credential_material(
                 %s, %s, %s, %s, %s, %s
             )""",
             (
@@ -397,7 +399,7 @@ class InteractiveCredentialMixin:
         generation: int,
     ) -> str:
         row = txn.execute(
-            f"""SELECT * FROM {AUTH_SCHEMA}.load_interactive_credential_material(
+            f"""SELECT * FROM {self.auth_schema}.load_interactive_credential_material(
                 %s, %s, %s, %s
             )""",
             (deployment_token, self._machine_id, project_id, generation),

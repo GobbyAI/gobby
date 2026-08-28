@@ -30,6 +30,7 @@ from psycopg.types.json import Jsonb
 
 from gobby.runner_maintenance.storage_hygiene import sweep_orphaned_test_schemas
 from gobby.storage.hub.postgres import PostgresHubDatabase
+from gobby.storage.managed_credential_types import auth_schema_for
 from gobby.storage.schema_contract import apply_schema
 from gobby.utils.env import is_test_protect_enabled
 from gobby.utils.machine_id import get_machine_id
@@ -456,12 +457,14 @@ def isolated_test_schema(url: str, worker_label: str) -> Iterator[str]:
 
 
 def _drop_test_schema(conn: psycopg.Connection[Any], schema: str) -> None:
-    exists = conn.execute(
-        "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
-        (schema,),
-    ).fetchone()
-    if exists:
-        conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+    # A non-public hub owns its own `<schema>_agent_auth`; drop both.
+    for name in (schema, auth_schema_for(schema)):
+        exists = conn.execute(
+            "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+            (name,),
+        ).fetchone()
+        if exists:
+            conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(name)))
 
 
 @pytest.fixture(scope="session")

@@ -1,7 +1,11 @@
 use postgres::Client;
 
 fn test_schema_created_epoch(schema_name: &str) -> Option<i64> {
-    let mut parts = schema_name.split('_');
+    // A non-public hub owns `<schema>_agent_auth`; it ages with its hub.
+    let hub_schema = schema_name
+        .strip_suffix("_agent_auth")
+        .unwrap_or(schema_name);
+    let mut parts = hub_schema.split('_');
     if parts.next()? != "gobby" || parts.next()? != "test" {
         return None;
     }
@@ -104,6 +108,14 @@ mod tests {
         assert!(!test_schema_is_sweep_eligible(
             "gobby_test_invalid_42_master_abc123",
             101,
+        ));
+        assert!(test_schema_is_sweep_eligible(
+            "gobby_test_100_42_master_abc123_agent_auth",
+            101,
+        ));
+        assert!(!test_schema_is_sweep_eligible(
+            "gobby_test_101_42_master_abc123_agent_auth",
+            100,
         ));
     }
 }
