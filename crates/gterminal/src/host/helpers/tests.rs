@@ -8,11 +8,15 @@ use crate::protocol::render_ansi::BlitEncoder;
 use crate::protocol::{CellData, FrameData, RenderEncoding, ServerMessage, TerminalFrame};
 
 fn cell(symbol: &str, fg: u32) -> CellData {
+    styled_cell(symbol, fg, 0, 0)
+}
+
+fn styled_cell(symbol: &str, fg: u32, bg: u32, modifier: u16) -> CellData {
     CellData {
         symbol: symbol.to_owned(),
         fg,
-        bg: 0,
-        modifier: 0,
+        bg,
+        modifier,
         skip: false,
         hyperlink: None,
     }
@@ -60,9 +64,11 @@ fn terminal_frame(rx: &mut mpsc::Receiver<ServerMessage>) -> TerminalFrame {
 #[test]
 fn first_push_is_a_full_paint_with_real_cell_colors() {
     let (mut att, mut rx) = attachment(4);
-    // Packed 24-bit colour, as `host::poll::apply_sgr` stores tmux SGR 38;2.
+    // Packed 24-bit colours, as `host::poll::apply_sgr` stores tmux SGR 38;2 / 48;2.
     let red = 0x02_00_00_00 | 0xff_00_00;
-    let painted = frame(vec![cell("A", red); 6]);
+    let navy = 0x02_00_00_00 | 0x00_40_80;
+    let bold = 1;
+    let painted = frame(vec![styled_cell("A", red, navy, bold); 6]);
 
     assert!(push_terminal_ansi(&mut att, &painted, 7));
 
@@ -72,10 +78,11 @@ fn first_push_is_a_full_paint_with_real_cell_colors() {
     let text = String::from_utf8(sent.bytes).unwrap();
     assert_eq!(text.matches('A').count(), 6);
     assert!(
-        text.contains("38;2;255;0;0"),
-        "cell fg must be encoded: {text:?}"
+        text.contains("\x1b[0;1;38;2;255;0;0;48;2;0;64;128m"),
+        "cell modifier, fg and bg must be encoded: {text:?}"
     );
     assert!(!text.contains("38;2;255;255;255m\x1b[48;2;0;0;0m"));
+    assert!(!text.contains("38;2;0;0;0m\x1b[48;2;255;255;255m"));
     assert!(!att.desynced);
 }
 
