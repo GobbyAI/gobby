@@ -24,18 +24,21 @@ def test_single_instance_reaches_every_consumer() -> None:
     from gobby.config.terminals import TerminalConfig
     from gobby.storage.terminals import TerminalManager
     from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.services import TerminalServices
 
     annotations = GobbyRunner.__annotations__
     assert "terminal_manager" in annotations
     assert "terminal_runtime_registry" in annotations
     assert "terminal_config" in annotations
     assert "frame_client" in annotations
+    assert "terminal_services" in annotations
 
     container_names = {item.name for item in fields(ServiceContainer)}
     assert "terminal_manager" in container_names
     assert "terminal_runtime_registry" in container_names
     assert "terminal_config" in container_names
     assert "frame_client" in container_names
+    assert "terminal_services" in container_names
 
     manager = MagicMock(spec=TerminalManager)
     registry = TerminalRuntimeRegistry()
@@ -52,6 +55,7 @@ def test_single_instance_reaches_every_consumer() -> None:
         terminal_manager=manager,
         terminal_runtime_registry=registry,
         terminal_config=config,
+        terminal_services=TerminalServices(manager=manager, registry=registry),
     )
     assert services.terminal_manager is manager
     assert services.terminal_runtime_registry is registry
@@ -64,8 +68,11 @@ def test_single_instance_reaches_every_consumer() -> None:
     ws_config.ping_timeout = 10
     ws_config.max_message_size = 1024
     server = WebSocketServer(ws_config, MagicMock(), AsyncMock(return_value="test-user"))
-    server.configure_terminals(manager, registry, config)
+    server.configure_terminals(
+        manager, registry, config, terminal_services=services.terminal_services
+    )
     assert server.terminal_manager is manager
+    assert server.terminal_services is services.terminal_services
     assert server.terminal_runtime_registry is registry
     assert server.terminal_config is config
     assert server.terminal_manager is services.terminal_manager
@@ -96,3 +103,13 @@ def test_proxy_frame_opener_is_bound_on_the_websocket_server(tmp_path: Path) -> 
     assert locator.host_socket is None
     expected = str(tmp_path / FRAMES_SOCKET_NAME)
     assert expected.endswith(FRAMES_SOCKET_NAME)
+
+
+def test_orchestration_builds_terminal_services_once() -> None:
+    """One runner-owned instance feeds the monitor, the container, and every caller."""
+    from gobby.runner_init import orchestration
+
+    source = Path(orchestration.__file__).read_text(encoding="utf-8")
+    assert source.count("TerminalServices(") == 1
+    assert "runner.terminal_services = TerminalServices(" in source
+    assert "terminal_services=runner.terminal_services," in source

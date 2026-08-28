@@ -169,6 +169,7 @@ def init_servers(runner: GobbyRunner) -> None:
         terminal_manager=getattr(runner, "terminal_manager", None),
         terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
         terminal_config=getattr(runner, "terminal_config", None),
+        terminal_services=getattr(runner, "terminal_services", None),
         terminal_host_config=getattr(runner, "terminal_host_config", None),
         terminal_host_manager=getattr(runner, "terminal_host_manager", None),
         frame_client=getattr(runner, "frame_client", None),
@@ -312,6 +313,7 @@ def init_servers(runner: GobbyRunner) -> None:
                 services.terminal_manager,
                 services.terminal_runtime_registry,
                 services.terminal_config,
+                terminal_services=services.terminal_services,
             )
             _bind_proxy_frame_opener(runner)
         runner.http_server.websocket_server = runner.websocket_server

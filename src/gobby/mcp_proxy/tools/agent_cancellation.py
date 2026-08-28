@@ -219,6 +219,7 @@ async def stop_agent_run(
                     kill_db,
                     signal_name="TERM",
                     close_terminal=True,
+                    terminal_services=getattr(runner, "terminal_services", None),
                 ),
             )
             if not result.get("success") and result.get("error_code") != KILL_ERROR_NO_TARGET_PID:

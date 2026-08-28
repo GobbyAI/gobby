@@ -77,6 +77,7 @@ if TYPE_CHECKING:
     from gobby.tasks.validation import TaskValidator
     from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.host_manager import TerminalHostManager
+    from gobby.terminals.services import TerminalServices
     from gobby.wiki.watcher import WikiWatcher
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.workflows.pipeline_loader import PipelineLoader
@@ -217,6 +218,7 @@ class GobbyRunner:
     terminal_host_manager: TerminalHostManager | None
     frame_client: Any
     write_coordinator: Any
+    terminal_services: TerminalServices
     terminal_effect_bridge: Any
     attention_manager: AttentionStateManager
     attention_metadata_store: AttentionMetadataStore

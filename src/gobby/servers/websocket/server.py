@@ -193,11 +193,13 @@ class WebSocketServer(
         terminal_manager: Any,
         runtime_registry: Any,
         terminal_config: Any | None = None,
+        terminal_services: Any | None = None,
     ) -> None:
         """Attach composition-root terminal services after construction."""
         self.terminal_manager = terminal_manager
         self.terminal_runtime_registry = runtime_registry
         self.terminal_config = terminal_config
+        self.terminal_services = terminal_services
 
     @property
     def daemon_config(self) -> DaemonConfig | None:

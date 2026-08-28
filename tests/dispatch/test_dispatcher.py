@@ -2033,6 +2033,7 @@ async def test_spawn_attach_failure_terminalizes_created_run(
         db: HubDatabase,
         error: str,
         completion_registry: object | None,
+        terminal_services: object | None,
     ) -> bool:
         killed.append(run_id)
         assert db is temp_db
@@ -2119,7 +2120,7 @@ async def test_cancel_between_spawn_and_attach_terminalizes_run_before_redispatc
         return run.id
 
     async def fake_kill_agent(
-        run: Any, db: HubDatabase, *, close_terminal: bool
+        run: Any, db: HubDatabase, *, close_terminal: bool, terminal_services: object | None
     ) -> dict[str, bool]:
         assert db is temp_db
         assert close_terminal is True
@@ -3518,7 +3519,7 @@ async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_r
         return original_get_artifacts(manager, task_id)
 
     async def fake_kill_agent(
-        run: Any, db: HubDatabase, *, close_terminal: bool
+        run: Any, db: HubDatabase, *, close_terminal: bool, terminal_services: object | None
     ) -> dict[str, object]:
         assert db is temp_db
         assert close_terminal is True
@@ -3766,6 +3767,7 @@ async def test_repeatedly_cancelled_spawn_cleanup_quarantines_before_propagating
         db: HubDatabase,
         *,
         close_terminal: bool,
+        terminal_services: object | None,
     ) -> dict[str, object]:
         assert run.id == run_id
         assert db is temp_db
@@ -3860,6 +3862,7 @@ async def test_inner_spawn_cleanup_cancellation_quarantines_without_spinning(
             db=MagicMock(),
             error="post-spawn cleanup failed",
             completion_registry=None,
+            terminal_services=None,
             cleanup_unattached_spawned_run=cancelled_cleanup,
             quarantine_unterminated_spawned_run=quarantine,
         )

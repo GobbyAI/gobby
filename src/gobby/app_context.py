@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from gobby.storage.terminals import TerminalManager
     from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.host_manager import TerminalHostManager
+    from gobby.terminals.services import TerminalServices
 
 
 @dataclass
@@ -102,6 +103,7 @@ class ServiceContainer:
     terminal_manager: TerminalManager | None = None
     terminal_runtime_registry: TerminalRuntimeRegistry | None = None
     terminal_config: TerminalConfig | None = None
+    terminal_services: TerminalServices | None = None
     terminal_host_config: TerminalHostConfig | None = None
     terminal_host_manager: TerminalHostManager | None = None
     frame_client: Any | None = None

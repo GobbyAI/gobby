@@ -220,6 +220,8 @@ async def test_stop_agent_run_happy_path_call_order() -> None:
 
     runner = MagicMock()
     runner.get_run.return_value = run
+    terminal_services = object()
+    runner.terminal_services = terminal_services
     agent_run_manager = MagicMock()
     agent_run_manager.db.bounded_transaction.return_value = nullcontext()
 
@@ -269,6 +271,7 @@ async def test_stop_agent_run_happy_path_call_order() -> None:
         agent_run_manager.db,
         signal_name="TERM",
         close_terminal=True,
+        terminal_services=terminal_services,
     )
     terminalize.assert_awaited_once_with(
         runner=runner,

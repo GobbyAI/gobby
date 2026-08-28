@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -221,3 +221,37 @@ async def test_release_source_session_cancellation_waits_for_delivery(
     assert CompletionSubscriberManager(temp_db).get_completion_subscribers(RUN_ID) == []
     assert not completion_registry.is_registered(RUN_ID)
     wake_callback.assert_awaited_once()
+
+
+async def test_release_source_session_closes_terminal_through_mixin_services(
+    temp_db: HubDatabase,
+) -> None:
+    mixin, manager, _registry, _wake = _release_mixin(temp_db, wake_result={"ism_persisted": True})
+    terminal_services = object()
+    cast(Any, mixin).terminal_services = terminal_services
+    kill_agent = AsyncMock(return_value={"success": True})
+
+    with (
+        patch(
+            "gobby.servers.websocket.handlers.session_observe_continue."
+            "agent_storage.LocalAgentRunManager",
+            return_value=manager,
+        ),
+        patch(
+            "gobby.servers.websocket.handlers.session_observe_continue.agent_kill.kill_agent",
+            kill_agent,
+        ),
+        patch(
+            "gobby.servers.websocket.handlers.session_observe_continue.asyncio.sleep",
+            new_callable=AsyncMock,
+        ),
+    ):
+        await _release_source_session(mixin, SOURCE_SESSION_ID, SimpleNamespace())
+
+    kill_agent.assert_awaited_once()
+    assert kill_agent.await_args is not None
+    assert kill_agent.await_args.args[0].id == RUN_ID
+    assert kill_agent.await_args.kwargs == {
+        "close_terminal": True,
+        "terminal_services": terminal_services,
+    }

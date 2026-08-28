@@ -436,6 +436,14 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     tmux_runtime = terminal_runtime_registry.resolve("tmux")
     runner.write_coordinator = WriteCoordinator(runner.terminal_manager, tmux_runtime)
     bind_wake_write_services(runner.terminal_manager, runner.write_coordinator)
+    # One TerminalServices for every in-process consumer that closes or writes
+    # to terminals: the lifecycle monitor, build controls, dispatch cleanup, and
+    # websocket session control all resolve this instance.
+    runner.terminal_services = TerminalServices(
+        manager=runner.terminal_manager,
+        registry=runner.terminal_runtime_registry,
+        coordinator=runner.write_coordinator,
+    )
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -455,6 +463,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         runner.agent_runner.terminal_runtime_registry = runner.terminal_runtime_registry
         runner.agent_runner.terminal_config = runner.terminal_config
         runner.agent_runner.write_coordinator = runner.write_coordinator
+        runner.agent_runner.terminal_services = runner.terminal_services
     try:
         runner.agent_lifecycle_monitor = AgentLifecycleMonitor(
             agent_run_manager=LocalAgentRunManager(
@@ -477,11 +486,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
             run_db=runner.db_executor.run,
             attention_manager=runner.attention_manager,
             attention_metadata_store=runner.attention_metadata_store,
-            terminal_services=TerminalServices(
-                manager=runner.terminal_manager,
-                registry=runner.terminal_runtime_registry,
-                coordinator=runner.write_coordinator,
-            ),
+            terminal_services=runner.terminal_services,
         )
     except Exception:
         mark_service_degraded(runner, "agent_lifecycle_monitor")

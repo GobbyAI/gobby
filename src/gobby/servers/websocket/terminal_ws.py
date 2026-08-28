@@ -43,6 +43,7 @@ class TerminalWsMixin:
     write_coordinator: Any
     terminal_runtime_registry: Any
     terminal_config: Any
+    terminal_services: Any | None = None
     open_proxy_frame: Any | None = None
 
     async def _send_json(self, websocket: Any, payload: dict[str, Any]) -> None:
