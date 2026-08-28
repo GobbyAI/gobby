@@ -77,7 +77,6 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         "tech-writer": ("codex", "gpt-5.6-sol", "xhigh"),
         "qa-reviewer": ("claude", "fable", "high"),
         "doc-reviewer": ("claude", "fable", "high"),
-        "goal-taskmaster": ("codex", "gpt-5.6-sol", "xhigh"),
         "epic-reviewer": ("codex", "gpt-5.6-sol", "xhigh"),
         "plan-adversary": ("codex", "gpt-5.6-sol", "xhigh"),
         "plan-adversary-taskless": ("codex", "gpt-5.6-sol", "xhigh"),

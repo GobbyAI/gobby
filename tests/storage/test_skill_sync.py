@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from gobby.storage.config_mutations import ConfigPatch
+from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.skills import LocalSkillManager, SkillFile, SkillScopeConflictError
 
@@ -33,6 +35,7 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BUNDLED_SKILLS_DIR = REPO_ROOT / "src/gobby/install/shared/skills"
 REMOVED_BUNDLED_SKILLS = (
+    "goal",
     "orchestrate",
     "automate",
     "dev",
@@ -63,6 +66,41 @@ class TestSyncBundledSkills:
         from gobby.skills.sync import sync_bundled_skills
 
         assert callable(sync_bundled_skills)
+
+    def test_sync_warns_using_resolved_bundled_content_limit(
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.skills.sync import sync_bundled_skills
+
+        skills_path = tmp_path / "skills"
+        skill_dir = skills_path / "oversized"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: oversized\ndescription: fixture\n---\n" + ("é" * 40),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: skills_path)
+        store = ConfigStore(db)
+        store.initialize()
+        snapshot = store.read_snapshot()
+        store.patch(
+            expected_revision=snapshot.revision,
+            patch=ConfigPatch(values={"skills.bundled_max_content_size": 64}),
+        )
+
+        result = sync_bundled_skills(db)
+
+        assert result["success"] is True
+        assert len(result["warnings"]) == 1
+        warning = result["warnings"][0]
+        assert "SKILL.md" in warning
+        assert "characters" in warning
+        assert "UTF-8 bytes" in warning
+        assert "configured limit 64" in warning
+        assert "get_skill_file" in warning
 
     @pytest.mark.unit
     @pytest.mark.parametrize("root_kind", ["missing", "file"])

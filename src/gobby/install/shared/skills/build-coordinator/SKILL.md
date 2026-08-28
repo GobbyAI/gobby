@@ -250,15 +250,3 @@ Close the coordination epic only after the target is complete and every
 discovered build bug from the run is fixed or explicitly blocked on a user
 decision. Keep discovered build bugs under the coordination epic while they are
 open; do not detach or reparent them to make the coordinator task closable.
-
-## Goal Preset
-
-Build coordination runs as a goal. When the user wants a reusable prompt or a
-durable loop for a coordinator run, use `/gobby goal` with the
-`build-coordinator` preset from the `goal` skill (`$gobby goal` in Codex)
-instead of a hand-rolled prompt: copy the preset into
-`.gobby/goals/build-<target>.md` — the coordination epic is the anchor and
-this skill's During The Build loop is the Procedure — then kick it off per the
-goal skill's Confirm & Kickoff options. The executing session loads this skill
-alongside the goal skill: the goal doc drives the loop, this skill drives the
-build semantics.

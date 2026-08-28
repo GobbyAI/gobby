@@ -62,7 +62,13 @@ MALFORMED_CASES = [
 
 
 def _plan_review_body() -> str:
-    return PLAN_REVIEW.read_text(encoding="utf-8")
+    references = PLAN_REVIEW.parent / "references"
+    return "\n\n".join(
+        [
+            PLAN_REVIEW.read_text(encoding="utf-8"),
+            *(reference.read_text() for reference in sorted(references.glob("*.md"))),
+        ]
+    )
 
 
 def _adversary_prompt() -> str:

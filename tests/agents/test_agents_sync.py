@@ -782,9 +782,7 @@ class TestSyncBundledAgents:
         assert pinned_row.enabled_pinned is True
 
 
-_STEPLESS_BUNDLED_AGENTS = frozenset(
-    {"comms-agent", "default", "goal-taskmaster", "memory-curator", "triage-agent"}
-)
+_STEPLESS_BUNDLED_AGENTS = frozenset({"comms-agent", "default", "memory-curator", "triage-agent"})
 _LEGACY_STEP_KEYS = ("steps", "step_variables", "exit_condition")
 
 

@@ -3717,6 +3717,17 @@
     },
     {
       "activation": "live",
+      "default": 15000,
+      "description": "Maximum character and UTF-8 byte count for each bundled SKILL.md or reference",
+      "key": "skills.bundled_max_content_size",
+      "machineExport": false,
+      "namespace": "skills",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": null,
       "description": "Override path for core skills (default: install/shared/skills/)",
       "key": "skills.core_skills_path",

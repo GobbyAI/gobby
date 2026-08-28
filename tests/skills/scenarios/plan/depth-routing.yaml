@@ -1,0 +1,33 @@
+skill: plan
+agent: default
+description: Loaded planning selects depth, elicits decisions, and routes a lightweight request without adversarial material.
+prompt: |
+  Plan a small, reversible configuration rename. Keep it lightweight and pause
+  for confirmation before finalizing the implementation handoff.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: draft_plan
+        depth: unspecified
+      - action: respond
+        text: Drafted a generic plan without elicitation or a checkpoint.
+  loaded:
+    loaded_skills: [plan]
+    actions:
+      - action: select_depth
+        depth: lightweight
+      - action: elicit_decision
+        topic: rename boundary
+      - action: load_reference
+        path: references/lightweight.md
+      - action: checkpoint
+        state: awaiting-confirmation
+      - action: respond
+        text: Lightweight branch selected; decision elicited and checkpoint recorded.
+assertions:
+  baseline_action_order: [draft_plan, respond]
+  loaded_action_order: [select_depth, elicit_decision, load_reference, checkpoint, respond]
+  baseline_text_contains: [without elicitation, or a checkpoint]
+  loaded_text_contains: [Lightweight branch selected, checkpoint recorded]
+  loaded_text_forbids: [adversarial, references/adversarial-review.md]

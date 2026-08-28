@@ -88,10 +88,27 @@ materialized cache.
 | `references/degraded/finish-reviewer.md` | Vendored as-is |
 | `references/degraded/manual-edit-applier.md` | Vendored as-is |
 | `references/color-and-contrast.md` | Gobby-retained upstream domain reference |
+| `references/critique-cognitive-load.md` | Gobby-retained decomposition reference |
+| `references/critique-personas.md` | Gobby-retained decomposition reference |
+| `references/critique-report.md` | Gobby-retained decomposition reference |
+| `references/critique-scoring.md` | Gobby-retained decomposition reference |
+| `references/critique-workflow.md` | Gobby-retained decomposition reference |
+| `references/design-execution.md` | Gobby-retained decomposition reference |
+| `references/design-foundations.md` | Gobby-retained decomposition reference |
 | `references/interaction-design.md` | Gobby-retained upstream domain reference |
+| `references/live-actions.md` | Gobby-retained decomposition reference |
+| `references/live-contract.md` | Gobby-retained decomposition reference |
+| `references/live-generation.md` | Gobby-retained decomposition reference |
+| `references/live-setup-recovery.md` | Gobby-retained decomposition reference |
+| `references/live-variants.md` | Gobby-retained decomposition reference |
 | `references/motion-design.md` | Gobby-retained upstream domain reference |
+| `references/new-work-build.md` | Gobby-retained decomposition reference |
+| `references/new-work-direction.md` | Gobby-retained decomposition reference |
+| `references/new-work-finish.md` | Gobby-retained decomposition reference |
+| `references/new-work-invention.md` | Gobby-retained decomposition reference |
 | `references/responsive-design.md` | Gobby-retained upstream domain reference |
 | `references/spatial-design.md` | Gobby-retained upstream domain reference |
+| `references/teach.md` | Gobby-retained decomposition reference |
 | `references/typography.md` | Gobby-retained upstream domain reference |
 | `references/ux-writing.md` | Gobby-retained upstream domain reference |
 

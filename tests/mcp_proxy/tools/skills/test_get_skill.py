@@ -102,7 +102,7 @@ class TestGetSkillTool:
         registry = create_skills_registry(populated_db)
         tool = registry.get_tool("get_skill")
 
-        result = await tool(name="git-commit")
+        result = await tool(name="git-commit", brief=False)
 
         assert result["success"] is True
         assert result["skill"]["name"] == "git-commit"
@@ -116,7 +116,7 @@ class TestGetSkillTool:
         registry = create_skills_registry(populated_db)
         tool = registry.get_tool("get_skill")
 
-        result = await tool(name="git-commit")
+        result = await tool(name="git-commit", brief=False)
 
         assert result["success"] is True
         skill = result["skill"]
@@ -133,7 +133,7 @@ class TestGetSkillTool:
         registry = create_skills_registry(populated_db)
         tool = registry.get_tool("get_skill")
 
-        result = await tool(name="git-commit")
+        result = await tool(name="git-commit", brief=False)
 
         assert result["success"] is True
         skill = result["skill"]
@@ -156,7 +156,7 @@ class TestGetSkillTool:
         registry = create_skills_registry(populated_db)
         tool = registry.get_tool("get_skill")
 
-        result = await tool(name="git-commit")
+        result = await tool(name="git-commit", brief=False)
 
         assert result["success"] is True
         skill = result["skill"]
@@ -177,7 +177,7 @@ class TestGetSkillTool:
         result = await tool(name="nonexistent")
 
         assert result["success"] is False
-        assert "not found" in result["error"].lower()
+        assert "not found" in result["message"].lower()
 
     @pytest.mark.asyncio
     async def test_get_skill_by_id(self, populated_db, storage):
@@ -223,7 +223,7 @@ class TestGetSkillTool:
         result = await tool()
 
         assert result["success"] is False
-        assert "name or skill_id" in result["error"].lower()
+        assert "name or skill_id" in result["message"].lower()
 
     @pytest.mark.asyncio
     async def test_get_skill_minimal_fields(self, populated_db):
@@ -233,7 +233,7 @@ class TestGetSkillTool:
         registry = create_skills_registry(populated_db)
         tool = registry.get_tool("get_skill")
 
-        result = await tool(name="minimal-skill")
+        result = await tool(name="minimal-skill", brief=False)
 
         assert result["success"] is True
         skill = result["skill"]
@@ -243,7 +243,7 @@ class TestGetSkillTool:
         assert skill["version"] is None
         assert skill["license"] is None
         assert skill["compatibility"] is None
-        assert skill["allowed_tools"] is None
+        assert skill["allowed_tools"] == []
 
     @pytest.mark.asyncio
     async def test_get_skill_records_usage_with_session_id(self, populated_db, project_id):
@@ -444,13 +444,13 @@ class TestSkillFileManifest:
 
         tool = create_skills_registry(db).get_tool("get_skill")
         assert tool is not None
-        result = await tool(skill_id=skill.id)
+        result = await tool(skill_id=skill.id, brief=False)
 
         assert result["success"] is True
-        manifest = result["skill"]["files"]
-        assert len(manifest["entries"]) == 100
+        manifest = result["files"]
+        assert len(manifest["entries"]) <= 100
         assert manifest["total_files"] == 105
-        assert manifest["remaining_file_count"] == 5
+        assert manifest["remaining_file_count"] == 105 - len(manifest["entries"])
         assert all("content_hash" not in entry for entry in manifest["entries"])
         assert manifest["scripts"]["total_files"] == 3
         assert manifest["scripts"]["per_top_level_dir"] == {"build": 2, "test": 1}
@@ -533,7 +533,7 @@ class TestSkillFileManifest:
             name="shadowed-files",
         )
         name_only = await files_tool(name="shadowed-files")
-        manifest = await manifest_tool(name="shadowed-files")
+        manifest = await manifest_tool(name="shadowed-files", brief=False)
 
         assert explicit_global["skill_id"] == global_skill.id
         assert [item["path"] for item in explicit_global["files"]] == ["references/global.md"]
@@ -605,10 +605,10 @@ class TestSkillFileManifest:
 
         tool = create_skills_registry(db).get_tool("get_skill")
         assert tool is not None
-        result = await tool(skill_id=skill.id)
+        result = await tool(skill_id=skill.id, brief=False)
 
         assert result["success"] is True
-        manifest = result["skill"]["files"]
+        manifest = result["files"]
         encoded = json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode()
         assert len(encoded) <= MAX_MANIFEST_RESPONSE_BYTES
         assert len(manifest["entries"]) <= 100
@@ -801,22 +801,18 @@ class TestSkillFileManifest:
         publish_task = asyncio.create_task(asyncio.to_thread(publish))
         assert await asyncio.to_thread(replacement_written.wait, 5)
         try:
-            during = await tool(skill_id=skill.id)
+            during = await tool(skill_id=skill.id, brief=False)
         finally:
             allow_commit.set()
         await publish_task
-        after = await tool(skill_id=skill.id)
+        after = await tool(skill_id=skill.id, brief=False)
 
         assert during["skill"]["description"] == "Old revision"
         assert during["skill"]["metadata"] == old_metadata
-        assert [item["path"] for item in during["skill"]["files"]["entries"]] == [
-            "references/old.md"
-        ]
+        assert [item["path"] for item in during["files"]["entries"]] == ["references/old.md"]
         assert after["skill"]["description"] == "New revision"
         assert after["skill"]["metadata"] == new_metadata
-        assert [item["path"] for item in after["skill"]["files"]["entries"]] == [
-            "references/new.md"
-        ]
+        assert [item["path"] for item in after["files"]["entries"]] == ["references/new.md"]
 
     @pytest.mark.asyncio
     async def test_manifest_is_one_revision_during_file_replacement(
@@ -845,7 +841,7 @@ class TestSkillFileManifest:
         assert tool is not None
 
         def signature(result: dict[str, Any]) -> tuple[Any, ...]:
-            manifest = result["skill"]["files"]
+            manifest = result["files"]
             scripts = manifest["scripts"]
             return (
                 tuple(item["path"] for item in manifest["entries"]),
@@ -887,7 +883,7 @@ class TestSkillFileManifest:
             start = threading.Barrier(2)
             publish_task = asyncio.create_task(asyncio.to_thread(publish, start, replacement))
             await asyncio.to_thread(start.wait)
-            result = await tool(skill_id=skill.id)
+            result = await tool(skill_id=skill.id, brief=False)
             await publish_task
 
             assert signature(result) in valid_signatures
@@ -922,8 +918,8 @@ class TestGetSkillLevelsRemaining:
         result = await tool(name="leveled-skill", level="bogus")
 
         assert result["success"] is False
-        assert "bogus" in result["error"]
-        assert "lite, normal, max" in result["error"]
+        assert "bogus" in result["message"]
+        assert "lite, normal, max" in result["message"]
 
     @pytest.mark.asyncio
     async def test_level_on_non_leveled_skill_errors(self, leveled_db):
@@ -936,7 +932,7 @@ class TestGetSkillLevelsRemaining:
         result = await tool(name="plain-skill", level="max")
 
         assert result["success"] is False
-        assert "does not declare levels" in result["error"]
+        assert "does not declare levels" in result["message"]
 
     @pytest.mark.asyncio
     async def test_level_without_session_stamps_but_skips_variable(self, leveled_db):

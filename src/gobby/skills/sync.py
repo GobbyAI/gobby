@@ -16,6 +16,10 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.skills.authoring import (
+    find_bundled_content_violations,
+    resolve_bundled_max_content_size,
+)
 from gobby.skills.loader import SkillLoader, SkillLoadError
 from gobby.skills.parser import ParsedSkill
 
@@ -208,6 +212,7 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
         "orphaned": 0,
         "purged_project_overrides": 0,
         "errors": [],
+        "warnings": [],
     }
 
     if not skills_path.exists():
@@ -232,6 +237,31 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
         result["success"] = False
         result["errors"].append(error_msg)
         return result
+
+    limit = resolve_bundled_max_content_size(db)
+    try:
+        violations = find_bundled_content_violations(skills_path, limit)
+    except OSError as e:
+        error_msg = f"Failed to inspect bundled skills path '{skills_path}': {e}"
+        logger.error(
+            "Failed to inspect bundled skills path",
+            extra={"path": str(skills_path), "error": str(e)},
+        )
+        result["success"] = False
+        result["errors"].append(error_msg)
+        return result
+    for violation in violations:
+        result["warnings"].append(violation.message)
+        logger.warning(
+            "Bundled skill instruction exceeds configured authoring ceiling",
+            extra={
+                "path": str(violation.path),
+                "character_count": violation.character_count,
+                "byte_count": violation.byte_count,
+                "configured_limit": violation.limit,
+                "guidance": violation.message,
+            },
+        )
 
     # Load skills using SkillLoader with 'filesystem' source type
     loader = SkillLoader(default_source_type="filesystem")

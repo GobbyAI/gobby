@@ -20,9 +20,19 @@ SKILL_PATH = (
 )
 
 
+def _skill_content() -> str:
+    references = SKILL_PATH.parent / "references"
+    return "\n\n".join(
+        [
+            SKILL_PATH.read_text(encoding="utf-8"),
+            *(path.read_text(encoding="utf-8") for path in sorted(references.glob("*.md"))),
+        ]
+    )
+
+
 @pytest.mark.skill_tdd
 def test_build_rule_lists_every_current_trigger_event() -> None:
-    content = SKILL_PATH.read_text(encoding="utf-8")
+    content = _skill_content()
 
     for event in RuleTriggerEvent:
         assert f"`{event.value}`" in content
@@ -30,7 +40,7 @@ def test_build_rule_lists_every_current_trigger_event() -> None:
 
 @pytest.mark.skill_tdd
 def test_build_rule_identifies_normalized_turn_boundaries() -> None:
-    content = SKILL_PATH.read_text(encoding="utf-8")
+    content = _skill_content()
 
     assert "`turn_start`" in content
     assert "`turn_end`" in content
@@ -39,7 +49,7 @@ def test_build_rule_identifies_normalized_turn_boundaries() -> None:
 
 @pytest.mark.skill_tdd
 def test_build_rule_yaml_examples_parse() -> None:
-    content = SKILL_PATH.read_text(encoding="utf-8")
+    content = _skill_content()
     examples = re.findall(r"```yaml\n(.*?)```", content, flags=re.DOTALL)
 
     assert examples

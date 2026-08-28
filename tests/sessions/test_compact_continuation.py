@@ -731,7 +731,7 @@ def test_persist_compact_resume_skills_keeps_core_and_active_task_requirements(
         {
             "required_skills": ["loading-skills", "memory"],
             "claimed_task_required_skills": ["tasks", "python", "development-discipline"],
-            WORKFLOW_REQUESTED_SKILLS_VARIABLE: ["goal"],
+            WORKFLOW_REQUESTED_SKILLS_VARIABLE: ["plan-review"],
             "loaded_skills": ["code-index", "tasks"],
         },
     )
@@ -744,7 +744,7 @@ def test_persist_compact_resume_skills_keeps_core_and_active_task_requirements(
             "tasks",
             "python",
             "development-discipline",
-            "goal",
+            "plan-review",
         ],
         "advisory": [],
     }

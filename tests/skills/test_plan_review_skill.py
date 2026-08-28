@@ -15,7 +15,13 @@ STAGED_AGENT_PATH = Path("src/gobby/install/shared/workflows/agents/plan-adversa
 
 
 def _normalized(path: Path) -> str:
-    return " ".join(path.read_text(encoding="utf-8").split())
+    content = path.read_text(encoding="utf-8")
+    if path in {SKILL_PATH, PLAN_SKILL_PATH}:
+        references = path.parent / "references"
+        content = "\n\n".join(
+            [content, *(reference.read_text() for reference in sorted(references.glob("*.md")))]
+        )
+    return " ".join(content.split())
 
 
 def test_plan_review_frontmatter_parses() -> None:
@@ -134,7 +140,7 @@ def test_interactive_phase_approvals_and_item_voting_remain_separate() -> None:
 
 def test_repair_class_section() -> None:
     parsed = parse_skill_file(SKILL_PATH)
-    assert parsed.version == "1.4.0"
+    assert parsed.version == "1.5.0"
     text = _normalized(SKILL_PATH)
 
     assert "### Repair class vs design class" in text

@@ -256,7 +256,7 @@ index c5591f2..dbaade0 100644
 
 ## Task checklist
 
--- [ ] Confirm CWD is `/Users/josh/.gobby/worktrees/gobby/task-18879`, claim #18879 and the existing worktree only, set `auto_task_ref` to `#18879`, `goal_file` to `.gobby/goals/complete-epic-18879.md`, and merge `goal` into `additional_skills`.
+-- [ ] Confirm CWD is `/Users/josh/.gobby/worktrees/gobby/task-18879`, claim #18879 and the existing worktree only, set `auto_task_ref` to `#18879`, and set `goal_file` to `.gobby/goals/complete-epic-18879.md`.
 -- [ ] Re-read the goal file; reconcile the Progress Log with `get_task` / descendants (database wins).
 -- [ ] Select exactly one ready leaf via `suggest_next_task` scoped to #18879 (first expected #20176). Claim that leaf, not a phase parent.
 -- [ ] Implement the full published contract in the shared worktree; honor Constraints; extract in-leaf if a 1,000-line ceiling would be exceeded.
@@ -264,7 +264,7 @@ index c5591f2..dbaade0 100644
 -- [ ] Commit only the leaf’s files as `[gobby-#<leaf>] <type>: <summary>`. `close_task` with the SHA (`preview=true` first). Do not merge or delete the worktree. Append a Progress Log entry. Call `gobby-sessions:compact_self` (or accept a close-triggered compaction as the boundary).
 -- [ ] After resume, close any phase parent #20169–#20175 whose leaves are all closed. Repeat from reconcile until no implementation leaf remains.
 -- [ ] Tick Success Criteria with evidence, set the goal file to `status: suspended`, keep #18879 open, keep the worktree, clear `auto_task_ref` and `goal_file`, write `{SCRATCH}/task-tree.txt`, `{SCRATCH}/leaf-commits.txt`, `{SCRATCH}/live-hub-schema.txt`, `{SCRATCH}/live-gdaemon.txt`, `{SCRATCH}/qa-hold.txt`, notify the user. Do not start E1 live-hub apply.
-+- [x] Confirm CWD is `/Users/josh/.gobby/worktrees/gobby/task-18879`, claim #18879 and the existing worktree only, set `auto_task_ref` to `#18879`, `goal_file` to `.gobby/goals/complete-epic-18879.md`, and merge `goal` into `additional_skills`.
++- [x] Confirm CWD is `/Users/josh/.gobby/worktrees/gobby/task-18879`, claim #18879 and the existing worktree only, set `auto_task_ref` to `#18879`, and set `goal_file` to `.gobby/goals/complete-epic-18879.md`.
 +- [x] Re-read the goal file; reconcile the Progress Log with `get_task` / descendants (database wins).
 +- [x] Select exactly one ready leaf via `suggest_next_task` scoped to #18879 (first expected #20176). Claim that leaf, not a phase parent.
 +- [x] Implement the full published contract in the shared worktree; honor Constraints; extract in-leaf if a 1,000-line ceiling would be exceeded.

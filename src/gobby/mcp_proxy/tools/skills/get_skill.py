@@ -1,4 +1,4 @@
-"""Handlers for the get_skill and get_skill_file tools."""
+"""Handlers for lossless, progressively disclosed skill delivery."""
 
 from __future__ import annotations
 
@@ -8,13 +8,24 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
+from gobby.mcp_proxy.tools.skills._paging import (
+    CursorError,
+    CursorState,
+    ResponseView,
+    build_content_page,
+    content_hash,
+    decode_cursor,
+)
+from gobby.storage.skills import Skill, SkillFile
 from gobby.utils.session_context import get_current_session_id
 
 logger = logging.getLogger(__name__)
 
 MAX_MANIFEST_FILE_ENTRIES = 100
 MAX_MANIFEST_DIRECTORY_ENTRIES = 20
-MAX_MANIFEST_RESPONSE_BYTES = 16384
+MAX_MANIFEST_RESPONSE_BYTES = 15_000
+MAX_EMBEDDED_MANIFEST_BYTES = 6_000
+MAX_BRIEF_REFERENCES_BYTES = 4_000
 
 
 def _encoded_size(value: dict[str, Any]) -> int:
@@ -56,7 +67,7 @@ def _build_manifest(snapshot: dict[str, Any], skill_id: str) -> dict[str, Any]:
     if warning is not None:
         manifest["warning"] = warning
 
-    while _encoded_size(manifest) > MAX_MANIFEST_RESPONSE_BYTES:
+    while _encoded_size(manifest) > MAX_EMBEDDED_MANIFEST_BYTES:
         if entries:
             entries.pop()
             manifest["remaining_file_count"] += 1
@@ -105,14 +116,8 @@ def _serve_scan_error(
     source_type: str | None,
     content: str,
     path: str = "SKILL.md",
-) -> dict[str, Any] | None:
-    """Serve-time gate: rescan external-tier content before it reaches context.
-
-    Returns an error response dict when the content must not be served, or
-    None when serving is allowed. Content hashes are cached, so each unique
-    content is scanned once per process. External sources fail closed when
-    the scanner is unavailable.
-    """
+) -> str | None:
+    """Return a refusal message when complete external content fails its serve scan."""
     from gobby.skills.scanner import is_external_source, scan_served_content
 
     if not is_external_source(source_type):
@@ -120,59 +125,190 @@ def _serve_scan_error(
     try:
         scan_result = scan_served_content(content, name=skill_name, path=path)
     except ImportError:
-        return {
-            "success": False,
-            "error": (
-                f"clawcare is not installed; refusing to serve skill "
-                f"'{skill_name}' from external source ({source_type}) "
-                f"without a security scan"
-            ),
-        }
+        return (
+            f"clawcare is not installed; refusing to serve skill '{skill_name}' from external "
+            f"source ({source_type}) without a security scan"
+        )
     if not scan_result["is_safe"]:
-        return {
-            "success": False,
-            "error": (
-                f"Skill '{skill_name}' content at {path} failed security scan "
-                f"(max severity: {scan_result['max_severity']}); refusing to serve"
-            ),
-            "scan_result": scan_result,
-        }
+        return (
+            f"Skill '{skill_name}' content at {path} failed security scan "
+            f"(max severity: {scan_result['max_severity']}); refusing to serve"
+        )
     return None
 
 
+def _error(error_code: str, message: str, *, restart: str | None = None) -> dict[str, Any]:
+    response: dict[str, Any] = {
+        "success": False,
+        "error_code": error_code,
+        "message": message,
+    }
+    if restart is not None:
+        response["restart"] = restart
+    return response
+
+
+def _brief_references(snapshot: dict[str, Any]) -> dict[str, Any]:
+    candidates = [entry for entry in snapshot["files"] if entry["file_type"] == "reference"]
+    entries: list[dict[str, Any]] = []
+    omitted_from_snapshot = max(0, snapshot["total_files"] - len(snapshot["files"]))
+    for candidate in candidates:
+        projected = {"path": candidate["path"], "size_bytes": candidate["size_bytes"]}
+        if _encoded_size({"entries": [*entries, projected]}) > MAX_BRIEF_REFERENCES_BYTES:
+            break
+        entries.append(projected)
+    remaining = len(candidates) - len(entries) + omitted_from_snapshot
+    return {
+        "entries": entries,
+        "remaining_count": remaining,
+        "next_after_path": entries[-1]["path"] if entries and remaining else None,
+    }
+
+
+def _brief_skill(skill: Skill, content: str) -> dict[str, Any]:
+    result: dict[str, Any] = {"name": skill.name, "content": content}
+    if skill.compatibility:
+        result["compatibility"] = skill.compatibility
+    if skill.allowed_tools:
+        result["allowed_tools"] = skill.allowed_tools
+    return result
+
+
+def _full_skill(skill: Skill, content: str) -> dict[str, Any]:
+    return {
+        "id": skill.id,
+        "name": skill.name,
+        "description": skill.description,
+        "content": content,
+        "version": skill.version,
+        "license": skill.license,
+        "compatibility": skill.compatibility,
+        "allowed_tools": skill.allowed_tools or [],
+        "metadata": skill.metadata or {},
+        "enabled": skill.enabled,
+        "source": {
+            "scope": skill.source,
+            "type": skill.source_type,
+            "path": skill.source_path,
+            "ref": skill.source_ref,
+        },
+    }
+
+
+def _brief_file(skill: Skill, skill_file: SkillFile, content: str) -> dict[str, Any]:
+    return {"skill_name": skill.name, "path": skill_file.path, "content": content}
+
+
+def _full_file(skill: Skill, skill_file: SkillFile, content: str) -> dict[str, Any]:
+    return {
+        "skill_id": skill.id,
+        "skill_name": skill.name,
+        "path": skill_file.path,
+        "file_type": skill_file.file_type,
+        "size_bytes": skill_file.size_bytes,
+        "content_hash": skill_file.content_hash,
+        "content": content,
+    }
+
+
+def _resolve_level(skill: Skill, requested: str | None) -> tuple[str | None, str | None]:
+    gobby_meta = (skill.metadata or {}).get("gobby") or {}
+    levels = gobby_meta.get("levels") if isinstance(gobby_meta, dict) else None
+    if not isinstance(levels, list) or not levels:
+        if requested is not None:
+            return None, f"Skill '{skill.name}' does not declare levels"
+        return None, None
+    if requested is not None and requested not in levels:
+        return None, (
+            f"Invalid level '{requested}' for skill '{skill.name}'. "
+            f"Valid levels: {', '.join(levels)}"
+        )
+    return requested or gobby_meta.get("default_level") or levels[0], None
+
+
 def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
-    """Register the get_skill and get_skill_file tools on the registry."""
+    """Register brief-by-default, cursor-paged skill delivery tools."""
+
+    async def record_completed_load(
+        skill: Skill,
+        effective_level: str | None,
+        session_id: str | None,
+    ) -> None:
+        session_reference = session_id or get_current_session_id()
+        if not session_reference:
+            return
+        try:
+            resolved_session_id = await ctx.run_db(
+                ctx.session_manager.resolve_session_reference,
+                session_reference,
+                project_id=ctx.project_id,
+            )
+            await ctx.run_db(
+                ctx.session_manager.record_skills_used,
+                resolved_session_id,
+                [skill.name],
+            )
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            variables = SessionVariableManager(ctx.db)
+            await ctx.run_db(
+                variables.append_to_set_variable,
+                resolved_session_id,
+                "loaded_skills",
+                [skill.name],
+                preserve_order=True,
+            )
+            if effective_level is not None:
+                await ctx.run_db(
+                    variables.set_variable,
+                    resolved_session_id,
+                    f"{skill.name.replace('-', '_')}_level",
+                    effective_level,
+                )
+        except Exception as exc:
+            logger.debug(
+                "Best-effort completed skill tracking failed for session %s: %s",
+                session_reference,
+                exc,
+            )
 
     @registry.tool(
         name="get_skill",
-        description="Get full skill content by name or ID. Returns complete skill including content, allowed_tools, etc.",
+        description=(
+            "Get exact skill instructions using a brief projection by default. "
+            "Follow next_cursor until null before treating the skill as loaded."
+        ),
     )
     async def get_skill(
         name: str | None = None,
         skill_id: str | None = None,
         session_id: str | None = None,
         level: str | None = None,
+        cursor: str | None = None,
+        brief: bool = True,
     ) -> dict[str, Any]:
-        """
-        Get a skill by name or ID with full content.
-
-        Returns all skill fields including content, allowed_tools, compatibility.
-        Use this after list_skills to get the full skill when needed.
-
-        Args:
-            name: Skill name (used if skill_id not provided)
-            skill_id: Skill ID (takes precedence over name)
-            session_id: Optional session ID (accepts #N, N, UUID, or prefix) to record skill usage
-            level: Optional level for leveled skills (declared in metadata.gobby.levels);
-                defaults to the skill's default_level
-
-        Returns:
-            Dict with success status and full skill data
-        """
         try:
-            # Validate input
-            if not skill_id and not name:
-                return {"success": False, "error": "Either name or skill_id is required"}
+            continuation = cursor is not None
+            state: CursorState | None = None
+            if continuation:
+                assert cursor is not None
+                if name is not None or skill_id is not None or level is not None:
+                    return _error(
+                        "invalid_cursor",
+                        "Cursor continuation cannot include initial lookup arguments",
+                        restart="Call get_skill again without cursor to restart.",
+                    )
+                try:
+                    state = decode_cursor(cursor, expected_kind="skill")
+                except CursorError as exc:
+                    return _error(
+                        "invalid_cursor",
+                        str(exc),
+                        restart="Call get_skill again without cursor to restart.",
+                    )
+                skill_id = state.skill_id
+            elif not skill_id and not name:
+                return _error("invalid_request", "Either name or skill_id is required")
 
             snapshot = await ctx.run_db(
                 ctx.storage.get_skill_with_manifest,
@@ -183,140 +319,100 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 directory_limit=MAX_MANIFEST_DIRECTORY_ENTRIES,
             )
             if snapshot is None:
-                return {"success": False, "error": f"Skill not found: {skill_id or name}"}
+                if continuation:
+                    return _error(
+                        "stale_cursor",
+                        "Cursor skill no longer exists",
+                        restart="Call get_skill again without cursor to restart.",
+                    )
+                return _error("not_found", f"Skill not found: {skill_id or name}")
             skill = snapshot["skill"]
 
-            scan_error = _serve_scan_error(skill.name, skill.source_type, skill.content)
-            if scan_error is not None:
-                return scan_error
+            if state is None:
+                effective_level, level_error = _resolve_level(skill, level)
+                if level_error is not None:
+                    return _error("invalid_level", level_error)
+                view: ResponseView = "brief" if brief else "full"
+            else:
+                effective_level = state.level
+                view = state.view
 
-            # Resolve effective level for leveled skills (metadata.gobby.levels)
-            gobby_meta = (skill.metadata or {}).get("gobby") or {}
-            levels = gobby_meta.get("levels") if isinstance(gobby_meta, dict) else None
-            if not isinstance(levels, list) or not levels:
-                levels = None
-            if level is not None and levels is None:
-                return {
-                    "success": False,
-                    "error": f"Skill '{skill.name}' does not declare levels",
-                }
-            effective_level: str | None = None
-            if levels is not None:
-                if level is not None and level not in levels:
-                    return {
-                        "success": False,
-                        "error": (
-                            f"Invalid level '{level}' for skill '{skill.name}'. "
-                            f"Valid levels: {', '.join(levels)}"
-                        ),
-                    }
-                effective_level = level or gobby_meta.get("default_level") or levels[0]
-
-            # Record skill usage against the explicit session_id, falling back to
-            # the ambient wrapper session context seeded by call_tool
-            resolved_session_id: str | None = None
-            if not session_id:
-                session_id = get_current_session_id()
-            if session_id:
-                try:
-                    resolved_session_id = await ctx.run_db(
-                        ctx.session_manager.resolve_session_reference,
-                        session_id,
-                        project_id=ctx.project_id,
-                    )
-                    await ctx.run_db(
-                        ctx.session_manager.record_skills_used,
-                        resolved_session_id,
-                        [skill.name],
-                    )
-                except Exception as e:
-                    logger.debug(
-                        "Best-effort skill tracking failed for session %s: %s", session_id, e
-                    )
-
-            if resolved_session_id is not None:
-                # Grant the skill load at serve time. Gate rules read loaded_skills,
-                # and the CLI's PostToolUse echo can silently disappear (#19891) —
-                # the daemon served the skill body, so the daemon records the load.
-                try:
-                    from gobby.workflows.state_manager import SessionVariableManager
-
-                    await ctx.run_db(
-                        SessionVariableManager(ctx.db).append_to_set_variable,
-                        resolved_session_id,
-                        "loaded_skills",
-                        [skill.name],
-                        preserve_order=True,
-                    )
-                except Exception as e:
-                    logger.debug(
-                        "Best-effort loaded_skills append failed for session %s: %s",
-                        session_id,
-                        e,
-                    )
-
-            content = skill.content
+            complete_content = skill.content
             if effective_level is not None:
-                content = f"Active level: {effective_level}\n\n{content}"
-                if resolved_session_id is not None:
-                    try:
-                        from gobby.workflows.state_manager import SessionVariableManager
+                complete_content = f"Active level: {effective_level}\n\n{complete_content}"
+            hash_value = content_hash(complete_content)
+            if state is not None and state.content_hash != hash_value:
+                return _error(
+                    "stale_cursor",
+                    "Skill content changed after the cursor was issued",
+                    restart="Call get_skill again without cursor to restart.",
+                )
+            scan_message = _serve_scan_error(skill.name, skill.source_type, complete_content)
+            if scan_message is not None:
+                return _error("security_scan_failed", scan_message)
 
-                        var_name = f"{skill.name.replace('-', '_')}_level"
-                        await ctx.run_db(
-                            SessionVariableManager(ctx.db).set_variable,
-                            resolved_session_id,
-                            var_name,
-                            effective_level,
-                        )
-                    except Exception as e:
-                        logger.debug(
-                            "Best-effort level variable set failed for session %s: %s",
-                            session_id,
-                            e,
-                        )
-                else:
-                    logger.debug(
-                        "No session resolved; skipping %s level variable persistence", skill.name
-                    )
+            if state is None:
+                state = CursorState(
+                    kind="skill",
+                    view=view,
+                    skill_id=skill.id,
+                    path=None,
+                    level=effective_level,
+                    content_hash=hash_value,
+                    offset=0,
+                )
 
-            # Build response
-            skill_data: dict[str, Any] = {
-                "id": skill.id,
-                "name": skill.name,
-                "description": skill.description,
-                "content": content,
-                "version": skill.version,
-                "license": skill.license,
-                "compatibility": skill.compatibility,
-                "allowed_tools": skill.allowed_tools,
-                "metadata": skill.metadata,
-                "enabled": skill.enabled,
-                "source": skill.source,
-                "source_path": skill.source_path,
-                "source_type": skill.source_type,
-                "source_ref": skill.source_ref,
-            }
+            references = _brief_references(snapshot)
+            files = _build_manifest(snapshot, skill.id)
 
-            if (
-                snapshot["total_files"]
-                or snapshot["scripts"]["total_files"]
-                or snapshot["omitted_oversized_path_count"]
-            ):
-                skill_data["files"] = _build_manifest(snapshot, skill.id)
+            def response_factory(
+                page_content: str,
+                start_byte: int,
+                end_byte: int,
+                complete: bool,
+                next_cursor: str | None,
+            ) -> dict[str, Any]:
+                if view == "brief":
+                    return {
+                        "success": True,
+                        "view": view,
+                        "skill": _brief_skill(skill, page_content),
+                        "page": {"complete": complete, "next_cursor": next_cursor},
+                        "references": references,
+                    }
+                return {
+                    "success": True,
+                    "view": view,
+                    "skill": _full_skill(skill, page_content),
+                    "page": {
+                        "start_byte": start_byte,
+                        "end_byte": end_byte,
+                        "total_bytes": len(complete_content.encode("utf-8")),
+                        "complete": complete,
+                        "next_cursor": next_cursor,
+                        "content_hash": hash_value,
+                    },
+                    "files": files,
+                }
 
-            return {
-                "success": True,
-                "skill": skill_data,
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+            response = build_content_page(complete_content, state, response_factory)
+            if response["page"]["complete"]:
+                await record_completed_load(skill, effective_level, session_id)
+            return response
+        except CursorError as exc:
+            return _error(
+                "invalid_cursor",
+                str(exc),
+                restart="Call get_skill again without cursor to restart.",
+            )
+        except Exception as exc:
+            return _error("internal_error", str(exc))
 
     @registry.tool(
         name="get_skill_files",
         description=(
-            "List one bounded page of skill files. Use path_prefix and the returned "
-            "next_after_path cursor to continue."
+            "List one byte-bounded page of skill files. Continue with the returned "
+            "next_after_path value."
         ),
     )
     async def get_skill_files_tool(
@@ -326,10 +422,9 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
         file_type: str | None = None,
         after_path: str | None = None,
     ) -> dict[str, Any]:
-        """List a byte-bounded, keyset-paginated page from one resolved skill."""
         try:
             if not skill_id and not name:
-                return {"success": False, "error": "Either name or skill_id is required"}
+                return _error("invalid_request", "Either name or skill_id is required")
             snapshot = await ctx.run_db(
                 ctx.storage.get_skill_file_page,
                 skill_id,
@@ -341,41 +436,52 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 limit=MAX_MANIFEST_FILE_ENTRIES + 1,
             )
             if snapshot is None:
-                return {"success": False, "error": f"Skill not found: {skill_id or name}"}
+                return _error("not_found", f"Skill not found: {skill_id or name}")
             return _build_file_page(snapshot)
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        except Exception as exc:
+            return _error("internal_error", str(exc))
 
     @registry.tool(
         name="get_skill_file",
-        description="Get a single file's content from a multi-file skill. Use after get_skill() shows available files.",
+        description=(
+            "Get one exact skill file using a brief projection by default. "
+            "Follow next_cursor until null."
+        ),
     )
     def get_skill_file_tool(
-        path: str,
+        path: str | None = None,
         name: str | None = None,
         skill_id: str | None = None,
+        cursor: str | None = None,
+        brief: bool = True,
     ) -> dict[str, Any]:
-        """
-        Fetch a single file from a skill on demand.
-
-        Progressive disclosure: get_skill() shows file metadata (path, type, size),
-        this tool fetches the actual content for a specific file.
-
-        Args:
-            path: Relative file path within the skill (e.g. "references/api.md")
-            name: Skill name (used if skill_id not provided)
-            skill_id: Skill ID (takes precedence over name)
-
-        Returns:
-            Dict with success status and file content
-        """
         try:
-            if not path:
-                return {"success": False, "error": "path is required"}
-            if not skill_id and not name:
-                return {"success": False, "error": "Either name or skill_id is required"}
+            continuation = cursor is not None
+            state: CursorState | None = None
+            if continuation:
+                assert cursor is not None
+                if path is not None or name is not None or skill_id is not None:
+                    return _error(
+                        "invalid_cursor",
+                        "Cursor continuation cannot include initial lookup arguments",
+                        restart="Call get_skill_file again without cursor to restart.",
+                    )
+                try:
+                    state = decode_cursor(cursor, expected_kind="file")
+                except CursorError as exc:
+                    return _error(
+                        "invalid_cursor",
+                        str(exc),
+                        restart="Call get_skill_file again without cursor to restart.",
+                    )
+                skill_id = state.skill_id
+                path = state.path
+            else:
+                if not path:
+                    return _error("invalid_request", "path is required")
+                if not skill_id and not name:
+                    return _error("invalid_request", "Either name or skill_id is required")
 
-            # Resolve skill
             skill = None
             if skill_id:
                 try:
@@ -385,22 +491,86 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             if skill is None and name:
                 skill = ctx.storage.get_by_name(name, project_id=ctx.project_id)
             if skill is None:
-                return {"success": False, "error": f"Skill not found: {skill_id or name}"}
+                if continuation:
+                    return _error(
+                        "stale_cursor",
+                        "Cursor skill no longer exists",
+                        restart="Call get_skill_file again without cursor to restart.",
+                    )
+                return _error("not_found", f"Skill not found: {skill_id or name}")
 
-            # Get the file
-            skill_file = ctx.storage.get_skill_file(skill.id, path)
+            skill_file = ctx.storage.get_skill_file(skill.id, path or "")
             if skill_file is None:
-                return {"success": False, "error": f"File not found: {path}"}
+                if continuation:
+                    return _error(
+                        "stale_cursor",
+                        "Cursor file no longer exists",
+                        restart="Call get_skill_file again without cursor to restart.",
+                    )
+                return _error("not_found", f"File not found: {path}")
 
-            scan_error = _serve_scan_error(
-                skill.name, skill.source_type, skill_file.content, path=skill_file.path
+            hash_value = content_hash(skill_file.content)
+            if state is not None and state.content_hash != hash_value:
+                return _error(
+                    "stale_cursor",
+                    "Skill file content changed after the cursor was issued",
+                    restart="Call get_skill_file again without cursor to restart.",
+                )
+            scan_message = _serve_scan_error(
+                skill.name,
+                skill.source_type,
+                skill_file.content,
+                path=skill_file.path,
             )
-            if scan_error is not None:
-                return scan_error
+            if scan_message is not None:
+                return _error("security_scan_failed", scan_message)
 
-            return {
-                "success": True,
-                "file": skill_file.to_dict(include_content=True),
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+            view: ResponseView = state.view if state is not None else ("brief" if brief else "full")
+            if state is None:
+                state = CursorState(
+                    kind="file",
+                    view=view,
+                    skill_id=skill.id,
+                    path=skill_file.path,
+                    level=None,
+                    content_hash=hash_value,
+                    offset=0,
+                )
+
+            def response_factory(
+                page_content: str,
+                start_byte: int,
+                end_byte: int,
+                complete: bool,
+                next_cursor: str | None,
+            ) -> dict[str, Any]:
+                if view == "brief":
+                    return {
+                        "success": True,
+                        "view": view,
+                        "file": _brief_file(skill, skill_file, page_content),
+                        "page": {"complete": complete, "next_cursor": next_cursor},
+                    }
+                return {
+                    "success": True,
+                    "view": view,
+                    "file": _full_file(skill, skill_file, page_content),
+                    "page": {
+                        "start_byte": start_byte,
+                        "end_byte": end_byte,
+                        "total_bytes": len(skill_file.content.encode("utf-8")),
+                        "complete": complete,
+                        "next_cursor": next_cursor,
+                        "content_hash": hash_value,
+                    },
+                }
+
+            return build_content_page(skill_file.content, state, response_factory)
+        except CursorError as exc:
+            return _error(
+                "invalid_cursor",
+                str(exc),
+                restart="Call get_skill_file again without cursor to restart.",
+            )
+        except Exception as exc:
+            return _error("internal_error", str(exc))

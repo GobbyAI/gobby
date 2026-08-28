@@ -26,6 +26,27 @@ def test_writing_skills_requires_scenario_before_skill_body() -> None:
     assert result.has_behavioral_delta
 
 
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "plan/depth-routing.yaml",
+        "impeccable/critique-routing.yaml",
+        "impeccable/live-routing.yaml",
+        "impeccable/new-work-routing.yaml",
+        "build-rule/complete-rule.yaml",
+        "writing-skills/compact-decomposition.yaml",
+    ],
+)
+def test_decomposed_skill_families_preserve_routed_behavior(scenario: str) -> None:
+    result = run_recorded_skill_scenario(SCENARIOS / scenario)
+
+    assert result.has_behavioral_delta
+    loaded_references = [
+        action for action in result.loaded.actions if action.get("action") == "load_reference"
+    ]
+    assert len(loaded_references) <= 3
+
+
 def test_plan_embeds_artifact_provenance_in_presented_full_plan() -> None:
     """Verify loaded plan guidance preserves provenance when plan bodies are copied."""
     result = run_recorded_skill_scenario(SCENARIOS / "plan/present-artifact-provenance.yaml")
@@ -55,7 +76,7 @@ def test_elicit_presents_decision_record_as_plain_conversation_text() -> None:
     assert "never solely inside" in skill_text
 
 
-@pytest.mark.parametrize("skill_name", ["plan", "merge-expert", "goal"])
+@pytest.mark.parametrize("skill_name", ["plan", "merge-expert"])
 def test_coordinator_skills_page_bounded_terminal_captures(skill_name: str) -> None:
     """Verify coordinators retrieve complete captures before consuming terminal reports."""
     result = run_recorded_skill_scenario(SCENARIOS / skill_name / "page-terminal-capture.yaml")

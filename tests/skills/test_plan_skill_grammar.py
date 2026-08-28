@@ -23,8 +23,18 @@ PLANNER = Path("src/gobby/install/shared/workflows/agents/planner.yaml")
 ADVERSARY = Path("src/gobby/install/shared/workflows/agents/plan-adversary.yaml")
 
 
+def _skill_bundle(path: Path) -> str:
+    content = path.read_text(encoding="utf-8")
+    references = path.parent / "references"
+    if references.is_dir():
+        content = "\n\n".join(
+            [content, *(reference.read_text() for reference in sorted(references.glob("*.md")))]
+        )
+    return content
+
+
 def _first_regex_block(path: Path) -> str:
-    body = path.read_text(encoding="utf-8")
+    body = _skill_bundle(path)
     match = re.search(r"```regex\n(?P<pattern>.+?)\n```", body, re.DOTALL)
     assert match is not None, f"{path} has no regex code block"
     return match.group("pattern")
@@ -52,7 +62,7 @@ def test_canonical_regex_pinned() -> None:
 
 
 def test_kind_enum_documented() -> None:
-    body = PLAN_DRAFT.read_text(encoding="utf-8")
+    body = _skill_bundle(PLAN_DRAFT)
     assert "deliverable | framing | verification | deferred" in body
     for kind in ("deliverable", "framing", "verification", "deferred"):
         assert f"`{kind}`" in body
@@ -61,7 +71,7 @@ def test_kind_enum_documented() -> None:
 
 
 def test_acceptance_item_shape_documented() -> None:
-    body = PLAN_DRAFT.read_text(encoding="utf-8")
+    body = _skill_bundle(PLAN_DRAFT)
     assert "**Acceptance:**" in body
     assert "appending `.<n>`" in body
     for artifact_kind in ("file", "symbol", "test", "behavior"):
@@ -69,7 +79,7 @@ def test_acceptance_item_shape_documented() -> None:
 
 
 def test_deferral_object_and_covers_record_documented() -> None:
-    body = PLAN_DRAFT.read_text(encoding="utf-8")
+    body = _skill_bundle(PLAN_DRAFT)
     for field in ("task_ref", "reason", "owner", "original_acceptance_items"):
         assert field in body
     assert "deferred-from:<plan-id>:<section-id>" in body
@@ -78,8 +88,8 @@ def test_deferral_object_and_covers_record_documented() -> None:
 
 def test_table_row_decomposition_rule_documented() -> None:
     surfaces = {
-        "plan-draft": PLAN_DRAFT.read_text(encoding="utf-8"),
-        "plan-review": PLAN_REVIEW.read_text(encoding="utf-8"),
+        "plan-draft": _skill_bundle(PLAN_DRAFT),
+        "plan-review": _skill_bundle(PLAN_REVIEW),
         "planner": _agent_prompt(PLANNER),
         "plan-adversary": _agent_prompt(ADVERSARY),
     }

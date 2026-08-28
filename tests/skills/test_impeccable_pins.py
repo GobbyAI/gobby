@@ -75,10 +75,27 @@ RELEASE_REFERENCES = frozenset(
 GOBBY_RETAINED_REFERENCES = frozenset(
     {
         "color-and-contrast.md",
+        "critique-cognitive-load.md",
+        "critique-personas.md",
+        "critique-report.md",
+        "critique-scoring.md",
+        "critique-workflow.md",
+        "design-execution.md",
+        "design-foundations.md",
         "interaction-design.md",
+        "live-actions.md",
+        "live-contract.md",
+        "live-generation.md",
+        "live-setup-recovery.md",
+        "live-variants.md",
         "motion-design.md",
+        "new-work-build.md",
+        "new-work-direction.md",
+        "new-work-finish.md",
+        "new-work-invention.md",
         "responsive-design.md",
         "spatial-design.md",
+        "teach.md",
         "typography.md",
         "ux-writing.md",
     }
@@ -109,6 +126,7 @@ DISPATCHABLE_REFERENCES = frozenset(
         "polish.md",
         "quieter.md",
         "shape.md",
+        "teach.md",
         "typeset.md",
     }
 )
@@ -173,6 +191,7 @@ _NOTICE_CLASS_PREFIXES = {
     "Near-verbatim native reference": "near-verbatim",
     "Vendored as-is": "vendored-as-is",
     "Gobby-retained upstream domain reference": "gobby-retained-extra",
+    "Gobby-retained decomposition reference": "gobby-retained-extra",
 }
 _NOTICE_ROW = re.compile(r"^\| `references/(?P<path>[^`]+)` \| (?P<label>[^|]+) \|$", re.MULTILINE)
 _REFERENCE_LINK = re.compile(r"`references/(?P<path>[^`]+\.md)`")

@@ -26,13 +26,25 @@ def _normalize_prose(value: str) -> str:
 
 @pytest.fixture(scope="module")
 def body() -> str:
-    return SKILL_PATH.read_text()
+    reference_order = (
+        "lightweight.md",
+        "full-drafting.md",
+        "adversarial-review.md",
+        "evidence-and-recovery.md",
+        "build-handoff.md",
+    )
+    references = SKILL_PATH.parent / "references"
+    return "\n\n".join(
+        [
+            SKILL_PATH.read_text(),
+            *(references.joinpath(path).read_text() for path in reference_order),
+        ]
+    )
 
 
 @pytest.mark.parametrize(
     ("skill_name", "expected_count"),
     [
-        ("goal", 1),
         ("build-coordinator", 1),
         ("bridge", 1),
         ("plan", 2),
@@ -42,7 +54,14 @@ def test_set_handoff_interrupt_warning_is_shared_by_skills(
     skill_name: str,
     expected_count: int,
 ) -> None:
-    skill_body = _normalize_prose((SKILL_ROOT / skill_name / "SKILL.md").read_text())
+    skill_path = SKILL_ROOT / skill_name / "SKILL.md"
+    content = skill_path.read_text()
+    if skill_name == "plan":
+        references = skill_path.parent / "references"
+        content = "\n\n".join(
+            [content, *(reference.read_text() for reference in sorted(references.glob("*.md")))]
+        )
+    skill_body = _normalize_prose(content)
 
     assert skill_body.count(HANDOFF_INTERRUPT_WARNING) == expected_count
 
@@ -130,7 +149,7 @@ def test_plan_is_artifact_first_and_taskless(body: str) -> None:
 
 
 def test_full_plan_body_starts_with_authoritative_artifact_path(body: str) -> None:
-    full_workflow = body[body.index("## Full Workflow") : body.index("## Boundaries")]
+    full_workflow = (SKILL_DIR / "references" / "full-drafting.md").read_text()
     normalized = " ".join(full_workflow.split())
 
     assert "every user-facing Full plan body" in normalized

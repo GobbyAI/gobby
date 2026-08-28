@@ -20,12 +20,17 @@ def test_loading_skills_requires_complete_separate_results_and_retry() -> None:
     )
     content = skill_path.read_text(encoding="utf-8")
 
-    assert "one `get_skill` request per outer tool result" in content
-    assert "fully read its complete body" in content
+    assert "one request for one page per outer tool result" in content
+    assert "loaded only after the final entrypoint page" in content
     assert "deduplicate names" in content
     assert "sequentially in required order" in content
     assert "Do not use `Promise.all`" in content
-    assert "`structuredContent.result.skill.content`" in content
+    assert "`brief=true` by default" in content
+    assert "only `cursor=<opaque cursor>`" in content
+    assert "`page.next_cursor` is null" in content
+    assert "current page's `content` together with `page`" in content
+    assert "use its topic index to select references" in content
+    assert '`get_skill_file(name="<skill>", path="references/<topic>.md")`' in content
     assert "`…N tokens truncated…`" in content
-    assert "retry that skill individually" in content
+    assert "restart that skill or file lookup individually" in content
     assert "Collapsed UI previews are presentation-only" in content

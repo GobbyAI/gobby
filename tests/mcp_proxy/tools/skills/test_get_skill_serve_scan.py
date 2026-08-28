@@ -77,7 +77,7 @@ class TestGetSkillServeScan:
         result = await tool(name="ext-bad")
 
         assert result["success"] is False
-        assert "failed security scan" in result["error"]
+        assert "failed security scan" in result["message"]
 
     @pytest.mark.asyncio
     async def test_external_safe_body_served(
@@ -167,7 +167,7 @@ class TestGetSkillServeScan:
             result = await tool(name="ext-good")
 
         assert result["success"] is False
-        assert "clawcare is not installed" in result["error"]
+        assert "clawcare is not installed" in result["message"]
 
 
 class TestGetSkillFileServeScan:
@@ -190,7 +190,7 @@ class TestGetSkillFileServeScan:
         result = tool(name="ext-files", path="references/x.md")
 
         assert result["success"] is False
-        assert "failed security scan" in result["error"]
+        assert "failed security scan" in result["message"]
 
     @pytest.mark.asyncio
     async def test_external_safe_file_served(
