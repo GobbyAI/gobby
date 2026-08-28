@@ -430,4 +430,4 @@ async def test_criteria_review_receives_successful_transcript_operational_action
     await_args = review.await_args
     assert await_args is not None
     facts = cast(dict[str, Any], await_args.kwargs["checklist_facts"])
-    assert facts["transcript_operational_actions"] == ["restart"]
+    assert facts["transcript_operational_actions"] == ["restart:daemon,gobby"]

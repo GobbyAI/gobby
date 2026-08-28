@@ -47,7 +47,7 @@ def test_operational_criteria_require_affirmative_completion_evidence() -> None:
     assert (
         missing_operational_evidence(
             criteria,
-            "Release installed and restart completed; live smoke check passed.",
+            "Release installed and daemon restart completed; live smoke check passed.",
         )
         == ()
     )
@@ -60,11 +60,13 @@ def test_operational_evidence_accepts_successful_transcript_actions() -> None:
         missing_operational_evidence(
             criteria,
             "Implementation complete.",
-            transcript_actions=("install", "restart", "smoke"),
+            transcript_actions=("install:release", "restart:daemon", "smoke"),
         )
         == ()
     )
-    assert operational_actions_from_command("uv run gobby restart --wait") == ("restart",)
+    assert operational_actions_from_command("uv run gobby restart --wait") == (
+        "restart:daemon,gobby",
+    )
 
 
 def test_pending_or_negated_operations_are_not_completion_evidence() -> None:
@@ -97,3 +99,23 @@ def test_nominal_operational_requirements_are_detected() -> None:
     criteria = "Release ghook installation, daemon restart, and live smoke checks are required."
 
     assert required_operational_actions(criteria) == ("install", "restart", "smoke")
+
+
+def test_target_specific_operations_reject_unrelated_evidence() -> None:
+    criteria = "Release ghook installation must be complete."
+
+    assert missing_operational_evidence(criteria, "Plugin installed successfully.") == ("install",)
+    assert missing_operational_evidence(criteria, "Release ghook installed successfully.") == ()
+    assert missing_operational_evidence(
+        criteria,
+        "Implementation complete.",
+        transcript_actions=("install:plugin",),
+    ) == ("install",)
+    assert (
+        missing_operational_evidence(
+            criteria,
+            "Implementation complete.",
+            transcript_actions=("install:ghook",),
+        )
+        == ()
+    )

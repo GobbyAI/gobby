@@ -134,10 +134,16 @@ async def test_operational_criteria_block_before_inline_or_submitted_review(
 @pytest.mark.parametrize(
     ("changes_summary", "checklist_facts"),
     [
-        ("Release installed; restart completed; smoke check passed.", {}),
+        ("Release installed; daemon restart completed; smoke check passed.", {}),
         (
             "Implementation complete.",
-            {"transcript_operational_actions": ["install", "restart", "smoke"]},
+            {
+                "transcript_operational_actions": [
+                    "install:release",
+                    "restart:daemon",
+                    "smoke",
+                ]
+            },
         ),
     ],
 )
