@@ -107,13 +107,17 @@ async def evaluate_epic_guards(
     # this project, 1.1 s out of process and 7 s inside the daemon -- and a hit
     # needs none of them (#20866). A miss falls through to the original order.
     template, template_error = _load_guard_template(repo_path)
-    cache_key = (
+    keys = (
         None
         if template_error
         else await asyncio.to_thread(
-            _guard_run_cache_key, task_manager, task, template or "", repo_path
+            _guard_run_cache_keys, task_manager, task, template or "", repo_path
         )
     )
+    cache_key: str | None = None
+    repo_state: str | None = None
+    if keys is not None:
+        cache_key, repo_state = keys
     if cache_key is not None:
         run = _guard_runs.get(cache_key)
         if run is not None:
@@ -202,9 +206,19 @@ async def evaluate_epic_guards(
     quoted_paths = " ".join(shlex.quote(path) for path in paths)
     command = template.replace("{test_files}", quoted_paths)
     fingerprint = _fingerprint(paths, source_task_ids, template)
+    # A scope miss with the same resolved paths on the same tree is the run
+    # that already passed: a sibling closed without adding a guard, which is
+    # every close but the first when an epic's committed leaves land in a row.
+    verdict_key = None if repo_state is None else _digest(repo_state, fingerprint)
+    if verdict_key is not None:
+        cached = _passed_guard_runs.get(verdict_key)
+        if cached is not None:
+            if cache_key is not None:
+                _remember_passed_guard_run(cache_key, cached)
+            return cached
     start = functools.partial(
         _run_guard,
-        cache_key=cache_key,
+        cache_keys=tuple(key for key in (cache_key, verdict_key) if key is not None),
         command=command,
         repo_path=repo_path,
         timeout_seconds=timeout_seconds,
@@ -312,7 +326,7 @@ def _kill_guard_process_group(process: asyncio.subprocess.Process) -> None:
 
 async def _run_guard(
     *,
-    cache_key: str | None,
+    cache_keys: tuple[str, ...],
     command: str,
     repo_path: str,
     timeout_seconds: float,
@@ -385,18 +399,22 @@ async def _run_guard(
         output=output,
         fingerprint=fingerprint,
     )
-    if cache_key is not None:
-        _remember_passed_guard_run(cache_key, passed)
+    for key in cache_keys:
+        _remember_passed_guard_run(key, passed)
     return passed
 
 
-def _guard_run_cache_key(
+def _guard_run_cache_keys(
     task_manager: LocalTaskManager,
     task: Task,
     template: str,
     repo_path: str,
-) -> str | None:
+) -> tuple[str, str] | None:
     """Key one guard run by its epic scope and everything git can see.
+
+    Returns the scope-bound key and the repository-state digest it was built
+    from; the latter is joined with the resolved guard fingerprint after
+    collection, so a pass survives scope changes that add no guard.
 
     The scope is keyed by identity rather than by the guard paths it resolves
     to: the paths are a pure function of these rows and the repository, and
@@ -436,15 +454,13 @@ def _guard_run_cache_key(
     )
     if head is None or status is None or diff is None:
         return None
-    parts = [
-        repo_path,
-        scope_digest,
-        template,
-        head,
-        status,
-        diff,
-        *_untracked_stats(status, repo_path),
-    ]
+    repo_state = _digest(
+        repo_path, template, head, status, diff, *_untracked_stats(status, repo_path)
+    )
+    return _digest(scope_digest, repo_state), repo_state
+
+
+def _digest(*parts: str) -> str:
     return hashlib.sha256("\0".join(parts).encode()).hexdigest()
 
 

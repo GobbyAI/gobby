@@ -821,6 +821,82 @@ async def test_a_newly_closed_leaf_earns_a_fresh_guard_run(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_a_newly_closed_leaf_that_adds_no_guard_serves_the_earlier_pass(
+    tmp_path: Path,
+) -> None:
+    """Closing a leaf moves the scope digest; only a new guard path earns a run.
+
+    Landing an epic closes its already-committed leaves one after another, and
+    each close moved the scope digest while leaving the guard paths, HEAD and
+    the working tree untouched -- so every close paid the whole guard run
+    again (ten minutes each on the herdr landing). The verdict is a function of
+    the resolved paths and the tree, so a pass is remembered under those too.
+    """
+    test_path = "tests/test_guard.py"
+    Path(tmp_path, test_path).parent.mkdir()
+    Path(tmp_path, test_path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, _counting_template())
+    _init_repo(tmp_path)
+    epic, prior, current = _task_tree(criteria=f"test: {test_path}::test_guard")
+    tasks = [epic, prior, current]
+    manager = cast(LocalTaskManager, _TaskManager(tasks))
+
+    first = await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+    tasks.append(_task("later", parent=epic.id, now=datetime(2026, 8, 22, tzinfo=UTC), closed=True))
+    second = await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+    third = await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+
+    assert first.passed is True and second.passed is True and third.passed is True
+    assert second.paths == first.paths
+    assert second.fingerprint == first.fingerprint
+    assert _run_count(tmp_path) == 1, "an unchanged guard set ran again after a leaf closed"
+
+
+@pytest.mark.parametrize("change", ["head", "diff", "template", "paths"])
+async def test_the_verdict_memo_ignores_a_pass_from_another_tree_or_guard_set(
+    tmp_path: Path, change: str
+) -> None:
+    """The verdict memo keys on the tree and the resolved guard set, nothing less.
+
+    Every case moves the scope digest the way a closing sibling does, so the
+    scope-bound key misses and the verdict memo is the one consulted; the
+    change made alongside must keep it from serving the earlier pass.
+    """
+    test_path = "tests/test_guard.py"
+    other_path = "tests/test_other_guard.py"
+    Path(tmp_path, test_path).parent.mkdir()
+    for path in (test_path, other_path):
+        Path(tmp_path, path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, _counting_template())
+    _init_repo(tmp_path)
+    epic, prior, current = _task_tree(criteria=f"test: {test_path}::test_guard")
+    tasks = [epic, prior, current]
+    manager = cast(LocalTaskManager, _TaskManager(tasks))
+
+    first = await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+    tasks.append(
+        _task(
+            "later",
+            parent=epic.id,
+            now=datetime(2026, 8, 22, tzinfo=UTC),
+            criteria=f"test: {other_path}::test_guard" if change == "paths" else None,
+            closed=True,
+        )
+    )
+    if change == "head":
+        Path(tmp_path, "src.py").write_text("value = 2\n", encoding="utf-8")
+        _git(tmp_path, "add", "src.py")
+        _git(tmp_path, "commit", "-m", "a later commit")
+    elif change == "diff":
+        Path(tmp_path, test_path).write_text("def test_guard(): assert True\n", encoding="utf-8")
+    elif change == "template":
+        _write_project(tmp_path, _counting_template() + " # v2")
+    second = await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+
+    assert first.passed is True and second.passed is True
+    assert _run_count(tmp_path) == 2, f"a {change} change served the earlier pass"
+
+
 async def test_a_retry_does_not_invalidate_its_own_guard_cache(tmp_path: Path) -> None:
     """The task being closed must not key its own guard run.
 
