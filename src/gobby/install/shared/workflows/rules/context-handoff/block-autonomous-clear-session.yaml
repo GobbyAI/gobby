@@ -1,0 +1,17 @@
+tags: [context-handoff, handoff, autonomous, enforcement, gobby, default]
+
+rules:
+  block-autonomous-clear-session:
+    description: "Keep autonomous sessions handing off in place instead of clearing"
+    event: before_tool
+    enabled: true
+    priority: 12
+    audience: autonomous
+    when: "((tool_input.get('arguments') or tool_input) or {}).get('clear_session') is True"
+    effects:
+      - type: block
+        mcp_tools:
+          - "gobby-sessions:set_handoff"
+        reason: >-
+          Autonomous sessions hand off in place. Call gobby-sessions:set_handoff
+          without clear_session; the session compacts and continues.

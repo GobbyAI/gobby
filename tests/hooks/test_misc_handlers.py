@@ -113,8 +113,6 @@ class TestPostCompactHandler:
             context_window=258_400,
             context_used_tokens=222_353,
             context_usage_ratio=222_353 / 258_400,
-            context_compact_soft_ratio=None,
-            context_compact_strong_ratio=None,
         )
         session_manager.get.return_value = session
 

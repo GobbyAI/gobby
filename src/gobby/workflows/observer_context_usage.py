@@ -1,30 +1,43 @@
-"""Context-pressure observer for compact guidance."""
+"""Context-pressure observer for compact guidance.
+
+Pressure is measured in absolute resident tokens (``session.context_used_tokens``)
+against two window-independent cuts. The soft band asks the agent to consider a
+handoff on a K-tool cadence; the strong band demands one on every event until a
+``gobby-sessions:set_handoff`` result gates the loop or a compaction resets it.
+"""
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
+
+from gobby.hooks.events import HookEvent
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SOFT_CONTEXT_RATIO = 0.40
-DEFAULT_STRONG_CONTEXT_RATIO = 0.70
-LARGE_CONTEXT_SOFT_RATIO = 0.30
-LARGE_CONTEXT_STRONG_RATIO = 0.40
-LARGE_CONTEXT_WINDOW = 1_000_000
+SOFT_CONTEXT_TOKENS = 128_000
+STRONG_CONTEXT_TOKENS = 256_000
+SOFT_NUDGE_EVERY_TOOLS = 5
 UNKNOWN_USAGE_TURN_FALLBACK = 10
 GUIDANCE_KINDS = frozenset({"soft", "strong", "unknown"})
+
+SOFT_NUDGE_COUNTER_VARIABLE = "context_compact_soft_nudge_tools"
+HANDOFF_RESULT_VARIABLE = "context_compact_handoff_result"
+SHOWN_KINDS_VARIABLE = "context_compact_guidance_shown_kinds"
+PRESSURE_BAND_VARIABLE = "context_compact_mid_turn_pressure_band"
+
+UNKNOWN_USAGE_MESSAGE = (
+    "Context usage has been unknown for 10 non-plan turns. "
+    "Call `gobby-sessions:set_handoff` with `clear_session=false` and a concise structured "
+    "handoff at the next clean boundary."
+)
+
+_HandoffGate = Literal["pending", "failed"] | None
 
 
 class _SessionValue(Protocol):
     @property
-    def context_usage_ratio(self) -> object: ...
-
-    @property
     def context_used_tokens(self) -> object: ...
-
-    @property
-    def context_window(self) -> object: ...
 
 
 class _SessionManager(Protocol):
@@ -39,6 +52,7 @@ def detect_context_compact_guidance(
     """Populate compact guidance variables for turn_start evaluation."""
     variables["context_compact_guidance_kind"] = ""
     variables["context_compact_guidance_message"] = ""
+    variables[HANDOFF_RESULT_VARIABLE] = None
 
     if _is_plan_mode(variables):
         return
@@ -55,100 +69,110 @@ def detect_context_compact_guidance(
     variables["turns_since_compact"] = turns_since_compact
 
     session = _load_session(session_manager, session_id)
-    ratio = _ratio_from_session(session)
-    if ratio is None:
+    used = _used_tokens_from_session(session)
+    if used is None:
         if turns_since_compact >= UNKNOWN_USAGE_TURN_FALLBACK:
-            _set_guidance(
-                variables,
-                "unknown",
-                (
-                    "Context usage has been unknown for 10 non-plan turns. "
-                    "Call `gobby-sessions:set_handoff` with `clear_session=false` and a concise structured handoff at the next clean boundary."
-                ),
-            )
+            _set_guidance(variables, "unknown", UNKNOWN_USAGE_MESSAGE, once=True)
         return
 
-    soft_ratio, strong_ratio = _thresholds_from_session(session)
-    variables["context_compact_mid_turn_pressure_band"] = _pressure_band(
-        ratio,
-        soft_ratio,
-        strong_ratio,
-    )
-
-    if ratio >= strong_ratio:
-        _set_guidance(
-            variables,
-            "strong",
-            (
-                f"Context pressure is {_percent(ratio)}. "
-                "Call `gobby-sessions:set_handoff` with `clear_session=false` and a concise structured handoff at the next clean boundary."
-            ),
-        )
+    band = _pressure_band(used)
+    variables[PRESSURE_BAND_VARIABLE] = band
+    if band == "none":
+        _reset_pressure_state(variables)
         return
 
-    if ratio >= soft_ratio:
-        _set_guidance(
-            variables,
-            "soft",
-            (
-                f"Context pressure is {_percent(ratio)}. "
-                "Consider calling `gobby-sessions:set_handoff` with `clear_session=false` and a concise structured handoff at the next natural pause "
-                "in your work."
-            ),
-        )
+    if band == "strong":
+        _set_guidance(variables, "strong", _strong_message(used), once=False)
+        return
+
+    _set_guidance(variables, "soft", _soft_message(used), once=True)
 
 
 def detect_mid_turn_context_compact_guidance(
+    event: HookEvent,
     variables: dict[str, Any],
     session_id: str,
     session_manager: _SessionManager | None,
 ) -> None:
-    """Populate compact guidance when context crosses a pressure band within a turn."""
+    """Populate compact guidance for an after_tool event under context pressure."""
     variables["context_compact_guidance_kind"] = ""
     variables["context_compact_guidance_message"] = ""
 
-    if variables.get("pending_context_reset") is True:
-        variables["context_compact_mid_turn_pressure_band"] = "none"
-        variables["context_compact_guidance_shown_kinds"] = []
+    if variables.get("pending_context_reset") is True or _is_plan_mode(variables):
+        _reset_pressure_state(variables)
         return
 
-    if _is_plan_mode(variables):
-        variables["context_compact_mid_turn_pressure_band"] = "none"
-        variables["context_compact_guidance_shown_kinds"] = []
-        return
+    just_failed = _record_handoff_result(event, variables)
 
     session = _load_session(session_manager, session_id)
-    ratio = _ratio_from_session(session)
-    if ratio is None:
+    used = _used_tokens_from_session(session)
+    if used is None:
         return
 
-    soft_ratio, strong_ratio = _thresholds_from_session(session)
-    previous_band = str(variables.get("context_compact_mid_turn_pressure_band") or "none")
-    current_band = _pressure_band(ratio, soft_ratio, strong_ratio)
-    variables["context_compact_mid_turn_pressure_band"] = current_band
-    if _pressure_band_rank(current_band) <= _pressure_band_rank(previous_band):
+    previous_band = str(variables.get(PRESSURE_BAND_VARIABLE) or "none")
+    band = _pressure_band(used)
+    variables[PRESSURE_BAND_VARIABLE] = band
+    if band == "none":
+        _reset_pressure_state(variables)
         return
 
-    if current_band == "strong":
-        _set_guidance(
-            variables,
-            "strong",
-            (
-                f"Context pressure is {_percent(ratio)}. "
-                "Call `gobby-sessions:set_handoff` with `clear_session=false` and a concise structured handoff at the next clean boundary."
-            ),
-        )
+    gate = _handoff_gate(variables)
+    if gate == "pending":
         return
 
-    _set_guidance(
-        variables,
-        "soft",
-        (
-            f"Context pressure is {_percent(ratio)}. "
-            "Consider calling `gobby-sessions:set_handoff` with `clear_session=false` and a concise structured handoff at the next natural pause "
-            "in your work."
-        ),
-    )
+    if band == "strong" and gate is None:
+        _set_guidance(variables, "strong", _strong_message(used), once=False)
+        return
+
+    if just_failed:
+        counter = 0
+    else:
+        counter = (_int_or_none(variables.get(SOFT_NUDGE_COUNTER_VARIABLE), default=0) or 0) + 1
+    variables[SOFT_NUDGE_COUNTER_VARIABLE] = counter
+
+    crossed = previous_band == "none" and band == "soft"
+    if not (just_failed or crossed or counter % SOFT_NUDGE_EVERY_TOOLS == 0):
+        return
+
+    if gate == "failed":
+        _set_guidance(variables, band, _failed_handoff_message(used, variables), once=False)
+        return
+    _set_guidance(variables, "soft", _soft_message(used), once=False)
+
+
+def _record_handoff_result(event: HookEvent, variables: dict[str, Any]) -> bool:
+    """Store the ``set_handoff`` outcome from *event*; return True on a fresh failure."""
+    data = event.data or {}
+    if data.get("mcp_server") != "gobby-sessions" or data.get("mcp_tool") != "set_handoff":
+        return False
+    payload: Any = data.get("tool_output")
+    if isinstance(payload, dict) and isinstance(payload.get("result"), dict):
+        payload = payload["result"]
+    if not isinstance(payload, dict):
+        return False
+    compacted = payload.get("compacted")
+    if not isinstance(compacted, bool):
+        return False
+    reason = payload.get("reason")
+    variables[HANDOFF_RESULT_VARIABLE] = {
+        "compacted": compacted,
+        "reason": reason if isinstance(reason, str) and reason else None,
+    }
+    return not compacted
+
+
+def _handoff_gate(variables: dict[str, Any]) -> _HandoffGate:
+    result = variables.get(HANDOFF_RESULT_VARIABLE)
+    if not isinstance(result, dict) or "compacted" not in result:
+        return None
+    return "pending" if result.get("compacted") is True else "failed"
+
+
+def _reset_pressure_state(variables: dict[str, Any]) -> None:
+    variables[PRESSURE_BAND_VARIABLE] = "none"
+    variables[SHOWN_KINDS_VARIABLE] = []
+    variables[SOFT_NUDGE_COUNTER_VARIABLE] = 0
+    variables[HANDOFF_RESULT_VARIABLE] = None
 
 
 def _load_session(
@@ -164,43 +188,34 @@ def _load_session(
         return None
 
 
-def _ratio_from_session(session: _SessionValue | None) -> float | None:
+def _used_tokens_from_session(session: _SessionValue | None) -> int | None:
     if session is None:
         return None
-    ratio = getattr(session, "context_usage_ratio", None)
-    if isinstance(ratio, int | float) and not isinstance(ratio, bool):
-        return _clamp(float(ratio))
-
     used = _int_or_none(getattr(session, "context_used_tokens", None))
-    window = _int_or_none(getattr(session, "context_window", None))
-    if used is None or window is None or window <= 0:
+    if used is None or used < 0:
         return None
-    return _clamp(used / window)
-
-
-def _thresholds_from_session(session: _SessionValue | None) -> tuple[float, float]:
-    window = _int_or_none(getattr(session, "context_window", None))
-    if window is not None and window >= LARGE_CONTEXT_WINDOW:
-        return LARGE_CONTEXT_SOFT_RATIO, LARGE_CONTEXT_STRONG_RATIO
-    return DEFAULT_SOFT_CONTEXT_RATIO, DEFAULT_STRONG_CONTEXT_RATIO
+    return used
 
 
 def _set_guidance(
     variables: dict[str, Any],
     kind: str,
     message: str,
+    *,
+    once: bool,
 ) -> None:
     shown_kinds = _shown_guidance_kinds(variables)
-    if kind in shown_kinds or (kind == "soft" and "strong" in shown_kinds):
+    if once and (kind in shown_kinds or (kind == "soft" and "strong" in shown_kinds)):
         return
     variables["context_compact_guidance_kind"] = kind
     variables["context_compact_guidance_message"] = message
-    shown_kinds.append(kind)
-    variables["context_compact_guidance_shown_kinds"] = shown_kinds
+    if kind not in shown_kinds:
+        shown_kinds.append(kind)
+    variables[SHOWN_KINDS_VARIABLE] = shown_kinds
 
 
 def _shown_guidance_kinds(variables: dict[str, Any]) -> list[str]:
-    raw_kinds = variables.get("context_compact_guidance_shown_kinds")
+    raw_kinds = variables.get(SHOWN_KINDS_VARIABLE)
     if not isinstance(raw_kinds, list):
         return []
     return list(
@@ -228,16 +243,40 @@ def _next_turn_seq(variables: dict[str, Any]) -> int:
     return current
 
 
-def _pressure_band(ratio: float, soft_ratio: float, strong_ratio: float) -> str:
-    if ratio >= strong_ratio:
+def _pressure_band(used: int) -> str:
+    if used >= STRONG_CONTEXT_TOKENS:
         return "strong"
-    if ratio >= soft_ratio:
+    if used >= SOFT_CONTEXT_TOKENS:
         return "soft"
     return "none"
 
 
-def _pressure_band_rank(band: str) -> int:
-    return {"none": 0, "soft": 1, "strong": 2}.get(band, 0)
+def _soft_message(used: int) -> str:
+    return (
+        f"Context is {_format_tokens(used)} tokens. Consider gobby-sessions:set_handoff "
+        "with a concise structured handoff at the next pause."
+    )
+
+
+def _strong_message(used: int) -> str:
+    return (
+        f"Context is {_format_tokens(used)} tokens. Call gobby-sessions:set_handoff now, "
+        "before any other tool call."
+    )
+
+
+def _failed_handoff_message(used: int, variables: dict[str, Any]) -> str:
+    result = variables.get(HANDOFF_RESULT_VARIABLE)
+    reason = result.get("reason") if isinstance(result, dict) else None
+    detail = reason if isinstance(reason, str) and reason else "unknown reason"
+    return (
+        f"Context is {_format_tokens(used)} tokens. set_handoff could not compact ({detail}). "
+        "Hand off manually or run the CLI's own compact command."
+    )
+
+
+def _format_tokens(used: int) -> str:
+    return f"{round(used / 1000)}k"
 
 
 def _int_or_none(value: Any, default: int | None = None) -> int | None:
@@ -247,11 +286,3 @@ def _int_or_none(value: Any, default: int | None = None) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return default
-
-
-def _clamp(value: float) -> float:
-    return max(0.0, min(1.0, value))
-
-
-def _percent(value: float) -> str:
-    return f"{round(_clamp(value) * 100)}%"
