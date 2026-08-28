@@ -70,12 +70,12 @@ def test_generation_gwiki_timeout_sits_below_extended_http_cap() -> None:
 def test_wait_tool_protocol_mismatch_result_detects_missing_header() -> None:
     from gobby.mcp_proxy import wait_tools
 
-    result = wait_tools.mcp_wrapper_protocol_mismatch_result("get_handoff", None)
+    result = wait_tools.mcp_wrapper_protocol_mismatch_result("wait_for_output", None)
 
     assert result is not None
     assert result["success"] is False
     assert result["error_code"] == "GOBBY_MCP_WRAPPER_STALE"
-    assert result["tool_name"] == "get_handoff"
+    assert result["tool_name"] == "wait_for_output"
     assert result["provided_wrapper_protocol_version"] is None
     assert result["expected_wrapper_protocol_version"] == wait_tools.MCP_WRAPPER_PROTOCOL_VERSION
     assert result["restart_required"] is True
@@ -85,7 +85,7 @@ def test_wait_tool_protocol_mismatch_result_accepts_current_version() -> None:
     from gobby.mcp_proxy import wait_tools
 
     result = wait_tools.mcp_wrapper_protocol_mismatch_result(
-        "get_handoff",
+        "wait_for_output",
         wait_tools.MCP_WRAPPER_PROTOCOL_VERSION,
     )
 
@@ -837,7 +837,7 @@ class TestDaemonProxy:
     @pytest.mark.parametrize(
         "value",
         [
-            pytest.param(["goal", "plan"], id="array"),
+            pytest.param(["plan-review", "plan"], id="array"),
             pytest.param({"source": "compaction", "round": 2}, id="object"),
         ],
     )
@@ -1395,9 +1395,9 @@ class TestDaemonProxy:
                 mock_request.return_value = {"success": True}
 
                 result = await proxy.call_tool(
-                    "gobby-sessions",
-                    "get_handoff",
-                    {"session_id": "session-123", "timeout_seconds": 120},
+                    "gobby-agents",
+                    "wait_for_output",
+                    {"run_id": "run-123", "pattern": "READY", "timeout_seconds": 120},
                 )
 
                 assert result == {"success": True}
@@ -1406,9 +1406,13 @@ class TestDaemonProxy:
                     "POST",
                     "/api/mcp/tools/call",
                     json={
-                        "server_name": "gobby-sessions",
-                        "tool_name": "get_handoff",
-                        "arguments": {"session_id": "session-123", "timeout_seconds": 120},
+                        "server_name": "gobby-agents",
+                        "tool_name": "wait_for_output",
+                        "arguments": {
+                            "run_id": "run-123",
+                            "pattern": "READY",
+                            "timeout_seconds": 120,
+                        },
                     },
                     timeout=150.0,
                     preflight=True,
@@ -1428,9 +1432,9 @@ class TestDaemonProxy:
                 mock_request.return_value = {"success": True}
 
                 result = await proxy.call_tool(
-                    "gobby-sessions",
-                    "get_handoff",
-                    {"session_id": "session-123", "timeout": "5m"},
+                    "gobby-agents",
+                    "wait_for_output",
+                    {"run_id": "run-123", "pattern": "READY", "timeout": "5m"},
                 )
 
                 assert result == {"success": True}
@@ -1439,9 +1443,9 @@ class TestDaemonProxy:
                     "POST",
                     "/api/mcp/tools/call",
                     json={
-                        "server_name": "gobby-sessions",
-                        "tool_name": "get_handoff",
-                        "arguments": {"session_id": "session-123", "timeout": "5m"},
+                        "server_name": "gobby-agents",
+                        "tool_name": "wait_for_output",
+                        "arguments": {"run_id": "run-123", "pattern": "READY", "timeout": "5m"},
                     },
                     timeout=330.0,
                     preflight=True,
@@ -1473,8 +1477,8 @@ class TestDaemonProxy:
         )
 
     @pytest.mark.asyncio
-    async def test_call_tool_treats_get_handoff_as_wait_tool(self) -> None:
-        """get_handoff uses generic wait-tool proxying and timeout buffering."""
+    async def test_call_tool_routes_get_handoff_directly(self) -> None:
+        """get_handoff uses its direct no-argument route and default timeout."""
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         proxy = DaemonProxy(60887)
@@ -1488,20 +1492,18 @@ class TestDaemonProxy:
                 result = await proxy.call_tool(
                     "gobby-sessions",
                     "get_handoff",
-                    {"session_id": "s1", "timeout_seconds": 45},
+                    {},
                 )
 
                 assert result == {"success": True}
-                mock_request.assert_called_once()
-                args, kwargs = mock_request.call_args
-                assert args == ("POST", "/api/mcp/tools/call")
-                assert kwargs["json"] == {
-                    "server_name": "gobby-sessions",
-                    "tool_name": "get_handoff",
-                    "arguments": {"session_id": "s1", "timeout_seconds": 45},
-                }
-                assert kwargs["timeout"] == 75.0
-                assert kwargs["preflight"] is True
+                assert result["success"] is True
+                mock_request.assert_awaited_once_with(
+                    "POST",
+                    "/api/mcp/gobby-sessions/tools/get_handoff",
+                    json={},
+                    timeout=30.0,
+                    preflight=True,
+                )
 
     @pytest.mark.asyncio
     async def test_call_tool_proxies_when_timeout_config_load_fails(self) -> None:
@@ -1790,7 +1792,7 @@ class TestMCPToolsWrapper:
         mock_proxy.import_mcp_server.assert_called()
 
         # 11. set_variable preserves structured values
-        skill_names = ["goal", "plan"]
+        skill_names = ["plan-review", "plan"]
         await run_tool(
             "set_variable",
             name="loaded_skills",
@@ -1929,9 +1931,9 @@ class TestMCPToolsWrapper:
             task: asyncio.Task[Any] = asyncio.create_task(
                 run_tool(
                     "call_tool",
-                    server_name="gobby-sessions",
-                    tool_name="get_handoff",
-                    arguments={"session_id": "session-123", "timeout_seconds": 300},
+                    server_name="gobby-agents",
+                    tool_name="wait_for_output",
+                    arguments={"run_id": "run-123", "pattern": "READY", "timeout_seconds": 300},
                     ctx=ctx,
                 )
             )
@@ -1943,9 +1945,9 @@ class TestMCPToolsWrapper:
 
         assert result == {"res": "call"}
         mock_proxy.call_tool.assert_awaited_once_with(
-            "gobby-sessions",
-            "get_handoff",
-            {"session_id": "session-123", "timeout_seconds": 300},
+            "gobby-agents",
+            "wait_for_output",
+            {"run_id": "run-123", "pattern": "READY", "timeout_seconds": 300},
             preflight_enabled=True,
         )
 
@@ -1955,16 +1957,16 @@ class TestMCPToolsWrapper:
         mock_proxy.call_tool.return_value = {"success": True, "completed": True}
         result = await run_tool(
             "call_tool",
-            server_name="gobby-sessions",
-            tool_name="get_handoff",
-            arguments={"session_id": "session-123", "timeout_seconds": 300},
+            server_name="gobby-agents",
+            tool_name="wait_for_output",
+            arguments={"run_id": "run-123", "pattern": "READY", "timeout_seconds": 300},
         )
 
         assert result == {"success": True, "completed": True}
         mock_proxy.call_tool.assert_awaited_once_with(
-            "gobby-sessions",
-            "get_handoff",
-            {"session_id": "session-123", "timeout_seconds": 300},
+            "gobby-agents",
+            "wait_for_output",
+            {"run_id": "run-123", "pattern": "READY", "timeout_seconds": 300},
             preflight_enabled=True,
         )
 
@@ -1975,7 +1977,7 @@ class TestMCPToolsWrapper:
             "success": False,
             "error_code": "GOBBY_MCP_WRAPPER_STALE",
             "error": "wrapper protocol is incompatible",
-            "tool_name": "get_handoff",
+            "tool_name": "wait_for_output",
             "provided_wrapper_protocol_version": "0",
             "expected_wrapper_protocol_version": "1",
             "restart_required": True,
@@ -1984,16 +1986,16 @@ class TestMCPToolsWrapper:
 
         result = await run_tool(
             "call_tool",
-            server_name="gobby-sessions",
-            tool_name="get_handoff",
-            arguments={"session_id": "session-123", "timeout_seconds": 300},
+            server_name="gobby-agents",
+            tool_name="wait_for_output",
+            arguments={"run_id": "run-123", "pattern": "READY", "timeout_seconds": 300},
         )
 
         assert result == stale_result
         mock_proxy.call_tool.assert_awaited_once_with(
-            "gobby-sessions",
-            "get_handoff",
-            {"session_id": "session-123", "timeout_seconds": 300},
+            "gobby-agents",
+            "wait_for_output",
+            {"run_id": "run-123", "pattern": "READY", "timeout_seconds": 300},
             preflight_enabled=True,
         )
 
@@ -2047,9 +2049,9 @@ class TestMCPToolsWrapper:
             result = await asyncio.wait_for(
                 run_tool(
                     "call_tool",
-                    server_name="gobby-sessions",
-                    tool_name="get_handoff",
-                    arguments={"session_id": "session-123", "timeout_seconds": 600},
+                    server_name="gobby-agents",
+                    tool_name="wait_for_output",
+                    arguments={"run_id": "run-123", "pattern": "READY", "timeout_seconds": 600},
                 ),
                 timeout=0.2,
             )
@@ -2061,21 +2063,21 @@ class TestMCPToolsWrapper:
             "effective_timeout_seconds": 0.02,
             "mcp_wrapper_timeout": True,
             "background_call_continues": True,
-            "tool_name": "get_handoff",
+            "tool_name": "wait_for_output",
             "requested_timeout_seconds": 600.0,
             "wait_timeout_capped_by_mcp_wrapper": True,
         }
         mock_proxy.call_tool.assert_awaited_once_with(
-            "gobby-sessions",
-            "get_handoff",
-            {"session_id": "session-123", "timeout_seconds": 0.02},
+            "gobby-agents",
+            "wait_for_output",
+            {"run_id": "run-123", "pattern": "READY", "timeout_seconds": 0.02},
             preflight_enabled=True,
         )
         release_call.set()
         await asyncio.wait_for(call_finished.wait(), timeout=0.2)
 
     @pytest.mark.asyncio
-    async def test_call_tool_caps_get_handoff_timeout(self) -> None:
+    async def test_call_tool_caps_wait_for_output_timeout(self) -> None:
         _, mock_proxy, run_tool = self._register_tools()
         release_call = asyncio.Event()
         call_finished = asyncio.Event()
@@ -2094,9 +2096,9 @@ class TestMCPToolsWrapper:
             result = await asyncio.wait_for(
                 run_tool(
                     "call_tool",
-                    server_name="gobby-sessions",
-                    tool_name="get_handoff",
-                    arguments={"session_id": "s1", "timeout_seconds": 600},
+                    server_name="gobby-agents",
+                    tool_name="wait_for_output",
+                    arguments={"run_id": "run-123", "pattern": "READY", "timeout_seconds": 600},
                 ),
                 timeout=0.2,
             )
@@ -2108,14 +2110,14 @@ class TestMCPToolsWrapper:
             "effective_timeout_seconds": 0.02,
             "mcp_wrapper_timeout": True,
             "background_call_continues": True,
-            "tool_name": "get_handoff",
+            "tool_name": "wait_for_output",
             "requested_timeout_seconds": 600.0,
             "wait_timeout_capped_by_mcp_wrapper": True,
         }
         mock_proxy.call_tool.assert_awaited_once_with(
-            "gobby-sessions",
-            "get_handoff",
-            {"session_id": "s1", "timeout_seconds": 0.02},
+            "gobby-agents",
+            "wait_for_output",
+            {"run_id": "run-123", "pattern": "READY", "timeout_seconds": 0.02},
             preflight_enabled=True,
         )
         release_call.set()
