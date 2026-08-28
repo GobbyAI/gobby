@@ -126,7 +126,9 @@ interface TmuxSessionsResult {
   onAttachHistory: (callback: (history: TerminalAttachHistory) => void) => void;
 }
 
-export function useTmuxSessions(): TmuxSessionsResult {
+export function useTmuxSessions(
+  projectId: string | null = null,
+): TmuxSessionsResult {
   const [sessions, setSessions] = useState<TmuxSession[]>([]);
   const [liveCliSessionIds, setLiveCliSessionIds] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
@@ -156,6 +158,25 @@ export function useTmuxSessions(): TmuxSessionsResult {
   const connectRef = useRef<() => void>(() => {});
   const fragmentReducerRef = useRef(createTerminalWsReducer());
   const leaseGenerationRef = useRef(new Map<string, number>());
+  const projectIdRef = useRef<string | null>(projectId);
+
+  // The daemon lists the whole machine unless a project is named; naming
+  // the picker's project keeps other projects' terminals out of the list
+  // while still including terminals that belong to no project.
+  const listRequest = useCallback(
+    (requestId: string, cursor?: string): string => {
+      const request: Record<string, unknown> = {
+        type: "terminal_list",
+        request_id: requestId,
+      };
+      if (projectIdRef.current !== null) {
+        request.project_id = projectIdRef.current;
+      }
+      if (cursor !== undefined) request.cursor = cursor;
+      return JSON.stringify(request);
+    },
+    [],
+  );
 
   const updateAttachment = useCallback(
     (target: TmuxTarget | null, streamId: string | null) => {
@@ -212,13 +233,8 @@ export function useTmuxSessions(): TmuxSessionsResult {
 
   const refreshSessions = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(
-      JSON.stringify({
-        type: "terminal_list",
-        request_id: `refresh-${Date.now()}`,
-      }),
-    );
-  }, []);
+    wsRef.current.send(listRequest(`refresh-${Date.now()}`));
+  }, [listRequest]);
 
   const beginAttachRequest = useCallback(
     (target: TmuxTarget): boolean => {
@@ -319,7 +335,11 @@ export function useTmuxSessions(): TmuxSessionsResult {
             (data.items as TmuxSession[] | undefined) ?? []
           ).map(asSession);
           const generation = connectionGenerationRef.current;
-          if (data.request_id === "init" || data.request_id === "refresh") {
+          const requestId =
+            typeof data.request_id === "string" ? data.request_id : "";
+          // A fresh listing replaces the table so terminals that vanished
+          // drop out; only continuation pages merge.
+          if (requestId === "init" || requestId.startsWith("refresh")) {
             setSessions(pageItems);
           } else {
             setSessions((current) => {
@@ -345,11 +365,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
           }
           if (typeof data.next_cursor === "string" && data.next_cursor) {
             wsRef.current?.send(
-              JSON.stringify({
-                type: "terminal_list",
-                request_id: `page-${generation}`,
-                cursor: data.next_cursor,
-              }),
+              listRequest(`page-${generation}`, data.next_cursor),
             );
           }
           if (pendingRequestRef.current === null) setIsLoading(false);
@@ -500,6 +516,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
     [
       beginAttachRequest,
       clearPendingRequest,
+      listRequest,
       refreshSessions,
       updateAttachment,
     ],
@@ -534,7 +551,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
         }),
       );
       // Fetch session list on connect
-      ws.send(JSON.stringify({ type: "terminal_list", request_id: "init" }));
+      ws.send(listRequest("init"));
     };
 
     ws.onclose = () => {
@@ -584,7 +601,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
         console.error("Failed to parse tmux message:", e);
       }
     };
-  }, [handleMessage, updateAttachment]);
+  }, [handleMessage, listRequest, updateAttachment]);
 
   useEffect(() => {
     connectRef.current = connect;
@@ -741,6 +758,12 @@ export function useTmuxSessions(): TmuxSessionsResult {
       ws?.close();
     };
   }, [connect]);
+
+  // The project picker changed: list again under the new scope.
+  useEffect(() => {
+    projectIdRef.current = projectId;
+    refreshSessions();
+  }, [projectId, refreshSessions]);
 
   // Refresh session list when browser tab becomes visible (catches missed events)
   useEffect(() => {

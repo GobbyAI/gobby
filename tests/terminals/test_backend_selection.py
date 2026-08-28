@@ -101,7 +101,7 @@ async def test_explicit_and_external_selection_under_tmux_default(
     assert refused_row is not None
     assert refused_row.backend == "native"
     assert refused_row.state == "exited"
-    open_rows, _more = manager.list_page(sample_project["id"], states=("pending", "live"), limit=10)
+    open_rows, _more = manager.list_page([sample_project["id"]], states=("pending", "live"), limit=10)
     assert [row.id for row in open_rows] == [external.id]
 
     prepares: list[str] = []

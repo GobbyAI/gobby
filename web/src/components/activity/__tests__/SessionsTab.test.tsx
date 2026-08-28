@@ -847,7 +847,7 @@ describe("SessionsTab", () => {
     expect(screen.queryByText("Handoff Terminal")).toBeNull();
   });
 
-  it("renders deterministic provisional titles verbatim", async () => {
+  it("renders provisional titles without their parenthesised prefix", async () => {
     render(
       <SessionsTab
         sessions={[
@@ -855,15 +855,16 @@ describe("SessionsTab", () => {
             id: "provisional-title",
             ref: "#9829",
             seq_num: 9829,
-            title: "(gobby): S#9829",
+            title: "(gobby-S#9829): S#9829",
           }),
         ]}
       />,
     );
 
     await waitFor(() => {
-      expect(screen.getByText("(gobby): S#9829")).toBeInTheDocument();
+      expect(screen.getByText("S#9829")).toBeInTheDocument();
     });
+    expect(screen.queryByText("(gobby-S#9829): S#9829")).toBeNull();
   });
 
   it("orders session entries by ref (#N) descending, not by recency", async () => {

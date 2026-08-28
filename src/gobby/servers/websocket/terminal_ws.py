@@ -10,17 +10,21 @@ from typing import Any, cast
 from unittest.mock import Mock
 
 from gobby.config.terminals import TerminalConfig
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
 from gobby.terminals.leases import TerminalLeaseRegistry, paste_oversize
 from gobby.terminals.runtime import Delivered, IndeterminateWrite
+from gobby.terminals.tmux_discovery import pane_owners, sweep_tmux_terminals
 from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_DEFAULT_PAGE_SIZE,
     TERMINAL_LIST_MAX_PAGE_SIZE,
     encode_page,
     inventory_item,
+    parse_list_cursor,
 )
 from gobby.utils.json_helpers import json_dumps
+from gobby.utils.machine_id import require_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -131,31 +135,111 @@ class TerminalWsMixin:
         )
 
     async def _handle_terminal_list(self, websocket: Any, data: dict[str, Any]) -> None:
+        """Every pending or live terminal on this machine, tmux panes included.
+
+        A ``project_id`` (sent by the web project picker) narrows the page to
+        that project plus terminals that belong to no project, which live
+        under the global project. Without one the whole machine is listed.
+        """
+        request_id = data.get("request_id")
         manager = getattr(self, "terminal_manager", None)
-        project_id = data.get("project_id") or self._project_id(websocket)
-        if manager is None or not isinstance(project_id, str):
+        if manager is None:
             await self._send_json(
                 websocket,
                 {
                     "type": "terminal_list",
-                    "request_id": data.get("request_id"),
+                    "request_id": request_id,
                     "items": [],
                     "next_cursor": None,
                 },
             )
             return
+        project_id = data.get("project_id") or self._project_id(websocket)
+        if not isinstance(project_id, str):
+            project_id = None
+        try:
+            cursor_created_at, cursor_id = parse_list_cursor(data.get("cursor"))
+        except ValueError:
+            await self._send_json(
+                websocket,
+                {"type": "terminal_error", "code": "invalid_cursor", "request_id": request_id},
+            )
+            return
         limit = data.get("limit", TERMINAL_LIST_DEFAULT_PAGE_SIZE)
-        if not isinstance(limit, int):
+        if not isinstance(limit, int) or isinstance(limit, bool):
             limit = TERMINAL_LIST_DEFAULT_PAGE_SIZE
         limit = max(1, min(limit, TERMINAL_LIST_MAX_PAGE_SIZE))
-        items, has_more = manager.list_page(project_id, states=("pending", "live"), limit=limit)
+        machine_id = require_machine_id()
+        panes = await self._sweep_tmux_panes(manager, machine_id)
+        items, has_more = manager.list_page(
+            None if project_id is None else [project_id, GLOBAL_PROJECT_ID],
+            machine_id=machine_id,
+            states=("pending", "live"),
+            cursor_created_at=cursor_created_at,
+            cursor_id=cursor_id,
+            limit=limit,
+        )
+        serialized = []
+        for row in items:
+            item = inventory_item(row)
+            pane = panes.get(row.locator_key or "")
+            if pane is not None:
+                item.update(
+                    {
+                        "name": pane.session_name,
+                        "socket": os.path.basename(pane.socket_path),
+                        "window_name": pane.window_name,
+                        "pane_pid": pane.pane_pid,
+                        "pane_title": pane.pane_title,
+                        "pane_command": pane.pane_command,
+                        "pane_path": pane.pane_path,
+                    }
+                )
+            serialized.append(item)
         payload = encode_page(
-            [inventory_item(row) for row in items],
+            serialized,
             None if not has_more else f"{items[-1].created_at.isoformat()}|{items[-1].id}",
         )
         payload["type"] = "terminal_list"
-        payload["request_id"] = data.get("request_id")
+        payload["request_id"] = request_id
         await self._send_json(websocket, payload)
+
+    async def _sweep_tmux_panes(self, manager: Any, machine_id: str) -> dict[str, Any]:
+        """Mirror the tmux servers into ``terminals`` before listing; never fails the list.
+
+        A pane whose working directory is not inside a registered project is
+        filed under the global project, so it shows up whichever project the
+        web picker selects.
+        """
+        tmux_managers = [
+            tmux
+            for tmux in (
+                getattr(self, "_tmux_mgr_default", None),
+                getattr(self, "_tmux_mgr_gobby", None),
+            )
+            if tmux is not None
+        ]
+        if not tmux_managers:
+            return {}
+        session_manager = getattr(self, "session_manager", None)
+        try:
+            sessions = (
+                []
+                if session_manager is None
+                else session_manager.list(
+                    statuses=("active", "paused"), machine_id=machine_id, limit=1000
+                )
+            )
+            return await sweep_tmux_terminals(
+                manager,
+                tmux_managers,
+                machine_id=machine_id,
+                owners=pane_owners(sessions),
+                fallback_project_id=GLOBAL_PROJECT_ID,
+            )
+        except Exception:
+            logger.warning("tmux terminal discovery failed", exc_info=True)
+            return {}
 
     async def _handle_terminal_create(self, websocket: Any, data: dict[str, Any]) -> None:
         request_id = data.get("request_id")

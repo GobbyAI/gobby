@@ -14,7 +14,6 @@ import pytest
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
 from gobby.sessions.compact_continuation import COMPACT_HANDOFF_MARKER_VARIABLE
-from gobby.sessions.compact_markers import COMPACT_HANDOFF_INJECT_PENDING_VARIABLE
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -114,8 +113,6 @@ class TestPostCompactHandler:
             context_window=258_400,
             context_used_tokens=222_353,
             context_usage_ratio=222_353 / 258_400,
-            context_compact_soft_ratio=None,
-            context_compact_strong_ratio=None,
         )
         session_manager.get.return_value = session
 
@@ -239,7 +236,6 @@ class TestPostCompactHandler:
         assert response.decision == "allow"
         variables = sv_mgr.get_variables(session.id)
         assert variables[COMPACT_HANDOFF_MARKER_VARIABLE] == "compact"
-        assert COMPACT_HANDOFF_INJECT_PENDING_VARIABLE not in variables
         assert variables["unlocked_tools"] == ["call_tool"]
         assert variables["plan_mode"] is True
 

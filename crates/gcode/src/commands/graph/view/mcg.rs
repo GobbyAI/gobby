@@ -19,6 +19,7 @@ use super::{
 };
 
 pub(crate) use fetch::run;
+pub(crate) use identity::McgSeedSelector;
 
 pub(super) struct McgHopFetch {
     pub incoming: Vec<ViewEdgeCandidate>,

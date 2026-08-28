@@ -65,9 +65,15 @@ fn output_keys(contract: &Value, name: &str) -> Vec<String> {
 }
 
 #[test]
-fn contract_is_version_six_without_codewiki() {
+fn contract_is_version_seven_without_codewiki() {
     let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
-    assert_eq!(contract["contract_version"], serde_json::json!(6));
+    assert_eq!(contract["contract_version"], serde_json::json!(7));
+    assert!(
+        contract["error_codes"]
+            .as_array()
+            .expect("error codes")
+            .contains(&serde_json::json!("invalid_path_scope"))
+    );
     let global_flags = contract["global_flags"]
         .as_array()
         .expect("global flags array");
@@ -94,7 +100,7 @@ fn contract_is_version_six_without_codewiki() {
             },
             {
                 "code": 2,
-                "meaning": "usage error or typed error (grant, project_required, capability_unavailable, graph sync contract); one JSON line on stderr"
+                "meaning": "usage error or typed error (grant, project_required, invalid_path_scope, capability_unavailable, graph sync contract); one JSON line on stderr"
             },
             {
                 "code": 3,
@@ -130,6 +136,25 @@ fn contract_is_version_six_without_codewiki() {
             .all(|command| command["name"] != "setup"),
         "standalone setup command must be absent"
     );
+}
+
+#[test]
+fn contract_declares_tree_paths_and_typed_graph_view_selectors() {
+    let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
+    assert_eq!(
+        command(&contract, "tree")["positionals"],
+        serde_json::json!([{"name": "PATH", "required": false, "repeatable": true}])
+    );
+
+    let graph_view = command(&contract, "graph view");
+    assert_eq!(graph_view["positionals"], serde_json::json!([]));
+    let flags = graph_view["flags"].as_array().expect("graph view flags");
+    for expected in ["--file", "--module", "--symbol"] {
+        assert!(
+            flags.iter().any(|flag| flag["name"] == expected),
+            "graph view missing {expected}"
+        );
+    }
 }
 
 #[test]

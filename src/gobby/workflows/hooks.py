@@ -405,6 +405,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
             run_observer(
                 "detect_mid_turn_context_compact_guidance",
                 detect_mid_turn_context_compact_guidance,
+                event,
                 variables,
                 session_id,
                 self._session_manager,

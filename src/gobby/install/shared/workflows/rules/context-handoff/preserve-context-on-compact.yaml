@@ -30,6 +30,12 @@ rules:
         variable: context_compact_guidance_shown_kinds
         value: []
       - type: set_variable
+        variable: context_compact_soft_nudge_tools
+        value: 0
+      - type: set_variable
+        variable: context_compact_handoff_result
+        value: null
+      - type: set_variable
         variable: gobby_plan_consider_shown
         value: false
       - type: set_variable

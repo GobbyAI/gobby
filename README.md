@@ -168,7 +168,7 @@ but Gobby wires them in for you.
 
 | Tool | What it does | Why it matters |
 | --- | --- | --- |
-| [`gcode`](crates/gcode) | AST symbol search over 18 languages via tree-sitter and PostgreSQL hub full-text search; with vector and graph backends it adds semantic + graph search and Reciprocal Rank Fusion ranking | Agents stop reading whole files. They retrieve by symbol. Cuts 90%+ off file-level loads on large repos. |
+| [`gcode`](crates/gcode) | AST symbol search over 18 languages via tree-sitter and PostgreSQL hub full-text search; scoped path filters, typed graph views, vector search, and graph-backed Reciprocal Rank Fusion | Agents stop reading whole files. They retrieve by symbol or an explicit project scope. Cuts 90%+ off file-level loads on large repos. |
 | [`ghook`](crates/ghook) | Sandbox-tolerant hook dispatcher that spools events to `~/.gobby/hooks/inbox/` *before* posting to the daemon | Hook events survive sandbox FS denials, network blips, and daemon restarts. The drain worker replays them. |
 
 Plus the progressive MCP proxy itself, which only fetches schemas when a tool

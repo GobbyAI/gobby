@@ -68,10 +68,10 @@ known.
 ## Navigation
 
 - `gcode repo-outline` — high-level project summary with module symbol counts
-- `gcode tree` — whole-project file tree with symbol counts per file; text output groups files by directory and it takes no path argument
+- `gcode tree [PATH ...]` — file tree with symbol counts; optional file, directory, and glob filters use OR semantics before paging
 - `gcode kinds` — list distinct symbol kinds in the index (helps pick `--kind` values)
 
-For directory-focused exploration, use `gcode tree` with shell filtering, or scope search commands with positional paths: `gcode search "query" crates/gcode/src docs/**/*.md`.
+Bare project-file paths resolve from the project root; `./` and `../` resolve from the current directory; absolute paths map into the current checkout or overlay. Use `gcode tree crates/gcode/src 'docs/**/*.md'` for directory-focused exploration.
 
 ## Impact Analysis
 
@@ -88,7 +88,8 @@ Collection commands accept `--limit`, `--offset`, and `--token-budget`. Compact 
 
 ## Graph views
 
-- `gcode graph view --view=fcg|mcg|class-hierarchy <seed>` — scoped CALLS, IMPORTS, or heritage dump as complete JSON plus a complete Mermaid fence
+- `gcode graph view --view=mcg --file <file>` or `--module <module>` — scoped IMPORTS dump
+- `gcode graph view --view=fcg|class-hierarchy --symbol <symbol>` — scoped CALLS or heritage dump; graph views emit complete JSON plus a complete Mermaid fence
 
 CHG is complete within `--depth` (no row LIMIT); omitted `--depth` is 8 for CHG and 1 for FCG/MCG. FCG/MCG keep #18786 incoming/outgoing edge limits and report `incoming_truncated` / `outgoing_truncated`; they do not clip JSON or Mermaid. MCG communities are Leiden via `analyze`.
 
@@ -139,7 +140,8 @@ See `docs/guides/codewiki.md` for the dormant daemon status/error contract, cano
 | What breaks if I change X | `gcode blast-radius <name>` |
 | Who calls a function | `gcode callers <symbol-id>` |
 | Who a function calls | `gcode callees <symbol>` |
-| A scoped CALLS, IMPORTS, or class-hierarchy graph | `gcode graph view --view=fcg\|mcg\|class-hierarchy <seed>` |
+| A scoped CALLS or class-hierarchy graph | `gcode graph view --view=fcg --symbol <symbol>` |
+| A scoped IMPORTS graph | `gcode graph view --view=mcg --file <file>` |
 | All references to a symbol | `gcode usages <symbol-id>` |
 | Shortest call path between two symbols | `gcode path <from> <to>` |
 

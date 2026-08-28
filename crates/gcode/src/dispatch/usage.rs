@@ -23,7 +23,7 @@ pub(super) fn usage_error_from_clap(error: &clap::Error) -> CliError {
     CliError {
         code: "usage",
         message: concise_message(error),
-        recovery: recovery_for(offending_token(error).as_deref()),
+        recovery: recovery_for(offending_token(error).as_deref()).map(str::to_string),
         exit_status: 2,
     }
 }
@@ -120,7 +120,7 @@ mod tests {
             rendered.message
         );
         assert_eq!(
-            rendered.recovery,
+            rendered.recovery.as_deref(),
             Some("use `--format json` and read `matched_lines`")
         );
         let line = json_line(&rendered);
@@ -165,7 +165,7 @@ mod tests {
     fn no_freshness_suggests_allow_stale() {
         let rendered = usage_error_from_clap(&parse_err(&["--no-freshness", "tree"]));
         assert_eq!(rendered.code, "usage");
-        assert_eq!(rendered.recovery, Some("use `--allow-stale`"));
+        assert_eq!(rendered.recovery.as_deref(), Some("use `--allow-stale`"));
         assert!(rendered.message.contains("Usage:"), "{}", rendered.message);
         assert!(
             !rendered.message.contains("Commands:"),

@@ -5,12 +5,13 @@ The machine-readable contract lives at `crates/gcode/contract/gcode.contract.jso
 
 ## Version
 
-`contract_version`: 6
+`contract_version`: 7
 
-Version 6 makes compact text the default navigation surface and replaces
-token-budget row trimming with lossless whole-item pagination. Each command
-below emits a stable, whitespace-compact JSON shape under `--format json`; the
-keys are pinned in `gcode.contract.json` and asserted by drift tests.
+Version 7 gives public path inputs explicit scope semantics, adds repeatable
+`tree [PATH]...` filters, and replaces the ambiguous graph-view positional seed
+with typed `--file`, `--module`, and `--symbol` selectors. Each command below
+emits a stable, whitespace-compact JSON shape under `--format json`; the keys
+are pinned in `gcode.contract.json` and asserted by drift tests.
 
 ### Query surfaces
 
@@ -28,12 +29,14 @@ keys are pinned in `gcode.contract.json` and asserted by drift tests.
 - `symbols` — paged complete stored symbol records with bounded `source`, plus
   `missing_ids` and recovery guidance when edited files invalidate requested IDs
 - `kinds` — paged kind strings
-- `tree` — paged directory groups containing `file_path, language,
-  symbol_count` rows
+- `tree [PATH]...` — paged directory groups containing `file_path, language,
+  symbol_count` rows; file, directory-prefix, and glob filters compose with OR
+  semantics before pagination
 - `callers`, `callees`, `usages` — call/import graph reads (the `graph_read_keys`
   envelope). Each relationship remains a complete page unit; callback references
   require `gcode grep -w`.
-- `graph view` — scoped `fcg` / `mcg` / `class-hierarchy` dump. JSON keys:
+- `graph view` — scoped `fcg` / `mcg` / `class-hierarchy` dump. MCG requires
+  `--file` or `--module`; FCG and class hierarchy require `--symbol`. JSON keys:
   `project_id, project_root, view, seed, depth, incoming_truncated,
   outgoing_truncated, hint, nodes, edges, communities, mermaid`. Mermaid is
   always present and is never character/token-sliced
@@ -50,6 +53,18 @@ Stored symbol records carry the AI `summary`, never the raw `docstring`.
 project from the current working directory. JSON output consumed by Gobby must
 identify the resolved project with `project_id` and, where path context matters,
 `project_root`.
+
+Filesystem roots (`--project` and positional `index PATH`) use native absolute
+or cwd-relative filesystem semantics. Project-file inputs use bare paths from
+the project root, `./` or `../` paths from the current working directory, and
+absolute paths mapped into the current checkout or overlay. Search, grep, and
+tree filters follow the same intent rules while preserving glob syntax.
+
+Paths that escape the current/overlay/parent project scope, including symlink
+escapes and paths into another checkout, fail with exit `2` and the typed
+`invalid_path_scope` error. When another project root is discoverable, the
+error includes a `--project <ROOT>` recovery command. Read commands never
+switch projects automatically.
 
 ## Format
 

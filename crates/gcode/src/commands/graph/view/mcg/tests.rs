@@ -11,7 +11,9 @@ use crate::commands::graph::view::{
 
 use crate::index::import_resolution::ImportResolutionContext;
 
-use super::identity::{McgIdentity, McgSeedError, close_endpoint, resolve_mcg_seed};
+use super::identity::{
+    McgIdentity, McgSeedError, McgSeedSelector, close_endpoint, resolve_mcg_seed,
+};
 use super::{McgHopFetch, assign_leiden_communities, walk_mcg};
 
 const MACHINE: &str = "machine-1";
@@ -185,7 +187,12 @@ fn walk(
     catalog: Vec<ViewEdgeCandidate>,
 ) -> super::McgWalk {
     let maps = identity();
-    let resolved = resolve_mcg_seed(seed, &maps).expect("mcg seed");
+    let selector = if maps.visible_files.contains(seed) {
+        McgSeedSelector::File(seed)
+    } else {
+        McgSeedSelector::Module(seed)
+    };
+    let resolved = resolve_mcg_seed(selector, &maps).expect("mcg seed");
     walk_mcg(
         resolved.files.into_iter().chain(resolved.modules).collect(),
         depth,
@@ -333,11 +340,11 @@ fn mcg_file_path_and_module_name_resolve_same_scope() {
 #[test]
 fn mcg_module_seed_rejects_missing_and_ambiguous() {
     let maps = identity();
-    match resolve_mcg_seed("missing", &maps) {
+    match resolve_mcg_seed(McgSeedSelector::Module("missing"), &maps) {
         Err(McgSeedError::Missing { input }) => assert_eq!(input, "missing"),
         other => panic!("expected missing seed, got {other:?}"),
     }
-    match resolve_mcg_seed("ambiguous", &maps) {
+    match resolve_mcg_seed(McgSeedSelector::Module("ambiguous"), &maps) {
         Err(McgSeedError::Ambiguous { input, providers }) => {
             assert_eq!(input, "ambiguous");
             assert_eq!(providers.len(), 2);
@@ -424,7 +431,7 @@ fn mcg_module_seed_uses_provider_not_unique_importer() {
             || ids.contains(&"file:src/provider.py".into())
     );
     assert!(ids.contains(&"file:src/consumer.py".into()));
-    let seed = resolve_mcg_seed("provider", &identity()).expect("seed");
+    let seed = resolve_mcg_seed(McgSeedSelector::Module("provider"), &identity()).expect("seed");
     assert_eq!(
         seed.files
             .iter()
@@ -552,7 +559,7 @@ fn mcg_two_aliases_and_provider_file_share_equivalence_class() {
         from_file.incoming_truncated == from_path.incoming_truncated
             && from_file.outgoing_truncated == from_relative.outgoing_truncated
     );
-    let seed = resolve_mcg_seed("src/p.py", &identity()).expect("file seed");
+    let seed = resolve_mcg_seed(McgSeedSelector::File("src/p.py"), &identity()).expect("file seed");
     let mut modules = seed
         .modules
         .iter()
@@ -617,7 +624,8 @@ fn mcg_identity_resolves_relative_specifier_through_row_context() {
         identity.unique_provider(".utils").as_deref(),
         Some("src/pkg/utils.py")
     );
-    let seed = resolve_mcg_seed(".utils", &identity).expect("relative seed");
+    let seed =
+        resolve_mcg_seed(McgSeedSelector::Module(".utils"), &identity).expect("relative seed");
     assert_eq!(seed.file.as_deref(), Some("src/pkg/utils.py"));
 }
 
@@ -647,7 +655,7 @@ fn mcg_identity_marks_colliding_relative_specifier_ambiguous() {
     assert!(!identity.aliases["src/other/utils.py"].contains(&".utils".to_string()));
     assert!(identity.aliases["src/pkg/utils.py"].contains(&"pkg.utils".to_string()));
     assert_eq!(identity.aliases["utils.py"], vec!["utils"]);
-    match resolve_mcg_seed(".utils", &identity) {
+    match resolve_mcg_seed(McgSeedSelector::Module(".utils"), &identity) {
         Err(McgSeedError::Ambiguous { input, providers }) => {
             assert_eq!(input, ".utils");
             assert_eq!(providers.len(), 2);

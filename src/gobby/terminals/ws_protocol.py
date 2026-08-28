@@ -5,7 +5,9 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Any, Final
+from uuid import UUID
 
 TERMINAL_WS_SAFE_INTEGER_MAX: Final[int] = 2**53 - 1
 TERMINAL_LIST_DEFAULT_PAGE_SIZE: Final[int] = 100
@@ -488,6 +490,18 @@ def golden_fixtures() -> dict[str, dict[str, Any]]:
             "attachment_id": ATTACHMENT_ID,
         },
     }
+
+
+def parse_list_cursor(raw: object) -> tuple[datetime | None, str | None]:
+    """Split a ``<created_at iso>|<terminal_id>`` page cursor; raises ValueError when malformed."""
+    if not raw:
+        return None, None
+    if not isinstance(raw, str):
+        raise ValueError("cursor must be a string")
+    created_at, _, terminal_id = raw.partition("|")
+    if not terminal_id:
+        raise ValueError("cursor is missing the terminal id")
+    return datetime.fromisoformat(created_at), str(UUID(terminal_id))
 
 
 def inventory_item(row: Any) -> dict[str, Any]:

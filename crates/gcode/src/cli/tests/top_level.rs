@@ -264,6 +264,27 @@ fn test_parse_allow_stale_global_flag() {
     }
 }
 
+#[test]
+fn test_parse_tree_accepts_repeatable_optional_paths() {
+    let cli = Cli::try_parse_from([
+        "gcode",
+        "tree",
+        "src/lib.rs",
+        "tests/**/*.rs",
+        "--limit",
+        "2",
+    ])
+    .expect("scoped tree parses");
+
+    match cli.command {
+        Command::Tree { paths, limit, .. } => {
+            assert_eq!(paths, ["src/lib.rs", "tests/**/*.rs"]);
+            assert_eq!(limit, Some(2));
+        }
+        _ => panic!("expected tree command"),
+    }
+}
+
 fn parse_failure(args: &[&str]) -> clap::Error {
     match Cli::try_parse_from(args) {
         Err(error) => error,

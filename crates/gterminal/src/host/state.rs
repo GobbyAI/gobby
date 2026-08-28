@@ -12,11 +12,12 @@ use tokio::sync::{mpsc, watch, Mutex};
 
 use super::config::HostConfig;
 use super::helpers::{
-    encode_terminal_ansi, err, list_rows, named_key_bytes, native_entitlements, s,
-    spawn_fingerprint, truncate_title,
+    err, list_rows, named_key_bytes, native_entitlements, push_terminal_ansi, s, spawn_fingerprint,
+    truncate_title,
 };
 #[cfg(feature = "vt-engine")]
 use super::spawn::{spawn_prepared, PreparedChild};
+use crate::protocol::render_ansi::BlitEncoder;
 use crate::protocol::{
     validate_dimensions, ObservationReason, ObservationState, RenderEncoding, ServerMessage,
     CONTROL_DELIVERY_DEADLINE_MS, CONTROL_QUEUE_BYTES, CONTROL_QUEUE_ENTRIES, DELTA_LAG_TIMEOUT_MS,
@@ -112,6 +113,8 @@ pub struct Attachment {
     pub desynced: bool,
     pub delta_len: usize,
     pub delta_bytes: usize,
+    /// Per-attachment diff state for `terminal_ansi` frames.
+    pub(crate) encoder: BlitEncoder,
 }
 
 struct EventSub {
@@ -774,6 +777,7 @@ impl HostState {
                 desynced: true,
                 delta_len: 0,
                 delta_bytes: 0,
+                encoder: BlitEncoder::new(),
             },
         );
         if let Some(slot) = inner.terminals.get_mut(&identity) {
@@ -867,7 +871,7 @@ impl HostState {
         let mut inner = self.inner.lock().await;
         let ids: Vec<u64> = inner.attachments.keys().copied().collect();
         for id in ids {
-            let (host_id, rows, cols, scroll, encoding, desynced) = {
+            let (host_id, rows, cols, scroll, encoding) = {
                 let Some(att) = inner.attachments.get(&id) else {
                     continue;
                 };
@@ -877,7 +881,6 @@ impl HostState {
                     att.cols,
                     att.scroll,
                     att.encoding,
-                    att.desynced,
                 )
             };
             let Some(identity) = inner.by_host_id.get(&host_id).cloned() else {
@@ -891,7 +894,7 @@ impl HostState {
                 continue;
             }
             #[cfg(feature = "vt-engine")]
-            let frame = {
+            let (frame, seq) = {
                 let Some(slot) = inner.terminals.get_mut(&identity) else {
                     continue;
                 };
@@ -912,41 +915,43 @@ impl HostState {
                     slot.title = truncate_title(&title);
                     slot.last_seq += 1;
                 }
-                frame
+                (frame, slot.last_seq)
             };
             #[cfg(not(feature = "vt-engine"))]
-            let frame = crate::protocol::FrameData {
-                cells: Vec::new(),
-                width: cols,
-                height: rows,
-                cursor: None,
-                hyperlinks: Vec::new(),
-                graphics: Vec::new(),
-                modes: crate::protocol::PaneModes::default(),
-            };
-            let msg = match encoding {
-                RenderEncoding::SemanticFrame => ServerMessage::Frame(frame),
-                RenderEncoding::TerminalAnsi => {
-                    let bytes = encode_terminal_ansi(&frame);
-                    ServerMessage::Terminal(crate::protocol::TerminalFrame {
-                        seq: 1,
-                        width: cols,
-                        height: rows,
-                        full: desynced,
-                        bytes,
-                    })
-                }
-            };
+            let (frame, seq) = (
+                crate::protocol::FrameData {
+                    cells: Vec::new(),
+                    width: cols,
+                    height: rows,
+                    cursor: None,
+                    hyperlinks: Vec::new(),
+                    graphics: Vec::new(),
+                    modes: crate::protocol::PaneModes::default(),
+                },
+                inner
+                    .terminals
+                    .get(&identity)
+                    .map_or(0, |slot| slot.last_seq),
+            );
             if let Some(att) = inner.attachments.get_mut(&id) {
-                match att.tx.try_send(msg) {
-                    Ok(()) => {
-                        att.last_send = Instant::now();
-                        att.desynced = false;
-                        att.delta_len = att.delta_len.saturating_add(1);
+                let sent = match encoding {
+                    RenderEncoding::SemanticFrame => {
+                        match att.tx.try_send(ServerMessage::Frame(frame)) {
+                            Ok(()) => {
+                                att.last_send = Instant::now();
+                                att.desynced = false;
+                                true
+                            }
+                            Err(_) => {
+                                att.desynced = true;
+                                false
+                            }
+                        }
                     }
-                    Err(_) => {
-                        att.desynced = true;
-                    }
+                    RenderEncoding::TerminalAnsi => push_terminal_ansi(att, &frame, seq),
+                };
+                if sent {
+                    att.delta_len = att.delta_len.saturating_add(1);
                 }
             }
             let _ = MAX_FRAME_SIZE;

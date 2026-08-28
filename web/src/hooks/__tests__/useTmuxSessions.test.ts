@@ -73,6 +73,77 @@ afterEach(() => {
 });
 
 describe("useTmuxSessions", () => {
+  it("scopes every listing to the project picker and relists when it changes", () => {
+    const mount = renderHook(
+      ({ projectId }: { projectId: string | null }) =>
+        useTmuxSessions(projectId),
+      { initialProps: { projectId: "proj-a" as string | null } },
+    );
+    const ws = mockWs.instances[0];
+    open(ws);
+
+    expect(sentMessages(ws, "terminal_list")).toEqual([
+      { type: "terminal_list", request_id: "init", project_id: "proj-a" },
+    ]);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_list",
+        request_id: "init",
+        items: [{ terminal_id: "t-1" }],
+        next_cursor: "2026-01-01T00:00:00|t-1",
+      });
+    });
+    const page = lastOf(sentMessages(ws, "terminal_list"));
+    expect(page).toMatchObject({
+      project_id: "proj-a",
+      cursor: "2026-01-01T00:00:00|t-1",
+    });
+
+    mount.rerender({ projectId: "proj-b" });
+    const relist = lastOf(sentMessages(ws, "terminal_list"));
+    expect(relist).toMatchObject({ project_id: "proj-b" });
+    expect(String(relist?.request_id)).toMatch(/^refresh/);
+
+    mount.rerender({ projectId: null });
+    expect(lastOf(sentMessages(ws, "terminal_list"))).not.toHaveProperty(
+      "project_id",
+    );
+  });
+
+  it("a refresh replaces the list so vanished terminals drop out", () => {
+    const mount = renderHook(() => useTmuxSessions());
+    const ws = mockWs.instances[0];
+    open(ws);
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_list",
+        request_id: "init",
+        items: [{ terminal_id: "t-1" }, { terminal_id: "t-2" }],
+        next_cursor: null,
+      });
+    });
+    expect(mount.result.current.sessions.map((s) => s.terminal_id)).toEqual([
+      "t-1",
+      "t-2",
+    ]);
+
+    act(() => mount.result.current.refreshSessions());
+    const refreshId = requestId(ws, "terminal_list");
+    expect(refreshId).toMatch(/^refresh-/);
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_list",
+        request_id: refreshId,
+        items: [{ terminal_id: "t-2" }],
+        next_cursor: null,
+      });
+    });
+    expect(mount.result.current.sessions.map((s) => s.terminal_id)).toEqual([
+      "t-2",
+    ]);
+  });
+
   it("reconnect generation guard", () => {
     const wrapper = ({ children }: { children: ReactNode }) =>
       createElement(StrictMode, null, children);

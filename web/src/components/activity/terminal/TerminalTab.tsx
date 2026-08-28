@@ -28,6 +28,8 @@ import { TerminalView, type TerminalViewHandle } from "./TerminalView";
 
 export interface TerminalTabProps {
   sessions?: GobbySession[];
+  /** Project picker selection; scopes the list to it plus unscoped terminals. */
+  projectId?: string | null;
   focusSessionId?: string | null;
   onFocusHandled?: () => void;
 }
@@ -125,6 +127,7 @@ function PlusIcon() {
 
 export function TerminalTab({
   sessions,
+  projectId = null,
   focusSessionId = null,
   onFocusHandled,
 }: TerminalTabProps) {
@@ -148,7 +151,7 @@ export function TerminalTab({
     killSession,
     onOutput,
     onAttachHistory,
-  } = useTmuxSessions();
+  } = useTmuxSessions(projectId);
   const [selectedKey, setSelectedKey] = useState<string | null>(
     loadStoredTerminalTargetKey,
   );

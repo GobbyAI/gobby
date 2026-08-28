@@ -56,21 +56,28 @@ struct SelectedSymbol<'a> {
 
 pub fn requested_file_for_freshness(
     ctx: &Context,
+    cwd: &std::path::Path,
     location: &str,
     line: Option<usize>,
 ) -> anyhow::Result<String> {
     let parsed = parse_location(location, line)?;
-    Ok(scope::normalize_file_arg(ctx, &parsed.file))
+    Ok(scope::resolve_path_input(
+        ctx,
+        cwd,
+        scope::ScopedPathInput::ExactFile(&parsed.file),
+    )?)
 }
 
 pub fn run(
     ctx: &Context,
+    cwd: &std::path::Path,
     location: &str,
     line: Option<usize>,
     format: Format,
 ) -> anyhow::Result<()> {
     let request = parse_location(location, line)?;
-    let requested_file = scope::normalize_file_arg(ctx, &request.file);
+    let requested_file =
+        scope::resolve_path_input(ctx, cwd, scope::ScopedPathInput::ExactFile(&request.file))?;
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let symbols = visibility::visible_symbols_for_file(&mut conn, ctx, &requested_file)?;
     if symbols.is_empty() {

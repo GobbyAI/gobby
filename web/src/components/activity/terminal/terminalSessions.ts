@@ -1,4 +1,5 @@
 import type { TmuxSession } from "../../../hooks/useTmuxSessions";
+import { stripSessionTitlePrefix } from "../../../lib/sessionTitle";
 import type { GobbySession } from "../../../types/sessions";
 
 export interface JoinedTerminalSession {
@@ -7,6 +8,8 @@ export interface JoinedTerminalSession {
   label: string;
   provider: string | null;
   paneRef: string;
+  /** Terminal backend as the product names it: `tmux` or `gterm`. */
+  backendLabel: "tmux" | "gterm";
   dead: boolean;
   agentManaged: boolean;
   external: boolean;
@@ -49,7 +52,8 @@ function displayLabel(
       gobbySession.seq_num === null
         ? gobbySession.ref
         : `#${gobbySession.seq_num}`;
-    return gobbySession.title ? `${ref} ${gobbySession.title}` : ref;
+    const title = stripSessionTitlePrefix(gobbySession.title);
+    return title ? `${ref} ${title}` : ref;
   }
   if (tmuxSession.agent_managed) {
     return tmuxSession.name;
@@ -103,7 +107,8 @@ export function joinTmuxSessions(
       gobby,
       label: displayLabel(tmux, gobby),
       provider: providerFor(tmux, gobby),
-      paneRef: tmux.terminal_id,
+      paneRef: `${tmux.socket}:${tmux.name}`,
+      backendLabel: tmux.backend === "native" ? "gterm" : "tmux",
       dead:
         tmux.pane_dead || tmux.state === "exited" || tmux.state === "orphaned",
       agentManaged: tmux.ownership === "gobby" && gobby !== null,
