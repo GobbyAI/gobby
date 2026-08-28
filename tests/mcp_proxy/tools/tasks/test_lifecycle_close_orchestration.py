@@ -385,7 +385,7 @@ def _evaluation(*, ready: bool = False) -> CloseEvaluation:
         }
     )
     if ready:
-        evaluation.pass_gate(14, "criteria_review", "valid")
+        evaluation.pass_gate(13, "criteria_review", "valid")
     else:
         evaluation.error = "agentic_review_required"
     return evaluation

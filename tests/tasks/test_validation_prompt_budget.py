@@ -205,7 +205,7 @@ async def test_oversized_review_fingerprint_tracks_every_close_input(
             "changes_summary": "Summary",
             "validation_criteria": "Criterion.",
             "diff_text": "diff --git a/a.py b/a.py\n+a",
-            "checklist_facts": {"epic_guards": {"paths": ["tests/a.py"]}},
+            "checklist_facts": {"acceptance_artifacts": {"test_references": ["tests/a.py"]}},
             "test_bodies": "def test_a(): assert a()",
         }
         values.update(changes)
@@ -218,7 +218,9 @@ async def test_oversized_review_fingerprint_tracks_every_close_input(
         await fingerprint(description="Edited description"),
         await fingerprint(validation_criteria="Edited criterion."),
         await fingerprint(diff_text="diff --git a/b.py b/b.py\n+b"),
-        await fingerprint(checklist_facts={"epic_guards": {"paths": ["tests/b.py"]}}),
+        await fingerprint(
+            checklist_facts={"acceptance_artifacts": {"test_references": ["tests/b.py"]}}
+        ),
     }
 
     assert len(fingerprints) == 5

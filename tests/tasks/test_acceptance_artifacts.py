@@ -16,7 +16,7 @@ from gobby.tasks.acceptance_artifacts import (
     validate_structured_file_evidence,
     validation_run_names_test,
 )
-from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
+from gobby.tasks.tdd_evidence import evaluate_tdd_evidence, is_test_convention_path
 from gobby.tasks.transcript_evidence import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -583,3 +583,24 @@ def _git(repo: Path, *args: str) -> str:
     )
     assert result.returncode == 0, result.stderr
     return result.stdout
+
+
+@pytest.mark.parametrize(
+    ("path", "convention"),
+    [
+        ("tests/tasks/test_acceptance_artifacts.py", True),
+        ("src/gobby/tasks/guards_test.py", True),
+        ("web/src/login.test.tsx", True),
+        ("web/src/Login.spec.ts", True),
+        ("pkg/store_test.go", True),
+        ("tests/skills/scenarios/plan-mechanic/bounded-repair.yaml", True),
+        ("tests/conftest.py", True),
+        ("tests/skills/scenario_runner.py", True),
+        ("crates/gcore/tests/schema_contract.rs", True),
+        ("src/gobby/tasks/tdd_evidence.py", False),
+    ],
+)
+def test_test_convention_paths_cover_every_language_and_test_tree(
+    path: str, convention: bool
+) -> None:
+    assert is_test_convention_path(path) is convention

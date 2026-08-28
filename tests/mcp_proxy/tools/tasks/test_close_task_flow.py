@@ -307,11 +307,10 @@ async def test_no_work_disposition_skips_delivery_gates_but_runs_review() -> Non
         )
 
     assert evaluation.ready is True
-    delivery = {gate.name: gate.status for gate in evaluation.gates[10:13]}
+    delivery = {gate.name: gate.status for gate in evaluation.gates[10:12]}
     assert delivery == {
         "acceptance_artifacts": "skipped",
         "tdd_evidence": "skipped",
-        "epic_guards": "skipped",
     }
     review.assert_awaited_once()
 
@@ -395,7 +394,7 @@ async def test_ready_leaf_runs_criteria_review_exactly_once() -> None:
         )
 
     assert evaluation.ready is True
-    assert [gate.item for gate in evaluation.gates] == list(range(1, 15))
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 14))
     linked_paths.assert_called_once_with(task, "/repo", ("base123", "abc123"))
     review.assert_awaited_once()
 
@@ -1190,7 +1189,7 @@ async def test_epic_skips_leaf_gates_without_llm() -> None:
 
     assert evaluation.ready is True
     assert evaluation.commit_shas == ["abc123"]
-    assert [gate.item for gate in evaluation.gates] == list(range(1, 15))
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 14))
     assert all(gate.status == "skipped" for gate in evaluation.gates[4:])
     review.assert_not_awaited()
 
