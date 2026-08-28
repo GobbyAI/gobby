@@ -47,6 +47,7 @@ from tests.e2e.conftest import (
     _seed_e2e_runtime_state,
     daemon_token,
     find_free_port,
+    kill_tmux_server,
     prepare_daemon_env,
     terminate_process_tree,
     wait_for_daemon_health,
@@ -606,17 +607,18 @@ def _start_isolated_daemon(
     postgres_database_url: str,
     postgres_schema: str,
     backend: str,
-) -> tuple[DaemonInstance, Path]:
+) -> tuple[DaemonInstance, Path, Path]:
     """Start a daemon whose gterm host lives in the returned socket dir.
 
     The host outlives the daemon by design (restart adoption) and the harness
     hard-kills the daemon before its graceful host stop runs, so callers own the
-    host and stop it with ``_stop_host``.
+    host and stop it with ``_stop_host``; the third element is the daemon's
+    private tmux socket, killed with ``kill_tmux_server``.
     """
     home = _short_dir("gobby-rt-home")
     socket_dir = _short_dir("gobby-rt-host")
     binary = gterm_binary()
-    _seed_e2e_runtime_state(postgres_db, home)
+    tmux_socket = _seed_e2e_runtime_state(postgres_db, home)
     _patch_daemon_backend(postgres_db, backend=backend, socket_dir=socket_dir, binary=binary)
     (home / "machine_id").write_text(MACHINE_ID)
     http_port = find_free_port()
@@ -683,7 +685,7 @@ def _start_isolated_daemon(
     if not wait_for_port(ws_port, timeout=10.0):
         terminate_process_tree(process.pid)
         pytest.fail("contract daemon websocket was not ready")
-    return instance, socket_dir
+    return instance, socket_dir, tmux_socket
 
 
 def _stop_host(socket_dir: Path) -> None:
@@ -829,7 +831,7 @@ async def test_daemon_restart_continuity(
     postgres_schema: str,
 ) -> None:
     require_backend(contract_backend)
-    daemon, host_socket_dir = _start_isolated_daemon(
+    daemon, host_socket_dir, tmux_socket = _start_isolated_daemon(
         postgres_db=postgres_db,
         postgres_database_url=postgres_database_url,
         postgres_schema=postgres_schema,
@@ -878,6 +880,7 @@ async def test_daemon_restart_continuity(
         if daemon.is_alive():
             daemon.stop()
         _stop_host(host_socket_dir)
+        kill_tmux_server(tmux_socket)
         shutil.rmtree(daemon.project_dir, ignore_errors=True)
 
 
