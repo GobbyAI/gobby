@@ -527,7 +527,7 @@ class TestSpawnAgentStepVariables:
                 status="pending",
                 pid=None,
                 terminal_type=None,
-                tmux_session_name=None,
+                terminal_id=None,
                 process=None,
                 error=None,
                 message=None,

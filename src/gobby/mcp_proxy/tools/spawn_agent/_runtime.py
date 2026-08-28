@@ -97,11 +97,12 @@ def _build_spawn_success_response(
     effective_isolation: str,
     isolation_ctx: Any,
     base_commit_sha: Any,
-    tmux_session_name: str | None,
     tmux_socket_name: str | None,
     tmux_socket_path: str | None,
     code_index_preflight_warning: dict[str, str] | None,
     reasoning: Any | None,
+    terminal_id: str | None = None,
+    tmux_session_name: str | None = None,
 ) -> dict[str, Any]:
     response = {
         "success": True,
@@ -116,7 +117,7 @@ def _build_spawn_success_response(
         "clone_path": str(isolation_ctx.cwd) if effective_isolation == "clone" else None,
         "base_commit_sha": base_commit_sha if isinstance(base_commit_sha, str) else None,
         "pid": spawn_result.pid,
-        "terminal_id": getattr(spawn_result, "terminal_id", None),
+        "terminal_id": terminal_id or getattr(spawn_result, "terminal_id", None),
         "tmux_session_name": tmux_session_name,
         "tmux_socket_name": tmux_socket_name,
         "tmux_socket_path": tmux_socket_path,
