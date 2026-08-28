@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
+import os
 import shlex
+import signal
 import subprocess
 from collections import OrderedDict
 from collections.abc import Sequence
@@ -21,6 +24,10 @@ logger = logging.getLogger(__name__)
 
 _GUARD_OUTPUT_LIMIT = 32_000
 _GUARD_TIMEOUT_SECONDS = 600.0
+# close_task is detached by the MCP wrapper after 300 seconds
+# (``MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS``) and its result dropped, so an
+# attempt stops waiting for the guard before then and reports the run pending.
+_GUARD_WAIT_SECONDS = 240.0
 _REPO_STATE_TIMEOUT_SECONDS = 15
 _GUARD_CACHE_LIMIT = 16
 
@@ -66,6 +73,10 @@ class EpicGuardResult:
 
 _passed_guard_runs: OrderedDict[str, EpicGuardResult] = OrderedDict()
 
+#: One guard run per repository state. A finished run stays here until an
+#: attempt collects its verdict (see ``_collect_guard_run``).
+_guard_runs: OrderedDict[str, asyncio.Task[EpicGuardResult]] = OrderedDict()
+
 #: Closures that leave no repository artifacts behind (see
 #: ``gobby.tasks.validation.NO_WORK_CLOSE_REASONS``); their criteria still name
 #: acceptance tests nobody wrote. ``already_implemented`` stays a guard source
@@ -82,6 +93,7 @@ async def evaluate_epic_guards(
     repo_path: str,
     closing_commit_shas: Sequence[str] = (),
     timeout_seconds: float = _GUARD_TIMEOUT_SECONDS,
+    wait_seconds: float = _GUARD_WAIT_SECONDS,
 ) -> EpicGuardResult:
     """Collect and run every earlier closed leaf's guard test."""
     # The cached answer is reached before collection, because the key needs the
@@ -98,6 +110,15 @@ async def evaluate_epic_guards(
         )
     )
     if cache_key is not None:
+        run = _guard_runs.get(cache_key)
+        if run is not None:
+            if run.done():
+                # The attempt that started this run was detached before it
+                # finished, so its verdict is still owed -- once, so that one
+                # flaky failure cannot block every later attempt.
+                del _guard_runs[cache_key]
+                return run.result()
+            return await _collect_guard_run(cache_key, run, wait_seconds)
         cached = _passed_guard_runs.get(cache_key)
         if cached is not None:
             return cached
@@ -176,17 +197,102 @@ async def evaluate_epic_guards(
     quoted_paths = " ".join(shlex.quote(path) for path in paths)
     command = template.replace("{test_files}", quoted_paths)
     fingerprint = _fingerprint(paths, source_task_ids, template)
+    start = functools.partial(
+        _run_guard,
+        cache_key=cache_key,
+        command=command,
+        repo_path=repo_path,
+        timeout_seconds=timeout_seconds,
+        paths=paths,
+        source_task_ids=source_task_ids,
+        fingerprint=fingerprint,
+    )
+    if cache_key is None:
+        return await start()
+    run = _guard_runs.get(cache_key)
+    if run is None:
+        run = asyncio.create_task(start())
+        _guard_runs[cache_key] = run
+        _forget_collected_guard_runs()
+    return await _collect_guard_run(cache_key, run, wait_seconds)
+
+
+def _forget_collected_guard_runs() -> None:
+    """Bound the run map by dropping finished runs nobody came back for.
+
+    A pending run is never dropped: the map holds the only strong reference
+    to its task, and a detached attempt's run has to finish for its verdict
+    to be collected.
+    """
+    while len(_guard_runs) > _GUARD_CACHE_LIMIT:
+        stale = next((key for key, run in _guard_runs.items() if run.done()), None)
+        if stale is None:
+            return
+        del _guard_runs[stale]
+
+
+async def _collect_guard_run(
+    cache_key: str, run: asyncio.Task[EpicGuardResult], wait_seconds: float
+) -> EpicGuardResult:
+    """Wait for a run, or report it pending when the wait budget ends.
+
+    The run continues either way, and a retry collects its verdict instead of
+    starting another run against the same repository state.
+    """
+    try:
+        result = await asyncio.wait_for(asyncio.shield(run), timeout=wait_seconds)
+    except TimeoutError:
+        return _result(
+            passed=False,
+            skipped=False,
+            error_type="epic_guard_pending",
+            message=(
+                f"Epic guard is still running after {wait_seconds:g} seconds; "
+                "retry close_task to collect its verdict."
+            ),
+        )
+    if _guard_runs.get(cache_key) is run:
+        del _guard_runs[cache_key]
+    return result
+
+
+def _kill_guard_process_group(process: asyncio.subprocess.Process) -> None:
+    """Kill the runner shell together with the pytest it spawned.
+
+    ``process.kill()`` reaches the shell alone and left pytest running to
+    completion against the shared test database; the run starts in its own
+    session, so its process group is the shell's pid.
+    """
+    if process.returncode is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+async def _run_guard(
+    *,
+    cache_key: str | None,
+    command: str,
+    repo_path: str,
+    timeout_seconds: float,
+    paths: tuple[str, ...],
+    source_task_ids: tuple[str, ...],
+    fingerprint: str,
+) -> EpicGuardResult:
     try:
         process = await asyncio.create_subprocess_shell(
             command,
             cwd=repo_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
         )
         try:
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
         except TimeoutError:
-            process.kill()
+            _kill_guard_process_group(process)
             stdout, _ = await process.communicate()
             output = _bounded_output(stdout.decode(errors="replace"))
             return EpicGuardResult(
@@ -200,6 +306,9 @@ async def evaluate_epic_guards(
                 output=output,
                 fingerprint=fingerprint,
             )
+        finally:
+            # Cancellation (daemon shutdown) must not orphan the run either.
+            _kill_guard_process_group(process)
     except OSError as exc:
         return EpicGuardResult(
             passed=False,

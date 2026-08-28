@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -14,6 +15,7 @@ from typing import cast
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.tasks import epic_guards
 from gobby.tasks.epic_guards import (
     collect_epic_guard_paths,
     evaluate_epic_guards,
@@ -922,3 +924,89 @@ def test_guard_collection_sees_test_files_a_landing_merge_brought_in(tmp_path: P
     assert paths == ("tests/test_landed_guard.py",)
     assert sources == (prior.id,)
     assert errors == ()
+
+
+# --- long runs and the close_task wrapper ------------------------------------
+
+
+async def _process_is_gone(pid: int) -> bool:
+    for _ in range(60):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        await asyncio.sleep(0.05)
+    return False
+
+
+async def test_guard_timeout_kills_the_runner_and_its_children(tmp_path: Path) -> None:
+    """Killing the shell alone left its pytest child running to completion."""
+    test_path = "tests/test_guard.py"
+    Path(tmp_path, test_path).parent.mkdir()
+    Path(tmp_path, test_path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, "sleep 30 & echo $! > child-pid; wait; printf '%s' {test_files}")
+    epic, prior, current = _task_tree(criteria=f"test: {test_path}::test_guard")
+
+    result = await evaluate_epic_guards(
+        task_manager=cast(LocalTaskManager, _TaskManager([epic, prior, current])),
+        task=current,
+        repo_path=str(tmp_path),
+        timeout_seconds=0.3,
+    )
+
+    assert result.error_type == "epic_guard_timeout"
+    child_pid = int(Path(tmp_path, "child-pid").read_text(encoding="utf-8").strip())
+    assert await _process_is_gone(child_pid), "the runner's child outlived the timeout"
+
+
+async def test_concurrent_attempts_share_one_guard_run(tmp_path: Path) -> None:
+    """Two attempts on the same repository state pay for one run."""
+    test_path = "tests/test_guard.py"
+    Path(tmp_path, test_path).parent.mkdir()
+    Path(tmp_path, test_path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, f"sleep 0.3; {_counting_template()}")
+    _init_repo(tmp_path)
+    epic, prior, current = _task_tree(criteria=f"test: {test_path}::test_guard")
+    manager = cast(LocalTaskManager, _TaskManager([epic, prior, current]))
+
+    first, second = await asyncio.gather(
+        evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path)),
+        evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path)),
+    )
+
+    assert first.passed is True and second.passed is True
+    assert _run_count(tmp_path) == 1, "the guard runner ran once per attempt"
+
+
+async def test_a_pending_run_hands_its_verdict_to_the_next_attempt_once(tmp_path: Path) -> None:
+    """An attempt that outlasts its wait budget reports the run pending.
+
+    close_task is detached by the MCP wrapper after 300 seconds with its result
+    dropped, so the run continues and the next attempt collects its verdict
+    without a new run. The verdict is delivered once: the attempt after that
+    runs the guard again, so one flaky failure never sticks to the state.
+    """
+    test_path = "tests/test_guard.py"
+    Path(tmp_path, test_path).parent.mkdir()
+    Path(tmp_path, test_path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, f"sleep 0.4; {_counting_template()}; exit 9")
+    _init_repo(tmp_path)
+    epic, prior, current = _task_tree(criteria=f"test: {test_path}::test_guard")
+    manager = cast(LocalTaskManager, _TaskManager([epic, prior, current]))
+
+    pending = await evaluate_epic_guards(
+        task_manager=manager, task=current, repo_path=str(tmp_path), wait_seconds=0.05
+    )
+    # The detached run finishes on its own before the next attempt arrives.
+    await asyncio.gather(*epic_guards._guard_runs.values())
+    collected = await evaluate_epic_guards(
+        task_manager=manager, task=current, repo_path=str(tmp_path)
+    )
+    runs_after_collect = _run_count(tmp_path)
+    rerun = await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+
+    assert pending.passed is False and pending.error_type == "epic_guard_pending"
+    assert collected.error_type == "epic_guard_failed"
+    assert runs_after_collect == 1, "the collected verdict came from a new run"
+    assert rerun.error_type == "epic_guard_failed"
+    assert _run_count(tmp_path) == 2, "the delivered verdict was served a second time"
