@@ -70,6 +70,7 @@ class TestProviderResolution:
                 surfaces=["persona"],
                 prompts={"persona": "Coordinate interactively."},
             ),
+            terminal_backend="tmux",
         )
 
         assert result["success"] is False
