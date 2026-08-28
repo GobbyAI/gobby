@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.terminals.runtime import TerminalRuntime
-from gobby.terminals.web_spawn import spawn_web_terminal
+from gobby.terminals.web_spawn import WebSpawnResult, spawn_web_terminal
+from tests.servers.test_tmux_mixin import MockWebSocket
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _manager
 
 pytestmark = pytest.mark.unit
@@ -195,3 +199,50 @@ async def test_native_create_saturates_then_expires(
             if isinstance(node, ast.Attribute) and node.attr == "reserve_observer"
         ]
         assert hits, f"expected reserve_observer in primitive {path}"
+
+
+@pytest.mark.asyncio
+async def test_create_without_a_project_lands_in_global_and_names_the_failure(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The picker's machine-wide view sends no project; a refusal carries its reason (#21198)."""
+    monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID)
+    config = MagicMock()
+    config.host = "localhost"
+    config.port = 60888
+    config.ping_interval = 30
+    config.ping_timeout = 10
+    config.max_message_size = 1024
+    server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="test-user"))
+    server.terminal_manager = _manager(temp_db)
+    runtime = MagicMock()
+    runtime.backend = "tmux"
+    server.terminal_runtime_registry = MagicMock(resolve=MagicMock(return_value=runtime))
+    server.terminal_config = MagicMock(default_backend="tmux")
+    spawn = AsyncMock(
+        side_effect=[
+            WebSpawnResult(False, "t-1", "backend boom"),
+            WebSpawnResult(True, "t-2"),
+        ]
+    )
+    monkeypatch.setattr("gobby.terminals.web_spawn.spawn_web_terminal", spawn)
+    ws = MockWebSocket()
+    request = {"type": "terminal_create", "rows": 24, "cols": 80, "command": ["zsh"]}
+
+    await server._handle_terminal_create(ws, {**request, "request_id": "c-1"})
+    await server._handle_terminal_create(ws, {**request, "request_id": "c-2"})
+
+    assert [call.kwargs["project_id"] for call in spawn.await_args_list] == [
+        GLOBAL_PROJECT_ID,
+        GLOBAL_PROJECT_ID,
+    ]
+    failed, created = (json.loads(message) for message in ws.sent_messages)
+    assert failed == {
+        "type": "terminal_create_result",
+        "request_id": "c-1",
+        "success": False,
+        "terminal_id": "t-1",
+        "backend": "tmux",
+        "message": "backend boom",
+    }
+    assert (created["success"], created["terminal_id"], created["message"]) == (True, "t-2", None)

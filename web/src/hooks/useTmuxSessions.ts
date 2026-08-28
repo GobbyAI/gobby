@@ -657,6 +657,9 @@ export function useTmuxSessions(
         JSON.stringify({
           type: "terminal_create",
           request_id: requestId,
+          ...(projectIdRef.current !== null
+            ? { project_id: projectIdRef.current }
+            : {}),
           rows: 24,
           cols: 80,
           cwd: name,

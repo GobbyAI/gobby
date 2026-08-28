@@ -436,6 +436,28 @@ describe("useTmuxSessions", () => {
     unmount();
   });
 
+  it("names the picker's project on create and omits it machine-wide", () => {
+    const scoped = renderHook(() => useTmuxSessions("proj-1"));
+    const scopedWs = mockWs.instances[0];
+    open(scopedWs);
+    scopedWs.send.mockClear();
+    act(() => scoped.result.current.createSession());
+    expect(sentMessages(scopedWs, "terminal_create")[0]).toMatchObject({
+      project_id: "proj-1",
+    });
+    scoped.unmount();
+
+    const machineWide = renderHook(() => useTmuxSessions());
+    const wideWs = mockWs.instances[1];
+    open(wideWs);
+    wideWs.send.mockClear();
+    act(() => machineWide.result.current.createSession());
+    expect(sentMessages(wideWs, "terminal_create")[0]).not.toHaveProperty(
+      "project_id",
+    );
+    machineWide.unmount();
+  });
+
   it("correlates create results and suppresses duplicate create sends", () => {
     const { result, unmount } = renderHook(() => useTmuxSessions());
     const ws = mockWs.instances[0];
