@@ -72,6 +72,7 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
         "knowledge_graph_queue",
         "memory",
         "pipelines",
+        "terminals",
     ):
         set_mock_default(config, name, getattr(defaults, name))
 
