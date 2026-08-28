@@ -79,8 +79,8 @@ prompts:
     - Coordinate, harvest, and take a leaf over only per the routing policy
       above — editing leaf implementations while workers own them destroys
       their in-flight work.
-  - Compact with gobby-sessions:set_handoff using structured state and
-    clear_session=false on context pressure or after finishing your own work item.
+    - Compact with gobby-sessions:set_handoff using structured state and
+      clear_session=false on context pressure or after finishing your own work item.
     - Idle only when workers are running and nothing is actionable: subscribe
       once by calling gobby-agents:wait_for_agent(run_id), and end the turn if
       the run remains active. On the daemon wake, re-call

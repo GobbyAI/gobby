@@ -426,7 +426,7 @@
     "workflows/agents/expansion-qa.yaml": "7492f0d2f898ac144923b0ad242dac479dc9c95fcd8eb6762d6f34789fa3f6de",
     "workflows/agents/frontend-developer.yaml": "6d1bf44746c7b8542b1fb4628d7b2bd6ced3a0632774bfcac55df1ffc1424160",
     "workflows/agents/fullstack-developer.yaml": "913bfa0f8252fda85240408fcf622628006ddef651eee371ffbcee553fb12879",
-    "workflows/agents/goal-taskmaster.yaml": "1c8d81604cdb989bf2d4df5724ded7a6c1eb9e0161f40c15ae6bc3203ddd60b8",
+    "workflows/agents/goal-taskmaster.yaml": "c8a38dae532ea863d3f46efca057e75a721c3ed1cd9d650fc031b0949f21b38e",
     "workflows/agents/memory-curator.yaml": "566ea2ee5aa2b52c14b8e88fad31ce055c7f8f54751defa697db94dd2daedfab",
     "workflows/agents/merge-orchestrator.yaml": "af3eb7c7114350042d5bee02aea2c775d9daf183da652d21a18ddfa835ccb045",
     "workflows/agents/merge-worker.yaml": "e7dd50470b514c8f2175a7fcace7d5ebe44efa4502d8ef4b3d6bee7a8767ba18",
