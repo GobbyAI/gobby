@@ -959,6 +959,27 @@ async def test_guard_timeout_kills_the_runner_and_its_children(tmp_path: Path) -
     assert await _process_is_gone(child_pid), "the runner's child outlived the timeout"
 
 
+async def test_guard_timeout_keeps_the_output_written_before_the_kill(tmp_path: Path) -> None:
+    """A timed-out run reported no output: the bytes the cancelled read had
+    already drained were dropped and only the empty remainder was collected."""
+    test_path = "tests/test_guard.py"
+    Path(tmp_path, test_path).parent.mkdir()
+    Path(tmp_path, test_path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, "echo progress-before-timeout; sleep 30; printf '%s' {test_files}")
+    epic, prior, current = _task_tree(criteria=f"test: {test_path}::test_guard")
+
+    result = await evaluate_epic_guards(
+        task_manager=cast(LocalTaskManager, _TaskManager([epic, prior, current])),
+        task=current,
+        repo_path=str(tmp_path),
+        timeout_seconds=0.5,
+    )
+
+    assert result.error_type == "epic_guard_timeout"
+    assert result.output is not None
+    assert "progress-before-timeout" in result.output
+
+
 async def test_concurrent_attempts_share_one_guard_run(tmp_path: Path) -> None:
     """Two attempts on the same repository state pay for one run."""
     test_path = "tests/test_guard.py"

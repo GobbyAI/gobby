@@ -23,11 +23,16 @@ from gobby.utils.git import run_git_command
 logger = logging.getLogger(__name__)
 
 _GUARD_OUTPUT_LIMIT = 32_000
-_GUARD_TIMEOUT_SECONDS = 600.0
+# The cumulative set grows with every closed leaf (44 files including e2e
+# daemons on the herdr epic ran 5-10 minutes), so the cap bounds a hung run,
+# never an honest one.
+_GUARD_TIMEOUT_SECONDS = 1800.0
 # close_task is detached by the MCP wrapper after 300 seconds
 # (``MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS``) and its result dropped, so an
 # attempt stops waiting for the guard before then and reports the run pending.
 _GUARD_WAIT_SECONDS = 240.0
+_STDOUT_CHUNK_BYTES = 65536
+_POST_KILL_DRAIN_SECONDS = 5.0
 _REPO_STATE_TIMEOUT_SECONDS = 15
 _GUARD_CACHE_LIMIT = 16
 
@@ -256,6 +261,40 @@ async def _collect_guard_run(
     return result
 
 
+async def _drain_then_wait(process: asyncio.subprocess.Process, chunks: list[bytes]) -> None:
+    """Collect stdout as it arrives, then wait for exit.
+
+    ``communicate()`` kept the bytes it had read inside the coroutine the
+    timeout cancelled, so a timed-out run reported an empty output; reading
+    into a shared list keeps everything pytest printed before the kill.
+    """
+    stream = process.stdout
+    if stream is None:
+        raise RuntimeError("epic guard runner was started without a stdout pipe")
+    while chunk := await stream.read(_STDOUT_CHUNK_BYTES):
+        chunks.append(chunk)
+    await process.wait()
+
+
+async def _drain_after_kill(process: asyncio.subprocess.Process, chunks: list[bytes]) -> None:
+    """Read what is still buffered after the kill, without waiting on orphans.
+
+    A grandchild that started its own session (an e2e daemon) survives the
+    group kill and can hold the pipe open, so the drain is bounded.
+    """
+    stream = process.stdout
+    if stream is None:
+        raise RuntimeError("epic guard runner was started without a stdout pipe")
+    try:
+        while chunk := await asyncio.wait_for(
+            stream.read(_STDOUT_CHUNK_BYTES), timeout=_POST_KILL_DRAIN_SECONDS
+        ):
+            chunks.append(chunk)
+    except TimeoutError:
+        pass
+    await process.wait()
+
+
 def _kill_guard_process_group(process: asyncio.subprocess.Process) -> None:
     """Kill the runner shell together with the pytest it spawned.
 
@@ -289,12 +328,13 @@ async def _run_guard(
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
         )
+        chunks: list[bytes] = []
         try:
-            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+            await asyncio.wait_for(_drain_then_wait(process, chunks), timeout=timeout_seconds)
         except TimeoutError:
             _kill_guard_process_group(process)
-            stdout, _ = await process.communicate()
-            output = _bounded_output(stdout.decode(errors="replace"))
+            await _drain_after_kill(process, chunks)
+            output = _bounded_output(b"".join(chunks).decode(errors="replace"))
             return EpicGuardResult(
                 passed=False,
                 skipped=False,
@@ -321,7 +361,7 @@ async def _run_guard(
             fingerprint=fingerprint,
         )
 
-    output = _bounded_output(stdout.decode(errors="replace"))
+    output = _bounded_output(b"".join(chunks).decode(errors="replace"))
     if process.returncode != 0:
         return EpicGuardResult(
             passed=False,
