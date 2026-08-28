@@ -305,6 +305,9 @@ class WatchdogRecoveryCoordinator:
             logger.warning("Failed to clear queued prompt before reprompting agent %s", run.id)
             if not await self._recover_failed_reprompt_clear(run, tmux_name):
                 return False
+        # The emptied composer settles an earlier reprompt whose Enter never
+        # resolved; left latched, it would suppress every later reprompt.
+        coordinator.observe_resolved(terminal.id, f"idle-reprompt:{run.id}")
         sent = await self._deliver(
             coordinator,
             terminal.id,

@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from gobby.storage.attention import AttentionKind, AttentionStateManager
     from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
+    from gobby.terminals.runtime import TerminalRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ class TmuxPaneMonitor:
         attention_manager: AttentionStateManager | None = None,
         prompt_detector: PromptDetector | None = None,
         stall_classifier: StallClassifier | None = None,
-        tmux_manager_factory: Callable[[Mapping[str, Any]], TmuxSessionManager] | None = None,
+        runtime: TerminalRuntime | None = None,
     ) -> None:
         self._callback = session_end_callback
         if config is None:
@@ -83,8 +84,12 @@ class TmuxPaneMonitor:
         self._stall_classifier = stall_classifier or StallClassifier(detection_registry)
         from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 
-        self._tmux_manager_factory = tmux_manager_factory
-        self._runtime = TmuxTerminalRuntime(TmuxSessionManager(config=self._config))
+        # Interactive-pane snapshots go through the runtime seam; tests inject a fake.
+        self._runtime: TerminalRuntime = (
+            runtime
+            if runtime is not None
+            else TmuxTerminalRuntime(TmuxSessionManager(config=self._config))
+        )
         self._task: asyncio.Task[None] | None = None
         # session_id -> timestamp when it was marked ended
         self._recently_ended: dict[str, float] = {}

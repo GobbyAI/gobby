@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -20,6 +20,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.agents.terminal_fixtures import make_live_terminal
+from tests.agents.test_lifecycle_monitor import _fake_terminal_services, _pane_text, _runtime_of
 
 from .detection_test_support import BundledDetectionRegistry
 
@@ -157,6 +158,7 @@ async def test_idle_reprompt_logs_watchdog_snapshot(
         session_manager=session_manager,
         check_interval_seconds=1.0,
         tmux_config=config,
+        terminal_services=_fake_terminal_services(temp_db),
     )
 
     parent = session_manager.register(
@@ -188,8 +190,7 @@ async def test_idle_reprompt_logs_watchdog_snapshot(
     state.first_idle_at = time.monotonic() - 360
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True),
+        _pane_text(monitor, "❯\n"),
         patch("gobby.agents.watchdog.recovery.logger.warning") as mock_warning,
     ):
         handled = await monitor.check_idle_agents()
@@ -240,6 +241,7 @@ async def test_idle_reasoning_watchdog_interrupts_supported_reader_and_records_t
         task_manager=task_manager,
         check_interval_seconds=1.0,
         tmux_config=config,
+        terminal_services=_fake_terminal_services(temp_db),
     )
 
     parent = session_manager.register(
@@ -273,22 +275,17 @@ async def test_idle_reasoning_watchdog_interrupts_supported_reader_and_records_t
     state.first_idle_at = time.monotonic() - 360
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=""),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
+        _pane_text(monitor, ""),
         patch("gobby.agents.watchdog.recovery.logger.warning") as mock_warning,
     ):
         handled = await monitor.check_idle_agents()
 
     assert handled == 1
-    mock_send.assert_has_awaits(
-        [
-            call("gobby-codex-reasoning", "C-c", literal=False),
-            call("gobby-codex-reasoning", REASONING_WATCHDOG_CONTINUATION),
-            call("gobby-codex-reasoning", "Enter", literal=False),
-        ]
-    )
+    assert _runtime_of(monitor).write_log == [
+        ("text", "\x03"),
+        ("text", REASONING_WATCHDOG_CONTINUATION),
+        ("key", "enter"),
+    ]
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
     watchdog_diagnostics = [
         str(log_call.args[4])
@@ -329,6 +326,7 @@ async def test_reasoning_watchdog_does_not_interrupt_unsupported_readers(
             reasoning_watchdog_interrupt_enabled=True,
             reasoning_watchdog_settle_seconds=0,
         ),
+        terminal_services=_fake_terminal_services(temp_db),
     )
     reader = WatchdogReaderRegistry().for_provider(provider)
     assert reader is not None
@@ -341,18 +339,17 @@ async def test_reasoning_watchdog_does_not_interrupt_unsupported_readers(
         latest_activity_kind="reasoning",
     )
 
-    with patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock) as send_keys:
-        recovered = await monitor._idle_check_handler._recovery._recover_reasoning_idle(
-            run,
-            tmux_name=f"gobby-{provider}",
-            session=None,
-            session_id=None,
-            reader=reader,
-            snapshot=snapshot,
-        )
+    recovered = await monitor._idle_check_handler._recovery._recover_reasoning_idle(
+        run,
+        tmux_name=f"gobby-{provider}",
+        session=None,
+        session_id=None,
+        reader=reader,
+        snapshot=snapshot,
+    )
 
     assert recovered is False
-    send_keys.assert_not_awaited()
+    assert _runtime_of(monitor).write_log == []
 
 
 @pytest.mark.asyncio
@@ -371,6 +368,7 @@ async def test_idle_failure_logs_watchdog_snapshot(
         session_manager=session_manager,
         check_interval_seconds=1.0,
         tmux_config=config,
+        terminal_services=_fake_terminal_services(temp_db),
     )
 
     parent = session_manager.register(
@@ -402,8 +400,7 @@ async def test_idle_failure_logs_watchdog_snapshot(
     state.reprompt_count = 2
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
+        _pane_text(monitor, "❯\n"),
         patch("gobby.agents.watchdog.recovery.logger.warning") as mock_warning,
     ):
         handled = await monitor.check_idle_agents()

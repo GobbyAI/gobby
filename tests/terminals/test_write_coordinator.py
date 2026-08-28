@@ -12,7 +12,7 @@ from gobby.storage.terminals import (
     UNRESOLVED_WRITE_MAX_ENTRIES,
     UnresolvedWriteCapacityError,
 )
-from gobby.terminals.runtime import Delivered, IndeterminateWrite
+from gobby.terminals.runtime import Delivered, IndeterminateWrite, TerminalWriteError
 from gobby.terminals.write_coordinator import (
     SequenceDelay,
     StaleTerminalLeaseError,
@@ -21,6 +21,14 @@ from gobby.terminals.write_coordinator import (
     WriteRequest,
 )
 from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
+
+
+async def _let_tasks_run() -> None:
+    """Yield one loop iteration so just-created tasks reach their first await."""
+    loop = asyncio.get_running_loop()
+    ready: asyncio.Future[None] = loop.create_future()
+    loop.call_soon(ready.set_result, None)
+    await ready
 
 
 def _unresolved(store: MemoryTerminalStore, terminal_id: str) -> dict[str, Any]:
@@ -278,7 +286,7 @@ async def test_sequence_cancellation_settles_once() -> None:
                 ],
             )
         )
-        await asyncio.sleep(0.01)
+        await _let_tasks_run()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -317,7 +325,7 @@ async def test_sequence_cancellation_settles_once() -> None:
         hold2.set()
         with pytest.raises(asyncio.CancelledError):
             await task2
-        await asyncio.sleep(0)
+        await _let_tasks_run()
         assert "seq-mid" in _unresolved(store2, terminal2.id)
         payloads = [payload for _kind, payload in runtime2.write_log]
         assert "enter" not in payloads
@@ -347,7 +355,7 @@ async def test_lease_revalidated_immediately_before_effect() -> None:
     holder = asyncio.create_task(first())
     await started.wait()
     takeover_task = asyncio.create_task(coordinator.takeover_lease(terminal.id, "att-2"))
-    await asyncio.sleep(0)
+    await _let_tasks_run()
 
     async def waiting_operator() -> None:
         with pytest.raises(StaleTerminalLeaseError):
@@ -364,7 +372,7 @@ async def test_lease_revalidated_immediately_before_effect() -> None:
             )
 
     waiter = asyncio.create_task(waiting_operator())
-    await asyncio.sleep(0)
+    await _let_tasks_run()
     hold.set()
     await holder
     await takeover_task
@@ -570,3 +578,56 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
     payloads = [payload for _kind, payload in runtime5.write_log]
     assert "enter" not in payloads
     assert "seq-kill" in _unresolved(store5, terminal5.id)
+
+
+def _wake_steps(terminal_id: str) -> list[WriteRequest]:
+    return [
+        WriteRequest(
+            terminal_id=terminal_id,
+            action_key="wake",
+            origin="automatic",
+            kind="text",
+            payload="hello",
+        ),
+        WriteRequest(
+            terminal_id=terminal_id,
+            action_key="wake",
+            origin="automatic",
+            kind="key",
+            payload="enter",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sequence_failure_before_any_dispatch_clears_latch() -> None:
+    """Nothing reached the terminal, so nothing is left to resolve."""
+    coordinator, runtime, store = _coordinator(
+        FakeRuntime(raise_on_write=TerminalWriteError(stage="none"), raise_on_write_after=0)
+    )
+    terminal = next(iter(store.rows.values()))
+
+    with pytest.raises(TerminalWriteError):
+        await coordinator.run_sequence(
+            terminal.id, action_key="wake", origin="automatic", steps=_wake_steps(terminal.id)
+        )
+
+    assert _unresolved(store, terminal.id) == {}
+    assert runtime.write_log == []
+
+
+@pytest.mark.asyncio
+async def test_sequence_failure_after_a_dispatched_step_keeps_latch() -> None:
+    """A step that landed may have changed the terminal; the action stays open."""
+    coordinator, runtime, store = _coordinator(
+        FakeRuntime(raise_on_write=TerminalWriteError(stage="none"), raise_on_write_after=1)
+    )
+    terminal = next(iter(store.rows.values()))
+
+    with pytest.raises(TerminalWriteError):
+        await coordinator.run_sequence(
+            terminal.id, action_key="wake", origin="automatic", steps=_wake_steps(terminal.id)
+        )
+
+    assert "wake" in _unresolved(store, terminal.id)
+    assert runtime.write_log == [("text", "hello")]

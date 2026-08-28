@@ -187,10 +187,10 @@ class WriteCoordinator:
                         if expected_lease_generation is not None
                         else step.expected_lease_generation,
                     )
-                    dispatched = True
                     in_flight = asyncio.create_task(self._dispatch(step))
                     outcome = await in_flight
                     in_flight = None
+                    dispatched = True
                     if isinstance(outcome, IndeterminateWrite):
                         return outcome
                     if isinstance(outcome, Delivered):

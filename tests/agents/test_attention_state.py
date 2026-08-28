@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,11 +18,27 @@ from gobby.agents.tmux.pane_monitor import TmuxPaneMonitor
 from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from gobby.storage.terminals import TerminalManager
+from gobby.terminals.discovery import seed_external_terminal
+from tests.agents.test_lifecycle_monitor import LifecycleRuntime
+from tests.agents.test_lifecycle_monitor_extra import _memory_terminal_services
 
 from .detection_test_support import BundledDetectionRegistry
 
 DETECTION_REGISTRY = BundledDetectionRegistry()
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+APPROVAL_PANE = "Permission required: press Enter to approve this command"
+PANE_CONTEXT: dict[str, Any] = {
+    "tmux_socket_path": "/private/tmp/tmux-501/default",
+    "tmux_pane": "%42",
+    "tmux_session": "interactive",
+    "tmux_window": "@1",
+    "tmux_server_pid": 1658,
+    "tmux_server_start_time": 1784592177,
+}
 
 
 def _agent_run() -> AgentRun:
@@ -52,6 +68,30 @@ def _attention_manager(
         event_publisher=event_publisher,
         notification_publisher=notification_publisher,
         epoch="test-epoch",
+    )
+
+
+def _interactive_session(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> SimpleNamespace:
+    """A registered session whose external pane is a live terminals row."""
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        row = session_manager.register(
+            external_id="interactive-session",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        seeded = seed_external_terminal(
+            TerminalManager(session_manager.db),
+            project_id=sample_project["id"],
+            session_id=row.id,
+            terminal_context=PANE_CONTEXT,
+        )
+    assert seeded is not None
+    return SimpleNamespace(
+        id=row.id, status="active", source="claude", terminal_context=PANE_CONTEXT
     )
 
 
@@ -317,10 +357,9 @@ async def test_idle_handler_checks_attention_without_waiting_for_idle(
     run = _agent_run()
     run_manager = MagicMock()
     run_manager.list_active_for_machine.return_value = [run]
-    tmux = MagicMock()
-    tmux.capture_pane = AsyncMock(
-        return_value="Permission required: press Enter to approve this command"
-    )
+    services = _memory_terminal_services("agent-run-1")
+    runtime = cast(LifecycleRuntime, services.registry.resolve("tmux"))
+    runtime.snapshot_text = APPROVAL_PANE
     config = MagicMock()
     config.auto_enter_approval_prompts = False
     config.idle_timeout_seconds = 60
@@ -332,7 +371,7 @@ async def test_idle_handler_checks_attention_without_waiting_for_idle(
         agent_run_manager=run_manager,
         db=temp_db,
         get_session_manager=lambda: None,
-        tmux=tmux,
+        tmux=MagicMock(),
         idle_detector=MagicMock(),
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
         stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
@@ -341,11 +380,13 @@ async def test_idle_handler_checks_attention_without_waiting_for_idle(
         tmux_config=config,
         run_db=run_db,
         attention_manager=manager,
+        terminal_services=services,
     )
 
     result = await handler.check_attention_agents()
 
     assert result == 1
+    assert runtime.snapshot_calls == [15]
     attention = manager.get(f"run:{run.id}")
     assert attention is not None
     assert attention.state == "blocked"
@@ -361,10 +402,9 @@ async def test_idle_check_reuses_attention_pane_and_stops_on_unknown(
     run_manager = MagicMock()
     run_manager.list_active_for_machine.return_value = [run]
     run_manager.get.return_value = run
-    tmux = MagicMock()
-    tmux.capture_pane = AsyncMock(
-        return_value="Permission required: press Enter to approve this command"
-    )
+    services = _memory_terminal_services("agent-run-1")
+    runtime = cast(LifecycleRuntime, services.registry.resolve("tmux"))
+    runtime.snapshot_text = APPROVAL_PANE
     config = MagicMock()
     config.auto_enter_approval_prompts = False
     config.idle_check_enabled = True
@@ -382,7 +422,7 @@ async def test_idle_check_reuses_attention_pane_and_stops_on_unknown(
         agent_run_manager=run_manager,
         db=temp_db,
         get_session_manager=lambda: None,
-        tmux=tmux,
+        tmux=MagicMock(),
         idle_detector=idle_detector,
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
         stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
@@ -391,6 +431,7 @@ async def test_idle_check_reuses_attention_pane_and_stops_on_unknown(
         tmux_config=config,
         run_db=run_db,
         attention_manager=manager,
+        terminal_services=services,
     )
 
     with patch.object(
@@ -406,7 +447,7 @@ async def test_idle_check_reuses_attention_pane_and_stops_on_unknown(
     assert attention is not None
     assert attention.state == "blocked"
     assert attention.reason == "approval"
-    tmux.capture_pane.assert_awaited_once_with(run.terminal_id, lines=15)
+    assert runtime.snapshot_calls == [15]
     sync_attention.assert_awaited_once()
     bound_idle_detector.reset_idle.assert_called_once_with(run.id)
     bound_idle_detector.has_unsubmitted_input.assert_not_called()
@@ -416,31 +457,24 @@ async def test_idle_check_reuses_attention_pane_and_stops_on_unknown(
 @pytest.mark.asyncio
 async def test_tmux_monitor_reports_interactive_prompt_without_injection(
     temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
 ) -> None:
     manager = _attention_manager(temp_db)
-    session = SimpleNamespace(
-        id="interactive-session",
-        status="active",
-        source="claude",
-        terminal_context={"tmux_pane": "%42"},
-    )
-    session_manager = MagicMock()
-    session_manager.db = temp_db
-    session_manager.get.side_effect = AssertionError("provider must come from listed session")
-    session_manager.list.return_value = [session]
-    tmux = MagicMock()
-    tmux.capture_pane = AsyncMock(
-        return_value="Permission required: press Enter to approve this command"
-    )
-    tmux.send_keys = AsyncMock()
+    session = _interactive_session(session_manager, sample_project)
+    sessions = MagicMock()
+    sessions.db = temp_db
+    sessions.get.side_effect = AssertionError("provider must come from listed session")
+    sessions.list.return_value = [session]
+    runtime = LifecycleRuntime(snapshot_text=APPROVAL_PANE)
     monitor = TmuxPaneMonitor(
         detection_registry=DETECTION_REGISTRY,
         session_end_callback=MagicMock(),
-        session_manager=session_manager,
+        session_manager=sessions,
         attention_manager=manager,
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
         stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
-        tmux_manager_factory=lambda _context: tmux,
+        runtime=runtime,
     )
 
     await monitor._check_attention_panes(active_runs=[])
@@ -450,43 +484,37 @@ async def test_tmux_monitor_reports_interactive_prompt_without_injection(
     assert attention.state == "blocked"
     assert attention.reason == "approval"
     assert attention.payload["kind"] == "approval"
-    tmux.send_keys.assert_not_awaited()
+    assert runtime.write_log == []
 
 
 @pytest.mark.asyncio
 async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
     temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     manager = _attention_manager(temp_db)
-    session = SimpleNamespace(
-        id="interactive-session",
-        status="active",
-        source="claude",
-        terminal_context={"tmux_pane": "%42"},
-    )
-    session_manager = MagicMock()
-    session_manager.db = temp_db
-    session_manager.list.return_value = [session]
-    tmux = MagicMock()
-    tmux.capture_pane = AsyncMock(
-        return_value="Permission required: press Enter to approve this command"
-    )
+    session = _interactive_session(session_manager, sample_project)
+    sessions = MagicMock()
+    sessions.db = temp_db
+    sessions.list.return_value = [session]
+    runtime = LifecycleRuntime(snapshot_text=APPROVAL_PANE)
     monitor = TmuxPaneMonitor(
         detection_registry=DETECTION_REGISTRY,
         session_end_callback=MagicMock(),
-        session_manager=session_manager,
+        session_manager=sessions,
         attention_manager=manager,
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
         stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
-        tmux_manager_factory=lambda _context: tmux,
+        runtime=runtime,
     )
     await monitor._check_attention_panes(active_runs=[])
     before_timeout = manager.get(f"session:{session.id}")
     assert before_timeout is not None
 
-    tmux.capture_pane.reset_mock()
-    tmux.capture_pane.side_effect = TimeoutError("tmux command timed out")
+    runtime.snapshot_calls.clear()
+    runtime.snapshot_error = TimeoutError("tmux command timed out")
     caplog.clear()
     logger_name = "gobby.agents.tmux.pane_monitor"
     with caplog.at_level(logging.DEBUG, logger=logger_name):
@@ -497,7 +525,7 @@ async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
     assert after_timeout.attention_id == before_timeout.attention_id
     assert after_timeout.fingerprint == before_timeout.fingerprint
     assert after_timeout.state == "blocked"
-    tmux.capture_pane.assert_awaited_once_with("%42", lines=15)
+    assert runtime.snapshot_calls == [15]
     records = [record for record in caplog.records if record.name == logger_name]
     assert not [record for record in records if record.levelno >= logging.WARNING]
     timeout_record = next(
@@ -508,8 +536,8 @@ async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
     assert timeout_record.__dict__["session_id"] == session.id
     assert timeout_record.__dict__["provider"] == "claude"
 
-    tmux.capture_pane.side_effect = None
-    tmux.capture_pane.return_value = "Working normally"
+    runtime.snapshot_error = None
+    runtime.snapshot_text = "Working normally"
     await monitor._check_attention_panes(active_runs=[])
 
     recovered = manager.get(f"session:{session.id}")

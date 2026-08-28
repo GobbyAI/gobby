@@ -161,9 +161,16 @@ class IdleCheckHandler:
         return checked
 
     def _get_active_terminal_runs(self) -> list[AgentRun]:
-        """Get active terminal agent runs with tmux sessions from DB."""
+        """Active runs on this machine whose terminal is still pending or live.
+
+        A run whose terminal exited is unmonitored: leaving it out lets
+        ``check_idle_agents`` prune its recovery state.
+        """
+        services = self._terminal_services
+        if services is None:
+            return []
         runs = self._agent_run_manager.list_active_for_machine(require_machine_id())
-        return [run for run in runs if run.terminal_id]
+        return [run for run in runs if services.terminal_for(run) is not None]
 
     def _idle_timeout_seconds_for_run(self, run: AgentRun) -> int:
         """Return the idle timeout window for a run."""

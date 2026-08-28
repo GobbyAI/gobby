@@ -44,7 +44,7 @@ from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_states import StageManifestSpec
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals import TerminalRuntimeRegistry
-from gobby.terminals.runtime import SnapshotResult, TerminalWriteError, WriteOutcome
+from gobby.terminals.runtime import NamedKey, SnapshotResult, TerminalWriteError, WriteOutcome
 from gobby.terminals.services import TerminalServices
 from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.workflows.step_instances import AgentStepInstanceManager
@@ -92,6 +92,16 @@ class LifecycleRuntime(FakeRuntime):
     # Consumed one entry per write; True makes that write fail before landing.
     write_failures: list[bool] = field(default_factory=list)
     live_probes: int = 0
+    # Terminal ids written to, in order; multi-run tests assert the routing.
+    write_targets: list[str] = field(default_factory=list)
+
+    async def write_text(self, terminal: Terminal, text: str, submit: bool) -> WriteOutcome:
+        self.write_targets.append(terminal.id)
+        return await super().write_text(terminal, text, submit)
+
+    async def write_key(self, terminal: Terminal, key: NamedKey) -> WriteOutcome:
+        self.write_targets.append(terminal.id)
+        return await super().write_key(terminal, key)
 
     async def _record(self, kind: str, payload: str) -> WriteOutcome:
         failed = self.write_failures.pop(0) if self.write_failures else False
