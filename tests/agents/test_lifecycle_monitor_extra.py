@@ -1055,6 +1055,20 @@ class TestPeriodicAgentTerminalEnter:
         assert len(runtime.write_log) == 1
 
     @pytest.mark.asyncio
+    async def test_periodic_enter_leaves_a_question_dialog_to_the_user(self) -> None:
+        """Enter would pick the highlighted option before attention surfaces it."""
+        mock_run_mgr = MagicMock()
+        monitor = self._monitor(mock_run_mgr, interval=30)
+        runtime = _runtime_of(monitor)
+        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
+        runtime.snapshot_text = "Which probe path should I take?\n❯ 1. alpha\n  2. beta\n"
+
+        handled = await monitor.check_periodic_enters()
+
+        assert handled == 0
+        assert runtime.write_log == []
+
+    @pytest.mark.asyncio
     async def test_periodic_enter_can_be_disabled(self) -> None:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr, enabled=False)

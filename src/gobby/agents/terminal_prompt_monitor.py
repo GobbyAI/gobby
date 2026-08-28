@@ -387,4 +387,7 @@ class TerminalPromptMonitor:
             return True
         if not config.auto_enter_approval_prompts and detector.detect_approval_prompt(pane_output):
             return True
-        return False
+        # A question dialog is the user's decision: Enter would pick the
+        # highlighted option before the attention tracker can surface it.
+        detected = detector.detect_prompt(pane_output)
+        return detected is not None and detected.kind == "question"
