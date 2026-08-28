@@ -26,12 +26,9 @@ from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.agents.test_lifecycle_monitor import (
     DETECTION_REGISTRY,
     TerminalWakeRecorder,
-    _local_machine_identity,  # noqa: F401  # autouse fixture re-export
     _make_progress_stagnation_monitor,
     _make_terminal_run,
     _rid,
-    agent_run_manager,  # noqa: F401  # fixture re-export
-    sample_session,  # noqa: F401  # fixture re-export
 )
 
 pytestmark = pytest.mark.unit
@@ -93,7 +90,7 @@ def test_plain_prompt_still_reads_idle() -> None:
 
 
 def _idle_monitor(
-    agent_run_manager: LocalAgentRunManager,  # noqa: F811
+    agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
     registry: CompletionEventRegistry | None = None,
 ) -> AgentLifecycleMonitor:
@@ -109,9 +106,9 @@ def _idle_monitor(
 
 
 async def test_parked_agent_is_never_reprompted_until_its_wait_resolves(
-    agent_run_manager: LocalAgentRunManager,  # noqa: F811
+    agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
-    sample_session: dict[str, Any],  # noqa: F811
+    sample_session: dict[str, Any],
 ) -> None:
     registry = CompletionEventRegistry()
     monitor = _idle_monitor(agent_run_manager, temp_db, registry)
@@ -140,9 +137,9 @@ async def test_parked_agent_is_never_reprompted_until_its_wait_resolves(
 
 
 async def test_agent_mid_turn_is_not_reprompted(
-    agent_run_manager: LocalAgentRunManager,  # noqa: F811
+    agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
-    sample_session: dict[str, Any],  # noqa: F811
+    sample_session: dict[str, Any],
 ) -> None:
     monitor = _idle_monitor(agent_run_manager, temp_db)
     run = _make_terminal_run(
@@ -170,9 +167,9 @@ async def test_agent_mid_turn_is_not_reprompted(
 
 
 async def test_parked_agent_is_not_stagnant_until_its_wait_resolves(
-    agent_run_manager: LocalAgentRunManager,  # noqa: F811
+    agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
-    sample_session: dict[str, Any],  # noqa: F811
+    sample_session: dict[str, Any],
 ) -> None:
     registry = CompletionEventRegistry()
     monitor, run, _detector = _make_progress_stagnation_monitor(
@@ -200,9 +197,9 @@ async def test_parked_agent_is_not_stagnant_until_its_wait_resolves(
 
 
 async def test_live_spinner_defers_stagnation_and_a_frozen_one_does_not(
-    agent_run_manager: LocalAgentRunManager,  # noqa: F811
+    agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
-    sample_session: dict[str, Any],  # noqa: F811
+    sample_session: dict[str, Any],
 ) -> None:
     monitor, run, _detector = _make_progress_stagnation_monitor(
         agent_run_manager=agent_run_manager,

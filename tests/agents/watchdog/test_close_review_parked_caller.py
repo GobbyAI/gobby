@@ -46,11 +46,8 @@ from gobby.utils.session_context import (
 from tests.agents.test_lifecycle_monitor import (
     DETECTION_REGISTRY,
     TerminalWakeRecorder,
-    _local_machine_identity,  # noqa: F401  # autouse fixture re-export
     _make_terminal_run,
     _rid,
-    agent_run_manager,  # noqa: F401  # fixture re-export
-    sample_session,  # noqa: F401  # fixture re-export
 )
 
 pytestmark = pytest.mark.unit
@@ -284,11 +281,11 @@ class _Harness:
 
 @pytest.fixture
 def harness(
-    agent_run_manager: LocalAgentRunManager,  # noqa: F811
+    agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
-    sample_session: dict[str, Any],  # noqa: F811
+    sample_session: dict[str, Any],
 ) -> _Harness:
     return _Harness(
         runs=agent_run_manager,
