@@ -8,10 +8,11 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from gobby.agents.capture import terminate_managed_tmux_async
+from gobby.agents.capture import terminate_managed_runtime_async
 from gobby.agents.kill import pid_matches_agent_identity
 from gobby.agents.recovery_state import is_recovery_protected
 from gobby.agents.stall_classifier import StallStatus
+from gobby.terminals.lookup import active_terminal_for_run
 from gobby.utils.datetime import parse_stored_datetime
 from gobby.utils.machine_id import require_machine_id
 
@@ -48,6 +49,7 @@ class AgentHealthMonitor:
         tmux_config: TmuxConfig,
         run_db: Callable[..., Awaitable[Any]] | None = None,
         checkpoint_agent_work: Callable[[AgentRun], Awaitable[None]] | None = None,
+        terminal_services: Any | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
@@ -58,6 +60,7 @@ class AgentHealthMonitor:
         self._tmux_config = tmux_config
         self._run_db_callback = run_db
         self._checkpoint_agent_work = checkpoint_agent_work
+        self._terminal_services = terminal_services
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
@@ -86,10 +89,15 @@ class AgentHealthMonitor:
                 await self._run_db(self._agent_run_manager.get, run.id),
             )
 
-        result = await terminate_managed_tmux_async(
+        services = self._terminal_services
+        terminal = None if services is None else services.terminal_for(run)
+        if services is None or terminal is None:
+            return False
+        result = await terminate_managed_runtime_async(
             storage=self._agent_run_manager,
             run=run,
-            tmux=self._tmux,
+            terminal=terminal,
+            runtime=services.runtime_for(terminal),
             action=action,
             reason=reason,
             terminalize=terminalize,
@@ -103,22 +111,16 @@ class AgentHealthMonitor:
             )
         return result.success
 
-    async def _clear_tmux_session_name(self, run: AgentRun) -> None:
-        if run.tmux_session_name:
-            await self._run_db(
-                self._agent_run_manager.clear_tmux_session_name,
-                run.id,
-                run.tmux_session_name,
-            )
-
     async def _capture_pane_snapshot(self, run: AgentRun, *, lines: int = 50) -> str:
-        if not run.tmux_session_name:
+        services = self._terminal_services
+        if services is None:
             return ""
         try:
-            return await self._tmux.capture_pane(run.tmux_session_name, lines=lines) or ""
+            snapshot = await services.snapshot(run, lines)
         except Exception as e:
             logger.debug("Failed to capture pane for agent %s: %s", run.id, e)
             return ""
+        return "" if snapshot is None else snapshot.text
 
     async def _bootstrap_accounting_stall_error(
         self,
@@ -165,7 +167,7 @@ class AgentHealthMonitor:
             f"(provider={run.provider}, model={run.model or 'unknown'}, "
             f"agent={run.agent_name or 'unknown'}, run_id={run.id}, "
             f"child_session_id={run.child_session_id}, "
-            f"tmux_session={run.tmux_session_name or 'none'}, pid={run.pid or 'none'}, "
+            f"terminal_id={run.terminal_id or 'none'}, pid={run.pid or 'none'}, "
             f"context_injected={context_injected}, message_count={message_count}, "
             f"turn_count={turn_count}, tool_call_count={tool_call_count}, "
             f"transcript_path={transcript_path}, "
@@ -209,8 +211,10 @@ class AgentHealthMonitor:
                             run.timeout_seconds,
                         )
 
-                if reason is None and run.tmux_session_name:
-                    tmux_alive = await self._tmux.has_session(run.tmux_session_name)
+                services = self._terminal_services
+                terminal = None if services is None else services.terminal_for(run)
+                if reason is None and services is not None and terminal is not None:
+                    tmux_alive = await services.is_live(run)
                     if tmux_alive:
                         if run.pid:
                             session_id = run.child_session_id or run.parent_session_id
@@ -223,17 +227,17 @@ class AgentHealthMonitor:
                                 reason = f"PID {run.pid} no longer matches agent identity"
                                 logger.info("Agent %s %s - cleaning up", run.id, reason)
                     else:
-                        reason = "tmux session died unexpectedly"
+                        reason = "terminal session died unexpectedly"
                         logger.info(
-                            "Detected dead tmux session '%s' for agent %s",
-                            run.tmux_session_name,
+                            "Detected dead terminal '%s' for agent %s",
+                            terminal.id,
                             run.id,
                         )
 
                 if reason is None:
                     continue
 
-                if run.tmux_session_name:
+                if terminal is not None:
                     pane_snapshot = await self._capture_pane_snapshot(run, lines=50)
 
                 if is_timeout and timeout_age is not None:
@@ -254,7 +258,7 @@ class AgentHealthMonitor:
                 if pane_snapshot:
                     error_msg += f"\n\n--- Last terminal output ---\n{pane_snapshot[-2000:]}"
 
-                if run.tmux_session_name:
+                if terminal is not None:
                     if not await self._terminate_tmux_run(
                         run,
                         action="timeout" if is_timeout else "fail",
@@ -350,7 +354,10 @@ class AgentHealthMonitor:
                     f"Provider connection timed out: agent never initialized "
                     f"after {age:.0f}s (provider={run.provider})"
                 )
-                if run.tmux_session_name:
+                if active_terminal_for_run(
+                    None if self._terminal_services is None else self._terminal_services.manager,
+                    run,
+                ):
                     if await self._terminate_tmux_run(run, action="fail", reason=error_msg):
                         killed += 1
                     continue
@@ -389,14 +396,18 @@ class AgentHealthMonitor:
         stalled = 0
         for run in runs:
             try:
-                tmux_name = run.tmux_session_name
-                if tmux_name is None:
+                snapshot = (
+                    None
+                    if self._terminal_services is None
+                    else await self._terminal_services.snapshot(run, 8)
+                )
+                if snapshot is None:
                     logger.warning(
-                        "Skipping provider stall check for run %s: missing tmux name", run.id
+                        "Skipping provider stall check for run %s: missing terminal", run.id
                     )
                     continue
 
-                pane_output = await self._tmux.capture_pane(tmux_name, lines=8)
+                pane_output = snapshot.text
                 classification = self._stall_classifier.for_provider(run.provider).classify(
                     run.id,
                     pane_output=pane_output,
@@ -437,4 +448,4 @@ class AgentHealthMonitor:
     def _get_active_terminal_runs(self) -> list[AgentRun]:
         """Get active terminal agent runs with tmux sessions from DB."""
         runs = self._agent_run_manager.list_active_for_machine(require_machine_id())
-        return [run for run in runs if run.tmux_session_name and not is_recovery_protected(run)]
+        return [run for run in runs if run.terminal_id and not is_recovery_protected(run)]

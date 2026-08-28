@@ -128,6 +128,16 @@ class _FakeTmux:
         self.sent_keys.append((pane_id, text, literal))
         return True
 
+    async def dispatch_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
+        return await self.send_keys(pane_id, text, literal=literal)
+
+    async def snapshot_lines(self, pane_id: str, lines: int = 5) -> str | None:
+        capture = getattr(self, "capture_pane", None)
+        if capture is None:
+            return None
+        captured = await capture(pane_id, lines=lines)
+        return captured if isinstance(captured, str) else None
+
 
 @pytest.mark.asyncio
 async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() -> None:
@@ -147,7 +157,7 @@ async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() ->
 
     with (
         patch(
-            "gobby.sessions.compact_continuation.get_tmux_manager_for_context",
+            "gobby.sessions.compact_continuation.manager_for_terminal_context",
             return_value=tmux,
         ),
         patch(

@@ -109,7 +109,7 @@ class _Harness:
             runs,
             session,
             run_id=_rid("run-close-review-caller"),
-            tmux_session_name="gobby-close-review-caller",
+            terminal_id="gobby-close-review-caller",
             child_session_id=self.caller_session,
         )
         self.spawned: list[str] = []

@@ -6,9 +6,7 @@ Extracted from server.py as part of the Strangler Fig decomposition.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 import uuid
 from typing import Any
 
@@ -299,7 +297,7 @@ class HandlerMixin:
             websocket: Client WebSocket connection
             data: Parsed terminal input message
         """
-        run_id = data.get("run_id")
+        run_id = data.get("terminal_id") or data.get("run_id")
         input_data = data.get("data")
 
         if not run_id or input_data is None:
@@ -320,30 +318,20 @@ class HandlerMixin:
             )
             return
 
-        # Check if this is a tmux PTY bridge streaming_id first
-        if hasattr(self, "_tmux_bridge"):
-            bridge_fd = await self._tmux_bridge.get_master_fd(run_id)
-            if bridge_fd is not None:
-                try:
-                    encoded_data = input_data.encode("utf-8")
-                    await asyncio.to_thread(os.write, bridge_fd, encoded_data)
-                except OSError as e:
-                    logger.warning("Failed to write to tmux bridge %s: %s", run_id, e)
-                return
-
-        # Only an agent run is left to try, and the runs table keys on a uuid
-        # column -- an id that cannot be one raises instead of missing. The web
-        # terminal answers tmux's DA and DSR queries as terminal_input, so a
-        # reply that lands after its bridge detached arrives here carrying a
-        # tmux streaming id, which is exactly such an id.
+        # The runs table keys on a uuid column -- an id that cannot be one
+        # raises instead of missing. The web terminal answers tmux's DA and DSR
+        # queries as terminal_input, so a reply that lands after its attachment
+        # detached arrives here carrying a tmux streaming id, which is exactly
+        # such an id (#20803).
         try:
             uuid.UUID(run_id)
         except ValueError:
             logger.debug("Ignoring terminal_input for non-agent id %s", run_id)
             return
 
-        # Look up agent run from DB to get tmux_session_name
         from gobby.storage.agents import LocalAgentRunManager
+        from gobby.storage.terminals import TerminalManager
+        from gobby.terminals.write_coordinator import WriteRequest
 
         db = getattr(self, "_db", None) or getattr(
             getattr(self, "session_manager", None), "db", None
@@ -354,19 +342,30 @@ class HandlerMixin:
 
         run = LocalAgentRunManager(db).get(run_id)
         if not run:
-            # Be silent on missing agent to avoid spamming errors if frontend is out of sync
-            # or if agent just died.
             return
 
-        # Route input to tmux session (all agents use tmux mode)
-        if run.tmux_session_name:
-            try:
-                from gobby.agents.tmux import get_tmux_session_manager
-
-                mgr = get_tmux_session_manager()
-                await mgr.send_keys(run.tmux_session_name, input_data)
-            except (OSError, RuntimeError) as e:
-                logger.warning("Failed to send keys to tmux agent %s: %s", run_id, e)
+        coordinator = getattr(self, "write_coordinator", None) or getattr(
+            getattr(self, "terminal_services", None), "coordinator", None
+        )
+        manager = getattr(self, "terminal_manager", None)
+        if manager is None:
+            manager = TerminalManager(db)
+        if not run.terminal_id:
+            logger.warning("Agent %s has no terminal - cannot route input", run_id)
             return
-
-        logger.warning("Agent %s has no tmux_session_name - cannot route input", run_id)
+        terminal = manager.get(run.terminal_id)
+        if terminal is None or coordinator is None:
+            logger.warning("Agent %s has no writable terminal - cannot route input", run_id)
+            return
+        try:
+            await coordinator.write(
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"ws-input:{run_id}",
+                    origin="automatic",
+                    kind="text",
+                    payload=input_data,
+                )
+            )
+        except (OSError, RuntimeError) as e:
+            logger.warning("Failed to send keys to agent %s: %s", run_id, e)

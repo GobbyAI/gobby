@@ -31,9 +31,10 @@ from gobby.sessions.compact_markers import (
     WORKFLOW_REQUESTED_SKILLS_VARIABLE,
 )
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
-from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
+from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.storage.hub.protocol import SessionVariableMutation
 from gobby.storage.session_models import Session
+from gobby.terminals.lookup import manager_for_terminal_context
 from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 
 if TYPE_CHECKING:
@@ -370,7 +371,7 @@ def schedule_compact_self_continuation(
         )
         return False
 
-    tmux = get_tmux_manager_for_context(ctx)
+    tmux = manager_for_terminal_context(ctx)
     coro = _send_compact_self_continuation(
         tmux,
         str(target),
@@ -412,7 +413,7 @@ def schedule_codex_compact_self_continuation_readiness(
         )
         return False
 
-    tmux = get_tmux_manager_for_context(ctx)
+    tmux = manager_for_terminal_context(ctx)
     coro = _continue_after_codex_compaction_ready(
         db,
         tmux=tmux,
@@ -527,7 +528,7 @@ async def _send_compact_self_continuation(
     if delay_seconds > 0:
         await asyncio.sleep(delay_seconds)
     try:
-        ok = await tmux.send_keys(target, f"{prompt}\n", literal=True)
+        ok = await tmux.dispatch_keys(target, f"{prompt}\n", literal=True)
     except Exception:
         logger.warning(
             "Failed to send compact_self continuation prompt for session %s",
@@ -544,7 +545,7 @@ async def _send_compact_self_continuation(
     # a retry failure is logged, never propagated.
     await asyncio.sleep(COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS)
     try:
-        retry_ok = await tmux.send_keys(target, "Enter", literal=False)
+        retry_ok = await tmux.dispatch_keys(target, "Enter", literal=False)
     except Exception:
         retry_ok = False
         logger.warning(
@@ -602,7 +603,7 @@ async def _continue_after_codex_compaction_ready(
             return
 
         try:
-            output = await tmux.capture_pane(
+            output = await tmux.snapshot_lines(
                 target,
                 lines=CODEX_COMPACT_READY_CAPTURE_LINES,
             )

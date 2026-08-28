@@ -28,7 +28,7 @@ const PROVIDER_COMMANDS = new Set([
 const SHELL_COMMANDS = new Set(["zsh", "bash", "sh", "fish", "tmux", "login"]);
 
 export function sessionKey(tmuxSession: TmuxSession): string {
-  return `${tmuxSession.socket}:${tmuxSession.name}`;
+  return tmuxSession.terminal_id;
 }
 
 function paneDirectory(panePath: string | null): string | null {
@@ -91,11 +91,10 @@ export function joinTmuxSessions(
 
   return tmuxSessions.map((tmux) => {
     let gobby: GobbySession | null = null;
-
-    if (tmux.socket === "default" && tmux.gobby_session_id !== null) {
-      const candidate = byId.get(tmux.gobby_session_id);
-      gobby = candidate?.agent_run_id === null ? candidate : null;
-    } else if (tmux.socket === "gobby" && tmux.agent_run_id !== null) {
+    if (tmux.session_id !== null) {
+      gobby = byId.get(tmux.session_id) ?? null;
+    }
+    if (gobby === null && tmux.agent_run_id !== null) {
       gobby = byAgentRunId.get(tmux.agent_run_id) ?? null;
     }
 
@@ -104,9 +103,9 @@ export function joinTmuxSessions(
       gobby,
       label: displayLabel(tmux, gobby),
       provider: providerFor(tmux, gobby),
-      paneRef: `tmux ${tmux.name}`,
-      dead: tmux.pane_dead,
-      agentManaged: tmux.socket === "gobby" && gobby !== null,
+      paneRef: tmux.terminal_id,
+      dead: tmux.pane_dead || tmux.state === "exited" || tmux.state === "orphaned",
+      agentManaged: tmux.ownership === "gobby" && gobby !== null,
       external: gobby === null,
     };
   });

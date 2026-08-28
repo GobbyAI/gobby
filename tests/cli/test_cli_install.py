@@ -26,6 +26,7 @@ from gobby.cli.install import (
     _resolve_ide_settings_consent,
 )
 from gobby.cli.install_components import COMPONENTS, UNINSTALLABLE_COMPONENTS
+from gobby.cli.install_setup import MANAGED_NATIVE_BINARY_NAMES
 from gobby.cli.install_setup_impeccable import ImpeccableRemovalResult
 from gobby.cli.install_setup_rtk import RtkCleanupReport, RtkInstallStatus
 from gobby.config.bootstrap import BootstrapConfig
@@ -1228,3 +1229,7 @@ def test_remote_mode_preflight_deadlines(monkeypatch: pytest.MonkeyPatch) -> Non
     install_path = Path(__file__).parents[2] / "src" / "gobby" / "cli" / "install.py"
     assert len(helper_path.read_text().splitlines()) < 1_000
     assert len(install_path.read_text().splitlines()) < 1_000
+
+
+def test_managed_binary_install_inventory_includes_gterm_and_gclient() -> None:
+    assert MANAGED_NATIVE_BINARY_NAMES == ("gcode", "ghook", "gwiki", "gterm", "gclient")

@@ -73,9 +73,9 @@ class PlanKeystrokeSequence:
 
 
 class SupportsSendKeys(Protocol):
-    """Structural type for the tmux send-keys capability used at dispatch."""
+    """Structural type for the backend-neutral keystroke dispatch used at playback."""
 
-    async def send_keys(self, session_name: str, keys: str, *, literal: bool = ...) -> bool: ...
+    async def dispatch_keys(self, session_name: str, keys: str, *, literal: bool = ...) -> bool: ...
 
 
 # A pane-aware resolver maps ``(option_id, live_pane_text)`` onto a keystroke
@@ -233,7 +233,8 @@ async def dispatch_plan_keystrokes(
     for index, stroke in enumerate(sequence.strokes):
         if index and sequence.settle_seconds > 0:
             await sleep(sequence.settle_seconds)
-        if not await tmux.send_keys(pane, stroke.keys, literal=stroke.literal):
+        sent = await tmux.dispatch_keys(pane, stroke.keys, literal=stroke.literal)
+        if not sent:
             return False
     return True
 

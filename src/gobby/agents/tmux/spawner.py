@@ -14,7 +14,6 @@ import logging
 import re
 import shlex
 import time
-import uuid
 from pathlib import Path
 
 from gobby.agents.constants import get_terminal_env_vars
@@ -30,10 +29,44 @@ from gobby.agents.spawners.command_builder import build_cli_command
 from gobby.agents.spawners.prompt_manager import MAX_ENV_PROMPT_LENGTH, create_prompt_file
 from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
+from gobby.storage.terminals import AttachLocator
+from gobby.terminals.runtime import InvalidSpawnKeyError
 from gobby.utils.local_token import read_local_api_token
 
 logger = logging.getLogger(__name__)
 _SUPPORTED_AUTH_CLIS = frozenset({"claude", "codex", "grok", "qwen", "droid"})
+_SPAWN_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+
+
+def validate_spawn_key(spawn_key: str) -> str:
+    """Reject a spawn_key that tmux would have to rewrite."""
+    if not spawn_key or not _SPAWN_KEY_RE.fullmatch(spawn_key):
+        raise InvalidSpawnKeyError(spawn_key)
+    rewritten = re.sub(r"[^a-zA-Z0-9_-]", "-", spawn_key)
+    rewritten = re.sub(r"-{2,}", "-", rewritten).lstrip("-")
+    if rewritten != spawn_key:
+        raise InvalidSpawnKeyError(spawn_key)
+    return spawn_key
+
+
+def tmux_spawn_shell_and_env(
+    command: list[str],
+    env: dict[str, str] | None,
+    auth_cli: str | None,
+) -> tuple[str, dict[str, str]]:
+    """Build the pane shell command and extra env TmuxSessionManager.create_session needs."""
+    shell_cmd = shlex.join(command) if len(command) > 1 else command[0]
+    shell_cmd = f"unset VIRTUAL_ENV VIRTUAL_ENV_PROMPT; {shell_cmd}"
+    spawn_env = dict(env or {})
+    if cli := auth_cli or _infer_auth_cli(command):
+        for key, value in terminal_env_passthrough(cli).items():
+            spawn_env.setdefault(key, value)
+    apply_spawn_cache_policy(spawn_env)
+    clean_env = make_spawn_env(spawn_env)
+    extra_env = {k: v for k, v in clean_env.items() if k in spawn_env}
+    extra_env["VIRTUAL_ENV"] = ""
+    extra_env["VIRTUAL_ENV_PROMPT"] = ""
+    return shell_cmd, extra_env
 
 
 def _infer_auth_cli(command: list[str]) -> str | None:
@@ -64,9 +97,10 @@ class TmuxSpawner(TerminalSpawnerBase):
     def __init__(
         self,
         config: TmuxConfig,
+        session_manager: TmuxSessionManager | None = None,
     ) -> None:
         self._config = config
-        self._session_manager = TmuxSessionManager(self._config)
+        self._session_manager = session_manager or TmuxSessionManager(self._config)
 
     @property
     def terminal_type(self) -> str:
@@ -88,9 +122,12 @@ class TmuxSpawner(TerminalSpawnerBase):
         env: dict[str, str] | None = None,
         title: str | None = None,
         auth_cli: str | None = None,
+        spawn_key: str | None = None,
     ) -> SpawnResult:
         """Spawn a command inside a new tmux session."""
-        return await self._async_spawn(command, cwd, env, title, auth_cli)
+        if spawn_key is None:
+            raise InvalidSpawnKeyError("")
+        return await self._async_spawn(command, cwd, env, title, auth_cli, spawn_key=spawn_key)
 
     def spawn(
         self,
@@ -99,9 +136,14 @@ class TmuxSpawner(TerminalSpawnerBase):
         env: dict[str, str] | None = None,
         title: str | None = None,
         auth_cli: str | None = None,
+        spawn_key: str | None = None,
     ) -> SpawnResult:
         """Spawn a command inside a new tmux session for sync callers."""
-        return asyncio.run(self.spawn_async(command, cwd, env, title, auth_cli))
+        if spawn_key is None:
+            raise InvalidSpawnKeyError("")
+        return asyncio.run(
+            self.spawn_async(command, cwd, env, title, auth_cli, spawn_key=spawn_key)
+        )
 
     async def _async_spawn(
         self,
@@ -110,45 +152,13 @@ class TmuxSpawner(TerminalSpawnerBase):
         env: dict[str, str] | None = None,
         title: str | None = None,
         auth_cli: str | None = None,
+        *,
+        spawn_key: str,
     ) -> SpawnResult:
         """Async implementation of spawn."""
-        suffix = uuid.uuid4().hex[:8]
-        base = title or f"{self._config.session_prefix}-{int(time.time())}"
-        session_name = f"{base}-{suffix}"
-        # Sanitise (TmuxSessionManager also sanitises, but normalise here
-        # so the name we return is consistent).
-        session_name = re.sub(r"[^a-zA-Z0-9_-]", "-", session_name)
-        session_name = re.sub(r"-{2,}", "-", session_name)
-        session_name = session_name.lstrip("-")
-        if not session_name:
-            session_name = "gobby-session"
-
-        shell_cmd = shlex.join(command) if len(command) > 1 else command[0]
-
-        # Unset VIRTUAL_ENV in the tmux session to avoid uv warnings
-        # when the agent runs in a worktree/clone with a different CWD.
-        # tmux inherits the daemon's env; -e can only SET vars, not unset.
-        shell_cmd = f"unset VIRTUAL_ENV VIRTUAL_ENV_PROMPT; {shell_cmd}"
-
-        spawn_env = dict(env or {})
-        if cli := auth_cli or _infer_auth_cli(command):
-            for key, value in terminal_env_passthrough(cli).items():
-                spawn_env.setdefault(key, value)
-        apply_spawn_cache_policy(spawn_env)
-
-        # Merge env with a clean spawn env
-        clean_env = make_spawn_env(spawn_env)
-        # Only pass the *extra* env vars that differ from os.environ
-        extra_env = {k: v for k, v in clean_env.items() if k in spawn_env}
-
-        # tmux -e can only SET vars, not unset them.  Override to empty so
-        # the session doesn't inherit the daemon's VIRTUAL_ENV (causes uv
-        # "does not match project environment" errors in worktrees/clones).
-        # The shell-level unset above provides full removal; this prevents
-        # inheritance if the unset doesn't take effect (e.g. login shells
-        # that re-source profiles).
-        extra_env["VIRTUAL_ENV"] = ""
-        extra_env["VIRTUAL_ENV_PROMPT"] = ""
+        del title  # Display metadata is persisted on the terminal row, not the tmux name.
+        session_name = validate_spawn_key(spawn_key)
+        shell_cmd, extra_env = tmux_spawn_shell_and_env(command, env, auth_cli)
 
         try:
             info = await self._session_manager.create_session(
@@ -192,7 +202,11 @@ class TmuxSpawner(TerminalSpawnerBase):
             message=(f"Spawned tmux session '{verified_info.name}' (attach: {attach_cmd})"),
             pid=verified_info.pane_pid,
             terminal_type=self.terminal_type,
-            tmux_session_name=verified_info.name,
+            locator=AttachLocator(
+                backend="tmux",
+                frame_host_epoch="",
+                pane_id=verified_info.pane_id,
+            ),
             tmux_socket_name=self._config.socket_name,
             tmux_socket_path=self._config.socket_path,
         )
@@ -260,6 +274,8 @@ class TmuxSpawner(TerminalSpawnerBase):
         max_agent_depth: int = 5,
         prompt: str | None = None,
         sandbox_config: SandboxConfig | None = None,
+        *,
+        spawn_key: str,
     ) -> SpawnResult:
         """Spawn a CLI agent in a new tmux session with Gobby env vars.
 
@@ -336,4 +352,5 @@ class TmuxSpawner(TerminalSpawnerBase):
             env=env,
             title=title,
             auth_cli=cli,
+            spawn_key=spawn_key,
         )

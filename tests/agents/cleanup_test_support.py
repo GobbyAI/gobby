@@ -100,6 +100,7 @@ def _handler(
     session_coordinator: Any | None = None,
     task_recovery: Any | None = None,
     clone_storage: Any | None = None,
+    terminal_services: Any | None = None,
 ) -> AgentCleanupHandler:
     async def default_run_db(
         func: Callable[..., Any],
@@ -123,6 +124,7 @@ def _handler(
         loop_tracker=clearable,
         master_fds={},
         run_db=run_db or default_run_db,
+        terminal_services=terminal_services,
     )
 
 

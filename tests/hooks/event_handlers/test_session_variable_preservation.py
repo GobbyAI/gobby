@@ -11,6 +11,7 @@ import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -514,7 +515,7 @@ def _materialize_first_activity(
     db: HubDatabase,
     project_id: str,
     tmp_path: Path,
-    data: dict,
+    data: dict[str, Any],
 ) -> str:
     """Create the deferred row and run the first-activity activation body."""
     session_id = _register_session(db, project_id, tmp_path)
@@ -636,7 +637,7 @@ def test_variables_seeded_in_pre_created_session_flow(
         logger=logging.getLogger("test"),
     )
     event = _make_hook_event({"agent_name_override": "default"}, external_id="external-pre")
-    seen_during_activation: dict = {}
+    seen_during_activation: dict[str, Any] = {}
 
     def capture_seeded_variables(
         activation_session_id: str,

@@ -173,6 +173,18 @@ def _register_clear_self(
     tmux_manager = MagicMock()
     tmux_manager.send_keys = AsyncMock(return_value=send_keys_returns)
     tmux_manager.capture_pane = AsyncMock(return_value="")
+
+    # The tool reaches tmux through the backend-neutral seam, which
+    # TmuxSessionManager delegates to send_keys / capture_pane; tests keep
+    # asserting on those.
+    async def dispatch_keys(*args: Any, **kwargs: Any) -> Any:
+        return await tmux_manager.send_keys(*args, **kwargs)
+
+    async def snapshot_lines(*args: Any, **kwargs: Any) -> Any:
+        return await tmux_manager.capture_pane(*args, **kwargs)
+
+    tmux_manager.dispatch_keys = dispatch_keys
+    tmux_manager.snapshot_lines = snapshot_lines
     with patch(
         "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
         return_value=agent_run_manager,
@@ -199,7 +211,7 @@ def _call_clear_self(
     with (
         session_context_for_test(session_id),
         patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+            "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
             return_value=tmux_manager,
         ),
         patch(
@@ -526,7 +538,7 @@ class TestClearSelfWebChatPath:
             with (
                 session_context_for_test(session_id),
                 patch(
-                    "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                    "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
                     return_value=tmux,
                 ),
                 patch(

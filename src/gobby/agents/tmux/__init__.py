@@ -20,7 +20,6 @@ import threading
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.agents.tmux.output_reader import TmuxOutputReader
 from gobby.agents.tmux.pane_monitor import TmuxPaneMonitor
-from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.agents.tmux.wsl_compat import convert_windows_path_to_wsl, needs_wsl
@@ -31,7 +30,6 @@ __all__ = [
     "TmuxNotFoundError",
     "TmuxOutputReader",
     "TmuxPaneMonitor",
-    "TmuxPTYBridge",
     "TmuxSessionError",
     "TmuxSessionManager",
     "TmuxSpawner",
@@ -75,6 +73,25 @@ def get_configured_tmux_config() -> TmuxConfig:
         if _configured_tmux_config is None:
             raise RuntimeError("tmux helpers have not been configured from daemon config")
         return _configured_tmux_config
+
+
+def get_tmux_session_manager_for(
+    *,
+    socket_name: str | None = None,
+    socket_path: str | None = None,
+) -> TmuxSessionManager:
+    """Return the daemon session manager, or a socket-overridden instance."""
+    if socket_name is None and socket_path is None:
+        return get_tmux_session_manager()
+    config = get_configured_tmux_config().model_copy(
+        update={
+            "socket_name": get_configured_tmux_config().socket_name
+            if socket_name is None
+            else socket_name,
+            "socket_path": socket_path,
+        }
+    )
+    return TmuxSessionManager(config)
 
 
 def tmux_command_prefix(config: TmuxConfig) -> list[str]:

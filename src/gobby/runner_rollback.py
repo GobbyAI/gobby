@@ -4,41 +4,44 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_PENDING_ASYNC_ROLLBACK_TASKS: set[asyncio.Task[None]] = set()
 
-
-def _settled_async_close(task: asyncio.Task[None]) -> None:
-    _PENDING_ASYNC_ROLLBACK_TASKS.discard(task)
+async def _await_named(name: str, callback: Callable[[], Any]) -> None:
     try:
-        task.result()
+        result = callback()
+        if asyncio.iscoroutine(result):
+            await result
     except BaseException:
-        logger.warning("Async construction rollback did not settle cleanly", exc_info=True)
+        logger.warning("Runner resource rollback failed for %s", name, exc_info=True)
 
 
-def _settle_async_close(awaitable: Coroutine[Any, Any, Any]) -> None:
-    """Settle an async close from a synchronous constructor rollback."""
-
-    async def settle_with_timeout() -> None:
-        await asyncio.wait_for(awaitable, timeout=5.0)
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        asyncio.run(settle_with_timeout())
-        return
-
-    task = loop.create_task(settle_with_timeout(), name="gobby-init-rollback")
-    _PENDING_ASYNC_ROLLBACK_TASKS.add(task)
-    task.add_done_callback(_settled_async_close)
+async def rollback_runner_resources_async(runner: Any) -> None:
+    """Ordered async rollback: host producers, drain, clients, then the inventory."""
+    host = getattr(runner, "terminal_host_manager", None)
+    if host is not None:
+        await _await_named("host producers", getattr(host, "stop_producers", lambda: None))
+        await _await_named("host rollback", getattr(host, "rollback_host", lambda: None))
+        await _await_named("host clients", getattr(host, "close_clients", lambda: None))
+    await _rollback_inventory_async(runner)
 
 
 def rollback_runner_resources(runner: Any) -> None:
     """Release every known daemon-owned side effect installed during construction."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(rollback_runner_resources_async(runner))
+        return
+    raise RuntimeError(
+        "rollback_runner_resources requires no running loop; await rollback_runner_resources_async"
+    )
+
+
+async def _rollback_inventory_async(runner: Any) -> None:
     from gobby.agents.terminal_delivery import reset_terminal_delivery_offload
     from gobby.agents.tmux import reset_tmux_globals
     from gobby.app_context import clear_app_context
@@ -46,19 +49,11 @@ def rollback_runner_resources(runner: Any) -> None:
     from gobby.telemetry import shutdown_telemetry
     from gobby.utils.tool_summarizer import reset_summarizer_config
 
-    def settle(name: str, callback: Callable[[], Any]) -> None:
-        try:
-            result = callback()
-            if asyncio.iscoroutine(result):
-                _settle_async_close(result)
-        except BaseException:
-            logger.warning("Runner resource rollback failed for %s", name, exc_info=True)
-
-    settle("app context", clear_app_context)
-    settle("terminal delivery offload", reset_terminal_delivery_offload)
-    settle("tool summarizer", reset_summarizer_config)
-    settle("agent event broadcasting", reset_agent_event_broadcasting)
-    settle("tmux globals", reset_tmux_globals)
+    await _await_named("app context", clear_app_context)
+    await _await_named("terminal delivery offload", reset_terminal_delivery_offload)
+    await _await_named("tool summarizer", reset_summarizer_config)
+    await _await_named("agent event broadcasting", reset_agent_event_broadcasting)
+    await _await_named("tmux globals", reset_tmux_globals)
 
     http_services = getattr(getattr(runner, "http_server", None), "services", None)
     resources = (
@@ -74,27 +69,27 @@ def rollback_runner_resources(runner: Any) -> None:
     for name, resource in resources:
         close = getattr(resource, "close", None) or getattr(resource, "stop", None)
         if callable(close):
-            settle(name, close)
+            await _await_named(name, close)
 
     database_watchdog = getattr(runner, "database_watchdog", None)
     if database_watchdog is not None:
-        settle("database watchdog", database_watchdog.stop)
+        await _await_named("database watchdog", database_watchdog.stop)
     worktree_delete_executor = getattr(runner, "worktree_delete_executor", None)
     if worktree_delete_executor is not None:
-        settle("worktree delete executor revocation", worktree_delete_executor.shutdown)
-        settle("worktree delete executor join", worktree_delete_executor.join)
+        await _await_named("worktree delete executor revocation", worktree_delete_executor.shutdown)
+        await _await_named("worktree delete executor join", worktree_delete_executor.join)
     coverage_executor = getattr(runner, "coverage_executor", None)
     if coverage_executor is not None:
-        settle("coverage executor revocation", coverage_executor.shutdown)
-        settle("coverage executor join", coverage_executor.join)
+        await _await_named("coverage executor revocation", coverage_executor.shutdown)
+        await _await_named("coverage executor join", coverage_executor.join)
     db_executor = getattr(runner, "db_executor", None)
     if db_executor is not None:
-        settle("database executor revocation", db_executor.shutdown)
-        settle("database executor join", db_executor.join)
+        await _await_named("database executor revocation", db_executor.shutdown)
+        await _await_named("database executor join", db_executor.join)
     database = getattr(runner, "database", None)
     if database is not None:
-        settle("database", database.close)
-    settle("telemetry", shutdown_telemetry)
+        await _await_named("database", database.close)
+    await _await_named("telemetry", shutdown_telemetry)
 
 
-__all__ = ["rollback_runner_resources"]
+__all__ = ["rollback_runner_resources", "rollback_runner_resources_async"]

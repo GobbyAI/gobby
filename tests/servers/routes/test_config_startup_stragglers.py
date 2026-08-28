@@ -22,7 +22,7 @@ def _starting_server() -> MagicMock:
 
 def test_attention_roster_tmux_payload_startup_returns_retryable_503() -> None:
     server = _starting_server()
-    run = SimpleNamespace(tmux_session_name="agent", pid=123)
+    run = SimpleNamespace(terminal_id="agent", pid=123)
 
     with pytest.raises(HTTPException) as raised:
         _run_tmux_payload(server, run)
@@ -37,9 +37,9 @@ async def test_attention_pane_startup_returns_retryable_503() -> None:
     server = _starting_server()
     server.services.session_manager = None
     server.services.agent_runner.get_run = AsyncMock(
-        return_value=SimpleNamespace(tmux_session_name="agent")
+        return_value=SimpleNamespace(terminal_id="agent")
     )
-    server.services.run_db = AsyncMock(return_value=SimpleNamespace(tmux_session_name="agent"))
+    server.services.run_db = AsyncMock(return_value=SimpleNamespace(terminal_id="agent"))
     state = cast(AttentionState, SimpleNamespace(run_id="1", session_id=None))
 
     with pytest.raises(HTTPException) as raised:

@@ -56,7 +56,7 @@ class TestResolveTmuxTarget:
         agent_run_manager.get_by_session.return_value = None
 
         with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context"
+            "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context"
         ) as mock_get_tmux_manager:
             target, tmux_manager, error = _resolve_tmux_target(
                 "session-1",
@@ -83,7 +83,7 @@ class TestResolveTmuxTarget:
         agent_run_manager.get_by_session.return_value = None
 
         with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context"
+            "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context"
         ) as mock_get_tmux_manager:
             target, tmux_manager, error = _resolve_tmux_target(
                 "session-1",
@@ -168,6 +168,7 @@ class TestRegisterTerminalTools:
 
         tmux_manager = MagicMock()
         tmux_manager.send_keys = AsyncMock(return_value=True)
+        tmux_manager.dispatch_keys = tmux_manager.send_keys
 
         with (
             patch(
@@ -192,7 +193,7 @@ class TestRegisterTerminalTools:
 
         with (
             patch(
-                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
                 return_value=tmux_manager,
             ) as mock_get_tmux_manager,
             patch(
@@ -278,7 +279,7 @@ class TestRegisterTerminalTools:
                 return_value="caller-session",
             ),
             patch(
-                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
                 return_value=tmux_manager,
             ) as mock_get_tmux_manager,
         ):
@@ -322,6 +323,7 @@ class TestRegisterTerminalTools:
         agent_run_manager.get_by_session.return_value = None
         tmux_manager = MagicMock()
         tmux_manager.send_keys = AsyncMock(return_value=True)
+        tmux_manager.dispatch_keys = tmux_manager.send_keys
 
         with patch(
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
@@ -334,7 +336,7 @@ class TestRegisterTerminalTools:
 
         with (
             patch(
-                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
                 return_value=tmux_manager,
             ),
             patch(
@@ -359,6 +361,7 @@ class TestRegisterTerminalTools:
         agent_run_manager.get_by_session.return_value = None
         tmux_manager = MagicMock()
         tmux_manager.capture_pane = AsyncMock(return_value="live output")
+        tmux_manager.snapshot_lines = tmux_manager.capture_pane
 
         with patch(
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
@@ -370,7 +373,7 @@ class TestRegisterTerminalTools:
         assert capture_output is not None
 
         with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+            "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
             return_value=tmux_manager,
         ):
             result = asyncio.run(capture_output(session_id="session-1", lines=20))

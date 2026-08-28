@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
 from fastapi import APIRouter, HTTPException
@@ -21,6 +22,12 @@ from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.attention import AttentionRosterSnapshot, AttentionState
 from gobby.storage.session_models import Session
+from gobby.terminals.runtime import (
+    Delivered,
+    IndeterminateWrite,
+    TerminalWriteError,
+    is_named_key,
+)
 from gobby.utils.hashing import is_sha256
 from gobby.utils.machine_id import require_machine_id
 
@@ -167,13 +174,16 @@ def create_attention_router(
         if injector is not None:
             await injector(pane, answer)
             return
-        await inject_attention_answer_to_tmux_target(
-            pane.target,
-            option=answer.option,
-            text=answer.text,
-            key=answer.key,
-            tmux_cmd=pane.tmux_cmd,
-        )
+        if pane.tmux_cmd:
+            await inject_attention_answer_to_tmux_target(
+                pane.target,
+                option=answer.option,
+                text=answer.text,
+                key=answer.key,
+                tmux_cmd=pane.tmux_cmd,
+            )
+            return
+        await _inject_via_runtime(server, pane, answer)
 
     @router.get("/roster")
     async def roster() -> dict[str, object]:
@@ -456,6 +466,7 @@ async def _load_roster_entries(
                 "task": task_cache.get(run.task_id) if run.task_id is not None else None,
                 "provider": run.provider,
                 "model": run.model,
+                "terminal": _run_terminal_block(server, run),
                 "tmux": _run_tmux_payload(server, run),
                 "last_activity_at": _serialize_timestamp(run.updated_at),
                 **_metadata_payload(snapshot, entry_id),
@@ -482,6 +493,7 @@ async def _load_roster_entries(
                 "task": None,
                 "provider": session.source,
                 "model": session.model,
+                "terminal": _session_terminal_block(server, session),
                 "tmux": _session_tmux_payload(terminal_context),
                 "last_activity_at": _serialize_timestamp(session.updated_at),
                 **_metadata_payload(snapshot, entry_id),
@@ -567,30 +579,81 @@ def _serialize_attention(state: AttentionState | None) -> dict[str, object] | No
     }
 
 
-def _run_tmux_payload(server: HTTPServer, run: Any) -> dict[str, object] | None:
-    session_name = run.tmux_session_name
-    if not isinstance(session_name, str) or not session_name:
+def _run_terminal_block(server: HTTPServer, run: Any) -> dict[str, object] | None:
+    terminal_id = getattr(run, "terminal_id", None)
+    if not isinstance(terminal_id, str) or not terminal_id:
         return None
+    manager = getattr(server.services, "terminal_manager", None)
+    if manager is None:
+        return None
+    row = manager.get(terminal_id)
+    if row is None:
+        return None
+    try:
+        attach = manager.attach_locator(
+            terminal_id,
+            live_host_epoch=row.host_epoch or "",
+            socket_dir=Path.home() / ".gobby",
+        )
+    except Exception:
+        attach = None
+    return {
+        "terminal_id": terminal_id,
+        "backend": row.backend,
+        "attach": None if attach is None else asdict(attach),
+    }
+
+
+def _session_terminal_block(server: HTTPServer, session: Any) -> dict[str, object] | None:
+    manager = getattr(server.services, "terminal_manager", None)
+    if manager is None:
+        return None
+    row = manager.get_live_for_session(session.id)
+    if row is None:
+        return None
+    try:
+        attach = manager.attach_locator(
+            row.id,
+            live_host_epoch=row.host_epoch or "",
+            socket_dir=Path.home() / ".gobby",
+        )
+    except Exception:
+        attach = None
+    return {
+        "terminal_id": row.id,
+        "backend": row.backend,
+        "attach": None if attach is None else asdict(attach),
+    }
+
+
+def _run_tmux_payload(server: HTTPServer, run: Any) -> dict[str, object] | None:
+    terminal_id = getattr(run, "terminal_id", None)
+    if not isinstance(terminal_id, str) or not terminal_id:
+        return None
+    manager = getattr(server.services, "terminal_manager", None)
+    row = None if manager is None else manager.get(terminal_id)
+    session_name = None if row is None else row.session_name
     tmux_config = require_config_snapshot(server).active.tmux
     socket_path = getattr(tmux_config, "socket_path", None)
     return {
         "socket_path": socket_path if isinstance(socket_path, str) and socket_path else None,
         "session_name": session_name,
         "pane_pid": run.pid,
+        "terminal_id": terminal_id,
     }
 
 
 def _session_tmux_payload(terminal_context: Mapping[str, object]) -> dict[str, object]:
-    from gobby.sessions.tmux_context import (
-        get_terminal_parent_pid,
-        get_tmux_session_name,
-        get_tmux_socket_path,
+    from gobby.terminals.lookup import (
+        attach_name_from_context,
+        parent_pid_from_context,
+        socket_path_from_context,
     )
 
     return {
-        "socket_path": get_tmux_socket_path(terminal_context),
-        "session_name": get_tmux_session_name(terminal_context),
-        "parent_pid": get_terminal_parent_pid(terminal_context),
+        "socket_path": socket_path_from_context(terminal_context),
+        "session_name": attach_name_from_context(terminal_context),
+        "parent_pid": parent_pid_from_context(terminal_context),
     }
 
 
@@ -610,49 +673,77 @@ def _serialize_timestamp(value: object) -> str | None:
     return str(value)
 
 
+async def _inject_via_runtime(
+    server: HTTPServer,
+    pane: AttentionPane,
+    answer: AttentionAnswer,
+) -> None:
+    manager = getattr(server.services, "terminal_manager", None)
+    registry = getattr(server.services, "terminal_runtime_registry", None)
+    if manager is None or registry is None:
+        raise AttentionInjectionError(stage="none")
+    row = manager.get(pane.target)
+    if row is None:
+        raise AttentionInjectionError(stage="none")
+    runtime = registry.resolve(row.backend)
+    try:
+        if answer.key is not None:
+            if not is_named_key(answer.key):
+                raise AttentionInjectionError(stage="none")
+            result = await runtime.write_key(row, answer.key)
+        elif answer.option is not None:
+            result = await runtime.write_text(row, str(answer.option), True)
+        else:
+            result = await runtime.write_text(row, answer.text or "", True)
+    except TerminalWriteError as exc:
+        raise AttentionInjectionError(stage=exc.stage) from exc
+    if isinstance(result, IndeterminateWrite):
+        raise AttentionInjectionError(stage="partial")
+    if not isinstance(result, Delivered):
+        raise AttentionInjectionError(stage="none")
+
+
 async def _resolve_attention_pane(
     server: HTTPServer,
     state: AttentionState,
 ) -> AttentionPane | None:
     services = server.services
-    session_manager = services.session_manager
-    if state.session_id is not None and session_manager is not None:
-        session = await services.run_db(session_manager.get, state.session_id)
-        if session is not None and isinstance(session.terminal_context, Mapping):
-            terminal_context = session.terminal_context
-            pane_id = terminal_context.get("tmux_pane")
-            if isinstance(pane_id, str) and pane_id:
-                from gobby.sessions.tmux_context import get_tmux_manager_for_context
+    manager = getattr(services, "terminal_manager", None)
+    registry = getattr(services, "terminal_runtime_registry", None)
+    if state.session_id is not None and manager is not None and registry is not None:
+        row = manager.get_live_for_session(state.session_id)
+        if row is not None:
+            runtime = registry.resolve(row.backend)
 
-                tmux = get_tmux_manager_for_context(terminal_context)
+            async def capture_session_pane() -> str | None:
+                snapshot = await runtime.snapshot(row, 15)
+                text = snapshot.text
+                return text if isinstance(text, str) else None
 
-                async def capture_session_pane() -> str | None:
-                    return await tmux.capture_pane(pane_id, lines=15)
-
-                return AttentionPane(
-                    target=pane_id,
-                    tmux_cmd=tuple(tmux.base_args()),
-                    capture=capture_session_pane,
-                )
+            return AttentionPane(
+                target=row.id,
+                tmux_cmd=(),
+                capture=capture_session_pane,
+            )
 
     agent_runner = services.agent_runner
     if state.run_id is None or agent_runner is None:
         return None
     run = await services.run_db(agent_runner.get_run, state.run_id)
-    if run is None or not run.tmux_session_name:
+    if run is None or not run.terminal_id or manager is None or registry is None:
         return None
-
-    from gobby.agents.tmux import get_tmux_session_manager
-
-    tmux_config = require_config_snapshot(server).active.tmux
-    tmux = get_tmux_session_manager(tmux_config)
-    session_name = run.tmux_session_name
+    row = manager.get(run.terminal_id)
+    if row is None:
+        return None
+    runtime = registry.resolve(row.backend)
 
     async def capture_run_pane() -> str | None:
-        return await tmux.capture_pane(session_name, lines=15)
+        snapshot = await runtime.snapshot(row, 15)
+        text = snapshot.text
+        return text if isinstance(text, str) else None
 
     return AttentionPane(
-        target=f"={session_name}:",
-        tmux_cmd=tuple(tmux.base_args()),
+        target=row.id,
+        tmux_cmd=(),
         capture=capture_run_pane,
     )

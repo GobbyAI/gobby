@@ -655,7 +655,7 @@ def test_schedule_clear_self_continuation_requires_tmux_target() -> None:
     session.terminal_context = {"tmux_pane": "%12"}
     with (
         patch(
-            "gobby.sessions.compact_continuation.get_tmux_manager_for_context",
+            "gobby.sessions.compact_continuation.manager_for_terminal_context",
             return_value=object(),
         ),
         patch(

@@ -451,7 +451,7 @@ class TestRecoverTaskFromFailedAgent:
             created_at="2024-01-01T00:00:00+00:00",
             updated_at="2024-01-01T00:00:00+00:00",
             task_id="task-1",
-            tmux_session_name="agent-run-1",
+            terminal_id="agent-run-1",
         )
         mock_run_mgr = MagicMock()
         mock_run_mgr.get.return_value = db_run
@@ -503,7 +503,7 @@ class TestLoopPromptEscalation:
             status="running",
             created_at="2024-01-01",
             updated_at="2024-01-01",
-            tmux_session_name="gobby-test",
+            terminal_id="gobby-test",
             pid=12345,
         )
 
@@ -674,7 +674,7 @@ class TestApprovalPromptAutoEnter:
     @staticmethod
     def _run(
         run_id: str = "run-approval",
-        tmux_session_name: str | None = "gobby-approval",
+        terminal_id: str | None = "gobby-approval",
     ) -> AgentRun:
         return AgentRun(
             id=run_id,
@@ -684,7 +684,7 @@ class TestApprovalPromptAutoEnter:
             status="running",
             created_at="2024-01-01",
             updated_at="2024-01-01",
-            tmux_session_name=tmux_session_name,
+            terminal_id=terminal_id,
             pid=12345,
         )
 
@@ -806,7 +806,7 @@ class TestApprovalPromptAutoEnter:
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux)
         mock_run_mgr.list_active_for_machine.return_value = [
-            self._run(run_id="run-no-tmux", tmux_session_name=None)
+            self._run(run_id="run-no-tmux", terminal_id=None)
         ]
 
         handled = await monitor.check_approval_prompts()
@@ -822,7 +822,7 @@ class TestPeriodicAgentTerminalEnter:
     @staticmethod
     def _run(
         run_id: str = "run-periodic",
-        tmux_session_name: str | None = "gobby-periodic",
+        terminal_id: str | None = "gobby-periodic",
         provider: str = "codex",
         child_session_id: str | None = None,
     ) -> AgentRun:
@@ -835,7 +835,7 @@ class TestPeriodicAgentTerminalEnter:
             status="running",
             created_at="2024-01-01",
             updated_at="2024-01-01",
-            tmux_session_name=tmux_session_name,
+            terminal_id=terminal_id,
             pid=12345,
         )
 
@@ -872,9 +872,9 @@ class TestPeriodicAgentTerminalEnter:
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux)
         mock_run_mgr.list_active_for_machine.return_value = [
-            self._run(run_id="run-codex", tmux_session_name="gobby-codex", provider="codex"),
-            self._run(run_id="run-claude", tmux_session_name="gobby-claude", provider="claude"),
-            self._run(run_id="run-qwen", tmux_session_name="gobby-qwen", provider="qwen"),
+            self._run(run_id="run-codex", terminal_id="gobby-codex", provider="codex"),
+            self._run(run_id="run-claude", terminal_id="gobby-claude", provider="claude"),
+            self._run(run_id="run-qwen", terminal_id="gobby-qwen", provider="qwen"),
         ]
         mock_tmux.send_keys.return_value = True
 
@@ -921,9 +921,9 @@ class TestPeriodicAgentTerminalEnter:
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux)
         mock_run_mgr.list_active_for_machine.return_value = [
-            self._run(run_id="run-trust", tmux_session_name="gobby-trust"),
-            self._run(run_id="run-loop", tmux_session_name="gobby-loop"),
-            self._run(run_id="run-normal", tmux_session_name="gobby-normal"),
+            self._run(run_id="run-trust", terminal_id="gobby-trust"),
+            self._run(run_id="run-loop", terminal_id="gobby-loop"),
+            self._run(run_id="run-normal", terminal_id="gobby-normal"),
         ]
         mock_tmux.capture_pane.side_effect = [
             "Do you trust the files in this folder?\n❯ 1. Trust Folder\n",
@@ -1000,7 +1000,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux, interval=30)
         mock_run_mgr.list_active_for_machine.return_value = [
-            self._run(run_id="run-claude", tmux_session_name="gobby-claude", provider="claude"),
+            self._run(run_id="run-claude", terminal_id="gobby-claude", provider="claude"),
         ]
         mock_tmux.capture_pane.return_value = (
             "  ❯ Continue working on your task. Your active Gobby step workflow is not complete.\n"
@@ -1090,7 +1090,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux)
         mock_run_mgr.list_active_for_machine.return_value = [
-            self._run(run_id="run-no-tmux", tmux_session_name=None)
+            self._run(run_id="run-no-tmux", terminal_id=None)
         ]
 
         handled = await monitor.check_periodic_enters()

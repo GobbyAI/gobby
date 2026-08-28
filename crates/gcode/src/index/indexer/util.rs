@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 
 use super::types::UnsupportedFileType;
 
-/// Default exclude patterns (matching Python CodeIndexConfig defaults).
+/// Directory-name exclude patterns for discovery and explicit-file routing.
+/// These are gcode's own defaults, not a Python-config mirror. `vendor` keeps
+/// vendored third-party trees (for example `crates/gterminal/vendor`) out of
+/// the index.
 pub(super) const DEFAULT_EXCLUDES: &[&str] = &[
     "node_modules",
     "__pycache__",
@@ -19,6 +22,7 @@ pub(super) const DEFAULT_EXCLUDES: &[&str] = &[
     ".pytest_cache",
     ".ruff_cache",
     "target",
+    "vendor",
     ".next",
     ".nuxt",
     "coverage",

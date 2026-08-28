@@ -12,7 +12,6 @@ import psycopg
 
 from gobby.agents.capture import _capture_marker, _capture_slot
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
-from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.sessions.session_wiki_file import redact_session_markdown
 
 logger = logging.getLogger(__name__)
@@ -136,17 +135,9 @@ async def _check_tmux_session_alive(
     socket_path: str | None = None,
 ) -> tuple[bool, str | None]:
     """Check if a tmux session is still alive after spawn."""
-    from gobby.agents.tmux import get_configured_tmux_config
+    from gobby.agents.tmux import get_tmux_session_manager_for
 
-    config = get_configured_tmux_config()
-    if socket_name is not None or socket_path is not None:
-        config = config.model_copy(
-            update={
-                "socket_name": config.socket_name if socket_name is None else socket_name,
-                "socket_path": socket_path,
-            }
-        )
-    manager = TmuxSessionManager(config)
+    manager = get_tmux_session_manager_for(socket_name=socket_name, socket_path=socket_path)
     if not manager.is_available():
         return True, None  # Can't check without tmux binary, assume alive
     try:
@@ -176,16 +167,21 @@ async def _check_tmux_session_alive(
 async def _deferred_tmux_health_check(
     runner: _RunnerWithRunStorage,
     run_id: str,
-    tmux_session_name: str,
-    socket_name: str | None,
-    socket_path: str | None,
-    delay: float,
+    tmux_session_name: str | None = None,
+    socket_name: str | None = None,
+    socket_path: str | None = None,
+    delay: float = 0,
     completion_registry: Any | None = None,
+    *,
+    terminal_id: str | None = None,
 ) -> None:
     try:
         await asyncio.sleep(delay)
+        session_name = tmux_session_name or terminal_id
+        if session_name is None:
+            return
         alive, pane_output = await _check_tmux_session_alive(
-            tmux_session_name,
+            session_name,
             socket_name=socket_name,
             socket_path=socket_path,
         )
@@ -203,7 +199,7 @@ async def _deferred_tmux_health_check(
                 error = f"{error}\nPane output:\n{safe_output}"
                 if capture_id:
                     error = f"{error}\ncapture_id={capture_id}"
-            logger.error("Agent %s tmux session %r: %s", run_id, tmux_session_name, error)
+            logger.error("Agent %s tmux session %r: %s", run_id, session_name, error)
             try:
                 failed = runner.run_storage.fail(run_id, error=error)
                 if failed is not None:
@@ -242,6 +238,8 @@ def _start_tmux_health_check(
     socket_name: str | None,
     socket_path: str | None,
     completion_registry: Any | None = None,
+    *,
+    terminal_id: str | None = None,
 ) -> None:
     health_task = asyncio.create_task(
         _deferred_tmux_health_check(
@@ -252,6 +250,7 @@ def _start_tmux_health_check(
             socket_path,
             0,
             completion_registry,
+            terminal_id=terminal_id,
         ),
         name=f"tmux-health-{run_id}",
     )
@@ -262,11 +261,13 @@ def _start_tmux_health_check(
 def schedule_tmux_health_check(
     runner: _RunnerWithRunStorage,
     run_id: str,
-    tmux_session_name: str,
-    socket_name: str | None,
-    socket_path: str | None,
+    tmux_session_name: str | None = None,
+    socket_name: str | None = None,
+    socket_path: str | None = None,
     completion_registry: Any | None = None,
     delay: float = TMUX_HEALTH_CHECK_DELAY,
+    *,
+    terminal_id: str | None = None,
 ) -> asyncio.TimerHandle:
     """Schedule a post-spawn tmux liveness check without leaving a sleeping task."""
     loop = asyncio.get_running_loop()
@@ -278,10 +279,11 @@ def schedule_tmux_health_check(
         _start_tmux_health_check(
             runner,
             run_id,
-            tmux_session_name,
+            tmux_session_name or terminal_id or "",
             socket_name,
             socket_path,
             completion_registry,
+            terminal_id=terminal_id,
         )
 
     handle = loop.call_later(delay, start_health_check)

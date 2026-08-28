@@ -17,6 +17,7 @@ from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from tests.agents.terminal_fixtures import make_live_terminal
 
 from .detection_test_support import BundledDetectionRegistry
 
@@ -73,7 +74,11 @@ def _create_task_run(
         task_id=task.id,
     )
     agent_run_manager.start(run.id)
-    agent_run_manager.update_runtime(run.id, tmux_session_name=f"gobby-test-{run.id}")
+    agent_run_manager.update_runtime(run.id)
+    _live_run = agent_run_manager.get(run.id)
+    assert _live_run is not None
+    make_live_terminal(_live_run, db=agent_run_manager.db, session_name=f"gobby-test-{run.id}")
+
     stored = agent_run_manager.get(run.id)
     assert stored is not None
     return task.id, stored

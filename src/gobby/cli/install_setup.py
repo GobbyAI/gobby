@@ -34,8 +34,10 @@ from gobby.install.distribution import (
     verify_homebrew_managed_bins,
 )
 
+from . import install_setup_gclient as _gclient_impl
 from . import install_setup_gcode as _gcode_impl
 from . import install_setup_ghook as _ghook_impl
+from . import install_setup_gterm as _gterm_impl
 from . import install_setup_gwiki as _gwiki_impl
 from .install_setup_gdaemon import GdaemonInstallError, ensure_gdaemon
 from .install_setup_impeccable import ImpeccableInstallResult
@@ -496,60 +498,47 @@ def _run_npm_install(label: str, package: str, project_path: Path) -> None:
         click.echo(f"Warning: {label} install timed out")
 
 
+MANAGED_NATIVE_BINARY_NAMES: tuple[str, ...] = ("gcode", "ghook", "gwiki", "gterm", "gclient")
+_MANAGED_NATIVE_BINARY_DESCRIPTIONS: dict[str, str] = {
+    "gcode": "code index CLI",
+    "ghook": "hook manager",
+    "gwiki": "wiki CLI",
+    "gterm": "terminal host",
+    "gclient": "workspace client",
+}
+
+
+def _echo_managed_binary_install(name: str, result: dict[str, Any], description: str) -> None:
+    if result.get("installed"):
+        verb = "Upgraded" if result.get("upgraded") else "Installed"
+        click.echo(
+            f"{verb} {name} {result.get('version', '')} "
+            f"via {result.get('method', 'unknown')} ({description})"
+        )
+        return
+    if result.get("skipped"):
+        reason = result.get("reason", "")
+        suffix = f" ({reason})" if reason else ""
+        click.echo(f"{name} already installed and up to date{suffix}")
+        return
+    reason = result.get("reason", "unknown error")
+    click.echo(f"Warning: Failed to install {name}: {reason}")
+
+
 def _run_managed_native_binary_installs() -> None:
-    try:
-        gcode_result = _install_gcode()
-        if gcode_result.get("installed"):
-            verb = "Upgraded" if gcode_result.get("upgraded") else "Installed"
-            click.echo(
-                f"{verb} gcode {gcode_result.get('version', '')} "
-                f"via {gcode_result.get('method', 'unknown')} (code index CLI)"
-            )
-        elif gcode_result.get("skipped"):
-            reason = gcode_result.get("reason", "")
-            suffix = f" ({reason})" if reason else ""
-            click.echo(f"gcode already installed and up to date{suffix}")
-        else:
-            reason = gcode_result.get("reason", "unknown error")
-            click.echo(f"Warning: Failed to install gcode: {reason}")
-    except Exception as e:
-        click.echo(f"Warning: Failed to install gcode: {e}")
-
-    try:
-        ghook_result = _install_ghook()
-        if ghook_result.get("installed"):
-            verb = "Upgraded" if ghook_result.get("upgraded") else "Installed"
-            click.echo(
-                f"{verb} ghook {ghook_result.get('version', '')} "
-                f"via {ghook_result.get('method', 'unknown')} (hook manager)"
-            )
-        elif ghook_result.get("skipped"):
-            reason = ghook_result.get("reason", "")
-            suffix = f" ({reason})" if reason else ""
-            click.echo(f"ghook already installed and up to date{suffix}")
-        else:
-            reason = ghook_result.get("reason", "unknown error")
-            click.echo(f"Warning: Failed to install ghook: {reason}")
-    except Exception as e:
-        click.echo(f"Warning: Failed to install ghook: {e}")
-
-    try:
-        gwiki_result = _install_gwiki()
-        if gwiki_result.get("installed"):
-            verb = "Upgraded" if gwiki_result.get("upgraded") else "Installed"
-            click.echo(
-                f"{verb} gwiki {gwiki_result.get('version', '')} "
-                f"via {gwiki_result.get('method', 'unknown')} (wiki CLI)"
-            )
-        elif gwiki_result.get("skipped"):
-            reason = gwiki_result.get("reason", "")
-            suffix = f" ({reason})" if reason else ""
-            click.echo(f"gwiki already installed and up to date{suffix}")
-        else:
-            reason = gwiki_result.get("reason", "unknown error")
-            click.echo(f"Warning: Failed to install gwiki: {reason}")
-    except Exception as e:
-        click.echo(f"Warning: Failed to install gwiki: {e}")
+    installers = {
+        "gcode": _install_gcode,
+        "ghook": _install_ghook,
+        "gwiki": _install_gwiki,
+        "gterm": _install_gterm,
+        "gclient": _install_gclient,
+    }
+    for name in MANAGED_NATIVE_BINARY_NAMES:
+        description = _MANAGED_NATIVE_BINARY_DESCRIPTIONS[name]
+        try:
+            _echo_managed_binary_install(name, installers[name](), description)
+        except Exception as exc:
+            click.echo(f"Warning: Failed to install {name}: {exc}")
 
 
 # Platform -> target triple mapping used across public binary installers.
@@ -799,3 +788,98 @@ def _probe_gwiki_version(gwiki_path: Path) -> str | None:
 
 def _install_gwiki(force: bool = False) -> dict[str, Any]:
     return _gwiki_impl.install_gwiki(_module(), force)
+
+
+# Stage-0 gterm/gclient ships macOS/Linux only. Windows remains compile-only
+# until the ConPTY milestone; the installer must not invent a Windows fallback.
+_STAGE0_TARGETS: dict[tuple[str, str], str] = {
+    ("darwin", "arm64"): "aarch64-apple-darwin",
+    ("darwin", "x86_64"): "x86_64-apple-darwin",
+    ("linux", "x86_64"): "x86_64-unknown-linux-gnu",
+    ("linux", "aarch64"): "aarch64-unknown-linux-gnu",
+}
+
+_GTERM_RELEASE_TAG_PREFIX = "gterm-v"
+_GTERM_VERSION_STAMP = ".gterm-version"
+_GTERM_BIN_NAME = "gterm"
+_GTERM_TARGETS = _STAGE0_TARGETS
+_GTERM_CRATES_API = "https://crates.io/api/v1/crates/gobby-terminal"
+
+
+def _get_latest_gterm_version() -> str | None:
+    return _gterm_impl.get_latest_gterm_version(_module())
+
+
+def _get_installed_gterm_version(bin_dir: Path) -> str | None:
+    return _gterm_impl.get_installed_gterm_version(_module(), bin_dir)
+
+
+def _write_gterm_version_stamp(bin_dir: Path, version: str) -> None:
+    _gterm_impl.write_gterm_version_stamp(_module(), bin_dir, version)
+
+
+def _install_gterm_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
+    return _gterm_impl.install_gterm_from_github(_module(), bin_dir, target, version)
+
+
+def _install_gterm_from_submodule(bin_dir: Path) -> bool:
+    return _gterm_impl.install_gterm_from_submodule(_module(), bin_dir)
+
+
+def _install_gterm_from_cargo_git(bin_dir: Path) -> bool:
+    return _gterm_impl.install_gterm_from_cargo_git(_module(), bin_dir)
+
+
+def _install_gterm_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
+    return _gterm_impl.install_gterm_from_cargo_binstall(_module(), bin_dir, version)
+
+
+def _install_gterm_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
+    return _gterm_impl.install_gterm_from_cargo_install(_module(), bin_dir, version)
+
+
+def _install_gterm(force: bool = False) -> dict[str, Any]:
+    return _gterm_impl.install_gterm(_module(), force)
+
+
+_GCLIENT_RELEASE_TAG_PREFIX = "gclient-v"
+_GCLIENT_VERSION_STAMP = ".gclient-version"
+_GCLIENT_BIN_NAME = "gclient"
+_GCLIENT_TARGETS = _STAGE0_TARGETS
+_GCLIENT_CRATES_API = "https://crates.io/api/v1/crates/gobby-client"
+
+
+def _get_latest_gclient_version() -> str | None:
+    return _gclient_impl.get_latest_gclient_version(_module())
+
+
+def _get_installed_gclient_version(bin_dir: Path) -> str | None:
+    return _gclient_impl.get_installed_gclient_version(_module(), bin_dir)
+
+
+def _write_gclient_version_stamp(bin_dir: Path, version: str) -> None:
+    _gclient_impl.write_gclient_version_stamp(_module(), bin_dir, version)
+
+
+def _install_gclient_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
+    return _gclient_impl.install_gclient_from_github(_module(), bin_dir, target, version)
+
+
+def _install_gclient_from_submodule(bin_dir: Path) -> bool:
+    return _gclient_impl.install_gclient_from_submodule(_module(), bin_dir)
+
+
+def _install_gclient_from_cargo_git(bin_dir: Path) -> bool:
+    return _gclient_impl.install_gclient_from_cargo_git(_module(), bin_dir)
+
+
+def _install_gclient_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
+    return _gclient_impl.install_gclient_from_cargo_binstall(_module(), bin_dir, version)
+
+
+def _install_gclient_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
+    return _gclient_impl.install_gclient_from_cargo_install(_module(), bin_dir, version)
+
+
+def _install_gclient(force: bool = False) -> dict[str, Any]:
+    return _gclient_impl.install_gclient(_module(), force)

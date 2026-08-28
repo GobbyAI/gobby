@@ -81,7 +81,7 @@ class BroadcastMixin:
             "autonomous_event",
             "pipeline_event",
             "terminal_output",
-            "tmux_session_event",
+            "terminal_event",
             "skill_event",
             "mcp_event",
             "workflow_event",
@@ -415,13 +415,15 @@ class BroadcastMixin:
 
     async def broadcast_terminal_output(
         self,
-        run_id: str,
+        terminal_id: str,
         data: str,
+        attachment_id: str | None = None,
     ) -> None:
-        """Broadcast terminal output."""
+        """Broadcast terminal output keyed by durable terminal id."""
         message = {
             "type": "terminal_output",
-            "run_id": run_id,
+            "terminal_id": terminal_id,
+            "attachment_id": attachment_id,
             "data": data,
             "timestamp": datetime.now(UTC).isoformat(),
         }
@@ -430,19 +432,16 @@ class BroadcastMixin:
     async def broadcast_tmux_session_event(
         self,
         event: str,
-        session_name: str,
-        socket: str,
+        terminal_id: str = "",
+        session_name: str | None = None,
+        socket: str | None = None,
     ) -> None:
-        """Broadcast tmux session lifecycle event (created, killed).
-
-        Bridges agent spawn/stop events to the tmux_session_event type
-        that the Terminals page subscribes to for auto-refresh.
-        """
+        """Broadcast terminal lifecycle events to subscribed clients."""
+        del session_name, socket
         message = {
-            "type": "tmux_session_event",
+            "type": "terminal_event",
             "event": event,
-            "session_name": session_name,
-            "socket": socket,
+            "terminal_id": terminal_id,
             "timestamp": datetime.now(UTC).isoformat(),
         }
         await self.broadcast(message)

@@ -105,11 +105,20 @@ vi.mock("../../../hooks/useTmuxSessions", () => ({
   useTmuxSessions: () => ({
     sessions: [
       {
+        terminal_id: "default:paused-pane",
+        backend: "tmux",
+        ownership: "external",
+        state: "live",
+        title: "Paused Terminal",
+        session_id: "paused-1",
+        dims: null,
         name: "paused-pane",
         socket: "default",
         pane_pid: 4202,
         pane_dead: false,
         pane_title: "Paused Terminal",
+        pane_command: null,
+        pane_path: null,
         window_name: "agent",
         session_title: "Paused Terminal",
         gobby_session_id: "paused-1",

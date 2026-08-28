@@ -10,6 +10,8 @@ import pytest
 
 from gobby.install.bin_freshness_inspector import _probe_binary_version
 from gobby.install.distribution import (
+    HOMEBREW_HELPER_FORMULAE,
+    HOMEBREW_HELPERS,
     HomebrewDistributionError,
     _probe_helper_version,
     is_homebrew_distribution,
@@ -50,11 +52,21 @@ def test_homebrew_helper_detection_fails_with_brew_guidance_when_missing(
             verify_homebrew_managed_bins()
 
     message = str(exc_info.value)
-    gcode_pin = MANAGED_BIN_VERSION_PINS["gcode"]
     assert "Homebrew-managed Gobby requires helper binaries satisfying pinned floors." in message
-    assert f"gcode >= {gcode_pin} required; gcode was not found on PATH." in message
-    assert "brew install GobbyAI/tap/gobby-code" in message
-    assert "brew upgrade GobbyAI/tap/gobby-code" in message
+    assert HOMEBREW_HELPERS == ("gcode", "ghook", "gwiki", "gterm", "gclient")
+    assert HOMEBREW_HELPER_FORMULAE == {
+        "gcode": "gobby-code",
+        "ghook": "gobby-hooks",
+        "gwiki": "gobby-wiki",
+        "gterm": "gobby-terminal",
+        "gclient": "gobby-client",
+    }
+    for name in HOMEBREW_HELPERS:
+        pin = MANAGED_BIN_VERSION_PINS[name]
+        formula = HOMEBREW_HELPER_FORMULAE[name]
+        assert f"{name} >= {pin} required; {name} was not found on PATH." in message
+        assert f"brew install GobbyAI/tap/{formula}" in message
+        assert f"brew upgrade GobbyAI/tap/{formula}" in message
 
 
 def test_homebrew_helper_detection_fails_with_brew_guidance_when_stale(tmp_path: Path) -> None:
@@ -90,7 +102,7 @@ def test_homebrew_helper_detection_accepts_valid_local_helpers_before_stale_path
 ) -> None:
     bin_dir = tmp_path / ".gobby" / "bin"
     bin_dir.mkdir(parents=True)
-    for binary in ("gcode", "ghook", "gwiki"):
+    for binary in HOMEBREW_HELPERS:
         helper = bin_dir / binary
         helper.write_text("")
         helper.chmod(0o755)
@@ -112,9 +124,7 @@ def test_homebrew_helper_detection_accepts_valid_local_helpers_before_stale_path
 
     mock_which.assert_not_called()
     assert [status.path for status in statuses] == [
-        str(bin_dir / "gcode"),
-        str(bin_dir / "ghook"),
-        str(bin_dir / "gwiki"),
+        str(bin_dir / name) for name in HOMEBREW_HELPERS
     ]
     assert all(status.ok for status in statuses)
 
@@ -140,5 +150,8 @@ def test_homebrew_helper_detection_accepts_pinned_versions(tmp_path: Path) -> No
     ):
         statuses = verify_homebrew_managed_bins()
 
-    assert [status.name for status in statuses] == ["gcode", "ghook", "gwiki"]
+    assert [status.name for status in statuses] == list(HOMEBREW_HELPERS)
     assert all(status.ok for status in statuses)
+    assert [status.formula for status in statuses] == [
+        HOMEBREW_HELPER_FORMULAE[name] for name in HOMEBREW_HELPERS
+    ]

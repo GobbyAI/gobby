@@ -324,6 +324,38 @@ async def _check_tmux_health(tracker: StartupTracker | None) -> None:
             tracker.error("tmux", str(e))
 
 
+async def _start_terminal_host(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
+    from gobby.runner_init.services import mark_service_degraded
+
+    host = getattr(runner, "terminal_host_manager", None)
+    if host is None:
+        return
+    try:
+        await host.start()
+        if not host.native_available:
+            mark_service_degraded(runner, "gterm_host")
+            if tracker:
+                tracker.error("gterm_host", host.last_error or "unavailable")
+            return
+        epoch = host.host_epoch
+        registry = getattr(runner, "terminal_runtime_registry", None)
+        if epoch and registry is not None:
+            for backend in ("native", "tmux"):
+                try:
+                    runtime = registry.resolve(backend)
+                except Exception:
+                    continue
+                if hasattr(runtime, "_frame_host_epoch"):
+                    runtime._frame_host_epoch = str(epoch)
+        if tracker:
+            tracker.complete("gterm host")
+    except Exception as e:
+        mark_service_degraded(runner, "gterm_host")
+        logger.warning("gterm host start failed on startup: %s", e)
+        if tracker:
+            tracker.error("gterm_host", str(e))
+
+
 async def _start_agent_lifecycle_monitor(
     runner: GobbyRunner,
     tracker: StartupTracker | None,
@@ -829,6 +861,7 @@ async def init_subsystems(
     await _initialize_vector_store(runner, rebuild_vector_store, tracker)
     await _start_core_services(runner, tracker)
     await _check_tmux_health(tracker)
+    await _start_terminal_host(runner, tracker)
     await _start_agent_lifecycle_monitor(
         runner,
         tracker,

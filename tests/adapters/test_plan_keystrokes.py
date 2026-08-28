@@ -61,6 +61,9 @@ class _FakeTmux:
             return True
         return self._results.pop(0)
 
+    async def dispatch_keys(self, session_name: str, keys: str, *, literal: bool = True) -> bool:
+        return await self.send_keys(session_name, keys, literal=literal)
+
 
 class TestPlanKeystrokeSequence:
     def test_rejects_empty_strokes(self) -> None:

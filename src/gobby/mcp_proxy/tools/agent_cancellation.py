@@ -245,7 +245,7 @@ async def stop_agent_run(
             await cleanup_terminal_artifacts(
                 run_id=run.id,
                 db=kill_db,
-                tmux_session_name=run.tmux_session_name,
+                terminal_id=run.terminal_id,
                 agent_session_id=run.child_session_id,
                 debug=False,
                 session_manager=session_manager,

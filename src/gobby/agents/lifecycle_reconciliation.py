@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 from gobby.agents.agent_cleanup import AgentCleanupHandler
-from gobby.agents.capture import TerminationErrorCode, terminate_managed_tmux_async
+from gobby.agents.capture import TerminationErrorCode, terminate_managed_runtime_async
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.storage.agents import (
     AgentRun,
@@ -53,9 +53,12 @@ class LifecycleReconciliation:
         *,
         agent_run_manager: LocalAgentRunManager,
         db: HubDatabase,
-        tmux: TmuxSessionManager,
+        tmux: TmuxSessionManager | None = None,
         cleanup_handler: AgentCleanupHandler,
         run_db: Callable[..., Awaitable[Any]],
+        terminal_manager: Any | None = None,
+        runtime_registry: Any | None = None,
+        spawn_in_doubt_seconds: float = 150.0,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
@@ -63,6 +66,9 @@ class LifecycleReconciliation:
         self._cleanup_handler = cleanup_handler
         self._run_db = run_db
         self._dispatch_refresh_cursor = 0
+        self._terminal_manager = terminal_manager
+        self._runtime_registry = runtime_registry
+        self._spawn_in_doubt_seconds = spawn_in_doubt_seconds
 
     async def reconcile_pending_terminations(self, *, machine_id: str) -> int:
         """Re-drive interrupted capture, kill, and terminal sequences."""
@@ -72,9 +78,9 @@ class LifecycleReconciliation:
         )
         reconciled = 0
         for run in runs:
-            if not run.tmux_session_name:
+            if not run.terminal_id:
                 logger.warning(
-                    "Cannot reconcile termination for run %s without a tmux session name",
+                    "Cannot reconcile termination for run %s without a terminal",
                     run.id,
                 )
                 continue
@@ -121,10 +127,20 @@ class LifecycleReconciliation:
                     await self._run_db(self._agent_run_manager.get, candidate.id),
                 )
 
-            result = await terminate_managed_tmux_async(
+            from gobby.terminals.lookup import active_terminal_for_run
+
+            terminal = (
+                None
+                if self._terminal_manager is None
+                else active_terminal_for_run(self._terminal_manager, run)
+            )
+            if terminal is None or self._runtime_registry is None:
+                continue
+            result = await terminate_managed_runtime_async(
                 storage=self._agent_run_manager,
                 run=run,
-                tmux=self._tmux,
+                terminal=terminal,
+                runtime=self._runtime_registry.resolve(terminal.backend),
                 action=action,
                 reason=reason,
                 terminalize=terminalize,
@@ -152,6 +168,19 @@ class LifecycleReconciliation:
                     result.error_code,
                 )
         return reconciled
+
+    async def reap_stale_pending(self) -> int:
+        """Fail pending terminals older than the 2.3 in-doubt deadline."""
+        manager = self._terminal_manager
+        if manager is None:
+            return 0
+        stale = manager.list_stale_pending(self._spawn_in_doubt_seconds)
+        reaped = 0
+        for row in stale:
+            failed = manager.fail_pending(row.id)
+            if failed is not None:
+                reaped += 1
+        return reaped
 
     async def refresh_active_run_dispatch_mutexes(self, *, machine_id: str) -> int:
         """Extend or restore dispatch mutex leases for local active runs."""

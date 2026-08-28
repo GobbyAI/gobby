@@ -249,7 +249,7 @@ def test_bundled_template_matchers_are_valid_grok_regexes() -> None:
     """Grok treats ``matcher`` as a regular expression; ``*`` alone never matches."""
     import re
 
-    from gobby.cli.installers.grok import get_install_dir
+    from gobby.cli.utils import get_install_dir
 
     template = get_install_dir() / "grok" / "hooks-template.json"
     hooks = json.loads(template.read_text())["hooks"]

@@ -9,6 +9,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import require_machine_id
+from tests.agents.terminal_fixtures import make_live_terminal
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
@@ -50,7 +51,11 @@ def _create_run(
         prompt="capture test",
     )
     manager.start(run.id)
-    manager.update_runtime(run.id, tmux_session_name=f"gobby-{suffix}")
+    manager.update_runtime(run.id)
+    _live_run = manager.get(run.id)
+    assert _live_run is not None
+    make_live_terminal(_live_run, db=manager.db, session_name=f"gobby-{suffix}")
+
     return manager, run.id, child.id
 
 
@@ -171,7 +176,7 @@ def test_termination_candidates_include_intent_and_terminal_child_only(
         suffix="no-tmux",
         child_status="expired",
     )
-    no_tmux_manager.clear_tmux_session_name(no_tmux_id, "gobby-no-tmux")
+    no_tmux_manager.clear_live_terminal(no_tmux_id, "gobby-no-tmux")
 
     candidate_ids = {
         run.id for run in manager.list_termination_candidates(machine_id=require_machine_id())
@@ -212,4 +217,4 @@ def test_terminal_transition_clears_intent_and_preserves_capture_result(
     assert failed.pending_terminal_action is None
     assert failed.pending_terminal_reason is None
     assert failed.termination_requested_at is None
-    assert failed.tmux_session_name is None
+    assert failed.terminal_id is None

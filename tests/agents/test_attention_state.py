@@ -35,7 +35,7 @@ def _agent_run() -> AgentRun:
         status="running",
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
-        tmux_session_name="agent-run-1",
+        terminal_id="agent-run-1",
     )
 
 
@@ -406,7 +406,7 @@ async def test_idle_check_reuses_attention_pane_and_stops_on_unknown(
     assert attention is not None
     assert attention.state == "blocked"
     assert attention.reason == "approval"
-    tmux.capture_pane.assert_awaited_once_with(run.tmux_session_name, lines=15)
+    tmux.capture_pane.assert_awaited_once_with(run.terminal_id, lines=15)
     sync_attention.assert_awaited_once()
     bound_idle_detector.reset_idle.assert_called_once_with(run.id)
     bound_idle_detector.has_unsubmitted_input.assert_not_called()

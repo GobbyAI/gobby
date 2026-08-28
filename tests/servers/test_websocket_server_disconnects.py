@@ -117,7 +117,7 @@ class TestHandleConnectionDisconnects:
     async def test_connection_closed_during_handler_does_not_log_message_error(
         self, server: WebSocketServer, caplog: pytest.LogCaptureFixture
     ) -> None:
-        ws = IteratingWebSocket(messages=['{"type":"tmux_list_sessions"}'])
+        ws = IteratingWebSocket(messages=['{"type":"terminal_list"}'])
         server._rebroadcast_pending_interactions = AsyncMock()
         server._handle_message = AsyncMock(
             side_effect=ConnectionClosedOK(
@@ -140,7 +140,7 @@ class TestHandleConnectionDisconnects:
     async def test_non_connection_handler_error_still_logs_and_sends_error(
         self, server: WebSocketServer, caplog: pytest.LogCaptureFixture
     ) -> None:
-        ws = IteratingWebSocket(messages=['{"type":"tmux_list_sessions"}'])
+        ws = IteratingWebSocket(messages=['{"type":"terminal_list"}'])
         server._rebroadcast_pending_interactions = AsyncMock()
         server._handle_message = AsyncMock(side_effect=RuntimeError("boom"))
         server._send_error = AsyncMock()

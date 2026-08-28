@@ -18,7 +18,8 @@ from gobby.agents.detection.provider import DetectionRegistry
 from gobby.agents.kill import pid_matches_agent_identity
 from gobby.agents.prompt_detector import PromptDetector, PromptKind
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
-from gobby.agents.tmux.session_manager import TMUX_COMMAND_TIMEOUT_SECONDS, TmuxSessionManager
+from gobby.agents.tmux.session_activation import TMUX_COMMAND_TIMEOUT_SECONDS
+from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource, parse_session_source
 from gobby.storage.attention import session_attention_entry_id
@@ -80,14 +81,10 @@ class TmuxPaneMonitor:
         self._detection_registry = detection_registry
         self._prompt_detector = prompt_detector or PromptDetector(detection_registry)
         self._stall_classifier = stall_classifier or StallClassifier(detection_registry)
-        if tmux_manager_factory is None:
-
-            def tmux_manager_factory(context: Mapping[str, Any]) -> TmuxSessionManager:
-                from gobby.sessions.tmux_context import get_tmux_manager_for_context
-
-                return get_tmux_manager_for_context(context)
+        from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 
         self._tmux_manager_factory = tmux_manager_factory
+        self._runtime = TmuxTerminalRuntime(TmuxSessionManager(config=self._config))
         self._task: asyncio.Task[None] | None = None
         # session_id -> timestamp when it was marked ended
         self._recently_ended: dict[str, float] = {}
@@ -178,7 +175,7 @@ class TmuxPaneMonitor:
             return
         live_lookup = {s.name: s for s in live_sessions}
 
-        # 3. Get all active agent runs with a tmux_session_name from DB
+        # 3. Get all active agent runs with a live tmux terminal row from DB
         if not self._session_manager:
             return
         try:
@@ -195,7 +192,17 @@ class TmuxPaneMonitor:
                 logger.warning("TmuxPaneMonitor: failed to list active agent runs", exc_info=True)
             return
         await self._check_attention_panes(active_runs=all_runs)
-        tmux_agents = [r for r in all_runs if r.tmux_session_name]
+        from gobby.storage.terminals import TerminalManager
+
+        terminal_manager = TerminalManager(self._session_manager.db)
+        tmux_agents: list[tuple[Any, str]] = []
+        for run in all_runs:
+            if not run.terminal_id:
+                continue
+            row = terminal_manager.get(run.terminal_id)
+            if row is None or row.backend != "tmux" or not row.session_name:
+                continue
+            tmux_agents.append((run, row.session_name))
 
         if not tmux_agents:
             return
@@ -203,10 +210,7 @@ class TmuxPaneMonitor:
         # 4. Fire session_end for agents whose tmux session is gone,
         #    whose pane process has exited (remain-on-exit keeps session alive),
         #    or whose registered PID is no longer running.
-        for agent in tmux_agents:
-            session_name = agent.tmux_session_name
-            if session_name is None:
-                continue
+        for agent, session_name in tmux_agents:
             live_info = live_lookup.get(session_name)
 
             # Check if the agent's PID is still alive (catches remain-on-exit cases)
@@ -235,7 +239,7 @@ class TmuxPaneMonitor:
             logger.info(
                 "Detected dead tmux pane for agent session=%s (tmux=%s)",
                 child_sid,
-                agent.tmux_session_name,
+                session_name,
             )
 
             # Look up the session to get external_id and source
@@ -311,8 +315,17 @@ class TmuxPaneMonitor:
                 await self._clear_attention_if_current(session_attention_entry_id(session.id))
                 continue
             try:
-                tmux = self._tmux_manager_factory(terminal_context)
-                pane_output = await tmux.capture_pane(pane_id, lines=15)
+                from gobby.storage.terminals import TerminalManager
+
+                if self._session_manager is None:
+                    await self._clear_attention_if_current(session_attention_entry_id(session.id))
+                    continue
+                row = TerminalManager(self._session_manager.db).get_live_for_session(session.id)
+                if row is None:
+                    await self._clear_attention_if_current(session_attention_entry_id(session.id))
+                    continue
+                snapshot = await self._runtime.snapshot(row, 15)
+                pane_output = snapshot.text
             except TimeoutError as exc:
                 logger.debug(
                     "TmuxPaneMonitor: interactive pane capture timed out",

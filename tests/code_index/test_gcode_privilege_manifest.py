@@ -99,6 +99,13 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
     assert "tasks" in manifest["explicitly_denied_relations"]
     assert "sessions" in manifest["explicitly_denied_relations"]
     assert "schema_migrations" in manifest["explicitly_denied_relations"]
+
+
+def test_terminals_is_denied_to_scoped_gcode() -> None:
+    manifest = _load_manifest()
+    assert "terminals" in manifest["explicitly_denied_relations"]
+    relations = {entry["relation"] for entry in manifest["relations"]}
+    assert "terminals" not in relations
     inventory = {entry["path"]: entry for entry in manifest["source_inventory"]}
     assert inventory["crates/gcode/src/config/runtime_contract.rs"]["classification"] == (
         "project-read"

@@ -17,6 +17,7 @@ from gobby.storage.session_lifecycle import rebind_agent_run
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.machine_id import require_machine_id
+from tests.agents.terminal_fixtures import make_live_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -1798,7 +1799,11 @@ class TestLocalAgentRunManager:
             prompt="Stale terminal run",
         )
         agent_manager.start(run.id)
-        agent_manager.update_runtime(run.id, tmux_session_name="gobby-stale-live")
+        agent_manager.update_runtime(run.id)
+        _live_run = agent_manager.get(run.id)
+        assert _live_run is not None
+        make_live_terminal(_live_run, db=agent_manager.db, session_name="gobby-stale-live")
+
         agent_manager.db.execute(
             "UPDATE agent_runs SET started_at = NOW() - INTERVAL '35 minutes' WHERE id = %s",
             (run.id,),
@@ -2068,7 +2073,11 @@ class TestLocalAgentRunManager:
             provider="claude",
             prompt="Tmux initialized pending",
         )
-        agent_manager.update_runtime(pending.id, tmux_session_name="gobby-agent-1")
+        agent_manager.update_runtime(pending.id)
+        _live_run = agent_manager.get(pending.id)
+        assert _live_run is not None
+        make_live_terminal(_live_run, db=agent_manager.db, session_name="gobby-agent-1")
+
         agent_manager.db.execute(
             "UPDATE agent_runs SET created_at = NOW() - INTERVAL '23 hours' WHERE id = %s",
             (pending.id,),

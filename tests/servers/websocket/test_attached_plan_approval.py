@@ -27,7 +27,20 @@ from gobby.servers.websocket.handlers.plan_approval import (
 )
 from gobby.servers.websocket.session_control import SessionControlMixin
 
-_TMUX_PATCH = "gobby.servers.websocket.handlers.plan_approval.get_tmux_manager_for_context"
+_TMUX_PATCH = "gobby.servers.websocket.handlers.plan_approval.manager_for_terminal_context"
+
+
+def _wire_tmux(tmux: MagicMock) -> MagicMock:
+    async def dispatch_keys(*args: Any, **kwargs: Any) -> Any:
+        return await tmux.send_keys(*args, **kwargs)
+
+    async def snapshot_lines(*args: Any, **kwargs: Any) -> Any:
+        return await tmux.capture_pane(*args, **kwargs)
+
+    tmux.dispatch_keys = dispatch_keys
+    tmux.snapshot_lines = snapshot_lines
+    return tmux
+
 
 # Trimmed verbatim Claude Code v2.1.169 captures (full plan menu vs. bare confirm).
 _CLAUDE_FULL_MENU_PANE = (
@@ -112,7 +125,7 @@ class TestAttachedPlanApprovalDispatch:
         tmux_manager = MagicMock()
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager) as get_tmux:
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)) as get_tmux:
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -150,7 +163,7 @@ class TestAttachedPlanApprovalDispatch:
         tmux_manager = MagicMock()
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -266,7 +279,7 @@ class TestAttachedPlanApprovalDispatch:
         tmux_manager = MagicMock()
         tmux_manager.send_keys = AsyncMock(return_value=False)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -295,7 +308,7 @@ class TestAttachedPlanApprovalClaude:
         tmux_manager.capture_pane = AsyncMock(return_value=_CLAUDE_FULL_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -327,7 +340,7 @@ class TestAttachedPlanApprovalClaude:
         tmux_manager.capture_pane = AsyncMock(return_value=_CLAUDE_CONFIRM_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -361,7 +374,7 @@ class TestAttachedPlanApprovalClaude:
         tmux_manager.capture_pane = AsyncMock(return_value="just a shell prompt, no menu\n")
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -395,7 +408,7 @@ class TestAttachedPlanApprovalCodex:
         tmux_manager.capture_pane = AsyncMock(return_value=_CODEX_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -422,7 +435,7 @@ class TestAttachedPlanApprovalCodex:
         tmux_manager.capture_pane = AsyncMock(return_value=_CODEX_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -454,7 +467,7 @@ class TestAttachedPlanApprovalCodex:
         tmux_manager.capture_pane = AsyncMock(return_value="agent is still generating\n")
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -486,7 +499,7 @@ class TestAttachedPlanApprovalDroid:
         tmux_manager.capture_pane = AsyncMock(return_value=_DROID_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -513,7 +526,7 @@ class TestAttachedPlanApprovalDroid:
         tmux_manager.capture_pane = AsyncMock(return_value=_DROID_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -574,7 +587,7 @@ class TestAttachedPlanApprovalGrok:
         tmux_manager.capture_pane = AsyncMock(return_value=_GROK_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -601,7 +614,7 @@ class TestAttachedPlanApprovalGrok:
         tmux_manager.capture_pane = AsyncMock(return_value=_GROK_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -628,7 +641,7 @@ class TestAttachedPlanApprovalGrok:
         tmux_manager.capture_pane = AsyncMock(return_value=_GROK_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -667,7 +680,7 @@ class TestAttachedPlanApprovalQwen:
         tmux_manager.capture_pane = AsyncMock(return_value=_QWEN_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -694,7 +707,7 @@ class TestAttachedPlanApprovalQwen:
         tmux_manager.capture_pane = AsyncMock(return_value=_QWEN_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -721,7 +734,7 @@ class TestAttachedPlanApprovalQwen:
         tmux_manager.capture_pane = AsyncMock(return_value=_QWEN_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=tmux_manager):
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
             await handle_attached_plan_approval(
                 server,
                 ws,

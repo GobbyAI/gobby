@@ -430,3 +430,16 @@ def test_stdio_proxy_has_no_workflows_variable_literal() -> None:
         encoding="utf-8"
     )
     assert "/api/workflows" not in source
+
+
+def test_stdio_constructs_no_terminal_service_set() -> None:
+    from gobby.mcp_proxy.stdio_server import create_stdio_mcp_server
+
+    source = (
+        Path(__file__).resolve().parents[2] / "src/gobby/mcp_proxy/stdio_server.py"
+    ).read_text(encoding="utf-8")
+    assert "WriteCoordinator(" not in source
+    assert "TerminalManager(" not in source
+    assert "TerminalRuntimeRegistry(" not in source
+    assert "session_manager = None" in source
+    del create_stdio_mcp_server

@@ -66,6 +66,7 @@ class TestSpawnAgentImplErrorBranches:
             return_value=None,
         ):
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -86,6 +87,7 @@ class TestSpawnAgentImplErrorBranches:
             return_value={"project_path": "/path"},
         ):
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -106,6 +108,7 @@ class TestSpawnAgentImplErrorBranches:
             return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -125,6 +128,7 @@ class TestSpawnAgentImplErrorBranches:
             return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -149,6 +153,7 @@ class TestSpawnAgentImplErrorBranches:
             return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -180,6 +185,7 @@ class TestSpawnAgentImplErrorBranches:
             return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -207,6 +213,7 @@ class TestSpawnAgentImplErrorBranches:
             return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -238,6 +245,7 @@ class TestSpawnAgentImplErrorBranches:
             return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -275,6 +283,7 @@ class TestSpawnAgentImplErrorBranches:
             ),
         ):
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -419,12 +428,13 @@ class TestSpawnAgentImplErrorBranches:
                 status="ok",
                 pid=1,
                 terminal_type=None,
-                tmux_session_name=None,
+                terminal_id=None,
                 message="ok",
                 process=None,
             )
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -506,12 +516,13 @@ test"""
                 status="ok",
                 pid=1,
                 terminal_type=None,
-                tmux_session_name=None,
+                terminal_id=None,
                 message="ok",
                 process=None,
             )
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -609,12 +620,13 @@ test"""
                 status="ok",
                 pid=1,
                 terminal_type=None,
-                tmux_session_name=None,
+                terminal_id=None,
                 message="ok",
                 process=None,
             )
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -704,13 +716,14 @@ test"""
                     status="ok",
                     pid=1,
                     terminal_type=None,
-                    tmux_session_name=None,
+                    terminal_id=None,
                     message="ok",
                     process=None,
                 )
             )
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -798,12 +811,13 @@ test"""
                 status="ok",
                 pid=1,
                 terminal_type=None,
-                tmux_session_name=None,
+                terminal_id=None,
                 message="ok",
                 process=None,
             )
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -848,7 +862,7 @@ test"""
             child_session_id="child-1",
             status="running",
             terminal_type="process",
-            tmux_session_name=None,
+            terminal_id=None,
             tmux_socket_name=None,
             tmux_socket_path=None,
             pid=123,
@@ -869,6 +883,7 @@ test"""
             ) as mock_execute,
         ):
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="plan",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -927,6 +942,7 @@ test"""
             ) as mock_execute,
         ):
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="plan",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -969,7 +985,7 @@ test"""
             child_session_id="child-1",
             status="running",
             terminal_type="process",
-            tmux_session_name=None,
+            terminal_id=None,
             tmux_socket_name=None,
             tmux_socket_path=None,
             pid=123,
@@ -1014,6 +1030,7 @@ test"""
             ) as mock_execute,
         ):
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -1080,6 +1097,7 @@ test"""
             ),
         ):
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -1130,12 +1148,13 @@ test"""
                 status="ok",
                 pid=1,
                 terminal_type=None,
-                tmux_session_name=None,
+                terminal_id=None,
                 message="ok",
                 process=None,
             )
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="test",
                 runner=runner,
                 provider="claude",

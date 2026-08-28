@@ -18,7 +18,7 @@ from gobby.adapters.plan_keystrokes import (
 )
 from gobby.adapters.plan_options import get_plan_accept_option
 from gobby.servers.websocket.db import run_db
-from gobby.sessions.tmux_context import get_tmux_manager_for_context
+from gobby.terminals.lookup import manager_for_terminal_context
 from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
@@ -300,7 +300,7 @@ async def handle_attached_plan_approval(
         )
         return
 
-    tmux = get_tmux_manager_for_context(ctx)
+    tmux = manager_for_terminal_context(ctx)
     # Resolve against the live pane when the source either has multiple menu
     # shapes or a static-menu presence guard. A stale web-UI click must not send
     # blind digits into whatever the pane currently shows.
@@ -308,7 +308,7 @@ async def handle_attached_plan_approval(
     if registry.requires_pane(source):
         try:
             captured = await asyncio.wait_for(
-                tmux.capture_pane(tmux_pane, lines=_PLAN_MENU_CAPTURE_LINES),
+                tmux.snapshot_lines(tmux_pane, lines=_PLAN_MENU_CAPTURE_LINES),
                 timeout=_PLAN_TMUX_OPERATION_TIMEOUT_SECONDS,
             )
         except (TimeoutError, OSError, RuntimeError, ValueError) as exc:

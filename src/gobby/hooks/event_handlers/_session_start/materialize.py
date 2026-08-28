@@ -260,6 +260,25 @@ def activate_materialized_session(
         project_id=project_id,
         terminal_context=terminal_context,
     )
+    if (
+        handler.terminal_manager is not None
+        and isinstance(terminal_context, dict)
+        and isinstance(project_id, str)
+        and session_id
+    ):
+        from gobby.storage.terminals import ProjectOwnershipConflictError
+        from gobby.terminals.discovery import seed_external_terminal
+
+        try:
+            seed_external_terminal(
+                handler.terminal_manager,
+                project_id=project_id,
+                session_id=session_id,
+                terminal_context=terminal_context,
+            )
+        except ProjectOwnershipConflictError:
+            handler.logger.info("external terminal discovery conflict for session %s", session_id)
+
     handler._setup_code_index(session_id, project_id)
 
     if workflow_name:

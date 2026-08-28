@@ -22,6 +22,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.step_context import IncompleteStepWorkflow, StepWorkflowContext
+from tests.agents.terminal_fixtures import make_live_terminal
 
 from .detection_test_support import BundledDetectionRegistry
 
@@ -50,7 +51,7 @@ def _make_terminal_run(
     *,
     child_session_id: str,
     run_id: str,
-    tmux_session_name: str,
+    terminal_id: str,
     task_id: str | None = None,
     agent_name: str | None = None,
 ) -> AgentRun:
@@ -64,7 +65,11 @@ def _make_terminal_run(
         agent_name=agent_name,
     )
     agent_run_manager.start(run.id)
-    agent_run_manager.update_runtime(run.id, tmux_session_name=tmux_session_name)
+    agent_run_manager.update_runtime(run.id)
+    _live_run = agent_run_manager.get(run.id)
+    assert _live_run is not None
+    make_live_terminal(_live_run, db=agent_run_manager.db, session_name=terminal_id)
+
     stored_run = agent_run_manager.get(run.id)
     assert stored_run is not None
     return stored_run
@@ -385,7 +390,7 @@ def _make_idle_monitor_run(
         parent.to_dict(),
         child_session_id=child.id,
         run_id=run_id,
-        tmux_session_name=f"gobby-{run_id[-4:]}",
+        terminal_id=f"gobby-{run_id[-4:]}",
     )
     return monitor, run
 
@@ -436,9 +441,9 @@ async def test_completed_turn_reprompts_after_base_timeout_before_semantic_delay
     mock_message.assert_awaited_once()
     mock_send.assert_has_awaits(
         [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "workflow-aware continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
+            call(run.terminal_id, "Escape", literal=False),
+            call(run.terminal_id, "workflow-aware continuation"),
+            call(run.terminal_id, "Enter", literal=False),
         ]
     )
     assert all(awaited.args[1] != "C-c" for awaited in mock_send.await_args_list)
@@ -488,9 +493,9 @@ async def test_claude_turn_duration_reprompts_after_base_timeout(
     assert handled == 1
     mock_send.assert_has_awaits(
         [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "workflow-aware continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
+            call(run.terminal_id, "Escape", literal=False),
+            call(run.terminal_id, "workflow-aware continuation"),
+            call(run.terminal_id, "Enter", literal=False),
         ]
     )
 
@@ -538,9 +543,9 @@ async def test_grok_turn_completed_reprompts_and_records_watchdog_event(
     mock_message.assert_awaited_once()
     mock_send.assert_has_awaits(
         [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "workflow-aware continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
+            call(run.terminal_id, "Escape", literal=False),
+            call(run.terminal_id, "workflow-aware continuation"),
+            call(run.terminal_id, "Enter", literal=False),
         ]
     )
     assert all(awaited.args[1] != "C-c" for awaited in mock_send.await_args_list)
@@ -670,9 +675,9 @@ async def test_fresh_capacity_error_immediately_sends_workflow_aware_reprompt(
     assert state.successful_reprompts == 1
     mock_send.assert_has_awaits(
         [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "workflow-aware continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
+            call(run.terminal_id, "Escape", literal=False),
+            call(run.terminal_id, "workflow-aware continuation"),
+            call(run.terminal_id, "Enter", literal=False),
         ]
     )
     mock_audit.assert_awaited_once_with(
@@ -1050,9 +1055,9 @@ async def test_unreadable_transcript_uses_existing_delayed_idle_reprompt(
     assert handled == 1
     mock_send.assert_has_awaits(
         [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "delayed continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
+            call(run.terminal_id, "Escape", literal=False),
+            call(run.terminal_id, "delayed continuation"),
+            call(run.terminal_id, "Enter", literal=False),
         ]
     )
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
@@ -1099,9 +1104,9 @@ async def test_completed_turn_recovery_proceeds_despite_unsubmitted_input(
     assert handled == 1
     mock_send.assert_has_awaits(
         [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "completed continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
+            call(run.terminal_id, "Escape", literal=False),
+            call(run.terminal_id, "completed continuation"),
+            call(run.terminal_id, "Enter", literal=False),
         ]
     )
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
@@ -1176,7 +1181,7 @@ async def test_recent_session_activity_still_checks_supported_capacity_pane(
         handled = await monitor.check_idle_agents()
 
     assert handled == 0
-    mock_capture.assert_awaited_once_with(_run.tmux_session_name, lines=15)
+    mock_capture.assert_awaited_once_with(_run.terminal_id, lines=15)
     mock_send.assert_not_awaited()
 
 
@@ -1364,7 +1369,7 @@ async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
         parent.to_dict(),
         child_session_id=child.id,
         run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1001",
-        tmux_session_name="gobby-codex-fallback",
+        terminal_id="gobby-codex-fallback",
     )
 
     with (
@@ -1427,9 +1432,9 @@ async def test_no_reader_provider_uses_shared_idle_path_without_transcript_read(
     mock_read.assert_not_awaited()
     mock_send.assert_has_awaits(
         [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "shared continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
+            call(run.terminal_id, "Escape", literal=False),
+            call(run.terminal_id, "shared continuation"),
+            call(run.terminal_id, "Enter", literal=False),
         ]
     )
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
@@ -1479,9 +1484,9 @@ async def test_droid_diagnostics_only_reader_uses_shared_reprompt_and_redacted_l
     assert handled == 1
     mock_send.assert_has_awaits(
         [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "shared continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
+            call(run.terminal_id, "Escape", literal=False),
+            call(run.terminal_id, "shared continuation"),
+            call(run.terminal_id, "Enter", literal=False),
         ]
     )
     diagnostic = "\n".join(caplog.messages)
@@ -1960,10 +1965,10 @@ async def test_terminal_and_unmonitored_runs_clear_completed_turn_recovery_state
     handler._transcript_resolver._path_cache[(inactive_run.id, "codex", "inactive")] = (
         "/inactive.jsonl"
     )
-    assert inactive_run.tmux_session_name is not None
-    assert agent_run_manager.clear_tmux_session_name(
+    assert inactive_run.terminal_id is not None
+    assert agent_run_manager.clear_live_terminal(
         inactive_run.id,
-        inactive_run.tmux_session_name,
+        inactive_run.terminal_id,
     )
     assert await monitor.check_idle_agents() == 0
     assert inactive_run.id not in handler._recovery._capacity_recovery

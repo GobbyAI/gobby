@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -26,10 +27,13 @@ class _FakeTmux:
         self.pane_text = pane_text
         self.sent: list[tuple[str, str, bool]] = []
 
-    async def capture_pane(self, session_name: str, lines: int = 5) -> str | None:
+    async def snapshot_lines(self, session_name: str, lines: int = 5) -> str | None:
         assert session_name == "%42"
         assert lines == 30
         return self.pane_text
+
+    async def capture_pane(self, session_name: str, lines: int = 5) -> str | None:
+        return await self.snapshot_lines(session_name, lines=lines)
 
     async def send_keys(
         self,
@@ -41,6 +45,15 @@ class _FakeTmux:
         self.sent.append((session_name, keys, literal))
         return True
 
+    async def dispatch_keys(
+        self,
+        session_name: str,
+        keys: str,
+        *,
+        literal: bool = True,
+    ) -> bool:
+        return await self.send_keys(session_name, keys, literal=literal)
+
 
 def _service(
     monkeypatch: pytest.MonkeyPatch,
@@ -51,7 +64,7 @@ def _service(
     tmux = _FakeTmux(pane_text)
     monkeypatch.setattr(
         native_plan_actions,
-        "get_tmux_manager_for_context",
+        "manager_for_terminal_context",
         lambda _context: tmux,
     )
     session_manager = MagicMock()
@@ -112,6 +125,43 @@ async def test_dispatch_rejects_changed_prompt_without_sending_keys(
 
     assert result == "stale"
     assert tmux.sent == []
+
+
+async def test_plan_actions_use_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
+    from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
+
+    terminal = make_memory_terminal(backend="native")
+    store = MemoryTerminalStore(terminal)
+    runtime = FakeRuntime(backend="native")
+    runtime.snapshot_text = CODEX_MENU
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
+    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime)
+    session_manager = MagicMock()
+    session_manager.get.return_value = SimpleNamespace(
+        id=SESSION_ID,
+        status="paused",
+        source="codex",
+        terminal_id=terminal.id,
+    )
+    service = NativePlanActionService(
+        session_manager,
+        MagicMock(),
+        terminal_manager=store,
+        terminal_runtime_registry=registry,
+        write_coordinator=coordinator,
+    )
+    menu = await service.get_menu(SESSION_ID)
+    assert menu is not None
+    result = await service.dispatch(
+        SESSION_ID,
+        option=2,
+        expected_fingerprint=menu.fingerprint,
+    )
+    assert result == "sent"
+    assert runtime.write_log
 
 
 async def test_agy_is_excluded_from_native_plan_actions(

@@ -51,6 +51,7 @@ class AgentCleanupHandler:
         kill_tmux_session: Callable[[str], Awaitable[bool]] | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
         attention_manager: AttentionStateManager | None = None,
+        terminal_services: Any | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
@@ -58,6 +59,7 @@ class AgentCleanupHandler:
         self._completion_registry = completion_registry
         self._task_recovery = task_recovery
         self._run_db_callback = run_db
+        self._terminal_services = terminal_services
         self._resource_cleaner = TerminalResourceCleaner(
             agent_run_manager=agent_run_manager,
             db=db,
@@ -175,14 +177,13 @@ class AgentCleanupHandler:
         including when a policy invocation higher in the stack (reconciler,
         watchdog) already killed the session before invoking this terminalizer.
         """
-        session_name = run.tmux_session_name
-        if not session_name or run.status not in ("pending", "running"):
+        if run.status not in ("pending", "running"):
             return False, None
-        from gobby.agents.capture import terminate_managed_tmux_async
-        from gobby.agents.tmux import get_tmux_session_manager
+        from gobby.agents.capture import terminate_managed_runtime_async
 
-        tmux = get_tmux_session_manager()
-        if not await tmux.has_session(session_name):
+        services = self._terminal_services
+        terminal = None if services is None else services.terminal_for(run)
+        if services is None or terminal is None or not await services.is_live(run):
             return False, None
 
         async def _terminalize(
@@ -191,10 +192,11 @@ class AgentCleanupHandler:
         ) -> AgentRun | None:
             return await terminalize()
 
-        result = await terminate_managed_tmux_async(
+        result = await terminate_managed_runtime_async(
             storage=self._agent_run_manager,
             run=run,
-            tmux=tmux,
+            terminal=terminal,
+            runtime=services.runtime_for(terminal),
             action=action,
             reason=reason,
             terminalize=_terminalize,

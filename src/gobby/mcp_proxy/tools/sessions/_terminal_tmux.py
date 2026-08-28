@@ -66,7 +66,7 @@ async def _capture_pane_snapshot(
     lines: int = _COMPACTION_REJECTION_CAPTURE_LINES,
 ) -> str | None:
     try:
-        output = await tmux.capture_pane(target, lines=lines)
+        output = await tmux.snapshot_lines(target, lines=lines)
     except (TimeoutError, OSError, RuntimeError):
         logger.debug("Failed to capture tmux target %s for compaction state check", target)
         return None
@@ -104,7 +104,7 @@ async def _send_tmux_keys(
 ) -> tuple[bool, str | None]:
     """Send tmux keys and keep failures structured for MCP callers."""
     try:
-        ok = await tmux.send_keys(target, keys, literal=literal)
+        ok = await tmux.dispatch_keys(target, keys, literal=literal)
     except TimeoutError:
         logger.warning("Timed out %s to tmux target %s for %s", action, target, session_id)
         return False, f"tmux send-keys timed out for session {session_id} while {action}"
@@ -335,16 +335,20 @@ def _resolve_tmux_target(
     Returns:
         (tmux_target, tmux_manager, error_message).
     """
-    # Try agent run first (agent sessions have tmux_session_name on the run)
+    # Try agent run first (agent sessions have a terminals-row link)
     agent_run = agent_run_manager.get_by_session(session_id)
     if agent_run is not None:
         if agent_run.status not in ("running", "pending"):
             return None, None, f"Agent session is not running (status={agent_run.status})"
-        if not agent_run.tmux_session_name:
-            return None, None, "Agent session has no tmux terminal (mode may be autonomous)"
-        from gobby.agents.tmux import get_tmux_session_manager
+        if not agent_run.terminal_id:
+            return None, None, "Agent session has no terminal (mode may be autonomous)"
+        from gobby.agents.tmux.session_manager import TmuxSessionManager
+        from gobby.storage.terminals import TerminalManager
 
-        return agent_run.tmux_session_name, get_tmux_session_manager(), None
+        row = TerminalManager(agent_run_manager.db).get(agent_run.terminal_id)
+        if row is None or not row.session_name:
+            return None, None, "Agent session has no tmux target"
+        return row.session_name, TmuxSessionManager(), None
 
     # Fallback: interactive CLI session with terminal_context
     session = session_manager.get(session_id)

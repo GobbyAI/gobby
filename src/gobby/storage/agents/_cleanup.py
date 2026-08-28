@@ -69,7 +69,7 @@ class _AgentRunCleanupMixin:
                     ar.id,
                     ar.timeout_seconds,
                     ar.pid,
-                    ar.tmux_session_name,
+                    ar.terminal_id,
                     COALESCE(child.updated_at, ar.updated_at, ar.started_at) AS last_activity_at,
                     COALESCE(child.tool_call_count, parent.tool_call_count, ar.tool_calls_count, 0)
                         AS tool_calls_count,
@@ -95,7 +95,11 @@ class _AgentRunCleanupMixin:
                 turns_used
             FROM run_activity
             WHERE pid IS NULL
-              AND tmux_session_name IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM terminals t
+                  WHERE t.id = run_activity.terminal_id
+                    AND t.state IN ('pending', 'live')
+              )
               AND (
                 (
                     timeout_seconds IS NOT NULL
@@ -174,7 +178,11 @@ class _AgentRunCleanupMixin:
                 UPDATE agent_runs
                 SET status = 'error',
                     error = CASE
-                        WHEN tmux_session_name IS NULL THEN 'Pending run never started'
+                        WHEN NOT EXISTS (
+                            SELECT 1 FROM terminals started
+                            WHERE started.id = agent_runs.terminal_id
+                              AND started.state = 'live'
+                        ) THEN 'Pending run never started'
                         ELSE 'Pending tmux-initialized run never started'
                     END,
                     pid = NULL,
@@ -192,11 +200,19 @@ class _AgentRunCleanupMixin:
                 )
                 AND (
                     (
-                        tmux_session_name IS NULL
+                        NOT EXISTS (
+                            SELECT 1 FROM terminals started
+                            WHERE started.id = agent_runs.terminal_id
+                              AND started.state = 'live'
+                        )
                         AND {pending_timeout_sql}
                     )
                     OR (
-                        tmux_session_name IS NOT NULL
+                        EXISTS (
+                            SELECT 1 FROM terminals started
+                            WHERE started.id = agent_runs.terminal_id
+                              AND started.state = 'live'
+                        )
                         AND {pending_timeout_sql}
                     )
                 )

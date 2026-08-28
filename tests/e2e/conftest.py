@@ -242,7 +242,7 @@ class DaemonInstance:
                 f"Daemon failed to restart within timeout.\n"
                 f"Logs:\n{self.read_logs()}\nError logs:\n{self.read_error_logs()}"
             )
-        if not wait_for_port(self.ws_port, timeout=10.0):
+        if not wait_for_port(self.ws_port, timeout=30.0):
             terminate_process_tree(process.pid)
             pytest.fail(
                 f"Daemon WebSocket port {self.ws_port} did not become ready within timeout.\n"

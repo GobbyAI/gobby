@@ -22,6 +22,7 @@ class SpawnRunStorage(Protocol):
         run_id: str,
         *,
         pid: int | None = None,
+        terminal_id: str | None = None,
         tmux_session_name: str | None = None,
         worktree_id: str | None = None,
         clone_id: str | None = None,
@@ -54,6 +55,7 @@ def _persist_spawn_runtime(
     tmux_session_name: str | None,
     worktree_id: str | None,
     clone_id: str | None,
+    terminal_id: str | None = None,
 ) -> None:
     child_session_id = getattr(spawn_result, "child_session_id", None)
     if child_session_id is not None:
@@ -66,7 +68,7 @@ def _persist_spawn_runtime(
         runner.run_storage.update_runtime(
             run_id,
             pid=getattr(spawn_result, "pid", None),
-            tmux_session_name=tmux_session_name,
+            terminal_id=terminal_id or getattr(spawn_result, "terminal_id", None),
             worktree_id=worktree_id,
             clone_id=clone_id,
         )
@@ -77,7 +79,8 @@ def _persist_spawn_runtime(
 def _tmux_runtime_metadata(spawn_result: Any) -> tuple[str | None, str | None, str | None]:
     tmux_session_name = getattr(spawn_result, "tmux_session_name", None)
     if not isinstance(tmux_session_name, str):
-        tmux_session_name = None
+        terminal_id = getattr(spawn_result, "terminal_id", None)
+        tmux_session_name = terminal_id if isinstance(terminal_id, str) else None
     tmux_socket_name = getattr(spawn_result, "tmux_socket_name", None)
     if not isinstance(tmux_socket_name, str):
         tmux_socket_name = None
@@ -113,6 +116,7 @@ def _build_spawn_success_response(
         "clone_path": str(isolation_ctx.cwd) if effective_isolation == "clone" else None,
         "base_commit_sha": base_commit_sha if isinstance(base_commit_sha, str) else None,
         "pid": spawn_result.pid,
+        "terminal_id": getattr(spawn_result, "terminal_id", None),
         "tmux_session_name": tmux_session_name,
         "tmux_socket_name": tmux_socket_name,
         "tmux_socket_path": tmux_socket_path,

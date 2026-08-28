@@ -33,7 +33,7 @@ class _Run:
     provider: str = "codex"
     error: str | None = "failed"
     pid: int | None = None
-    tmux_session_name: str | None = None
+    terminal_id: str | None = None
 
 
 class _RunManager:

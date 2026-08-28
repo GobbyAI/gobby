@@ -283,3 +283,7 @@ gobby_yc_demo_script.md
 
 # Raw taskless agent feedback; curated research reports remain tracked.
 docs/research/gobby-feedback/inbox/
+# Generated libghostty-vt Zig build artifacts
+crates/gterminal/vendor/libghostty-vt/zig-out/
+crates/gterminal/vendor/libghostty-vt/.zig-cache/
+crates/gterminal/vendor/libghostty-vt/zig-pkg/

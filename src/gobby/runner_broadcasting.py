@@ -164,7 +164,7 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
         """Broadcast agent events via WebSocket (non-blocking).
 
         Can be called directly — no registry dependency. The ``data`` dict
-        should contain tmux_session_name, session_id, parent_session_id, etc.
+        should contain terminal_id, session_id, parent_session_id, etc.
         """
         if not websocket_server:
             return
@@ -186,27 +186,33 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
 
         # Handle tmux output reader start for tmux terminal agents
         if event_type == "agent_started":
-            tmux_name = data.get("tmux_session_name")
-            if tmux_name:
-                _tmux_name = tmux_name  # bind for closure
+            terminal_id = data.get("terminal_id")
+            attach_name = None
+            manager = getattr(websocket_server, "terminal_manager", None)
+            if isinstance(terminal_id, str) and manager is not None:
+                row = manager.get(terminal_id)
+                if row is not None:
+                    attach_name = row.session_name or row.spawn_key
+            if attach_name:
+                _attach_name = attach_name
 
                 async def start_tmux_reader() -> None:
-                    await tmux_reader.start_reader(run_id, _tmux_name)
+                    await tmux_reader.start_reader(run_id, _attach_name)
 
                 _schedule_agent_broadcast(start_tmux_reader(), event_type=event_type)
 
-                # Notify Terminals page so it auto-refreshes
+            if terminal_id:
                 _ws = websocket_server
+                _terminal_id = str(terminal_id)
 
-                async def broadcast_tmux_created() -> None:
+                async def broadcast_terminal_created() -> None:
                     if _ws:
                         await _ws.broadcast_tmux_session_event(
-                            event="session_created",
-                            session_name=_tmux_name,
-                            socket="gobby",
+                            event="created",
+                            terminal_id=_terminal_id,
                         )
 
-                _schedule_agent_broadcast(broadcast_tmux_created(), event_type=event_type)
+                _schedule_agent_broadcast(broadcast_terminal_created(), event_type=event_type)
 
         elif event_type in (
             "agent_completed",
@@ -229,18 +235,18 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
             _schedule_agent_broadcast(stop_tmux_reader(), event_type=event_type)
 
             # Notify Terminals page so it auto-refreshes
-            _killed_name = data.get("tmux_session_name")
+            _killed_id = data.get("terminal_id")
             _ws_kill = websocket_server
-            if _killed_name and _ws_kill:
+            if _killed_id and _ws_kill:
+                _terminal_id = str(_killed_id)
 
-                async def broadcast_tmux_killed() -> None:
+                async def broadcast_terminal_killed() -> None:
                     await _ws_kill.broadcast_tmux_session_event(
-                        event="session_killed",
-                        session_name=_killed_name,
-                        socket="gobby",
+                        event="killed",
+                        terminal_id=_terminal_id,
                     )
 
-                _schedule_agent_broadcast(broadcast_tmux_killed(), event_type=event_type)
+                _schedule_agent_broadcast(broadcast_terminal_killed(), event_type=event_type)
 
         forwarded = {
             key: value
@@ -253,7 +259,6 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
                 "mode",
                 "provider",
                 "pid",
-                "tmux_session_name",
             }
         }
 
@@ -267,7 +272,6 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
                 mode=data.get("mode"),
                 provider=data.get("provider"),
                 pid=data.get("pid"),
-                tmux_session_name=data.get("tmux_session_name"),
                 **forwarded,
             ),
             event_type=event_type,

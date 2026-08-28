@@ -1814,10 +1814,10 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
               '{"socket":"default","sessionName":"capture-session"}',
           }),
           ws: (ws, message) => {
-            if (message.type === "tmux_list_sessions") {
+            if (message.type === "terminal_list") {
               ws.send(
                 JSON.stringify({
-                  type: "tmux_sessions_list",
+                  type: "terminal_list",
                   request_id: message.request_id ?? "init",
                   live_cli_session_ids: [],
                   sessions: [
@@ -1840,17 +1840,17 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
                 }),
               );
             }
-            if (message.type === "tmux_attach") {
+            if (message.type === "terminal_attach") {
               ws.send(
                 JSON.stringify({
-                  type: "tmux_attach_result",
+                  type: "terminal_attach_result",
                   request_id: message.request_id,
                   success: true,
                   streaming_id: "stream-capture-session",
                 }),
               );
             }
-            if (message.type === "tmux_resize" && !sentTerminalOutput.has(ws)) {
+            if (message.type === "terminal_resize" && !sentTerminalOutput.has(ws)) {
               // Once per socket: repeated resize events must not duplicate
               // the seeded scrollback.
               sentTerminalOutput.add(ws);
@@ -1862,10 +1862,10 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
                 }),
               );
             }
-            if (message.type === "tmux_detach") {
+            if (message.type === "terminal_detach") {
               ws.send(
                 JSON.stringify({
-                  type: "tmux_detach_result",
+                  type: "terminal_detach_result",
                   request_id: message.request_id,
                   success: true,
                 }),

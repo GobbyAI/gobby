@@ -409,17 +409,17 @@ class TestKillAgent:
         mock_db,
     ):
         agent_run.pid = 999
-        agent_run.tmux_session_name = "gobby-run-123"
+        agent_run.terminal_id = "gobby-run-123"
         mock_close_tmux.return_value = {
             "success": True,
-            "method": "tmux_kill_session",
-            "tmux_session_name": "gobby-run-123",
+            "method": "terminal_kill",
+            "terminal_id": "gobby-run-123",
         }
 
         res = await kill_agent(agent_run, mock_db, close_terminal=True)
 
         assert res["success"] is True
-        assert res["method"] == "tmux_kill_session"
+        assert res["method"] == "terminal_kill"
         assert res["terminal_close"] == mock_close_tmux.return_value
         mock_close_tmux.assert_awaited_once_with(
             agent_run,
@@ -427,6 +427,7 @@ class TestKillAgent:
             terminal_action="cancel",
             terminal_reason="user_cancelled",
             timeout=5.0,
+            terminal_services=None,
         )
         mock_close_window.assert_not_called()
         mock_kill.assert_not_called()
@@ -444,7 +445,7 @@ class TestKillAgent:
         mock_db,
     ):
         agent_run.pid = 999
-        agent_run.tmux_session_name = "gobby-run-123"
+        agent_run.terminal_id = "gobby-run-123"
         mock_kill.side_effect = ProcessLookupError("already dead")
         mock_close_tmux.return_value = {"success": False, "error": "missing"}
         mock_close_window.return_value = {"success": True, "method": "tmux_kill_pane"}
@@ -459,6 +460,7 @@ class TestKillAgent:
             terminal_action="cancel",
             terminal_reason="user_cancelled",
             timeout=5.0,
+            terminal_services=None,
         )
         mock_close_window.assert_called_once()
 

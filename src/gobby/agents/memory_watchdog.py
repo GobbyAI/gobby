@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import psutil
 
-from gobby.agents.capture import TerminationErrorCode, capture_then_kill_async
+from gobby.agents.capture import TerminationErrorCode
 from gobby.agents.kill import kill_agent
 from gobby.utils.datetime import parse_stored_datetime
 from gobby.utils.machine_id import require_machine_id
@@ -90,10 +90,12 @@ class MemoryWatchdogHandler:
         virtual_memory_fn: Callable[[], Any] = psutil.virtual_memory,
         process_iter_fn: Callable[..., Any] = psutil.process_iter,
         monotonic: Callable[[], float] = time.monotonic,
+        terminal_services: Any | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
         self._tmux = tmux
+        self._terminal_services = terminal_services
         self._cleanup_handler = cleanup_handler
         self._config = tmux_config
         self._run_db_callback = run_db
@@ -164,8 +166,9 @@ class MemoryWatchdogHandler:
             return False
 
         logger.warning("Memory watchdog killing agent %s: %s", run.id, message)
-        tmux_name = run.tmux_session_name
-        if not tmux_name:
+        services = self._terminal_services
+        terminal = None if services is None else services.terminal_for(run)
+        if services is None or terminal is None:
             result = await kill_agent(
                 run,
                 self._db,
@@ -184,12 +187,6 @@ class MemoryWatchdogHandler:
             self._breach_counts.pop(run.id, None)
             return True
 
-        async def kill_tmux() -> bool:
-            if self._kill_agent_fn is not None:
-                kill_result = await self._kill_agent_fn(run)
-                return bool(kill_result.get("success"))
-            return await self._tmux.kill_session(tmux_name, missing_ok=True)
-
         async def terminalize(
             _action: TerminalAction,
             payload: str | None,
@@ -203,15 +200,15 @@ class MemoryWatchdogHandler:
                 await self._run_db(self._agent_run_manager.get, run.id),
             )
 
-        termination = await capture_then_kill_async(
+        from gobby.agents.capture import terminate_managed_runtime_async
+
+        termination = await terminate_managed_runtime_async(
             storage=self._agent_run_manager,
-            run_id=run.id,
-            session_name=tmux_name,
+            run=run,
+            terminal=terminal,
+            runtime=services.runtime_for(terminal),
             action="fail",
             reason=message,
-            session_alive=lambda: self._tmux.has_session(tmux_name),
-            capture=lambda: self._tmux.capture_full_pane(tmux_name),
-            kill=kill_tmux,
             terminalize=terminalize,
         )
         if not termination.success:
@@ -240,10 +237,15 @@ class MemoryWatchdogHandler:
         )
         samples: list[_TreeSample] = []
         for run in runs:
-            if not run.tmux_session_name:
+            terminal = (
+                None
+                if self._terminal_services is None
+                else self._terminal_services.terminal_for(run)
+            )
+            if terminal is None or not terminal.session_name:
                 continue
             try:
-                pane_pid = await self._tmux.get_pane_pid(run.tmux_session_name)
+                pane_pid = await self._tmux.get_pane_pid(terminal.session_name)
             except Exception:
                 pane_pid = None
             if pane_pid is None:
