@@ -5,6 +5,7 @@ import logging
 import signal
 import sys
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import psutil
@@ -718,3 +719,42 @@ class TestKillAgent:
         }
         mock_close_window.assert_not_called()
         mock_run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_close_terminal_treats_exited_terminal_row_as_already_dead() -> None:
+    """agent_runs.terminal_id outlives the row's live state; an exited row needs no kill."""
+    from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.services import TerminalServices
+    from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
+
+    terminal = make_memory_terminal()
+    store = MemoryTerminalStore(terminal)
+    store.mark_exited(terminal.id)
+    runtime = FakeRuntime()
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
+    run = AgentRun(
+        id="run-exited",
+        parent_session_id="parent1",
+        child_session_id="sess1",
+        provider="claude",
+        prompt="do it",
+        status="running",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
+        terminal_id=terminal.id,
+    )
+
+    result = await kill_agent(
+        run,
+        MagicMock(),
+        close_terminal=True,
+        terminal_services=TerminalServices(manager=store, registry=registry),
+    )
+
+    assert result["success"] is True
+    assert result["already_dead"] is True
+    assert result["method"] == "terminal_exited"
+    assert result["terminal_close"]["terminal_id"] == terminal.id
+    assert runtime.killed == []

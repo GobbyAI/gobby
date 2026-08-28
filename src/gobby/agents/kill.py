@@ -326,8 +326,21 @@ async def _close_tmux_session(
     from gobby.terminals.lookup import active_terminal_for_run
 
     services = terminal_services
-    terminal = None if services is None else active_terminal_for_run(services.manager, run)
-    if services is None or terminal is None:
+    if services is None:
+        return {"success": False, "error": "agent run has no terminal"}
+    terminal = active_terminal_for_run(services.manager, run)
+    if terminal is None:
+        # agent_runs.terminal_id outlives the row's live state, so a run whose
+        # terminal already exited has nothing left to close.
+        row = None if run.terminal_id is None else services.manager.get(run.terminal_id)
+        if row is not None and row.state == "exited":
+            return {
+                "success": True,
+                "message": f"terminal '{row.id}' already exited",
+                "already_dead": True,
+                "method": "terminal_exited",
+                "terminal_id": row.id,
+            }
         return {"success": False, "error": "agent run has no terminal"}
     try:
         result = await terminate_managed_runtime_async(

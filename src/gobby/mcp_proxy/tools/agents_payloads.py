@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -62,12 +63,25 @@ def _agent_capture_parts(run: AgentRunProtocol) -> _AgentCaptureParts | None:
     end_marker = f"--- END GOBBY TMUX CAPTURE {capture_id} ---"
     end_offset = result.find(f"\n{end_marker}", content_offset)
     content = result[content_offset:] if end_offset < 0 else result[content_offset:end_offset]
+    content = _without_capture_meta(content)
     return _AgentCaptureParts(
         capture_id=capture_id,
         prefix=result[:marker_offset],
         content=content,
         malformed=False,
     )
+
+
+def _without_capture_meta(content: str) -> str:
+    """Drop the truncation-metadata line a capture slot stores ahead of its text."""
+    first, separator, remainder = content.partition("\n")
+    try:
+        meta = json.loads(first)
+    except json.JSONDecodeError:
+        return content
+    if not isinstance(meta, dict) or "truncated" not in meta:
+        return content
+    return remainder if separator else ""
 
 
 def _result_separator(prefix: str) -> str:

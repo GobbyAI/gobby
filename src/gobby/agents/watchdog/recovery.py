@@ -4,18 +4,21 @@ import json
 import logging
 import re
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import psycopg
 import pydantic
 
-from gobby.agents.capture import terminate_managed_tmux_async
+from gobby.agents.capture import terminate_managed_runtime_async
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.watchdog.completed_turn_recovery import (
     format_reprompt_message,
     recover_completed_turn,
 )
 from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
+from gobby.storage.terminals import Terminal
+from gobby.terminals.runtime import Delivered, TerminalWriteError
+from gobby.terminals.write_coordinator import WriteCoordinator, WriteRequest
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_context import (
     StepWorkflowContext,
@@ -210,46 +213,71 @@ class WatchdogRecoveryCoordinator:
             snapshot=snapshot,
         )
 
+    def _write_target(self, run: AgentRun) -> tuple[Terminal, WriteCoordinator] | None:
+        services = self._terminal_services
+        if services is None or services.coordinator is None:
+            return None
+        terminal = services.terminal_for(run)
+        if terminal is None:
+            return None
+        return terminal, services.coordinator
+
+    async def _deliver(
+        self,
+        coordinator: WriteCoordinator,
+        terminal_id: str,
+        action_key: str,
+        steps: list[tuple[Literal["text", "key"], str]],
+    ) -> bool:
+        """Write one automatic action; False when any step did not definitively land."""
+        requests = [
+            WriteRequest(
+                terminal_id=terminal_id,
+                action_key=action_key,
+                origin="automatic",
+                kind=kind,
+                payload=payload,
+            )
+            for kind, payload in steps
+        ]
+        try:
+            if len(requests) == 1:
+                outcome = await coordinator.write(requests[0])
+            else:
+                outcome = await coordinator.run_sequence(
+                    terminal_id,
+                    action_key=action_key,
+                    origin="automatic",
+                    steps=requests,
+                )
+        except TerminalWriteError as exc:
+            logger.warning("Terminal write %s failed: %s", action_key, exc)
+            return False
+        return isinstance(outcome, Delivered)
+
     async def _recover_failed_reprompt_clear(self, run: AgentRun, tmux_name: str) -> bool:
         del tmux_name
-        if self._terminal_services is None or not await self._terminal_services.is_live(run):
+        services = self._terminal_services
+        if services is None or not await services.is_live(run):
             logger.warning(
                 "Cannot recover failed idle prompt clear for agent %s: terminal gone",
                 run.id,
             )
             return False
-        from gobby.terminals.runtime import Delivered
-        from gobby.terminals.write_coordinator import WriteRequest
-
-        terminal = self._terminal_services.terminal_for(run)
-        coordinator = self._terminal_services.coordinator
-        if terminal is None or coordinator is None:
+        target = self._write_target(run)
+        if target is None:
             return False
-        outcome = await coordinator.run_sequence(
+        terminal, coordinator = target
+        interrupted = await self._deliver(
+            coordinator,
             terminal.id,
-            action_key=f"watchdog-interrupt:{run.id}",
-            origin="automatic",
-            steps=[
-                WriteRequest(
-                    terminal_id=terminal.id,
-                    action_key=f"watchdog-interrupt:{run.id}",
-                    origin="automatic",
-                    kind="text",
-                    payload="\x03",
-                ),
-                WriteRequest(
-                    terminal_id=terminal.id,
-                    action_key=f"watchdog-interrupt:{run.id}",
-                    origin="automatic",
-                    kind="key",
-                    payload="enter",
-                ),
-            ],
+            f"watchdog-interrupt:{run.id}",
+            [("text", "\x03"), ("key", "enter")],
         )
-        if not isinstance(outcome, Delivered):
+        if not interrupted:
             logger.warning("Failed to interrupt queued prompt while recovering agent %s", run.id)
             return False
-        if not await self._terminal_services.is_live(run):
+        if not await services.is_live(run):
             logger.warning("Cannot reprompt agent %s after recovery: terminal gone", run.id)
             return False
         return True
@@ -263,51 +291,28 @@ class WatchdogRecoveryCoordinator:
     ) -> bool:
         if reprompt_message is None:
             reprompt_message = await self._idle_reprompt_message(run)
-        from gobby.terminals.runtime import Delivered, IndeterminateWrite
-        from gobby.terminals.write_coordinator import WriteRequest
-
-        terminal = (
-            None if self._terminal_services is None else self._terminal_services.terminal_for(run)
-        )
-        coordinator = (
-            None if self._terminal_services is None else self._terminal_services.coordinator
-        )
-        if terminal is None or coordinator is None:
+        target = self._write_target(run)
+        if target is None:
             return False
-        outcome = await coordinator.run_sequence(
+        terminal, coordinator = target
+        cleared = await self._deliver(
+            coordinator,
             terminal.id,
-            action_key=f"idle-reprompt:{run.id}",
-            origin="automatic",
-            steps=[
-                WriteRequest(
-                    terminal_id=terminal.id,
-                    action_key=f"idle-reprompt:{run.id}",
-                    origin="automatic",
-                    kind="key",
-                    payload="escape",
-                ),
-                WriteRequest(
-                    terminal_id=terminal.id,
-                    action_key=f"idle-reprompt:{run.id}",
-                    origin="automatic",
-                    kind="text",
-                    payload=reprompt_message,
-                ),
-                WriteRequest(
-                    terminal_id=terminal.id,
-                    action_key=f"idle-reprompt:{run.id}",
-                    origin="automatic",
-                    kind="key",
-                    payload="enter",
-                ),
-            ],
+            f"idle-reprompt-clear:{run.id}",
+            [("key", "escape")],
         )
-        if isinstance(outcome, IndeterminateWrite):
-            return False
-        if not isinstance(outcome, Delivered):
-            logger.warning("Failed to send idle reprompt to agent %s", run.id)
+        if not cleared:
+            logger.warning("Failed to clear queued prompt before reprompting agent %s", run.id)
             if not await self._recover_failed_reprompt_clear(run, tmux_name):
                 return False
+        sent = await self._deliver(
+            coordinator,
+            terminal.id,
+            f"idle-reprompt:{run.id}",
+            [("text", reprompt_message), ("key", "enter")],
+        )
+        if not sent:
+            logger.warning("Failed to send idle reprompt to agent %s", run.id)
             return False
         self._idle_detector.for_provider(run.provider).record_reprompt(run.id)
         return True
@@ -548,44 +553,65 @@ class WatchdogRecoveryCoordinator:
 
     async def _fail_idle_agent(self, run: AgentRun, reason: str) -> None:
         """Fail an agent that is irrecoverably idle."""
-        if run.terminal_id:
+        payload = f"Agent idle: {reason}"
 
-            async def terminalize(
-                _action: TerminalAction,
-                payload: str | None,
-            ) -> AgentRun | None:
-                await self._cleanup_handler.cleanup_agent(
-                    run,
-                    terminal_payload=payload or f"Agent idle: {reason}",
-                )
-                return cast(
-                    "AgentRun | None",
-                    await self._run_db(self._agent_run_manager.get, run.id),
-                )
-
-            result = await terminate_managed_tmux_async(
-                storage=self._agent_run_manager,
-                run=run,
-                tmux=self._tmux,
-                action="fail",
-                reason=f"Agent idle: {reason}",
-                terminalize=terminalize,
+        async def terminalize(
+            _action: TerminalAction,
+            captured: str | None,
+        ) -> AgentRun | None:
+            await self._cleanup_handler.cleanup_agent(
+                run,
+                terminal_payload=captured or payload,
             )
-            if not result.success:
-                logger.warning(
-                    "Idle-agent termination failed for run %s: %s (%s)",
-                    run.id,
-                    result.error,
-                    result.error_code,
-                )
-                return
+            return cast(
+                "AgentRun | None",
+                await self._run_db(self._agent_run_manager.get, run.id),
+            )
 
+        await self._terminalize_idle_agent(
+            run,
+            action="fail",
+            payload=payload,
+            terminalize=terminalize,
+        )
+
+    async def _terminalize_idle_agent(
+        self,
+        run: AgentRun,
+        *,
+        action: TerminalAction,
+        payload: str,
+        terminalize: Callable[[TerminalAction, str | None], Awaitable[AgentRun | None]],
+    ) -> None:
+        """Capture-then-kill the run's active terminal, or terminalize directly without one."""
+        services = self._terminal_services
+        terminal = None if services is None else services.terminal_for(run)
+        if services is None or terminal is None:
             self._idle_detector.clear_state(run.id)
+            await terminalize(action, None)
             self.discard(run.id)
             return
 
+        result = await terminate_managed_runtime_async(
+            storage=self._agent_run_manager,
+            run=run,
+            terminal=terminal,
+            runtime=services.runtime_for(terminal),
+            action=action,
+            reason=payload,
+            terminalize=terminalize,
+        )
+        if not result.success:
+            logger.warning(
+                "Idle-agent %s failed for run %s: %s (%s)",
+                action,
+                run.id,
+                result.error,
+                result.error_code,
+            )
+            return
+
         self._idle_detector.clear_state(run.id)
-        await self._cleanup_handler.cleanup_agent(run, terminal_payload=f"Agent idle: {reason}")
         self.discard(run.id)
 
     async def _complete_if_step_workflow_finished(self, run: AgentRun) -> bool:
@@ -620,50 +646,27 @@ class WatchdogRecoveryCoordinator:
     async def _complete_idle_agent(self, run: AgentRun, reason: str) -> None:
         """Complete an idle agent whose step workflow already finished."""
         payload = f"Agent completed by watchdog: {reason}"
-        if run.terminal_id:
 
-            async def terminalize(
-                _action: TerminalAction,
-                captured: str | None,
-            ) -> AgentRun | None:
-                await self._cleanup_handler.cleanup_agent(
-                    run,
-                    terminal_payload=captured or payload,
-                    is_success=True,
-                )
-                return cast(
-                    "AgentRun | None",
-                    await self._run_db(self._agent_run_manager.get, run.id),
-                )
-
-            result = await terminate_managed_tmux_async(
-                storage=self._agent_run_manager,
-                run=run,
-                tmux=self._tmux,
-                action="complete",
-                reason=payload,
-                terminalize=terminalize,
+        async def terminalize(
+            _action: TerminalAction,
+            captured: str | None,
+        ) -> AgentRun | None:
+            await self._cleanup_handler.cleanup_agent(
+                run,
+                terminal_payload=captured or payload,
+                is_success=True,
             )
-            if not result.success:
-                logger.warning(
-                    "Idle-agent completion failed for run %s: %s (%s)",
-                    run.id,
-                    result.error,
-                    result.error_code,
-                )
-                return
+            return cast(
+                "AgentRun | None",
+                await self._run_db(self._agent_run_manager.get, run.id),
+            )
 
-            self._idle_detector.clear_state(run.id)
-            self.discard(run.id)
-            return
-
-        self._idle_detector.clear_state(run.id)
-        await self._cleanup_handler.cleanup_agent(
+        await self._terminalize_idle_agent(
             run,
-            terminal_payload=payload,
-            is_success=True,
+            action="complete",
+            payload=payload,
+            terminalize=terminalize,
         )
-        self.discard(run.id)
 
     async def _step_workflow_exit_condition_met(self, run: AgentRun) -> bool:
         """Return whether every active step workflow on the child session is finished."""

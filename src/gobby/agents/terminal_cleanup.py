@@ -72,8 +72,8 @@ class TerminalResourceCleaner:
         loop_tracker: LoopTracker,
         master_fds: dict[str, int],
         run_db: Callable[..., Awaitable[Any]],
-        kill_tmux_session: Callable[[str], Awaitable[bool]] | None = None,
         attention_manager: AttentionStateManager | None = None,
+        terminal_services: Any | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
@@ -86,8 +86,8 @@ class TerminalResourceCleaner:
         self._loop_tracker = loop_tracker
         self._master_fds = master_fds
         self._run_db = run_db
-        self._kill_tmux_session = kill_tmux_session
         self._attention_manager = attention_manager
+        self._terminal_services = terminal_services
 
     async def post_terminal_cleanup(
         self,
@@ -229,26 +229,29 @@ class TerminalResourceCleaner:
         terminal = manager.get(run.terminal_id)
         if terminal is None or terminal.state not in {"pending", "live"}:
             return False
-        if self._kill_tmux_session is None or not terminal.session_name:
-            manager.mark_exited(run.terminal_id)
-            return True
-        try:
-            killed = await self._kill_tmux_session(terminal.session_name)
-        except Exception:
-            logger.warning(
-                "Failed to close lingering terminal %s for agent %s",
-                run.terminal_id,
-                run.id,
-                exc_info=True,
-            )
-            return False
-        if not killed:
-            logger.warning(
-                "Terminal %s for agent %s was not closed",
-                run.terminal_id,
-                run.id,
-            )
-            return False
+        if self._terminal_services is not None:
+            try:
+                runtime = self._terminal_services.runtime_for(terminal)
+                await runtime.terminate(terminal, grace_seconds=5.0)
+                if await runtime.is_live(terminal):
+                    logger.warning(
+                        "Terminal %s for agent %s was not closed",
+                        run.terminal_id,
+                        run.id,
+                    )
+                    return False
+            except Exception:
+                logger.warning(
+                    "Failed to close lingering terminal %s for agent %s",
+                    run.terminal_id,
+                    run.id,
+                    exc_info=True,
+                )
+                return False
+        manager.mark_exited(run.terminal_id)
+        # The stored pid is the pane pid of the terminal just closed; keeping it
+        # would offer a stale signal target to later recovery.
+        await self._run_db(self._agent_run_manager.update_runtime, run.id, pid=None)
         logger.info(
             "Closed lingering terminal %s for agent %s",
             run.terminal_id,

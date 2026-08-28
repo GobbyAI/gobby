@@ -135,6 +135,24 @@ class LifecycleReconciliation:
                 else active_terminal_for_run(self._terminal_manager, run)
             )
             if terminal is None or self._runtime_registry is None:
+                # The run's own terminal transition exits its terminal row, so a
+                # run that finished between the candidate listing and this pass
+                # has no active terminal left to drive -- the same benign skip
+                # as ALREADY_TERMINAL below (#20860).
+                latest = await self._run_db(self._agent_run_manager.get, run.id)
+                if latest is not None and latest.status not in ("pending", "running"):
+                    logger.info(
+                        "Termination reconciliation skipped for run %s: "
+                        "agent run already terminal (status=%s)",
+                        run.id,
+                        latest.status,
+                    )
+                else:
+                    logger.warning(
+                        "Termination reconciliation failed for run %s: no active terminal (%s)",
+                        run.id,
+                        TerminationErrorCode.TERMINAL_TRANSITION_FAILED,
+                    )
                 continue
             result = await terminate_managed_runtime_async(
                 storage=self._agent_run_manager,

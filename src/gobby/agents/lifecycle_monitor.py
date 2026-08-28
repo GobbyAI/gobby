@@ -146,6 +146,7 @@ class AgentLifecycleMonitor:
                 signal_name="TERM",
                 timeout=5.0,
                 close_terminal=True,
+                terminal_services=self._terminal_services,
             ),
             run_db=run_db,
         )
@@ -175,7 +176,6 @@ class AgentLifecycleMonitor:
             stall_classifier=self._stall_classifier,
             loop_tracker=self._loop_tracker,
             master_fds=self._master_fds,
-            kill_tmux_session=None,
             run_db=run_db,
             attention_manager=attention_manager,
             terminal_services=self._terminal_services,

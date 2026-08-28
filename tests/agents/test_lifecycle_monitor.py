@@ -17,7 +17,8 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from dataclasses import replace
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
@@ -41,8 +42,14 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_states import StageManifestSpec
+from gobby.storage.terminals import Terminal, TerminalManager
+from gobby.terminals import TerminalRuntimeRegistry
+from gobby.terminals.runtime import SnapshotResult, TerminalWriteError, WriteOutcome
+from gobby.terminals.services import TerminalServices
+from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
+from tests.terminals.fakes import FakeRuntime
 from tests.workflows.step_instance_fixtures import make_step_instance
 
 from .detection_test_support import BundledDetectionRegistry
@@ -68,6 +75,134 @@ def _local_machine_identity() -> Iterator[None]:
 def _rid(label: str) -> str:
     """Deterministic uuid for a readable run label (agent_runs.id is uuid)."""
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:{label}"))
+
+
+@dataclass
+class LifecycleRuntime(FakeRuntime):
+    """FakeRuntime with the liveness and snapshot controls the lifecycle checks need."""
+
+    # Overrides row-derived liveness while set; a terminate clears it.
+    alive: bool | None = None
+    live_error: BaseException | None = None
+    # Raised by every snapshot while set (a vanished pane, a tmux timeout).
+    snapshot_error: BaseException | None = None
+    snapshot_calls: list[int] = field(default_factory=list)
+    # A sticky runtime records the kill but leaves the terminal live.
+    sticky: bool = False
+    # Consumed one entry per write; True makes that write fail before landing.
+    write_failures: list[bool] = field(default_factory=list)
+    live_probes: int = 0
+
+    async def _record(self, kind: str, payload: str) -> WriteOutcome:
+        failed = self.write_failures.pop(0) if self.write_failures else False
+        outcome = await super()._record(kind, payload)
+        if failed:
+            raise TerminalWriteError(stage="none")
+        return outcome
+
+    async def is_live(self, terminal: Terminal) -> bool:
+        self.live_probes += 1
+        if self.live_error is not None:
+            raise self.live_error
+        if self.alive is not None:
+            return self.alive
+        return await super().is_live(terminal)
+
+    async def snapshot(self, terminal: Terminal, lines: int = 50) -> SnapshotResult:
+        self.snapshot_calls.append(lines)
+        if self.snapshot_error is not None:
+            raise self.snapshot_error
+        return await super().snapshot(terminal, lines)
+
+    async def snapshot_full(self, terminal: Terminal) -> SnapshotResult:
+        if self.snapshot_error is not None:
+            raise self.snapshot_error
+        return await super().snapshot_full(terminal)
+
+    async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
+        if self.sticky:
+            name = terminal.session_name or terminal.spawn_key
+            if name is not None:
+                self.killed.append(name)
+            return
+        await super().terminate(terminal, grace_seconds)
+        self.alive = None
+
+
+def _fake_terminal_services(
+    db: HubDatabase,
+    runtime: LifecycleRuntime | None = None,
+) -> TerminalServices:
+    """Real terminal rows in ``db`` behind a recording runtime."""
+    runtime = runtime or LifecycleRuntime()
+    manager = TerminalManager(db)
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
+    return TerminalServices(
+        manager=manager,
+        registry=registry,
+        coordinator=WriteCoordinator(manager, runtime),
+    )
+
+
+def _runtime_of(monitor: AgentLifecycleMonitor) -> LifecycleRuntime:
+    return cast(LifecycleRuntime, monitor._terminal_services.registry.resolve("tmux"))
+
+
+@contextmanager
+def _pane_text(
+    monitor: AgentLifecycleMonitor,
+    text: str | BaseException | list[str | BaseException] | None,
+) -> Iterator[LifecycleRuntime]:
+    """Scope what the monitor's snapshots return (or raise) to a block.
+
+    A list is consumed one snapshot at a time, like an AsyncMock side_effect.
+    """
+    runtime = _runtime_of(monitor)
+    previous = (runtime.snapshot_text, runtime.snapshot_error, runtime.snapshot_effects)
+    if isinstance(text, BaseException):
+        runtime.snapshot_error = text
+    elif isinstance(text, list):
+        runtime.snapshot_effects = list(text)
+    else:
+        runtime.snapshot_text = text or ""
+    try:
+        yield runtime
+    finally:
+        runtime.snapshot_text, runtime.snapshot_error, runtime.snapshot_effects = previous
+
+
+def _terminal_state(db: HubDatabase, terminal_id: str | None) -> str | None:
+    if terminal_id is None:
+        return None
+    row = TerminalManager(db).get(terminal_id)
+    return None if row is None else row.state
+
+
+@contextmanager
+def _terminal_liveness(
+    monitor: AgentLifecycleMonitor,
+    alive: bool | BaseException,
+) -> Iterator[LifecycleRuntime]:
+    """Scope whether the monitor sees its terminals as live to a block."""
+    runtime = _runtime_of(monitor)
+    previous = (runtime.alive, runtime.live_error)
+    if isinstance(alive, BaseException):
+        runtime.live_error = alive
+    else:
+        runtime.alive = alive
+    try:
+        yield runtime
+    finally:
+        runtime.alive, runtime.live_error = previous
+
+
+def _written_keys(runtime: LifecycleRuntime) -> list[str]:
+    return [payload for kind, payload in runtime.write_log if kind == "key"]
+
+
+def _written_text(runtime: LifecycleRuntime) -> list[str]:
+    return [payload for kind, payload in runtime.write_log if kind == "text"]
 
 
 def test_monitor_ignores_other_machines_runs(
@@ -99,6 +234,7 @@ def test_monitor_ignores_other_machines_runs(
         agent_run_manager=run_manager,
         db=temp_db,
         tmux_config=TmuxConfig(),
+        terminal_services=_fake_terminal_services(temp_db),
     )
 
     assert [run.id for run in monitor._get_active_terminal_runs()] == [local.id]
@@ -126,6 +262,7 @@ async def test_cleanup_and_termination_ignore_other_machine_runs(
         agent_run_manager=run_manager,
         db=temp_db,
         tmux_config=TmuxConfig(),
+        terminal_services=_fake_terminal_services(temp_db),
     )
 
     stale_run_ids = await monitor.run_acknowledged_stale_sweeps(
@@ -257,6 +394,7 @@ def monitor(
         db=temp_db,
         check_interval_seconds=1.0,
         tmux_config=TmuxConfig(),
+        terminal_services=_fake_terminal_services(temp_db),
     )
 
 
@@ -299,17 +437,6 @@ def _metadata_run(run_id: str, metadata: object, task_id: str | None = None) -> 
     )
 
 
-class TerminalWakeRecorder:
-    """Async tmux send_keys stub that preserves exact wake key order."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str, bool]] = []
-
-    async def __call__(self, session_name: str, keys: str, *, literal: bool = True) -> bool:
-        self.calls.append((session_name, keys, literal))
-        return True
-
-
 async def test_check_autonomous_stuck_agents_nudges_change_approach(
     agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
@@ -333,6 +460,7 @@ async def test_check_autonomous_stuck_agents_nudges_change_approach(
         db=temp_db,
         stuck_detector=stuck_detector,
         check_interval_seconds=1.0,
+        terminal_services=_fake_terminal_services(temp_db),
     )
     child = session_manager.register(
         external_id="stuck-child-session",
@@ -347,7 +475,6 @@ async def test_check_autonomous_stuck_agents_nudges_change_approach(
         child_session_id=child.id,
         terminal_id="gobby-test",
     )
-    monitor._tmux.send_keys = AsyncMock(return_value=True)
 
     handled = await monitor.check_autonomous_stuck_agents()
     stuck_detector.is_stuck.return_value = StuckDetectionResult(
@@ -388,8 +515,7 @@ async def test_check_autonomous_stuck_agents_nudges_change_approach(
     assert left_active_set == 0
     assert repeated_after_reentry == 1
     assert stuck_detector.is_stuck.call_count == 6
-    monitor._tmux.send_keys.assert_awaited_with("gobby-test", "Enter", literal=True)
-    assert monitor._tmux.send_keys.await_count == 4
+    assert _runtime_of(monitor).write_log == [("key", "enter")] * 4
     assert sum("Autonomous session stuck" in record.getMessage() for record in caplog.records) == 4
     assert all(
         "Counter agent_lifecycle_autonomous_stuck_detected_total not registered"
@@ -458,6 +584,7 @@ async def test_refresh_active_run_dispatch_mutexes_advances_batch_cursor(
         agent_run_manager=agent_run_manager,
         db=temp_db,
         check_interval_seconds=1.0,
+        terminal_services=_fake_terminal_services(temp_db),
     )
 
     assert await monitor.refresh_active_run_dispatch_mutexes() == 0
@@ -514,6 +641,7 @@ async def test_refresh_active_run_dispatch_mutexes_extends_expired_attached_mute
         agent_run_manager=agent_run_manager,
         db=temp_db,
         check_interval_seconds=1.0,
+        terminal_services=_fake_terminal_services(temp_db),
     )
 
     before_refresh = datetime.now(UTC)
@@ -572,6 +700,7 @@ async def test_refresh_active_run_dispatch_mutexes_extends_spawn_held_mutex(
         agent_run_manager=agent_run_manager,
         db=temp_db,
         check_interval_seconds=1.0,
+        terminal_services=_fake_terminal_services(temp_db),
     )
 
     before_refresh = datetime.now(UTC)
@@ -628,6 +757,7 @@ async def test_refresh_active_run_dispatch_mutexes_skips_mutex_bound_to_other_ru
         agent_run_manager=agent_run_manager,
         db=temp_db,
         check_interval_seconds=1.0,
+        terminal_services=_fake_terminal_services(temp_db),
     )
 
     assert await monitor.refresh_active_run_dispatch_mutexes() == 0
@@ -671,6 +801,7 @@ async def test_refresh_active_run_dispatch_mutexes_restores_missing_mutex(
         agent_run_manager=agent_run_manager,
         db=temp_db,
         check_interval_seconds=1.0,
+        terminal_services=_fake_terminal_services(temp_db),
     )
 
     before_restore = datetime.now(UTC)
@@ -724,6 +855,7 @@ async def test_refresh_active_run_dispatch_mutexes_does_not_restore_without_stag
         agent_run_manager=agent_run_manager,
         db=temp_db,
         check_interval_seconds=1.0,
+        terminal_services=_fake_terminal_services(temp_db),
     )
 
     assert await monitor.refresh_active_run_dispatch_mutexes() == 0
@@ -811,6 +943,7 @@ def _make_progress_stagnation_monitor(
         stuck_detector=stuck_detector,
         tmux_config=tmux_config
         or TmuxConfig(idle_timeout_seconds=60, idle_reprompt_delay_seconds=300),
+        terminal_services=_fake_terminal_services(temp_db),
     )
     run = _make_terminal_run(
         agent_run_manager,
@@ -839,12 +972,7 @@ async def test_progress_stagnation_visible_draft_starts_grace_without_telemetry(
     caplog.set_level(logging.INFO, logger=lifecycle_monitor_module.__name__)
 
     with (
-        patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            return_value="❯ private draft contents\n",
-        ),
+        _pane_text(monitor, "❯ private draft contents\n"),
         patch.object(
             monitor._cleanup_handler,
             "cleanup_agent",
@@ -882,12 +1010,7 @@ async def test_unchanged_draft_within_grace_remains_active(
     caplog.set_level(logging.INFO, logger=lifecycle_monitor_module.__name__)
 
     with (
-        patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            return_value="❯ stable draft\n",
-        ),
+        _pane_text(monitor, "❯ stable draft\n"),
         patch.object(
             monitor._cleanup_handler,
             "cleanup_agent",
@@ -924,12 +1047,7 @@ async def test_changed_draft_resets_grace_window(
     )
 
     with (
-        patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            side_effect=["❯ first draft\n", "❯ changed draft\n", "❯ changed draft\n"],
-        ),
+        _pane_text(monitor, ["❯ first draft\n", "❯ changed draft\n", "❯ changed draft\n"]),
         patch.object(
             monitor._cleanup_handler,
             "cleanup_agent",
@@ -960,12 +1078,7 @@ async def test_unchanged_draft_past_grace_cleans_up_once(
     )
 
     with (
-        patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            return_value="❯ expired draft\n",
-        ) as capture_pane,
+        _pane_text(monitor, "❯ expired draft\n") as runtime,
         patch.object(
             monitor._cleanup_handler,
             "cleanup_agent",
@@ -985,7 +1098,7 @@ async def test_unchanged_draft_past_grace_cleans_up_once(
         terminal_payload="autonomous stuck: No progress events for 634 seconds",
     )
     inc_counter.assert_called_once_with("agent_lifecycle_autonomous_stuck_detected_total", 1)
-    assert capture_pane.await_count == 2
+    assert len(runtime.snapshot_calls) == 2
     assert run.id not in monitor._draft_grace_observations
 
 
@@ -1001,12 +1114,7 @@ async def test_resumed_progress_clears_draft_grace(
     )
 
     with (
-        patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            return_value="❯ draft\n",
-        ),
+        _pane_text(monitor, "❯ draft\n"),
     ):
         assert await monitor.check_autonomous_stuck_agents() == 0
         stuck_detector.is_stuck.return_value = StuckDetectionResult(is_stuck=False)
@@ -1027,12 +1135,7 @@ async def test_run_removal_clears_draft_grace(
     )
 
     with (
-        patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            return_value="❯ draft\n",
-        ),
+        _pane_text(monitor, "❯ draft\n"),
     ):
         assert await monitor.check_autonomous_stuck_agents() == 0
     with patch.object(monitor, "_get_active_terminal_runs", return_value=[]):
@@ -1068,15 +1171,10 @@ async def test_noneligible_draft_boundaries_preserve_immediate_enforcement(
     )
     run = replace(stored_run, terminal_id=None) if missing_tmux else stored_run
     monitor._draft_grace_observations[run.id] = ("previous", 1.0)
-    capture_pane = (
-        AsyncMock(side_effect=pane_result)
-        if isinstance(pane_result, Exception)
-        else AsyncMock(return_value=pane_result)
-    )
 
     with (
         patch.object(monitor, "_get_active_terminal_runs", return_value=[run]),
-        patch.object(monitor._tmux, "capture_pane", new=capture_pane),
+        _pane_text(monitor, pane_result) as runtime,
         patch.object(
             monitor._cleanup_handler,
             "cleanup_agent",
@@ -1092,9 +1190,9 @@ async def test_noneligible_draft_boundaries_preserve_immediate_enforcement(
     )
     assert run.id not in monitor._draft_grace_observations
     if missing_tmux or layer != "progress_stagnation":
-        capture_pane.assert_not_awaited()
+        assert runtime.snapshot_calls == []
     else:
-        capture_pane.assert_awaited_once_with("gobby-progress-draft-grace", lines=15)
+        assert runtime.snapshot_calls == [15]
 
 
 async def test_nonfatal_progress_stagnation_action_is_not_deferred(
@@ -1109,20 +1207,12 @@ async def test_nonfatal_progress_stagnation_action_is_not_deferred(
         suggested_action="change_approach",
     )
 
-    with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock) as capture_pane,
-        patch.object(
-            monitor._tmux,
-            "send_keys",
-            new_callable=AsyncMock,
-            return_value=True,
-        ) as send_keys,
-    ):
+    with _pane_text(monitor, None) as runtime:
         handled = await monitor.check_autonomous_stuck_agents()
 
     assert handled == 1
-    capture_pane.assert_not_awaited()
-    send_keys.assert_awaited_once_with("gobby-progress-draft-grace", "Enter", literal=True)
+    assert runtime.snapshot_calls == []
+    assert runtime.write_log == [("key", "enter")]
 
 
 async def test_xhigh_draft_grace_uses_scaled_idle_window(
@@ -1139,12 +1229,7 @@ async def test_xhigh_draft_grace_uses_scaled_idle_window(
     )
 
     with (
-        patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            return_value="❯ long reasoning draft\n",
-        ),
+        _pane_text(monitor, "❯ long reasoning draft\n"),
         patch.object(
             monitor._cleanup_handler,
             "cleanup_agent",
@@ -1283,36 +1368,18 @@ async def test_reconcile_pending_termination_captures_kills_and_terminalizes(
         action="timeout",
         reason="reconciled timeout",
     )
-    alive = True
-
-    async def has_session(_name: str) -> bool:
-        return alive
-
-    async def kill_session(_name: str, *, missing_ok: bool = False) -> bool:
-        nonlocal alive
-        assert missing_ok is True
-        alive = False
-        return True
-
-    with (
-        patch.object(monitor._tmux, "has_session", side_effect=has_session),
-        patch.object(
-            monitor._tmux,
-            "capture_full_pane",
-            new_callable=AsyncMock,
-            return_value="complete pane history",
-        ),
-        patch.object(monitor._tmux, "kill_session", side_effect=kill_session),
-    ):
+    with _pane_text(monitor, "complete pane history") as runtime:
         reconciled = await monitor.reconcile_pending_terminations()
 
     assert reconciled == 1
+    assert runtime.killed == ["gobby-reconcile-termination"]
     updated = agent_run_manager.get(run.id)
     assert updated is not None
     assert updated.status == "timeout"
     assert "complete pane history" in (updated.result or "")
     assert updated.pending_terminal_action is None
-    assert updated.terminal_id is None
+    assert updated.terminal_id == run.terminal_id
+    assert _terminal_state(agent_run_manager.db, run.terminal_id) == "exited"
 
 
 class TestCheckDeadAgents:
@@ -1334,7 +1401,7 @@ class TestCheckDeadAgents:
             pid=999999,
         )
 
-        with patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=False):
+        with _terminal_liveness(monitor, False):
             cleaned = await monitor.check_unhealthy_agents()
 
         assert cleaned == 1
@@ -1342,7 +1409,7 @@ class TestCheckDeadAgents:
         updated = agent_run_manager.get(_rid("run-dead"))
         assert updated is not None
         assert updated.status == "error"
-        assert "tmux session died" in (updated.error or "")
+        assert "terminal session died unexpectedly" in (updated.error or "")
 
     @pytest.mark.asyncio
     async def test_dead_tmux_session_without_pid_cleans_up(
@@ -1352,7 +1419,7 @@ class TestCheckDeadAgents:
         sample_session: dict,
     ) -> None:
         """Dead tmux session with no PID is already gone and should still clean up."""
-        _make_terminal_run(
+        run = _make_terminal_run(
             agent_run_manager,
             sample_session,
             run_id=_rid("run-dead-no-pid"),
@@ -1365,7 +1432,7 @@ class TestCheckDeadAgents:
         tmux_manager.kill_session = AsyncMock(return_value=True)
 
         with (
-            patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=False),
+            _terminal_liveness(monitor, False),
             patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux_manager),
         ):
             cleaned = await monitor.check_unhealthy_agents()
@@ -1376,8 +1443,9 @@ class TestCheckDeadAgents:
         updated = agent_run_manager.get(_rid("run-dead-no-pid"))
         assert updated is not None
         assert updated.status == "error"
-        assert updated.terminal_id is None
-        assert "tmux session died" in (updated.error or "")
+        assert updated.terminal_id == run.terminal_id
+        assert _terminal_state(agent_run_manager.db, run.terminal_id) == "exited"
+        assert "terminal session died unexpectedly" in (updated.error or "")
 
     @pytest.mark.asyncio
     async def test_skips_alive_tmux_session(
@@ -1394,7 +1462,7 @@ class TestCheckDeadAgents:
             terminal_id="gobby-alive",
         )
 
-        with patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True):
+        with _terminal_liveness(monitor, True):
             cleaned = await monitor.check_unhealthy_agents()
 
         assert cleaned == 0
@@ -1420,7 +1488,7 @@ class TestCheckDeadAgents:
         )
 
         with (
-            patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True),
+            _terminal_liveness(monitor, True),
             patch(
                 "gobby.agents.agent_health.pid_matches_agent_identity",
                 new_callable=AsyncMock,
@@ -1498,12 +1566,7 @@ class TestCheckDeadAgents:
             terminal_id="gobby-err",
         )
 
-        with patch.object(
-            monitor._tmux,
-            "has_session",
-            new_callable=AsyncMock,
-            side_effect=OSError("tmux socket gone"),
-        ):
+        with _terminal_liveness(monitor, OSError("tmux socket gone")):
             cleaned = await monitor.check_unhealthy_agents()
 
         assert cleaned == 0
@@ -1534,6 +1597,7 @@ class TestCheckDeadAgents:
             db=temp_db,
             session_coordinator=mock_coordinator,
             tmux_config=TmuxConfig(),
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         _make_terminal_run(
@@ -1545,7 +1609,7 @@ class TestCheckDeadAgents:
             pid=999999,
         )
 
-        with patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False):
+        with _terminal_liveness(mon, False):
             await mon.check_unhealthy_agents()
 
         mock_coordinator.release_session_worktrees.assert_called_once_with(child_session.id)
@@ -1619,6 +1683,7 @@ class TestCheckIdleAgents:
             db=temp_db,
             check_interval_seconds=1.0,
             tmux_config=config,
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
     @pytest.mark.asyncio
@@ -1636,12 +1701,7 @@ class TestCheckIdleAgents:
             terminal_id="gobby-active",
         )
 
-        with patch.object(
-            idle_monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            return_value="Running tests...\n",
-        ):
+        with _pane_text(idle_monitor, "Running tests...\n"):
             handled = await idle_monitor.check_idle_agents()
 
         assert handled == 0
@@ -1667,22 +1727,17 @@ class TestCheckIdleAgents:
         state = idle_monitor._idle_detector.get_state(run.id)
         state.first_idle_at = time.monotonic() - 360
 
-        with (
-            patch.object(
-                idle_monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="\u276f\n"
-            ),
-            patch.object(idle_monitor._tmux, "send_keys", new=TerminalWakeRecorder()) as wake,
-        ):
+        with _pane_text(idle_monitor, "\u276f\n") as runtime:
             handled = await idle_monitor.check_idle_agents()
 
         assert handled == 1
-        assert wake.calls == [
-            ("gobby-idle", "Escape", False),
-            ("gobby-idle", wake.calls[1][1], True),
-            ("gobby-idle", "Enter", False),
+        assert runtime.write_log == [
+            ("key", "escape"),
+            ("text", _written_text(runtime)[0]),
+            ("key", "enter"),
         ]
-        assert "Continue working" in wake.calls[1][1]
-        assert all(keys != "Up" for _session, keys, _literal in wake.calls)
+        assert "Continue working" in _written_text(runtime)[0]
+        assert "up" not in _written_keys(runtime)
 
     @pytest.mark.asyncio
     async def test_idle_agent_with_unsubmitted_input_is_not_cleared(
@@ -1705,20 +1760,12 @@ class TestCheckIdleAgents:
         state.first_idle_at = time.monotonic() - 360
 
         with (
-            patch.object(
-                idle_monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value="❯ uv run pytest tests/foo.py\n",
-            ),
-            patch.object(
-                idle_monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-            ) as mock_send,
+            _pane_text(idle_monitor, "❯ uv run pytest tests/foo.py\n"),
         ):
             handled = await idle_monitor.check_idle_agents()
 
         assert handled == 0
-        mock_send.assert_not_awaited()
+        assert _runtime_of(idle_monitor).write_log == []
         assert idle_monitor._idle_detector.get_state(run.id).first_idle_at is None
 
     @pytest.mark.asyncio
@@ -1741,15 +1788,12 @@ class TestCheckIdleAgents:
         state.first_idle_at = time.monotonic() - 120
 
         with (
-            patch.object(
-                idle_monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="\u276f\n"
-            ),
-            patch.object(idle_monitor._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
+            _pane_text(idle_monitor, "\u276f\n"),
         ):
             handled = await idle_monitor.check_idle_agents()
 
         assert handled == 0
-        mock_send.assert_not_called()
+        assert _runtime_of(idle_monitor).write_log == []
 
     @pytest.mark.asyncio
     async def test_idle_agent_failed_after_max_reprompts(
@@ -1771,12 +1815,7 @@ class TestCheckIdleAgents:
         state.reprompt_count = 2  # max_reprompt_attempts = 2
 
         with (
-            patch.object(
-                idle_monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="\u276f\n"
-            ),
-            patch.object(
-                idle_monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True
-            ),
+            _pane_text(idle_monitor, "\u276f\n"),
         ):
             handled = await idle_monitor.check_idle_agents()
 
@@ -1810,20 +1849,13 @@ class TestCheckIdleAgents:
             "❯ Press up to edit queued messages\n"
         )
         with (
-            patch.object(
-                idle_monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value=pane_output,
-            ),
-            patch.object(idle_monitor._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
-            patch.object(idle_monitor._tmux, "kill_session", new_callable=AsyncMock) as mock_kill,
+            _pane_text(idle_monitor, pane_output),
         ):
             handled = await idle_monitor.check_idle_agents()
 
         assert handled == 0
-        mock_send.assert_not_called()
-        mock_kill.assert_not_called()
+        assert _runtime_of(idle_monitor).write_log == []
+        assert _runtime_of(idle_monitor).killed == []
         updated = agent_run_manager.get(run.id)
         assert updated is not None
         assert updated.status == "running"
@@ -1854,23 +1886,15 @@ class TestCheckIdleAgents:
             "❯ Press up to edit queued messages\n"
         )
         with (
-            patch.object(
-                idle_monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value=pane_output,
-            ),
-            patch.object(
-                idle_monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-            ) as mock_send,
+            _pane_text(idle_monitor, pane_output),
         ):
             handled = await idle_monitor.check_idle_agents()
 
         assert handled == 1
-        assert mock_send.call_args_list == [
-            call("gobby-queued-continuation-delayed", "Escape", literal=False),
-            call("gobby-queued-continuation-delayed", "Continue working on your task."),
-            call("gobby-queued-continuation-delayed", "Enter", literal=False),
+        assert _runtime_of(idle_monitor).write_log == [
+            ("key", "escape"),
+            ("text", "Continue working on your task."),
+            ("key", "enter"),
         ]
 
     @pytest.mark.asyncio
@@ -1892,29 +1916,16 @@ class TestCheckIdleAgents:
         state = idle_monitor._idle_detector.get_state(run.id)
         state.first_idle_at = time.monotonic() - 360
 
-        send_results = [True, True, False]
-        with (
-            patch.object(
-                idle_monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value="\u276f\n",
-            ),
-            patch.object(
-                idle_monitor._tmux,
-                "send_keys",
-                new_callable=AsyncMock,
-                side_effect=send_results,
-            ) as mock_send,
-        ):
+        with _pane_text(idle_monitor, "\u276f\n") as runtime:
+            runtime.write_failures = [False, False, True]
             handled = await idle_monitor.check_idle_agents()
 
         assert handled == 0
         assert idle_monitor._idle_detector.get_state(run.id).reprompt_count == 0
-        assert mock_send.call_args_list == [
-            call("gobby-reprompt-enter-fails", "Escape", literal=False),
-            call("gobby-reprompt-enter-fails", "Continue working on your task."),
-            call("gobby-reprompt-enter-fails", "Enter", literal=False),
+        assert runtime.write_log == [
+            ("key", "escape"),
+            ("text", "Continue working on your task."),
+            ("key", "enter"),
         ]
 
     @pytest.mark.asyncio
@@ -1936,38 +1947,22 @@ class TestCheckIdleAgents:
         state = idle_monitor._idle_detector.get_state(run.id)
         state.first_idle_at = time.monotonic() - 360
 
-        send_results = [False, True, True, True, True]
         with (
-            patch.object(
-                idle_monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value="\u276f\n",
-            ),
-            patch.object(
-                idle_monitor._tmux,
-                "has_session",
-                new_callable=AsyncMock,
-                return_value=True,
-            ) as mock_has_session,
-            patch.object(
-                idle_monitor._tmux,
-                "send_keys",
-                new_callable=AsyncMock,
-                side_effect=send_results,
-            ) as mock_send,
+            _pane_text(idle_monitor, "\u276f\n") as runtime,
+            _terminal_liveness(idle_monitor, True),
         ):
+            runtime.write_failures = [True]
             handled = await idle_monitor.check_idle_agents()
 
         assert handled == 1
         assert idle_monitor._idle_detector.get_state(run.id).reprompt_count == 1
-        assert mock_has_session.await_count == 2
-        assert mock_send.call_args_list == [
-            call("gobby-reprompt-escape-fails", "Escape", literal=False),
-            call("gobby-reprompt-escape-fails", "C-c", literal=False),
-            call("gobby-reprompt-escape-fails", "Enter", literal=False),
-            call("gobby-reprompt-escape-fails", "Continue working on your task."),
-            call("gobby-reprompt-escape-fails", "Enter", literal=False),
+        assert runtime.live_probes == 2
+        assert runtime.write_log == [
+            ("key", "escape"),
+            ("text", "\x03"),
+            ("key", "enter"),
+            ("text", "Continue working on your task."),
+            ("key", "enter"),
         ]
 
     @pytest.mark.asyncio
@@ -1994,20 +1989,13 @@ class TestCheckIdleAgents:
             "❯ Press up to edit queued messages\n"
         )
         with (
-            patch.object(
-                idle_monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value=pane_output,
-            ),
-            patch.object(idle_monitor._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
-            patch.object(idle_monitor._tmux, "kill_session", new_callable=AsyncMock) as mock_kill,
+            _pane_text(idle_monitor, pane_output),
         ):
             handled = await idle_monitor.check_idle_agents()
 
         assert handled == 0
-        mock_send.assert_not_called()
-        mock_kill.assert_not_called()
+        assert _runtime_of(idle_monitor).write_log == []
+        assert _runtime_of(idle_monitor).killed == []
         updated = agent_run_manager.get(run.id)
         assert updated is not None
         assert updated.status == "running"
@@ -2028,15 +2016,7 @@ class TestCheckIdleAgents:
         )
 
         with (
-            patch.object(
-                idle_monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value="The context window is full.\n\u276f\n",
-            ),
-            patch.object(
-                idle_monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True
-            ),
+            _pane_text(idle_monitor, "The context window is full.\n\u276f\n"),
         ):
             handled = await idle_monitor.check_idle_agents()
 
@@ -2062,6 +2042,7 @@ class TestCheckIdleAgents:
             agent_run_manager=agent_run_manager,
             db=temp_db,
             tmux_config=config,
+            terminal_services=_fake_terminal_services(temp_db),
         )
         _make_terminal_run(
             agent_run_manager,
@@ -2091,17 +2072,13 @@ class TestCheckIdleAgents:
         state.reprompt_count = 2
 
         with (
-            patch.object(
-                idle_monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=None
-            ),
-            patch.object(idle_monitor._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
-            patch.object(idle_monitor._tmux, "kill_session", new_callable=AsyncMock) as mock_kill,
+            _pane_text(idle_monitor, None),
         ):
             handled = await idle_monitor.check_idle_agents()
 
         assert handled == 0
-        mock_send.assert_not_called()
-        mock_kill.assert_not_called()
+        assert _runtime_of(idle_monitor).write_log == []
+        assert _runtime_of(idle_monitor).killed == []
         updated = agent_run_manager.get(_rid("run-no-capture"))
         assert updated is not None
         assert updated.status == "running"
@@ -2128,6 +2105,7 @@ class TestCheckIdleAgents:
             session_manager=session_manager,
             check_interval_seconds=1.0,
             tmux_config=config,
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         # Create a child session and register it
@@ -2148,12 +2126,12 @@ class TestCheckIdleAgents:
             child_session_id=child.id,
         )
 
-        with patch.object(mon._tmux, "capture_pane", new_callable=AsyncMock) as mock_capture:
+        with _pane_text(mon, None) as runtime:
             handled = await mon.check_idle_agents()
 
         assert handled == 0
         # Pane capture should NOT have been called — session activity was sufficient
-        mock_capture.assert_not_called()
+        assert runtime.snapshot_calls == []
 
     @pytest.mark.asyncio
     async def test_recent_hook_activity_skips_stale_session_pane_check(
@@ -2177,6 +2155,7 @@ class TestCheckIdleAgents:
             session_manager=session_manager,
             check_interval_seconds=1.0,
             tmux_config=config,
+            terminal_services=_fake_terminal_services(temp_db),
         )
         child = session_manager.register(
             external_id="child-hook-active",
@@ -2200,13 +2179,13 @@ class TestCheckIdleAgents:
         )
 
         try:
-            with patch.object(mon._tmux, "capture_pane", new_callable=AsyncMock) as mock_capture:
+            with _pane_text(mon, None) as runtime:
                 handled = await mon.check_idle_agents()
         finally:
             session_activity.reset_for_tests()
 
         assert handled == 0
-        mock_capture.assert_not_called()
+        assert runtime.snapshot_calls == []
 
     @pytest.mark.asyncio
     async def test_active_pane_resets_stale_session_instead_of_failing(
@@ -2229,6 +2208,7 @@ class TestCheckIdleAgents:
             session_manager=session_manager,
             check_interval_seconds=1.0,
             tmux_config=config,
+            terminal_services=_fake_terminal_services(temp_db),
         )
         child = session_manager.register(
             external_id="child-pane-active",
@@ -2253,20 +2233,13 @@ class TestCheckIdleAgents:
         state.reprompt_count = 2
 
         with (
-            patch.object(
-                mon._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value="Running tests...\n",
-            ),
-            patch.object(mon._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
-            patch.object(mon._tmux, "kill_session", new_callable=AsyncMock) as mock_kill,
+            _pane_text(mon, "Running tests...\n"),
         ):
             handled = await mon.check_idle_agents()
 
         assert handled == 0
-        mock_send.assert_not_called()
-        mock_kill.assert_not_called()
+        assert _runtime_of(mon).write_log == []
+        assert _runtime_of(mon).killed == []
         updated = agent_run_manager.get(run.id)
         assert updated is not None
         assert updated.status == "running"
@@ -2297,6 +2270,7 @@ class TestCheckIdleAgents:
             session_manager=session_manager,
             check_interval_seconds=1.0,
             tmux_config=config,
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         # Create child session with stale updated_at
@@ -2326,19 +2300,14 @@ class TestCheckIdleAgents:
         state.first_idle_at = time.monotonic() - 360
 
         with (
-            patch.object(
-                mon._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"
-            ) as mock_capture,
-            patch.object(
-                mon._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-            ) as mock_send,
+            _pane_text(mon, "❯\n") as runtime,
         ):
             handled = await mon.check_idle_agents()
 
         assert handled == 1
         # Pane capture SHOULD have been called since session was stale
-        mock_capture.assert_called_once()
-        assert mock_send.call_args_list[0] == call("gobby-session-stale", "Escape", literal=False)
+        assert len(runtime.snapshot_calls) == 1
+        assert _runtime_of(mon).write_log[0] == ("key", "escape")
 
     @pytest.mark.asyncio
     async def test_idle_step_workflow_agent_gets_actionable_handoff_reprompt(
@@ -2364,6 +2333,7 @@ class TestCheckIdleAgents:
             session_manager=session_manager,
             check_interval_seconds=1.0,
             tmux_config=config,
+            terminal_services=_fake_terminal_services(temp_db),
         )
         child = session_manager.register(
             external_id="child-planner-step",
@@ -2414,20 +2384,13 @@ class TestCheckIdleAgents:
         mon._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
 
         with (
-            patch.object(mon._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-            patch.object(
-                mon._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-            ) as mock_send,
+            _pane_text(mon, "❯\n"),
         ):
             handled = await mon.check_idle_agents()
 
         assert handled == 1
-        assert mock_send.call_args_list[0] == call(
-            "gobby-planner-step-idle",
-            "Escape",
-            literal=False,
-        )
-        prompt = mock_send.call_args_list[1].args[1]
+        assert _runtime_of(mon).write_log[0] == ("key", "escape")
+        prompt = _written_text(_runtime_of(mon))[0]
         assert "Workflow: planner. Current step: plan." in prompt
         assert 'submit_for_review(stage_name="planning")' in prompt
         assert "end_agent_run" in prompt
@@ -2456,6 +2419,7 @@ class TestCheckIdleAgents:
             session_manager=session_manager,
             check_interval_seconds=1.0,
             tmux_config=config,
+            terminal_services=_fake_terminal_services(temp_db),
         )
         child = session_manager.register(
             external_id="child-naive-stale",
@@ -2478,22 +2442,13 @@ class TestCheckIdleAgents:
         mon._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
 
         with (
-            patch.object(
-                mon._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"
-            ) as mock_capture,
-            patch.object(
-                mon._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-            ) as mock_send,
+            _pane_text(mon, "❯\n") as runtime,
         ):
             handled = await mon.check_idle_agents()
 
         assert handled == 1
-        mock_capture.assert_called_once()
-        assert mock_send.call_args_list[0] == call(
-            "gobby-session-naive-stale",
-            "Escape",
-            literal=False,
-        )
+        assert len(runtime.snapshot_calls) == 1
+        assert runtime.write_log[0] == ("key", "escape")
 
     @pytest.mark.asyncio
     async def test_xhigh_session_within_scaled_timeout_only_probes_capacity(
@@ -2519,6 +2474,7 @@ class TestCheckIdleAgents:
             session_manager=session_manager,
             check_interval_seconds=1.0,
             tmux_config=config,
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         child = session_manager.register(
@@ -2547,18 +2503,14 @@ class TestCheckIdleAgents:
         state.reprompt_count = 2
 
         with (
-            patch.object(
-                mon._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"
-            ) as mock_capture,
-            patch.object(mon._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
-            patch.object(mon._tmux, "kill_session", new_callable=AsyncMock) as mock_kill,
+            _pane_text(mon, "❯\n") as runtime,
         ):
             handled = await mon.check_idle_agents()
 
         assert handled == 0
-        mock_capture.assert_awaited_once_with("gobby-xhigh-scaled-active", lines=15)
-        mock_send.assert_not_called()
-        mock_kill.assert_not_called()
+        assert runtime.snapshot_calls == [15]
+        assert _runtime_of(mon).write_log == []
+        assert _runtime_of(mon).killed == []
         updated = agent_run_manager.get(run.id)
         assert updated is not None
         assert updated.status == "running"
@@ -2587,6 +2539,7 @@ class TestCheckIdleAgents:
             session_manager=session_manager,
             check_interval_seconds=1.0,
             tmux_config=config,
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         child = session_manager.register(
@@ -2614,22 +2567,13 @@ class TestCheckIdleAgents:
         state.first_idle_at = time.monotonic() - 360
 
         with (
-            patch.object(
-                mon._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"
-            ) as mock_capture,
-            patch.object(
-                mon._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-            ) as mock_send,
+            _pane_text(mon, "❯\n") as runtime,
         ):
             handled = await mon.check_idle_agents()
 
         assert handled == 1
-        mock_capture.assert_called_once()
-        assert mock_send.call_args_list[0] == call(
-            "gobby-high-base-stale",
-            "Escape",
-            literal=False,
-        )
+        assert len(runtime.snapshot_calls) == 1
+        assert runtime.write_log[0] == ("key", "escape")
 
     @pytest.mark.asyncio
     async def test_xhigh_session_past_scaled_timeout_can_fail_after_reprompts(
@@ -2654,6 +2598,7 @@ class TestCheckIdleAgents:
             session_manager=session_manager,
             check_interval_seconds=1.0,
             tmux_config=config,
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         child = session_manager.register(
@@ -2681,8 +2626,7 @@ class TestCheckIdleAgents:
         state.reprompt_count = 2
 
         with (
-            patch.object(mon._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-            patch.object(mon._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
+            _pane_text(mon, "❯\n"),
         ):
             handled = await mon.check_idle_agents()
 
@@ -2716,6 +2660,7 @@ class TestCheckIdleAgents:
             session_manager=session_manager,
             check_interval_seconds=1.0,
             tmux_config=config,
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         # Create child session with stale updated_at
@@ -2743,24 +2688,14 @@ class TestCheckIdleAgents:
         state = mon._idle_detector.get_state(run.id)
         state.first_idle_at = time.monotonic() - 360
 
-        with (
-            patch.object(
-                mon._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                # Pane shows active-looking output (running command)
-                return_value="Running tests...\nProcessing file 42/100\n",
-            ),
-            patch.object(
-                mon._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-            ) as mock_send,
-        ):
+        # Pane shows active-looking output (running command)
+        with _pane_text(mon, "Running tests...\nProcessing file 42/100\n") as runtime:
             handled = await mon.check_idle_agents()
 
         # Agent should be reprompted despite active-looking pane
         assert handled == 1
-        assert mock_send.call_args_list[0] == call("gobby-stale-active", "Escape", literal=False)
-        assert "Continue working" in mock_send.call_args_list[1].args[1]
+        assert runtime.write_log[0] == ("key", "escape")
+        assert "Continue working" in _written_text(runtime)[0]
 
 
 class TestCheckTrustPrompts:
@@ -2789,20 +2724,12 @@ class TestCheckTrustPrompts:
         )
 
         with (
-            patch.object(
-                monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value=trust_output,
-            ),
-            patch.object(
-                monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-            ) as mock_send,
+            _pane_text(monitor, trust_output),
         ):
             handled = await monitor.check_trust_prompts()
 
         assert handled == 1
-        mock_send.assert_called_once_with("gobby-trust", "\n")
+        assert _runtime_of(monitor).write_log == [("key", "enter")]
 
     @pytest.mark.asyncio
     async def test_no_action_on_normal_output(
@@ -2820,18 +2747,12 @@ class TestCheckTrustPrompts:
         )
 
         with (
-            patch.object(
-                monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value="Running tests...\n",
-            ),
-            patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
+            _pane_text(monitor, "Running tests...\n"),
         ):
             handled = await monitor.check_trust_prompts()
 
         assert handled == 0
-        mock_send.assert_not_called()
+        assert _runtime_of(monitor).write_log == []
 
     @pytest.mark.asyncio
     async def test_does_not_dismiss_twice(
@@ -2851,15 +2772,7 @@ class TestCheckTrustPrompts:
         trust_output = "Do you trust the files in this folder?\n"
 
         with (
-            patch.object(
-                monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value=trust_output,
-            ),
-            patch.object(
-                monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-            ) as mock_send,
+            _pane_text(monitor, trust_output),
         ):
             # First call should dismiss
             handled1 = await monitor.check_trust_prompts()
@@ -2868,7 +2781,7 @@ class TestCheckTrustPrompts:
 
         assert handled1 == 1
         assert handled2 == 0
-        mock_send.assert_called_once()
+        assert _runtime_of(monitor).write_log == [("key", "enter")]
 
     @pytest.mark.asyncio
     async def test_skips_non_terminal_agents(
@@ -2903,7 +2816,7 @@ class TestCheckTrustPrompts:
             terminal_id="gobby-nocap",
         )
 
-        with patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=None):
+        with _pane_text(monitor, None):
             handled = await monitor.check_trust_prompts()
 
         assert handled == 0
@@ -2933,12 +2846,7 @@ class TestCheckTrustPrompts:
         )
         caplog.set_level("DEBUG", logger="gobby.agents.terminal_prompt_monitor")
 
-        with patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            side_effect=error,
-        ):
+        with _pane_text(monitor, error):
             handled = await monitor.check_trust_prompts()
 
         assert handled == 0
@@ -2950,7 +2858,7 @@ class TestCheckTrustPrompts:
         assert record.levelname == "DEBUG"
         assert type(error).__name__ in record.message
         assert run.id in record.message
-        assert "gobby-probe-race" in record.message
+        assert str(run.terminal_id) in record.message
 
     @pytest.mark.asyncio
     async def test_unexpected_probe_error_warns_with_traceback(
@@ -2968,12 +2876,7 @@ class TestCheckTrustPrompts:
         )
         caplog.set_level("DEBUG", logger="gobby.agents.terminal_prompt_monitor")
 
-        with patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("unexpected capture failure"),
-        ):
+        with _pane_text(monitor, RuntimeError("unexpected capture failure")):
             handled = await monitor.check_trust_prompts()
 
         assert handled == 0
@@ -2985,7 +2888,7 @@ class TestCheckTrustPrompts:
         assert record.levelname == "WARNING"
         assert "RuntimeError" in record.message
         assert run.id in record.message
-        assert "gobby-probe-unexpected" in record.message
+        assert str(run.terminal_id) in record.message
         assert record.exc_info is not None
 
     @pytest.mark.asyncio
@@ -3007,7 +2910,7 @@ class TestCheckTrustPrompts:
         # Pre-mark as dismissed
         monitor._prompt_detector.mark_dismissed(run.id)
 
-        with patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=False):
+        with _terminal_liveness(monitor, False):
             await monitor.check_unhealthy_agents()
 
         # State should be cleared after cleanup
@@ -3046,7 +2949,7 @@ class TestCheckExpiredAgents:
             terminal_id="gobby-no-timeout",
             timeout_seconds=None,
         )
-        with patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True):
+        with _terminal_liveness(monitor, True):
             cleaned = await monitor.check_unhealthy_agents()
         assert cleaned == 0
 
@@ -3066,7 +2969,7 @@ class TestCheckExpiredAgents:
             terminal_id="gobby-not-expired",
             timeout_seconds=3600,
         )
-        with patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True):
+        with _terminal_liveness(monitor, True):
             cleaned = await monitor.check_unhealthy_agents()
         assert cleaned == 0
 
@@ -3102,7 +3005,7 @@ class TestCheckExpiredAgents:
         )
 
         with (
-            patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True),
+            _terminal_liveness(monitor, True),
             patch.object(
                 monitor._health_monitor,
                 "_terminate_tmux_run",
@@ -3157,6 +3060,7 @@ class TestCheckExpiredAgents:
             task_manager=task_manager,
             check_interval_seconds=1.0,
             tmux_config=TmuxConfig(),
+            terminal_services=_fake_terminal_services(temp_db),
         )
         events: list[str] = []
         release_observations: list[tuple[list[str], str | None]] = []
@@ -3174,12 +3078,7 @@ class TestCheckExpiredAgents:
             return original_release_claim(*args, **kwargs)
 
         with (
-            patch.object(
-                monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value="",
-            ),
+            _pane_text(monitor, ""),
             patch.object(
                 monitor._health_monitor,
                 "_terminate_tmux_run",
@@ -3291,15 +3190,11 @@ class TestCheckExpiredAgents:
             task_manager=task_manager,
             check_interval_seconds=1.0,
             tmux_config=TmuxConfig(),
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         with (
-            patch.object(
-                monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value="CANARY-OK\nQA verdict: APPROVED\n",
-            ),
+            _pane_text(monitor, "CANARY-OK\nQA verdict: APPROVED\n"),
             patch.object(
                 monitor._health_monitor,
                 "_terminate_tmux_run",
@@ -3368,15 +3263,11 @@ class TestCheckExpiredAgents:
             task_manager=task_manager,
             check_interval_seconds=1.0,
             tmux_config=TmuxConfig(),
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         with (
-            patch.object(
-                monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value="QA verdict: PASS\n",
-            ),
+            _pane_text(monitor, "QA verdict: PASS\n"),
             patch.object(
                 monitor._health_monitor,
                 "_terminate_tmux_run",
@@ -3433,7 +3324,7 @@ class TestCheckExpiredAgents:
         )
 
         with (
-            patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True),
+            _terminal_liveness(monitor, True),
             patch.object(
                 monitor._health_monitor,
                 "_terminate_tmux_run",
@@ -3537,24 +3428,15 @@ class TestCheckExpiredAgents:
             (completed_at, completed_at, run.id),
         )
 
-        with patch.object(
-            monitor._tmux,
-            "kill_session",
-            new_callable=AsyncMock,
-            return_value=True,
-        ) as kill_session:
-            expired = await monitor.expire_terminal_run_sessions()
+        expired = await monitor.expire_terminal_run_sessions()
 
         assert expired == 1
-        kill_session.assert_awaited_once_with(
-            "gobby-terminal-lingering-tmux",
-            missing_ok=True,
-        )
+        assert _runtime_of(monitor).killed == ["gobby-terminal-lingering-tmux"]
         updated = agent_run_manager.get(run.id)
         assert updated is not None
         assert updated.status == "success"
         assert updated.pid is None
-        assert updated.terminal_id is None
+        assert _terminal_state(temp_db, updated.terminal_id) == "exited"
         assert session_manager.get(child_session.id).status == "expired"
 
     @pytest.mark.asyncio
@@ -3609,6 +3491,7 @@ class TestCheckExpiredAgents:
             task_manager=task_manager,
             check_interval_seconds=1.0,
             tmux_config=TmuxConfig(),
+            terminal_services=_fake_terminal_services(temp_db),
         )
         caplog.set_level(logging.WARNING, logger="gobby.agents")
 
@@ -3678,6 +3561,7 @@ class TestCheckExpiredAgents:
             task_manager=task_manager,
             check_interval_seconds=1.0,
             tmux_config=TmuxConfig(),
+            terminal_services=_fake_terminal_services(temp_db),
         )
         events: list[str] = []
         release_observations: list[tuple[list[str], str | None, str | None]] = []
@@ -3705,7 +3589,6 @@ class TestCheckExpiredAgents:
             return original_release_claim(*args, **kwargs)
 
         with (
-            patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock),
             patch(
                 "gobby.agents.lifecycle_monitor.kill_agent",
                 new_callable=AsyncMock,
@@ -3770,10 +3653,10 @@ class TestCheckExpiredAgents:
             task_manager=task_manager,
             check_interval_seconds=1.0,
             tmux_config=TmuxConfig(),
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         with (
-            patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock),
             patch(
                 "gobby.agents.lifecycle_monitor.kill_agent",
                 new_callable=AsyncMock,
@@ -3814,6 +3697,7 @@ class TestCheckExpiredAgents:
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_coordinator=mock_coordinator,
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         run = agent_run_manager.create(
@@ -3842,7 +3726,7 @@ class TestCheckExpiredAgents:
         )
 
         with (
-            patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=True),
+            _terminal_liveness(mon, True),
             patch.object(
                 mon._health_monitor,
                 "_terminate_tmux_run",
@@ -3870,6 +3754,7 @@ class TestCheckExpiredAgents:
             agent_run_manager=agent_run_manager,
             db=temp_db,
             clone_storage=mock_clone_storage,
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         run = agent_run_manager.create(
@@ -3896,7 +3781,7 @@ class TestCheckExpiredAgents:
         )
 
         with (
-            patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=True),
+            _terminal_liveness(mon, True),
             patch.object(
                 mon._health_monitor,
                 "_terminate_tmux_run",
@@ -3937,12 +3822,7 @@ class TestCheckProviderStalls:
             terminal_id="gobby-healthy",
         )
 
-        with patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            return_value="Working on task...\n",
-        ):
+        with _pane_text(monitor, "Working on task...\n"):
             stalled = await monitor.check_provider_stalls()
 
         assert stalled == 0
@@ -3962,12 +3842,7 @@ class TestCheckProviderStalls:
             terminal_id="gobby-stall-err",
         )
 
-        with patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            side_effect=OSError("tmux error"),
-        ):
+        with _pane_text(monitor, OSError("tmux error")):
             stalled = await monitor.check_provider_stalls()
 
         assert stalled == 0
@@ -3984,7 +3859,7 @@ class TestCheckProviderStallsKillsAgent:
         sample_session: dict,
     ) -> None:
         """Confirmed PROVIDER_STALL kills the agent and marks it failed."""
-        _make_terminal_run(
+        run = _make_terminal_run(
             agent_run_manager,
             sample_session,
             run_id=_rid("run-stall-kill"),
@@ -3993,26 +3868,9 @@ class TestCheckProviderStallsKillsAgent:
 
         rate_limit_output = "Error: 429 Too Many Requests - rate limit exceeded\n"
 
-        call_count = 0
-
-        async def capture_pane_side_effect(session_name: str, lines: int = 30) -> str:
-            nonlocal call_count
-            call_count += 1
-            return rate_limit_output
-
         with (
-            patch.object(
-                monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                side_effect=capture_pane_side_effect,
-            ),
-            patch.object(
-                monitor._tmux,
-                "has_session",
-                new_callable=AsyncMock,
-                return_value=True,
-            ),
+            _pane_text(monitor, rate_limit_output),
+            _terminal_liveness(monitor, True),
             patch.object(
                 monitor._health_monitor,
                 "_terminate_tmux_run",
@@ -4033,7 +3891,7 @@ class TestCheckProviderStallsKillsAgent:
             # Second check: consecutive_hits=2, confirms PROVIDER_STALL → kill
             stalled = await monitor.check_provider_stalls()
             assert stalled == 1
-            assert mock_kill.await_args.args[0].terminal_id == "gobby-stall-kill"
+            assert mock_kill.await_args.args[0].terminal_id == run.terminal_id
 
         updated = agent_run_manager.get(_rid("run-stall-kill"))
         assert updated is not None
@@ -4065,12 +3923,7 @@ class TestCheckProviderStallsKillsAgent:
             return True
 
         with (
-            patch.object(
-                monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value="Error: 429 Too Many Requests - rate limit exceeded\n",
-            ),
+            _pane_text(monitor, "Error: 429 Too Many Requests - rate limit exceeded\n"),
             patch.object(
                 monitor,
                 "_checkpoint_agent_work",
@@ -4093,7 +3946,7 @@ class TestCheckProviderStallsKillsAgent:
         assert stalled == 1
         assert events == [
             ("checkpoint", _rid("run-stall-checkpoint-order")),
-            ("kill", "gobby-stall-checkpoint-order"),
+            ("kill", run.terminal_id or ""),
         ]
 
     @pytest.mark.asyncio
@@ -4130,20 +3983,11 @@ class TestCheckProviderStallsKillsAgent:
             task_manager=task_manager,
             check_interval_seconds=1.0,
             tmux_config=TmuxConfig(),
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         with (
-            patch.object(
-                monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value="Provider connection timed out while starting\n",
-            ),
-            patch.object(
-                monitor._tmux,
-                "kill_session",
-                new_callable=AsyncMock,
-            ),
+            _pane_text(monitor, "Provider connection timed out while starting\n"),
         ):
             await monitor.check_provider_stalls()
             state = monitor._stall_classifier._states.get(run.id)
@@ -4182,23 +4026,8 @@ class TestCheckProviderStallsKillsAgent:
         import time
 
         with (
-            patch.object(
-                monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value="Error: 503 Service Unavailable overloaded\n",
-            ),
-            patch.object(
-                monitor._tmux,
-                "has_session",
-                new_callable=AsyncMock,
-                return_value=True,
-            ),
-            patch.object(
-                monitor._tmux,
-                "kill_session",
-                new_callable=AsyncMock,
-            ),
+            _pane_text(monitor, "Error: 503 Service Unavailable overloaded\n"),
+            _terminal_liveness(monitor, True),
         ):
             await monitor.check_provider_stalls()
             state = monitor._stall_classifier._states.get(_rid("run-stall-pattern"))
@@ -4258,7 +4087,7 @@ class TestCheckInitializationTimeout:
             killed = await monitor.check_initialization_timeout()
 
         assert killed == 1
-        assert mock_kill.await_args.args[0].terminal_id == "gobby-uninit"
+        assert mock_kill.await_args.args[0].terminal_id == run.terminal_id
 
         updated = agent_run_manager.get(_rid("run-uninit"))
         assert updated is not None
@@ -4360,14 +4189,10 @@ class TestCheckInitializationTimeout:
             task_manager=task_manager,
             check_interval_seconds=1.0,
             tmux_config=TmuxConfig(),
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
-        with patch.object(
-            monitor._tmux,
-            "kill_session",
-            new_callable=AsyncMock,
-        ):
-            killed = await monitor.check_initialization_timeout()
+        killed = await monitor.check_initialization_timeout()
 
         assert killed == 1
         stage = task_manager.stage_states.get(task.id, "development")
@@ -4518,7 +4343,7 @@ class TestCheckInitializationTimeout:
             killed = await monitor.check_initialization_timeout()
 
         assert killed == 1
-        assert mock_kill.await_args.args[0].terminal_id == "gobby-naive-uninit"
+        assert mock_kill.await_args.args[0].terminal_id == run.terminal_id
 
     @pytest.mark.asyncio
     async def test_error_matches_provider_pattern(
@@ -4555,12 +4380,7 @@ class TestCheckInitializationTimeout:
 
         monitor._session_manager = session_manager
 
-        with patch.object(
-            monitor._tmux,
-            "kill_session",
-            new_callable=AsyncMock,
-        ):
-            await monitor.check_initialization_timeout()
+        await monitor.check_initialization_timeout()
 
         updated = agent_run_manager.get(_rid("run-pattern"))
         assert updated is not None
@@ -4616,15 +4436,7 @@ class TestCheckLoopPrompts:
         loop_output = "It looks like you may be stuck in a loop. Continue? (y/n)\n"
 
         with (
-            patch.object(
-                monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value=loop_output,
-            ),
-            patch.object(
-                monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-            ) as mock_send,
+            _pane_text(monitor, loop_output),
             patch.object(
                 monitor._prompt_detector,
                 "detect_loop_prompt",
@@ -4634,7 +4446,7 @@ class TestCheckLoopPrompts:
             handled = await monitor.check_loop_prompts()
 
         assert handled == 1
-        mock_send.assert_called_once()
+        assert _runtime_of(monitor).write_log == [("text", "y\n")]
 
     @pytest.mark.asyncio
     async def test_no_loop_prompt(
@@ -4652,18 +4464,12 @@ class TestCheckLoopPrompts:
         )
 
         with (
-            patch.object(
-                monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value="Working...\n",
-            ),
-            patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
+            _pane_text(monitor, "Working...\n"),
         ):
             handled = await monitor.check_loop_prompts()
 
         assert handled == 0
-        mock_send.assert_not_called()
+        assert _runtime_of(monitor).write_log == []
 
     @pytest.mark.asyncio
     async def test_skips_non_terminal_agents(
@@ -4697,12 +4503,7 @@ class TestCheckLoopPrompts:
             terminal_id="gobby-loop-err",
         )
 
-        with patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            side_effect=OSError("tmux gone"),
-        ):
+        with _pane_text(monitor, OSError("tmux gone")):
             handled = await monitor.check_loop_prompts()
 
         assert handled == 0
@@ -4723,6 +4524,7 @@ class TestRecoverTaskFromFailedAgent:
             agent_run_manager=agent_run_manager,
             db=temp_db,
             task_manager=None,
+            terminal_services=_fake_terminal_services(temp_db),
         )
         result = await mon._recover_task_from_failed_agent("00000000-0000-0000-0000-0000000000ff")
         assert result is None
@@ -4741,6 +4543,7 @@ class TestRecoverTaskFromFailedAgent:
             agent_run_manager=agent_run_manager,
             db=temp_db,
             task_manager=mock_task_manager,
+            terminal_services=_fake_terminal_services(temp_db),
         )
         await mon._recover_task_from_failed_agent("00000000-0000-0000-0000-0000000000ff")
         mock_task_manager.update_task.assert_not_called()
@@ -4803,6 +4606,7 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
         task_manager=task_manager,
         tmux_config=TmuxConfig(),
         run_db=executor.run,
+        terminal_services=_fake_terminal_services(temp_db),
     )
     original_list_active = agent_run_manager.list_active_for_machine
 
@@ -4819,7 +4623,6 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
             patch.object(
                 agent_run_manager, "list_active_for_machine", side_effect=slow_list_active
             ),
-            patch.object(monitor._tmux, "send_keys", new=AsyncMock(return_value=True)),
         ):
 
             async def run_checks() -> list[None]:
@@ -4877,6 +4680,7 @@ class TestDeadAgentCompletionEvent:
             agent_run_manager=agent_run_manager,
             db=temp_db,
             completion_registry=mock_cr,
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         _make_terminal_run(
@@ -4888,20 +4692,15 @@ class TestDeadAgentCompletionEvent:
         )
 
         with (
-            patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False),
-            patch.object(
-                mon._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value="agent exited during startup",
-            ) as capture_pane,
+            _terminal_liveness(mon, False),
+            _pane_text(mon, "agent exited during startup") as runtime,
         ):
             first_cleaned = await mon.check_unhealthy_agents()
             second_cleaned = await mon.check_unhealthy_agents()
 
         assert first_cleaned == 1
         assert second_cleaned == 0
-        capture_pane.assert_awaited_once_with("gobby-dead-cr", lines=50)
+        assert runtime.snapshot_calls == [50]
         mock_cr.notify.assert_awaited_once()
         assert mock_cr.notify.call_args is not None
         updated = agent_run_manager.get(_rid("run-dead-cr"))
@@ -4924,6 +4723,7 @@ class TestDeadAgentCompletionEvent:
             agent_run_manager=agent_run_manager,
             db=temp_db,
             clone_storage=mock_clone_storage,
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         _make_terminal_run(
@@ -4935,7 +4735,7 @@ class TestDeadAgentCompletionEvent:
             pid=999999,
         )
 
-        with patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False):
+        with _terminal_liveness(mon, False):
             await mon.check_unhealthy_agents()
 
         mock_clone_storage.release.assert_called_once_with("cccccccc-cccc-4ccc-8ccc-cccccccc0789")
@@ -4962,7 +4762,7 @@ class TestDeadAgentKillsOrphanedProcess:
             pid=999999,  # Non-existent PID
         )
 
-        with patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=False):
+        with _terminal_liveness(monitor, False):
             cleaned = await monitor.check_unhealthy_agents()
 
         assert cleaned == 1
@@ -4993,6 +4793,7 @@ class TestSessionExpirationOnCleanup:
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         _make_terminal_run(
@@ -5004,7 +4805,7 @@ class TestSessionExpirationOnCleanup:
             pid=999999,
         )
 
-        with patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False):
+        with _terminal_liveness(mon, False):
             cleaned = await mon.check_unhealthy_agents()
 
         assert cleaned == 1
@@ -5027,6 +4828,7 @@ class TestSessionExpirationOnCleanup:
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=None,
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         _make_terminal_run(
@@ -5037,7 +4839,7 @@ class TestSessionExpirationOnCleanup:
             pid=999999,
         )
 
-        with patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False):
+        with _terminal_liveness(mon, False):
             cleaned = await mon.check_unhealthy_agents()
 
         assert cleaned == 1
@@ -5184,6 +4986,7 @@ class TestReapDaemonStopOrphans:
             completion_registry=registry,
             session_manager=session_manager,
             tmux_config=TmuxConfig(),
+            terminal_services=_fake_terminal_services(temp_db),
         )
         recovery = MagicMock(recover_task_from_terminal_agent=AsyncMock())
         subscribers_at_delivery: list[list[str]] = []
@@ -5282,6 +5085,7 @@ class TestReapDaemonStopOrphans:
             db=temp_db,
             check_interval_seconds=1.0,
             tmux_config=TmuxConfig(),
+            terminal_services=_fake_terminal_services(temp_db),
         )
 
         assert [r.id for r in monitor._get_active_terminal_runs()] == [live.id]
@@ -5423,21 +5227,9 @@ async def test_reconcile_still_warns_on_a_retryable_termination_failure(
         reason="reconciled timeout",
     )
 
-    async def has_session(_name: str) -> bool:
-        return True
-
-    async def kill_session(_name: str, *, missing_ok: bool = False) -> bool:
-        return False
-
+    _runtime_of(monitor).sticky = True
     with (
-        patch.object(monitor._tmux, "has_session", side_effect=has_session),
-        patch.object(
-            monitor._tmux,
-            "capture_full_pane",
-            new_callable=AsyncMock,
-            return_value="pane",
-        ),
-        patch.object(monitor._tmux, "kill_session", side_effect=kill_session),
+        _pane_text(monitor, "pane"),
         caplog.at_level(logging.INFO, logger="gobby.agents.lifecycle_reconciliation"),
     ):
         reconciled = await monitor.reconcile_pending_terminations()
@@ -5466,7 +5258,7 @@ async def test_progress_stagnation_after_delivered_result_completes_taskless_run
 
     with (
         patch.object(monitor, "_get_active_terminal_runs", return_value=[delivered]),
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=None),
+        _pane_text(monitor, None),
         patch.object(
             monitor._cleanup_handler,
             "cleanup_agent",
@@ -5508,7 +5300,7 @@ async def test_progress_stagnation_after_delivered_result_keeps_failure_path_for
 
     with (
         patch.object(monitor, "_get_active_terminal_runs", return_value=[delivered]),
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=None),
+        _pane_text(monitor, None),
         patch.object(
             monitor._cleanup_handler,
             "cleanup_agent",

@@ -48,7 +48,6 @@ class AgentCleanupHandler:
         stall_classifier: StallClassifier,
         loop_tracker: LoopTracker,
         master_fds: dict[str, int],
-        kill_tmux_session: Callable[[str], Awaitable[bool]] | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
         attention_manager: AttentionStateManager | None = None,
         terminal_services: Any | None = None,
@@ -71,9 +70,9 @@ class AgentCleanupHandler:
             stall_classifier=stall_classifier,
             loop_tracker=loop_tracker,
             master_fds=master_fds,
-            kill_tmux_session=kill_tmux_session,
             run_db=self._run_db,
             attention_manager=attention_manager,
+            terminal_services=terminal_services,
         )
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
