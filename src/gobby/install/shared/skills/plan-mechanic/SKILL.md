@@ -46,9 +46,6 @@ artifact reference, a `Targets:` block broken by a blank line.
   reporting: no hunk may start at or below that heading.
 - **Never write the `## M1 Task Manifest`** and never call `approve_review` /
   `reject_review`. The adversary owns the gate and the manifest.
-- **Never touch the companion coverage ledger**
-  (`<plan>.coverage-ledger.yaml`). Plan bytes changing invalidates its
-  `plan_hash`; report that the coordinator must re-seal it.
 - **A design choice is a stop, not a guess.** When a failing lint can only be
   cleared by choosing scope, ownership, a split boundary, or a dependency
   direction the plan does not already state, leave the section unchanged and

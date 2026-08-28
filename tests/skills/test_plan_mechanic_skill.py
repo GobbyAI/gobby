@@ -56,13 +56,12 @@ class TestPlanMechanicContent:
         assert 'get_skill(name="restraint")' in body
         assert 'get_skill(name="plan-draft")' in body
 
-    def test_hard_boundaries_forbid_redesign_fences_manifest_ledger(self, body: str) -> None:
+    def test_hard_boundaries_forbid_redesign_fences_manifest(self, body: str) -> None:
         lowered = body.lower()
         assert "never redesign" in lowered
         assert "never edit the `## v1 plan changelog`" in lowered
         assert "byte-identical" in lowered
         assert "never write the `## m1 task manifest`" in lowered
-        assert "coverage-ledger.yaml" in lowered
 
     def test_design_choice_stops_with_needs_planner(self, body: str) -> None:
         assert "needs-planner" in body

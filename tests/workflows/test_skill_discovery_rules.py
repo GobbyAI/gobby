@@ -2797,7 +2797,7 @@ class TestRequirePlanSkillCondition:
         "file_path",
         [
             "/project/.gobby/plans/wiki-output-design.md",
-            "/project/.gobby/plans/wiki-output-design.coverage-ledger.yaml",
+            "/project/.gobby/plans/coverage/wiki-output-design.coverage.yaml",
             "/project/.gobby/plans/completed/coderabbit-fixes.md",
             ".gobby/plans/wiki-output-design.md",
             "C:\\project\\.gobby\\plans\\wiki-output-design.md",

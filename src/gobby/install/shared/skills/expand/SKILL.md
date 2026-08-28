@@ -22,8 +22,6 @@ reference is `docs/contracts/plan-coverage.md`.
 
 Expansion-side obligations:
 
-- A `.coverage-ledger.yaml` companion file MUST exist before expansion
-  proceeds for new epic plans.
 - Created leaves MUST emit structured
   `covers:<plan-id>:<section-id>:<item-id>` labels for the acceptance items
   they implement.

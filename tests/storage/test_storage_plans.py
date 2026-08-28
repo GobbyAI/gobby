@@ -97,15 +97,11 @@ def test_archive_removes_coverage_manifest(temp_db: HubDatabase, tmp_path: Path)
         root_task_ref=root_task_ref,
         plan_id="task-200-red",
     )
-    ledger = tmp_path / ".gobby" / "plans" / "task-200-red.coverage-ledger.yaml"
-    ledger.write_text("header: {}\n", encoding="utf-8")
     assert manifest.exists()
-    assert ledger.exists()
 
     manager.archive_plan("task-200-red", project_id=project_id)
 
     assert not manifest.exists()
-    assert not ledger.exists()
 
 
 def _write_strategy_plan(root: Path) -> Path:

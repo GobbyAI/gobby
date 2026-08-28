@@ -113,9 +113,8 @@ class LocalPlanManager:
         )
         resolve_task_reference(self.db, root_task_ref, project_id)
         # Every plans/coverage consumer canonicalizes the ref unprefixed — the manifest
-        # path via `_sanitize(kind="root_task_ref")`, the bootstrap ledger, and
-        # expansion QA — so store that form instead of whichever spelling the caller
-        # used. A prefixed row makes ManifestIdentity report a foreign owner for the
+        # path via `_sanitize(kind="root_task_ref")` and expansion QA — so store that
+        # form instead of whichever spelling the caller used. A prefixed row makes ManifestIdentity report a foreign owner for the
         # manifest its own path resolves to, which blocks the expansion-QA gate.
         root_task_ref = _normalize_ref(root_task_ref)
         record_id = str(uuid.uuid4())
@@ -392,15 +391,13 @@ class LocalPlanManager:
             plan_id=record.plan_id,
         )
         path.unlink(missing_ok=True)
-        ledger_path = project_root / ".gobby" / "plans" / f"{record.plan_id}.coverage-ledger.yaml"
-        ledger_path.unlink(missing_ok=True)
 
 
 def _normalize_ref(ref: str) -> str:
     """Canonicalize a plan root-task ref to the unprefixed form the subsystem stores.
 
-    `plans.bootstrap_ledger`, `coverage_manifest._sanitize` and expansion QA all
-    canonicalize unprefixed, so `#18653` and `18653` name one plan here too.
+    `coverage_manifest._sanitize` and expansion QA both canonicalize unprefixed,
+    so `#18653` and `18653` name one plan here too.
     """
     stripped = ref.strip()
     if not stripped:

@@ -1,4 +1,4 @@
-"""Content tests for the CLAUDE.md Plan-Coverage Contract section."""
+"""Content tests for the AGENTS.md plans pointer and the Plan-Coverage Contract."""
 
 import re
 from pathlib import Path
@@ -7,7 +7,7 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-CLAUDE = Path("CLAUDE.md")
+AGENTS = Path("AGENTS.md")
 CONTRACT = Path("docs/contracts/plan-coverage.md")
 
 CANONICAL_PLAN_HEADING_REGEX = (
@@ -19,9 +19,9 @@ CANONICAL_PLAN_HEADING_REGEX = (
 
 
 def _section() -> str:
-    body = CLAUDE.read_text(encoding="utf-8")
+    body = AGENTS.read_text(encoding="utf-8")
     match = re.search(
-        r"## Plan-Coverage Contract\n(?P<section>.*?)(?=\n## |\Z)",
+        r"## Plans\n(?P<section>.*?)(?=\n## |\Z)",
         body,
         re.DOTALL,
     )
@@ -83,8 +83,6 @@ def test_plan_coverage_section_present() -> None:
         "`7`",
         "`8`",
         "commits | task-diff | worktree-diff | coverage-matrix | none",
-        "## Bootstrap Ledger",
-        ".coverage-ledger.yaml",
         "`plans` table",
         "gobby-plans",
         "gobby plans",
@@ -98,7 +96,7 @@ def test_plan_coverage_section_present() -> None:
         assert term in section
 
 
-def test_claude_md_points_to_plan_coverage_contract() -> None:
+def test_agents_md_points_to_plan_coverage_contract() -> None:
     section = _section()
 
     assert "docs/contracts/plan-coverage.md" in section
@@ -128,7 +126,7 @@ def test_no_retired_plan_storage_terms() -> None:
         "plan_kind` " + "—" + " one of `implementation`, `strategy`, `" + "legacy" + "`",
         "`status` " + "—" + " one of `active`, `" + "merged" + "`, `archived`",
     )
-    for path in (CLAUDE, CONTRACT):
+    for path in (AGENTS, CONTRACT):
         body = path.read_text(encoding="utf-8")
         for term in stale_terms:
             assert term not in body

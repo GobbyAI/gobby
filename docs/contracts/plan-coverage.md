@@ -505,15 +505,6 @@ Exit codes: `0`, `2`, `3`, `4`, `5`, `6`, `7`, `8`.
 
 Evidence kinds: `commits | task-diff | worktree-diff | coverage-matrix | none`.
 
-## Bootstrap Ledger
-
-Every new epic plan ships a `.coverage-ledger.yaml` companion file,
-adversary-reviewed before expansion, until the contract tooling is mature. The
-ledger enumerates deliverable acceptance items and expected implementation
-leaves so expansion and `gobby plan coverage` can compare manifest rows against
-the plan. Parent close does not consult the ledger: an epic is closable when it
-has no open children.
-
 ## Plan Storage
 
 The `plans` table is the authoritative registry of plan state. The file system
