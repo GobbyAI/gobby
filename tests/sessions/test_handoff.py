@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.sessions.handoff import (
     FeedbackObservation,
     consume_pending_handoff,
@@ -19,14 +20,15 @@ from gobby.sessions.handoff import (
 )
 from gobby.sessions.title_lifecycle import (
     apply_clear_successor_title,
+    clear_successor_title,
     recompute_automatic_title,
     update_title_for_claim,
 )
-from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
@@ -294,14 +296,16 @@ def test_title_lifecycle_is_provisional_task_manual_and_clear_sticky(
 ) -> None:
     session = _registered_session(session_manager)
     assert session.seq_num is not None
-    assert session.title == f"(gobby): S#{session.seq_num}"
+    assert session.title == f"(handoff-test-S#{session.seq_num}): Codex"
 
     update_title_for_claim(
         session_manager,
         session.id,
         SimpleNamespace(seq_num=42, title="Implement handoffs"),
     )
-    assert _title(session_manager, session.id) == "(gobby): Task #42 - Implement handoffs"
+    assert _title(session_manager, session.id) == (
+        f"(handoff-test-S#{session.seq_num}): Task #42 - Implement handoffs"
+    )
 
     session_manager.update_title(session.id, "Sticky", title_source="manual")
     update_title_for_claim(
@@ -326,3 +330,26 @@ def test_title_lifecycle_is_provisional_task_manual_and_clear_sticky(
     assert _title(session_manager, successor_id) == "Sticky"
     recomputed = recompute_automatic_title(session_manager, successor_id)
     assert recomputed is not None and recomputed.title == "Sticky"
+
+
+def test_clear_successor_task_title_uses_successor_session_ref(
+    session_manager: SessionManager,
+) -> None:
+    predecessor = _registered_session(session_manager)
+    task = LocalTaskManager(session_manager.db).create_task(
+        project_id=predecessor.project_id,
+        title="Continue claimed work",
+        claimed_by_session_id=predecessor.id,
+        category="code",
+        validation_criteria="Title lifecycle test task.",
+        implementation_domain="backend",
+    )
+
+    title, title_source = clear_successor_title(
+        session_manager.db,
+        predecessor,
+        successor_seq_num=99,
+    )
+
+    assert title == (f"(handoff-test-S#99): Task #{task.seq_num} - Continue claimed work")
+    assert title_source == "task"

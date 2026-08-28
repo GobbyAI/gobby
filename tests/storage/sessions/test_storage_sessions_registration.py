@@ -560,16 +560,17 @@ class TestSessionManagerRegistration:
         assert session.last_assistant_content is None
 
     @pytest.mark.parametrize(
-        "source",
+        ("source", "provider_label"),
         [
-            "claude",
-            "codex",
-            "grok",
-            "qwen",
-            "droid",
-            "agy",
-            "pipeline",
-            "Custom Source!",
+            ("claude", "Claude"),
+            ("claude_code", "Claude Code"),
+            ("codex", "Codex"),
+            ("grok", "Grok"),
+            ("qwen", "Qwen"),
+            ("droid", "Droid"),
+            ("agy", "AGY"),
+            ("pipeline", "Pipeline"),
+            ("Custom Source!", "Custom Source!"),
         ],
     )
     def test_register_without_title_uses_provisional_title(
@@ -577,6 +578,7 @@ class TestSessionManagerRegistration:
         session_manager: SessionManager,
         sample_project: dict,
         source: str,
+        provider_label: str,
     ) -> None:
         session = session_manager.register(
             external_id=f"provisional-{source}",
@@ -585,7 +587,7 @@ class TestSessionManagerRegistration:
             project_id=sample_project["id"],
         )
 
-        assert session.title == f"(gobby): S#{session.seq_num}"
+        assert session.title == f"(test-project-S#{session.seq_num}): {provider_label}"
         assert session.title_source == PROVISIONAL_TITLE_SOURCE
 
     def test_register_with_explicit_title_does_not_mark_provisional(
@@ -669,7 +671,7 @@ class TestSessionManagerRegistration:
         )
 
         assert updated.id == session.id
-        assert updated.title == f"(gobby): S#{updated.seq_num}"
+        assert updated.title == f"(test-project-S#{updated.seq_num}): Codex"
         assert updated.title_source == PROVISIONAL_TITLE_SOURCE
 
     def test_stale_registration_backfill_preserves_concurrent_task_title(
@@ -723,7 +725,7 @@ class TestSessionManagerRegistration:
         )
 
         assert session.session_type == "web_chat"
-        assert session.title == f"(gobby): S#{session.seq_num}"
+        assert session.title == f"(test-project-S#{session.seq_num}): Droid"
         assert session.title_source == PROVISIONAL_TITLE_SOURCE
 
     def test_create_web_chat_with_user_title_marks_it_manual(

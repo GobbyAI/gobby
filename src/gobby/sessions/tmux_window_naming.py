@@ -14,7 +14,6 @@ from gobby.agents.tmux.session_manager import (
 )
 from gobby.hooks.background_tasks import create_background_task
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
-from gobby.storage.sessions._title_defaults import format_provisional_session_title
 from gobby.terminal_ownership import (
     TERMINAL_INACTIVE_STATUSES,
     TERMINAL_OWNER_STATUSES,
@@ -71,7 +70,7 @@ def schedule_tmux_window_rename(
 
 def _synthesize_fallback_title(session: object) -> str:
     seq_num = getattr(session, "seq_num", None)
-    return format_provisional_session_title(seq_num) if isinstance(seq_num, int) else "(gobby)"
+    return f"(gobby): S#{seq_num}" if isinstance(seq_num, int) else "(gobby)"
 
 
 def _contains_unresolved_session_ref(value: Any) -> bool:

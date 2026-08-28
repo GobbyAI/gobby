@@ -32,6 +32,7 @@ from ._registration import (
 from ._title_defaults import (
     PROVISIONAL_TITLE_SOURCE,
     format_provisional_session_title,
+    project_name_for_session_title,
 )
 from ._update_sentinel import UNSET, UnsetType, is_set
 from ._upsert import is_session_unique_conflict, update_existing_session
@@ -206,7 +207,11 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                     and existing_seq_num is not None
                     and not str(existing.title or "").strip()
                 ):
-                    registration_title = format_provisional_session_title(existing_seq_num)
+                    registration_title = format_provisional_session_title(
+                        project_name_for_session_title(conn, existing.project_id),
+                        existing_seq_num,
+                        existing.source,
+                    )
                     registration_title_source = PROVISIONAL_TITLE_SOURCE
                 if existing.parent_session_id == existing.id:
                     repair_self_parent_session(conn, session_id=existing.id, now=now)
@@ -271,7 +276,11 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                         manual_title_source if is_set(manual_title_source) else None
                     )
                     if insert_title is None:
-                        insert_title = format_provisional_session_title(next_seq_num)
+                        insert_title = format_provisional_session_title(
+                            project_name_for_session_title(conn, storage_project_id),
+                            next_seq_num,
+                            source,
+                        )
                         insert_title_source = PROVISIONAL_TITLE_SOURCE
                     conn.execute(
                         """
@@ -345,7 +354,11 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                         and conflicting_seq_num is not None
                         and not str(conflicting.title or "").strip()
                     ):
-                        registration_title = format_provisional_session_title(conflicting_seq_num)
+                        registration_title = format_provisional_session_title(
+                            project_name_for_session_title(conn, conflicting.project_id),
+                            conflicting_seq_num,
+                            conflicting.source,
+                        )
                         registration_title_source = PROVISIONAL_TITLE_SOURCE
                     session = update_existing_session(
                         self,
