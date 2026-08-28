@@ -104,7 +104,8 @@ export function joinTmuxSessions(
       label: displayLabel(tmux, gobby),
       provider: providerFor(tmux, gobby),
       paneRef: tmux.terminal_id,
-      dead: tmux.pane_dead || tmux.state === "exited" || tmux.state === "orphaned",
+      dead:
+        tmux.pane_dead || tmux.state === "exited" || tmux.state === "orphaned",
       agentManaged: tmux.ownership === "gobby" && gobby !== null,
       external: gobby === null,
     };

@@ -17,6 +17,10 @@ import {
 
 type WireMessage = Record<string, unknown>;
 
+function lastOf<T>(items: readonly T[]): T | undefined {
+  return items[items.length - 1];
+}
+
 let mockWs: {
   instances: MockWebSocketInstance[];
   MockWebSocket: typeof WebSocket;
@@ -227,7 +231,7 @@ describe("useTmuxSessions", () => {
 
     ws.send.mockClear();
     act(() => result.current.attachSession("worker", "gobby"));
-    expect(sentMessages(ws, "terminal_attach").at(-1)).toMatchObject({
+    expect(lastOf(sentMessages(ws, "terminal_attach"))).toMatchObject({
       type: "terminal_attach",
       terminal_id: "worker",
     });
@@ -244,12 +248,12 @@ describe("useTmuxSessions", () => {
       result.current.sendInput("\u001b[A");
       result.current.resizeTerminal(42, 120);
     });
-    expect(sentMessages(ws, "terminal_input").at(-1)).toMatchObject({
+    expect(lastOf(sentMessages(ws, "terminal_input"))).toMatchObject({
       type: "terminal_input",
       attachment_id: "stream-wire",
       data: "\u001b[A",
     });
-    expect(sentMessages(ws, "terminal_resize").at(-1)).toMatchObject({
+    expect(lastOf(sentMessages(ws, "terminal_resize"))).toMatchObject({
       type: "terminal_resize",
       attachment_id: "stream-wire",
       rows: 42,
@@ -692,7 +696,7 @@ describe("useTmuxSessions", () => {
     });
     const ids = result.current.sessions.map((session) => session.terminal_id);
     expect(ids[0]).toBe("t-000");
-    expect(ids.at(-1)).toBe("t-100");
+    expect(lastOf(ids)).toBe("t-100");
     expect(new Set(ids).size).toBe(ids.length);
   });
 
@@ -714,7 +718,7 @@ describe("useTmuxSessions", () => {
       ws.simulateMessage({
         type: "terminal_write_outcome",
         attachment_id: "att-1",
-        client_write_seq: sentMessages(ws, "terminal_input").at(-1)
+        client_write_seq: lastOf(sentMessages(ws, "terminal_input"))
           ?.client_write_seq,
         outcome: "refused",
         reason: "write_seq_conflict",
@@ -755,7 +759,16 @@ describe("useTmuxSessions", () => {
       encoding: "utf8-b64",
       payload: btoa(text),
     });
-    reducer.push(slice("terminal_attach_history", "att-a", 1, 0, true, history.slice(0, 12)));
+    reducer.push(
+      slice(
+        "terminal_attach_history",
+        "att-a",
+        1,
+        0,
+        true,
+        history.slice(0, 12),
+      ),
+    );
     reducer.push(
       slice(
         "terminal_output",
@@ -766,26 +779,45 @@ describe("useTmuxSessions", () => {
         JSON.stringify({ type: "terminal_output", data: "b" }),
       ),
     );
-    reducer.push(slice("terminal_attach_history", "att-a", 1, 1, false, history.slice(12)));
-    expect(reducer.applied[0]).toMatchObject({ type: "terminal_output", data: "b" });
-    expect(reducer.applied[1]).toMatchObject({ type: "terminal_attach_history", text: "hist" });
-    reducer.push(slice("terminal_output", "att-a", 2, 0, true, output.slice(0, 10)));
-    reducer.push(slice("terminal_output", "att-a", 2, 1, false, output.slice(10)));
-    expect(reducer.applied.at(-1)).toMatchObject({ type: "terminal_output", data: "kf" });
+    reducer.push(
+      slice("terminal_attach_history", "att-a", 1, 1, false, history.slice(12)),
+    );
+    expect(reducer.applied[0]).toMatchObject({
+      type: "terminal_output",
+      data: "b",
+    });
+    expect(reducer.applied[1]).toMatchObject({
+      type: "terminal_attach_history",
+      text: "hist",
+    });
+    reducer.push(
+      slice("terminal_output", "att-a", 2, 0, true, output.slice(0, 10)),
+    );
+    reducer.push(
+      slice("terminal_output", "att-a", 2, 1, false, output.slice(10)),
+    );
+    expect(lastOf(reducer.applied)).toMatchObject({
+      type: "terminal_output",
+      data: "kf",
+    });
 
     const gappy = createTerminalWsReducer({ now: () => 0 });
     gappy.markLive("att-a");
     gappy.push(slice("terminal_output", "att-a", 1, 0, true, "abc"));
     gappy.push(slice("terminal_output", "att-a", 1, 2, false, "def"));
     expect(gappy.applied).toEqual([]);
-    expect(gappy.errors.some((item) => item.code === "fragment_sequence")).toBe(true);
+    expect(gappy.errors.some((item) => item.code === "fragment_sequence")).toBe(
+      true,
+    );
 
     const jumped = createTerminalWsReducer({ now: () => 0 });
     jumped.markLive("att-a");
     jumped.push(slice("terminal_output", "att-a", 1, 0, true, "abc"));
     jumped.push(slice("terminal_output", "att-a", 2, 0, false, output));
     expect(jumped.applied).toEqual([]);
-    expect(jumped.errors.some((item) => item.code === "fragment_sequence")).toBe(true);
+    expect(
+      jumped.errors.some((item) => item.code === "fragment_sequence"),
+    ).toBe(true);
 
     let now = 0;
     const timed = createTerminalWsReducer({ now: () => now, timeoutMs: 5000 });
@@ -794,17 +826,24 @@ describe("useTmuxSessions", () => {
     now = 5001;
     timed.tick(now);
     expect(timed.applied).toEqual([]);
-    expect(timed.errors.some((item) => item.code === "fragment_timeout")).toBe(true);
+    expect(timed.errors.some((item) => item.code === "fragment_timeout")).toBe(
+      true,
+    );
 
     expect(TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES).toBe(16 * 1024 * 1024);
-    const huge = createTerminalWsReducer({ now: () => 0, maxReassemblyBytes: 8 });
+    const huge = createTerminalWsReducer({
+      now: () => 0,
+      maxReassemblyBytes: 8,
+    });
     huge.markLive("att-a");
     huge.push({
       ...slice("terminal_output", "att-a", 1, 0, false, "x"),
       payload: btoa("123456789"),
     });
     expect(huge.applied).toEqual([]);
-    expect(huge.errors.some((item) => item.code === "fragment_too_large")).toBe(true);
+    expect(huge.errors.some((item) => item.code === "fragment_too_large")).toBe(
+      true,
+    );
 
     const dropped = createTerminalWsReducer({ now: () => 0 });
     dropped.markLive("att-a");
@@ -815,9 +854,14 @@ describe("useTmuxSessions", () => {
   });
 
   it("test_socket_reassembly_budget_and_stale_fragments", () => {
-    expect(TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES).toBe(64 * 1024 * 1024);
+    expect(TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES).toBe(
+      64 * 1024 * 1024,
+    );
     expect(TERMINAL_WS_SAFE_INTEGER_MAX).toBe(2 ** 53 - 1);
-    const reducer = createTerminalWsReducer({ now: () => 0, maxSocketBytes: 24 });
+    const reducer = createTerminalWsReducer({
+      now: () => 0,
+      maxSocketBytes: 24,
+    });
     reducer.markLive("a");
     reducer.markLive("b");
     const chunk = (attachment: string, seq: number, text: string) => ({
@@ -833,7 +877,9 @@ describe("useTmuxSessions", () => {
     });
     reducer.push(chunk("a", 1, "1234567890123456"));
     reducer.push(chunk("b", 1, "1234567890123456"));
-    expect(reducer.errors.some((item) => item.code === "fragment_socket_budget")).toBe(true);
+    expect(
+      reducer.errors.some((item) => item.code === "fragment_socket_budget"),
+    ).toBe(true);
     expect(reducer.applied).toEqual([]);
     const stale = createTerminalWsReducer({ now: () => 0 });
     stale.push(chunk("missing", 1, "hello"));
@@ -855,18 +901,30 @@ describe("useTmuxSessions", () => {
     const seqs = createTerminalWsReducer({ now: () => 0 });
     seqs.markLive("a");
     seqs.push({
-      ...chunk("a", Number.MAX_SAFE_INTEGER - 1, '{"type":"terminal_output","data":"x"}'),
+      ...chunk(
+        "a",
+        Number.MAX_SAFE_INTEGER - 1,
+        '{"type":"terminal_output","data":"x"}',
+      ),
       more: false,
     });
     seqs.push({
-      ...chunk("a", Number.MAX_SAFE_INTEGER, '{"type":"terminal_output","data":"y"}'),
+      ...chunk(
+        "a",
+        Number.MAX_SAFE_INTEGER,
+        '{"type":"terminal_output","data":"y"}',
+      ),
       more: false,
     });
     expect(seqs.applied).toHaveLength(2);
     const overflowSeq = createTerminalWsReducer({ now: () => 0 });
     overflowSeq.markLive("a");
     overflowSeq.push({
-      ...chunk("a", Number.MAX_SAFE_INTEGER + 1, '{"type":"terminal_output","data":"z"}'),
+      ...chunk(
+        "a",
+        Number.MAX_SAFE_INTEGER + 1,
+        '{"type":"terminal_output","data":"z"}',
+      ),
       more: false,
     });
     expect(overflowSeq.applied).toEqual([]);

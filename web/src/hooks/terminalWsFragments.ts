@@ -1,5 +1,6 @@
 export const TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES = 16 * 1024 * 1024;
-export const TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES = 64 * 1024 * 1024;
+export const TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES =
+  64 * 1024 * 1024;
 export const TERMINAL_WS_FRAGMENT_REASSEMBLY_TIMEOUT_MS = 5000;
 export const TERMINAL_WS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
 
@@ -46,9 +47,12 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-export function createTerminalWsReducer(options: TerminalWsReducerOptions = {}) {
+export function createTerminalWsReducer(
+  options: TerminalWsReducerOptions = {},
+) {
   const now = options.now ?? (() => Date.now());
-  const timeoutMs = options.timeoutMs ?? TERMINAL_WS_FRAGMENT_REASSEMBLY_TIMEOUT_MS;
+  const timeoutMs =
+    options.timeoutMs ?? TERMINAL_WS_FRAGMENT_REASSEMBLY_TIMEOUT_MS;
   const maxReassembly =
     options.maxReassemblyBytes ?? TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES;
   const maxSocket =
@@ -85,7 +89,8 @@ export function createTerminalWsReducer(options: TerminalWsReducerOptions = {}) 
     const attachmentId = message.attachment_id;
     if (typeof attachmentId !== "string" || !live.has(attachmentId)) return;
     const seq = message.message_seq;
-    if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq < 0) return;
+    if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq < 0)
+      return;
     if (seq > TERMINAL_WS_SAFE_INTEGER_MAX) return;
     const index = message.fragment_index;
     if (typeof index !== "number" || index < 0 || !Number.isInteger(index)) {
@@ -93,7 +98,8 @@ export function createTerminalWsReducer(options: TerminalWsReducerOptions = {}) 
       return;
     }
     const event = typeof message.event === "string" ? message.event : "";
-    const terminalId = typeof message.terminal_id === "string" ? message.terminal_id : "";
+    const terminalId =
+      typeof message.terminal_id === "string" ? message.terminal_id : "";
     const decoded = decodePayload(message.payload);
     if (decoded === null) {
       dropBuffer(attachmentId, "fragment_sequence");

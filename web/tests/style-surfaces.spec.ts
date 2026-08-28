@@ -1850,7 +1850,10 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
                 }),
               );
             }
-            if (message.type === "terminal_resize" && !sentTerminalOutput.has(ws)) {
+            if (
+              message.type === "terminal_resize" &&
+              !sentTerminalOutput.has(ws)
+            ) {
               // Once per socket: repeated resize events must not duplicate
               // the seeded scrollback.
               sentTerminalOutput.add(ws);

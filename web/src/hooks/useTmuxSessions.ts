@@ -10,7 +10,9 @@ import { createTerminalWsReducer } from "./terminalWsFragments";
 
 export const TMUX_REQUEST_TIMEOUT_MS = 10_000;
 
-function asSession(row: Partial<TmuxSession> & { terminal_id?: string }): TmuxSession {
+function asSession(
+  row: Partial<TmuxSession> & { terminal_id?: string },
+): TmuxSession {
   const terminalId = row.terminal_id ?? "";
   return {
     terminal_id: terminalId,
@@ -115,7 +117,7 @@ interface TmuxSessionsResult {
   clearAttachError: () => void;
   refreshTerminal: (sessionName: string, socket: string) => void;
   createSession: (name?: string, socket?: string) => void;
-  killSession: (sessionName: string, socket: string) => void;
+  killSession: (terminalId: string) => void;
   refreshSessions: () => void;
   dismissEndedSession: () => void;
   sendInput: (data: string) => void;
@@ -292,13 +294,6 @@ export function useTmuxSessions(): TmuxSessionsResult {
   const handleMessage = useCallback(
     (data: Record<string, unknown>) => {
       const reducer = fragmentReducerRef.current;
-      if (data.type === "terminal_ws_fragment") {
-        reducer.push(data);
-        for (const event of reducer.applied.splice(0)) {
-          handleMessage(event);
-        }
-        return;
-      }
       if (data.type === "terminal_attachment_finalized") {
         const finalizedId = data.attachment_id;
         if (typeof finalizedId === "string") reducer.finalize(finalizedId);
@@ -309,7 +304,10 @@ export function useTmuxSessions(): TmuxSessionsResult {
       ) {
         const attachmentId = data.attachment_id;
         const generation = data.lease_generation;
-        if (typeof attachmentId === "string" && typeof generation === "number") {
+        if (
+          typeof attachmentId === "string" &&
+          typeof generation === "number"
+        ) {
           const previous = leaseGenerationRef.current.get(attachmentId) ?? -1;
           if (generation < previous) return;
           leaseGenerationRef.current.set(attachmentId, generation);
@@ -317,7 +315,9 @@ export function useTmuxSessions(): TmuxSessionsResult {
       }
       switch (data.type) {
         case "terminal_list": {
-          const pageItems = ((data.items as TmuxSession[] | undefined) ?? []).map(asSession);
+          const pageItems = (
+            (data.items as TmuxSession[] | undefined) ?? []
+          ).map(asSession);
           const generation = connectionGenerationRef.current;
           if (data.request_id === "init" || data.request_id === "refresh") {
             setSessions(pageItems);
@@ -336,7 +336,9 @@ export function useTmuxSessions(): TmuxSessionsResult {
           const attached = attachedTargetRef.current;
           if (
             attached &&
-            !pageItems.some((session) => session.terminal_id === attached.terminal_id) &&
+            !pageItems.some(
+              (session) => session.terminal_id === attached.terminal_id,
+            ) &&
             data.next_cursor == null
           ) {
             setSessionEnded(true);
@@ -532,9 +534,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
         }),
       );
       // Fetch session list on connect
-      ws.send(
-        JSON.stringify({ type: "terminal_list", request_id: "init" }),
-      );
+      ws.send(JSON.stringify({ type: "terminal_list", request_id: "init" }));
     };
 
     ws.onclose = () => {
@@ -569,6 +569,16 @@ export function useTmuxSessions(): TmuxSessionsResult {
       if (!isCurrentConnection()) return;
       try {
         const data = JSON.parse(event.data);
+        if (data.type === "terminal_ws_fragment") {
+          // Fragments reassemble into whole messages before dispatch, so the
+          // handler itself never recurses.
+          const reducer = fragmentReducerRef.current;
+          reducer.push(data);
+          for (const applied of reducer.applied.splice(0)) {
+            handleMessage(applied);
+          }
+          return;
+        }
         handleMessage(data);
       } catch (e) {
         console.error("Failed to parse tmux message:", e);
@@ -585,8 +595,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
       if (pendingRequestRef.current) return;
       const target = { terminal_id: sessionName || socket };
       const currentTarget = attachedTargetRef.current;
-      if (currentTarget?.terminal_id === target.terminal_id)
-        return;
+      if (currentTarget?.terminal_id === target.terminal_id) return;
       if (currentTarget) {
         beginDetachRequest(target);
         return;
@@ -643,18 +652,18 @@ export function useTmuxSessions(): TmuxSessionsResult {
   );
 
   const killSession = useCallback(
-    (sessionName: string, socket: string) => {
+    (terminalId: string) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       setIsLoading(true);
       const currentTarget = attachedTargetRef.current;
-      if (currentTarget?.terminal_id === sessionName) {
+      if (currentTarget?.terminal_id === terminalId) {
         updateAttachment(null, null);
       }
       wsRef.current.send(
         JSON.stringify({
           type: "terminal_kill",
           request_id: `kill-${Date.now()}`,
-          terminal_id: sessionName,
+          terminal_id: terminalId,
         }),
       );
     },

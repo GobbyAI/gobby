@@ -44,7 +44,8 @@ function makeTmuxSession(overrides: Partial<TmuxSession> = {}): TmuxSession {
   return {
     terminal_id: overrides.terminal_id ?? `${socket}:${name}`,
     backend: overrides.backend ?? "tmux",
-    ownership: overrides.ownership ?? (socket === "gobby" ? "gobby" : "external"),
+    ownership:
+      overrides.ownership ?? (socket === "gobby" ? "gobby" : "external"),
     state: overrides.state ?? "live",
     title: overrides.title ?? name,
     session_id: overrides.session_id ?? overrides.gobby_session_id ?? null,

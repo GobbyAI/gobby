@@ -1672,7 +1672,7 @@ describe("SessionsTab", () => {
       screen.getByRole("status", { name: "Active activity tab" }),
     ).toHaveTextContent("terminal");
     expect(terminalHook.attachSession).toHaveBeenCalledWith(
-      "paused-pane",
+      "default:paused-pane",
       "default",
     );
     expect(
