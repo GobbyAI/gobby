@@ -26,13 +26,17 @@ from .handoff import (
 )
 from .materialize import (
     _CONTEXT_MODE_METADATA_KEY,
+    STARTUP_SOURCES,
     _consume_pending_handoff_compact_continuation,
     _reset_agent_context_injection,
     _schedule_tmux_window_rename_for_session,
     session_start_should_defer,
 )
 from .profile import seed_user_profile_content
-from .terminal_runtime import session_start_is_nested_cli_child
+from .terminal_runtime import (
+    session_start_is_native_subagent_child,
+    session_start_is_nested_cli_child,
+)
 from .transcripts import replace_session_message_processor
 
 SLOW_SESSION_START_THRESHOLD_MS = 1000
@@ -129,6 +133,24 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     if session_start_is_nested_cli_child(cli_source, terminal_context):
         handler.logger.info(
             "Skipping session registration for nested CLI child process",
+            extra={
+                "cli": cli_source,
+                "external_id": external_id,
+                "tmux_pane": terminal_context.get("tmux_pane") if terminal_context else None,
+            },
+        )
+        return HookResponse(decision="allow")
+    if (
+        (session_source or "startup") in STARTUP_SOURCES
+        and handler._session_manager
+        and session_start_is_native_subagent_child(
+            handler._session_manager,
+            terminal_context,
+            event.machine_id or handler._get_machine_id(),
+        )
+    ):
+        handler.logger.info(
+            "Skipping session registration for native subagent inheriting TTY",
             extra={
                 "cli": cli_source,
                 "external_id": external_id,

@@ -223,9 +223,7 @@ def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registeri
     )
 
 
-@pytest.mark.parametrize(
-    "event_type", sorted(NON_MATERIALIZING_EVENTS, key=lambda item: item.value)
-)
+@pytest.mark.parametrize("event_type", list(NON_MATERIALIZING_EVENTS))
 def test_passive_hooks_do_not_materialize_idle_session(event_type: HookEventType) -> None:
     session_manager = MagicMock()
     session_manager.get_session_id.return_value = None
@@ -268,6 +266,102 @@ def test_resolve_uncached_marks_only_the_create_branch() -> None:
 
     assert service.resolve(created_event) == "created-session"
     assert created_event.metadata["_session_just_materialized"] is True
+
+
+def _uncached_service() -> tuple[MagicMock, MagicMock, SessionLookupService]:
+    session_manager = MagicMock()
+    session_manager.get_session_id.return_value = None
+    session_manager.lookup_session_id.return_value = None
+    session_manager.recover_session.return_value = None
+    session_manager.find_live_interactive_pane_owner.return_value = None
+    session_manager.backfill_terminal_context.return_value = (None, False)
+    session_task_manager = MagicMock()
+    session_task_manager.get_session_tasks.return_value = []
+    service = _service(
+        session_manager,
+        session_task_manager,
+        MagicMock(return_value="project-1"),
+    )
+    return session_manager, session_task_manager, service
+
+
+def _pane_event(
+    event_type: HookEventType,
+    *,
+    session_id: str = "01a04561-child",
+    source: SessionSource = SessionSource.GROK,
+) -> HookEvent:
+    return HookEvent(
+        event_type=event_type,
+        session_id=session_id,
+        source=source,
+        timestamp=datetime.now(UTC),
+        machine_id=_REAL_MACHINE_ID,
+        data={
+            "terminal_context": {
+                "tmux_pane": "%90",
+                "tmux_socket_path": "/tmp/tmux-501/default",
+                "parent_pid": 64881,
+            }
+        },
+        metadata={},
+    )
+
+
+def test_subagent_start_with_parent_tty_binds_without_registering() -> None:
+    session_manager, _, service = _uncached_service()
+    parent = SimpleNamespace(id="parent-live", status="active", agent_run_id=None, agent_depth=0)
+    session_manager.find_live_interactive_pane_owner.return_value = parent
+    event = _pane_event(HookEventType.SUBAGENT_START)
+
+    result = service.resolve(event)
+
+    assert result == "parent-live"
+    assert event.metadata["_platform_session_id"] == "parent-live"
+    assert "_session_just_materialized" not in event.metadata
+    session_manager.register_session.assert_not_called()
+
+
+def test_subagent_start_without_parent_does_not_materialize() -> None:
+    session_manager, _, service = _uncached_service()
+    event = _pane_event(HookEventType.SUBAGENT_START)
+
+    result = service.resolve(event)
+
+    assert result is None
+    assert "_platform_session_id" not in event.metadata
+    assert "_session_just_materialized" not in event.metadata
+    session_manager.register_session.assert_not_called()
+
+
+def test_tool_hook_with_active_parent_subagent_binds_to_parent() -> None:
+    session_manager, _, service = _uncached_service()
+    parent = SimpleNamespace(id="parent-live", status="active", agent_run_id=None, agent_depth=0)
+    session_manager.find_live_interactive_pane_owner.return_value = parent
+    session_manager.db.fetchone.return_value = {
+        "variables": {"subagent_count": 1, "is_subagent": True}
+    }
+    event = _pane_event(HookEventType.BEFORE_TOOL)
+
+    result = service.resolve(event)
+
+    assert result == "parent-live"
+    session_manager.register_session.assert_not_called()
+
+
+def test_tool_hook_without_parent_subagent_still_auto_registers() -> None:
+    session_manager, _, service = _uncached_service()
+    parent = SimpleNamespace(id="parent-live", status="active", agent_run_id=None, agent_depth=0)
+    session_manager.find_live_interactive_pane_owner.return_value = parent
+    session_manager.db.fetchone.return_value = None
+    session_manager.register_session.return_value = "created-session"
+    event = _pane_event(HookEventType.BEFORE_TOOL)
+
+    result = service.resolve(event)
+
+    assert result == "created-session"
+    assert event.metadata["_session_just_materialized"] is True
+    session_manager.register_session.assert_called_once()
 
 
 def test_materialized_row_uses_normalized_deferred_identity() -> None:

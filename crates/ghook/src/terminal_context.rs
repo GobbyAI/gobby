@@ -57,6 +57,9 @@ pub fn enabled_for_hook(hook_type: &str) -> bool {
             | "stop"
             | "afteragent"
             | "postinvocation"
+            | "subagentstart"
+            | "subagentstop"
+            | "subagentend"
     )
 }
 
@@ -369,6 +372,15 @@ mod tests {
             "PostInvocation",
             "post-invocation",
             "post_invocation",
+            "SubagentStart",
+            "subagent-start",
+            "subagent_start",
+            "SubagentStop",
+            "subagent-stop",
+            "subagent_stop",
+            "SubagentEnd",
+            "subagent-end",
+            "subagent_end",
         ] {
             assert!(enabled_for_hook(hook_type), "{hook_type}");
         }

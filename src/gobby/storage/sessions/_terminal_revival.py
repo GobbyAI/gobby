@@ -8,6 +8,7 @@ from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.session_models import Session
 from gobby.terminal_ownership import (
     TERMINAL_OWNER_STATUSES,
+    is_interactive_terminal_claim,
     resolve_pane_ownership,
     terminal_session_creation_order,
     terminal_session_identity,
@@ -15,7 +16,10 @@ from gobby.terminal_ownership import (
 from gobby.utils.datetime import utc_now
 
 from ._constants import get_logger, past_terminal_revival_horizon
-from ._contested_expiry import clear_contested_terminal_expiry
+from ._contested_expiry import (
+    clear_contested_terminal_expiry,
+    session_has_active_native_subagent,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -129,11 +133,7 @@ class _TerminalRevivalMixin:
                     owner = candidate
                 elif not past_horizon:
                     owner = candidate
-                elif (
-                    candidate.id == session_id
-                    and candidate.agent_run_id is None
-                    and candidate.agent_depth == 0
-                ):
+                elif candidate.id == session_id and is_interactive_terminal_claim(candidate):
                     decision = resolve_pane_ownership(
                         [candidate],
                         requested_session_id=session_id,
@@ -147,9 +147,17 @@ class _TerminalRevivalMixin:
                 interactive_candidates = [
                     candidate
                     for candidate in candidates
-                    if candidate.agent_run_id is None and candidate.agent_depth == 0
+                    if is_interactive_terminal_claim(candidate)
                 ]
-                if interactive_candidates:
+                live_native_parents = [
+                    candidate
+                    for candidate in interactive_candidates
+                    if candidate.status in {"active", "paused"}
+                    and session_has_active_native_subagent(self.db, candidate.id)
+                ]
+                if live_native_parents:
+                    owner = min(live_native_parents, key=terminal_session_creation_order)
+                elif interactive_candidates:
                     decision = resolve_pane_ownership(
                         interactive_candidates,
                         requested_session_id=session_id,

@@ -66,6 +66,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "find_active_by_terminal_context": "(self, project_id: 'str | None', parent_pid: 'Any', "
     "terminal_context: 'dict[str, Any] | str | None' = None) -> 'Session | None'",
     "find_by_terminal_identity": "(self, identity: 'TerminalIdentity') -> 'list[Session]'",
+    "find_live_interactive_pane_owner": "(self, terminal_context: 'dict[str, Any] | None', "
+    "machine_id: 'str | None') -> 'Session | None'",
     "resolve_current_terminal_session": "(self, project_id: 'str | None', parent_pid: 'Any', "
     "terminal_context: 'dict[str, Any] | str | None') -> 'Session | None'",
     "find_by_external_id": "(self, external_id: 'str', project_id: 'str | None', "

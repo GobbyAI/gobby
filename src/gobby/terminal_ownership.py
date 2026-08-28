@@ -97,6 +97,14 @@ def _session_id(session: object) -> str | None:
     return _non_empty_text(getattr(session, "id", None) or getattr(session, "session_id", None))
 
 
+def is_interactive_terminal_claim(session: object) -> bool:
+    """Return whether a session competes as an interactive pane owner."""
+    return (
+        getattr(session, "agent_run_id", None) is None
+        and (getattr(session, "agent_depth", 0) or 0) == 0
+    )
+
+
 def terminal_session_identity(session: object) -> TerminalIdentity | None:
     """Return machine/socket/pane identity when stored metadata is unambiguous."""
     terminal_context = getattr(session, "terminal_context", None)
