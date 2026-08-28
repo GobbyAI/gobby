@@ -231,6 +231,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "16d605b267c6f21c9d3ec5499acdc99a96c865504133eaf55d0485daf513931d",
         sql: include_str!("../../assets/schema/migrations/407_interactive_session_id_nullable.sql"),
     },
+    EmbeddedMigration {
+        version: 408,
+        filename: "408_terminals.sql",
+        checksum: "d70abddeec801fab9845861c18610efcb0ecb7b84b2eec9d27e78ac2ae5ed34a",
+        sql: include_str!("../../assets/schema/migrations/408_terminals.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

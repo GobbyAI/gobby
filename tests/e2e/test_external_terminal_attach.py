@@ -299,7 +299,7 @@ def _wait_for_host(client: httpx.Client, daemon: DaemonInstance | None = None) -
     last: dict[str, Any] = {}
 
     def snapshot() -> dict[str, Any]:
-        response = client.get("/api/admin/health")
+        response = client.get("/api/health")
         if response.status_code != 200:
             last["health_status"] = response.status_code
             last["health_body"] = response.text[:500]

@@ -11,11 +11,14 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import psycopg
 import pytest
+from psycopg import sql
 from psycopg.errors import CheckViolation, NotNullViolation, UniqueViolation
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.schema_contract import apply_schema
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import (
     ALLOWED_EDGES,
@@ -36,6 +39,7 @@ from gobby.storage.terminals import (
     truncate_title,
 )
 from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.postgres import isolated_test_schema
 
 pytestmark = pytest.mark.unit
 
@@ -942,3 +946,96 @@ def test_cas_stale_transitions_affect_zero_rows(
         manager.promote_to_live(pending.id, locator=locator, locator_key=_tmux_key(locator)) is None
     )
     assert manager.fail_pending(pending.id) is None
+
+
+_MIGRATED_TABLES = ("terminals", "agent_runs")
+
+
+def _terminal_catalog(
+    connection: psycopg.Connection[Any], schema: str
+) -> dict[str, list[tuple[Any, ...]]]:
+    """Name-keyed column, constraint, and index definitions for the 408 tables."""
+
+    def normalized(rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+        return [
+            tuple(
+                value.replace(f"{schema}.", "") if isinstance(value, str) else value
+                for value in row
+            )
+            for row in rows
+        ]
+
+    columns = connection.execute(
+        """
+        SELECT table_name, column_name, data_type, udt_name, is_nullable,
+               COALESCE(column_default, '')
+        FROM information_schema.columns
+        WHERE table_schema = %s AND table_name = ANY(%s)
+        ORDER BY table_name, column_name
+        """,
+        (schema, list(_MIGRATED_TABLES)),
+    ).fetchall()
+    constraints = connection.execute(
+        """
+        SELECT rel.relname, con.conname, pg_get_constraintdef(con.oid)
+        FROM pg_constraint AS con
+        JOIN pg_class AS rel ON rel.oid = con.conrelid
+        JOIN pg_namespace AS nsp ON nsp.oid = rel.relnamespace
+        WHERE nsp.nspname = %s AND rel.relname = ANY(%s)
+        ORDER BY rel.relname, con.conname
+        """,
+        (schema, list(_MIGRATED_TABLES)),
+    ).fetchall()
+    indexes = connection.execute(
+        """
+        SELECT tablename, indexname, indexdef
+        FROM pg_indexes
+        WHERE schemaname = %s AND tablename = ANY(%s)
+        ORDER BY tablename, indexname
+        """,
+        (schema, list(_MIGRATED_TABLES)),
+    ).fetchall()
+    return {
+        "columns": normalized(columns),
+        "constraints": normalized(constraints),
+        "indexes": normalized(indexes),
+    }
+
+
+@pytest.mark.integration
+def test_migration_408_matches_baseline(postgres_database_url: str) -> None:
+    """A hub upgraded from the 407 shape equals a fresh apply, and re-applying is a no-op."""
+    with (
+        isolated_test_schema(postgres_database_url, "fresh408") as fresh_schema,
+        isolated_test_schema(postgres_database_url, "hub407") as migrated_schema,
+    ):
+        apply_schema(postgres_database_url, schema=fresh_schema)
+        apply_schema(postgres_database_url, schema=migrated_schema)
+
+        with psycopg.connect(postgres_database_url, autocommit=True) as connection:
+            connection.execute(
+                sql.SQL("SET search_path TO {}").format(sql.Identifier(migrated_schema))
+            )
+            connection.execute("DROP TABLE terminals CASCADE")
+            connection.execute("ALTER TABLE agent_runs DROP COLUMN terminal_id")
+            connection.execute("ALTER TABLE agent_runs ADD COLUMN tmux_session_name text")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 408")
+
+        apply_schema(postgres_database_url, schema=migrated_schema)
+
+        with psycopg.connect(postgres_database_url, autocommit=True) as connection:
+            fresh = _terminal_catalog(connection, fresh_schema)
+            migrated = _terminal_catalog(connection, migrated_schema)
+            receipt = connection.execute(
+                sql.SQL("SELECT filename FROM {}.schema_migrations WHERE version = 408").format(
+                    sql.Identifier(migrated_schema)
+                )
+            ).fetchone()
+        assert receipt == ("408_terminals.sql",)
+        assert migrated == fresh
+        assert not any(column[1] == "tmux_session_name" for column in migrated["columns"])
+        assert ("agent_runs", "terminal_id", "uuid", "uuid", "YES", "") in migrated["columns"]
+
+        apply_schema(postgres_database_url, schema=migrated_schema)
+        with psycopg.connect(postgres_database_url, autocommit=True) as connection:
+            assert _terminal_catalog(connection, migrated_schema) == fresh

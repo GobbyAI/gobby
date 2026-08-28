@@ -777,7 +777,7 @@ def _restart_daemon_preserving_host(daemon: DaemonInstance) -> None:
 
 
 def _health(client: httpx.Client) -> dict[str, Any]:
-    response = client.get("/api/admin/health")
+    response = client.get("/api/health")
     response.raise_for_status()
     payload = response.json()
     host = payload.get("gterm_host")

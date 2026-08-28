@@ -1,8 +1,8 @@
 /**
  * Terminal scrollback restore on the shipped tmux path.
  *
- * The daemon acknowledges `tmux_attach` as a reservation and does the real
- * work on the first `tmux_resize`: build the bridge at the client's geometry,
+ * The daemon acknowledges `terminal_attach` as a reservation and does the real
+ * work on the first `terminal_resize`: build the bridge at the client's geometry,
  * send one bounded `terminal_attach_history` frame, then stream. The fake
  * socket below implements exactly that handshake.
  *
@@ -14,6 +14,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 interface TmuxSessionFixture {
+  terminal_id: string;
   name: string;
   socket: string;
   pane_pid: number;
@@ -40,6 +41,7 @@ const STREAM_ID = "stream-history-session";
 
 const MOCK_SESSIONS: TmuxSessionFixture[] = [
   {
+    terminal_id: "terminal-history-session",
     name: SESSION_NAME,
     socket: "default",
     pane_pid: 12345,
@@ -192,11 +194,13 @@ async function installTerminalSocket(
         return;
       }
 
-      if (message.type === "tmux_list_sessions") {
+      if (message.type === "terminal_list") {
         ws.send(
           JSON.stringify({
-            type: "tmux_sessions_list",
-            sessions: MOCK_SESSIONS,
+            type: "terminal_list",
+            request_id: message.request_id,
+            next_cursor: null,
+            items: MOCK_SESSIONS,
             live_cli_session_ids: [],
           }),
         );
@@ -204,24 +208,23 @@ async function installTerminalSocket(
       }
 
       // Attach only reserves; nothing is built and nothing is streamed yet.
-      if (message.type === "tmux_attach") {
+      if (message.type === "terminal_attach") {
         ws.send(
           JSON.stringify({
-            type: "tmux_attach_result",
+            type: "terminal_attach_result",
             request_id: message.request_id,
             success: true,
-            streaming_id: STREAM_ID,
-            session_name: message.session_name,
-            socket: message.socket,
+            attachment_id: STREAM_ID,
+            terminal_id: message.terminal_id,
           }),
         );
         return;
       }
 
-      if (message.type === "tmux_detach") {
+      if (message.type === "terminal_detach") {
         ws.send(
           JSON.stringify({
-            type: "tmux_detach_result",
+            type: "terminal_detach_result",
             request_id: message.request_id,
             success: true,
           }),
@@ -230,15 +233,15 @@ async function installTerminalSocket(
       }
 
       // The first resize is the activation point: history, then the stream.
-      if (message.type === "tmux_resize") {
-        const streamingId = String(message.streaming_id);
+      if (message.type === "terminal_resize") {
+        const streamingId = String(message.attachment_id);
         if (activated.has(streamingId)) return;
         activated.add(streamingId);
         const text = unavailable ? "" : historyText(historyLines);
         ws.send(
           JSON.stringify({
             type: "terminal_attach_history",
-            streaming_id: streamingId,
+            attachment_id: streamingId,
             text,
             truncated,
             unavailable,
@@ -249,7 +252,7 @@ async function installTerminalSocket(
         ws.send(
           JSON.stringify({
             type: "terminal_output",
-            run_id: streamingId,
+            attachment_id: streamingId,
             data: LIVE_OUTPUT,
           }),
         );
@@ -263,7 +266,7 @@ async function installTerminalSocket(
           ws.send(
             JSON.stringify({
               type: "terminal_output",
-              run_id: streamingId,
+              attachment_id: streamingId,
               data: `tick-${tick}\r\n`,
             }),
           );

@@ -22,6 +22,7 @@ const PAD = " lorem ipsum dolor sit amet consectetur".repeat(
 );
 
 const SESSION = {
+  terminal_id: "perf-terminal",
   name: "perf-session",
   socket: "default",
   pane_pid: 1,
@@ -41,8 +42,7 @@ function history(): string {
   return (
     Array.from(
       { length: HISTORY_LINES },
-      (_, i) =>
-        `${ESC}[3${i % 8}mhistory-line-${i + 1}${PAD}${ESC}[0m`,
+      (_, i) => `${ESC}[3${i % 8}mhistory-line-${i + 1}${PAD}${ESC}[0m`,
     ).join("\r\n") + `${ESC}[0m`
   );
 }
@@ -145,26 +145,27 @@ async function mocks(page: Page, box: { sendEpoch: number }) {
           JSON.stringify({ type: "subscribe_success", events: m.events ?? [] }),
         );
       }
-      if (m.type === "tmux_list_sessions")
+      if (m.type === "terminal_list")
         ws.send(
           JSON.stringify({
-            type: "tmux_sessions_list",
+            type: "terminal_list",
+            request_id: m.request_id,
+            next_cursor: null,
             live_cli_session_ids: [],
-            sessions: [SESSION],
+            items: [SESSION],
           }),
         );
-      if (m.type === "tmux_attach")
+      if (m.type === "terminal_attach")
         ws.send(
           JSON.stringify({
-            type: "tmux_attach_result",
+            type: "terminal_attach_result",
             request_id: m.request_id,
             success: true,
-            streaming_id: "perf-stream",
-            session_name: m.session_name,
-            socket: m.socket,
+            attachment_id: "perf-stream",
+            terminal_id: m.terminal_id,
           }),
         );
-      if (m.type === "tmux_resize" && !activated) {
+      if (m.type === "terminal_resize" && !activated) {
         activated = true;
         // performance.timeOrigin and Date.now() are the same epoch clock on
         // this machine, so the two sides are directly comparable.
@@ -172,7 +173,7 @@ async function mocks(page: Page, box: { sendEpoch: number }) {
         ws.send(
           JSON.stringify({
             type: "terminal_attach_history",
-            streaming_id: String(m.streaming_id),
+            attachment_id: String(m.attachment_id),
             text: history(),
             truncated: true,
             unavailable: false,
@@ -218,7 +219,9 @@ async function measure(
 
   return page.evaluate(async () => {
     const find = () =>
-      document.querySelector<HTMLElement>('[data-testid="terminal-view"] .wterm');
+      document.querySelector<HTMLElement>(
+        '[data-testid="terminal-view"] .wterm',
+      );
     // Every wait here is driven by animation frames. write() renders through
     // rAF, so frames are the clock the renderer actually runs on, and a wall
     // timer would only add a second clock to reason about. What is reported is
@@ -270,10 +273,7 @@ async function measure(
       firstNum: numberOf(rowsEls[0]),
       lastScrollbackNum: numberOf(rowsEls[rowsEls.length - 1]),
       gridRows: grid.length,
-      lastGridNum: Math.max(
-        ...Array.from(grid, (el) => numberOf(el)),
-        -1,
-      ),
+      lastGridNum: Math.max(...Array.from(grid, (el) => numberOf(el)), -1),
     };
   });
 }
@@ -319,7 +319,9 @@ for (const core of ["ghostty", "fallback"] as const) {
     console.log(
       `RESULT core=${core} lines=${HISTORY_LINES} median_ms=${median?.toFixed(1)} all=${times
         .map((t) => t.toFixed(0))
-        .join(",")} rows=${samples[0]?.rows} nodes=${samples[0]?.nodes} vw=${vw || "default"} cols=${samples[0]?.cols}`,
+        .join(
+          ",",
+        )} rows=${samples[0]?.rows} nodes=${samples[0]?.nodes} vw=${vw || "default"} cols=${samples[0]?.cols}`,
     );
     console.log(
       `COVERAGE core=${core} sent=${HISTORY_LINES} scrollback=${samples[0]?.rows}` +
