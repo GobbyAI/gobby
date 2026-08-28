@@ -1,0 +1,395 @@
+project_id: d45545c5-ded5-4335-b115-0245752edacf
+plan_id: bundled-mcp-templates
+plan_hash: 8daa390b5e5dbdd3d2961c5da3a958662aab6cf5367590a9656f7e2c1a07f313
+root_task_ref: '21152'
+sections:
+  '1.1':
+    acceptance_items:
+      1.1.1:
+        expected_leaves:
+        - title: Add the AWS OpenAPI MCP negotiation smoke test
+          owner_agent: backend-developer
+      1.1.2:
+        expected_leaves:
+        - title: Add the AWS OpenAPI MCP negotiation smoke test
+          owner_agent: backend-developer
+      1.1.3:
+        expected_leaves:
+        - title: Add the AWS OpenAPI MCP negotiation smoke test
+          owner_agent: backend-developer
+  '2.1':
+    acceptance_items:
+      2.1.1:
+        expected_leaves:
+        - title: Add the migration hop for template registry, instance provenance, and project-scoped secrets
+          owner_agent: backend-developer
+      2.1.2:
+        expected_leaves:
+        - title: Add the migration hop for template registry, instance provenance, and project-scoped secrets
+          owner_agent: backend-developer
+      2.1.3:
+        expected_leaves:
+        - title: Add the migration hop for template registry, instance provenance, and project-scoped secrets
+          owner_agent: backend-developer
+  '2.2':
+    acceptance_items:
+      2.2.1:
+        expected_leaves:
+        - title: Add template registry storage and instance provenance to MCP storage
+          owner_agent: backend-developer
+      2.2.2:
+        expected_leaves:
+        - title: Add template registry storage and instance provenance to MCP storage
+          owner_agent: backend-developer
+      2.2.3:
+        expected_leaves:
+        - title: Add template registry storage and instance provenance to MCP storage
+          owner_agent: backend-developer
+      2.2.4:
+        expected_leaves:
+        - title: Add template registry storage and instance provenance to MCP storage
+          owner_agent: backend-developer
+      2.2.5:
+        expected_leaves:
+        - title: Add template registry storage and instance provenance to MCP storage
+          owner_agent: backend-developer
+      2.2.6:
+        expected_leaves:
+        - title: Add template registry storage and instance provenance to MCP storage
+          owner_agent: backend-developer
+      2.2.7:
+        expected_leaves:
+        - title: Add template registry storage and instance provenance to MCP storage
+          owner_agent: backend-developer
+      2.2.8:
+        expected_leaves:
+        - title: Add template registry storage and instance provenance to MCP storage
+          owner_agent: backend-developer
+  '2.3':
+    acceptance_items:
+      2.3.1:
+        expected_leaves:
+        - title: Scope the secret store by project
+          owner_agent: backend-developer
+      2.3.2:
+        expected_leaves:
+        - title: Scope the secret store by project
+          owner_agent: backend-developer
+      2.3.3:
+        expected_leaves:
+        - title: Scope the secret store by project
+          owner_agent: backend-developer
+      2.3.4:
+        expected_leaves:
+        - title: Scope the secret store by project
+          owner_agent: backend-developer
+      2.3.5:
+        expected_leaves:
+        - title: Scope the secret store by project
+          owner_agent: backend-developer
+      2.3.6:
+        expected_leaves:
+        - title: Scope the secret store by project
+          owner_agent: backend-developer
+      2.3.7:
+        expected_leaves:
+        - title: Scope the secret store by project
+          owner_agent: backend-developer
+  '3.1':
+    acceptance_items:
+      3.1.1:
+        expected_leaves:
+        - title: Add the MCP server template model, loader, expansion, and bundled template YAMLs
+          owner_agent: backend-developer
+      3.1.2:
+        expected_leaves:
+        - title: Add the MCP server template model, loader, expansion, and bundled template YAMLs
+          owner_agent: backend-developer
+      3.1.3:
+        expected_leaves:
+        - title: Add the MCP server template model, loader, expansion, and bundled template YAMLs
+          owner_agent: backend-developer
+      3.1.4:
+        expected_leaves:
+        - title: Add the MCP server template model, loader, expansion, and bundled template YAMLs
+          owner_agent: backend-developer
+      3.1.5:
+        expected_leaves:
+        - title: Add the MCP server template model, loader, expansion, and bundled template YAMLs
+          owner_agent: backend-developer
+      3.1.6:
+        expected_leaves:
+        - title: Add the MCP server template model, loader, expansion, and bundled template YAMLs
+          owner_agent: backend-developer
+      3.1.7:
+        expected_leaves:
+        - title: Add the MCP server template model, loader, expansion, and bundled template YAMLs
+          owner_agent: backend-developer
+      3.1.8:
+        expected_leaves:
+        - title: Add the MCP server template model, loader, expansion, and bundled template YAMLs
+          owner_agent: backend-developer
+      3.1.9:
+        expected_leaves:
+        - title: Add the MCP server template model, loader, expansion, and bundled template YAMLs
+          owner_agent: backend-developer
+      3.1.10:
+        expected_leaves:
+        - title: Add the MCP server template model, loader, expansion, and bundled template YAMLs
+          owner_agent: backend-developer
+      3.1.11:
+        expected_leaves:
+        - title: Add the MCP server template model, loader, expansion, and bundled template YAMLs
+          owner_agent: backend-developer
+  '3.2':
+    acceptance_items:
+      3.2.1:
+        expected_leaves:
+        - title: Add template and instance sync targets for bundled, global, and project YAML
+          owner_agent: backend-developer
+      3.2.2:
+        expected_leaves:
+        - title: Add template and instance sync targets for bundled, global, and project YAML
+          owner_agent: backend-developer
+      3.2.3:
+        expected_leaves:
+        - title: Add template and instance sync targets for bundled, global, and project YAML
+          owner_agent: backend-developer
+      3.2.4:
+        expected_leaves:
+        - title: Add template and instance sync targets for bundled, global, and project YAML
+          owner_agent: backend-developer
+      3.2.5:
+        expected_leaves:
+        - title: Add template and instance sync targets for bundled, global, and project YAML
+          owner_agent: backend-developer
+      3.2.6:
+        expected_leaves:
+        - title: Add template and instance sync targets for bundled, global, and project YAML
+          owner_agent: backend-developer
+      3.2.7:
+        expected_leaves:
+        - title: Add template and instance sync targets for bundled, global, and project YAML
+          owner_agent: backend-developer
+      3.2.8:
+        expected_leaves:
+        - title: Add template and instance sync targets for bundled, global, and project YAML
+          owner_agent: backend-developer
+      3.2.9:
+        expected_leaves:
+        - title: Add template and instance sync targets for bundled, global, and project YAML
+          owner_agent: backend-developer
+      3.2.10:
+        expected_leaves:
+        - title: Add template and instance sync targets for bundled, global, and project YAML
+          owner_agent: backend-developer
+      3.2.11:
+        expected_leaves:
+        - title: Add template and instance sync targets for bundled, global, and project YAML
+          owner_agent: backend-developer
+      3.2.12:
+        expected_leaves:
+        - title: Add template and instance sync targets for bundled, global, and project YAML
+          owner_agent: backend-developer
+  '4.1':
+    acceptance_items:
+      4.1.1:
+        expected_leaves:
+        - title: Key the client manager, connections, health, and tool cache by server id
+          owner_agent: backend-developer
+      4.1.2:
+        expected_leaves:
+        - title: Key the client manager, connections, health, and tool cache by server id
+          owner_agent: backend-developer
+      4.1.3:
+        expected_leaves:
+        - title: Key the client manager, connections, health, and tool cache by server id
+          owner_agent: backend-developer
+      4.1.4:
+        expected_leaves:
+        - title: Key the client manager, connections, health, and tool cache by server id
+          owner_agent: backend-developer
+      4.1.5:
+        expected_leaves:
+        - title: Key the client manager, connections, health, and tool cache by server id
+          owner_agent: backend-developer
+      4.1.6:
+        expected_leaves:
+        - title: Key the client manager, connections, health, and tool cache by server id
+          owner_agent: backend-developer
+      4.1.7:
+        expected_leaves:
+        - title: Key the client manager, connections, health, and tool cache by server id
+          owner_agent: backend-developer
+      4.1.8:
+        expected_leaves:
+        - title: Key the client manager, connections, health, and tool cache by server id
+          owner_agent: backend-developer
+      4.1.9:
+        expected_leaves:
+        - title: Key the client manager, connections, health, and tool cache by server id
+          owner_agent: backend-developer
+      4.1.10:
+        expected_leaves:
+        - title: Key the client manager, connections, health, and tool cache by server id
+          owner_agent: backend-developer
+      4.1.11:
+        expected_leaves:
+        - title: Key the client manager, connections, health, and tool cache by server id
+          owner_agent: backend-developer
+      4.1.12:
+        expected_leaves:
+        - title: Key the client manager, connections, health, and tool cache by server id
+          owner_agent: backend-developer
+      4.1.13:
+        expected_leaves:
+        - title: Key the client manager, connections, health, and tool cache by server id
+          owner_agent: backend-developer
+      4.1.14:
+        expected_leaves:
+        - title: Key the client manager, connections, health, and tool cache by server id
+          owner_agent: backend-developer
+  '4.2':
+    acceptance_items:
+      4.2.1:
+        expected_leaves:
+        - title: Resolve server names by project scope in the proxy front door
+          owner_agent: backend-developer
+      4.2.2:
+        expected_leaves:
+        - title: Resolve server names by project scope in the proxy front door
+          owner_agent: backend-developer
+      4.2.3:
+        expected_leaves:
+        - title: Resolve server names by project scope in the proxy front door
+          owner_agent: backend-developer
+      4.2.4:
+        expected_leaves:
+        - title: Resolve server names by project scope in the proxy front door
+          owner_agent: backend-developer
+      4.2.5:
+        expected_leaves:
+        - title: Resolve server names by project scope in the proxy front door
+          owner_agent: backend-developer
+      4.2.6:
+        expected_leaves:
+        - title: Resolve server names by project scope in the proxy front door
+          owner_agent: backend-developer
+      4.2.7:
+        expected_leaves:
+        - title: Resolve server names by project scope in the proxy front door
+          owner_agent: backend-developer
+      4.2.8:
+        expected_leaves:
+        - title: Resolve server names by project scope in the proxy front door
+          owner_agent: backend-developer
+      4.2.9:
+        expected_leaves:
+        - title: Resolve server names by project scope in the proxy front door
+          owner_agent: backend-developer
+      4.2.10:
+        expected_leaves:
+        - title: Resolve server names by project scope in the proxy front door
+          owner_agent: backend-developer
+  '4.3':
+    acceptance_items:
+      4.3.1:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.2:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.3:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.4:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.5:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.6:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.7:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.8:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.9:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.10:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.11:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.12:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.13:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.14:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.15:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.16:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+      4.3.17:
+        expected_leaves:
+        - title: Expose templates and scope through HTTP routes, the CLI, and the stdio proxy
+          owner_agent: backend-developer
+  '5.1':
+    acceptance_items:
+      5.1.1:
+        expected_leaves:
+        - title: Retire the legacy bundled-install path and machine-local MCP registry
+          owner_agent: backend-developer
+      5.1.2:
+        expected_leaves:
+        - title: Retire the legacy bundled-install path and machine-local MCP registry
+          owner_agent: backend-developer
+      5.1.3:
+        expected_leaves:
+        - title: Retire the legacy bundled-install path and machine-local MCP registry
+          owner_agent: backend-developer
+      5.1.4:
+        expected_leaves:
+        - title: Retire the legacy bundled-install path and machine-local MCP registry
+          owner_agent: backend-developer
+  '5.2':
+    acceptance_items:
+      5.2.1:
+        expected_leaves:
+        - title: Add the mcp-servers skill and rewrite the MCP tool docs
+          owner_agent: tech-writer
+      5.2.2:
+        expected_leaves:
+        - title: Add the mcp-servers skill and rewrite the MCP tool docs
+          owner_agent: tech-writer
+      5.2.3:
+        expected_leaves:
+        - title: Add the mcp-servers skill and rewrite the MCP tool docs
+          owner_agent: tech-writer
