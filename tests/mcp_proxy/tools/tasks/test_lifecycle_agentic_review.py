@@ -105,6 +105,79 @@ async def test_malformed_submitted_verdict_can_be_corrected(
     account.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_operational_criteria_block_before_inline_or_submitted_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    review = AsyncMock()
+    account = MagicMock()
+    monkeypatch.setattr(review_gate, "evaluate_criteria_review", review)
+    monkeypatch.setattr(review_gate, "account_criteria_verdict", account)
+
+    result = await _evaluate(
+        criteria="Install the release, restart the daemon, and run a smoke check.",
+        changes_summary="Implementation and tests are complete.",
+        submitted=SubmittedCloseReview(
+            verdict={"status": "valid", "criteria": [], "feedback": "ok"},
+            review_fingerprint="close",
+            evidence_fingerprint="evidence",
+        ),
+    )
+
+    assert result.error_type == "operational_evidence_missing"
+    assert result.extra["missing_operational_actions"] == ["install", "restart", "smoke"]
+    review.assert_not_awaited()
+    account.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("changes_summary", "checklist_facts"),
+    [
+        ("Release installed; restart completed; smoke check passed.", {}),
+        (
+            "Implementation complete.",
+            {"transcript_operational_actions": ["install", "restart", "smoke"]},
+        ),
+    ],
+)
+async def test_operational_criteria_reach_review_with_completion_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    changes_summary: str,
+    checklist_facts: dict[str, object],
+) -> None:
+    expected = ValidationResult(can_close=True)
+    review = AsyncMock(return_value=expected)
+    monkeypatch.setattr(review_gate, "evaluate_criteria_review", review)
+
+    result = await _evaluate(
+        criteria="Install the release, restart the daemon, and run a smoke check.",
+        changes_summary=changes_summary,
+        checklist_facts=checklist_facts,
+    )
+
+    assert result is expected
+    review.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_no_work_disposition_skips_operational_evidence_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = ValidationResult(can_close=True)
+    review = AsyncMock(return_value=expected)
+    monkeypatch.setattr(review_gate, "evaluate_criteria_review", review)
+
+    result = await _evaluate(
+        criteria="Deploy the service and run a smoke check.",
+        changes_summary="Superseded by the replacement task.",
+        reason="obsolete",
+    )
+
+    assert result is expected
+    review.assert_awaited_once()
+
+
 def _oversized() -> ValidationResult:
     return ValidationResult(
         can_close=False,
@@ -135,6 +208,10 @@ def _prepared() -> PreparedCloseReview:
 async def _evaluate(
     *,
     submitted: SubmittedCloseReview | None = None,
+    criteria: str = "Criterion.",
+    changes_summary: str = "summary",
+    checklist_facts: dict[str, object] | None = None,
+    reason: str = "completed",
 ) -> ValidationResult:
     task = Task(
         id="task",
@@ -144,7 +221,7 @@ async def _evaluate(
         task_type="task",
         created_at=datetime(2026, 8, 21, tzinfo=UTC),
         updated_at=datetime(2026, 8, 21, tzinfo=UTC),
-        validation_criteria="Criterion.",
+        validation_criteria=criteria,
     )
     validator = cast(
         TaskValidator,
@@ -156,11 +233,11 @@ async def _evaluate(
         task_validator=validator,
         ctx=ctx,
         resolved_id=task.id,
-        changes_summary="summary",
+        changes_summary=changes_summary,
         diff_text="diff",
-        checklist_facts={},
+        checklist_facts=checklist_facts or {},
         validation_config=None,
-        reason="completed",
+        reason=reason,
         description="",
         test_bodies="tests",
         submitted_review=submitted,

@@ -46,7 +46,12 @@ def _committed_manifest_is_current() -> Iterator[None]:
         yield
 
 
-def _task(*, escalated: bool, tdd_required: bool = False) -> Task:
+def _task(
+    *,
+    escalated: bool,
+    tdd_required: bool = False,
+    validation_criteria: str | None = None,
+) -> Task:
     task = Task(
         id="00000000-0000-4000-8000-000000000101",
         project_id="00000000-0000-4000-8000-000000000201",
@@ -57,7 +62,8 @@ def _task(*, escalated: bool, tdd_required: bool = False) -> Task:
         created_at=datetime(2026, 8, 23, 12, tzinfo=UTC),
         updated_at=datetime(2026, 8, 23, 12, tzinfo=UTC),
         claimed_by_session_id=SESSION_ID,
-        validation_criteria=(
+        validation_criteria=validation_criteria
+        or (
             "Recall injects nothing when the batched read raises.\n"
             "Acceptance artifacts:\n"
             f"- test: `{NAMED_TEST.reference}`"
@@ -112,6 +118,28 @@ def _transcript() -> TranscriptEvidence:
     )
 
 
+def _operational_transcript() -> TranscriptEvidence:
+    return TranscriptEvidence(
+        validation_runs=(
+            *_transcript().validation_runs,
+            TranscriptValidationRun(
+                session_id=SESSION_ID,
+                source="claude",
+                command="uv run gobby restart --wait",
+                categories=("config",),
+                matcher_id="gobby-restart",
+                label="gobby restart",
+                outcome="success",
+                started_at=NOW,
+                completed_at=NOW,
+                order=2,
+                exit_code=0,
+            ),
+        ),
+        sessions=(SESSION_ID,),
+    )
+
+
 async def _evaluate(
     task: Task,
     *,
@@ -122,6 +150,8 @@ async def _evaluate(
     close_root: CloseWorktreeRoot = NO_WORKTREE,
     project_path: str | None = None,
     acceptance_evaluator: MagicMock | None = None,
+    transcript: TranscriptEvidence | None = None,
+    changes_summary: str = "Implemented and tested.",
 ) -> CloseEvaluation:
     review = review or AsyncMock(
         return_value=ValidationResult(
@@ -158,7 +188,7 @@ async def _evaluate(
         patch.object(
             lifecycle,
             "_derive_close_transcript_evidence",
-            AsyncMock(return_value=_transcript()),
+            AsyncMock(return_value=transcript or _transcript()),
         ),
         patch.object(
             lifecycle,
@@ -177,7 +207,7 @@ async def _evaluate(
             _ctx(task),
             task_id=task.id,
             reason="completed",
-            changes_summary="Implemented and tested.",
+            changes_summary=changes_summary,
             commit_sha="abc123",
             project_path=project_path,
             response_detail="diagnostic",
@@ -372,3 +402,32 @@ async def test_criteria_review_sees_guard_identity_without_its_stdout() -> None:
     assert guard_facts["command"] == "uv run pytest 'tests/memory/test_recall.py'"
     gate_details = _gate(evaluation, 13).details
     assert gate_details["output"] == guards.output, "gate 13 keeps the runner output"
+
+
+@pytest.mark.asyncio
+async def test_criteria_review_receives_successful_transcript_operational_actions() -> None:
+    review = AsyncMock(
+        return_value=ValidationResult(
+            can_close=True,
+            validation_status="valid",
+            validation_feedback="Criteria satisfied.",
+            reset_reason="llm_valid",
+            extra={"verdict": {"status": "valid"}},
+        )
+    )
+
+    evaluation = await _evaluate(
+        _task(
+            escalated=False,
+            validation_criteria="Restart the daemon and verify the service is healthy.",
+        ),
+        override_justification=None,
+        review=review,
+        transcript=_operational_transcript(),
+    )
+
+    assert evaluation.error is None
+    await_args = review.await_args
+    assert await_args is not None
+    facts = cast(dict[str, Any], await_args.kwargs["checklist_facts"])
+    assert facts["transcript_operational_actions"] == ["restart"]

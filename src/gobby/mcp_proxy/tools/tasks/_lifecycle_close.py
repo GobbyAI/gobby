@@ -70,7 +70,10 @@ from gobby.tasks.acceptance_artifacts import (
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.close_verdict_memo import TaskCloseVerdictMemo
 from gobby.tasks.commits import collect_commit_diff_text
-from gobby.tasks.criteria_contract import split_validation_criteria
+from gobby.tasks.criteria_contract import (
+    operational_actions_from_command,
+    split_validation_criteria,
+)
 from gobby.tasks.epic_guards import evaluate_epic_guards
 from gobby.tasks.generation_schemas import TASK_CLOSE_VALIDATION_SCHEMA
 from gobby.tasks.state_semantics import get_claimed_session_id
@@ -741,6 +744,14 @@ async def _evaluate_close(
             "attributed_paths": sorted(evaluation.edited_paths),
             "claim_started_at": evaluation.claim_started_at,
             "validation_commands": command_gate.details,
+            "transcript_operational_actions": sorted(
+                {
+                    action
+                    for run in transcript.validation_runs
+                    if run.outcome == "success"
+                    for action in operational_actions_from_command(run.command)
+                }
+            ),
             "acceptance_artifacts": acceptance_details,
             "tdd_evidence": tdd_details,
             "epic_guards": guard_review_facts,

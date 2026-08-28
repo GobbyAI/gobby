@@ -15,6 +15,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 from gobby.storage.tasks import Task
 from gobby.tasks.close_verdict import CloseVerdictParseError, parse_close_verdict
 from gobby.tasks.close_verdict_memo import CloseVerdictMemo
+from gobby.tasks.criteria_contract import missing_operational_evidence
 from gobby.tasks.validation import TaskValidator
 
 
@@ -44,6 +45,38 @@ async def evaluate_close_criteria(
     verdict_memo: CloseVerdictMemo | None = None,
 ) -> ValidationResult:
     """Run one bounded review or account for an authenticated background verdict."""
+    raw_transcript_actions = checklist_facts.get("transcript_operational_actions", ())
+    transcript_actions = (
+        tuple(str(action) for action in raw_transcript_actions)
+        if isinstance(raw_transcript_actions, (list, tuple, set, frozenset))
+        else ()
+    )
+    missing_operations = (
+        missing_operational_evidence(
+            task.validation_criteria,
+            changes_summary,
+            transcript_actions=transcript_actions,
+        )
+        if reason == "completed"
+        else ()
+    )
+    if missing_operations:
+        missing_text = ", ".join(missing_operations)
+        return ValidationResult(
+            can_close=False,
+            error_type="operational_evidence_missing",
+            message=(
+                "Task-close evidence does not confirm required operational actions: "
+                f"{missing_text}. Record each completed action and outcome in changes_summary "
+                "or run a matching successful command in the task transcript."
+            ),
+            extra={
+                "blocking_reasons": [
+                    f"Missing completion evidence for operational actions: {missing_text}."
+                ],
+                "missing_operational_actions": list(missing_operations),
+            },
+        )
     if submitted_review is not None:
         prepared = task_validator.prepare_task_review(
             title=task.title,
