@@ -1,21 +1,33 @@
 """Shared deadline helpers for blocking hook effects."""
 
 import time
+from dataclasses import dataclass
 
 BLOCKING_EFFECT_BUDGET_SECONDS = 20.0
 
 
-def new_blocking_effect_deadline() -> float:
+@dataclass
+class BlockingEffectDeadline:
+    """Mutable monotonic deadline shared by one hook's blocking effects."""
+
+    expires_at: float
+
+    def extend(self, duration_seconds: float) -> None:
+        """Exclude elapsed non-effect time from the shared blocking budget."""
+        self.expires_at += duration_seconds
+
+
+def new_blocking_effect_deadline() -> BlockingEffectDeadline:
     """Return the monotonic deadline for one hook's blocking effects."""
-    return time.monotonic() + BLOCKING_EFFECT_BUDGET_SECONDS
+    return BlockingEffectDeadline(time.monotonic() + BLOCKING_EFFECT_BUDGET_SECONDS)
 
 
 def remaining_blocking_effect_seconds(
-    deadline: float | None,
+    deadline: BlockingEffectDeadline | None,
     *,
     maximum: float,
 ) -> float:
     """Return the remaining bounded timeout for a blocking effect."""
     if deadline is None:
         return maximum
-    return max(0.0, min(maximum, deadline - time.monotonic()))
+    return max(0.0, min(maximum, deadline.expires_at - time.monotonic()))

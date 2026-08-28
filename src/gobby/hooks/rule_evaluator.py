@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.block_audit import audit_source_block_sync
@@ -79,7 +80,7 @@ class WorkflowRuleEvaluator:
         format_discovery_result: FormatDiscoveryResult,
         database: Any,
         logger: logging.Logger,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> None:
         self.workflow_handler = workflow_handler
         self.dispatch_mcp_calls = dispatch_mcp_calls

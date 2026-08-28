@@ -18,10 +18,12 @@ ghook --version
 
 ## Terminal context
 
-For session-start hooks, when `TMUX` is set and `TMUX_PANE` matches `^%\d+$`,
-`ghook` injects `input_data.terminal_context.tmux_pane` into the envelope.
-The pane ID is passed through verbatim. If the pane variable is missing, empty,
-or invalid, the tmux fields are emitted as `null`.
+For session-start, prompt-start (`UserPromptSubmit`, `BeforeAgent`, and
+`PreInvocation`), and terminal-completion hooks, when `TMUX` is set and
+`TMUX_PANE` matches `^%\d+$`, `ghook` injects
+`input_data.terminal_context.tmux_pane` into the envelope. The pane ID is passed
+through verbatim. If the pane variable is missing, empty, or invalid, the tmux
+fields are emitted as `null`. High-frequency tool hooks omit terminal context.
 
 Exit codes:
 

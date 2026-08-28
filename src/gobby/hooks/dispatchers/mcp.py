@@ -14,7 +14,10 @@ import logging
 from typing import Any, Literal
 
 from gobby.hooks.background_tasks import create_background_task
-from gobby.hooks.effect_deadline import remaining_blocking_effect_seconds
+from gobby.hooks.effect_deadline import (
+    BlockingEffectDeadline,
+    remaining_blocking_effect_seconds,
+)
 from gobby.hooks.events import HookEvent
 from gobby.hooks.mcp_result import mcp_call_succeeded
 from gobby.mcp_proxy.server_list import compact_mcp_server_list
@@ -240,7 +243,7 @@ def dispatch_mcp_calls(
     loop: asyncio.AbstractEventLoop | None,
     logger: logging.Logger,
     *,
-    deadline: float | None = None,
+    deadline: BlockingEffectDeadline | None = None,
 ) -> list[dict[str, Any]]:
     """Dispatch mcp_call effects from rule engine evaluation.
 

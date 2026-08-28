@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from tests._timing import wait_for_async_condition
 
@@ -268,7 +269,7 @@ class TestDispatchMcpCallsNoEventLoop:
                 }
             ],
             _make_event(platform_session_id="plat-456"),
-            deadline=started + 0.02,
+            deadline=BlockingEffectDeadline(started + 0.02),
         )
 
         assert time.monotonic() - started < 0.5

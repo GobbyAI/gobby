@@ -254,6 +254,9 @@ fn diagnose_json_reports_terminal_criticality_contract() -> TestResult {
     );
 
     for (cli, hook_type, terminal_context_enabled) in [
+        ("codex", "UserPromptSubmit", true),
+        ("droid", "BeforeAgent", true),
+        ("agy", "PreInvocation", true),
         ("agy", "PostInvocation", true),
         ("grok", "stop", true),
         ("claude", "Stop", true),
@@ -389,6 +392,44 @@ fn tool_hook_does_not_enqueue_terminal_context() -> TestResult {
         envelope["headers"]["X-Gobby-Agent-Run-Id"],
         "3fbc517c-9e1c-4ea3-9a2f-f21b2035c764"
     );
+
+    Ok(())
+}
+
+#[test]
+fn prompt_start_hooks_enqueue_terminal_context() -> TestResult {
+    for (cli, hook_type) in [
+        ("codex", "UserPromptSubmit"),
+        ("droid", "BeforeAgent"),
+        ("agy", "PreInvocation"),
+    ] {
+        let home = tempfile::tempdir()?;
+        let gobby_home = tempfile::tempdir()?;
+        let daemon_url = closed_local_url()?;
+        let output = run_ghook_with_dirs_and_args(
+            home.path(),
+            gobby_home.path(),
+            Some(cli),
+            Some(hook_type),
+            &daemon_url,
+            VALID_STDIN,
+            RunGhookExtras {
+                env: &[
+                    ("TMUX", "/tmp/tmux-501/default,12345,0"),
+                    ("TMUX_PANE", "%17"),
+                ],
+                args: &["--enqueue-only"],
+                cwd: None,
+            },
+        )?;
+
+        assert!(output.status.success(), "{cli} {hook_type}");
+        let envelope = read_single_inbox_envelope(gobby_home.path())?;
+        assert_eq!(
+            envelope["input_data"]["terminal_context"]["tmux_pane"], "%17",
+            "{cli} {hook_type}"
+        );
+    }
 
     Ok(())
 }

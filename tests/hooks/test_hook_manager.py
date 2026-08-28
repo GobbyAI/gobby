@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.hooks.dispatchers.mcp import run_coro_blocking
-from gobby.hooks.effect_deadline import BLOCKING_EFFECT_BUDGET_SECONDS
+from gobby.hooks.effect_deadline import BLOCKING_EFFECT_BUDGET_SECONDS, BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.session_types import HookSessionManager
@@ -295,7 +295,7 @@ class TestHandleSessionStart:
         def mock_workflow_handle(
             event: HookEvent,
             *,
-            blocking_deadline: float | None = None,
+            blocking_deadline: BlockingEffectDeadline | None = None,
         ) -> HookResponse:
             assert blocking_deadline is not None
             call_order.append("rules")
@@ -328,7 +328,7 @@ class TestHandleSessionStart:
         def mock_workflow_handle(
             event: HookEvent,
             *,
-            blocking_deadline: float | None = None,
+            blocking_deadline: BlockingEffectDeadline | None = None,
         ) -> HookResponse:
             assert blocking_deadline is not None
             call_order.append("rules")
@@ -364,7 +364,7 @@ class TestHandleSessionStart:
         def mock_workflow_handle(
             event: HookEvent,
             *,
-            blocking_deadline: float | None = None,
+            blocking_deadline: BlockingEffectDeadline | None = None,
         ) -> HookResponse:
             del blocking_deadline
             call_order.append("rules")
@@ -494,8 +494,9 @@ class TestHandleNonSessionStart:
 
         rules_deadline = evaluate_rules.call_args.args[1]
         webhooks_deadline = evaluate_webhooks.call_args.args[1]
-        assert rules_deadline == webhooks_deadline
-        assert rules_deadline == 100.0 + BLOCKING_EFFECT_BUDGET_SECONDS
+        assert rules_deadline is webhooks_deadline
+        assert isinstance(rules_deadline, BlockingEffectDeadline)
+        assert rules_deadline.expires_at == 100.0 + BLOCKING_EFFECT_BUDGET_SECONDS
 
     def test_workflow_rule_evaluator_propagates_shared_deadline(
         self,
@@ -506,12 +507,14 @@ class TestHandleNonSessionStart:
         manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
         event = make_event(event_type=HookEventType.AFTER_TOOL)
 
-        result = manager._create_rule_evaluator(123.5).evaluate(event)
+        deadline = BlockingEffectDeadline(123.5)
+
+        result = manager._create_rule_evaluator(deadline).evaluate(event)
 
         assert result == (None, None)
         manager._workflow_handler.handle.assert_called_once_with(
             event,
-            blocking_deadline=123.5,
+            blocking_deadline=deadline,
         )
 
     def test_non_session_start_runs_rules_before_handler(
@@ -530,7 +533,7 @@ class TestHandleNonSessionStart:
         def mock_workflow_handle(
             event: HookEvent,
             *,
-            blocking_deadline: float | None = None,
+            blocking_deadline: BlockingEffectDeadline | None = None,
         ) -> HookResponse:
             assert blocking_deadline is not None
             call_order.append("rules")

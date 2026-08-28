@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from gobby.config.extensions import WebhookEndpointConfig, WebhooksConfig
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.session_materialize import activate_deferred_session
@@ -368,7 +369,7 @@ class TestWebhookDispatcherTrigger:
             started = time.monotonic()
             results = await dispatcher.trigger(
                 sample_event,
-                deadline=started + 0.02,
+                deadline=BlockingEffectDeadline(started + 0.02),
             )
             elapsed = time.monotonic() - started
 
@@ -766,7 +767,7 @@ def test_deferred_start_webhooks_use_synthetic_event_and_gate_live_response(
         metadata={"_platform_session_id": "platform-session"},
     )
 
-    result = activate_deferred_session(manager, event, 123.0)
+    result = activate_deferred_session(manager, event, BlockingEffectDeadline(123.0))
 
     copied = manager._evaluate_blocking_webhooks.call_args.args[0]
     assert copied.event_type is HookEventType.SESSION_START
@@ -806,7 +807,11 @@ def test_sessionless_start_suppresses_rules_and_webhooks() -> None:
         "gobby.hooks.hook_manager.resolve_hook_project_context",
         return_value=SimpleNamespace(skipped=False, project_id="project-1", reason=None),
     ):
-        response = HookManager._handle_after_daemon_ready(manager, event, 123.0)
+        response = HookManager._handle_after_daemon_ready(
+            manager,
+            event,
+            BlockingEffectDeadline(123.0),
+        )
 
     assert response is completed
     manager._evaluate_workflow_rules.assert_not_called()

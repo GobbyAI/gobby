@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.session_materialize import activate_deferred_session
@@ -514,7 +515,7 @@ def _materialize_first_activity(
     db: HubDatabase,
     project_id: str,
     tmp_path: Path,
-    data: dict,
+    data: dict[str, object],
 ) -> str:
     """Create the deferred row and run the first-activity activation body."""
     session_id = _register_session(db, project_id, tmp_path)
@@ -610,7 +611,14 @@ def test_full_session_start_marks_startup_context_injected(
             return_value=HookResponse(decision="allow"),
         ),
     ):
-        assert activate_deferred_session(manager, event, 0.0) is None
+        assert (
+            activate_deferred_session(
+                manager,
+                event,
+                BlockingEffectDeadline(0.0),
+            )
+            is None
+        )
 
     activate.assert_not_called()
     variables = SessionVariableManager(temp_db).get_variables(session_id)
@@ -636,7 +644,7 @@ def test_variables_seeded_in_pre_created_session_flow(
         logger=logging.getLogger("test"),
     )
     event = _make_hook_event({"agent_name_override": "default"}, external_id="external-pre")
-    seen_during_activation: dict = {}
+    seen_during_activation: dict[str, object] = {}
 
     def capture_seeded_variables(
         activation_session_id: str,

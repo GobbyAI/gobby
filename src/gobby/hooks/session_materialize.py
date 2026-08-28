@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.event_handlers._session_start.context import mark_startup_context_injected
 from gobby.hooks.event_handlers._session_start.materialize import (
     _CONTEXT_MODE_METADATA_KEY,
@@ -50,7 +51,7 @@ def build_synthetic_session_start(event: HookEvent, session_id: str) -> HookEven
 def activate_deferred_session(
     manager: Any,
     event: HookEvent,
-    blocking_deadline: float,
+    blocking_deadline: BlockingEffectDeadline,
 ) -> HookResponse | None:
     """Activate a just-created row and stage its startup packet on ``event``."""
     session_id = event.metadata.get("_platform_session_id")

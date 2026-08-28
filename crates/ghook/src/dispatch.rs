@@ -574,17 +574,23 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_envelope_injects_valid_tmux_pane_for_session_start() {
+    fn dispatch_envelope_injects_valid_tmux_pane_for_context_bearing_hooks() {
         with_tmux_env(Some("/tmp/tmux-501/default,12345,0"), Some("%17"), || {
             let cfg = CliConfig::for_cli("grok").expect("supported CLI");
-            let envelope = build_dispatch_envelope(
-                &cfg,
+            for hook_type in [
                 "SessionStart",
-                json!({"session_id": "sess-1"}),
-                None,
-            );
+                "UserPromptSubmit",
+                "BeforeAgent",
+                "PreInvocation",
+            ] {
+                let envelope =
+                    build_dispatch_envelope(&cfg, hook_type, json!({"session_id": "sess-1"}), None);
 
-            assert_eq!(envelope.input_data["terminal_context"]["tmux_pane"], "%17");
+                assert_eq!(
+                    envelope.input_data["terminal_context"]["tmux_pane"], "%17",
+                    "{hook_type}"
+                );
+            }
         });
     }
 

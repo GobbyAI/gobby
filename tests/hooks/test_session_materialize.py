@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.session_materialize import activate_deferred_session
 
@@ -56,7 +57,7 @@ def test_deferred_grok_session_derives_and_persists_transcript_path() -> None:
     manager = _manager(session, updated)
     event = _event({"prompt": "hello", "cwd": "/repo"})
 
-    assert activate_deferred_session(manager, event, 123.0) is None
+    assert activate_deferred_session(manager, event, BlockingEffectDeadline(123.0)) is None
 
     manager._event_handlers._derive_transcript_path.assert_called_once_with(
         "grok",
@@ -84,7 +85,7 @@ def test_native_transcript_path_skips_derivation() -> None:
     manager = _manager(session, None)
     event = _event({"prompt": "hello", "cwd": "/repo", "transcript_path": "/repo/t.jsonl"})
 
-    assert activate_deferred_session(manager, event, 123.0) is None
+    assert activate_deferred_session(manager, event, BlockingEffectDeadline(123.0)) is None
 
     manager._event_handlers._derive_transcript_path.assert_not_called()
     manager._session_manager.update.assert_not_called()

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType, HookResponse
 from gobby.hooks.session_materialize import activate_deferred_session
@@ -83,7 +84,14 @@ class TestReturnValues:
             metadata={"_platform_session_id": "sess-1"},
         )
 
-        assert activate_deferred_session(hook_manager, event, 123.0) is None
+        assert (
+            activate_deferred_session(
+                hook_manager,
+                event,
+                BlockingEffectDeadline(123.0),
+            )
+            is None
+        )
 
         assert event.metadata["_startup_context"] is None
         system_message = event.metadata["_startup_system_message"]

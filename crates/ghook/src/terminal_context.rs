@@ -49,7 +49,14 @@ pub fn enabled_for_hook(hook_type: &str) -> bool {
             .flat_map(char::to_lowercase)
             .collect::<String>()
             .as_str(),
-        "sessionstart" | "sessionend" | "stop" | "afteragent" | "postinvocation"
+        "sessionstart"
+            | "userpromptsubmit"
+            | "beforeagent"
+            | "preinvocation"
+            | "sessionend"
+            | "stop"
+            | "afteragent"
+            | "postinvocation"
     )
 }
 
@@ -337,11 +344,20 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_aliases_enable_terminal_context() {
+    fn context_bearing_hook_aliases_enable_terminal_context() {
         for hook_type in [
             "SessionStart",
             "session-start",
             "session_start",
+            "UserPromptSubmit",
+            "user-prompt-submit",
+            "user_prompt_submit",
+            "BeforeAgent",
+            "before-agent",
+            "before_agent",
+            "PreInvocation",
+            "pre-invocation",
+            "pre_invocation",
             "SessionEnd",
             "session-end",
             "session_end",

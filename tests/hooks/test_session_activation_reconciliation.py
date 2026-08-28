@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
@@ -1346,7 +1347,10 @@ def test_hook_manager_reconciles_before_rules(
         call_order.append("handler")
         return HookResponse(decision="allow")
 
-    def record_rules(event: HookEvent, blocking_deadline: float | None = None) -> HookResponse:
+    def record_rules(
+        event: HookEvent,
+        blocking_deadline: BlockingEffectDeadline | None = None,
+    ) -> HookResponse:
         call_order.append("rules")
         return HookResponse(decision="allow")
 

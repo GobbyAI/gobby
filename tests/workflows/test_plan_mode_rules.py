@@ -156,6 +156,11 @@ class TestHandlePlanModeEntry:
             "multi-agent coordination or durable handoff requirements",
             "artifact, lifecycle automation, or adversarial review",
             "localized, low-risk work",
+            "Strong signals determine whether Gobby planning is offered",
+            "Always recommend **Lightweight** for bug fixes and maintenance",
+            "regardless of breadth, risk, affected subsystems",
+            "Recommend **Full** only for complex new features and complex refactors",
+            "decision-complete plan artifact",
             "**Full:**",
             "**Lightweight:**",
         ):

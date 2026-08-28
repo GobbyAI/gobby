@@ -22,6 +22,7 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
@@ -214,7 +215,9 @@ class TestHandleAllLifecycles:
 
             # Make the coroutine hang by patching _evaluate_rules
             async def slow_coroutine(
-                event: HookEvent, *, blocking_deadline: float | None = None
+                event: HookEvent,
+                *,
+                blocking_deadline: BlockingEffectDeadline | None = None,
             ) -> HookResponse:
                 del blocking_deadline
                 await wait_forever()

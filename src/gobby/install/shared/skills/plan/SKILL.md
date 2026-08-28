@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Adaptive /gobby plan workflow. Investigates first, recommends lightweight or full planning depth, requires decision elicitation, and preserves explicit human gates for artifact enhancement, adversarial review, and optional build handoff.
-version: "4.1.0"
+version: "4.1.1"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -19,20 +19,24 @@ Both `$gobby plan` and `/gobby plan` invoke this workflow.
 1. Investigate the request and repository before recommending a planning depth.
    Resolve discoverable facts with repository inspection, using `gcode` for code
    navigation. Do not ask the user for facts the repository can answer.
-2. Determine whether the proposed implementation is a major change. Full-depth
-   candidates are limited to:
-   - a subsystem redesign or rework that changes multiple components and their
-     consumers;
+2. Classify the work kind before considering breadth or risk. Bug fixes and
+   maintenance always recommend **Lightweight**, regardless of breadth, risk,
+   affected subsystems, public API or schema involvement, or coordination needs.
+   Full-depth candidates are limited to:
    - a complex new feature with multiple dependent deliverables across
-     subsystems; or
-   - a broad migration or architecture/security-model change with many
-     consumers and a coordinated rollout.
-3. Recommend **Full** only for a major change. Recommend **Lightweight** for bug
-   fixes, maintenance, localized features or refactors, configuration, and
-   documentation. Public API or schema involvement, security or destructive
-   risk, unresolved product decisions, multi-agent coordination, durable
-   handoff, and a desire for lifecycle automation or adversarial review increase
-   the rigor within the chosen depth; none independently makes a change major.
+     subsystems;
+   - a complex refactor or subsystem rework that changes multiple components and
+     their consumers; or
+   - a broad migration or architecture/security-model rework with many consumers
+     and a coordinated rollout.
+3. Recommend **Full** only for those complex feature, refactor, rework, and
+   migration candidates. Recommend **Lightweight** for every bug fix, maintenance
+   change, localized feature or refactor, configuration change, and documentation
+   change. Strong signals determine whether Gobby planning is offered; they do not
+   promote bug fixes or maintenance to Full. Security or destructive risk,
+   unresolved product decisions, multi-agent coordination, durable handoff, and a
+   desire for lifecycle automation or adversarial review increase rigor within
+   the chosen depth.
    Ask the user to choose between the two depths. If the user already selected a
    depth in response to the Plan Mode Consider prompt, honor that choice without
    asking again.

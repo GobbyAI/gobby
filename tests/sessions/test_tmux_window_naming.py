@@ -137,8 +137,8 @@ class TestRenameTmuxWindow:
         assert mock_exec.await_count == 0
 
     @pytest.mark.asyncio
-    async def test_user_session_renames_on_default_server(self) -> None:
-        """User session (depth 0) calls tmux rename-window on default server."""
+    async def test_provisional_user_session_renames_on_default_server(self) -> None:
+        """A provisional provider title is prefixed with the session ref."""
         from gobby.sessions.tmux_window_naming import _rename_tmux_window
 
         _RecordingTmuxManager.instances = []
@@ -146,14 +146,15 @@ class TestRenameTmuxWindow:
         session.terminal_context = {"tmux_pane": "%42"}
         session.agent_depth = 0
         session.ref = "#99"
+        session.title_source = "provisional"
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager):
-            await _rename_tmux_window(session, "My Title")
+            await _rename_tmux_window(session, "Codex")
 
         manager = _RecordingTmuxManager.instances[0]
         assert manager.config.socket_path is None
         assert manager.config.socket_name == ""
-        assert manager.rename_calls == [("%42", "#99 My Title")]
+        assert manager.rename_calls == [("%42", "#99 Codex")]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", ["active", "paused", "handoff_ready"])

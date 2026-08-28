@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
 
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.integrations.rtk import RTK_RULE_NAME, clear_probe_cache
 from gobby.storage.definitions.rules import RuleDefinitionManager
@@ -17,7 +21,9 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine import proxy_hooks
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -318,7 +324,7 @@ async def test_sequential_proxy_handlers_receive_latest_input(
         invocation: object,
         event: HookEvent,
         *,
-        blocking_deadline: float | None,
+        blocking_deadline: BlockingEffectDeadline | None,
     ) -> bool:
         del self, invocation, blocking_deadline
         tool_input = event.data["tool_input"]
@@ -568,17 +574,59 @@ async def test_rtk_timeout_passes_through(
 async def test_exhausted_shared_deadline_skips_rtk(
     db: HubDatabase,
     manager: RuleDefinitionManager,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     _create_rule(manager, "proxy-deadline", [_proxy_effect()], priority=10)
 
-    response = await RuleEngine(db).evaluate(
-        _event(),
-        SESSION_ID,
-        {},
-        blocking_deadline=0.0,
-    )
+    with caplog.at_level(logging.WARNING, logger=proxy_hooks.logger.name):
+        response = await RuleEngine(db).evaluate(
+            _event(),
+            SESSION_ID,
+            {},
+            blocking_deadline=BlockingEffectDeadline(time.monotonic() - 1.0),
+        )
 
     assert response.modified_input is None
+    assert "proxy_hook[proxy-deadline]: blocking deadline exhausted" in caplog.messages
+
+
+async def test_rtk_runs_after_same_session_queue_wait(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    del fake_rtk
+    _create_rule(manager, "proxy-queued", [_proxy_effect()], priority=10)
+    handler = WorkflowHookHandler(rule_engine=RuleEngine(db))
+    handler._session_var_manager = MagicMock()
+    handler._session_var_manager.get_variables.return_value = {
+        "baseline_dirty_files": [],
+        "session_edited_files": [],
+    }
+    event = _event()
+    event.metadata["_platform_session_id"] = SESSION_ID
+    event.cwd = str(tmp_path)
+
+    held = handler._reserve_eval_lock(SESSION_ID)
+    await handler._acquire_eval_lock(held.lock)
+    deadline = BlockingEffectDeadline(time.monotonic() - 1.0)
+    with monkeypatch.context() as queue_clock:
+        queue_clock.setattr(
+            "gobby.workflows.hooks.monotonic", MagicMock(side_effect=[100.0, 103.0])
+        )
+        queued = asyncio.create_task(handler._evaluate_rules(event, blocking_deadline=deadline))
+        await drain_asyncio_tasks(cycles=2)
+        held.lock.release()
+        handler._release_eval_lock(SESSION_ID, held, cleanup=False)
+
+        with caplog.at_level(logging.WARNING, logger=proxy_hooks.logger.name):
+            response = await queued
+
+    assert response.modified_input == {"command": "rtk git status"}
+    assert not any("blocking deadline exhausted" in message for message in caplog.messages)
 
 
 async def test_wrong_package_collision_passes_through(

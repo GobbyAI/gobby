@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.config.values import ConfigRuntimeReader
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.skills.materialization import (
@@ -206,7 +207,7 @@ class RuleEngine(
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
-        blocking_deadline: float | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
     ) -> HookResponse:
         """Evaluate all matching rules for an event.
 
