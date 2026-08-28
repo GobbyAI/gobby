@@ -141,7 +141,9 @@ def test_build_coordinator_orders_compaction_before_agent_waits() -> None:
 
     monitor_idx = normalized.index("Check target build state, dispatch eligibility")
     bugs_idx = normalized.index("Work the highest-priority actionable coordination bug")
-    compact_idx = normalized.index("Use `gobby-sessions:set_handoff` when context pressure")
+    compact_idx = normalized.index(
+        "Use `gobby-sessions:set_handoff` with `clear_session=false` when context pressure"
+    )
     wait_idx = normalized.index("Use `gobby-agents:wait_for_agent` as the last idle action")
 
     assert monitor_idx < bugs_idx < compact_idx < wait_idx

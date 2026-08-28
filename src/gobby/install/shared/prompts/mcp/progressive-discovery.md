@@ -21,11 +21,15 @@ The proxy validates every `call_tool`. Invalid arguments always return the curre
 <skills>
 `list_skills`, `get_skill`, and `search_skills` on `gobby-skills` are bootstrap tools. Call them directly through `call_tool`; they are exempt from the schema gate.
 
-Each `get_skill` request must use its own outer tool result. A skill is loaded only after its complete body is available in active context. Collapsed UI previews are presentation-only.
+Initial `get_skill` and `get_skill_file` lookups default to `brief=true`: instruction content stays exact while management metadata is omitted. Use `brief=false` only for management work.
+
+Each request returns one content page and must use its own outer tool result. Inspect `page.next_cursor`; while it is non-null, call the same tool again with only `cursor=<opaque cursor>`. Cursor continuation preserves the initial view. A skill is loaded only after the final entrypoint page is available in active context. Collapsed UI previews are presentation-only.
 
 For multiple skills, call `get_skill` sequentially in required order after deduplicating names. Do not use `Promise.all` or aggregate full responses into one wrapper output.
 
-When using an execution wrapper, emit only `structuredContent.result.skill.content`. If the complete body is absent or the result contains an explicit truncation marker such as `…N tokens truncated…`, retry that skill individually before continuing.
+When using an execution wrapper, emit the current page's `content` together with `page`, keeping one page per outer result. Reassemble pages in order. If content is absent or contains an explicit truncation marker such as `…N tokens truncated…`, restart that skill or file lookup individually.
+
+After reassembling `SKILL.md`, follow its topic index. Load only references whose stated conditions apply, using the exact `get_skill_file(name="<skill>", path="references/<topic>.md")` call, and follow each file cursor until null.
 </skills>
 
 <code_search>

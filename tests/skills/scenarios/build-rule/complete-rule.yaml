@@ -1,0 +1,30 @@
+skill: build-rule
+agent: default
+description: Loaded rule authoring selects event and effect guidance and validates the artifact.
+prompt: Build a rule that blocks task closure when focused validation has not passed.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_rule
+        fields: [event, message]
+      - action: respond
+        text: Added a plausible rule without effect semantics or validation.
+  loaded:
+    loaded_skills: [build-rule]
+    actions:
+      - action: load_reference
+        path: references/events-and-conditions.md
+      - action: load_reference
+        path: references/effects.md
+      - action: write_rule
+        fields: [event, condition, effect, message]
+      - action: validate_rule
+        command: uv run gobby rules validate
+      - action: respond
+        text: Rule includes event, condition, effect, and validation evidence.
+assertions:
+  baseline_action_order: [write_rule, respond]
+  loaded_action_order: [load_reference, load_reference, write_rule, validate_rule, respond]
+  baseline_text_contains: [without effect semantics, or validation]
+  loaded_text_contains: [event, condition, effect, validation evidence]

@@ -110,6 +110,14 @@ class SkillsConfig(BaseModel):
         description="Days to retain soft-deleted skills before permanent removal",
     )
 
+    bundled_max_content_size: int = Field(
+        default=15_000,
+        gt=0,
+        description=(
+            "Maximum character and UTF-8 byte count for each bundled SKILL.md or reference"
+        ),
+    )
+
     hubs: dict[str, HubConfig] = Field(
         default_factory=lambda: {
             "anthropic-skills": HubConfig(

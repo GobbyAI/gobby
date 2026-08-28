@@ -53,3 +53,16 @@ def test_skill_is_adapted_to_gobby_skill_tdd() -> None:
     assert "uv run pytest tests/skills/ -m skill_tdd" in body
     assert "src/gobby/install/shared/skills/<skill-name>/SKILL.md" in body
     assert "do not rely on native CLI skill tools" in body
+
+
+def test_skill_requires_semantic_bundled_decomposition() -> None:
+    body = _body()
+
+    assert "skills.bundled_max_content_size" in body
+    assert "default `15000`" in body
+    assert 'len(text.encode("utf-8")) <= configured_limit' in body
+    assert "topic-named references" in body
+    assert "exact condition" in body
+    assert '`get_skill_file(name="<skill>", path="references/<topic>.md")`' in body
+    assert "three-reference activation budget" in body
+    assert "expected artifacts, validators, and recovery behavior" in body

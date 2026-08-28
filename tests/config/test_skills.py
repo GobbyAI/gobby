@@ -68,6 +68,13 @@ class TestSkillsConfigDefaults:
         config = SkillsConfig()
         assert config.injection_format == "summary"
 
+    def test_default_bundled_max_content_size(self) -> None:
+        from gobby.config.skills import SkillsConfig
+
+        config = SkillsConfig()
+
+        assert config.bundled_max_content_size == 15_000
+
 
 # =============================================================================
 # SkillsConfig Custom Values Tests
@@ -104,6 +111,13 @@ class TestSkillsConfigCustom:
 
         config = SkillsConfig(injection_format="none")
         assert config.injection_format == "none"
+
+    def test_custom_bundled_max_content_size(self) -> None:
+        from gobby.config.skills import SkillsConfig
+
+        config = SkillsConfig(bundled_max_content_size=9_000)
+
+        assert config.bundled_max_content_size == 9_000
 
     def test_full_configuration(self) -> None:
         """Test setting all configuration values."""
@@ -142,6 +156,12 @@ class TestSkillsConfigValidation:
 
         with pytest.raises(ValidationError):
             SkillsConfig(injection_format="invalid")
+
+    def test_bundled_max_content_size_must_be_positive(self) -> None:
+        from gobby.config.skills import SkillsConfig
+
+        with pytest.raises(ValidationError):
+            SkillsConfig(bundled_max_content_size=0)
 
 
 # =============================================================================

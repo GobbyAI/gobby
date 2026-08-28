@@ -47,7 +47,13 @@ class TestPlanDraftContent:
 
     @pytest.fixture(scope="class")
     def body(self) -> str:
-        return SKILL_PATH.read_text()
+        references = SKILL_PATH.parent / "references"
+        return "\n\n".join(
+            [
+                SKILL_PATH.read_text(),
+                *(path.read_text() for path in sorted(references.glob("*.md"))),
+            ]
+        )
 
     # --- canonical category list -------------------------------------------
 

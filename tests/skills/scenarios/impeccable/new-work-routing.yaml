@@ -1,0 +1,29 @@
+skill: impeccable
+agent: default
+description: New-work mode loads direction, build, and finish guidance within the activation budget.
+prompt: Design and build a new settings page, then verify the finish quality.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: build_generic_page
+      - action: respond
+        text: Built without a design contract or mode routing.
+  loaded:
+    loaded_skills: [impeccable]
+    actions:
+      - action: establish_design_contract
+      - action: load_reference
+        path: references/new-work-direction.md
+      - action: load_reference
+        path: references/new-work-build.md
+      - action: load_reference
+        path: references/new-work-finish.md
+      - action: respond
+        text: New-work route used three references from direction through finish.
+assertions:
+  baseline_action_order: [build_generic_page, respond]
+  loaded_action_order: [establish_design_contract, load_reference, load_reference, load_reference, respond]
+  baseline_text_contains: [without a design contract]
+  loaded_text_contains: [three references, direction through finish]
+  loaded_text_forbids: [references/critique-workflow.md, references/live-actions.md]

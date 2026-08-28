@@ -9,13 +9,11 @@ pytestmark = pytest.mark.unit
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/skills"
 WORKFLOWS_DIR = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows"
-UPDATED_SKILLS = ("expand", "plan", "build-coordinator", "goal")
+UPDATED_SKILLS = ("expand", "plan", "build-coordinator")
 WAKE_DRIVEN_GUIDANCE = (
     pytest.param(SKILLS_DIR / "build-coordinator/SKILL.md", id="build-coordinator"),
-    pytest.param(SKILLS_DIR / "goal/SKILL.md", id="goal"),
     pytest.param(SKILLS_DIR / "merge-expert/SKILL.md", id="merge-expert"),
     pytest.param(SKILLS_DIR / "plan/SKILL.md", id="plan"),
-    pytest.param(WORKFLOWS_DIR / "agents/goal-taskmaster.yaml", id="goal-taskmaster"),
     pytest.param(
         WORKFLOWS_DIR / "agents/merge-orchestrator.yaml",
         id="merge-orchestrator",
@@ -27,7 +25,6 @@ REVIEW_DISPATCH_GUIDANCE = (
     pytest.param(WORKFLOWS_DIR / "review.yaml", id="review-workflow"),
 )
 CAPTURE_GUIDANCE = (
-    pytest.param(SKILLS_DIR / "goal/SKILL.md", id="goal"),
     pytest.param(SKILLS_DIR / "merge-expert/SKILL.md", id="merge-expert"),
     pytest.param(SKILLS_DIR / "plan/SKILL.md", id="plan"),
 )
@@ -44,7 +41,13 @@ def _guidance_text(path: Path) -> str:
     break and its indentation. Normalizing keeps these checks pinned to the
     guidance content rather than to its current line layout.
     """
-    return _WHITESPACE_RUN.sub(" ", path.read_text())
+    content = path.read_text()
+    references = path.parent / "references"
+    if references.is_dir():
+        content = "\n\n".join(
+            [content, *(reference.read_text() for reference in sorted(references.glob("*.md")))]
+        )
+    return _WHITESPACE_RUN.sub(" ", content)
 
 
 @pytest.mark.parametrize("skill_name", UPDATED_SKILLS)

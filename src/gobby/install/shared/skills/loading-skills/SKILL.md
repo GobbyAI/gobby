@@ -48,14 +48,24 @@ call_tool("gobby-skills", "install_skill", {"source": "hub:skill-slug"})
 
 ## Complete Skill Delivery
 
-- Make one `get_skill` request per outer tool result and fully read its complete body before
-  continuing.
+- Initial `get_skill` and `get_skill_file` lookups use `brief=true` by default. Brief mode keeps
+  instruction content exact while omitting management metadata. Use `brief=false` only when
+  IDs, provenance, versioning, hashes, or other management fields are required.
+- Make one request for one page per outer tool result. Read the returned `content`, inspect
+  `page.next_cursor`, and keep calling the same tool with only `cursor=<opaque cursor>` until
+  `page.next_cursor` is null. Cursor continuations preserve the initial brief/full view.
+- A skill is loaded only after the final entrypoint page. Reassemble page content in order;
+  every byte matters, including multibyte text and boundary whitespace.
 - For multiple skills, deduplicate names while preserving order, then load them
   sequentially in required order. Do not use `Promise.all` or aggregate full responses into one
   wrapper output.
-- When using an execution wrapper, emit only `structuredContent.result.skill.content`.
-- If the complete body is absent or the result contains an explicit truncation marker such as
-  `…N tokens truncated…`, retry that skill individually before continuing.
+- When using an execution wrapper, emit the current page's `content` together with `page` so the
+  caller can follow `next_cursor`. Keep each page in its own outer result.
+- After reassembling `SKILL.md`, use its topic index to select references. Load only a referenced
+  topic whose stated condition applies, via its exact
+  `get_skill_file(name="<skill>", path="references/<topic>.md")` call, and page it the same way.
+- If a page body is absent or contains an explicit truncation marker such as
+  `…N tokens truncated…`, restart that skill or file lookup individually.
 - Collapsed UI previews are presentation-only; they do not indicate incomplete delivery.
 
 ## When to Search
@@ -74,5 +84,5 @@ Search proactively — don't wait to be told:
 
 **Rule of thumb:** Search local first for "how do we do X here." Search hubs for "what's the best way to do X in general."
 
-Direct `get_skill` results load the skill body into your tool output; follow the complete body
-before continuing.
+Direct `get_skill` results load one exact body page into the tool output. Follow its cursor to
+completion before applying the instructions.

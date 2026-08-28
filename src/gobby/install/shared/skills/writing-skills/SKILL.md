@@ -94,6 +94,32 @@ Keep the body reusable:
 - Cross-reference other skills by name, such as
 `REQUIRED SKILL: tasks`.
 
+## Bundled Content Ceiling
+
+Gobby-owned bundled `SKILL.md` and `references/**` files must satisfy both checks against the
+live `skills.bundled_max_content_size` setting (default `15000`):
+
+```python
+len(text) <= configured_limit
+len(text.encode("utf-8")) <= configured_limit
+```
+
+Project, user, hub, script, asset, and notice files are outside this authoring ceiling.
+`skill_tdd` fails every bundled violation with path, character count, byte count, limit, and
+decomposition guidance. Bundled sync stays permissive and emits the same guidance as a warning.
+
+When a bundled instruction file exceeds the resolved limit:
+
+1. Keep `SKILL.md` as purpose, common path, invariants, and topic index.
+2. Move conditional detail to topic-named references.
+3. Keep each reference within the same limit.
+4. State the exact condition and
+   `get_skill_file(name="<skill>", path="references/<topic>.md")` call for every reference.
+5. Split semantically, using names such as `recovery.md` or `verification.md` instead of
+   numbered parts.
+6. Keep normal workflows within a three-reference activation budget.
+7. Preserve expected artifacts, validators, and recovery behavior.
+
 ## Common Failures
 
 | Failure | Fix |
@@ -102,6 +128,7 @@ Keep the body reusable:
 | Description summarizes process | Rewrite it as a trigger only |
 | Skill is a one-off narrative | Extract the reusable technique or do not create a skill |
 | Reference is too long for the main file | Move it to `references/` and name when to open it |
+| Bundled file exceeds the resolved ceiling | Split by topic and add exact conditional routing |
 | Scenario shows no behavioral delta | Tighten the skill or delete the unnecessary guidance |
 
 ## Deployment Check
@@ -111,5 +138,7 @@ Before finishing:
 1. `SkillLoader().load_skill(...)` can parse the skill.
 2. The skill is discoverable after daemon sync through `gobby-skills`.
 3. `uv run pytest tests/skills/ -m skill_tdd` passes for its scenario.
-4. Any focused skill contract tests pass.
-5. Completion claims cite fresh verification evidence.
+4. Bundled authoring validation passes at the resolved content ceiling.
+5. Any focused skill contract tests pass.
+6. Completion claims cite fresh verification evidence, including expected artifacts,
+   validators, and recovery behavior.

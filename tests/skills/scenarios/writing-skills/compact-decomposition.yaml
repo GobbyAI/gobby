@@ -1,0 +1,30 @@
+skill: writing-skills
+agent: default
+description: Loaded authoring decomposes an oversized monolith and records validation evidence.
+prompt: Create a bundled multi-mode deployment skill with enough detail to exceed 15,000 bytes.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_monolithic_skill
+        size_bytes: 24000
+      - action: respond
+        text: Wrote one comprehensive SKILL.md without size validation.
+  loaded:
+    loaded_skills: [writing-skills]
+    actions:
+      - action: write_skill_router
+        sections: [purpose, common-path, invariants, topic-index]
+      - action: write_focused_references
+        topics: [deployment, rollback, recovery]
+      - action: run_skill_tdd
+        command: uv run pytest tests/skills/ -m skill_tdd
+      - action: validate_bundled_size
+        limit: 15000
+      - action: respond
+        text: Compact router and focused references verified with behavior and size evidence.
+assertions:
+  baseline_action_order: [write_monolithic_skill, respond]
+  loaded_action_order: [write_skill_router, write_focused_references, run_skill_tdd, validate_bundled_size, respond]
+  baseline_text_contains: [one comprehensive SKILL.md, without size validation]
+  loaded_text_contains: [Compact router, focused references, behavior and size evidence]

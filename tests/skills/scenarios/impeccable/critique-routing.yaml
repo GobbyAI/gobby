@@ -1,0 +1,27 @@
+skill: impeccable
+agent: default
+description: Critique mode establishes a design contract and loads only critique references.
+prompt: Critique the dashboard against its design contract and score the findings.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: critique_from_memory
+      - action: respond
+        text: General visual feedback without contract routing.
+  loaded:
+    loaded_skills: [impeccable]
+    actions:
+      - action: establish_design_contract
+      - action: load_reference
+        path: references/critique-workflow.md
+      - action: load_reference
+        path: references/critique-scoring.md
+      - action: respond
+        text: Contract-based critique completed with two focused references.
+assertions:
+  baseline_action_order: [critique_from_memory, respond]
+  loaded_action_order: [establish_design_contract, load_reference, load_reference, respond]
+  baseline_text_contains: [without contract routing]
+  loaded_text_contains: [Contract-based critique, two focused references]
+  loaded_text_forbids: [references/live-generation.md, references/new-work-build.md]

@@ -1,0 +1,29 @@
+skill: impeccable
+agent: default
+description: Live mode loads its contract and action references within the activation budget.
+prompt: Improve the connected live page and recover cleanly if setup is unavailable.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: edit_live_page_directly
+      - action: respond
+        text: Edited without a live design contract.
+  loaded:
+    loaded_skills: [impeccable]
+    actions:
+      - action: establish_design_contract
+      - action: load_reference
+        path: references/live-contract.md
+      - action: load_reference
+        path: references/live-actions.md
+      - action: load_reference
+        path: references/live-setup-recovery.md
+      - action: respond
+        text: Live route used three references and retained setup recovery.
+assertions:
+  baseline_action_order: [edit_live_page_directly, respond]
+  loaded_action_order: [establish_design_contract, load_reference, load_reference, load_reference, respond]
+  baseline_text_contains: [without a live design contract]
+  loaded_text_contains: [three references, setup recovery]
+  loaded_text_forbids: [references/critique-scoring.md, references/new-work-direction.md]
