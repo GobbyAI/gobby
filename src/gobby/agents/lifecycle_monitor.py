@@ -387,6 +387,7 @@ class AgentLifecycleMonitor:
                     except Exception as e:
                         logger.warning("Non-task resume callback failed: %s", e)
                 await self.reconcile_pending_terminations()
+                await self.reap_stale_pending()
                 await self.check_trust_prompts()
                 await self.check_loop_prompts()
                 await self.check_approval_prompts()
@@ -583,6 +584,10 @@ class AgentLifecycleMonitor:
         return await self._reconciliation.reconcile_pending_terminations(
             machine_id=require_machine_id()
         )
+
+    async def reap_stale_pending(self) -> int:
+        """Fail pending terminals rows whose spawn never resolved."""
+        return await self._reconciliation.reap_stale_pending()
 
     async def check_autonomous_stuck_agents(self) -> int:
         """Check active autonomous sessions with the production stuck detector."""

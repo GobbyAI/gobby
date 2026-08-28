@@ -5101,6 +5101,23 @@ class TestReapDaemonStopOrphans:
         assert [r.id for r in monitor._get_active_terminal_runs()] == [live.id]
 
 
+class TestStalePendingReaper:
+    """The check loop fails pending terminals rows whose spawn never resolved."""
+
+    @pytest.mark.asyncio
+    async def test_check_loop_reaps_stale_pending_through_reconciliation(
+        self,
+        monitor: AgentLifecycleMonitor,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        assert "reap_stale_pending" in AgentLifecycleMonitor._check_loop.__code__.co_names
+        reap = AsyncMock(return_value=2)
+        monkeypatch.setattr(monitor._reconciliation, "reap_stale_pending", reap)
+
+        assert await monitor.reap_stale_pending() == 2
+        reap.assert_awaited_once_with()
+
+
 class TestNonTaskResumeCallback:
     """Tests for the parked non-task resume retry hook in the check loop."""
 
