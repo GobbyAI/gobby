@@ -98,10 +98,13 @@ class FakeProxyFrame:
     handshake_epochs: list[str] = field(default_factory=list)
     closed: bool = False
     detached: bool = False
-    encoding: str = "terminal_ansi"
+    # Recorded from the production handshake call; FrameClient defaults to
+    # "semantic_frame", which the web proxy must override with "terminal_ansi".
+    encoding: str | None = None
 
-    async def handshake(self, locator: AttachLocator) -> None:
+    async def handshake(self, locator: AttachLocator, *, encoding: str = "semantic_frame") -> None:
         self.handshake_epochs.append(locator.frame_host_epoch)
+        self.encoding = encoding
 
     async def attach_terminal(
         self,

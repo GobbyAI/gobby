@@ -172,7 +172,10 @@ class ProxyHub:
     ) -> None:
         handshake = getattr(frame, "handshake", None)
         if callable(handshake):
-            await handshake(locator)
+            # The browser feeds ANSI bytes to its ghostty-vt core; the host's
+            # default semantic frames carry cell grids and map to empty
+            # terminal_output.
+            await handshake(locator, encoding="terminal_ansi")
         attach = getattr(frame, "attach_terminal", None)
         if callable(attach):
             await attach(locator, reservation_id=None)
