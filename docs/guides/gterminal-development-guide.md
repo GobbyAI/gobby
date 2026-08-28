@@ -116,11 +116,17 @@ root with `DATABASE_URL` pointed at the isolated test hub
    before, and no surviving `gterm host` references a state directory the run
    created.
 
-Carve-outs are explicit and end when their owner closes. At 1.1 close, group 2 and
-group 4's schema-identity tests are carved out (owner 1.2: the installed `gdaemon`
-is at schema 407, so `agent_runs.terminal_id` and the `terminals` table are absent
-from the test hub — `psycopg.errors.UndefinedColumn: column ar.terminal_id does not
-exist`). At 1.2 close, the nine red tests named in 1.4 and
+Carve-outs are explicit, cumulative, and end when their owner closes. From 1.1
+close: group 2 and group 4's schema-identity tests (owner 1.2, until 1.2 closes:
+the installed `gdaemon` is at schema 407, so `agent_runs.terminal_id` and the
+`terminals` table are absent from the test hub —
+`psycopg.errors.UndefinedColumn: column ar.terminal_id does not exist`); the red
+tests named in 1.4 — `tests/test_runner_lifecycle_restart_replay.py::TestAgentRestartReconciliation`,
+`tests/agents/test_resume_executor.py::test_codex_resume_delivers_prompt_via_composer_not_argv`,
+`tests/terminals/test_no_direct_tmux_spawn.py`, `tests/terminals/test_no_direct_tmux_consumers.py`
+(owner 1.4, until 1.4 closes); and
 `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`
-(owner 1.3) are carved out. A carved-out test must fail for the behavioural reason
-recorded at `518cec5c41` (an assertion or mock-call failure), never at collection.
+(owner 1.3, until 1.3 closes — it passes on the merged tree, so it is carved out only
+if the default revert in 1.3 turns it red). A carved-out test must fail for the
+behavioural reason recorded at `518cec5c41` (an assertion or mock-call failure),
+never at collection.
