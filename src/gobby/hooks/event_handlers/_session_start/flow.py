@@ -21,12 +21,12 @@ from gobby.storage.sessions._update_sentinel import UNSET
 from .agents import _seed_parent_turn_seq, _seed_wiki_overview_var
 from .context import classify_session_start_context, mark_startup_context_injected
 from .handoff import (
+    STARTUP_SOURCES,
     rebind_resumed_session_start,
     resolve_session_start_identity,
 )
 from .materialize import (
     _CONTEXT_MODE_METADATA_KEY,
-    STARTUP_SOURCES,
     _consume_pending_handoff_compact_continuation,
     _reset_agent_context_injection,
     _schedule_tmux_window_rename_for_session,
