@@ -1,30 +1,24 @@
 header:
   plan_id: project-checkout-identity
-  plan_hash: 375c753cdfa7e01534480e7053d1687bd150a280745ab1337722adb2439a61c2
+  plan_hash: 01916a1da2bc5af0f1a1019aea014971dd3ea659e34a61d62e277f19b1ea4be0
   root_task_ref: '19651'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-08-23T14:01:53Z'
+  generated_at: '2026-08-29T16:06:20Z'
   task_tree_source: db
-  task_tree_source_hash: 2aed01203930a4da2f3f935fc714109872667f32297bacc6b3185e2302ddbdfe
+  task_tree_source_hash: 2a7d32c2b44e4feeb41ce8b6d0b668fb70edfa0561b6731a53857e3dd85311fc
   evidence_summary: []
   evidence: []
 rows:
-- section_id: D1
-  item_id: D1.1
-  plan_node_hash: 355c27fc205b29ab47298483ecf5edf30e8a4497fc88001b8ee7acf1375368a4
-  status: invalid
-  leaves: []
-  deferral_target: '#17678'
 - section_id: '1.1'
   item_id: 1.1.1
-  plan_node_hash: c10e301d7d9f2621800b9e49ef0554744561000e15ce257646fbe88844249137
+  plan_node_hash: ec32de6a61789b1a0ad8d653663195aa2756d8a9ee6853889dbe2eacfd51e381
   status: covered
   leaves:
   - leaf_task_ref: '#20303'
-    validation_criteria_snippet: '1.1.1: Baseline 375 creates `project_checkouts`
-      with the stated columns, timestamp defaults, PK, unique root, cascading FKs,
-      and forced RLS. file: `crates/gcor...'
-    matched_artifact_ref: crates/gcore/assets/schema/baseline.sql
+    validation_criteria_snippet: '1.1.1: Numbered migration `412_project_checkouts.sql`
+      creates `project_checkouts` with the stated columns, timestamp defaults, PK,
+      unique root, cascading FKs, ...'
+    matched_artifact_ref: crates/gcore/assets/schema/migrations/412_project_checkouts.sql
   deferral_target: null
 - section_id: '1.1'
   item_id: 1.1.2
@@ -32,9 +26,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#20303'
-    validation_criteria_snippet: '1.1.1: Baseline 375 creates `project_checkouts`
-      with the stated columns, timestamp defaults, PK, unique root, cascading FKs,
-      and forced RLS. file: `crates/gcor...'
+    validation_criteria_snippet: '1.1.1: Numbered migration `412_project_checkouts.sql`
+      creates `project_checkouts` with the stated columns, timestamp defaults, PK,
+      unique root, cascading FKs, ...'
     matched_artifact_ref: crates/gcode/security/managed_postgres_privileges.json
   deferral_target: null
 - section_id: '1.1'
@@ -43,9 +37,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#20303'
-    validation_criteria_snippet: '1.1.1: Baseline 375 creates `project_checkouts`
-      with the stated columns, timestamp defaults, PK, unique root, cascading FKs,
-      and forced RLS. file: `crates/gcor...'
+    validation_criteria_snippet: '1.1.1: Numbered migration `412_project_checkouts.sql`
+      creates `project_checkouts` with the stated columns, timestamp defaults, PK,
+      unique root, cascading FKs, ...'
     matched_artifact_ref: tests/storage/test_postgres_agent_authorization.py
   deferral_target: null
 - section_id: '1.1'
@@ -54,20 +48,20 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#20303'
-    validation_criteria_snippet: '1.1.1: Baseline 375 creates `project_checkouts`
-      with the stated columns, timestamp defaults, PK, unique root, cascading FKs,
-      and forced RLS. file: `crates/gcor...'
+    validation_criteria_snippet: '1.1.1: Numbered migration `412_project_checkouts.sql`
+      creates `project_checkouts` with the stated columns, timestamp defaults, PK,
+      unique root, cascading FKs, ...'
     matched_artifact_ref: tests/code_index/test_gcode_privilege_manifest.py::test_manifest_privileges_match_the_managed_relation_set
   deferral_target: null
 - section_id: '1.1'
   item_id: 1.1.5
-  plan_node_hash: 1fe43fbe55093f2b25b64501d7e6ecf073c0e500b7b3405749ab568d296b58bd
+  plan_node_hash: d5309cac712e0028b02021d9f25a949f108f2c4f82875cb89e4e7cd5cc0f6686
   status: covered
   leaves:
   - leaf_task_ref: '#20303'
-    validation_criteria_snippet: '1.1.1: Baseline 375 creates `project_checkouts`
-      with the stated columns, timestamp defaults, PK, unique root, cascading FKs,
-      and forced RLS. file: `crates/gcor...'
+    validation_criteria_snippet: '1.1.1: Numbered migration `412_project_checkouts.sql`
+      creates `project_checkouts` with the stated columns, timestamp defaults, PK,
+      unique root, cascading FKs, ...'
     matched_artifact_ref: crates/gcore/assets/schema/catalog.manifest.json
   deferral_target: null
 - section_id: '1.1'
@@ -76,9 +70,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#20303'
-    validation_criteria_snippet: '1.1.1: Baseline 375 creates `project_checkouts`
-      with the stated columns, timestamp defaults, PK, unique root, cascading FKs,
-      and forced RLS. file: `crates/gcor...'
+    validation_criteria_snippet: '1.1.1: Numbered migration `412_project_checkouts.sql`
+      creates `project_checkouts` with the stated columns, timestamp defaults, PK,
+      unique root, cascading FKs, ...'
     matched_artifact_ref: tests/storage/test_postgres_agent_authorization.py
   deferral_target: null
 - section_id: '1.1'
@@ -87,9 +81,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#20303'
-    validation_criteria_snippet: '1.1.1: Baseline 375 creates `project_checkouts`
-      with the stated columns, timestamp defaults, PK, unique root, cascading FKs,
-      and forced RLS. file: `crates/gcor...'
+    validation_criteria_snippet: '1.1.1: Numbered migration `412_project_checkouts.sql`
+      creates `project_checkouts` with the stated columns, timestamp defaults, PK,
+      unique root, cascading FKs, ...'
     matched_artifact_ref: crates/gcode/security/managed_postgres_privileges.json
   deferral_target: null
 - section_id: '1.2'
@@ -666,7 +660,7 @@ rows:
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.7
-  plan_node_hash: 59ee207d464ed5912d325548c7cabcc3c0f1ec89e6fed81747ee40be06219491
+  plan_node_hash: 5e7c7dfc1022c927f027dd370eb527654677fda63b676e5f45c3a2ce0d33d466
   status: covered
   leaves:
   - leaf_task_ref: '#20311'
@@ -677,7 +671,7 @@ rows:
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.8
-  plan_node_hash: 7f2319135a104683a21b021139a08899a69b95aecdca88016b46c9c941460306
+  plan_node_hash: e419c366b1eb97fe326775deb6ce44661d65d4f85ba793ba6011540be7a68bd9
   status: covered
   leaves:
   - leaf_task_ref: '#20311'
@@ -754,25 +748,25 @@ rows:
   deferral_target: null
 - section_id: '3.3'
   item_id: 3.3.6
-  plan_node_hash: 87388a31c612dcf099ba199fd190e91733d01fc1c3445e8b50ccf0691c7cce05
-  status: covered
+  plan_node_hash: cd43912ebbd2aa2c37984076cb042b37629ce5d65c57c2b152356b9d0d0052f1
+  status: invalid
   leaves:
   - leaf_task_ref: '#20312'
     validation_criteria_snippet: '3.3.1: Files routes resolve the calling machine
       checkout and fail closed when it is missing. test: `tests/servers/routes/test_files.py`.
       3.3.2: Source-control ...'
-    matched_artifact_ref: tests/cli/test_plans.py
+    matched_artifact_ref: tests/cli/test_cli_plans.py
   deferral_target: null
 - section_id: '3.3'
   item_id: 3.3.7
-  plan_node_hash: 06700a43bf29c874dd3f835e154fb7a7d0426244f469c4b5eab7af299d5cb230
-  status: covered
+  plan_node_hash: 2fba978737ccb43a8ffbd663160ffcfa1583903abab96d7855f0b08884cb67c4
+  status: invalid
   leaves:
   - leaf_task_ref: '#20312'
     validation_criteria_snippet: '3.3.1: Files routes resolve the calling machine
       checkout and fail closed when it is missing. test: `tests/servers/routes/test_files.py`.
       3.3.2: Source-control ...'
-    matched_artifact_ref: tests/servers/routes/test_sessions_routes.py::TestGetCommitCount
+    matched_artifact_ref: tests/servers/routes/test_servers_routes_sessions_routes.py::TestGetCommitCount
   deferral_target: null
 - section_id: '3.3'
   item_id: 3.3.8
@@ -875,14 +869,14 @@ rows:
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.4
-  plan_node_hash: b17fc8686ccffc0bfbe3ba86f2ef5f28baf2290cd183bcd479d075430071c153
-  status: covered
+  plan_node_hash: d56ba7329edb6c3c53c8ff86f8c8b7c6f9aaa712864b0392a229d6aeb49b311f
+  status: invalid
   leaves:
   - leaf_task_ref: '#20315'
     validation_criteria_snippet: "4.2.1: Different-root rebind removes only the selected\
       \ machine\u2019s active index states and leaves shared content and other-machine\
       \ state in place; same-root rebi..."
-    matched_artifact_ref: tests/code_index/test_storage.py
+    matched_artifact_ref: tests/code_index/test_code_index_storage.py
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.5
@@ -897,7 +891,7 @@ rows:
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.6
-  plan_node_hash: 262cb99397c385e645a183ded61b2406e4dd6d1890aa62c4ca52f360ac007221
+  plan_node_hash: 0f6b7cbec732e89ef5fe020993d2872da9eba69a155fecdac9f57b48dc1d24e5
   status: covered
   leaves:
   - leaf_task_ref: '#20315'
@@ -930,14 +924,14 @@ rows:
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.9
-  plan_node_hash: 68465d4725bffcd1a61aeef3b0d50e6a75e3c4ecaaea88aca640fdda1c64af23
-  status: covered
+  plan_node_hash: c723f99eb63f5622c0079566a9dd98a0802eb4868beea2c9282aed04b303febe
+  status: invalid
   leaves:
   - leaf_task_ref: '#20315'
     validation_criteria_snippet: "4.2.1: Different-root rebind removes only the selected\
       \ machine\u2019s active index states and leaves shared content and other-machine\
       \ state in place; same-root rebi..."
-    matched_artifact_ref: tests/code_index/test_storage.py
+    matched_artifact_ref: tests/code_index/test_code_index_storage.py
   deferral_target: null
 - section_id: '5.1'
   item_id: 5.1.1
@@ -1048,14 +1042,14 @@ rows:
   deferral_target: null
 - section_id: '6.1'
   item_id: 6.1.7
-  plan_node_hash: 093b9e698062547aad85dae199ceff021afcc60e0c72e582a5a1ce8246fa94b4
-  status: covered
+  plan_node_hash: c0fd7d675b1a9be6cf0ce44f6a814662930eafafc87e578712cd1ce6950c55ae
+  status: invalid
   leaves:
   - leaf_task_ref: '#20318'
     validation_criteria_snippet: '6.1.1: Successful populated migration, covered-row
       rerun with zero inserts, two valid existing machine checkout rows perform zero
       inserts and preserve both row...'
-    matched_artifact_ref: tests/storage/test_account_identity_cutover.py
+    matched_artifact_ref: tests/storage/test_storage_account_identity_cutover.py
   deferral_target: null
 - section_id: '6.1'
   item_id: 6.1.8
