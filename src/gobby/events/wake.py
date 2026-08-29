@@ -4,7 +4,8 @@ Routes wake messages based on session type after first persisting a durable
 InterSessionMessage:
 - Terminal agents (agent_depth > 0, terminal_context): tmux send-keys wake signal
 - SDK agents (agent_depth > 0, sdk_session_id): SDK resume wake signal
-- Interactive sessions (agent_depth 0): tmux pane wake signal when available
+- Interactive sessions (agent_depth 0): managed terminal wake when Gobby owns a
+  terminal row for the session, else a tmux pane wake signal
 """
 
 from __future__ import annotations
@@ -70,6 +71,10 @@ class TmuxPaneSender(Protocol):
     ) -> Coroutine[Any, Any, None]: ...
 
 
+class LiveTerminalLookup(Protocol):
+    def get_live_for_session(self, session_id: str) -> Any | None: ...
+
+
 # sdk_resumer signature: (sdk_session_id: str, message: str) -> None
 SdkResumer = Callable[[str, str], Coroutine[Any, Any, None]]
 
@@ -87,6 +92,7 @@ class WakeDispatcher:
         tmux_sender: Optional async callable to send keys to a tmux session
         sdk_resumer: Optional async callable to resume an SDK session with a new prompt
         agent_run_manager: Optional manager for looking up sdk_session_id from agent runs
+        terminal_manager: Optional lookup for the live terminal row hosting a session
     """
 
     def __init__(
@@ -98,6 +104,7 @@ class WakeDispatcher:
         sdk_resumer: SdkResumer | None = None,
         agent_run_manager: LocalAgentRunManager | None = None,
         web_chat_session_registry: WebChatSessionRegistryProtocol | None = None,
+        terminal_manager: LiveTerminalLookup | None = None,
         run_db: RunDb | None = None,
     ) -> None:
         self._session_manager = session_manager
@@ -107,6 +114,7 @@ class WakeDispatcher:
         self._sdk_resumer = sdk_resumer
         self._agent_run_manager = agent_run_manager
         self._web_chat_session_registry = web_chat_session_registry
+        self._terminal_manager = terminal_manager
         self._run_db = run_db or _default_run_db
         # session_id -> (turn_count_at_last_wake, monotonic_ts_at_last_wake)
         self._last_live_wake: dict[str, tuple[int, float]] = {}
@@ -120,6 +128,10 @@ class WakeDispatcher:
     ) -> None:
         """Wire the live web-chat registry after server initialization."""
         self._web_chat_session_registry = registry
+
+    def set_terminal_manager(self, manager: LiveTerminalLookup | None) -> None:
+        """Wire the terminal row lookup once the composition root has built it."""
+        self._terminal_manager = manager
 
     async def wake(
         self,
@@ -222,8 +234,23 @@ class WakeDispatcher:
                 self._record_live_wake(session_id, session)
             return result
 
-        # Interactive session → try tmux pane wake after durable message storage.
+        # Interactive session → nudge its terminal after durable message storage.
         if agent_depth == 0:
+            # tmux_pane comes from $TMUX_PANE, so a native/gterm-hosted session
+            # never has one and gating this branch on it skipped every native
+            # session. The live terminals row is the backend-neutral gate; the
+            # raw pane stays the fallback for a tmux session Gobby holds no row
+            # for, where there is no backend to resolve a runtime from.
+            terminal = await self._live_terminal_for_session(session_id)
+            if terminal is not None and self._tmux_sender is not None:
+                if not self._should_send_live_wake(session_id, session):
+                    return self._live_wake_debounced_result(session_id, method="terminal")
+                return await self._send_managed_terminal_wake(
+                    session_id,
+                    session,
+                    terminal,
+                    self._tmux_sender,
+                )
             if not terminal_context:
                 return self._live_wake_failure(
                     session_id,
@@ -402,6 +429,79 @@ class WakeDispatcher:
             error_code="no_live_wake_channel",
             error_message="No live wake channel is available for this session",
         )
+
+    async def _live_terminal_for_session(self, session_id: str) -> Any | None:
+        """Resolve the managed terminal row hosting this session, if Gobby owns one."""
+        manager = self._terminal_manager
+        if manager is None:
+            return None
+
+        def read_terminal() -> Any | None:
+            return manager.get_live_for_session(session_id)
+
+        try:
+            return await self._run_db(read_terminal)
+        except Exception:
+            logger.warning(
+                "live terminal lookup failed for session %s",
+                session_id,
+                exc_info=True,
+            )
+            return None
+
+    async def _send_managed_terminal_wake(
+        self,
+        session_id: str,
+        session: Any,
+        terminal: Any,
+        send: TmuxSender,
+    ) -> dict[str, Any]:
+        """Wake a session through the terminal row that hosts it.
+
+        `send` is the composition root's wake sender: it resolves the row by
+        identity and writes through the write coordinator, so the runtime comes
+        from Terminal.backend and native rows are driven as well as tmux ones.
+        """
+        from gobby.terminals.runtime import IndeterminateWrite
+
+        terminal_id = str(terminal.id)
+        try:
+            await send(
+                terminal_id,
+                CONTINUE_WAKE_MESSAGE,
+                submit=True,
+                escape_before_submit=True,
+            )
+        except IndeterminateWrite as exc:
+            # Bytes may already be on screen, so record no delivery and try no
+            # other route: a second wake would double-write the same terminal.
+            return {
+                "session_id": session_id,
+                "delivered": False,
+                "method": "terminal",
+                "indeterminate": True,
+                "error_message": exc.detail,
+            }
+        except Exception as exc:
+            detail = str(exc) or type(exc).__name__
+            logger.warning(
+                "terminal wake failed for session %s (terminal=%s)",
+                session_id,
+                terminal_id,
+                exc_info=True,
+            )
+            return self._live_wake_failure(
+                session_id,
+                method="terminal",
+                error_code="terminal_wake_failed",
+                error_message=detail,
+            )
+        self._record_live_wake(session_id, session)
+        return {
+            "session_id": session_id,
+            "delivered": True,
+            "method": "terminal",
+        }
 
     @staticmethod
     def _live_wake_failure(

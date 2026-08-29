@@ -434,6 +434,10 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
 
     runner.write_coordinator = WriteCoordinator(runner.terminal_manager, terminal_runtime_registry)
     bind_wake_write_services(runner.terminal_manager, runner.write_coordinator)
+    # The wake dispatcher is built before the terminal manager exists, so its
+    # row lookup is wired here; without it every interactive wake falls back to
+    # the tmux pane and native/gterm sessions are never nudged.
+    runner.wake_dispatcher.set_terminal_manager(runner.terminal_manager)
     # One TerminalServices for every in-process consumer that closes or writes
     # to terminals: the lifecycle monitor, build controls, dispatch cleanup, and
     # websocket session control all resolve this instance.

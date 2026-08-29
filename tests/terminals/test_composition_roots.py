@@ -128,3 +128,12 @@ def test_composition_roots_give_the_coordinator_the_registry() -> None:
 
     monitor_source = Path(lifecycle_monitor.__file__).read_text(encoding="utf-8")
     assert "WriteCoordinator(manager, registry)" in " ".join(monitor_source.split())
+
+
+def test_orchestration_gives_the_wake_dispatcher_its_terminal_lookup() -> None:
+    """Without the row lookup, every interactive wake falls back to a tmux pane."""
+    from gobby.runner_init import orchestration
+
+    source = Path(orchestration.__file__).read_text(encoding="utf-8")
+    flattened = " ".join(source.split())
+    assert "runner.wake_dispatcher.set_terminal_manager(runner.terminal_manager)" in flattened
