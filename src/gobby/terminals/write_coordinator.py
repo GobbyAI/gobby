@@ -15,7 +15,9 @@ from gobby.terminals.runtime import (
     IndeterminateWrite,
     Suppressed,
     TerminalRuntime,
+    TerminalRuntimeRegistry,
     TerminalWriteError,
+    UnregisteredBackendError,
     WriteOutcome,
     is_named_key,
 )
@@ -78,16 +80,15 @@ class _Lease:
 class WriteCoordinator:
     """Serializes writes, latches action_key, and revalidates leases."""
 
-    def __init__(self, store: UnresolvedWriteStore, runtime: TerminalRuntime) -> None:
+    def __init__(self, store: UnresolvedWriteStore, registry: TerminalRuntimeRegistry) -> None:
         self._store = store
-        self._runtime = runtime
+        self._registry = registry
         self._locks: dict[str, asyncio.Lock] = {}
         self._leases: dict[str, _Lease] = {}
         self._attention_gate: Callable[[Terminal], Awaitable[None]] | None = None
 
-    @property
-    def runtime(self) -> TerminalRuntime:
-        return self._runtime
+    def runtime_for(self, terminal: Terminal) -> TerminalRuntime:
+        return self._registry.resolve(terminal.backend)
 
     def set_attention_gate(self, gate: Callable[[Terminal], Awaitable[None]]) -> None:
         self._attention_gate = gate
@@ -300,10 +301,18 @@ class WriteCoordinator:
 
     async def _dispatch(self, request: WriteRequest) -> WriteOutcome:
         terminal = self._require(request.terminal_id)
+        try:
+            runtime = self.runtime_for(terminal)
+        except UnregisteredBackendError as exc:
+            # Nothing was dispatched, so no bytes can exist — that is exactly
+            # stage="none", which _write_locked clears the latch for. Letting the
+            # KeyError subclass propagate would leave the latch persisted and
+            # suppress every later automatic write to this terminal.
+            raise TerminalWriteError(stage="none") from exc
         if request.kind == "text":
-            return await self._runtime.write_text(terminal, request.payload, request.submit)
+            return await runtime.write_text(terminal, request.payload, request.submit)
         if request.kind == "key":
             if not is_named_key(request.payload):
                 raise TerminalWriteError(stage="none")
-            return await self._runtime.write_key(terminal, request.payload)
-        return await self._runtime.write_paste(terminal, request.payload)
+            return await runtime.write_key(terminal, request.payload)
+        return await runtime.write_paste(terminal, request.payload)

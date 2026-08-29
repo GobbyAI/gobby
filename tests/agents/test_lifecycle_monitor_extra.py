@@ -29,7 +29,11 @@ from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
 from gobby.workflows.task_claim_state import add_claimed_task
 from tests.agents.test_lifecycle_monitor import LifecycleRuntime, _runtime_of
-from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
+from tests.terminals.fakes import (
+    MemoryTerminalStore,
+    make_memory_terminal,
+    runtime_registry,
+)
 from tests.workflows.step_instance_fixtures import make_step_instance
 
 from .detection_test_support import BundledDetectionRegistry
@@ -61,7 +65,7 @@ def _memory_terminal_services(*terminal_ids: str) -> TerminalServices:
     return TerminalServices(
         manager=cast(TerminalManager, store),
         registry=registry,
-        coordinator=WriteCoordinator(cast(UnresolvedWriteStore, store), runtime),
+        coordinator=WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime)),
     )
 
 

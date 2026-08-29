@@ -41,7 +41,11 @@ from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals.runtime import Delivered
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.agents.prepared_spawn import prepared_spawn
-from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore
+from tests.terminals.fakes import (
+    FakeRuntime,
+    MemoryTerminalStore,
+    runtime_registry,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -2256,7 +2260,7 @@ def _codex_delivery_target(runtime: FakeRuntime) -> tuple[WriteCoordinator, Term
 
     terminal = make_memory_terminal()
     store = MemoryTerminalStore(terminal)
-    return WriteCoordinator(cast(UnresolvedWriteStore, store), runtime), terminal
+    return WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime)), terminal
 
 
 @contextmanager

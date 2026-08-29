@@ -11,7 +11,12 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
 from gobby.terminals import TerminalRuntimeRegistry
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
-from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
+from tests.terminals.fakes import (
+    FakeRuntime,
+    MemoryTerminalStore,
+    make_memory_terminal,
+    runtime_registry,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -24,7 +29,7 @@ async def test_send_and_capture_are_backend_neutral() -> None:
     runtime.snapshot_text = "pane"
     registry = TerminalRuntimeRegistry()
     registry.register(runtime)
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime)
+    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
     tools = InternalToolRegistry(name="gobby-sessions", description="sessions")
     session_manager = MagicMock()
     db = MagicMock()

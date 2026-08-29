@@ -15,7 +15,12 @@ from gobby.terminals.write_coordinator import (
     WriteCoordinator,
     WriteRequest,
 )
-from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
+from tests.terminals.fakes import (
+    FakeRuntime,
+    MemoryTerminalStore,
+    make_memory_terminal,
+    runtime_registry,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -37,7 +42,7 @@ async def test_timeout_cancel_late_completion_and_loop_misuse() -> None:
     store = MemoryTerminalStore(terminal)
     hold = asyncio.Event()
     runtime = FakeRuntime(hold=hold)
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime)
+    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
     bridge = TerminalEffectBridge(
         loop,
         coordinator,
@@ -77,7 +82,7 @@ async def test_shutdown_drain_and_timeout_dispatch_race() -> None:
     store = MemoryTerminalStore(terminal)
     hold = asyncio.Event()
     runtime = FakeRuntime(hold=hold)
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime)
+    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
     bridge = TerminalEffectBridge(
         loop,
         coordinator,
@@ -98,7 +103,7 @@ async def test_shutdown_drain_and_timeout_dispatch_race() -> None:
     assert row.automatic_write_quarantined_at is not None
     assert row.automatic_write_quarantine_action_key == "hook-write"
 
-    restored = WriteCoordinator(cast(UnresolvedWriteStore, store), FakeRuntime())
+    restored = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(FakeRuntime()))
     from gobby.terminals.runtime import AutomaticWriteQuarantined
 
     refused = await restored.write(

@@ -221,3 +221,19 @@ def can_reserve_observer(runtime: object) -> TypeIs[ObserverReservingRuntime]:
     """Narrow a runtime that implements native observer reservation."""
     reserve = getattr(runtime, "reserve_observer", None)
     return callable(reserve)
+
+
+class TerminalRuntimeRegistry:
+    """Resolves Terminal.backend to a TerminalRuntime implementation."""
+
+    def __init__(self) -> None:
+        self._runtimes: dict[str, TerminalRuntime] = {}
+
+    def register(self, runtime: TerminalRuntime) -> None:
+        self._runtimes[runtime.backend] = runtime
+
+    def resolve(self, backend: str) -> TerminalRuntime:
+        try:
+            return self._runtimes[backend]
+        except KeyError as exc:
+            raise UnregisteredBackendError(backend) from exc

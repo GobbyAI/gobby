@@ -432,8 +432,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     from gobby.terminals.sync_bridge import TerminalEffectBridge
     from gobby.terminals.write_coordinator import WriteCoordinator
 
-    tmux_runtime = terminal_runtime_registry.resolve("tmux")
-    runner.write_coordinator = WriteCoordinator(runner.terminal_manager, tmux_runtime)
+    runner.write_coordinator = WriteCoordinator(runner.terminal_manager, terminal_runtime_registry)
     bind_wake_write_services(runner.terminal_manager, runner.write_coordinator)
     # One TerminalServices for every in-process consumer that closes or writes
     # to terminals: the lifecycle monitor, build controls, dispatch cleanup, and

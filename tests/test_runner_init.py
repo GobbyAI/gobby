@@ -353,12 +353,17 @@ class TestWakeTmuxSenders:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
-        from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
+        from tests.terminals.fakes import (
+            FakeRuntime,
+            MemoryTerminalStore,
+            make_memory_terminal,
+            runtime_registry,
+        )
 
         terminal = make_memory_terminal(session_name="gobby-agent-abc")
         store = MemoryTerminalStore(terminal)
         runtime = FakeRuntime()
-        coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime)
+        coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
 
         async def fake_sleep(_seconds: float) -> None:
             return None
@@ -390,13 +395,18 @@ class TestWakeTmuxSenders:
         from gobby.runner_init.orchestration import _send_tmux_session_wake
         from gobby.terminals.runtime import Delivered, IndeterminateWrite
         from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
-        from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
+        from tests.terminals.fakes import (
+            FakeRuntime,
+            MemoryTerminalStore,
+            make_memory_terminal,
+            runtime_registry,
+        )
 
         terminal = make_memory_terminal()
         store = MemoryTerminalStore(terminal)
         runtime = FakeRuntime()
         runtime.outcomes = [Delivered(), IndeterminateWrite(detail="lost")]
-        coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime)
+        coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
 
         async def fake_sleep(_seconds: float) -> None:
             return None

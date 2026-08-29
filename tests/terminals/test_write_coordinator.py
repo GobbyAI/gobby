@@ -12,7 +12,12 @@ from gobby.storage.terminals import (
     UNRESOLVED_WRITE_MAX_ENTRIES,
     UnresolvedWriteCapacityError,
 )
-from gobby.terminals.runtime import Delivered, IndeterminateWrite, TerminalWriteError
+from gobby.terminals.runtime import (
+    Delivered,
+    IndeterminateWrite,
+    TerminalWriteError,
+    UnregisteredBackendError,
+)
 from gobby.terminals.write_coordinator import (
     SequenceDelay,
     StaleTerminalLeaseError,
@@ -20,7 +25,12 @@ from gobby.terminals.write_coordinator import (
     WriteCoordinator,
     WriteRequest,
 )
-from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
+from tests.terminals.fakes import (
+    FakeRuntime,
+    MemoryTerminalStore,
+    make_memory_terminal,
+    runtime_registry,
+)
 
 
 async def _let_tasks_run() -> None:
@@ -49,7 +59,7 @@ def _coordinator(
     terminal = make_memory_terminal(backend=backend, unresolved_writes=unresolved)
     store = MemoryTerminalStore(terminal)
     fake = runtime or FakeRuntime(backend=backend)
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), fake)
+    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(fake))
     return coordinator, fake, store
 
 
@@ -470,7 +480,7 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
     terminal = make_memory_terminal()
     store = KillAfterPersist(terminal)
     runtime = FakeRuntime()
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime)
+    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
     with pytest.raises(RuntimeError, match="hard-kill"):
         await coordinator.write(
             WriteRequest(
@@ -491,7 +501,7 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
 
     store2 = MemoryTerminalStore(make_memory_terminal())
     runtime2 = KillAfterBytes()
-    coordinator2 = WriteCoordinator(cast(UnresolvedWriteStore, store2), runtime2)
+    coordinator2 = WriteCoordinator(cast(UnresolvedWriteStore, store2), runtime_registry(runtime2))
     terminal2 = next(iter(store2.rows.values()))
     with pytest.raises(RuntimeError, match="killed-after-bytes"):
         await coordinator2.write(
@@ -507,7 +517,7 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
 
     store3 = MemoryTerminalStore(make_memory_terminal())
     runtime3 = FakeRuntime(outcome=Delivered())
-    coordinator3 = WriteCoordinator(cast(UnresolvedWriteStore, store3), runtime3)
+    coordinator3 = WriteCoordinator(cast(UnresolvedWriteStore, store3), runtime_registry(runtime3))
     terminal3 = next(iter(store3.rows.values()))
     await coordinator3.write(
         WriteRequest(
@@ -526,7 +536,7 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
 
     store4 = MemoryTerminalStore(make_memory_terminal())
     runtime4 = FailTyped()
-    coordinator4 = WriteCoordinator(cast(UnresolvedWriteStore, store4), runtime4)
+    coordinator4 = WriteCoordinator(cast(UnresolvedWriteStore, store4), runtime_registry(runtime4))
     terminal4 = next(iter(store4.rows.values()))
     with pytest.raises(RuntimeError, match="no-effect"):
         await coordinator4.write(
@@ -544,7 +554,7 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
     hold = asyncio.Event()
     runtime5 = FakeRuntime(hold=hold)
     store5 = MemoryTerminalStore(make_memory_terminal())
-    coordinator5 = WriteCoordinator(cast(UnresolvedWriteStore, store5), runtime5)
+    coordinator5 = WriteCoordinator(cast(UnresolvedWriteStore, store5), runtime_registry(runtime5))
     terminal5 = next(iter(store5.rows.values()))
     task = asyncio.create_task(
         coordinator5.run_sequence(
@@ -631,3 +641,64 @@ async def test_sequence_failure_after_a_dispatched_step_keeps_latch() -> None:
 
     assert "wake" in _unresolved(store, terminal.id)
     assert runtime.write_log == [("text", "hello")]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_resolves_the_runtime_per_terminal_backend() -> None:
+    """One coordinator, two backends: each write reaches only its own runtime.
+
+    The coordinator used to bind a single runtime at construction, so every
+    write to a native-backend terminal was injected through the tmux runtime.
+    """
+    tmux_terminal = make_memory_terminal(backend="tmux")
+    native_terminal = make_memory_terminal(backend="native")
+    store = MemoryTerminalStore(tmux_terminal)
+    store.rows[native_terminal.id] = native_terminal
+    tmux_runtime = FakeRuntime(backend="tmux")
+    native_runtime = FakeRuntime(backend="native")
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(tmux_runtime, native_runtime),
+    )
+
+    for terminal, payload in ((tmux_terminal, "to-tmux"), (native_terminal, "to-native")):
+        await coordinator.write(
+            WriteRequest(
+                terminal_id=terminal.id,
+                action_key=f"w:{terminal.id}",
+                origin="automatic",
+                kind="text",
+                payload=payload,
+            )
+        )
+
+    assert tmux_runtime.write_log == [("text", "to-tmux")]
+    assert native_runtime.write_log == [("text", "to-native")]
+
+
+@pytest.mark.asyncio
+async def test_unregistered_backend_is_a_stage_none_write_error() -> None:
+    """No runtime owns the backend, so no bytes reached the terminal."""
+    terminal = make_memory_terminal(backend="native")
+    store = MemoryTerminalStore(terminal)
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store), runtime_registry(FakeRuntime(backend="tmux"))
+    )
+
+    with pytest.raises(TerminalWriteError) as excinfo:
+        await coordinator.write(
+            WriteRequest(
+                terminal_id=terminal.id,
+                action_key="unroutable",
+                origin="automatic",
+                kind="text",
+                payload="x",
+            )
+        )
+
+    assert excinfo.value.stage == "none"
+    assert isinstance(excinfo.value.__cause__, UnregisteredBackendError)
+    assert excinfo.value.__cause__.backend == "native"
+    # A provably-empty write must not leave the action latched, or every later
+    # automatic write to this terminal is suppressed as a duplicate.
+    assert _unresolved(store, terminal.id) == {}

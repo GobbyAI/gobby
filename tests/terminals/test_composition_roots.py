@@ -113,3 +113,18 @@ def test_orchestration_builds_terminal_services_once() -> None:
     assert source.count("TerminalServices(") == 1
     assert "runner.terminal_services = TerminalServices(" in source
     assert "terminal_services=runner.terminal_services," in source
+
+
+def test_composition_roots_give_the_coordinator_the_registry() -> None:
+    """Neither root may bind one runtime; the coordinator resolves per terminal."""
+    from gobby.agents import lifecycle_monitor
+    from gobby.runner_init import orchestration
+
+    orchestration_source = Path(orchestration.__file__).read_text(encoding="utf-8")
+    flattened = " ".join(orchestration_source.split())
+    assert "WriteCoordinator(runner.terminal_manager, terminal_runtime_registry)" in flattened
+    # The single-runtime resolve is what broke every write to a native terminal.
+    assert 'resolve("tmux")' not in orchestration_source
+
+    monitor_source = Path(lifecycle_monitor.__file__).read_text(encoding="utf-8")
+    assert "WriteCoordinator(manager, registry)" in " ".join(monitor_source.split())

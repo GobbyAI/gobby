@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
+from gobby.mcp_proxy.tools.sessions._terminal_handoff import _capture_handoff_configs
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
@@ -22,7 +23,6 @@ from gobby.mcp_proxy.services.result_offload import _WRAPPER_MUTATION_RESERVE
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.results import _MAX_SLICE_CHARS, create_results_registry
-from gobby.mcp_proxy.tools.sessions._terminal_handoff import _capture_handoff_configs
 from gobby.mcp_proxy.tools.skills import hub_tools, search_skills
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (

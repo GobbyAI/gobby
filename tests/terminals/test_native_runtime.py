@@ -34,7 +34,12 @@ from gobby.terminals.write_coordinator import (
     WriteCoordinator,
     WriteRequest,
 )
-from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
+from tests.terminals.fakes import (
+    FakeRuntime,
+    MemoryTerminalStore,
+    make_memory_terminal,
+    runtime_registry,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -523,7 +528,7 @@ async def test_attention_and_lease_writes_serialize_native(
     runtime = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch)
     terminal = _native_terminal(host)
     store = MemoryTerminalStore(terminal)
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime)
+    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
     recapture_at: list[int] = []
 
     async def recapture(_terminal: Any) -> None:
@@ -586,7 +591,7 @@ async def test_sequence_holds_lock_across_steps_native(monkeypatch: pytest.Monke
     runtime = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch)
     terminal = _native_terminal(host)
     store = MemoryTerminalStore(terminal)
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime)
+    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
     await coordinator.grant_lease(terminal.id, "att-1")
     delay_started = asyncio.Event()
     original_sleep = asyncio.sleep
@@ -652,3 +657,35 @@ async def test_sequence_holds_lock_across_steps_native(monkeypatch: pytest.Monke
     assert "text" in kinds
     assert interleaved == ["trying", "done"]
     assert kinds[-1] == "text" or host.writes[-1]["kind"] in {"text", "key"}
+
+
+@pytest.mark.asyncio
+async def test_coordinator_writes_reach_the_native_runtime() -> None:
+    """The acceptance test: a native row is driven by the native runtime.
+
+    A registry holding both backends is the production shape. Before per-terminal
+    resolution the coordinator injected every write through tmux, so a gterm-hosted
+    agent was undrivable while its terminal still read as live.
+    """
+    host = FakeHostClient()
+    native = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch)
+    tmux = FakeRuntime(backend="tmux")
+    terminal = _native_terminal(host)
+    store = MemoryTerminalStore(terminal)
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store), runtime_registry(tmux, native)
+    )
+
+    outcome = await coordinator.write(
+        WriteRequest(
+            terminal_id=terminal.id,
+            action_key="idle-reprompt",
+            origin="automatic",
+            kind="text",
+            payload="are you there",
+        )
+    )
+
+    assert isinstance(outcome, Delivered)
+    assert b"".join(host.pty) == b"are you there"
+    assert tmux.write_log == []

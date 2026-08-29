@@ -26,6 +26,7 @@ from gobby.terminals.runtime import (
     PreparedSpawn,
     SnapshotResult,
     TerminalHandle,
+    TerminalRuntimeRegistry,
     TerminalSpawnRequest,
     WriteOutcome,
 )
@@ -487,19 +488,25 @@ def uuid_of(terminal: Terminal) -> UUID:
     return UUID(terminal.id)
 
 
+def runtime_registry(*runtimes: Any) -> TerminalRuntimeRegistry:
+    """Build a registry holding the given runtimes, keyed by their backend."""
+    registry = TerminalRuntimeRegistry()
+    for runtime in runtimes:
+        registry.register(runtime)
+    return registry
+
+
 def bind_spawn_runtime(request: object) -> tuple[MemoryTerminalStore, FakeRuntime]:
     """Attach an in-memory manager and FakeRuntime to a SpawnRequest."""
     from gobby.agents.spawn_models import SpawnRequest
-    from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 
     spawn = cast(SpawnRequest, request)
 
     manager = MemoryTerminalStore()
     runtime = FakeRuntime()
-    registry = TerminalRuntimeRegistry()
-    registry.register(runtime)
+    registry = runtime_registry(runtime)
     spawn.terminal_manager = cast(TerminalManager, manager)
     spawn.terminal_runtime_registry = registry
-    spawn.write_coordinator = WriteCoordinator(cast(UnresolvedWriteStore, manager), runtime)
+    spawn.write_coordinator = WriteCoordinator(cast(UnresolvedWriteStore, manager), registry)
     return manager, runtime

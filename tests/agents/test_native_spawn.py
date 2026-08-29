@@ -34,7 +34,10 @@ from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.agents.test_capture import FakeCaptureStorage
 from tests.agents.test_capture import _run as capture_run
-from tests.terminals.fakes import MemoryTerminalStore
+from tests.terminals.fakes import (
+    MemoryTerminalStore,
+    runtime_registry,
+)
 from tests.terminals.test_native_runtime import FakeHostClient
 
 pytestmark = pytest.mark.unit
@@ -305,7 +308,7 @@ async def test_attention_episode_native(temp_db: Any) -> None:
     episode = attention_manager.get("run:run-native")
     assert episode is not None
     assert episode.state == "blocked"
-    coordinator = WriteCoordinator(cast(Any, manager), runtime)
+    coordinator = WriteCoordinator(cast(Any, manager), runtime_registry(runtime))
     outcome = await coordinator.write(
         WriteRequest(
             terminal_id=terminal.id,

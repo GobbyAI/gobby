@@ -13,7 +13,12 @@ from gobby.storage.agents import AgentRun
 from gobby.terminals import TerminalRuntimeRegistry
 from gobby.terminals.services import TerminalServices
 from gobby.terminals.write_coordinator import WriteCoordinator
-from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
+from tests.terminals.fakes import (
+    FakeRuntime,
+    MemoryTerminalStore,
+    make_memory_terminal,
+    runtime_registry,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -50,7 +55,7 @@ async def test_prompt_callback_failure_preserves_successful_injection(
     services = TerminalServices(
         manager=store,
         registry=registry,
-        coordinator=WriteCoordinator(store, runtime),
+        coordinator=WriteCoordinator(store, runtime_registry(runtime)),
     )
     callback = AsyncMock(side_effect=RuntimeError("callback failed"))
     monitor = TerminalPromptMonitor(

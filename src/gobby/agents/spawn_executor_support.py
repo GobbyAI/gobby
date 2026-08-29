@@ -350,7 +350,7 @@ async def _deliver_codex_prompt(
     from gobby.terminals.runtime import Delivered, IndeterminateWrite
     from gobby.terminals.write_coordinator import SequenceDelay, WriteRequest
 
-    runtime = coordinator.runtime
+    runtime = coordinator.runtime_for(terminal)
     last_pane: str | None = None
     try:
         loop = asyncio.get_running_loop()

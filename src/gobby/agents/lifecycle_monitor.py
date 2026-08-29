@@ -123,7 +123,7 @@ class AgentLifecycleMonitor:
             terminal_services = TerminalServices(
                 manager=manager,
                 registry=registry,
-                coordinator=WriteCoordinator(manager, runtime),
+                coordinator=WriteCoordinator(manager, registry),
             )
         self._terminal_services = terminal_services
         self._idle_detector = IdleDetector(detection_registry)

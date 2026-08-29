@@ -49,7 +49,10 @@ from gobby.terminals.services import TerminalServices
 from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
-from tests.terminals.fakes import FakeRuntime
+from tests.terminals.fakes import (
+    FakeRuntime,
+    runtime_registry,
+)
 from tests.workflows.step_instance_fixtures import make_step_instance
 
 from .detection_test_support import BundledDetectionRegistry
@@ -151,7 +154,7 @@ def _fake_terminal_services(
     return TerminalServices(
         manager=manager,
         registry=registry,
-        coordinator=WriteCoordinator(manager, runtime),
+        coordinator=WriteCoordinator(manager, runtime_registry(runtime)),
     )
 
 
