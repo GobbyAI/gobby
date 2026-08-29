@@ -612,3 +612,122 @@ async def test_create_worktree_no_unpushed_uses_remote(
         create_branch=True,
         use_local=False,
     )
+
+
+@pytest.mark.asyncio
+async def test_create_worktree_merge_and_delete_succeeds_with_one_committed_file(
+    mock_worktree_storage: MagicMock,
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "repo"
+    worktree_path = tmp_path / "worktree"
+    repo_path.joinpath(".gobby").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo_path, check=True, timeout=10)
+    project_id = "11111111-1111-4111-8111-111111110002"
+    project_json = repo_path / ".gobby" / "project.json"
+    project_json.write_text(json.dumps({"id": project_id, "name": "test-project"}) + "\n")
+    repo_path.joinpath(".gitignore").write_text(".gobby/isolation.json\n")
+    repo_path.joinpath("README.md").write_text("base\n")
+    subprocess.run(
+        ["git", "add", ".gobby/project.json", ".gitignore", "README.md"],
+        cwd=repo_path,
+        check=True,
+        timeout=10,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Gobby Tests",
+            "-c",
+            "user.email=gobby-tests@example.com",
+            "commit",
+            "--no-gpg-sign",
+            "-q",
+            "-m",
+            "initial",
+        ],
+        cwd=repo_path,
+        check=True,
+        timeout=10,
+    )
+
+    worktree = Worktree(
+        id="wt-merge-delete",
+        project_id=project_id,
+        task_id=None,
+        branch_name="feature/one-file",
+        worktree_path=str(worktree_path),
+        base_branch="main",
+        agent_session_id=None,
+        status="active",
+        created_at=STORED_AT,
+        updated_at=STORED_AT,
+        merged_at=None,
+    )
+    mock_worktree_storage.get_by_branch.return_value = None
+    mock_worktree_storage.create.return_value = worktree
+    mock_worktree_storage.get.return_value = worktree
+    mock_worktree_storage.mark_merged.return_value = True
+    mock_worktree_storage.delete.return_value = True
+    git_manager = WorktreeGitManager(repo_path)
+    registry = create_worktrees_registry(
+        worktree_storage=mock_worktree_storage,
+        git_manager=git_manager,
+        project_id=project_id,
+    )
+
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._create.emit_worktree_event",
+        return_value={"event_type": "worktree_created", "worktree_id": worktree.id},
+    ):
+        created = await registry.call(
+            "create_worktree",
+            {
+                "branch_name": "feature/one-file",
+                "base_branch": "main",
+                "worktree_path": str(worktree_path),
+                "use_local": True,
+            },
+        )
+    assert created["success"] is True
+    status = subprocess.run(
+        ["git", "status", "--porcelain=v1"],
+        cwd=worktree_path,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert status.stdout == ""
+
+    extra = worktree_path / "extra.txt"
+    extra.write_text("one committed file\n")
+    subprocess.run(["git", "add", "extra.txt"], cwd=worktree_path, check=True, timeout=10)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Gobby Tests",
+            "-c",
+            "user.email=gobby-tests@example.com",
+            "commit",
+            "--no-gpg-sign",
+            "-q",
+            "-m",
+            "one file",
+        ],
+        cwd=worktree_path,
+        check=True,
+        timeout=10,
+    )
+
+    merged = await registry.call(
+        "merge_worktree",
+        {"worktree_id": worktree.id, "target_branch": "main"},
+    )
+    assert merged["success"] is True, merged
+
+    deleted = await registry.call("delete_worktree", {"worktree_id": worktree.id})
+    assert deleted["success"] is True, deleted
+    assert not worktree_path.exists()
