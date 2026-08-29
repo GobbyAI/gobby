@@ -12,7 +12,6 @@ from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.recovery_state import is_daemon_stop_parked
 from gobby.agents.spawn_executor_support import _session_manager_validation_error
 from gobby.agents.spawn_models import SpawnRequest
-from gobby.agents.terminal_prompt_monitor import _is_expected_prompt_probe_error
 from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
@@ -72,18 +71,6 @@ def test_daemon_stop_run_owned_by_orphan_reaper_is_not_parked() -> None:
     )
 
     assert is_daemon_stop_parked(run) is False
-
-
-def test_missing_tmux_executable_is_not_a_vanished_target() -> None:
-    missing_executable = FileNotFoundError(2, "No such file or directory", "tmux")
-    missing_socket = FileNotFoundError(
-        2,
-        "No such file or directory",
-        "/tmp/tmux-501/gobby.sock",
-    )
-
-    assert _is_expected_prompt_probe_error(missing_executable) is False
-    assert _is_expected_prompt_probe_error(missing_socket) is True
 
 
 def test_session_manager_requires_sandbox_policy_hash_writer() -> None:

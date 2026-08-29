@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.loop_tracker import LoopTracker
 from gobby.agents.prompt_detector import PromptDetector
+from gobby.terminals.error_classification import is_vanished_terminal_target
 
 if TYPE_CHECKING:
     from gobby.agents.tmux.session_manager import TmuxSessionManager
@@ -17,23 +18,6 @@ if TYPE_CHECKING:
     from gobby.storage.agents import AgentRun
 
 logger = logging.getLogger(__name__)
-
-_VANISHED_TMUX_ERROR_MARKERS = (
-    "can't find pane",
-    "can't find session",
-    "failed to connect to server",
-    "no server running on",
-)
-
-
-def _is_expected_prompt_probe_error(error: Exception) -> bool:
-    """Return whether a prompt probe failed because its tmux target vanished."""
-    if isinstance(error, TimeoutError):
-        return True
-    message = str(error).casefold()
-    if "no such file or directory" in message:
-        return any(marker in message for marker in ("tmux-", "tmux socket", ".sock"))
-    return any(marker in message for marker in _VANISHED_TMUX_ERROR_MARKERS)
 
 
 def _log_prompt_probe_error(
@@ -51,7 +35,7 @@ def _log_prompt_probe_error(
         tmux_target,
         error,
     )
-    if _is_expected_prompt_probe_error(error):
+    if is_vanished_terminal_target(error):
         logger.debug(
             "Prompt probe %s skipped: exception=%s run_id=%s tmux_target=%s error=%s",
             *values,
