@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -129,6 +130,25 @@ def _turn_completed_record(
             "_meta": {"eventId": "grok-session-216", "agentTimestampMs": 1784250127054},
         },
     }
+
+
+def test_grok_unix_second_timestamp_is_not_replaced_with_now() -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    record = _turn_completed_record()
+    parsed = parser.parse_line(json.dumps(record), 4)
+
+    assert isinstance(parsed, ParsedMessage)
+    assert parsed.timestamp == datetime.fromtimestamp(1_784_250_127, UTC)
+
+
+def test_grok_unix_millisecond_timestamp_is_scaled() -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    record = _turn_completed_record()
+    record["timestamp"] = 1_784_250_127_054
+    parsed = parser.parse_line(json.dumps(record), 4)
+
+    assert isinstance(parsed, ParsedMessage)
+    assert parsed.timestamp == datetime.fromtimestamp(1_784_250_127.054, UTC)
 
 
 def test_grok_turn_completed_maps_turn_aggregate_usage() -> None:

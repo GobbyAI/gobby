@@ -46,6 +46,9 @@ disabled`, only for an explicitly trusted isolated environment.
 - Drop queued Grok briefing and turn-context injects on `set_handoff` compact,
   session-start, and Grok PostCompact so stale compact-pressure copy cannot deny
   the next PreToolUse after occupancy has already fallen.
+- Parse Grok `updates.jsonl` unix-second and millisecond timestamps so close
+  windows can exclude pre-close validation runs instead of treating every event
+  as `now()`.
 
 ## [0.8.1] — gobby-core — 2026-07-14
 

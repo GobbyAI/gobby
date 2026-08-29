@@ -490,12 +490,31 @@ def _count(value: Any) -> int:
 def _parse_timestamp(data: dict[str, Any]) -> datetime:
     for key in ("timestamp", "createdAt", "created_at"):
         value = data.get(key)
-        if isinstance(value, str):
-            try:
-                return datetime.fromisoformat(value.replace("Z", "+00:00"))
-            except ValueError:
-                continue
+        parsed = _coerce_timestamp(value)
+        if parsed is not None:
+            return parsed
     return datetime.now(UTC)
+
+
+def _coerce_timestamp(value: Any) -> datetime | None:
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        unix = float(value)
+        # Grok updates.jsonl uses unix seconds; some nested clocks are milliseconds.
+        if unix >= 1_000_000_000_000:
+            unix /= 1000.0
+        try:
+            return datetime.fromtimestamp(unix, UTC)
+        except (OSError, OverflowError, ValueError):
+            return None
+    return None
 
 
 def _extract_update(data: dict[str, Any]) -> dict[str, Any] | None:
