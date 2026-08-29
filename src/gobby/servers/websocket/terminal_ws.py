@@ -263,14 +263,21 @@ class TerminalWsMixin:
         # created there belongs to the global project, like an unowned pane.
         project_id = data.get("project_id") or self._project_id(websocket) or GLOBAL_PROJECT_ID
         if manager is None or registry is None or not isinstance(project_id, str):
-            logger.warning("terminal_create refused: terminal runtime unavailable")
+            reason = (
+                "terminal manager unavailable"
+                if manager is None
+                else "terminal runtime registry unavailable"
+                if registry is None
+                else "project unresolved"
+            )
+            logger.warning("terminal_create refused: %s", reason)
             await self._send_json(
                 websocket,
                 {
                     "type": "terminal_create_result",
                     "success": False,
                     "request_id": request_id,
-                    "message": "terminal runtime unavailable",
+                    "reason": reason,
                 },
             )
             return
@@ -291,7 +298,10 @@ class TerminalWsMixin:
         )
         if not result.success:
             logger.warning(
-                "web terminal create failed (backend=%s): %s", runtime.backend, result.error
+                "terminal_create spawn failed (backend=%s, terminal=%s): %s",
+                runtime.backend,
+                result.terminal_id,
+                result.error,
             )
         await self._send_json(
             websocket,
@@ -301,7 +311,7 @@ class TerminalWsMixin:
                 "success": result.success,
                 "terminal_id": result.terminal_id,
                 "backend": runtime.backend,
-                "message": result.error,
+                "reason": result.error,
             },
         )
 

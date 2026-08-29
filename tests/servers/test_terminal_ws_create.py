@@ -243,6 +243,6 @@ async def test_create_without_a_project_lands_in_global_and_names_the_failure(
         "success": False,
         "terminal_id": "t-1",
         "backend": "tmux",
-        "message": "backend boom",
+        "reason": "backend boom",
     }
-    assert (created["success"], created["terminal_id"], created["message"]) == (True, "t-2", None)
+    assert (created["success"], created["terminal_id"], created["reason"]) == (True, "t-2", None)

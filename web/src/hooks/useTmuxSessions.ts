@@ -454,7 +454,7 @@ export function useTmuxSessions(
             refreshSessions();
           } else {
             setAttachError(
-              typeof data.message === "string" ? data.message : "Create failed",
+              typeof data.reason === "string" ? data.reason : "Create failed",
             );
           }
           clearPendingRequest();
