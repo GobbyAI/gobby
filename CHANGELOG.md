@@ -52,6 +52,8 @@ disabled`, only for an explicitly trusted isolated environment.
 - Include the session's latest own task-close time in the found-work stop
   analysis cache key so a close or daemon restart cannot keep serving a stale
   red-run list.
+- Include the daemon process boot time in that cache key so a restarted
+  process cannot replay another process's persisted red-run list.
 
 ## [0.8.1] — gobby-core — 2026-07-14
 
