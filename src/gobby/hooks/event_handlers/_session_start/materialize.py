@@ -22,7 +22,11 @@ from gobby.sessions.handoff import build_handoff_continue_prompt
 from .agents import _seed_parent_turn_seq, _seed_wiki_overview_var
 from .claims import preserve_task_claim_state
 from .context import classify_session_start_context
-from .handoff import SessionStartResolution, prepare_compact_continuation_variables
+from .handoff import (
+    STARTUP_SOURCES,
+    SessionStartResolution,
+    prepare_compact_continuation_variables,
+)
 from .profile import seed_user_profile_content
 from .terminal_runtime import (
     expire_stale_terminal_sessions_for_context,
@@ -30,7 +34,6 @@ from .terminal_runtime import (
 )
 from .transcripts import replace_session_message_processor
 
-STARTUP_SOURCES = frozenset({"startup", "new", ""})
 _CONTEXT_MODE_METADATA_KEY = "_session_start_context_mode"
 
 
@@ -136,16 +139,16 @@ def _bind_clear_successor(
     handler: Any,
     resolution: SessionStartResolution | None,
     session_obj: Any,
-) -> None:
+) -> bool:
     """Take the clear marker and apply isolated successor side effects."""
     predecessor = getattr(resolution, "clear_predecessor", None)
     attempt_id = getattr(resolution, "clear_attempt_id", None)
     if predecessor is None or not attempt_id or handler._session_manager is None:
-        return
+        return False
     predecessor_id = getattr(predecessor, "id", None)
     successor_id = getattr(session_obj, "id", None)
     if not isinstance(predecessor_id, str) or not isinstance(successor_id, str):
-        return
+        return False
     won = take_clear_handoff_marker(
         handler._session_manager.db,
         predecessor_id,
@@ -164,7 +167,7 @@ def _bind_clear_successor(
                 "attempt_id": attempt_id,
             },
         )
-        return
+        return False
     try:
         predecessor_vars: dict[str, Any] = {}
         sv_mgr: Any | None = None
@@ -198,6 +201,11 @@ def _bind_clear_successor(
             successor_id,
             exc,
         )
+    return True
+
+
+def _schedule_clear_continuation(handler: Any, session_obj: Any, successor_id: str) -> None:
+    """Type the get_handoff pull prompt into the successor pane."""
     try:
         prompt = build_handoff_continue_prompt()
         schedule_handoff_continuation(
@@ -294,8 +302,13 @@ def activate_materialized_session(
             handler.logger.warning("Failed to seed memory recall vars: %s", exc)
         _seed_wiki_overview_var(handler, session_id, project_id)
 
-    if session_source == "clear" and session_obj is not None:
-        _bind_clear_successor(handler, resolution, session_obj)
+    clear_predecessor = getattr(resolution, "clear_predecessor", None)
+    if session_obj is not None and (session_source == "clear" or clear_predecessor is not None):
+        bound = _bind_clear_successor(handler, resolution, session_obj)
+        if bound and session_source == "clear":
+            successor_id = getattr(session_obj, "id", None)
+            if isinstance(successor_id, str):
+                _schedule_clear_continuation(handler, session_obj, successor_id)
         if handler._session_manager is not None:
             rebound = handler._session_manager.get(session_id)
             if rebound is not None:

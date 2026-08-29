@@ -1196,6 +1196,125 @@ class TestSessionStartNewSession:
         for args, _kwargs in mock_sv_mgr.merge_variables.call_args_list:
             assert copied_keys.isdisjoint(args[1])
 
+    @patch("gobby.hooks.event_handlers._session_start.materialize.schedule_handoff_continuation")
+    @patch(
+        "gobby.hooks.event_handlers._session_start.materialize.take_clear_handoff_marker",
+        return_value=True,
+    )
+    @patch("gobby.hooks.event_handlers._session_start.handoff.resolve_clear_continuation")
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_grok_new_source_promotes_matching_clear_continuation(
+        self,
+        mock_sv_mgr_cls: MagicMock,
+        mock_resolve_clear: MagicMock,
+        mock_take: MagicMock,
+        mock_schedule: MagicMock,
+        mock_dependencies: dict[str, Any],
+    ) -> None:
+        """Grok /clear successors emit source=new; a matching marker must not defer."""
+        mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
+        term = {
+            "tmux_pane": "%100",
+            "tmux_socket_path": "/tmp/tmux",
+            "parent_pid": 10322,
+            "parent_create_time": 1.0,
+        }
+        predecessor = SimpleNamespace(id="predecessor-sess", terminal_context=term)
+        mock_resolve_clear.return_value = SimpleNamespace(
+            predecessor=predecessor,
+            attempt_id="attempt-1",
+            degrade_reason=None,
+        )
+        successor = MagicMock()
+        successor.id = "successor-sess"
+        successor.project_id = "proj-123"
+        successor.parent_session_id = None
+        successor.agent_depth = 0
+        successor.agent_run_id = None
+        successor.title = None
+        successor.terminal_context = term
+
+        def _get(session_id: str) -> Any:
+            if session_id == "successor-sess":
+                return successor
+            return None
+
+        mock_dependencies["session_storage"].get.side_effect = _get
+        mock_dependencies["session_manager"].register_session.return_value = "successor-sess"
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="grok-new-ext",
+            source="grok",
+            data={
+                "source": "new",
+                "cwd": "/work/gobby",
+                "terminal_context": term,
+            },
+            metadata={},
+        )
+        event.machine_id = "21000000-0000-4000-8000-000000000008"
+        project_resolution = SimpleNamespace(
+            skipped=False,
+            reason="matched test project",
+            project_id="proj-123",
+        )
+        with (
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.resolve_hook_project_context",
+                return_value=project_resolution,
+            ),
+            patch.object(handlers, "_activate_default_agent", return_value=None),
+            patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
+        ):
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        assert event.data["source"] == "clear"
+        mock_dependencies["session_manager"].register_session.assert_called_once()
+        mock_take.assert_called_once()
+        assert mock_take.call_args.args[1] == "predecessor-sess"
+        assert mock_take.call_args.kwargs["attempt_id"] == "attempt-1"
+        assert mock_take.call_args.kwargs["successor_id"] == "successor-sess"
+        mock_schedule.assert_called_once()
+
+    @patch("gobby.hooks.event_handlers._session_start.materialize.schedule_handoff_continuation")
+    @patch("gobby.hooks.event_handlers._session_start.materialize.take_clear_handoff_marker")
+    @patch("gobby.hooks.event_handlers._session_start.handoff.resolve_clear_continuation")
+    def test_grok_new_source_without_clear_marker_still_defers(
+        self,
+        mock_resolve_clear: MagicMock,
+        mock_take: MagicMock,
+        mock_schedule: MagicMock,
+        mock_dependencies: dict[str, Any],
+    ) -> None:
+        mock_resolve_clear.return_value = SimpleNamespace(
+            predecessor=None,
+            attempt_id=None,
+            degrade_reason="expired",
+        )
+        mock_dependencies["session_storage"].get.return_value = None
+        mock_dependencies["session_manager"].register_session.return_value = "new-sess"
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="grok-new-ext",
+            source="grok",
+            data={"source": "new", "cwd": "/work/gobby"},
+            metadata={},
+        )
+        event.machine_id = "21000000-0000-4000-8000-000000000008"
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_manager"].register_session.assert_not_called()
+        mock_take.assert_not_called()
+        mock_schedule.assert_not_called()
+        assert "_platform_session_id" not in event.metadata
+
     def test_startup_session_does_not_adopt_stale_parent(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:

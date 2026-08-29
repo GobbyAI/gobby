@@ -1,4 +1,4 @@
-"""In-place compact identity resolution for session-start handling."""
+"""Session-start identity resolution for compact restarts and clear successors."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from gobby.sessions.handoff_identity import terminal_contexts_match
 from gobby.sessions.tmux_context import parse_terminal_context_value
 
 _TERMINAL_IDENTITY_FIELDS = ("tmux_pane", "tmux_session", "tty", "parent_pid")
+STARTUP_SOURCES = frozenset({"startup", "new", ""})
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,8 @@ def resolve_session_start_identity(
     identity is canonical even when ingress carries a differing provider ID.
     Compact classification is one-shot: an explicit compact source, a
     handoff_ready row, or an expired row with an unconsumed compact marker.
+    Grok ``/clear`` emits ``source: "new"``; a unique matching unconsumed
+    clear-attempt marker promotes that startup into a clear successor.
     """
     if not handler._session_manager:
         return SessionStartResolution(session=None, session_source=session_source)
@@ -73,6 +76,28 @@ def resolve_session_start_identity(
             cli_source=cli_source,
             terminal_context=terminal_context,
         )
+    if (session_source or "startup") in STARTUP_SOURCES:
+        matched = resolve_matching_clear_continuation(
+            handler,
+            machine_id=machine_id,
+            project_id=project_id,
+            cli_source=cli_source,
+            terminal_context=terminal_context,
+        )
+        if matched is not None:
+            input_data["source"] = "clear"
+            handler.logger.info(
+                "Promoted startup SessionStart to clear continuation",
+                extra={
+                    "event": "clear_continuation_promoted",
+                    "predecessor_id": getattr(matched.clear_predecessor, "id", None),
+                    "attempt_id": matched.clear_attempt_id,
+                    "observed_source": session_source,
+                    "project_id": project_id,
+                    "machine_id": machine_id,
+                },
+            )
+            return matched
 
     session = None
     drifted_project = False
@@ -204,6 +229,27 @@ def resolve_session_start_identity(
     return SessionStartResolution(session=session, session_source="compact")
 
 
+def resolve_matching_clear_continuation(
+    handler: Any,
+    *,
+    machine_id: str,
+    project_id: str,
+    cli_source: str,
+    terminal_context: dict[str, Any] | None,
+) -> SessionStartResolution | None:
+    """Return a clear successor resolution only for a unique unconsumed marker."""
+    resolved = _lookup_clear_continuation(
+        handler,
+        machine_id=machine_id,
+        project_id=project_id,
+        cli_source=cli_source,
+        terminal_context=terminal_context,
+    )
+    if resolved.clear_predecessor is None or not resolved.clear_attempt_id:
+        return None
+    return resolved
+
+
 def _resolve_clear_session_start(
     handler: Any,
     *,
@@ -213,6 +259,36 @@ def _resolve_clear_session_start(
     terminal_context: dict[str, Any] | None,
 ) -> SessionStartResolution:
     """Resolve a clear successor without reusing any existing session row."""
+    resolved = _lookup_clear_continuation(
+        handler,
+        machine_id=machine_id,
+        project_id=project_id,
+        cli_source=cli_source,
+        terminal_context=terminal_context,
+    )
+    if resolved.clear_degrade_reason:
+        handler.logger.warning(
+            "Clear continuation degraded: %s",
+            resolved.clear_degrade_reason,
+            extra={
+                "event": "clear_continuation_degraded",
+                "degrade_reason": resolved.clear_degrade_reason,
+                "project_id": project_id,
+                "machine_id": machine_id,
+            },
+        )
+    return resolved
+
+
+def _lookup_clear_continuation(
+    handler: Any,
+    *,
+    machine_id: str,
+    project_id: str,
+    cli_source: str,
+    terminal_context: dict[str, Any] | None,
+) -> SessionStartResolution:
+    """Look up a pending clear attempt. Always returns ``session_source='clear'``."""
     predecessor_hint: str | None = None
     if terminal_context is not None:
         hint = terminal_context.get("gobby_session_id")
@@ -237,17 +313,6 @@ def _resolve_clear_session_start(
             session=None,
             session_source="clear",
             clear_degrade_reason="exception",
-        )
-    if resolved.degrade_reason:
-        handler.logger.warning(
-            "Clear continuation degraded: %s",
-            resolved.degrade_reason,
-            extra={
-                "event": "clear_continuation_degraded",
-                "degrade_reason": resolved.degrade_reason,
-                "project_id": project_id,
-                "machine_id": machine_id,
-            },
         )
     return SessionStartResolution(
         session=None,

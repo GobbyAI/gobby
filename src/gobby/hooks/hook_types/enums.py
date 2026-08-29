@@ -133,9 +133,11 @@ class SessionStartSource(str, Enum):
         """Map provider aliases to canonical members.
 
         Grok emits SessionStart with ``source: "new"`` for a cold start and
-        ``source: "load"`` after compact/resume. Accept those aliases so
-        Pydantic broadcast validation succeeds. Identity resolution still
-        promotes a compact restart to ``compact`` when the row is marked.
+        after ``/clear``, and ``source: "load"`` after compact/resume. Accept
+        those aliases so Pydantic broadcast validation succeeds. Identity
+        resolution still promotes a compact restart to ``compact`` when the
+        row is marked, and a ``/clear`` successor to ``clear`` when a unique
+        unconsumed clear attempt matches the terminal identity.
         """
         if not isinstance(value, str):
             return None
