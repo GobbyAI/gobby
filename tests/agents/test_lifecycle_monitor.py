@@ -5117,6 +5117,34 @@ class TestStalePendingReaper:
         assert await monitor.reap_stale_pending() == 2
         reap.assert_awaited_once_with()
 
+    @pytest.mark.asyncio
+    async def test_check_loop_iteration_awaits_the_reaper(
+        self,
+        monitor: AgentLifecycleMonitor,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reap = AsyncMock(return_value=0)
+        monkeypatch.setattr(monitor._reconciliation, "reap_stale_pending", reap)
+        for name in AgentLifecycleMonitor._check_loop.__code__.co_names:
+            if name != "reap_stale_pending" and inspect.iscoroutinefunction(
+                getattr(AgentLifecycleMonitor, name, None)
+            ):
+                monkeypatch.setattr(monitor, name, AsyncMock(return_value=0))
+
+        async def stop_after_first_iteration(_seconds: float) -> None:
+            # The startup delay passes straight through; the first inter-iteration
+            # pause ends the loop once the reaper has run.
+            if reap.await_count:
+                raise asyncio.CancelledError
+
+        monkeypatch.setattr(
+            "gobby.agents.lifecycle_monitor.asyncio.sleep", stop_after_first_iteration
+        )
+        monitor._running = True
+        await asyncio.wait_for(monitor._check_loop(), timeout=5.0)
+
+        reap.assert_awaited_once_with()
+
 
 class TestNonTaskResumeCallback:
     """Tests for the parked non-task resume retry hook in the check loop."""
