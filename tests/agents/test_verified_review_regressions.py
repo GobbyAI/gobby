@@ -28,6 +28,7 @@ async def test_lifecycle_callbacks_fail_independently(
     monitor._non_task_resume_callback = AsyncMock()
     check_names = (
         "reconcile_pending_terminations",
+        "reap_stale_pending",
         "check_trust_prompts",
         "check_loop_prompts",
         "check_approval_prompts",
@@ -41,6 +42,7 @@ async def test_lifecycle_callbacks_fail_independently(
         "check_initialization_timeout",
         "check_idle_agents",
         "check_provider_stalls",
+        "check_completed_task_agents",
         "check_autonomous_stuck_agents",
         "refresh_active_run_dispatch_mutexes",
     )
@@ -58,7 +60,11 @@ async def test_lifecycle_callbacks_fail_independently(
     await monitor._check_loop()
 
     assert monitor._running is False
-    assert all(check.await_count == 1 for check in checks.values())
+    # Compared as a mapping so a check the loop gained but this list did not
+    # names itself, instead of collapsing to a bare `assert False`.
+    assert {name: check.await_count for name, check in checks.items()} == dict.fromkeys(
+        check_names, 1
+    )
     monitor._non_task_resume_callback.assert_awaited_once_with()
     checks["check_trust_prompts"].assert_awaited_once_with()
 
