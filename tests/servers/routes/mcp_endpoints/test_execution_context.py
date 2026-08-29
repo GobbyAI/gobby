@@ -338,6 +338,39 @@ class TestSetContextForRequest:
         assert tokens.resolved_session_id == SESSION_UUID
         assert tokens.resolved_project_id == PROJECT_ID
 
+    async def test_wrapper_accepts_serialized_tmux_generation_fields(self) -> None:
+        """Stdio capture includes tmux server generation; the daemon must not 409 it."""
+        server = _make_server()
+        terminal_context = {
+            "parent_pid": 21035,
+            "tmux_pane": "%123",
+            "tmux_socket_path": "/private/tmp/tmux-501/default",
+            "tmux_window_id": "@123",
+            "tmux_session": "121",
+            "tmux_server_pid": 6051,
+            "tmux_server_start_time": 1787385464,
+            "term_program": "tmux",
+        }
+        server.session_manager.resolve_current_terminal_session.return_value = SimpleNamespace(
+            id=SESSION_UUID,
+            external_id="external-session",
+            project_id=PROJECT_ID,
+        )
+        request = _make_request(
+            project_id=PROJECT_ID,
+            wrapper=True,
+            terminal_context=json.dumps(terminal_context),
+        )
+
+        with patch(
+            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
+            return_value=SeededContextTokens(resolved_project_id=PROJECT_ID),
+        ):
+            tokens = await _set_context_for_request(server, {}, request)
+
+        server.session_manager.resolve_current_terminal_session.assert_called_once()
+        assert tokens.resolved_session_id == SESSION_UUID
+
     @pytest.mark.parametrize(
         ("terminal_context", "terminal_context_seen"),
         [

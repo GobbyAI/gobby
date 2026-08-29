@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, NoReturn
 from fastapi import HTTPException, Request
 
 from gobby.mcp_proxy.models import ToolProxyErrorCode
+from gobby.mcp_proxy.terminal_context import TERMINAL_CONTEXT_KEYS
 from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_PROTOCOL_VERSION_HEADER
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.session_resolution import resolve_session_reference
@@ -30,18 +31,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("gobby.servers.routes.mcp.endpoints.execution")
 
-_TERMINAL_CONTEXT_KEYS = frozenset(
-    {
-        "parent_pid",
-        "tmux_pane",
-        "tmux_socket_path",
-        "tmux_window_id",
-        "tmux_session",
-        "tty",
-        "term_program",
-        "term_session_id",
-    }
-)
+_TERMINAL_CONTEXT_KEYS = frozenset(TERMINAL_CONTEXT_KEYS)
 
 
 def _raise_session_required(*, terminal_context_seen: bool) -> NoReturn:
