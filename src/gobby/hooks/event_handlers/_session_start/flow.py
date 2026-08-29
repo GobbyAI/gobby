@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import psycopg
 
+from gobby.hooks.envelope_dedupe import bump_stop_replay_epoch
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hooks.project_context import resolve_hook_project_context
@@ -491,6 +492,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     )
 
     clear_queued_context(handler._session_manager, session_id)
+    bump_stop_replay_epoch()
     response = cast(
         HookResponse,
         handler._compose_session_response(
@@ -678,6 +680,7 @@ def handle_pre_created_session(
     )
 
     clear_queued_context(handler._session_manager, session_id)
+    bump_stop_replay_epoch()
     response = cast(
         HookResponse,
         handler._compose_session_response(

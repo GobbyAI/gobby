@@ -38,6 +38,20 @@ PROCESSED_MARKER_RETENTION_SECONDS: Final = 24 * 60 * 60.0
 # sees the whole directory and the bound never binds.
 PROCESSED_MARKER_PRUNE_MAX_ENTRIES: Final = 100_000
 
+STOP_REPLAY_EPOCH_FILENAME: Final = ".stop_replay_epoch"
+_STOP_REPLAY_HOOK_TYPES: Final = frozenset(
+    {
+        "stop",
+        "subagent_stop",
+        "subagent_end",
+        "session_end",
+        "turn_end",
+        "stop_failure",
+    }
+)
+_FOUND_WORK_STOP_RULE: Final = "[block-terminal-validation-failure]"
+_BLOCK_DECISIONS: Final = frozenset({"block", "deny"})
+
 
 def get_processed_envelope_dir(inbox_dir: Path | None = None) -> Path:
     """Return the directory that stores processed envelope ID markers."""
@@ -257,8 +271,14 @@ def envelope_terminal_response(
     envelope_id: str,
     *,
     processed_dir: Path | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any] | None:
-    """Return a stored terminal hook response for a processed envelope."""
+    """Return a stored terminal hook response for a processed envelope.
+
+    STOP/turn_end blocks are replayed only inside ENVELOPE_REPLAY_GRACE_SECONDS
+    and only if they were processed after the latest session_start epoch.
+    Aged or pre-epoch stop blocks are dropped so the envelope can re-evaluate.
+    """
     record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
     if record is None:
         return None
@@ -269,7 +289,53 @@ def envelope_terminal_response(
     elif status is not None:
         return None
     response = record.get("response")
-    return response if isinstance(response, dict) else None
+    if not isinstance(response, dict):
+        return None
+    if _should_replay_processed_response(
+        record,
+        response,
+        now=now,
+        processed_dir=processed_dir,
+    ):
+        return response
+    remove_envelope_marker(envelope_id, processed_dir=processed_dir)
+    logger.debug("Dropped stale processed STOP/turn_end replay for envelope %s", envelope_id)
+    return None
+
+
+def bump_stop_replay_epoch(
+    *,
+    processed_dir: Path | None = None,
+    now: datetime | None = None,
+) -> None:
+    """Start a new session_start epoch so older STOP/turn_end blocks are not replayed."""
+    target = processed_dir if processed_dir is not None else get_processed_envelope_dir()
+    at = now or datetime.now(UTC)
+    path = target / STOP_REPLAY_EPOCH_FILENAME
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        temp_path = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
+        temp_path.write_text(at.isoformat() + "\n", encoding="utf-8")
+        try:
+            os.replace(temp_path, path)
+        finally:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+    except OSError:
+        logger.debug("Skipping stop-replay epoch bump at %s", path, exc_info=True)
+
+
+def read_stop_replay_epoch(*, processed_dir: Path | None = None) -> datetime | None:
+    """Return the latest session_start STOP-replay epoch, if one has been written."""
+    target = processed_dir if processed_dir is not None else get_processed_envelope_dir()
+    path = target / STOP_REPLAY_EPOCH_FILENAME
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return _parse_iso_datetime(raw)
 
 
 def mark_envelope_processed(
@@ -277,6 +343,7 @@ def mark_envelope_processed(
     *,
     response: Mapping[str, Any] | None = None,
     processed_dir: Path | None = None,
+    hook_type: str | None = None,
 ) -> None:
     """Persist a terminal processed marker for an envelope ID.
 
@@ -303,6 +370,13 @@ def mark_envelope_processed(
     }
     if response is not None:
         record["response"] = dict(response)
+    stored_hook_type = hook_type if hook_type else None
+    if stored_hook_type is None and existing is not None:
+        existing_hook_type = existing.get("hook_type")
+        if isinstance(existing_hook_type, str) and existing_hook_type:
+            stored_hook_type = existing_hook_type
+    if stored_hook_type:
+        record["hook_type"] = stored_hook_type
 
     temp_path = marker.with_name(f"{marker.name}.{uuid4().hex}.tmp")
     temp_path.write_text(
@@ -469,13 +543,57 @@ def _prune_entry(entry: os.DirEntry[str], *, cutoff: float) -> bool:
 
 
 def _processing_claimed_at(record: Mapping[str, Any]) -> datetime | None:
-    raw_claimed_at = record.get("claimed_at")
-    if not isinstance(raw_claimed_at, str):
+    return _parse_iso_datetime(record.get("claimed_at"))
+
+
+def _parse_iso_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
         return None
     try:
-        claimed_at = datetime.fromisoformat(raw_claimed_at)
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
-    if claimed_at.tzinfo is None:
-        return claimed_at.replace(tzinfo=UTC)
-    return claimed_at.astimezone(UTC)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _normalized_hook_type(hook_type: object) -> str:
+    if not isinstance(hook_type, str):
+        return ""
+    return hook_type.strip().casefold().replace("-", "_")
+
+
+def _response_is_block(response: Mapping[str, Any]) -> bool:
+    decision = response.get("decision")
+    return isinstance(decision, str) and decision.casefold() in _BLOCK_DECISIONS
+
+
+def _is_stop_or_turn_end_block(record: Mapping[str, Any], response: Mapping[str, Any]) -> bool:
+    if not _response_is_block(response):
+        return False
+    hook_type = _normalized_hook_type(record.get("hook_type"))
+    if hook_type in _STOP_REPLAY_HOOK_TYPES:
+        return True
+    reason = response.get("reason")
+    return isinstance(reason, str) and _FOUND_WORK_STOP_RULE in reason
+
+
+def _should_replay_processed_response(
+    record: Mapping[str, Any],
+    response: Mapping[str, Any],
+    *,
+    now: datetime | None,
+    processed_dir: Path | None,
+) -> bool:
+    if not _is_stop_or_turn_end_block(record, response):
+        return True
+    processed_at = _parse_iso_datetime(record.get("processed_at"))
+    if processed_at is None:
+        return False
+    reference = now or datetime.now(UTC)
+    age_seconds = (reference - processed_at).total_seconds()
+    if age_seconds < 0 or age_seconds >= ENVELOPE_REPLAY_GRACE_SECONDS:
+        return False
+    epoch = read_stop_replay_epoch(processed_dir=processed_dir)
+    return epoch is None or processed_at >= epoch
