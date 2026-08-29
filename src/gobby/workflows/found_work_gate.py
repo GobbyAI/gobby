@@ -33,6 +33,9 @@ from gobby.tasks.transcript_evidence import (
 
 logger = logging.getLogger(__name__)
 
+# In-process only. Persisted analysis cache must not outlive this daemon.
+_PROCESS_BOOT_AT = datetime.now(UTC)
+
 _DEFECT_RE = re.compile(
     r"\b(?:bugs?|broken|defects?|errors?|fail(?:ed|ing|ures?)?|incorrect|regressions?|"
     r"warnings?|issues?|type errors?|lint errors?|does(?:n't| not) work|not working)\b",
@@ -547,6 +550,7 @@ def _analysis_cache_key(
     variables: Mapping[str, Any],
     *,
     close_at: datetime | None = None,
+    boot_at: datetime | None = None,
 ) -> str:
     payload = {
         "message": message,
@@ -556,6 +560,7 @@ def _analysis_cache_key(
         "fix_commit": variables.get("_found_work_fix_commit_turn") is True,
         "owner_handoff": variables.get("_found_work_owner_handoff_turn") is True,
         "close_at": close_at.isoformat() if isinstance(close_at, datetime) else None,
+        "boot_at": (boot_at or _PROCESS_BOOT_AT).isoformat(),
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
