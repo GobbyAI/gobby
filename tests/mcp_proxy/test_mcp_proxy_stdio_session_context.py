@@ -11,6 +11,9 @@ from gobby.mcp_proxy.stdio import DaemonProxy
 
 pytestmark = pytest.mark.unit
 
+HEADLESS_CONTEXT = {"parent_pid": 4321}
+TERMINAL_CONTEXT = {"parent_pid": 4321, "tmux_pane": "%4"}
+
 
 @pytest.fixture(autouse=True)
 def _clear_managed_agent_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -18,6 +21,10 @@ def _clear_managed_agent_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GOBBY_AGENT_RUN_ID", raising=False)
     monkeypatch.delenv("GOBBY_SESSION_ID", raising=False)
     monkeypatch.delenv("GOBBY_AGENT_API_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.stdio_proxy.current_terminal_context",
+        lambda: HEADLESS_CONTEXT,
+    )
 
 
 def test_project_id_reads_nearest_parent_project_json(
@@ -186,6 +193,29 @@ async def test_managed_agent_pins_session_header_to_spawn_env(
     assert kwargs["headers"]["X-Gobby-Agent-Run-Id"] == "run-123"
     # The body session_id stays a target-tool argument, untouched by pinning.
     assert kwargs["json"] == {"session_id": "#42"}
+
+
+@pytest.mark.asyncio
+async def test_interactive_tmux_omits_guessed_wrapper_session_header() -> None:
+    with patch(
+        "gobby.mcp_proxy.stdio_proxy.current_terminal_context",
+        return_value=TERMINAL_CONTEXT,
+    ):
+        proxy = DaemonProxy(60887)
+
+    with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
+        client = _mock_http_client(mock_client_cls)
+
+        await proxy._request(
+            "POST",
+            "/some/path",
+            json={"session_id": "target-session"},
+            session_id="#1",
+        )
+
+    _, kwargs = client.request.call_args
+    assert "X-Gobby-Session-Id" not in kwargs["headers"]
+    assert kwargs["json"] == {"session_id": "target-session"}
 
 
 @pytest.mark.asyncio

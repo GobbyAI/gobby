@@ -14,6 +14,7 @@ from gobby.utils.session_context import TERMINAL_CONTEXT_HEADER
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 TERMINAL_CONTEXT = {"parent_pid": 4321, "tmux_pane": "%4"}
+HEADLESS_CONTEXT = {"parent_pid": 4321}
 
 
 def _proxy_with_response(response: MagicMock) -> tuple[DaemonProxy, AsyncMock]:
@@ -34,18 +35,21 @@ def _success_response() -> MagicMock:
 
 
 @pytest.mark.parametrize(
-    ("environment_session", "explicit_session", "expected_session", "ambient"),
+    ("environment_session", "explicit_session", "context", "expected_session", "ambient"),
     [
-        (None, None, None, True),
-        ("env-session", None, "env-session", False),
-        (None, "explicit-session", "explicit-session", False),
-        ("env-session", "explicit-session", "explicit-session", False),
+        (None, None, TERMINAL_CONTEXT, None, True),
+        ("env-session", None, TERMINAL_CONTEXT, "env-session", False),
+        (None, "explicit-session", TERMINAL_CONTEXT, None, True),
+        (None, "explicit-session", HEADLESS_CONTEXT, "explicit-session", False),
+        ("env-session", "explicit-session", TERMINAL_CONTEXT, "env-session", False),
+        ("env-session", "explicit-session", HEADLESS_CONTEXT, "env-session", False),
     ],
 )
 async def test_request_identity_header_matrix(
     monkeypatch: pytest.MonkeyPatch,
     environment_session: str | None,
     explicit_session: str | None,
+    context: dict[str, object],
     expected_session: str | None,
     ambient: bool,
 ) -> None:
@@ -56,7 +60,7 @@ async def test_request_identity_header_matrix(
 
     with patch(
         "gobby.mcp_proxy.stdio_proxy.current_terminal_context",
-        return_value=TERMINAL_CONTEXT,
+        return_value=context,
     ):
         proxy, request = _proxy_with_response(_success_response())
 
@@ -66,7 +70,7 @@ async def test_request_identity_header_matrix(
     headers = request.await_args.kwargs["headers"]
     assert headers.get("X-Gobby-Session-Id") == expected_session
     if ambient:
-        assert json.loads(headers[TERMINAL_CONTEXT_HEADER]) == TERMINAL_CONTEXT
+        assert json.loads(headers[TERMINAL_CONTEXT_HEADER]) == context
     else:
         assert TERMINAL_CONTEXT_HEADER not in headers
 
@@ -86,10 +90,29 @@ async def test_explicit_request_does_not_change_later_ambient_identity(
 
     explicit_headers = request.await_args_list[0].kwargs["headers"]
     ambient_headers = request.await_args_list[1].kwargs["headers"]
-    assert explicit_headers["X-Gobby-Session-Id"] == "explicit-session"
-    assert TERMINAL_CONTEXT_HEADER not in explicit_headers
+    assert "X-Gobby-Session-Id" not in explicit_headers
+    assert json.loads(explicit_headers[TERMINAL_CONTEXT_HEADER]) == TERMINAL_CONTEXT
     assert "X-Gobby-Session-Id" not in ambient_headers
     assert json.loads(ambient_headers[TERMINAL_CONTEXT_HEADER]) == TERMINAL_CONTEXT
+
+
+async def test_grok_session_id_is_not_caller_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GOBBY_SESSION_ID", raising=False)
+    monkeypatch.setenv("GROK_SESSION_ID", "grok-external-id")
+    with patch(
+        "gobby.mcp_proxy.stdio_proxy.current_terminal_context",
+        return_value=TERMINAL_CONTEXT,
+    ):
+        proxy, request = _proxy_with_response(_success_response())
+
+    await proxy._request("GET", "/api/status", session_id="#1")
+
+    assert request.await_args is not None
+    headers = request.await_args.kwargs["headers"]
+    assert "X-Gobby-Session-Id" not in headers
+    assert json.loads(headers[TERMINAL_CONTEXT_HEADER]) == TERMINAL_CONTEXT
 
 
 async def test_terminal_context_is_captured_once_at_proxy_initialization(

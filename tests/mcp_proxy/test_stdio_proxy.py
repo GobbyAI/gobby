@@ -95,6 +95,11 @@ async def test_request_refreshes_project_id_after_late_project_init(
 ) -> None:
     """A proxy started before ``gobby init`` sends project headers once the ID exists."""
     monkeypatch.delenv("GOBBY_AGENT_RUN_ID", raising=False)
+    monkeypatch.delenv("GOBBY_SESSION_ID", raising=False)
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.stdio_proxy.current_terminal_context",
+        lambda: {"parent_pid": 4321},
+    )
     deps = MagicMock()
     deps.read_project_id.side_effect = [None, None, "proj-1"]
     client = MagicMock()

@@ -107,8 +107,12 @@ class DaemonProxy:
         self.base_url = f"http://127.0.0.1:{port}"
         self._deps_factory = deps_factory or default_daemon_proxy_dependencies
         self._project_id: str | None = self._deps_factory().read_project_id()
+        # GOBBY_SESSION_ID is sessions.id. Provider CLI ids (GROK_SESSION_ID and
+        # the other CLIs' session env vars) are written to sessions.external_id.
         self._environment_session_id: str | None = os.environ.get("GOBBY_SESSION_ID") or None
-        self._terminal_context_header = serialize_terminal_context(current_terminal_context())
+        terminal_context = current_terminal_context()
+        self._terminal_context_header = serialize_terminal_context(terminal_context)
+        self._has_tmux_identity = bool(terminal_context.get("tmux_pane"))
         self._last_health_ok_at = 0.0
         self._auth_headers = daemon_auth_headers()
         self._client: httpx.AsyncClient | None = None
@@ -194,14 +198,17 @@ class DaemonProxy:
         caller_project_id = self._project_id
         managed_run_id = os.environ.get("GOBBY_AGENT_RUN_ID")
         effective_session_id: str | None
-        if managed_run_id and self._environment_session_id:
-            # A managed agent's caller identity is pinned by its spawn env:
-            # the environment value is the resolved session UUID, while
-            # per-call refs like "#42" cannot be resolved client-side and the
-            # run capability only ever authenticates as its own session.
+        if self._environment_session_id:
+            # sessions.id. Spawned/autonomous/managed runs export this; a
+            # body ref like "#42" cannot change caller identity.
             effective_session_id = self._environment_session_id
+        elif session_id and not self._has_tmux_identity:
+            # Headless callers pass the Gobby session as wrapper session_id.
+            # Interactive tmux omits the header so a guessed "#1" cannot
+            # replace the pane. GROK_SESSION_ID is sessions.external_id.
+            effective_session_id = session_id
         else:
-            effective_session_id = session_id or self._environment_session_id
+            effective_session_id = None
         if effective_project_id:
             headers["X-Gobby-Project-Id"] = effective_project_id
         if caller_project_id:
