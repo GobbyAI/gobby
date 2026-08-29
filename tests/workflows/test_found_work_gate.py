@@ -29,6 +29,7 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.found_work_gate import (
     FoundWorkStopAnalyzer,
     FoundWorkStopFacts,
+    _analysis_cache_key,
     capture_found_work_handoff,
     capture_turn_prompt,
     is_permission_deferral_candidate,
@@ -616,6 +617,26 @@ class TestTerminalValidationFailures:
             _run(2, "success", "pytest tests/unit/test_widget.py"),
         ]
         assert unresolved_validation_failures(runs, owner_handoff=False) == ()
+
+
+def test_analysis_cache_key_changes_when_latest_close_changes() -> None:
+    variables = {"_found_work_activity_revision": 3, "task_claimed": False}
+    before = _analysis_cache_key("msg", "prompt", variables, close_at=None)
+    after = _analysis_cache_key(
+        "msg",
+        "prompt",
+        variables,
+        close_at=datetime(2026, 8, 29, 16, 23, 13, tzinfo=UTC),
+    )
+    assert before != after
+
+
+def test_analysis_cache_key_stable_for_same_close() -> None:
+    close_at = datetime(2026, 8, 29, 16, 23, 13, tzinfo=UTC)
+    variables = {"_found_work_activity_revision": 3, "task_claimed": False}
+    first = _analysis_cache_key("msg", "prompt", variables, close_at=close_at)
+    second = _analysis_cache_key("msg", "prompt", variables, close_at=close_at)
+    assert first == second
 
     def test_identical_selector_green_covers_selector_narrowed_failure(self) -> None:
         runs = [

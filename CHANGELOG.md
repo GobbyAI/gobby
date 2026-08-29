@@ -49,6 +49,9 @@ disabled`, only for an explicitly trusted isolated environment.
 - Parse Grok `updates.jsonl` unix-second and millisecond timestamps so close
   windows can exclude pre-close validation runs instead of treating every event
   as `now()`.
+- Include the session's latest own task-close time in the found-work stop
+  analysis cache key so a close or daemon restart cannot keep serving a stale
+  red-run list.
 
 ## [0.8.1] — gobby-core — 2026-07-14
 

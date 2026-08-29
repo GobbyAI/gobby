@@ -265,7 +265,8 @@ class FoundWorkStopAnalyzer:
     ) -> FoundWorkStopFacts:
         message = await _assistant_message(event, self._session_manager, session_id)
         user_prompt = str(variables.get("_current_user_prompt") or "")
-        cache_key = _analysis_cache_key(message, user_prompt, variables)
+        close_at = await asyncio.to_thread(self._latest_task_close, session_id)
+        cache_key = _analysis_cache_key(message, user_prompt, variables, close_at=close_at)
         if variables.get("_found_work_analysis_cache_key") == cache_key:
             cached_failures = variables.get("_found_work_terminal_validation_failures")
             return FoundWorkStopFacts(
@@ -544,6 +545,8 @@ def _analysis_cache_key(
     message: str,
     user_prompt: str,
     variables: Mapping[str, Any],
+    *,
+    close_at: datetime | None = None,
 ) -> str:
     payload = {
         "message": message,
@@ -552,6 +555,7 @@ def _analysis_cache_key(
         "task_claimed": bool(variables.get("task_claimed")),
         "fix_commit": variables.get("_found_work_fix_commit_turn") is True,
         "owner_handoff": variables.get("_found_work_owner_handoff_turn") is True,
+        "close_at": close_at.isoformat() if isinstance(close_at, datetime) else None,
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
