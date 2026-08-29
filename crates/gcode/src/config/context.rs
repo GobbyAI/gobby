@@ -512,7 +512,7 @@ pub fn resolve_project_identity(
         if marker.parent_project_path.is_some() ^ marker.parent_project_id.is_some() {
             anyhow::bail!(
                 "invalid isolation marker in {}: parent_project_path and parent_project_id must be set together",
-                root.join(".gobby").join("project.json").display()
+                root.join(".gobby").join("isolation.json").display()
             );
         }
 

@@ -8,9 +8,11 @@ import contextvars
 import json
 import logging
 import os
+import stat
+import subprocess  # nosec B404 # git argv is a fixed isolation restore command.
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from gobby.utils.env import is_test_protect_enabled
 
@@ -28,6 +30,12 @@ _current_project_context: contextvars.ContextVar[dict[str, Any] | None] = contex
 
 
 _TEST_PROJECT_IDS = frozenset({"e2e-test-project", "test-project"})
+
+ISOLATION_MARKER_RELATIVE_PATH = ".gobby/isolation.json"
+PROJECT_JSON_RELATIVE_PATH = ".gobby/project.json"
+_PARENT_PROJECT_PATH_KEY = "parent_project_path"
+_PARENT_PROJECT_ID_KEY = "parent_project_id"
+_PARENT_KEYS = (_PARENT_PROJECT_PATH_KEY, _PARENT_PROJECT_ID_KEY)
 
 
 def set_project_context(ctx: dict[str, Any] | None) -> contextvars.Token[dict[str, Any] | None]:
@@ -108,9 +116,12 @@ def get_project_context(cwd: Path | None = None) -> dict[str, Any] | None:
         if root:
             try:
                 with open(root / ".gobby" / "project.json") as f:
-                    data = json.load(f)
+                    loaded = json.load(f)
+                if not isinstance(loaded, dict):
+                    raise json.JSONDecodeError("project.json is not an object", "", 0)
+                data = dict(loaded)
                 data["project_path"] = str(root)
-                return cast(dict[str, Any], data)
+                return _with_isolation_marker(data, root)
             except (FileNotFoundError, PermissionError, json.JSONDecodeError, OSError) as e:
                 logger.warning("Failed to read project context: %s", e)
 
@@ -166,7 +177,7 @@ def _build_and_set_project_context(
                         project.repo_path,
                     )
                 data["project_path"] = repo_path
-                return set_project_context(data)
+                return set_project_context(_with_isolation_marker(data, Path(repo_path)))
             except (json.JSONDecodeError, OSError) as e:
                 logger.debug("Failed to read project.json at %s: %s", project_file, e)
     return set_project_context(ctx)
@@ -268,26 +279,104 @@ class IsolationProjectJsonError(RuntimeError):
     """Raised when isolated project metadata cannot be created safely."""
 
 
+def read_isolation_marker(root: Path) -> dict[str, str] | None:
+    """Read parent isolation fields from the gitignored sidecar only."""
+    path = Path(root) / ISOLATION_MARKER_RELATIVE_PATH
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    parent_path = payload.get(_PARENT_PROJECT_PATH_KEY)
+    parent_id = payload.get(_PARENT_PROJECT_ID_KEY)
+    if not isinstance(parent_path, str) or not parent_path:
+        return None
+    if not isinstance(parent_id, str) or not parent_id:
+        return None
+    return {
+        _PARENT_PROJECT_PATH_KEY: parent_path,
+        _PARENT_PROJECT_ID_KEY: parent_id,
+    }
+
+
+def _with_isolation_marker(data: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Drop tracked parent keys and merge the sidecar when both fields exist."""
+    for key in _PARENT_KEYS:
+        data.pop(key, None)
+    marker = read_isolation_marker(root)
+    if marker is not None:
+        data.update(marker)
+    return data
+
+
+def _atomic_write_bytes(path: Path, payload: bytes, mode: int | None = None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_fd, temp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(temp_fd, "wb") as temp_file:
+            temp_file.write(payload)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+            if mode is not None:
+                os.fchmod(temp_file.fileno(), stat.S_IMODE(mode))
+        os.replace(temp_path, path)
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Failed to remove temporary file %s", temp_path)
+
+
+def _restore_generated_tracked_project_json(
+    isolated_path: Path,
+    main_repo_path: Path,
+) -> None:
+    from gobby.agents.isolation_git_hygiene import is_generated_isolation_project_json
+
+    target = isolated_path / PROJECT_JSON_RELATIVE_PATH
+    if not is_generated_isolation_project_json(target, main_repo_path=main_repo_path):
+        return
+    checkout = subprocess.run(
+        ["git", "checkout", "HEAD", "--", PROJECT_JSON_RELATIVE_PATH],
+        cwd=isolated_path,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if checkout.returncode != 0:
+        logger.warning(
+            "Failed to restore generated project metadata in %s: %s",
+            isolated_path,
+            checkout.stderr.strip(),
+        )
+        return
+    subprocess.run(
+        ["git", "update-index", "--no-skip-worktree", "--", PROJECT_JSON_RELATIVE_PATH],
+        cwd=isolated_path,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+
 def ensure_project_json_for_isolation(
     source_repo_path: str | Path,
     isolated_path: str | Path,
 ) -> None:
+    """Write the isolation sidecar without rewriting tracked project metadata.
+
+    Copies source project.json bytes into the isolated root only when that file
+    is missing. Parent identity lives in the gitignored sidecar so git status
+    stays clean. Generated parent-key dirt on tracked metadata is restored from
+    HEAD when it matches Gobby's old rewrite.
     """
-    Ensure .gobby/project.json exists in an isolated environment with parent_project_path.
-
-    Reads project.json from the source repo and writes it to the isolated path
-    (worktree or clone) with a ``parent_project_path`` field pointing back to
-    the source. This allows ``get_workflow_project_path()`` to discover
-    workflows from the parent project.
-
-    Preserves an existing target byte-for-byte when it already has the required
-    parent metadata. Otherwise, rewrites it from the source with those fields.
-
-    Args:
-        source_repo_path: Path to the main/source repository.
-        isolated_path: Path to the worktree or clone directory.
-    """
-    source_project_json = Path(source_repo_path) / ".gobby" / "project.json"
+    source_root = Path(source_repo_path)
+    isolated_root = Path(isolated_path)
+    source_project_json = source_root / PROJECT_JSON_RELATIVE_PATH
 
     if not source_project_json.exists():
         return
@@ -295,49 +384,30 @@ def ensure_project_json_for_isolation(
     try:
         source_bytes = source_project_json.read_bytes()
         source_data = json.loads(source_bytes)
-        data = dict(source_data)
+        parent_project_id = source_data["id"]
+        if not isinstance(parent_project_id, str) or not parent_project_id:
+            raise KeyError("id")
 
-        parent_project_id = data["id"]
-        data["parent_project_path"] = str(Path(source_repo_path).resolve())
-        data["parent_project_id"] = parent_project_id
+        marker = {
+            _PARENT_PROJECT_PATH_KEY: str(source_root.resolve()),
+            _PARENT_PROJECT_ID_KEY: parent_project_id,
+        }
+        marker_bytes = (json.dumps(marker, indent=2) + "\n").encode()
 
-        target_gobby_dir = Path(isolated_path) / ".gobby"
-        target_gobby_dir.mkdir(parents=True, exist_ok=True)
+        target_project_json = isolated_root / PROJECT_JSON_RELATIVE_PATH
+        if not target_project_json.exists():
+            _atomic_write_bytes(
+                target_project_json,
+                source_bytes,
+                mode=source_project_json.stat().st_mode,
+            )
 
-        target_project_json = target_gobby_dir / "project.json"
-        if target_project_json.exists():
-            try:
-                target_bytes = target_project_json.read_bytes()
-                target_data = json.loads(target_bytes)
-                if target_bytes == source_bytes and target_data == data:
-                    return
-            except (OSError, json.JSONDecodeError):
-                pass
-
-        output_bytes = (
-            source_bytes if source_data == data else (json.dumps(data, indent=2) + "\n").encode()
-        )
-        temp_fd, temp_name = tempfile.mkstemp(
-            dir=target_gobby_dir,
-            prefix=f".{target_project_json.name}.",
-        )
-        temp_path = Path(temp_name)
-        try:
-            with os.fdopen(temp_fd, "wb") as temp_file:
-                temp_file.write(output_bytes)
-                temp_file.flush()
-                os.fsync(temp_file.fileno())
-            os.replace(temp_path, target_project_json)
-        finally:
-            try:
-                temp_path.unlink(missing_ok=True)
-            except OSError:
-                logger.warning("Failed to remove temporary project metadata file %s", temp_path)
-
-        logger.info("Wrote project.json with parent reference in %s", isolated_path)
+        _atomic_write_bytes(isolated_root / ISOLATION_MARKER_RELATIVE_PATH, marker_bytes)
+        _restore_generated_tracked_project_json(isolated_root, source_root)
+        logger.info("Wrote isolation sidecar in %s", isolated_root)
     except (OSError, json.JSONDecodeError, KeyError) as exc:
         raise IsolationProjectJsonError(
-            f"Failed to write project.json in isolated environment {isolated_path}"
+            f"Failed to write isolation marker in isolated environment {isolated_path}"
         ) from exc
 
 

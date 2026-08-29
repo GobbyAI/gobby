@@ -643,8 +643,9 @@ The committed schema contains only repository-portable fields:
 Commit `.gobby/project.json`. Gobby strips `linear_team_id`,
 `linear_project_id`, `parent_project_id`, and `parent_project_path` whenever it
 updates the file. Linear bindings live in the local `projects` database row.
-Real worktree and clone isolation creates parent markers in those isolated
-checkouts; merge handling removes them from shared project metadata.
+Worktree and clone isolation writes those parent fields to a gitignored
+`.gobby/isolation.json` sidecar in the isolated checkout; tracked
+`.gobby/project.json` stays byte-for-byte as git checked it out.
 
 Task and memory state are database-owned and must stay untracked.
 `gobby tasks backup` and `gobby memory backup` write machine-local snapshots to

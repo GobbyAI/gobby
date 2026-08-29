@@ -21,6 +21,16 @@ fn write_project_json(root: &Path, json: serde_json::Value) {
     .expect("write project json");
 }
 
+fn write_isolation_json(root: &Path, json: serde_json::Value) {
+    let gobby_dir = root.join(".gobby");
+    std::fs::create_dir_all(&gobby_dir).expect("create .gobby");
+    std::fs::write(
+        gobby_dir.join("isolation.json"),
+        serde_json::to_string_pretty(&json).expect("serialize isolation json"),
+    )
+    .expect("write isolation json");
+}
+
 fn run_git(dir: &Path, args: &[&str]) {
     let output = Command::new("git")
         .arg("-C")
@@ -386,7 +396,12 @@ fn self_referential_parent_marker_keeps_project_json_id() {
         &root,
         serde_json::json!({
             "id": "main-project-id",
-            "name": "main",
+            "name": "main"
+        }),
+    );
+    write_isolation_json(
+        &root,
+        serde_json::json!({
             "parent_project_path": root.to_string_lossy(),
             "parent_project_id": "main-project-id"
         }),
@@ -411,7 +426,12 @@ fn isolated_marker_with_parent_metadata_resolves_overlay_scope() {
     write_project_json(
         &worktree,
         serde_json::json!({
-            "id": "parent-id",
+            "id": "parent-id"
+        }),
+    );
+    write_isolation_json(
+        &worktree,
+        serde_json::json!({
             "parent_project_path": parent.to_string_lossy(),
             "parent_project_id": parent_project_id
         }),
@@ -443,7 +463,12 @@ fn isolated_marker_without_complete_parent_metadata_is_rejected() {
     write_project_json(
         tmp.path(),
         serde_json::json!({
-            "id": "parent-id",
+            "id": "parent-id"
+        }),
+    );
+    write_isolation_json(
+        tmp.path(),
+        serde_json::json!({
             "parent_project_path": "/parent"
         }),
     );
@@ -453,7 +478,7 @@ fn isolated_marker_without_complete_parent_metadata_is_rejected() {
 
     let message = err.to_string();
     assert!(message.contains("invalid isolation marker in"), "{message}");
-    assert!(message.contains(".gobby/project.json"), "{message}");
+    assert!(message.contains(".gobby/isolation.json"), "{message}");
     assert!(
         message.contains("parent_project_path and parent_project_id must be set together"),
         "{message}"
@@ -570,7 +595,12 @@ fn identity_for_cwd_preserves_isolation_errors() {
     write_project_json(
         tmp.path(),
         serde_json::json!({
-            "id": "parent-id",
+            "id": "parent-id"
+        }),
+    );
+    write_isolation_json(
+        tmp.path(),
+        serde_json::json!({
             "parent_project_path": "/parent"
         }),
     );

@@ -17,6 +17,7 @@ GENERATED_ISOLATION_EXCLUDE_PATHS = (
     ".claude/",
     ".codex/",
     ".factory/hooks/hooks.json",
+    ".gobby/isolation.json",
 )
 
 
@@ -29,10 +30,11 @@ def apply_isolation_git_hygiene(
 
     Exclude writes are only used when Git scopes ``info/exclude`` to this
     workspace. Linked worktrees share that file with the main checkout, so
-    generated paths there are handled by reuse status filtering and tracked
-    ``.gobby/project.json`` is marked skip-worktree only after it matches
-    Gobby's generated parent-project metadata.
+    generated paths there are handled by reuse status filtering. Tracked
+    project metadata is no longer skip-worktree'd; the isolation sidecar is
+    gitignored instead.
     """
+    _ = main_repo_path
     workspace = Path(isolated_path)
     if not workspace.is_dir():
         return
@@ -43,15 +45,9 @@ def apply_isolation_git_hygiene(
         if _git_path_is_tracked(workspace, relative_path):
             _mark_skip_worktree(workspace, relative_path)
 
-    project_json = workspace / PROJECT_JSON_RELATIVE_PATH
-    if not is_generated_isolation_project_json(project_json, main_repo_path=main_repo_path):
-        return
-
-    _unstage_path(workspace, PROJECT_JSON_RELATIVE_PATH)
-    if _git_path_is_tracked(workspace, PROJECT_JSON_RELATIVE_PATH):
-        _mark_skip_worktree(workspace, PROJECT_JSON_RELATIVE_PATH)
-    else:
+    if not _git_path_is_tracked(workspace, PROJECT_JSON_RELATIVE_PATH):
         _add_local_exclude(workspace, PROJECT_JSON_RELATIVE_PATH)
+        _unstage_path(workspace, PROJECT_JSON_RELATIVE_PATH)
 
 
 def is_generated_isolation_project_json(

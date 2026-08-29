@@ -85,8 +85,10 @@ async def test_clone_isolation_writes_parent_project_id(tmp_path: Path) -> None:
 
     data = json.loads((clone_path / ".gobby" / "project.json").read_text())
     assert data["id"] == "parent-proj"
-    assert data["parent_project_path"] == str(parent.resolve())
-    assert data["parent_project_id"] == "parent-proj"
+    assert "parent_project_path" not in data
+    marker = json.loads((clone_path / ".gobby" / "isolation.json").read_text())
+    assert marker["parent_project_path"] == str(parent.resolve())
+    assert marker["parent_project_id"] == "parent-proj"
 
 
 @pytest.mark.asyncio
@@ -160,7 +162,7 @@ async def test_clone_creation_does_not_block_event_loop(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_repair_marks_tracked_project_json_skip_worktree(tmp_path: Path) -> None:
-    """Tracked generated project metadata should be marked skip-worktree."""
+    """Tracked project metadata is restored; isolation lives in the sidecar."""
     parent = tmp_path / "parent"
     worktree = tmp_path / "worktree"
     parent.mkdir()
@@ -186,8 +188,10 @@ async def test_repair_marks_tracked_project_json_skip_worktree(tmp_path: Path) -
     )
 
     data = json.loads((worktree / ".gobby" / "project.json").read_text(encoding="utf-8"))
-    assert data["parent_project_path"] == str(parent.resolve())
-    assert data["parent_project_id"] == "parent-proj"
+    assert "parent_project_path" not in data
+    marker = json.loads((worktree / ".gobby" / "isolation.json").read_text(encoding="utf-8"))
+    assert marker["parent_project_path"] == str(parent.resolve())
+    assert marker["parent_project_id"] == "parent-proj"
     assert parent_exclude_path.read_text(encoding="utf-8") == parent_exclude_before
     assert (
         "?? .mcp.json"
@@ -207,7 +211,7 @@ async def test_repair_marks_tracked_project_json_skip_worktree(tmp_path: Path) -
             "--untracked-files=all",
         ).stdout.splitlines()
     )
-    assert _git(worktree, "ls-files", "-v", ".gobby/project.json").stdout.startswith("S ")
+    assert not _git(worktree, "ls-files", "-v", ".gobby/project.json").stdout.startswith("S ")
 
 
 @pytest.mark.asyncio

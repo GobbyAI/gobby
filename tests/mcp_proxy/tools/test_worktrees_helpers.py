@@ -168,7 +168,10 @@ class TestCopyProjectJsonToWorktree:
 
         data = json.loads(worktree_project.read_text())
         assert data["id"] == "11111111-1111-4111-8111-111111110001"
-        assert "parent_project_path" in data
+        assert "parent_project_path" not in data
+        marker = json.loads((worktree_path / ".gobby" / "isolation.json").read_text())
+        assert marker["parent_project_path"] == str(repo_path.resolve())
+        assert marker["parent_project_id"] == "11111111-1111-4111-8111-111111110001"
 
     def test_skips_if_no_source(self, tmp_path) -> None:
         """Test that nothing happens if source doesn't exist."""
@@ -182,7 +185,7 @@ class TestCopyProjectJsonToWorktree:
         assert not (worktree_path / ".gobby" / "project.json").exists()
 
     def test_augments_existing_with_parent_path(self, tmp_path) -> None:
-        """Test that existing project.json is overwritten with parent_project_path."""
+        """Test that existing project.json is left alone and a sidecar is written."""
         repo_path = tmp_path / "repo"
         repo_gobby = repo_path / ".gobby"
         repo_gobby.mkdir(parents=True)
@@ -201,7 +204,10 @@ class TestCopyProjectJsonToWorktree:
 
         data = json.loads((worktree_gobby / "project.json").read_text())
         assert data["id"] == "11111111-1111-4111-8111-111111110001"
-        assert "parent_project_path" in data
+        assert "parent_project_path" not in data
+        marker = json.loads((worktree_gobby / "isolation.json").read_text())
+        assert marker["parent_project_path"] == str(repo_path.resolve())
+        assert marker["parent_project_id"] == "11111111-1111-4111-8111-111111110001"
 
 
 class TestInstallProviderHooks:

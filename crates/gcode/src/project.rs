@@ -112,7 +112,14 @@ mod tests {
         std::fs::write(
             gobby_dir.join("project.json"),
             serde_json::json!({
-                "id": "copied-parent-id",
+                "id": "copied-parent-id"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            gobby_dir.join("isolation.json"),
+            serde_json::json!({
                 "parent_project_path": "/parent/root",
                 "parent_project_id": "parent-id"
             })

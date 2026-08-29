@@ -54,20 +54,17 @@ class TestCopyProjectJsonToWorktree:
         with open(worktree_project_json) as f:
             data = json.load(f)
 
-        assert "parent_project_path" in data, "parent_project_path should be added"
-        assert data["parent_project_path"] == str(main_repo.resolve())
-        assert data["parent_project_id"] == "proj-123"
+        assert "parent_project_path" not in data
         assert data["id"] == "proj-123"
         assert data["name"] == "test-project"
+        marker = json.loads((worktree / ".gobby" / "isolation.json").read_text())
+        assert marker["parent_project_path"] == str(main_repo.resolve())
+        assert marker["parent_project_id"] == "proj-123"
 
     def test_overwrites_existing_project_json_preserves_parent_project_id(
         self, tmp_path: Path
     ) -> None:
-        """Verify existing worktree project.json is overwritten with source data.
-
-        ensure_project_json_for_isolation always overwrites so that
-        parent_project_path is correct even for git-tracked copies.
-        """
+        """Verify existing tracked project.json is left alone and a sidecar is written."""
         # Setup main repo
         main_repo = tmp_path / "main_repo"
         main_repo.mkdir()
@@ -93,11 +90,10 @@ class TestCopyProjectJsonToWorktree:
         with open(worktree_project_json) as f:
             data = json.load(f)
 
-        assert data["id"] == "new-id", "Source ID should overwrite existing"
-        assert data["parent_project_path"] == str(main_repo.resolve()), (
-            "parent_project_path should point to source repo"
-        )
-        assert data["parent_project_id"] == "new-id"
+        assert data["id"] == "existing-id"
+        marker = json.loads((worktree / ".gobby" / "isolation.json").read_text())
+        assert marker["parent_project_path"] == str(main_repo.resolve())
+        assert marker["parent_project_id"] == "new-id"
 
     def test_no_project_json_in_main_repo(self, tmp_path: Path) -> None:
         """Verify function handles missing project.json in main repo gracefully."""
@@ -153,8 +149,14 @@ class TestGetWorkflowProjectPath:
         parent_path = tmp_path / "parent_repo"
         parent_path.mkdir()
 
-        project_json.write_text(
-            json.dumps({"id": "worktree-id", "parent_project_path": str(parent_path)})
+        project_json.write_text(json.dumps({"id": "worktree-id"}))
+        (gobby_dir / "isolation.json").write_text(
+            json.dumps(
+                {
+                    "parent_project_path": str(parent_path),
+                    "parent_project_id": "worktree-id",
+                }
+            )
         )
 
         result = get_workflow_project_path(worktree)
@@ -224,8 +226,14 @@ class TestGetWorkflowProjectPath:
         worktree1.mkdir()
         gobby_dir1 = worktree1 / ".gobby"
         gobby_dir1.mkdir()
-        (gobby_dir1 / "project.json").write_text(
-            json.dumps({"id": "wt1-id", "parent_project_path": str(original_project)})
+        (gobby_dir1 / "project.json").write_text(json.dumps({"id": "wt1-id"}))
+        (gobby_dir1 / "isolation.json").write_text(
+            json.dumps(
+                {
+                    "parent_project_path": str(original_project),
+                    "parent_project_id": "wt1-id",
+                }
+            )
         )
 
         # get_workflow_project_path should return the parent path
@@ -264,11 +272,10 @@ class TestReadParentProjectPath:
         gobby_dir = worktree / ".gobby"
         gobby_dir.mkdir()
         project_json = gobby_dir / "project.json"
-        project_json.write_text(
+        project_json.write_text(json.dumps({"id": "wt-id", "name": "worktree-project"}))
+        (gobby_dir / "isolation.json").write_text(
             json.dumps(
                 {
-                    "id": "wt-id",
-                    "name": "worktree-project",
                     "parent_project_path": "/path/to/parent",
                     "parent_project_id": "parent-id",
                 }
@@ -308,8 +315,14 @@ class TestEdgeCases:
         gobby_dir = worktree / ".gobby"
         gobby_dir.mkdir()
         project_json = gobby_dir / "project.json"
-        project_json.write_text(
-            json.dumps({"id": "wt-id", "parent_project_path": "/nonexistent/path"})
+        project_json.write_text(json.dumps({"id": "wt-id"}))
+        (gobby_dir / "isolation.json").write_text(
+            json.dumps(
+                {
+                    "parent_project_path": "/nonexistent/path",
+                    "parent_project_id": "wt-id",
+                }
+            )
         )
 
         # get_workflow_project_path still returns the path even if it doesn't exist

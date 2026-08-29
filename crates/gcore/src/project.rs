@@ -82,7 +82,7 @@ pub fn code_index_id_for_root(root: &Path) -> String {
 
 /// Read the isolated-root marker from `.gobby/project.json`, if present.
 pub fn read_isolation_marker(project_root: &Path) -> Option<IsolationMarker> {
-    let path = project_root.join(".gobby").join("project.json");
+    let path = project_root.join(".gobby").join("isolation.json");
     let contents = std::fs::read_to_string(path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
     let parent_project_path = json
@@ -225,22 +225,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let gobby = dir.path().join(".gobby");
         fs::create_dir_all(&gobby).unwrap();
-        let marker = gobby.join("project.json");
+        let project_json = gobby.join("project.json");
+        let marker = gobby.join("isolation.json");
 
-        fs::write(&marker, r#"{"id": "parent-id"}"#).unwrap();
+        fs::write(&project_json, r#"{"id": "parent-id"}"#).unwrap();
         assert_eq!(code_overlay_project_id(dir.path()), None);
 
-        fs::write(
-            &marker,
-            r#"{"id": "parent-id", "parent_project_id": "parent-id"}"#,
-        )
-        .unwrap();
+        fs::write(&marker, r#"{"parent_project_id": "parent-id"}"#).unwrap();
         assert_eq!(code_overlay_project_id(dir.path()), None, "half marker");
 
         fs::write(
             &marker,
             format!(
-                r#"{{"id": "parent-id", "parent_project_path": "{}", "parent_project_id": "parent-id"}}"#,
+                r#"{{"parent_project_path": "{}", "parent_project_id": "parent-id"}}"#,
                 dir.path().display()
             ),
         )
@@ -254,7 +251,7 @@ mod tests {
         fs::write(
             &marker,
             format!(
-                r#"{{"id": "parent-id", "parent_project_path": "{}", "parent_project_id": "parent-id"}}"#,
+                r#"{{"parent_project_path": "{}", "parent_project_id": "parent-id"}}"#,
                 parent.path().display()
             ),
         )

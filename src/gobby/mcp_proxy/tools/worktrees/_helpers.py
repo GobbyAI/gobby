@@ -124,10 +124,9 @@ def copy_project_json_to_worktree(
     repo_path: str | Path,
     worktree_path: str | Path,
 ) -> None:
-    """Copy .gobby/project.json from main repo to worktree, adding parent reference.
+    """Write the isolation sidecar for a worktree without rewriting tracked metadata.
 
-    Delegates to ``ensure_project_json_for_isolation`` which always writes
-    ``parent_project_path`` even when the file already exists (e.g. git-tracked).
+    Delegates to ``ensure_project_json_for_isolation``.
     """
     ensure_project_json_for_isolation(repo_path, worktree_path)
 

@@ -9,6 +9,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
 from gobby.mcp_proxy.tools.worktrees._helpers import copy_project_json_to_worktree
 from gobby.storage.worktrees import Worktree
+from gobby.utils.project_context import get_project_context
 from gobby.worktrees.git import WorktreeGitManager
 
 STORED_AT = "2026-01-01T00:00:00+00:00"
@@ -134,8 +135,6 @@ async def test_create_worktree_preserves_project_json_trailing_newline(
     project_data = {
         "id": "11111111-1111-4111-8111-111111110001",
         "name": "test-project",
-        "parent_project_path": str(repo_path.resolve()),
-        "parent_project_id": "11111111-1111-4111-8111-111111110001",
     }
     expected_project_json = json.dumps(project_data, indent=2) + "\n"
     repo_path.joinpath(".gobby", "project.json").write_text(expected_project_json)
@@ -165,6 +164,9 @@ async def test_create_worktree_preserves_project_json_trailing_newline(
 
     assert result["success"] is True
     assert worktree_path.joinpath(".gobby", "project.json").read_text() == expected_project_json
+    marker = json.loads(worktree_path.joinpath(".gobby", "isolation.json").read_text())
+    assert marker["parent_project_path"] == str(repo_path.resolve())
+    assert marker["parent_project_id"] == project_data["id"]
 
 
 @pytest.mark.asyncio
@@ -185,14 +187,15 @@ async def test_create_worktree_actual_git_path_preserves_project_json_bytes_and_
     project_data = {
         "id": project_id,
         "name": "test-project",
-        "parent_project_path": str(repo_path.resolve()),
-        "parent_project_id": project_id,
         "unrelated_metadata": {"preserve": True},
     }
     project_bytes = (json.dumps(project_data, separators=(",", ":")) + "\n").encode()
-    repo_path.joinpath(".gobby", "project.json").write_bytes(project_bytes)
+    project_json = repo_path.joinpath(".gobby", "project.json")
+    project_json.write_bytes(project_bytes)
+    project_json.chmod(0o755)
+    repo_path.joinpath(".gitignore").write_text(".gobby/isolation.json\n")
     subprocess.run(
-        ["git", "add", ".gobby/project.json"],
+        ["git", "add", ".gobby/project.json", ".gitignore"],
         cwd=repo_path,
         check=True,
         timeout=10,
@@ -250,9 +253,16 @@ async def test_create_worktree_actual_git_path_preserves_project_json_bytes_and_
         )
 
     assert result["success"] is True
-    assert worktree_path.joinpath(".gobby", "project.json").read_bytes() == project_bytes
-
-    worktree_path.joinpath(".gobby", "project.json").write_bytes(project_bytes.rstrip(b"\n"))
+    worktree_project_json = worktree_path.joinpath(".gobby", "project.json")
+    assert worktree_project_json.read_bytes() == project_bytes
+    assert worktree_project_json.stat().st_mode & 0o777 == 0o755
+    marker = json.loads(worktree_path.joinpath(".gobby", "isolation.json").read_text())
+    assert marker["parent_project_path"] == str(repo_path.resolve())
+    assert marker["parent_project_id"] == project_id
+    ctx = get_project_context(worktree_path)
+    assert ctx is not None
+    assert ctx["parent_project_path"] == str(repo_path.resolve())
+    assert ctx["parent_project_id"] == project_id
     copy_project_json_to_worktree(repo_path, worktree_path)
     status = subprocess.run(
         ["git", "status", "--porcelain=v1"],
@@ -262,7 +272,7 @@ async def test_create_worktree_actual_git_path_preserves_project_json_bytes_and_
         text=True,
         timeout=10,
     )
-    assert worktree_path.joinpath(".gobby", "project.json").read_bytes() == project_bytes
+    assert worktree_project_json.read_bytes() == project_bytes
     assert status.stdout == ""
 
 

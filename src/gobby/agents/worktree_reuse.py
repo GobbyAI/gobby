@@ -15,6 +15,7 @@ from gobby.agents.isolation_git_hygiene import (
     apply_isolation_git_hygiene,
     is_generated_isolation_project_json,
 )
+from gobby.utils.project_context import IsolationProjectJsonError, ensure_project_json_for_isolation
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,13 @@ def _resolve_base_ref(git_manager: Any, base_branch: str) -> tuple[str, str]:
 
 def _ensure_clean_worktree(git_manager: Any, path: Path) -> None:
     main_repo_path = _main_repo_path(git_manager)
+    if main_repo_path is not None:
+        try:
+            ensure_project_json_for_isolation(main_repo_path, path)
+        except IsolationProjectJsonError as exc:
+            raise RuntimeError(
+                f"Failed to write isolation sidecar for reused worktree {path}: {exc}"
+            ) from exc
     apply_isolation_git_hygiene(path, main_repo_path=main_repo_path)
     status = _run_git(git_manager, ["status", "--porcelain"], cwd=path)
     if status.returncode != 0:

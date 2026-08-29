@@ -883,12 +883,17 @@ fn acquire_resolves_managed_then_cache_then_handshake() {
 fn mark_as_worktree(harness: &Harness, parent_root: &Path) -> String {
     fs::write(
         harness.project_root.join(".gobby").join("project.json"),
+        format!(r#"{{"id":"{PROJECT}","name":"test"}}"#),
+    )
+    .expect("worktree project json");
+    fs::write(
+        harness.project_root.join(".gobby").join("isolation.json"),
         format!(
-            r#"{{"id":"{PROJECT}","name":"test","parent_project_path":"{}","parent_project_id":"{PROJECT}"}}"#,
+            r#"{{"parent_project_path":"{}","parent_project_id":"{PROJECT}"}}"#,
             parent_root.display()
         ),
     )
-    .expect("worktree project json");
+    .expect("worktree isolation json");
     crate::project::code_index_id_for_root(&harness.project_root)
 }
 

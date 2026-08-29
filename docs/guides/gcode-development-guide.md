@@ -54,13 +54,13 @@ After the project root is detected, `resolve_project_identity()` decides which `
 
 | Source | Trigger | `project_id` derived from | Writes `.gobby/gcode.json`? |
 |--------|---------|---------------------------|-----------------------------|
-| `IsolatedRoot` | `IsolationMarker` present in `.gobby/project.json` (`parent_project_path` and/or `parent_project_id`), read via `project::read_isolation_marker` | UUID5 of canonical root path (`project::code_index_id_for_root`) | No |
+| `IsolatedRoot` / `IsolatedOverlay` | `IsolationMarker` present in `.gobby/isolation.json` (`parent_project_path` and `parent_project_id`), read via `project::read_isolation_marker` | UUID5 of canonical root path (`project::code_index_id_for_root`) | No |
 | `LinkedWorktree` | `git::worktree_info()` reports `WorktreeKind::Linked` | UUID5 of the worktree top-level path | No |
 | `ProjectJson` | `.gobby/project.json` exists, no `IsolationMarker` fields | `project_id` field from the file | No |
 | `GcodeJson` | `.gobby/gcode.json` exists | `project_id` field from the file | No |
 | `Generated` | None of the above | UUID5 of canonical root path | Only when caller passes `MissingIdentity::Generate` (i.e. `gcode init`) |
 
-`MissingIdentity::Error` is the default for non-init commands — they fail with "Run `gcode init`" instead of silently creating a generated id. The `IsolationMarker` struct (`{parent_project_path: Option<String>, parent_project_id: Option<String>}`) is what makes the `IsolatedRoot` branch fire: a non-empty value in either field signals that the directory should keep its own filesystem-derived code-index id even though it carries a Gobby `project.json`. Linked-worktree resolution emits a warning when an inherited `project.json` id differs from the filesystem-derived id, so it's obvious that the latter is the one being used.
+`MissingIdentity::Error` is the default for non-init commands — they fail with "Run `gcode init`" instead of silently creating a generated id. The `IsolationMarker` struct (`{parent_project_path: Option<String>, parent_project_id: Option<String>}`) is read from `.gobby/isolation.json`. Both fields together select `IsolatedOverlay` (parent index + overlay); an incomplete sidecar is rejected. Parent keys inside tracked `.gobby/project.json` are not isolation markers. Linked-worktree resolution without a sidecar uses `LinkedWorktree` + `Single` scope.
 
 ### `git` module — worktree detection
 

@@ -15,6 +15,7 @@ from gobby.mcp_proxy.tools.worktrees._helpers import (
     install_provider_hooks,
     resolve_project_context,
 )
+from gobby.utils.project_context import IsolationProjectJsonError
 from gobby.worktrees.events import emit_worktree_event
 
 logger = logging.getLogger(__name__)
@@ -181,13 +182,44 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 )
             return {"success": False, "error": f"Failed to record worktree in database: {db_err}"}
 
-        # Copy project.json and install provider hooks
         hooks_installed = False
         try:
             copy_project_json_to_worktree(resolved_git_mgr.repo_path, worktree.worktree_path)
+        except (IsolationProjectJsonError, OSError) as post_err:
+            logger.warning(
+                "Isolation sidecar write failed for worktree %s: %s", worktree.id, post_err
+            )
+            try:
+                await asyncio.to_thread(
+                    resolved_git_mgr.delete_worktree,
+                    worktree.worktree_path,
+                    force=True,
+                    delete_branch=create_branch,
+                    force_delete_branch=create_branch,
+                    branch_name=branch_name,
+                )
+            except Exception as cleanup_err:
+                logger.warning(
+                    "Failed to clean up worktree after isolation sidecar failure: %s",
+                    cleanup_err,
+                )
+            try:
+                ctx.worktree_storage.delete(worktree.id)
+            except Exception as cleanup_err:
+                logger.warning(
+                    "Failed to delete worktree record after isolation sidecar failure: %s",
+                    cleanup_err,
+                )
+            return {
+                "success": False,
+                "error": f"Failed to write isolation marker: {post_err}",
+            }
+        try:
             hooks_installed = install_provider_hooks(provider, worktree.worktree_path)
         except Exception as post_err:
-            logger.warning("Post-creation setup failed for worktree %s: %s", worktree.id, post_err)
+            logger.warning(
+                "Post-creation hook install failed for worktree %s: %s", worktree.id, post_err
+            )
 
         event = None
         try:

@@ -24,11 +24,11 @@ def _write_project_json(root: Path, project_id: str) -> None:
 
 def _write_isolation_marker(root: Path, parent_root: Path, parent_id: str) -> None:
     marker = root / ".gobby"
-    marker.mkdir(parents=True)
-    (marker / "project.json").write_text(
+    marker.mkdir(parents=True, exist_ok=True)
+    (marker / "project.json").write_text(json.dumps({"id": parent_id, "name": "x"}))
+    (marker / "isolation.json").write_text(
         json.dumps(
             {
-                "id": parent_id,
                 "parent_project_path": str(parent_root),
                 "parent_project_id": parent_id,
             }

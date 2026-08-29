@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -197,10 +198,12 @@ async def test_sync_reused_worktree_allows_generated_isolation_metadata(
         ).stdout.splitlines()
     )
     ls_files = _git(worktree, "ls-files", "-v", ".gobby/project.json").stdout
-    assert ls_files.startswith("S ")
-    assert "parent_project_path" in (worktree / ".gobby" / "project.json").read_text(
-        encoding="utf-8"
-    )
+    assert not ls_files.startswith("S ")
+    project_data = json.loads((worktree / ".gobby" / "project.json").read_text(encoding="utf-8"))
+    assert "parent_project_path" not in project_data
+    marker = json.loads((worktree / ".gobby" / "isolation.json").read_text(encoding="utf-8"))
+    assert marker["parent_project_path"] == str(parent.resolve())
+    assert marker["parent_project_id"] == "proj-1"
 
 
 @pytest.mark.asyncio

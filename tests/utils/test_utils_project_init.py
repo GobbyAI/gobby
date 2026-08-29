@@ -888,8 +888,12 @@ class TestInitializeProject:
         project_file = worktree_root / ".gobby" / "project.json"
         content = json.loads(project_file.read_text(encoding="utf-8"))
         assert result.already_existed is True
-        assert content["parent_project_path"] == str(parent_root.resolve())
-        assert content["parent_project_id"] == project_id
+        assert "parent_project_path" not in content
+        marker = json.loads(
+            (worktree_root / ".gobby" / "isolation.json").read_text(encoding="utf-8")
+        )
+        assert marker["parent_project_path"] == str(parent_root.resolve())
+        assert marker["parent_project_id"] == project_id
 
     def test_reinit_from_subdirectory_refreshes_project_root(
         self, tmp_path: Path, hub_db: HubDatabase

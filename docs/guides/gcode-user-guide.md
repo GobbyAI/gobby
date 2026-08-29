@@ -531,7 +531,7 @@ are configured; unhealthy services are reported as degraded required sources.
 
 Two cases break the usual "one `.gobby/project.json` ↔ one project id" mapping. gcode handles them automatically:
 
-- **Isolation marker** — when `.gobby/project.json` carries `parent_project_path` or `parent_project_id` fields, gcode treats the directory as its own code-index target rather than as part of the parent. The id is a deterministic UUID5 derived from the canonical filesystem path, so the directory gets its own symbol/file rows in the PostgreSQL hub and never collides with the parent's index.
+- **Isolation marker** — when `.gobby/isolation.json` carries both `parent_project_path` and `parent_project_id`, gcode treats the directory as an overlay of the parent rather than as the parent itself. The overlay id is a deterministic UUID5 derived from the canonical filesystem path, so the directory gets its own symbol/file rows in the PostgreSQL hub and never collides with the parent's index. Parent keys inside tracked `.gobby/project.json` are ignored.
 - **Linked git worktrees** — runs from inside a `git worktree add` directory resolve to the worktree's own top-level (via `git rev-parse --show-toplevel` and `git worktree list --porcelain`). The code-index id is derived from the worktree path, not from any inherited `.gobby/project.json`. If an inherited id would have been used, gcode prints a warning naming the filesystem-derived id it picked instead.
 
 Both cases are reported by `gcode init`'s status line (`isolated`, `linked-worktree`) so it's clear which identity source resolved.

@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### gobby-core
 
+- **Isolation marker path** — `read_isolation_marker` reads gitignored
+  `.gobby/isolation.json` only. Parent keys inside tracked `.gobby/project.json`
+  are not isolation markers.
 - **Flattened schema authority** — make baseline 375 the sole schema authority
   after commit `a3b56649a` folded migration 376 into it; ship no migration assets,
   and require the shared schema runner to enforce the exact baseline receipt.
@@ -43,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### gcode
 
+- **Overlay identity** — worktree/clone overlay resolution follows
+  `.gobby/isolation.json`. Incomplete sidecars still XOR-reject; leftover
+  `project.json` parent keys do not.
 - **Shared schema consumer** — consume the centralized `gobby-core 0.9.1`
   schema contract. Version: `1.6.0`.
 - **Read-only CodeWiki facts facade** — expose `codewiki_facts` as the sole

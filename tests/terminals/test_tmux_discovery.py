@@ -254,8 +254,14 @@ def test_project_for_path_resolves_only_registered_projects(
     (unknown / ".gobby" / "project.json").write_text(json.dumps({"id": str(uuid.uuid4())}))
     worktree = tmp_path / "worktree"
     (worktree / ".gobby").mkdir(parents=True)
-    (worktree / ".gobby" / "project.json").write_text(
-        json.dumps({"id": str(uuid.uuid4()), "parent_project_id": sample_project["id"]})
+    (worktree / ".gobby" / "project.json").write_text(json.dumps({"id": str(uuid.uuid4())}))
+    (worktree / ".gobby" / "isolation.json").write_text(
+        json.dumps(
+            {
+                "parent_project_path": str(registered),
+                "parent_project_id": sample_project["id"],
+            }
+        )
     )
 
     assert _project_for_path(manager, str(registered / "src")) == sample_project["id"]

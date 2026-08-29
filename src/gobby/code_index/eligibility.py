@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE
+from gobby.utils.project_context import read_isolation_marker
 
 EligibilityKind = Literal["active", "overlay", "unregistered", "missing_root", "identity_mismatch"]
 
@@ -38,21 +39,15 @@ def code_index_id_for_root(root: Path) -> str:
 def overlay_project_id_for_root(root: Path) -> str | None:
     """Return the derived overlay id when ``root`` is an isolation workspace.
 
-    Mirrors gcode's identity resolution: a root whose ``.gobby/project.json``
-    carries a non-self-referential isolation marker (``parent_project_path``
-    and ``parent_project_id`` both set) indexes under its own derived
+    Mirrors gcode's identity resolution: a root whose isolation sidecar
+    carries a non-self-referential marker indexes under its own derived
     code-index project id, not the parent's. Returns ``None`` for ordinary
     project roots and for malformed markers (gcode fails loudly on those).
     """
-    payload = _project_json(root)
-    if payload is None:
+    marker = read_isolation_marker(root)
+    if marker is None:
         return None
-    parent_path = payload.get("parent_project_path")
-    parent_id = payload.get("parent_project_id")
-    if not (isinstance(parent_path, str) and parent_path):
-        return None
-    if not (isinstance(parent_id, str) and parent_id):
-        return None
+    parent_path = marker["parent_project_path"]
     resolved_parent = root / parent_path if not os.path.isabs(parent_path) else Path(parent_path)
     try:
         if resolved_parent.resolve() == root.resolve():

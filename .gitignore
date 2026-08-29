@@ -231,6 +231,7 @@ __marimo__/
 .gobby/**
 !.gobby/
 !.gobby/project.json
+# isolation.json stays ignored (worktree/clone parent marker; never commit)
 !.gobby/project.jsonl
 !.gobby/plans/
 !.gobby/plans/**
