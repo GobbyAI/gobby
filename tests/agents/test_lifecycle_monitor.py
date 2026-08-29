@@ -5123,10 +5123,21 @@ class TestStalePendingReaper:
         monitor: AgentLifecycleMonitor,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        reap = AsyncMock(return_value=0)
+        events: list[str] = []
+
+        async def reap() -> int:
+            events.append("reap")
+            return 0
+
+        async def reconcile_terminations() -> int:
+            events.append("pending_terminations")
+            return 0
+
         monkeypatch.setattr(monitor._reconciliation, "reap_stale_pending", reap)
+        monkeypatch.setattr(monitor, "reconcile_pending_terminations", reconcile_terminations)
+        recorded = {"reap_stale_pending", "reconcile_pending_terminations"}
         for name in AgentLifecycleMonitor._check_loop.__code__.co_names:
-            if name != "reap_stale_pending" and inspect.iscoroutinefunction(
+            if name not in recorded and inspect.iscoroutinefunction(
                 getattr(AgentLifecycleMonitor, name, None)
             ):
                 monkeypatch.setattr(monitor, name, AsyncMock(return_value=0))
@@ -5134,7 +5145,7 @@ class TestStalePendingReaper:
         async def stop_after_first_iteration(_seconds: float) -> None:
             # The startup delay passes straight through; the first inter-iteration
             # pause ends the loop once the reaper has run.
-            if reap.await_count:
+            if "reap" in events:
                 raise asyncio.CancelledError
 
         monkeypatch.setattr(
@@ -5143,7 +5154,9 @@ class TestStalePendingReaper:
         monitor._running = True
         await asyncio.wait_for(monitor._check_loop(), timeout=5.0)
 
-        reap.assert_awaited_once_with()
+        # The reaper runs once per iteration, right after termination reconciliation.
+        assert events == ["pending_terminations", "reap"]
+        assert monitor._running is True
 
 
 class TestNonTaskResumeCallback:
