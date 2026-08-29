@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
@@ -497,3 +499,21 @@ def test_in_place_compact_clears_queued_context(
     stored = variables.get_variables(grok_session_id)
     assert stored.get("grok_pending_briefing") in ([], None)
     assert stored.get("grok_pending_turn_context") in ([], None)
+
+
+def test_grok_pending_context_imports_before_the_event_handler_package() -> None:
+    """Importing it first used to hit a half-built module and raise ImportError.
+
+    The cycle resolved itself whenever `gobby.hooks.event_handlers` was imported
+    first, so only a fresh interpreter that reaches this module first can prove
+    the upward edge is gone.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", "import gobby.hooks.grok_pending_context"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "circular import" not in result.stderr

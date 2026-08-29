@@ -9,6 +9,7 @@ import psycopg
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.session_types import has_prior_session_activity
 from gobby.skills.formatting import skill_fetch_directive
 
 logger = logging.getLogger(__name__)
@@ -19,24 +20,6 @@ _GOBBY_CMD_PATTERN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _HELP_SKILL_LIST_LIMIT = 50
-
-
-def _has_positive_count(value: Any) -> bool:
-    if isinstance(value, bool):
-        return False
-    if isinstance(value, int):
-        return value > 0
-    if isinstance(value, str) and value.isdigit():
-        return int(value) > 0
-    return False
-
-
-def _has_prior_session_activity(session: Any | None) -> bool:
-    if session is None:
-        return False
-    return _has_positive_count(getattr(session, "message_count", 0)) or _has_positive_count(
-        getattr(session, "turn_count", 0)
-    )
 
 
 def _load_agent_prompt(
@@ -259,7 +242,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if (
             not identity_reinject
             and not rehydrate_pending
-            and _has_prior_session_activity(session_row)
+            and has_prior_session_activity(session_row)
         ):
             sv_mgr.merge_variables(session_id, {"_agent_context_injected": True})
             return

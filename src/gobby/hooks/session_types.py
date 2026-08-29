@@ -1,8 +1,11 @@
-"""Hooks-facing protocols for session access.
+"""Hooks-facing protocols and predicates for session access.
 
 These protocols describe the subset of SessionManager behavior that the hooks
 stack relies on. The runtime implementation is the canonical
 ``gobby.storage.sessions.SessionManager``.
+
+Predicates over a session row live here rather than in an event handler so
+lower-level hook modules can reach them without importing the handler package.
 """
 
 from __future__ import annotations
@@ -18,6 +21,25 @@ if TYPE_CHECKING:
     from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.terminal_ownership import TerminalIdentity
+
+
+def _has_positive_count(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value > 0
+    if isinstance(value, str) and value.isdigit():
+        return int(value) > 0
+    return False
+
+
+def has_prior_session_activity(session: Any | None) -> bool:
+    """Report whether a session row has already recorded a message or a turn."""
+    if session is None:
+        return False
+    return _has_positive_count(getattr(session, "message_count", 0)) or _has_positive_count(
+        getattr(session, "turn_count", 0)
+    )
 
 
 class HookSessionManager(Protocol):

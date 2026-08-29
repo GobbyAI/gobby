@@ -12,10 +12,9 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 
 from gobby.cli.utils import get_gobby_home
 from gobby.hooks.envelope_dedupe import envelope_terminal_response
-from gobby.hooks.event_handlers._agent import _has_prior_session_activity
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.pending_messages import render_pending_messages
-from gobby.hooks.session_types import HookSessionManager
+from gobby.hooks.session_types import HookSessionManager, has_prior_session_activity
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
@@ -158,7 +157,7 @@ def mark_briefing_turn(handler: PendingContextHandler, event: HookEvent) -> None
     if session_id is None:
         return
     session = handler._session_manager.get(session_id)
-    if not _has_prior_session_activity(session):
+    if not has_prior_session_activity(session):
         event.metadata["_grok_briefing_turn"] = True
 
 
