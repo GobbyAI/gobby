@@ -16,6 +16,7 @@ from gobby.agents.tmux.session_manager import TmuxSessionInfo
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.storage.agents import AgentRun
 from tests.agents.detection_test_support import BundledDetectionRegistry
+from tests.terminals.fakes import FakeRuntime, runtime_registry
 
 DETECTION_REGISTRY = BundledDetectionRegistry()
 pytestmark = pytest.mark.unit
@@ -74,6 +75,7 @@ def _make_monitor_with_db(callback: MagicMock) -> TmuxPaneMonitor:
         session_end_callback=callback,
         poll_interval=1.0,
         session_manager=mock_session_manager,
+        registry=runtime_registry(FakeRuntime()),
     )
     return monitor
 
@@ -147,6 +149,7 @@ async def test_interactive_sessions_use_cursor_pagination_on_worker_thread() -> 
         detection_registry=DETECTION_REGISTRY,
         session_end_callback=callback,
         session_manager=session_manager,
+        registry=runtime_registry(FakeRuntime()),
     )
     sessions = [MagicMock() for _ in range(101)]
     for index, session in enumerate(sessions):

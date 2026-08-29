@@ -267,12 +267,16 @@ def create_lifespan(
                 detection_registry = server.services.detection_registry
                 if detection_registry is None:
                     raise RuntimeError("Tmux pane monitor requires a detection registry")
+                runtime_registry = getattr(server.services, "terminal_runtime_registry", None)
+                if runtime_registry is None:
+                    raise RuntimeError("Tmux pane monitor requires a terminal runtime registry")
                 monitor = TmuxPaneMonitor(
                     session_end_callback=app.state.hook_manager.event_handlers.handle_session_end,
                     detection_registry=detection_registry,
                     config=config.tmux,
                     session_manager=app.state.hook_manager._session_manager,
                     attention_manager=server.services.attention_manager,
+                    registry=runtime_registry,
                 )
                 set_tmux_pane_monitor(monitor)
                 await monitor.start()

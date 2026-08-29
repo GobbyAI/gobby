@@ -22,6 +22,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
 from gobby.terminals.discovery import seed_external_terminal
 from tests.agents.test_lifecycle_monitor import LifecycleRuntime
+from tests.terminals.fakes import runtime_registry
 from tests.agents.test_lifecycle_monitor_extra import _memory_terminal_services
 
 from .detection_test_support import BundledDetectionRegistry
@@ -474,7 +475,7 @@ async def test_tmux_monitor_reports_interactive_prompt_without_injection(
         attention_manager=manager,
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
         stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
-        runtime=runtime,
+        registry=runtime_registry(runtime),
     )
 
     await monitor._check_attention_panes(active_runs=[])
@@ -507,7 +508,7 @@ async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
         attention_manager=manager,
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
         stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
-        runtime=runtime,
+        registry=runtime_registry(runtime),
     )
     await monitor._check_attention_panes(active_runs=[])
     before_timeout = manager.get(f"session:{session.id}")

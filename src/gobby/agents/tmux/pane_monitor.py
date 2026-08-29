@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from gobby.storage.attention import AttentionKind, AttentionStateManager
     from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
-    from gobby.terminals.runtime import TerminalRuntime
+    from gobby.terminals.runtime import TerminalRuntimeRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,8 @@ class TmuxPaneMonitor:
         attention_manager: AttentionStateManager | None = None,
         prompt_detector: PromptDetector | None = None,
         stall_classifier: StallClassifier | None = None,
-        runtime: TerminalRuntime | None = None,
+        *,
+        registry: TerminalRuntimeRegistry,
     ) -> None:
         self._callback = session_end_callback
         if config is None:
@@ -82,14 +83,10 @@ class TmuxPaneMonitor:
         self._detection_registry = detection_registry
         self._prompt_detector = prompt_detector or PromptDetector(detection_registry)
         self._stall_classifier = stall_classifier or StallClassifier(detection_registry)
-        from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
-
-        # Interactive-pane snapshots go through the runtime seam; tests inject a fake.
-        self._runtime: TerminalRuntime = (
-            runtime
-            if runtime is not None
-            else TmuxTerminalRuntime(TmuxSessionManager(config=self._config))
-        )
+        # Interactive-pane snapshots resolve their runtime per row; the monitor
+        # sees native rows as readily as tmux ones, and binding one runtime here
+        # would snapshot a native pane through the tmux backend.
+        self._registry = registry
         self._task: asyncio.Task[None] | None = None
         # session_id -> timestamp when it was marked ended
         self._recently_ended: dict[str, float] = {}
@@ -329,7 +326,7 @@ class TmuxPaneMonitor:
                 if row is None:
                     await self._clear_attention_if_current(session_attention_entry_id(session.id))
                     continue
-                snapshot = await self._runtime.snapshot(row, 15)
+                snapshot = await self._registry.resolve(row.backend).snapshot(row, 15)
                 pane_output = snapshot.text
             except TimeoutError as exc:
                 logger.debug(
