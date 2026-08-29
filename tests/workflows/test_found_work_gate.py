@@ -530,6 +530,26 @@ class TestTerminalValidationFailures:
         ]
         assert unresolved_validation_failures(runs, owner_handoff=False) == ()
 
+    def test_compound_ruff_kickstart_failure_is_covered_by_later_scoped_ruff(self) -> None:
+        failed = (
+            "export PATH=/opt/homebrew/bin:/usr/bin:/bin\n"
+            "cd /Users/josh/Projects/gobby\n"
+            "uv run ruff check src/gobby/runner_init/config_subscribers.py "
+            "tests/config/test_stateful_config_subscribers.py\n"
+            "launchctl kickstart -k gui/501/com.gobby.daemon\n"
+            "uv run gobby status\n"
+        )
+        runs = [
+            _run(1, "failure", failed),
+            _run(
+                2,
+                "success",
+                "uv run ruff check src/gobby/runner_init/config_subscribers.py "
+                "tests/config/test_stateful_config_subscribers.py",
+            ),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False) == ()
+
     def test_file_green_covers_node_id_failure_but_not_the_reverse(self) -> None:
         node_id = "pytest tests/unit/test_widget.py::test_case"
         whole_file = "pytest tests/unit/test_widget.py"
