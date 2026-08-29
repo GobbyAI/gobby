@@ -6,7 +6,9 @@ rules:
     event: turn_start
     enabled: true
     priority: 15
-    when: "not variables.get('skill_discovery_instructions_shown')"
+    when: >
+      not variables.get('skill_discovery_instructions_shown')
+      and not variables.get('handoff_pull_pending')
     effects:
       - type: load_skill
         skill: loading-skills

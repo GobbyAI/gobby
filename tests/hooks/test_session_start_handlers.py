@@ -1278,6 +1278,12 @@ class TestSessionStartNewSession:
         assert mock_take.call_args.kwargs["attempt_id"] == "attempt-1"
         assert mock_take.call_args.kwargs["successor_id"] == "successor-sess"
         mock_schedule.assert_called_once()
+        assert any(
+            len(call.args) >= 2
+            and isinstance(call.args[1], dict)
+            and call.args[1].get("handoff_pull_pending") is True
+            for call in mock_sv_mgr_cls.return_value.merge_variables.call_args_list
+        )
 
     @patch("gobby.hooks.event_handlers._session_start.materialize.schedule_handoff_continuation")
     @patch("gobby.hooks.event_handlers._session_start.materialize.take_clear_handoff_marker")

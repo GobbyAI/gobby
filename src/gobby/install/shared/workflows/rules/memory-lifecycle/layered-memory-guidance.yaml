@@ -9,6 +9,7 @@ rules:
     when: >
       not variables.get('_memory_initial_stop_checked')
       and not skill_loaded('memory')
+      and not variables.get('handoff_pull_pending')
       and not has_open_tool_error(
         "gobby-skills/get_skill",
         {"name": "memory"}

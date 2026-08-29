@@ -1,9 +1,8 @@
-"""Injected-context fencing is scoped to the handoff templates.
+"""Injected-context fencing is scoped to session-start context templates.
 
-The contamination fix fences handoff/compact/clear summaries with sentinels so
-the digest/summary pipeline strips them. Fencing must live in those templates
-only — not in every ``inject_context`` effect — so per-turn injections (brevity,
-memory, task context) stay un-tagged.
+Handoff markdown is pull-only via ``get_handoff``. Remaining session-start
+injections that still render into additionalContext (wiki overview) keep
+sentinels. Per-turn injections (brevity, memory, task context) stay un-tagged.
 """
 
 from __future__ import annotations
@@ -34,24 +33,27 @@ def _inject_template(path: Path, rule_name: str) -> str:
 
 
 @pytest.mark.parametrize(
-    ("filename", "rule_name"),
-    [
-        ("inject-clear-handoff.yaml", "inject-clear-handoff-on-prompt"),
-        ("inject-compact-handoff.yaml", "inject-compact-handoff"),
-    ],
+    "filename",
+    ["inject-clear-handoff.yaml", "inject-compact-handoff.yaml"],
 )
-def test_handoff_templates_are_fenced(filename: str, rule_name: str) -> None:
-    template = _inject_template(_HANDOFF_DIR / filename, rule_name)
+def test_pull_only_handoff_templates_are_gone(filename: str) -> None:
+    assert not (_HANDOFF_DIR / filename).exists()
+
+
+def test_wiki_overview_template_is_fenced() -> None:
+    template = _inject_template(_HANDOFF_DIR / "inject-wiki-overview.yaml", "inject-wiki-overview")
 
     assert INJECTED_CONTEXT_BEGIN in template
     assert INJECTED_CONTEXT_END in template
     assert template.index(INJECTED_CONTEXT_BEGIN) < template.index(INJECTED_CONTEXT_END)
 
 
-def test_engine_inject_context_comment_cites_live_handoff_templates() -> None:
+def test_engine_inject_context_comment_cites_pull_only_handoff() -> None:
     source = inspect.getsource(EffectsMixin._apply_effect)
     assert "inject-previous-session-summary" not in source
-    assert "inject-clear-handoff.yaml" in source
+    assert "inject-clear-handoff.yaml" not in source
+    assert "inject-compact-handoff.yaml" not in source
+    assert "session-boundary.md" in source
 
 
 @pytest.mark.parametrize(

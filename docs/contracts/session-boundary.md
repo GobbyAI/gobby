@@ -83,6 +83,9 @@ The persisted Markdown remains available to UI/API session reads.
 
 No handoff content is injected through provider `additionalContext`; no bounded copy,
 summary pointer, stale-tail merge, or latest-project fallback participates in delivery.
+Turn-start meta skill loads (`memory`, `loading-skills`, `brevity`) wait until
+`get_handoff()` consumes the pending marker so Grok first-tool briefings cannot
+run those reloads ahead of the pull.
 
 ## Titles
 

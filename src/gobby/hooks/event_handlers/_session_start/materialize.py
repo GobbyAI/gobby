@@ -17,7 +17,10 @@ from gobby.sessions.clear_continuation import (
     schedule_handoff_continuation,
     take_clear_handoff_marker,
 )
-from gobby.sessions.handoff import build_handoff_continue_prompt
+from gobby.sessions.handoff import (
+    HANDOFF_PULL_PENDING_VARIABLE,
+    build_handoff_continue_prompt,
+)
 
 from .agents import _seed_parent_turn_seq, _seed_wiki_overview_var
 from .claims import preserve_task_claim_state
@@ -188,6 +191,19 @@ def _bind_clear_successor(
     except Exception as exc:
         handler.logger.warning(
             "Failed to reassign clear task claims for successor %s: %s",
+            successor_id,
+            exc,
+        )
+    try:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        SessionVariableManager(handler._session_manager.db).merge_variables(
+            successor_id,
+            {HANDOFF_PULL_PENDING_VARIABLE: True},
+        )
+    except Exception as exc:
+        handler.logger.warning(
+            "Failed to mark handoff pull pending for successor %s: %s",
             successor_id,
             exc,
         )

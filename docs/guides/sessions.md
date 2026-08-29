@@ -277,7 +277,9 @@ preserves task claims, and binds that successor to the predecessor. The continua
 prompt calls `get_handoff`, which consumes only the pending marker created by
 `set_handoff`. A second call is empty. Manual provider compact and `/clear` operations
 create no marker, so they also return an empty handoff. Persisted `handoff_markdown`
-remains visible in the UI after consumption.
+remains visible in the UI after consumption. While that marker is pending, turn-start
+meta skill loads wait so the pull runs before `memory`, `loading-skills`, and
+`brevity` reloads.
 
 ### Hookless Registration
 

@@ -10,6 +10,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.sessions.handoff import (
+    HANDOFF_PULL_PENDING_VARIABLE,
     FeedbackObservation,
     consume_pending_handoff,
     normalize_feedback_observations,
@@ -30,6 +31,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
@@ -198,8 +200,11 @@ def test_handoff_consumes_once_for_compact_and_clear_successor(
         observations=[],
         clear_session=False,
     )
+    sv_mgr = SessionVariableManager(temp_db)
+    assert sv_mgr.get_variables(predecessor.id).get(HANDOFF_PULL_PENDING_VARIABLE) is True
     compact = consume_pending_handoff(temp_db, predecessor.id)
     assert compact is not None and compact.markdown == markdown
+    assert HANDOFF_PULL_PENDING_VARIABLE not in sv_mgr.get_variables(predecessor.id)
     assert consume_pending_handoff(temp_db, predecessor.id) is None
 
     stage_handoff_attempt(
@@ -210,6 +215,7 @@ def test_handoff_consumes_once_for_compact_and_clear_successor(
         observations=[],
         clear_session=True,
     )
+    assert HANDOFF_PULL_PENDING_VARIABLE not in sv_mgr.get_variables(predecessor.id)
     successor_id = session_manager.register_session(
         external_id="clear-successor",
         machine_id=MACHINE_ID,
@@ -217,8 +223,10 @@ def test_handoff_consumes_once_for_compact_and_clear_successor(
         project_id=predecessor.project_id,
         parent_session_id=predecessor.id,
     )
+    sv_mgr.merge_variables(successor_id, {HANDOFF_PULL_PENDING_VARIABLE: True})
     cleared = consume_pending_handoff(temp_db, successor_id)
     assert cleared is not None and cleared.session_id == predecessor.id
+    assert HANDOFF_PULL_PENDING_VARIABLE not in sv_mgr.get_variables(successor_id)
     assert consume_pending_handoff(temp_db, successor_id) is None
 
 
@@ -239,8 +247,11 @@ def test_failed_attempt_restores_handoff_and_deletes_attempt_feedback(
         observations=[FeedbackObservation("agent", "friction", "evidence", "impact", "once")],
         clear_session=False,
     )
+    sv_mgr = SessionVariableManager(temp_db)
+    assert sv_mgr.get_variables(session.id).get(HANDOFF_PULL_PENDING_VARIABLE) is True
 
     assert restore_handoff_attempt(temp_db, state) is True
+    assert HANDOFF_PULL_PENDING_VARIABLE not in sv_mgr.get_variables(session.id)
     row = temp_db.fetchone(
         "SELECT handoff_markdown FROM sessions WHERE id = %s",
         (session.id,),

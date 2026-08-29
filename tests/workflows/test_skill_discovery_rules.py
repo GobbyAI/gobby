@@ -212,7 +212,8 @@ class TestDiscoverSkillHubsOnTurnStart:
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.event.value == "turn_start"
-        assert body.when == "not variables.get('skill_discovery_instructions_shown')"
+        assert "skill_discovery_instructions_shown" in (body.when or "")
+        assert "handoff_pull_pending" in (body.when or "")
         assert [effect.type for effect in body.effects] == [
             "load_skill",
             "mcp_call",
@@ -268,10 +269,40 @@ class TestDiscoverSkillHubsOnTurnStart:
         )
 
     @pytest.mark.asyncio
-    async def test_does_not_set_guard_when_hub_listing_fails(self, db) -> None:
+    async def test_skips_while_handoff_pull_pending(self, db: HubDatabase) -> None:
         _sync_bundled(db)
 
-        async def dispatcher(server: str, tool: str, args: dict, event: Any) -> dict[str, Any]:
+        async def dispatcher(
+            server: str, tool: str, args: dict[str, Any], event: Any
+        ) -> dict[str, Any]:
+            raise AssertionError(f"unexpected MCP call {server}/{tool}")
+
+        variables: dict[str, Any] = {
+            "handoff_pull_pending": True,
+            "loaded_skills": [],
+            "servers_listed": True,
+        }
+        engine = RuleEngine(db, mcp_dispatcher=dispatcher)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "Call get_handoff first."},
+        )
+
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+
+        assert skill_fetch_directive("loading-skills") not in (response.context or "")
+        assert "skill_discovery_instructions_shown" not in variables
+
+    @pytest.mark.asyncio
+    async def test_does_not_set_guard_when_hub_listing_fails(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+
+        async def dispatcher(
+            server: str, tool: str, args: dict[str, Any], event: Any
+        ) -> dict[str, Any]:
             return {"success": False, "result": {"error": "hub manager unavailable"}}
 
         variables: dict[str, Any] = {"loaded_skills": ["brevity"], "servers_listed": True}
@@ -320,15 +351,33 @@ class TestBrevityRules:
         assert load_body.event.value == "turn_start"
         assert load_body.effects[0].type == "load_skill"
         assert load_body.effects[0].skill == "brevity"
-        assert load_body.when == (
-            "not variables.get('brevity_disabled') and not skill_loaded('brevity')"
-        )
+        assert "brevity_disabled" in (load_body.when or "")
+        assert "skill_loaded('brevity')" in (load_body.when or "")
+        assert "handoff_pull_pending" in (load_body.when or "")
 
         reminder_row = manager.get_by_name("remind-brevity-on-turn-start")
         assert reminder_row is not None
         reminder_body = RuleDefinitionBody.model_validate(reminder_row.definition_json)
         assert reminder_body.event.value == "turn_start"
         assert reminder_body.effects[0].type == "inject_context"
+
+    @pytest.mark.asyncio
+    async def test_load_brevity_skips_while_handoff_pull_pending(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        variables: dict[str, Any] = self._turn_variables(loaded=False)
+        variables["handoff_pull_pending"] = True
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "Call get_handoff first."},
+        )
+
+        response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables=variables)
+
+        assert skill_fetch_directive("brevity") not in (response.context or "")
+        assert "brevity" not in variables.get("workflow_requested_skills", [])
 
     def test_detect_brevity_contrastive_rule_uses_allowed_regex_patterns(self, db, manager) -> None:
         _sync_bundled(db)

@@ -12,6 +12,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import utc_now
 
 PENDING_HANDOFF_VARIABLE = "set_handoff_pending"
+HANDOFF_PULL_PENDING_VARIABLE = "handoff_pull_pending"
 REQUIRED_SKILLS_VARIABLE = "compact_resume_required_skills"
 ADVISORY_SKILLS_VARIABLE = "compact_resume_advisory_skills"
 
@@ -141,6 +142,8 @@ def stage_handoff_attempt(
         "clear_session": clear_session,
         "created_at": utc_now().isoformat(),
     }
+    if not clear_session:
+        marker_updates[HANDOFF_PULL_PENDING_VARIABLE] = True
     with db.transaction() as conn:
         session_row = conn.execute(
             "SELECT handoff_markdown FROM sessions WHERE id = %s FOR UPDATE",
@@ -250,6 +253,8 @@ def consume_pending_handoff(db: HubDatabase, caller_session_id: str) -> Consumed
             continue
         consumed = _consume_candidate(db, candidate_id, expects_clear=expects_clear)
         if consumed is not None:
+            if expects_clear:
+                _clear_handoff_pull_pending(db, caller_session_id)
             return consumed
     return None
 
@@ -281,6 +286,7 @@ def _consume_candidate(
         if not isinstance(attempt_id, str) or not attempt_id:
             return None
         variables.pop(PENDING_HANDOFF_VARIABLE, None)
+        variables.pop(HANDOFF_PULL_PENDING_VARIABLE, None)
         _store_variables(conn, session_id, variables, exists=True)
         markdown = str(session_row["handoff_markdown"] or "")
         required = tuple(_string_list(variables.get(REQUIRED_SKILLS_VARIABLE)))
@@ -290,6 +296,22 @@ def _consume_candidate(
             if item not in required
         )
         return ConsumedHandoff(session_id, markdown, required, advisory)
+
+
+def _clear_handoff_pull_pending(db: HubDatabase, session_id: str) -> None:
+    """Drop the successor's pull-deferral flag after a clear handoff is consumed."""
+    with db.transaction() as conn:
+        variable_row = conn.execute(
+            "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",
+            (session_id,),
+        ).fetchone()
+        if variable_row is None:
+            return
+        variables = _load_variables(variable_row["variables"])
+        if HANDOFF_PULL_PENDING_VARIABLE not in variables:
+            return
+        variables.pop(HANDOFF_PULL_PENDING_VARIABLE, None)
+        _store_variables(conn, session_id, variables, exists=True)
 
 
 def _insert_feedback_rows(

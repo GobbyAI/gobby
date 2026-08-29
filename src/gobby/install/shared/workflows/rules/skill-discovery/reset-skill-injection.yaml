@@ -5,9 +5,9 @@ rules:
     description: "Clear skill loading tracking on context loss"
     event: session_start
     enabled: true
-    # Must run before inject-compact-handoff (priority 11): the handoff
-    # template excludes skills already in the loaded_skills ledger, so the
-    # fresh-epoch ledger has to be cleared before the reload list renders.
+    # Session-start reset must beat turn_start skill-load rules so a compact
+    # or clear epoch starts with an empty loaded_skills ledger. Meta skill
+    # loads themselves wait on handoff_pull_pending until get_handoff runs.
     priority: 8
     when: "event.data.get('source') in ['clear', 'compact'] or (event.data.get('source') == 'resume' and variables.get('pending_context_reset'))"
     effects:

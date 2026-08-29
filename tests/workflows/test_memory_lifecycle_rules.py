@@ -369,6 +369,7 @@ class TestLayeredMemoryGuidance:
         assert effects[0].skill == "memory"
         assert "_memory_initial_stop_checked" in (body.when or "")
         assert "has_open_tool_error" in (body.when or "")
+        assert "handoff_pull_pending" in (body.when or "")
 
     @pytest.mark.asyncio
     async def test_initial_turn_emits_skill_directive_and_records_reload(
@@ -395,6 +396,33 @@ class TestLayeredMemoryGuidance:
 
         assert skill_fetch_directive("memory") in (response.context or "")
         assert "memory" in variables["workflow_requested_skills"]
+
+    @pytest.mark.asyncio
+    async def test_initial_turn_skips_memory_skill_while_handoff_pull_pending(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        variables: dict[str, Any] = {
+            "_memory_initial_stop_checked": False,
+            "handoff_pull_pending": True,
+            "is_spawned_agent": False,
+            "parent_turn_seq": 0,
+            "loaded_skills": [],
+            "workflow_requested_skills": [],
+            "open_tool_errors": [],
+        }
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id="11111111-1111-4111-8111-111111111111",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "Call get_handoff first."},
+        )
+
+        response = await RuleEngine(db).evaluate(event, event.session_id, variables)
+
+        assert skill_fetch_directive("memory") not in (response.context or "")
+        assert "memory" not in variables.get("workflow_requested_skills", [])
 
     def test_initial_turn_end_gate_sets_flag_only_when_passed_or_acknowledged(
         self, db: HubDatabase, manager: RuleDefinitionManager

@@ -19,7 +19,10 @@ rules:
     event: turn_start
     enabled: true
     priority: 20
-    when: "not variables.get('brevity_disabled') and not skill_loaded('brevity')"
+    when: >
+      not variables.get('brevity_disabled')
+      and not skill_loaded('brevity')
+      and not variables.get('handoff_pull_pending')
     effects:
       - type: load_skill
         skill: brevity
