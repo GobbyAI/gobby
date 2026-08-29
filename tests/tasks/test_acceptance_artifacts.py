@@ -109,6 +109,119 @@ def test_test_body_resolution_requests_gcode_json(monkeypatch: pytest.MonkeyPatc
     assert calls[1] == ["gcode", "symbol", "symbol-id", "--format", "json"]
 
 
+def test_stale_index_names_the_index_and_the_reindex_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An artifact on disk but absent from the index is index lag, not an invalid artifact.
+
+    The close gate resolves `path::test_symbol` through gcode, so a test written
+    moments earlier reported `found 0` and read as a bad acceptance criterion
+    (#21237). Here the reindex cannot run, which is the wedged-lock case.
+    """
+    test_file = tmp_path / "tests" / "test_feature.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("def test_feature() -> None:\n    assert compute() == 3\n")
+
+    def run_command(command: list[str], _repo_path: str) -> str:
+        if command[1] == "index":
+            raise RuntimeError("index lock busy for project abc; skipped")
+        return '{"results":[]}'
+
+    monkeypatch.setattr(artifacts_module, "_run_command", run_command)
+
+    result = evaluate_acceptance_artifacts(
+        criteria="Feature works. test: tests/test_feature.py::test_feature",
+        repo_path=str(tmp_path),
+        commit_shas=[],
+    )
+
+    assert result.passed is False
+    assert result.findings == (
+        "tests/test_feature.py::test_feature: test_feature is defined in "
+        "tests/test_feature.py on disk but the code index does not have it "
+        "(index lock busy for project abc; skipped); the acceptance artifact is "
+        "valid and the index is behind. Run `gcode index --files "
+        "tests/test_feature.py` and retry the close.",
+    )
+
+
+def test_stale_index_is_repaired_by_reindexing_the_artifact_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The common case self-heals: index the one named file, then resolve it."""
+    test_file = tmp_path / "tests" / "test_feature.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("def test_feature() -> None:\n    assert compute() == 3\n")
+    commands: list[list[str]] = []
+
+    def run_command(command: list[str], _repo_path: str) -> str:
+        commands.append(command)
+        if command[1] == "index":
+            return "{}"
+        if command[1] == "symbol":
+            return '{"source":"def test_feature() -> None:\\n    assert compute() == 3\\n"}'
+        if any(cmd[1] == "index" for cmd in commands):
+            return (
+                '{"results":[{"id":"symbol-id","file_path":"tests/test_feature.py",'
+                '"name":"test_feature","qualified_name":"test_feature"}]}'
+            )
+        return '{"results":[]}'
+
+    monkeypatch.setattr(artifacts_module, "_run_command", run_command)
+
+    result = evaluate_acceptance_artifacts(
+        criteria="Feature works. test: tests/test_feature.py::test_feature",
+        repo_path=str(tmp_path),
+        commit_shas=[],
+    )
+
+    assert result.findings == ()
+    assert result.passed is True
+    assert commands[1] == [
+        "gcode",
+        "index",
+        "--files",
+        "tests/test_feature.py",
+        "--skip-if-locked",
+    ]
+
+
+def test_symbol_absent_from_disk_keeps_the_unresolved_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A named test that genuinely does not exist is not reported as index lag.
+
+    The file names ``test_feature`` in prose and calls it, so only a definition
+    check tells absence apart from lag; a bare text match would misreport this.
+    """
+    test_file = tmp_path / "tests" / "test_feature.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text(
+        '"""Covers test_feature."""\n\n\ndef test_other() -> None:\n    test_feature()\n'
+    )
+
+    def run_command(command: list[str], _repo_path: str) -> str:
+        assert command[1] != "index", "a symbol absent from disk must not trigger a reindex"
+        return '{"results":[]}'
+
+    monkeypatch.setattr(artifacts_module, "_run_command", run_command)
+
+    result = evaluate_acceptance_artifacts(
+        criteria="Feature works. test: tests/test_feature.py::test_feature",
+        repo_path=str(tmp_path),
+        commit_shas=[],
+    )
+
+    assert result.passed is False
+    assert result.findings == (
+        "tests/test_feature.py::test_feature: gcode could not resolve the exact "
+        "test body: expected one matching symbol, found 0",
+    )
+
+
 def test_python_placebo_acceptance_test_is_named(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

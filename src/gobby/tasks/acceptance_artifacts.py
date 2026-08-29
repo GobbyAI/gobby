@@ -32,6 +32,10 @@ _NON_ASSERTION_FAILURE_RE = re.compile(
 )
 
 
+class StaleCodeIndexError(RuntimeError):
+    """The named symbol is present on disk but the code index does not have it."""
+
+
 @dataclass(frozen=True, slots=True)
 class AcceptanceTest:
     """One exact test reference and its gcode-resolved body."""
@@ -118,6 +122,9 @@ def resolve_acceptance_tests(
             continue
         try:
             body = _resolve_test_body(path, symbol, repo_path)
+        except StaleCodeIndexError as exc:
+            findings.append(f"{reference}: {exc}")
+            continue
         except (OSError, RuntimeError, ValueError) as exc:
             findings.append(f"{reference}: gcode could not resolve the exact test body: {exc}")
             continue
@@ -226,6 +233,29 @@ def _parse_test_reference(reference: str) -> tuple[str, str] | None:
 
 def _resolve_test_body(path: str, symbol: str, repo_path: str) -> str:
     query = symbol.rsplit("::", 1)[-1].rsplit(".", 1)[-1]
+    candidates = _search_symbol(path, symbol, query, repo_path)
+    if not candidates and _symbol_defined_on_disk(path, query, repo_path):
+        # A test written moments before the close is both the case this gate
+        # exists to check and the case most likely to be missing from the index,
+        # so a miss on a symbol that is on disk is index lag, not absence
+        # (#21237). Index that one file and look again before failing.
+        candidates = _resolve_after_reindex(path, symbol, query, repo_path)
+    if len(candidates) != 1:
+        raise RuntimeError(f"expected one matching symbol, found {len(candidates)}")
+    symbol_id = candidates[0].get("id")
+    if not isinstance(symbol_id, str):
+        raise RuntimeError("gcode result omitted symbol id")
+    symbol_raw = _run_command(["gcode", "symbol", symbol_id, "--format", "json"], repo_path)
+    try:
+        source = json.loads(symbol_raw).get("source")
+    except (AttributeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("invalid gcode symbol response") from exc
+    if not isinstance(source, str) or not source.strip():
+        raise RuntimeError("gcode symbol response omitted source")
+    return source
+
+
+def _search_symbol(path: str, symbol: str, query: str, repo_path: str) -> list[dict[str, object]]:
     search_raw = _run_command(
         [
             "gcode",
@@ -243,7 +273,7 @@ def _resolve_test_body(path: str, symbol: str, repo_path: str) -> str:
         rows = json.loads(search_raw).get("results", [])
     except (AttributeError, json.JSONDecodeError) as exc:
         raise RuntimeError("invalid gcode search response") from exc
-    candidates = [
+    return [
         row
         for row in rows
         if isinstance(row, dict)
@@ -253,19 +283,57 @@ def _resolve_test_body(path: str, symbol: str, repo_path: str) -> str:
             or str(row.get("qualified_name", "")).replace(".", "::").endswith(symbol)
         )
     ]
-    if len(candidates) != 1:
-        raise RuntimeError(f"expected one matching symbol, found {len(candidates)}")
-    symbol_id = candidates[0].get("id")
-    if not isinstance(symbol_id, str):
-        raise RuntimeError("gcode result omitted symbol id")
-    symbol_raw = _run_command(["gcode", "symbol", symbol_id, "--format", "json"], repo_path)
+
+
+def _symbol_defined_on_disk(path: str, query: str, repo_path: str) -> bool:
+    """Whether the working copy actually defines the named symbol."""
     try:
-        source = json.loads(symbol_raw).get("source")
-    except (AttributeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("invalid gcode symbol response") from exc
-    if not isinstance(source, str) or not source.strip():
-        raise RuntimeError("gcode symbol response omitted source")
-    return source
+        source = (Path(repo_path) / path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    if Path(path).suffix.casefold() != ".py":
+        return re.search(rf"\b{re.escape(query)}\b", source) is not None
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    return any(
+        isinstance(node, ast.AsyncFunctionDef | ast.ClassDef | ast.FunctionDef)
+        and node.name == query
+        for node in ast.walk(tree)
+    )
+
+
+def _resolve_after_reindex(
+    path: str,
+    symbol: str,
+    query: str,
+    repo_path: str,
+) -> list[dict[str, object]]:
+    """Index the artifact's file, then search once more; explain a lasting miss."""
+    reindex_error = _reindex_file(path, repo_path)
+    candidates = [] if reindex_error else _search_symbol(path, symbol, query, repo_path)
+    if candidates:
+        return candidates
+    cause = reindex_error or "reindexing that file did not surface it"
+    raise StaleCodeIndexError(
+        f"{query} is defined in {path} on disk but the code index does not have it "
+        f"({cause}); the acceptance artifact is valid and the index is behind. "
+        f"Run `gcode index --files {path}` and retry the close."
+    )
+
+
+def _reindex_file(path: str, repo_path: str) -> str | None:
+    """Index one file in place, returning why that was not possible when it failed.
+
+    ``--skip-if-locked`` keeps a close gate from blocking behind another indexer:
+    a held lock exits 3 and is reported as the cause instead of stalling the close.
+    """
+    try:
+        _run_command(["gcode", "index", "--files", path, "--skip-if-locked"], repo_path)
+    except RuntimeError as exc:
+        return str(exc)
+    return None
 
 
 def _test_body_findings(test: AcceptanceTest) -> list[str]:

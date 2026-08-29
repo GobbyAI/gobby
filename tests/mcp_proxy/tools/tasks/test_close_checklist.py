@@ -271,6 +271,24 @@ async def test_unresolved_named_test_names_the_registered_worktree_and_project_p
 
 
 @pytest.mark.asyncio
+async def test_unregistered_worktree_does_not_suggest_a_project_path() -> None:
+    """Without a registered worktree there is no path to pass, so do not ask for one.
+
+    The hint used to be appended in the same breath as saying the task has no
+    registered isolation worktree, sending the caller hunting for one (#21237).
+    """
+    evaluation = await _evaluate(
+        _task(escalated=False),
+        override_justification=None,
+        artifacts=_unresolved_artifacts(),
+        close_root=NO_WORKTREE,
+    )
+
+    assert evaluation.error == "acceptance_artifacts_invalid"
+    assert evaluation.message == _unresolved_artifacts().findings[0]
+
+
+@pytest.mark.asyncio
 async def test_explicit_project_path_keeps_the_bare_gate_11_finding() -> None:
     """The caller who chose the root does not get told to choose one."""
     evaluation = await _evaluate(

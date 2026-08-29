@@ -127,7 +127,15 @@ def _acceptance_root_diagnostic(
         for reference in extract_artifact_references(criteria, "test")
         if reference not in resolved_references
     ]
-    if not unresolved or project_path is not None or close_root.applies:
+    # With nothing registered there is no worktree or clone path to pass, so the
+    # suggestion names a remedy the caller cannot supply and sends them hunting
+    # for a worktree that does not exist (#21237).
+    if (
+        not unresolved
+        or project_path is not None
+        or close_root.applies
+        or close_root.worktree_path is None
+    ):
         return finding
     return (
         f"{finding} Named test {', '.join(unresolved)} did not resolve in {repo_path}; "
