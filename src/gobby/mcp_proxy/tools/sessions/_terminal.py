@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.mcp_proxy.tools.sessions._handoff import FEEDBACK_OBSERVATION_INPUT_SCHEMA
 from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
     _CLI_COMPACT_COMMANDS,
@@ -510,6 +511,7 @@ def register_terminal_tools(
             if not result.get("compacted"):
                 restore_handoff_attempt(db, attempt_state)
                 return result
+            clear_queued_context(session_manager, resolved_session_id)
             result["attempt_id"] = attempt_id
             result["handoff_staged"] = True
             if any(resume_skills.values()):
@@ -727,6 +729,7 @@ def register_terminal_tools(
             "attempt_id": compact_attempt_id,
             "handoff_staged": True,
         }
+        clear_queued_context(session_manager, resolved_session_id)
         if any(resume_skills.values()):
             result["resume_skills"] = resume_skills
         return result

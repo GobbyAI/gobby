@@ -13,6 +13,7 @@ from gobby.hooks.event_handlers._session_start.materialize import (
     _CONTEXT_MODE_METADATA_KEY,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd, hook_cwd
 
 
@@ -157,6 +158,7 @@ def activate_deferred_session(
     if workflow_context:
         additional_context.append(workflow_context)
 
+    clear_queued_context(handlers._session_manager, session_id)
     startup_response = handlers._compose_session_response(
         session=session,
         session_id=session_id,

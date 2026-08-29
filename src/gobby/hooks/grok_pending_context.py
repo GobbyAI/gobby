@@ -162,6 +162,42 @@ def mark_briefing_turn(handler: PendingContextHandler, event: HookEvent) -> None
         event.metadata["_grok_briefing_turn"] = True
 
 
+def clear_queued_context(session_manager: object | None, session_id: str | None) -> None:
+    """Drop undelivered Grok briefing, turn-context, and in-flight delivery.
+
+    Compact and session-start start a new context epoch. Stale injects — especially
+    strong compact-pressure copy queued before occupancy dropped — must not flush
+    as PreToolUse denies on the continuation.
+    """
+    if session_manager is None or not session_id:
+        return
+    db = getattr(session_manager, "db", None)
+    if db is None:
+        return
+
+    def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
+        changed = False
+        if _components(variables.get(BRIEFING_VARIABLE)):
+            variables[BRIEFING_VARIABLE] = []
+            changed = True
+        if _components(variables.get(TURN_CONTEXT_VARIABLE)):
+            variables[TURN_CONTEXT_VARIABLE] = []
+            changed = True
+        if _delivery(variables.get(DELIVERY_VARIABLE)) is not None:
+            variables[DELIVERY_VARIABLE] = None
+            changed = True
+        return None, changed
+
+    try:
+        SessionVariableManager(db)._mutate_variables(session_id, mutate)
+    except Exception:
+        logger.debug(
+            "Skipping queued Grok context clear: session=%s",
+            session_id,
+            exc_info=True,
+        )
+
+
 def stash_response(
     handler: PendingContextHandler,
     event: HookEvent,
