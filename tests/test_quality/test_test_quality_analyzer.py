@@ -1048,3 +1048,68 @@ def test_zero_file_audit_warns_for_unmatched_paths(tmp_path: Path, requested_pat
     assert [(warning.code, warning.path) for warning in report.warnings] == [
         ("NO_ANALYZABLE_FILES", None)
     ]
+
+
+def test_zero_delay_sleep_is_a_cooperative_yield_not_sleep_based_timing(
+    tmp_path: Path,
+) -> None:
+    """`sleep(0)` has no duration to be flaky about; it yields the event loop."""
+    _write_test(
+        tmp_path,
+        """import asyncio
+import time
+
+async def test_asyncio_yield():
+    await asyncio.sleep(0)
+    assert True
+
+async def test_asyncio_keyword_yield():
+    await asyncio.sleep(delay=0)
+    assert True
+
+def test_time_zero():
+    time.sleep(0.0)
+    assert True
+""",
+    )
+    report = audit_paths([tmp_path / "tests"], root=tmp_path)
+
+    assert [issue for issue in report.issues if issue.issue_code == "SLEEP_IN_TEST"] == []
+
+
+def test_non_zero_and_unresolvable_delays_still_flag(tmp_path: Path) -> None:
+    """Only a literal zero is exempt — a variable delay could be anything."""
+    _write_test(
+        tmp_path,
+        """import asyncio
+import time
+from time import sleep
+
+DELAY = 0
+
+async def test_variable_delay():
+    await asyncio.sleep(DELAY)
+    assert True
+
+def test_small_but_real_delay():
+    time.sleep(0.01)
+    assert True
+
+def test_falsey_non_number():
+    time.sleep("")
+    assert True
+
+def test_recognized_alias_without_arguments():
+    sleep()
+    assert True
+""",
+    )
+    report = audit_paths([tmp_path / "tests"], root=tmp_path)
+
+    flagged = {issue.test_name for issue in report.issues if issue.issue_code == "SLEEP_IN_TEST"}
+    assert flagged == {
+        "test_variable_delay",
+        "test_small_but_real_delay",
+        "test_falsey_non_number",
+        "test_recognized_alias_without_arguments",
+    }

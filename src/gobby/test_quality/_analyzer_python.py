@@ -216,7 +216,7 @@ class _TestBodyVisitor(ast.NodeVisitor):
         if leaf_name == "setattr" and "monkeypatch" in call_name:
             self.mock_uses += 1
 
-        if _is_sleep_call(call_name, self.sleep_call_names):
+        if _is_sleep_call(node, call_name, self.sleep_call_names):
             self.sleep_lines.append(node.lineno)
 
         self.generic_visit(node)
@@ -291,8 +291,23 @@ def _sleep_call_names(nodes: Iterable[ast.AST]) -> set[str]:
     return call_names
 
 
-def _is_sleep_call(call_name: str, sleep_call_names: set[str]) -> bool:
-    return call_name in sleep_call_names
+def _is_zero_delay(node: ast.Call) -> bool:
+    """A literal-zero delay is a cooperative yield, not sleep-based timing."""
+    delay: ast.expr | None = node.args[0] if node.args else None
+    if delay is None:
+        for keyword in node.keywords:
+            if keyword.arg == "delay" or keyword.arg == "secs":
+                delay = keyword.value
+                break
+    if delay is None:
+        return False
+    return isinstance(delay, ast.Constant) and type(delay.value) in (int, float) and not delay.value
+
+
+def _is_sleep_call(node: ast.Call, call_name: str, sleep_call_names: set[str]) -> bool:
+    if call_name not in sleep_call_names:
+        return False
+    return not _is_zero_delay(node)
 
 
 def _call_name(node: ast.AST) -> str:
