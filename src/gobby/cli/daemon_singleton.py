@@ -26,6 +26,14 @@ def format_singleton_status(probe: SingletonProbe) -> str:
         return f"Gobby singleton: maintenance{pid}"
     if probe.state is ProbeState.ABSENT:
         return "Gobby daemon: not running"
+    # A start window is exactly when an operator runs `status`, and the question is
+    # binary: is it coming back, or is it stuck? The raw ProbeState name answers
+    # neither, so both reservation states say which one it is (#21240).
+    if probe.state is ProbeState.LIVE_RESERVATION:
+        pid = f" (PID: {probe.pid})" if probe.pid is not None else ""
+        return f"Gobby daemon: starting{pid}; a start reservation is live, retry shortly"
+    if probe.state is ProbeState.STALE_RESERVATION:
+        return "Gobby daemon: not running; an earlier start did not finish, run `gobby start`"
     return f"Gobby singleton: {label}"
 
 

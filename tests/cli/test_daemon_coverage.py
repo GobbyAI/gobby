@@ -581,16 +581,18 @@ class TestStatusCommand:
         from gobby.runner_pid_file import ProbeState, SingletonProbe
 
         mock_home.return_value = tmp_path
-        cases = (
-            ProbeState.LIVE_RESERVATION,
-            ProbeState.STALE_RESERVATION,
-            ProbeState.TRANSITIONING,
-        )
-        for state in cases:
+        # Each state must answer the operator, so they are pinned to distinct
+        # wording rather than to the raw ProbeState name they used to echo.
+        cases = {
+            ProbeState.LIVE_RESERVATION: "starting",
+            ProbeState.STALE_RESERVATION: "an earlier start did not finish",
+            ProbeState.TRANSITIONING: "transitioning",
+        }
+        for state, expected in cases.items():
             mock_probe.return_value = SingletonProbe(state=state)
             result = runner.invoke(status, [], catch_exceptions=False)
             assert result.exit_code == 0
-            assert state.value.replace("_", " ") in result.output.lower()
+            assert expected in result.output.lower()
         mock_probe.return_value = SingletonProbe(state=ProbeState.ABSENT)
         result = runner.invoke(status, [], catch_exceptions=False)
         assert result.exit_code == 0
