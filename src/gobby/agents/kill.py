@@ -327,6 +327,16 @@ async def _close_tmux_session(
 
     services = terminal_services
     if services is None:
+        # A caller that asked to close a terminal but wired no services degrades
+        # to _close_terminal_window's raw process-group kill, which skips the
+        # capture policy. Say so instead of blaming the run for having no
+        # terminal.
+        if run.terminal_id is not None:
+            logger.warning(
+                "Terminal close for run %s has no TerminalServices; "
+                "falling back off the managed capture path",
+                run.id,
+            )
         return {"success": False, "error": "agent run has no terminal"}
     terminal = active_terminal_for_run(services.manager, run)
     if terminal is None:

@@ -1377,6 +1377,39 @@ class TestKillAgent:
         runner.cancel_run.assert_called_once_with("run-123")
 
     @pytest.mark.asyncio
+    async def test_parent_kill_forwards_terminal_services(self) -> None:
+        """A parent kill must hand kill.py the services that reach capture.py.
+
+        Without terminal_services, _close_tmux_session short-circuits before
+        terminate_managed_runtime_async and _close_terminal_window raw-kills the
+        process group, losing the final transcript capture.
+        """
+        runner = _make_runner_with_run_storage()
+        mock_run = _make_mock_agent_run(
+            run_id="run-123",
+            session_id="sess-456",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
+        )
+        runner.get_run.return_value = mock_run
+        runner.cancel_run.return_value = True
+        services = object()
+        runner.terminal_services = services
+
+        registry = create_agents_registry(runner)
+        kill_agent = registry._tools["kill_agent"].func
+
+        with patch(
+            "gobby.mcp_proxy.tools.agents._kill_agent_process",
+            new_callable=AsyncMock,
+            return_value={"success": True},
+        ) as kill_process:
+            result = await kill_agent(run_id="run-123")
+
+        assert result["success"] is True
+        assert kill_process.call_args.kwargs["close_terminal"] is True
+        assert kill_process.call_args.kwargs["terminal_services"] is services
+
+    @pytest.mark.asyncio
     async def test_stop_false_kills_without_terminalizing_workflow(self) -> None:
         """CLI kill without --stop should not cancel workflow state."""
         runner = _make_runner_with_run_storage()

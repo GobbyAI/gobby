@@ -271,6 +271,7 @@ def register_agent_lifecycle_tools(
                         kill_db,
                         signal_name=signal,
                         close_terminal=not debug,
+                        terminal_services=getattr(ctx.runner, "terminal_services", None),
                     ),
                 )
                 if (
