@@ -1,6 +1,8 @@
 """Regression tests for hook ingress platform session metadata."""
 
+import json
 import logging
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,10 +11,12 @@ from fastapi.testclient import TestClient
 
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
+    ENVELOPE_REPLAY_GRACE_SECONDS,
     claim_envelope_processing,
     envelope_terminal_response,
     is_envelope_processed,
     mark_envelope_processed,
+    read_envelope_marker,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -271,6 +275,72 @@ def test_envelope_id_replays_terminal_denial(
         == terminal_response
     )
     adapter.handle_native.assert_called_once()
+
+
+def test_aged_stop_block_is_reevaluated_instead_of_replayed(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    session_manager = SessionManager(temp_db)
+    server = create_http_server(
+        port=60887,
+        test_mode=True,
+        session_manager=session_manager,
+    )
+    server.app.state.hook_manager = MagicMock()
+    server.app.state.hook_manager.shutdown_async = AsyncMock()
+
+    envelope = {
+        "schema_version": 1,
+        "enqueued_at": "2026-04-16T12:00:00Z",
+        "critical": True,
+        "hook_type": "Stop",
+        "source": "claude",
+        "input_data": {},
+    }
+    terminal_response = {
+        "continue": True,
+        "decision": "block",
+        "reason": "Rule enforced by Gobby: [block-terminal-validation-failure]\nfix it",
+    }
+    allow_response = {"continue": True, "decision": "allow"}
+    envelope_id = "n-0000000000003-stop"
+
+    with (
+        TestClient(server.app) as client,
+        patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
+    ):
+        adapter = MagicMock()
+        adapter.handle_native.side_effect = [terminal_response, allow_response]
+        adapter_cls.return_value = adapter
+
+        first_response = client.post(
+            "/api/hooks/execute",
+            json=envelope,
+            headers={ENVELOPE_ID_HEADER: envelope_id},
+        )
+        processed_dir = tmp_path / "gobby-home" / "hooks" / "inbox" / "processed"
+        record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+        assert record is not None
+        record["processed_at"] = (
+            datetime.now(UTC) - timedelta(seconds=ENVELOPE_REPLAY_GRACE_SECONDS + 5)
+        ).isoformat()
+        marker = next(processed_dir.glob("*.json"))
+        marker.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+
+        second_response = client.post(
+            "/api/hooks/execute",
+            json=envelope,
+            headers={ENVELOPE_ID_HEADER: envelope_id},
+        )
+
+    assert first_response.status_code == 200
+    assert first_response.json() == terminal_response
+    assert second_response.status_code == 200
+    assert second_response.json() == allow_response
+    assert adapter.handle_native.call_count == 2
 
 
 def test_envelope_id_processed_marker_without_response_returns_conflict(

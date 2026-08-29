@@ -435,7 +435,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         def mark_processed_and_return(response: dict[str, Any]) -> dict[str, Any]:
             if envelope_id:
                 try:
-                    mark_envelope_processed(envelope_id, response=response)
+                    mark_envelope_processed(
+                        envelope_id,
+                        response=response,
+                        hook_type=hook_type if isinstance(hook_type, str) else None,
+                    )
                 except Exception as exc:
                     logger.warning(
                         "Failed to mark hook envelope %s processed: %s",
@@ -492,19 +496,21 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 )
 
             if envelope_id and not claim_envelope_processing(envelope_id):
-                marker = read_envelope_marker(envelope_id)
                 stored_response = envelope_terminal_response(envelope_id)
                 if stored_response is not None:
                     logger.info("Replaying processed hook envelope %s result", envelope_id)
                     return stored_response
-                if not isinstance(marker, dict) or not isinstance(marker.get("status"), str):
+                marker = read_envelope_marker(envelope_id)
+                if marker is None and claim_envelope_processing(envelope_id):
+                    logger.info("Reclaimed expired hook envelope marker %s", envelope_id)
+                elif not isinstance(marker, dict) or not isinstance(marker.get("status"), str):
                     reason = "duplicate envelope marker malformed"
                     logger.debug("Hook envelope %s duplicate: %s", envelope_id, reason)
                     return JSONResponse(
                         status_code=409,
                         content={"status": "malformed_marker", "reason": reason},
                     )
-                if clear_stale_envelope_processing_marker(
+                elif clear_stale_envelope_processing_marker(
                     envelope_id
                 ) and claim_envelope_processing(envelope_id):
                     logger.info("Reclaimed stale hook envelope processing marker %s", envelope_id)
