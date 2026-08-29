@@ -284,8 +284,12 @@ def activate_materialized_session(
         project_id=project_id,
         terminal_context=terminal_context,
     )
+    # handler is typed Any and the mixins never declare terminal_manager; only
+    # the concrete HookEventHandlers assigns it. Match _session_end.py:192 so a
+    # handler without the attribute takes the same skip path as one holding None.
+    terminal_manager = getattr(handler, "terminal_manager", None)
     if (
-        handler.terminal_manager is not None
+        terminal_manager is not None
         and isinstance(terminal_context, dict)
         and isinstance(project_id, str)
         and session_id
@@ -295,7 +299,7 @@ def activate_materialized_session(
 
         try:
             seed_external_terminal(
-                handler.terminal_manager,
+                terminal_manager,
                 project_id=project_id,
                 session_id=session_id,
                 terminal_context=terminal_context,
