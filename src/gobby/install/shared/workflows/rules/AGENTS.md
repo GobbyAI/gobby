@@ -13,6 +13,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `stop-gates` | `stop-gates/` | 6 | Require workflow completion and enforce the Found Work ladder before turn end |
 | `plan-mode` | `plan-mode/` | 6 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
 | `memory-lifecycle` | `memory-lifecycle/` | 12 | Shadow relevance judging, layered guidance, claim-time search nudge, post-close review, plan-memory guards, turn sequencing, and tracking reset |
+| `session-feedback` | `session-feedback/` | 4 | Bounded Gobby-experience survey via `gobby-sessions:feedback` |
 | `context-handoff` | `context-handoff/` | 6 | Compact/resume handoffs, task context, user profile, wiki context, and pressure nudges |
 | `auto-task` | `auto-task/` | 3 | Autonomous task execution context, task continuation, notify tree complete |
 | `build-coordinator` | `build-coordinator/` | 1 | Require build-coordinator guidance for Gobby build work |

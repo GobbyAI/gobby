@@ -33,6 +33,13 @@ with session, source, kind, evidence, impact, frequency, optional suggestion and
 disposition, `reviewed=false`, and a UTC creation timestamp. Empty feedback writes no
 rows. Both feedback entry points use the same transactional batch writer.
 
+Bundled ask-once survey gates prompt in-scope sessions to call
+`gobby-sessions:feedback` before `set_handoff` and after completed work on stop.
+Daemon config `session_feedback.survey` is `all` (default), `gobby` (only
+`projects.name == "gobby"`), or `off` (prompts off; the manual tool still works).
+The computed flag `_gobby_feedback_survey_active` is injected per event; epoch
+acknowledgment lives in `_gobby_feedback_epoch_reviewed`.
+
 `summary_markdown` remains the transcript-generated archival summary. It never doubles
 as a live handoff.
 

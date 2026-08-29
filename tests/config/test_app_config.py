@@ -45,6 +45,7 @@ from gobby.config.persistence import MemoryBackupConfig, MemoryConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
     MessageTrackingConfig,
+    SessionFeedbackConfig,
     SessionLifecycleConfig,
     SessionSummaryConfig,
 )
@@ -395,6 +396,20 @@ class TestSessionSummaryConfig:
         assert config.prompt == "Custom prompt"
 
 
+class TestSessionFeedbackConfig:
+    """Tests for SessionFeedbackConfig and DaemonConfig.session_feedback."""
+
+    def test_default_survey_is_all(self) -> None:
+        assert SessionFeedbackConfig().survey == "all"
+        assert DaemonConfig().session_feedback.survey == "all"
+
+    def test_rejects_invalid_survey_value(self) -> None:
+        with pytest.raises(ValidationError):
+            SessionFeedbackConfig(survey="nope")
+        with pytest.raises(ValidationError):
+            DaemonConfig(session_feedback={"survey": "nope"})
+
+
 class TestMCPClientProxyConfig:
     """Tests for MCPClientProxyConfig."""
 
@@ -455,6 +470,7 @@ class TestDaemonConfig:
         assert config.daemon_health_check_interval == 10.0
         assert isinstance(config.bin_freshness, BinFreshnessConfig)
         assert isinstance(config.project_verification_synthesis, ProjectVerificationSynthesisConfig)
+        assert config.session_feedback.survey == "all"
         assert "conductor" not in DaemonConfig.model_fields
         assert not hasattr(config, "conductor")
 

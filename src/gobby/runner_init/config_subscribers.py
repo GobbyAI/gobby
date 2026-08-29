@@ -241,6 +241,10 @@ _PER_OPERATION_ROUTES: Mapping[str, _ConsumerRoute] = {
     "recommend_tools": _route("tool recommendation", "request ConfigRuntime.capture"),
     "rules": _route("rule evaluation", "operation ConfigRuntime.capture"),
     "search": _route("memory search", "operation ConfigRuntime.capture"),
+    "session_feedback": _route(
+        "session-feedback survey rules",
+        "operation ConfigRuntime.capture",
+    ),
     "session_lifecycle": _route("session lifecycle", "operation ConfigRuntime.capture"),
     "session_summary": _route("session summary", "operation ConfigRuntime.capture"),
     "skill_description": _route("skill description", "operation ConfigRuntime.capture"),

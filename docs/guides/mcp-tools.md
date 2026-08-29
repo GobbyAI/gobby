@@ -489,7 +489,7 @@ contract and [spec-writing.md](./spec-writing.md) for the authoring flow.
 
 ## Session Management (`gobby-sessions`)
 
-19 tools for session lifecycle and context management.
+20 tools for session lifecycle and context management.
 
 | Tool | Description |
 | :--- | :--- |
@@ -502,6 +502,7 @@ contract and [spec-writing.md](./spec-writing.md) for the authoring flow.
 | `search_session_messages` | Search rendered transcript messages by substring. |
 | `get_session_commits` | Git commits made during a session timeframe. |
 | `get_usage_breakdown` | Token usage broken down by source and model over a period. |
+| `feedback` | Write Gobby-experience survey observations into `session_feedback`. Empty `observations` is valid. |
 | `set_handoff` | Set handoff context (agent-authored or auto-fallback). Optional `to_session` peer delivery. |
 | `get_handoff` | Read handoff context from a session. |
 | `get_handoff` | Wait for a session's `summary_markdown` to become available. |
@@ -519,13 +520,13 @@ the MCP surface focuses on context manipulation.
 ### Example: Session Handoff
 
 ```python
-# Author a handoff in the current session
+call_tool("gobby-sessions", "feedback", {"observations": []})
+
 call_tool("gobby-sessions", "set_handoff", {
-    "content": "Refactored auth/middleware.py; tests green; PR #123 open.",
-    "set_handoff_ready": True,
+    "current_state": "Refactored auth/middleware.py; tests green; PR #123 open.",
+    "next_steps": ["Open the pull request"],
 })
 
-# In a successor session, read the most recent handoff_ready context
 call_tool("gobby-sessions", "get_handoff", {})
 ```
 

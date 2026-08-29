@@ -3541,6 +3541,17 @@
     },
     {
       "activation": "live",
+      "default": "all",
+      "description": "Who gets the session-feedback survey gates. all: every project. gobby: only projects named gobby. off: no prompts; gobby-sessions:feedback remains callable.",
+      "key": "session_feedback.survey",
+      "machineExport": false,
+      "namespace": "session_feedback",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": 30,
       "description": "Minutes of inactivity before active sessions are marked paused",
       "key": "session_lifecycle.active_session_pause_minutes",

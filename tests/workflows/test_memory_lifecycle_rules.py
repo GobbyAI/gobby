@@ -286,6 +286,7 @@ def _review_variables(*pending: dict[str, str], **overrides: Any) -> dict[str, A
         "loaded_skills": ["memory"],
         "_memory_pending_task_reviews": list(pending),
         "_memory_review_stop_delivered": False,
+        "_gobby_feedback_epoch_reviewed": True,
     }
     variables.update(overrides)
     return variables

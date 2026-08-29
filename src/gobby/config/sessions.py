@@ -5,9 +5,12 @@ Contains session-related Pydantic config models:
 - SessionSummaryConfig: Session summary (handoff) generation settings
 - MessageTrackingConfig: Session message tracking settings
 - SessionLifecycleConfig: Session lifecycle management settings
+- SessionFeedbackConfig: Gobby-experience survey capture settings
 
 Extracted from app.py using Strangler Fig pattern for code decomposition.
 """
+
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -18,6 +21,7 @@ __all__ = [
     "SessionSummaryConfig",
     "MessageTrackingConfig",
     "SessionLifecycleConfig",
+    "SessionFeedbackConfig",
 ]
 
 
@@ -186,3 +190,17 @@ class SessionLifecycleConfig(BaseModel):
         if v <= 0:
             raise ValueError("Value must be positive")
         return v
+
+
+class SessionFeedbackConfig(BaseModel):
+    """Gobby-experience survey capture (session_feedback table)."""
+
+    survey: Literal["all", "gobby", "off"] = Field(
+        default="all",
+        description=(
+            "Who gets the session-feedback survey gates. "
+            "all: every project. "
+            "gobby: only projects named gobby. "
+            "off: no prompts; gobby-sessions:feedback remains callable."
+        ),
+    )

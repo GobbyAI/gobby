@@ -492,6 +492,15 @@ def test_live_key_consumer_matrix_is_complete() -> None:
         live_consumer_matrix((*CONFIG_REGISTRY.specs, synthetic))
 
 
+def test_session_feedback_survey_is_routed_to_rule_evaluation() -> None:
+    entry = next(
+        item for item in live_consumer_matrix() if item.registry_key == "session_feedback.survey"
+    )
+    assert entry.consumers == ("session-feedback survey rules",)
+    assert entry.access_path == "per_operation"
+    assert entry.subscribers == ()
+
+
 @pytest.mark.asyncio
 async def test_first_registration_failure_contract() -> None:
     repository = FakeRepository([snapshot(0, alpha=0), snapshot(1, alpha=1)])

@@ -374,6 +374,8 @@ These are the bundled default variables (from `gobby-default-variables.yaml`):
 | `_memory_initial_stop_checked` | `false` | bool | True after the first turn end checks initial memory skill loading |
 | `_memory_reminder_turn_seq` | `null` | int | Parent turn sequence that last received the concise memory reminder |
 | `_memory_pending_task_reviews` | `[]` | list | Closed worked leaves awaiting the bounded post-close memory review turn end |
+| `_gobby_feedback_epoch_reviewed` | `false` | bool | Persisted epoch ack for the bundled Gobby-experience survey; set true when the gate fires or `gobby-sessions:feedback` succeeds |
+| `_gobby_feedback_survey_active` | computed | bool | Per-event flag from `session_feedback.survey` and `variables.project.name`; not a template default |
 | `_memory_review_stop_delivered` | `false` | bool | True once the pending post-close memory review block was delivered to the agent, or once `review_task_memories` has covered every queued closure |
 | `_memory_task_review_records` | `[]` | list | Successful `review_task_memories` results keyed by canonical task closure |
 | `skill_discovery_instructions_shown` | `false` | bool | Whether skill discovery instructions were shown |

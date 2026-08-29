@@ -67,6 +67,7 @@ from gobby.workflows.engine.event_utils import (
 from gobby.workflows.engine.proxy_hooks import ProxyHooksMixin
 from gobby.workflows.engine.templating import TemplatingMixin
 from gobby.workflows.selectors import rule_matches_agent
+from gobby.workflows.session_feedback_survey import inject_survey_active
 from gobby.workflows.step_instances import AgentStepInstanceManager
 
 logger = logging.getLogger(__name__)
@@ -280,6 +281,7 @@ class RuleEngine(
                 config_values = config_snapshot.active_values
                 if config_values.get("rules.enforcement_enabled", True) is False:
                     return HookResponse(decision="allow")
+                inject_survey_active(variables, config_values)
                 aggregate_blocks = config_values.get("rules.aggregate_blocks", True) is not False
 
                 if eval_context is None:

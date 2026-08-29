@@ -255,8 +255,17 @@ call_tool("gobby-sessions", "get_session_commits", {
 
 `set_handoff` operates on the current session context. It requires a nonblank
 current state and at least one nonblank next step. Optional entries reject blanks;
-references are deduplicated in their original order. `gobby_feedback` is stored in
-`session_feedback` and never rendered into the handoff.
+references are deduplicated in their original order. `gobby_feedback` on
+`set_handoff` is optional extra capture and is stored in `session_feedback`; it
+is never rendered into the handoff. Bundled survey gates require the dedicated
+`gobby-sessions:feedback` tool and must not duplicate the same observations in
+`gobby_feedback` on retry.
+
+```python
+call_tool("gobby-sessions", "feedback", {
+    "observations": [],
+})
+```
 
 ```python
 call_tool("gobby-sessions", "set_handoff", {

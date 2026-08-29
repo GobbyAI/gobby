@@ -62,6 +62,7 @@ from gobby.config.sessions import (
     ChatHistoryConfig,
     MemoryUsefulnessConfig,
     MessageTrackingConfig,
+    SessionFeedbackConfig,
     SessionLifecycleConfig,
     SessionSummaryConfig,
 )
@@ -348,6 +349,10 @@ class DaemonConfig(BaseModel):
     session_lifecycle: SessionLifecycleConfig = Field(
         default_factory=SessionLifecycleConfig,
         description="Session lifecycle management configuration",
+    )
+    session_feedback: SessionFeedbackConfig = Field(
+        default_factory=SessionFeedbackConfig,
+        description="Gobby-experience survey capture configuration",
     )
     metrics: MetricsConfig = Field(
         default_factory=MetricsConfig,
