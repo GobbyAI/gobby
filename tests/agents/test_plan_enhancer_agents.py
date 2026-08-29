@@ -88,9 +88,10 @@ class TestSharedEnhancerContract:
         ]
         assert ("gobby-skills", "get_skill", "skill_loaded") in triples
         assert ("gobby-skills", "get_skill", "proportionality_loaded") in triples
+        assert ("gobby-skills", "get_skill", "restraint_loaded") in triples
 
     @pytest.mark.parametrize("fixture", ["taskless", "stage_native"])
-    def test_load_skill_transition_gates_on_both_skills(
+    def test_load_skill_transition_gates_on_all_three_skills(
         self, fixture: str, request: pytest.FixtureRequest
     ) -> None:
         agent: AgentDefinitionBody = request.getfixturevalue(fixture)
@@ -101,7 +102,7 @@ class TestSharedEnhancerContract:
         transitions = getattr(load_step, "transitions", []) or []
         gate = [_field(t, "when") for t in transitions if _field(t, "to") == "enhance"]
         assert gate
-        assert "vars.skill_loaded and vars.proportionality_loaded" in gate
+        assert "vars.skill_loaded and vars.proportionality_loaded and vars.restraint_loaded" in gate
 
     @pytest.mark.parametrize("fixture", ["taskless", "stage_native"])
     def test_instructions_reference_methodology_skills(
@@ -157,6 +158,49 @@ class TestTasklessEnhancer:
             (_field(e, "server"), _field(e, "tool"), _field(e, "variable")) for e in mcp_success
         ]
         assert ("gobby-agents", "end_agent_run", "enhance_complete") in triples
+
+    def test_enhance_completes_on_result_delivery(self, taskless: AgentDefinitionBody) -> None:
+        # end_agent_run takes no arguments, so the result must be sent first. If
+        # the provider process exits after that send, no turn_end fires and the
+        # require-step-completion stop gate cannot ask for end_agent_run, so a
+        # delivered round would be recorded as a failed run. Delivering the
+        # result latches completion; the message_type gate stops mid-run
+        # messages from latching it early.
+        enhance = find_step(
+            (taskless.step_workflow.steps if taskless.step_workflow else []), "enhance"
+        )
+        assert enhance is not None
+        mcp_success = getattr(enhance, "on_mcp_success", []) or []
+        latches = [
+            e
+            for e in mcp_success
+            if (_field(e, "server"), _field(e, "tool")) == ("gobby-agents", "send_message")
+            and _field(e, "variable") == "enhance_complete"
+        ]
+        assert len(latches) == 1
+        assert _field(latches[0], "when") == "tool_input.message_type == 'plan_enhancement'"
+        assert "plan_enhancement" in (taskless.prompts.agent or "")
+
+    def test_instructions_route_artifact_read_to_the_filesystem(
+        self, taskless: AgentDefinitionBody
+    ) -> None:
+        # The enhance step whitelists a handful of MCP tools and none of them
+        # read files, so a prompt that only says "read the plan artifact" leads
+        # the agent to conclude the artifact is unreachable and stall the parent
+        # for a paste. isolation=none puts artifact_path on the local disk; both
+        # the agent prompt and the step message must say to read it there.
+        enhance = find_step(
+            (taskless.step_workflow.steps if taskless.step_workflow else []), "enhance"
+        )
+        assert enhance is not None
+        assert enhance.status_message is not None
+        assert taskless.prompts.agent is not None
+        for text in (taskless.prompts.agent, enhance.status_message):
+            # Block scalars hard-wrap, so compare against unwrapped text.
+            unwrapped = " ".join(text.lower().split())
+            assert "artifact_path" in unwrapped
+            assert "local filesystem" in unwrapped
+            assert "native file-read or shell" in unwrapped
 
     def test_enhance_step_blocks_review_and_record_verbs(
         self, taskless: AgentDefinitionBody

@@ -31,8 +31,10 @@ prompts:
     max_enhancement_rounds, and parent_session_id. There is no assigned task.
 
     Load `restraint`, `plan-enhance`, and `proportionality` before enhancing.
-    Use only the Gobby MCP proxy tools for this — native Skill, GitHub/app
-    connector, and Computer Use tools bypass Gobby's skill tracking.
+    Load those skills only through the Gobby MCP proxy — native Skill,
+    GitHub/app connector, and Computer Use tools bypass Gobby's skill tracking.
+    That restriction governs skill loading alone; it never limits how you read
+    files.
     `restraint` is the decision ladder every suggestion walks before it is
     recorded — rung 1 asks whether it needs to exist at all, each recorded
     suggestion names the rung it stopped at, and a suggestion that stops at a
@@ -44,8 +46,14 @@ prompts:
     consumer or stated requirement. Ambition and size are never reasons to
     withhold a suggestion; unjustified mechanism is.
 
-    After the workflow has advanced to `enhance`, read the plan artifact and the
-    parent context, then walk the plan once through both lenses (Better =
+    After the workflow has advanced to `enhance`, read the plan artifact at
+    artifact_path off the local filesystem with your native file-read or shell
+    tools. This run is `isolation: none`, so you are already in the caller's
+    checkout and artifact_path is a real file there. The MCP proxy exposes no
+    file-reading tool and the `enhance` step whitelists only a few MCP tools by
+    design — that is never a reason to ask the parent session to paste the plan
+    to you. Then read the parent context and walk the plan once through both
+    lenses (Better =
     strengthen in-scope work; Bigger = net-new scope the parent intent justifies).
     Emit the structured suggestion result defined by `plan-enhance` — top-level
     `converged` plus a ranked `suggestions` list (highest impact / lowest effort
@@ -54,9 +62,11 @@ prompts:
     honestly rather than inventing work.
 
     You are advisory only — the human is the scope gate and decides what
-    ships. Send your structured result to the parent session with `send_message`,
-    then call `end_agent_run`. The coordinator applies any accepted suggestions
-    and re-runs `uv run gobby plans validate`.
+    ships. Send your structured result to the parent session with `send_message`
+    using `message_type: "plan_enhancement"` — that exact type is what marks the
+    round delivered, so use it on the result send and on no other message. Then
+    call `end_agent_run` to release resources promptly. The coordinator applies
+    any accepted suggestions and re-runs `uv run gobby plans validate`.
 
     Lifecycle events may include `turn_start`, `turn_end`, `before_agent`,
     `after_agent`, and `stop`; they are observation points, never task-mutation
@@ -144,7 +154,10 @@ step_workflow:
       mcp_error_policy: stay
       description: "Read the plan artifact and return ranked enhancement suggestions"
       status_message: |
-        Read artifact_path and the parent context. Walk both lenses (Better,
+        Read artifact_path off the local filesystem with your native file-read
+        or shell tools — this step allows all native tools, and the MCP
+        whitelist below is not a file-read restriction. Never ask the parent to
+        paste the plan to you. Then read the parent context. Walk both lenses (Better,
         Bigger), run the proportionality test on each suggestion, and emit the
         structured `plan-enhance` result (converged + ranked suggestions) to the
         parent via send_message, then call end_agent_run. Never edit the plan;
@@ -167,6 +180,18 @@ step_workflow:
         - "gobby-agents:send_message"
         - "gobby-skills:get_skill"
       on_mcp_success:
+        # Delivering the result completes the round. `end_agent_run` takes no
+        # arguments, so the result must go out first; if the provider process
+        # then exits without that second call, no turn_end fires and the
+        # stop gate cannot ask for it, which would record a delivered round as
+        # a failed run. The message_type gate keeps mid-run messages (status
+        # updates, questions to the parent) from latching completion early.
+        - server: gobby-agents
+          tool: send_message
+          when: "tool_input.message_type == 'plan_enhancement'"
+          action: set_variable
+          variable: enhance_complete
+          value: true
         - server: gobby-agents
           tool: end_agent_run
           action: set_variable

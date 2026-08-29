@@ -197,9 +197,11 @@ prompts:
 
     The approval payload contains full typed entries; a count alone is invalid.
     The parent appends `## V1 Plan Changelog`; prior changelog history stays
-    intact. Send the exact JSON object to the parent with `send_message`, then
-    call end_agent_run. The durable parent message is the run result checked at
-    termination.
+    intact. Send the exact JSON object to the parent with `send_message` using
+    `message_type: "plan_review"` — that exact type is what marks the round
+    delivered, so use it on the result send and on no other message. Then call
+    end_agent_run to release resources promptly. The durable parent message is
+    the run result checked at termination.
 
     Boundaries:
     - This run is taskless: gobby-tasks and gobby-tasks-ops lifecycle tools and
@@ -292,7 +294,8 @@ step_workflow:
         verdict approved or needs_review to the parent. When validation fails,
         omit verdict and return the canonical protocol_failure with the exact tool
         error and draft findings.
-        Send that exact JSON with send_message, then call end_agent_run.
+        Send that exact JSON with send_message using `message_type: "plan_review"`,
+        then call end_agent_run.
       allowed_tools: "all"
       blocked_mcp_tools:
         - "gobby-tasks:create_task"
@@ -321,6 +324,18 @@ step_workflow:
         - "gobby-review-learning:list_check_keys"
         - "gobby-skills:get_skill"
       on_mcp_success:
+        # Delivering the verdict completes the round. `end_agent_run` takes no
+        # arguments, so the result must go out first; if the provider process
+        # then exits without that second call, no turn_end fires and the
+        # stop gate cannot ask for it, which would record a delivered round as
+        # a failed run. The message_type gate keeps mid-run messages (status
+        # updates, questions to the parent) from latching completion early.
+        - server: gobby-agents
+          tool: send_message
+          when: "tool_input.message_type == 'plan_review'"
+          action: set_variable
+          variable: review_complete
+          value: true
         - server: gobby-agents
           tool: end_agent_run
           action: set_variable
