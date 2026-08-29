@@ -143,10 +143,12 @@ async def test_call_tool_sends_intent_on_each_http_shape() -> None:
             {"intent": "target-value"},
             intent=long_intent,
         )
+        # A wait tool takes the structured shape; use one that is actually
+        # registered in WAIT_TOOL_NAMES.
         await proxy.call_tool(
-            "gobby-sessions",
-            "get_handoff",
-            {"session_id": "session", "intent": "target-value"},
+            "gobby-agents",
+            "wait_for_output",
+            {"run_id": "run-1", "pattern": "done", "intent": "target-value"},
             intent=long_intent,
         )
 
@@ -193,9 +195,9 @@ async def test_stdio_final_wait_envelope_stays_within_shared_cap() -> None:
     call_tool = _capture_stdio_tools(proxy)["call_tool"]
 
     result = await call_tool(
-        server_name="gobby-sessions",
-        tool_name="get_handoff",
-        arguments={"timeout_seconds": 999_999},
+        server_name="gobby-agents",
+        tool_name="wait_for_output",
+        arguments={"run_id": "run-1", "pattern": "done", "timeout_seconds": 999_999},
         intent="find completion",
     )
 
