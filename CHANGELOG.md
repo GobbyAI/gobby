@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Set `auth_mode: disabled` in `bootstrap.yaml`, or run `gobby install --auth-mode
 disabled`, only for an explicitly trusted isolated environment.
 
+### Fixed
+
+- Drop queued Grok briefing and turn-context injects on `set_handoff` compact,
+  session-start, and Grok PostCompact so stale compact-pressure copy cannot deny
+  the next PreToolUse after occupancy has already fallen.
+
 ## [0.8.1] — gobby-core — 2026-07-14
 
 ### Added

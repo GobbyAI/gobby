@@ -7,6 +7,7 @@ from typing import Any
 from gobby.hooks.event_handlers._session_start.handoff import (
     prepare_compact_continuation_variables,
 )
+from gobby.hooks.grok_pending_context import clear_queued_context
 
 
 def apply_in_place_compact_context_loss(handler: Any, session_id: str | None) -> None:
@@ -26,6 +27,7 @@ def apply_in_place_compact_context_loss(handler: Any, session_id: str | None) ->
 
     sv_mgr = SessionVariableManager(handler._session_manager.db)
     _reset_agent_context_injection(handler, session_id)
+    clear_queued_context(handler._session_manager, session_id)
 
     updates: dict[str, Any] = {
         "unlocked_tools": [],

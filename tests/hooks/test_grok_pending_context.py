@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock
 
@@ -10,7 +11,11 @@ import pytest
 
 from gobby.cli.utils import get_gobby_home
 from gobby.hooks.envelope_dedupe import get_processed_envelope_dir, mark_envelope_processed
+from gobby.hooks.event_handlers._session_start.in_place_compact import (
+    apply_in_place_compact_context_loss,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hooks.hook_manager import HookManager
 from gobby.storage import workspace_machine_scope
 from gobby.storage.machines import LocalMachineManager
@@ -413,3 +418,82 @@ def test_grok_pending_variables_are_reserved() -> None:
             "grok_pending_delivery",
         )
     )
+
+
+def test_clear_queued_context_drops_briefing_turn_context_and_delivery(
+    session_manager: SessionManager,
+    grok_session_id: str,
+) -> None:
+    variables = SessionVariableManager(session_manager.db)
+    stale = (
+        "Context is 356k tokens. Call gobby-sessions:set_handoff now, before any other tool call."
+    )
+    variables.merge_variables(
+        grok_session_id,
+        {
+            "grok_pending_briefing": [_component("turn:stale", stale)],
+            "grok_pending_turn_context": [_component("ctx:turn:1", "mid-turn pressure")],
+            "grok_pending_delivery": {
+                "envelope_id": "gate-1",
+                "components": [_component("turn:stale", stale)],
+            },
+        },
+    )
+
+    clear_queued_context(session_manager, grok_session_id)
+
+    stored = variables.get_variables(grok_session_id)
+    assert stored.get("grok_pending_briefing") in ([], None)
+    assert stored.get("grok_pending_turn_context") in ([], None)
+    assert stored.get("grok_pending_delivery") is None
+
+
+def test_pre_tool_use_does_not_deny_stale_briefing_after_clear(
+    manager_with_mocks: HookManager,
+    session_manager: SessionManager,
+    grok_session_id: str,
+) -> None:
+    variables = _configure_manager(manager_with_mocks, session_manager)
+    variables.merge_variables(
+        grok_session_id,
+        {
+            "grok_pending_briefing": [
+                _component(
+                    "turn:stale",
+                    "Context is 356k tokens. Call gobby-sessions:set_handoff now, "
+                    "before any other tool call.",
+                )
+            ]
+        },
+    )
+
+    clear_queued_context(session_manager, grok_session_id)
+    result = manager_with_mocks._complete_response(
+        _event(HookEventType.BEFORE_TOOL, grok_session_id, envelope_id="after-compact"),
+        HookResponse(decision="allow"),
+        workflow_context=None,
+    )
+
+    assert result.decision == "allow"
+    assert result.reason is None
+
+
+def test_in_place_compact_clears_queued_context(
+    session_manager: SessionManager,
+    grok_session_id: str,
+) -> None:
+    variables = SessionVariableManager(session_manager.db)
+    variables.merge_variables(
+        grok_session_id,
+        {
+            "grok_pending_briefing": [_component("turn:stale", "Context is 356k tokens.")],
+            "grok_pending_turn_context": [_component("ctx:turn:1", "turn context")],
+        },
+    )
+    handler = SimpleNamespace(_session_manager=session_manager, _task_manager=None)
+
+    apply_in_place_compact_context_loss(handler, grok_session_id)
+
+    stored = variables.get_variables(grok_session_id)
+    assert stored.get("grok_pending_briefing") in ([], None)
+    assert stored.get("grok_pending_turn_context") in ([], None)

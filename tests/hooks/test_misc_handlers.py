@@ -239,6 +239,58 @@ class TestPostCompactHandler:
         assert variables["unlocked_tools"] == ["call_tool"]
         assert variables["plan_mode"] is True
 
+    def test_grok_post_compact_clears_queued_context(
+        self,
+        hub_db: HubDatabase,
+        mock_dependencies: dict[str, Any],
+    ) -> None:
+        project = LocalProjectManager(hub_db).create(
+            name="post-compact-grok",
+            repo_path="/some/dir",
+        )
+        with patch(
+            "gobby.utils.machine_id._cached_machine_id", "21000000-0000-4000-8000-000000000001"
+        ):
+            session = SessionManager(hub_db).register(
+                external_id="dddddddd-0000-4000-8000-000000000001",
+                machine_id="21000000-0000-4000-8000-000000000001",
+                source="grok",
+                project_id=project.id,
+                terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+            )
+        sv_mgr = SessionVariableManager(hub_db)
+        sv_mgr.merge_variables(
+            session.id,
+            {
+                "grok_pending_briefing": [
+                    {
+                        "id": "turn:stale",
+                        "text": "Context is 356k tokens. Call gobby-sessions:set_handoff now.",
+                        "message_ids": [],
+                    }
+                ],
+                "grok_pending_turn_context": [
+                    {"id": "ctx:turn:1", "text": "mid-turn pressure", "message_ids": []}
+                ],
+            },
+        )
+        mock_dependencies["session_manager"].db = hub_db
+        mock_dependencies["session_manager"].get.return_value = session
+        mock_dependencies["session_manager"].update_context_usage.return_value = True
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.POST_COMPACT,
+            source="grok",
+            metadata={"_platform_session_id": session.id},
+        )
+
+        response = handlers.handle_post_compact(event)
+
+        assert response.decision == "allow"
+        variables = sv_mgr.get_variables(session.id)
+        assert variables.get("grok_pending_briefing") in ([], None)
+        assert variables.get("grok_pending_turn_context") in ([], None)
+
 
 class TestAcpOnlyHandlers:
     """Test ACP-style event handlers."""

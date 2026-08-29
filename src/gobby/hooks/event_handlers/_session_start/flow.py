@@ -9,6 +9,7 @@ from typing import Any, cast
 import psycopg
 
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.hooks.terminal_context import (
     enrich_terminal_context_with_cwd,
@@ -489,6 +490,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         },
     )
 
+    clear_queued_context(handler._session_manager, session_id)
     response = cast(
         HookResponse,
         handler._compose_session_response(
@@ -675,6 +677,7 @@ def handle_pre_created_session(
         pre_created=True,
     )
 
+    clear_queued_context(handler._session_manager, session_id)
     response = cast(
         HookResponse,
         handler._compose_session_response(
