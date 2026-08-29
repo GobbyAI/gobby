@@ -101,3 +101,53 @@ async def test_native_row_is_snapshotted_through_the_native_runtime(
     assert tmux_runtime.snapshot_calls == []
     # The native runtime's text is what reached detection, not the tmux one's.
     assert attention_manager.transition_async.await_count == 1
+
+
+async def test_native_session_without_a_tmux_pane_still_gets_attention(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """tmux_pane comes from $TMUX_PANE, so gating on it skipped every native session."""
+    replace_detection_manifest(temp_db, "claude", "alpha")
+    detection_registry = DetectionManifestRegistry(temp_db, staleness_seconds=0.0)
+    native_row = make_memory_terminal(backend="native")
+
+    def get_live_for_session(_self: object, _session_id: str) -> Terminal:
+        return native_row
+
+    monkeypatch.setattr(
+        "gobby.storage.terminals.TerminalManager.get_live_for_session",
+        get_live_for_session,
+    )
+    session_manager = Mock()
+    session_manager.db = Mock()
+    session_manager.list.return_value = [
+        SimpleNamespace(
+            id="session-1",
+            source="claude",
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+            # A gterm-hosted session: no tmux_pane anywhere in its context.
+            terminal_context={"parent_pid": 4242},
+        )
+    ]
+    attention_manager = Mock()
+    attention_manager.get.return_value = None
+    attention_manager.list_blocked.return_value = []
+    attention_manager.transition_async = AsyncMock()
+    native_runtime = LifecycleRuntime(backend="native", snapshot_text="alpha trust")
+
+    monitor = TmuxPaneMonitor(
+        session_end_callback=AsyncMock(),
+        config=TmuxConfig(),
+        session_manager=session_manager,
+        attention_manager=attention_manager,
+        detection_registry=detection_registry,
+        registry=runtime_registry(native_runtime),
+    )
+
+    await monitor._check_attention_panes(active_runs=[])
+
+    assert native_runtime.snapshot_calls == [15]
+    assert attention_manager.transition_async.await_count == 1
+    state = attention_manager.transition_async.await_args_list[0].kwargs["state"]
+    assert state == "blocked"

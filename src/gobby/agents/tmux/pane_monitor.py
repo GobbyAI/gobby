@@ -308,14 +308,16 @@ class TmuxPaneMonitor:
         for session in sessions:
             if session.id in active_agent_sessions:
                 continue
+            # Diagnostic only. tmux_pane comes from $TMUX_PANE, so a native
+            # terminal never has one; gating on it skipped every native session.
+            # The live terminals row below is the backend-neutral gate.
             terminal_context = session.terminal_context
-            if not isinstance(terminal_context, Mapping):
-                await self._clear_attention_if_current(session_attention_entry_id(session.id))
-                continue
-            pane_id = terminal_context.get("tmux_pane")
-            if not isinstance(pane_id, str) or not pane_id:
-                await self._clear_attention_if_current(session_attention_entry_id(session.id))
-                continue
+            pane_id = (
+                terminal_context.get("tmux_pane") if isinstance(terminal_context, Mapping) else None
+            )
+            if not isinstance(pane_id, str):
+                pane_id = ""
+            row = None
             try:
                 from gobby.storage.terminals import TerminalManager
 
@@ -333,6 +335,7 @@ class TmuxPaneMonitor:
                     "TmuxPaneMonitor: interactive pane capture timed out",
                     extra={
                         "pane_id": pane_id,
+                        "terminal_id": row.id if row is not None else "",
                         "session_id": session.id,
                         "provider": session.source or "",
                         "error": str(exc),
@@ -341,8 +344,8 @@ class TmuxPaneMonitor:
                 continue
             except Exception:
                 logger.warning(
-                    "TmuxPaneMonitor: failed to capture interactive pane %s",
-                    pane_id,
+                    "TmuxPaneMonitor: failed to capture terminal for session %s",
+                    session.id,
                     exc_info=True,
                 )
                 continue
