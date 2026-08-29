@@ -15,12 +15,14 @@ import pytest
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
+from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
 from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.terminals.runtime import TerminalWriteError
 from gobby.workflows.step_context import IncompleteStepWorkflow, StepWorkflowContext
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.agents.test_lifecycle_monitor import (
@@ -1855,3 +1857,144 @@ async def test_terminal_and_unmonitored_runs_clear_completed_turn_recovery_state
     assert terminal_run.id not in handler._recovery._capacity_recovery
     assert terminal_run.id not in handler._recovery._completed_turn_recovery
     assert not any(key[0] == terminal_run.id for key in handler._transcript_resolver._path_cache)
+
+
+def _vanished_write_error() -> TerminalWriteError:
+    """The production shape: the reason lives in __cause__, never in the wrapper."""
+    error = TerminalWriteError(stage="none")
+    error.__cause__ = TmuxTargetUnavailableError(
+        "tmux target is unavailable: can't find session: agent",
+        command=("tmux", "send-keys"),
+        stderr="can't find session: agent",
+        returncode=1,
+    )
+    return error
+
+
+def _recovery_records(records: list[logging.LogRecord], level: int) -> list[logging.LogRecord]:
+    return [
+        record
+        for record in records
+        if record.name == "gobby.agents.watchdog.recovery" and record.levelno == level
+    ]
+
+
+@pytest.mark.asyncio
+async def test_undeliverable_reprompt_stops_retrying_and_fails_the_run(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A terminal refusing every write fails its run instead of retrying forever."""
+    transcript_path = tmp_path / "codex-undeliverable.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path, response_payload_type="reasoning")
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1301",
+        transcript_path=transcript_path,
+    )
+    recovery = monitor._idle_check_handler._recovery
+    max_attempts = recovery._tmux_config.max_reprompt_attempts
+
+    handled: list[int] = []
+    warnings_per_iteration: list[int] = []
+    errors: list[logging.LogRecord] = []
+    with (
+        _pane_text(monitor, "❯\n") as runtime,
+        patch.object(
+            recovery,
+            "_idle_reprompt_message",
+            new_callable=AsyncMock,
+            return_value="continue",
+        ),
+        patch.object(recovery, "_record_watchdog_task_event", new_callable=AsyncMock),
+    ):
+        runtime.raise_on_write = _vanished_write_error()
+        for _ in range(max_attempts + 1):
+            with caplog.at_level(logging.DEBUG, logger="gobby.agents.watchdog.recovery"):
+                caplog.clear()
+                handled.append(await monitor.check_idle_agents())
+                warnings_per_iteration.append(
+                    len(_recovery_records(caplog.records, logging.WARNING))
+                )
+                errors.extend(_recovery_records(caplog.records, logging.ERROR))
+
+    # Nothing was ever recovered, and the run stopped being retried.
+    assert handled == [0] * (max_attempts + 1)
+    assert _runtime_of(monitor).write_log == []
+
+    # The log collapse: this iteration used to emit four warnings, now one.
+    assert warnings_per_iteration[0] == 1
+    # Once the run is terminal the watchdog stops considering it entirely.
+    assert warnings_per_iteration[-1] == 0
+    assert len(errors) == 1
+    assert "undeliverable" in errors[0].getMessage()
+
+    # The rejected designs must be provably absent: a failed delivery may not
+    # advance the progress budget, nor mark the completion as already handled.
+    state = recovery._completed_turn_recovery.get(run.id)
+    if state is not None:
+        assert state.successful_reprompts == 0
+        assert state.last_completion_identity is None
+    assert monitor._idle_detector.get_state(run.id).reprompt_count == 0
+
+    updated_run = agent_run_manager.get(run.id)
+    assert updated_run is not None
+    assert updated_run.status == "error"
+    # _terminalize_idle_agent discards the run, so the counter does not leak.
+    assert run.id not in recovery._reprompt_delivery_failures
+
+
+@pytest.mark.asyncio
+async def test_capacity_reprompt_delivery_failures_are_bounded(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    """The shared bound also covers _recover_capacity_error, not just completed turns."""
+    transcript_path = tmp_path / "codex-capacity-undeliverable.jsonl"
+    _append_codex_capacity_turn(transcript_path)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1302",
+        transcript_path=transcript_path,
+        session_age_seconds=1,
+    )
+    recovery = monitor._idle_check_handler._recovery
+    max_attempts = recovery._tmux_config.max_reprompt_attempts
+
+    handled: list[int] = []
+    with (
+        _pane_text(monitor, _CAPACITY_PANE) as runtime,
+        patch.object(
+            recovery,
+            "_idle_reprompt_message",
+            new_callable=AsyncMock,
+            return_value="continue",
+        ),
+        patch.object(recovery, "_record_watchdog_task_event", new_callable=AsyncMock),
+    ):
+        runtime.raise_on_write = _vanished_write_error()
+        for _ in range(max_attempts + 1):
+            handled.append(await monitor.check_idle_agents())
+
+    assert handled == [0] * (max_attempts + 1)
+    assert _runtime_of(monitor).write_log == []
+    capacity_state = recovery._capacity_recovery.get(run.id)
+    if capacity_state is not None:
+        assert capacity_state.successful_reprompts == 0
+        assert capacity_state.last_error_line_num is None
+    updated_run = agent_run_manager.get(run.id)
+    assert updated_run is not None
+    assert updated_run.status == "error"

@@ -17,6 +17,7 @@ from gobby.agents.watchdog.completed_turn_recovery import (
 )
 from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
 from gobby.storage.terminals import Terminal
+from gobby.terminals.error_classification import is_vanished_terminal_target
 from gobby.terminals.runtime import Delivered, TerminalWriteError
 from gobby.terminals.write_coordinator import WriteCoordinator, WriteRequest
 from gobby.workflows.state_manager import SessionVariableManager
@@ -83,10 +84,12 @@ class WatchdogRecoveryCoordinator:
         self._terminal_services = terminal_services
         self._capacity_recovery: dict[str, CapacityRecoveryState] = {}
         self._completed_turn_recovery: dict[str, CompletedTurnRecoveryState] = {}
+        self._reprompt_delivery_failures: dict[str, int] = {}
 
     def clear(self) -> None:
         self._capacity_recovery.clear()
         self._completed_turn_recovery.clear()
+        self._reprompt_delivery_failures.clear()
         self._transcript_resolver.clear()
 
     def prune(self, active_run_ids: set[str]) -> None:
@@ -100,11 +103,17 @@ class WatchdogRecoveryCoordinator:
             for run_id, state in self._completed_turn_recovery.items()
             if run_id in active_run_ids
         }
+        self._reprompt_delivery_failures = {
+            run_id: failures
+            for run_id, failures in self._reprompt_delivery_failures.items()
+            if run_id in active_run_ids
+        }
         self._transcript_resolver.prune(active_run_ids)
 
     def discard(self, run_id: str) -> None:
         self._capacity_recovery.pop(run_id, None)
         self._completed_turn_recovery.pop(run_id, None)
+        self._reprompt_delivery_failures.pop(run_id, None)
         self._transcript_resolver.discard(run_id)
 
     @staticmethod
@@ -251,7 +260,10 @@ class WatchdogRecoveryCoordinator:
                     steps=requests,
                 )
         except TerminalWriteError as exc:
-            logger.warning("Terminal write %s failed: %s", action_key, exc)
+            if is_vanished_terminal_target(exc):
+                logger.debug("Terminal write %s skipped: target gone: %s", action_key, exc)
+            else:
+                logger.warning("Terminal write %s failed: %s", action_key, exc, exc_info=True)
             return False
         return isinstance(outcome, Delivered)
 
@@ -259,7 +271,7 @@ class WatchdogRecoveryCoordinator:
         del tmux_name
         services = self._terminal_services
         if services is None or not await services.is_live(run):
-            logger.warning(
+            logger.debug(
                 "Cannot recover failed idle prompt clear for agent %s: terminal gone",
                 run.id,
             )
@@ -275,14 +287,61 @@ class WatchdogRecoveryCoordinator:
             [("text", "\x03"), ("key", "enter")],
         )
         if not interrupted:
-            logger.warning("Failed to interrupt queued prompt while recovering agent %s", run.id)
+            logger.debug("Failed to interrupt queued prompt while recovering agent %s", run.id)
             return False
         if not await services.is_live(run):
-            logger.warning("Cannot reprompt agent %s after recovery: terminal gone", run.id)
+            logger.debug("Cannot reprompt agent %s after recovery: terminal gone", run.id)
             return False
         return True
 
     async def _send_idle_reprompt(
+        self,
+        run: AgentRun,
+        *,
+        tmux_name: str,
+        reprompt_message: str | None = None,
+    ) -> bool:
+        """Reprompt an idle agent, bounding how often delivery may fail.
+
+        Every other give-up counter advances only on success, so a terminal
+        refusing all automatic writes bypasses all of them and retries
+        forever. This is the one boundary the three re-arming callers share.
+        """
+        delivered = await self._attempt_idle_reprompt(
+            run,
+            tmux_name=tmux_name,
+            reprompt_message=reprompt_message,
+        )
+        if delivered:
+            self._reprompt_delivery_failures.pop(run.id, None)
+            return True
+
+        failures = self._reprompt_delivery_failures.get(run.id, 0) + 1
+        self._reprompt_delivery_failures[run.id] = failures
+        # Reuses max_reprompt_attempts as the bound VALUE while keeping its own
+        # counter: successful_reprompts is the "agent isn't progressing" budget,
+        # and spending it here would misreport an unreachable agent as a lazy one.
+        max_attempts = self._tmux_config.max_reprompt_attempts
+        if failures < max_attempts:
+            logger.warning(
+                "Idle reprompt for agent %s was not delivered (%s/%s)",
+                run.id,
+                failures,
+                max_attempts,
+            )
+            return False
+        logger.error(
+            "Failing agent %s: idle reprompt undeliverable after %s attempts",
+            run.id,
+            failures,
+        )
+        await self._fail_idle_agent(
+            run,
+            reason=f"idle reprompt undeliverable after {failures} attempts",
+        )
+        return False
+
+    async def _attempt_idle_reprompt(
         self,
         run: AgentRun,
         *,
@@ -302,7 +361,7 @@ class WatchdogRecoveryCoordinator:
             [("key", "escape")],
         )
         if not cleared:
-            logger.warning("Failed to clear queued prompt before reprompting agent %s", run.id)
+            logger.debug("Failed to clear queued prompt before reprompting agent %s", run.id)
             if not await self._recover_failed_reprompt_clear(run, tmux_name):
                 return False
         # The emptied composer settles an earlier reprompt whose Enter never
@@ -315,7 +374,6 @@ class WatchdogRecoveryCoordinator:
             [("text", reprompt_message), ("key", "enter")],
         )
         if not sent:
-            logger.warning("Failed to send idle reprompt to agent %s", run.id)
             return False
         self._idle_detector.for_provider(run.provider).record_reprompt(run.id)
         return True

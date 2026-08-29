@@ -13,6 +13,7 @@ from gobby.agents.watchdog.completed_turn_recovery import (
     step_requires_gobby_proxy,
 )
 from gobby.agents.watchdog.models import (
+    CompletedTurnRecoveryState,
     TranscriptEventSummary,
     WatchdogTranscriptSnapshot,
 )
@@ -65,8 +66,10 @@ class _FakeHost:
         *,
         step_context: StepWorkflowContext | None,
         made_call: bool | None,
+        send_ok: bool = True,
     ) -> None:
-        self._completed_turn_recovery: dict[str, object] = {}
+        self._send_ok = send_ok
+        self._completed_turn_recovery: dict[str, CompletedTurnRecoveryState] = {}
         self._tmux_config = TmuxConfig(max_reprompt_attempts=3)
         self._step_context = step_context
         self._made_call = made_call
@@ -99,7 +102,7 @@ class _FakeHost:
         reprompt_message: str | None = None,
     ) -> bool:
         self.reprompts.append(reprompt_message or "")
-        return True
+        return self._send_ok
 
     async def _record_watchdog_task_event(
         self,
@@ -201,3 +204,22 @@ def test_step_requires_gobby_proxy_boundaries() -> None:
     assert step_requires_gobby_proxy(_step_context([])) is False
     assert step_requires_gobby_proxy(_step_context(_MCP_ONLY_TOOLS)) is True
     assert step_requires_gobby_proxy(_step_context(["Bash", "mcp__gobby__call_tool"])) is False
+
+
+@pytest.mark.asyncio
+async def test_undelivered_reprompt_does_not_burn_the_progress_budget() -> None:
+    """An undelivered write must not look like an unproductive agent."""
+    host = _FakeHost(
+        step_context=_step_context(["Bash", "mcp__gobby__call_tool"]),
+        made_call=False,
+        send_ok=False,
+    )
+
+    assert await _recover(host) == 0
+    assert len(host.reprompts) == 1
+    # The bound lives in _send_idle_reprompt, so this caller neither fails the
+    # run itself nor advances state that would wedge the next iteration.
+    assert host.failures == []
+    state = host._completed_turn_recovery["run-1"]
+    assert state.last_completion_identity is None
+    assert state.successful_reprompts == 0
