@@ -225,13 +225,13 @@ def _adopt_legacy_rows(manager: LocalMCPManager, result: dict[str, Any]) -> None
     gobby_rows = [
         MCPServerTemplateRow.from_row(raw)
         for raw in manager.db.fetchall(
-            "SELECT * FROM mcp_server_templates WHERE owner = %s",
-            ("gobby",),
+            "SELECT * FROM mcp_server_templates WHERE owner = %s AND project_id = %s",
+            ("gobby", GLOBAL_PROJECT_ID),
         )
     ]
     by_name = {row.name: row for row in gobby_rows}
     secret_store = SecretStore(manager.db)
-    for server in manager.list_all_servers(enabled_only=False):
+    for server in manager.list_servers(GLOBAL_PROJECT_ID, enabled_only=False):
         if server.template_id is not None:
             continue
         template_row = by_name.get(server.name)

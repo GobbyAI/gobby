@@ -196,6 +196,59 @@ def test_sync_adopts_only_exact_legacy_bundled_rows(temp_db: Any, tmp_path: Path
     assert result["adoption_skipped"]["demo-secret"] == "env"
 
 
+def test_adoption_ignores_project_scoped_rows_and_templates(
+    temp_db: Any, tmp_path: Path, sample_project: dict[str, Any]
+) -> None:
+    from gobby.mcp_proxy.sync_templates import sync_bundled_mcp_templates
+
+    manager = LocalMCPManager(temp_db)
+    bundled = tmp_path / "bundled"
+    _write_secret_template(bundled, "demo")
+    sync_bundled_mcp_templates(temp_db, bundled, tag="gobby")
+    global_template = manager.get_template("demo", project_id=GLOBAL_PROJECT_ID)
+    assert global_template is not None
+
+    project_server = manager.upsert(
+        name="demo",
+        transport="stdio",
+        command="npx",
+        args=["-y", "demo-pkg"],
+        env={"DEMO_TOKEN": "$secret:demo_token"},
+        project_id=sample_project["id"],
+        connect_timeout=30.0,
+    )
+    manager.upsert_template(
+        name="demo",
+        project_id=sample_project["id"],
+        owner="gobby",
+        definition={
+            "transport": "stdio",
+            "command": "npx",
+            "args": ["-y", "other-pkg"],
+            "enabled": True,
+        },
+    )
+    global_server = manager.upsert(
+        name="demo",
+        transport="stdio",
+        command="npx",
+        args=["-y", "demo-pkg"],
+        env={"DEMO_TOKEN": "$secret:demo_token"},
+        project_id=GLOBAL_PROJECT_ID,
+        connect_timeout=30.0,
+    )
+
+    result = sync_bundled_mcp_templates(temp_db, bundled, tag="gobby")
+
+    untouched = manager.get_server_by_id(project_server.id)
+    assert untouched is not None
+    assert untouched.template_id is None
+    adopted = manager.get_server_by_id(global_server.id)
+    assert adopted is not None
+    assert adopted.template_id == global_template.id
+    assert "demo" not in result["adoption_skipped"]
+
+
 def test_removed_template_file_prunes_row_and_restores_bundled_definition(
     temp_db: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
