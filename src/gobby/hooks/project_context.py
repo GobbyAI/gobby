@@ -71,21 +71,19 @@ class ProjectIdResolver:
         self.ensure_project_in_db(project_context)
 
     def ensure_project_in_db(self, project_context: dict[str, Any]) -> None:
-        """Ensure a project from project.json exists in the local database."""
+        """Register a cwd-marker checkout. Typed checkout refusals propagate."""
         if self.session_manager is None:
             return
 
-        from gobby.storage.projects import LocalProjectManager
-
-        project_id = str(project_context["id"])
-        project_name = project_context.get("name", "unknown")
-        repo_path = project_context.get("project_path")
+        from gobby.hooks.project_checkout_ingress import register_cwd_marker_checkout
 
         try:
-            db = self.session_manager.db
-            project_manager = LocalProjectManager(db)
-            project_manager.ensure_exists(project_id, project_name, repo_path)
-        except (psycopg.Error, ValueError, RuntimeError) as exc:
+            register_cwd_marker_checkout(
+                self.session_manager.db,
+                project_context,
+                logger=self.logger,
+            )
+        except psycopg.Error as exc:
             if self.logger:
                 self.logger.warning("Failed to ensure project in database: %s", exc)
 

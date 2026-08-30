@@ -31,6 +31,10 @@ class CheckoutSentinelRejectedError(ValueError):
     """Raised when a checkout-free sentinel project id is used."""
 
 
+class SoftDeletedProjectRejectedError(ValueError):
+    """Raised when hook or HTTP register targets a soft-deleted project."""
+
+
 class MissingMachineContextError(ValueError):
     """Raised when a resolver is called without a machine id."""
 

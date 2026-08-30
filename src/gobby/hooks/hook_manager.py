@@ -837,6 +837,4 @@ class HookManager(HookManagerDispatchMixin):
 
     def _ensure_project_in_db(self, project_context: dict[str, Any]) -> None:
         """Ensure project from project.json exists in the database."""
-        self._project_id_resolver.session_manager = getattr(self, "_session_manager", None)
-        self._project_id_resolver.logger = self.logger
         self._project_id_resolver.ensure_project_in_db(project_context)
