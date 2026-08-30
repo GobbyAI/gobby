@@ -97,6 +97,32 @@ _NEGATED_COMPLETION_PREFIX_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Requirement prose negates differently from completion prose, so the pattern above
+# cannot be reused: a completion claim puts its negator flush against the verb
+# ("was not installed"), while a criterion routes through a requirement verb and an
+# article ("does not require a daemon restart") or negates after the phrase entirely
+# ("a daemon restart is not required"). Both patterns below anchor to the matched
+# phrase, so only an unbroken negator-to-phrase run counts; punctuation and unlisted
+# words end the run and leave the requirement standing.
+_NEGATED_REQUIREMENT_PREFIX_RE = re.compile(
+    r"\b(?:no|not|never|without|avoid(?:s|ed|ing)?)\s+"
+    r"(?:(?:requir(?:e|es|ed|ing)|need(?:s|ed|ing)?|involv(?:e|es|ed|ing)|"
+    r"forc(?:e|es|ed|ing)|trigger(?:s|ed|ing)?|perform(?:s|ed|ing)?|"
+    r"depend(?:s|ed|ing)?\s+on)\s+)?"
+    r"(?:a|an|any|the|another|its|their)?\s*$",
+    re.IGNORECASE,
+)
+
+_NEGATED_REQUIREMENT_SUFFIX_RE = re.compile(
+    r"^\s*(?:(?:is|are|was|were|be|been|being|will|would|should|must|can|could|"
+    r"does|do|did|has|have|had|need|needs)\s+){0,3}"
+    r"(?:not|never|no\s+longer)\b",
+    re.IGNORECASE,
+)
+
+# Widest negator-to-phrase run worth reading, e.g. "should never require another ".
+_NEGATION_WINDOW = 48
+
 _OPERATIONAL_SUBJECT_RE = re.compile(
     r"\b(?:release|binary|artifact|package|build|executable|service|plugin|skill|"
     r"ghook|gcode|gwiki|gobby|daemon|server|app|application|site)\b",
@@ -224,12 +250,32 @@ def _requirements(value: str | None) -> tuple[_OperationalRequirement, ...]:
     requirements: list[_OperationalRequirement] = []
     for action, pattern in _OPERATIONAL_REQUIREMENTS.items():
         for match in pattern.finditer(normalized):
+            if _is_ruled_out(normalized, match):
+                continue
             requirements.append(
                 _OperationalRequirement(
                     action=action, subjects=frozenset(_subjects(match.group(0)))
                 )
             )
     return tuple(requirements)
+
+
+def _is_ruled_out(criteria: str, match: re.Match[str]) -> bool:
+    """Return whether a matched operational phrase names something to avoid.
+
+    Criteria promise an operation will not happen as readily as they demand it, and
+    both name it. Without reading the polarity around the match, a criterion such as
+    "clears without a daemon restart" registers a restart as required and the close
+    gate then demands evidence of the very thing the criterion ruled out.
+
+    Matching is per-occurrence, not per-action: criteria that rule one operation out
+    while demanding another keep demanding the one they asked for.
+    """
+    prefix = criteria[max(0, match.start() - _NEGATION_WINDOW) : match.start()]
+    if _NEGATED_REQUIREMENT_PREFIX_RE.search(prefix) is not None:
+        return True
+    suffix = criteria[match.end() : match.end() + _NEGATION_WINDOW]
+    return _NEGATED_REQUIREMENT_SUFFIX_RE.match(suffix) is not None
 
 
 def _subjects(value: str) -> tuple[str, ...]:
