@@ -12,6 +12,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.build.service import BuildOptions, BuildResult, DispatcherTickSummary
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -1042,3 +1043,43 @@ def test_unregistered_build_command_objects_are_removed() -> None:
 
     assert not hasattr(build_cli, "build_stop_command")
     assert not hasattr(build_cli, "build_resume_command")
+
+
+def test_project_repo_path_uses_machine_checkout(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.cli.build import _project_repo_path
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "cli-checkout", name="cli-build-checkout", monkeypatch=monkeypatch
+    )
+    monkeypatch.setattr("gobby.cli.runtime.require_cli_database", lambda: temp_db)
+
+    assert _project_repo_path(isolated.project.id) == Path(isolated.root_path)
+
+
+def test_project_repo_path_fails_closed_without_checkout(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import click
+
+    from gobby.cli.build import _project_repo_path
+    from gobby.storage.project_checkouts import CheckoutNotFoundError
+    from gobby.storage.projects import LocalProjectManager
+    from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create("cli-missing-checkout")
+    monkeypatch.setattr("gobby.cli.runtime.require_cli_database", lambda: temp_db)
+
+    with pytest.raises((click.ClickException, CheckoutNotFoundError)) as exc_info:
+        _project_repo_path(project.id)
+
+    message = str(exc_info.value).lower()
+    assert "repo_path" not in message
+    assert "checkout" in message or isinstance(exc_info.value, CheckoutNotFoundError)

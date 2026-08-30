@@ -9,8 +9,9 @@ from pathlib import Path
 
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.project_checkouts import require_root
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.git import git_subprocess_env
 
@@ -139,10 +140,10 @@ def is_missing_branch_delete(branch: str, detail: str) -> bool:
 
 
 def project_path(db: HubDatabase, project_id: str) -> Path:
-    project = LocalProjectManager(db).get(project_id)
-    if project is not None and project.repo_path:
-        return Path(project.repo_path)
-    raise ValueError("project repo_path is required for build branch cleanup")
+    machine_id = require_local_machine_id(
+        None, resource_kind="project_checkout", resource_id=project_id
+    )
+    return Path(require_root(db, project_id, machine_id))
 
 
 def git(repo_path: Path, args: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:

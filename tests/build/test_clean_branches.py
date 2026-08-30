@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import Project
+
 pytestmark = pytest.mark.unit
 
 
@@ -35,16 +38,32 @@ def _branches(path: Path) -> set[str]:
     return {line.strip() for line in output.splitlines() if line.strip()}
 
 
+def _checkout_project(
+    temp_db: HubDatabase,
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    name: str,
+) -> Project:
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(temp_db, root, name=name, monkeypatch=monkeypatch)
+    monkeypatch.setattr(
+        "gobby.storage.worktrees.require_machine_id",
+        lambda: isolated.machine_id,
+    )
+    return isolated.project
+
+
 def test_branch_cleanup_ignores_branch_already_deleted(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
 ) -> None:
     from gobby.build import branch_cleanup
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
 
-    project = LocalProjectManager(temp_db).create("branch-race", repo_path=str(tmp_path))
+    project = _checkout_project(temp_db, tmp_path, monkeypatch, name="branch-race")
     task = LocalTaskManager(temp_db).create_task(
         project_id=project.id,
         title="already cleaned branch",
@@ -83,9 +102,13 @@ def test_branch_cleanup_refuses_missing_project_repo_path(
     temp_db,
 ) -> None:
     from gobby.build import branch_cleanup
+    from gobby.storage.project_checkouts import CheckoutNotFoundError
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
+    from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
 
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
     project = LocalProjectManager(temp_db).create("missing-repo")
     task = LocalTaskManager(temp_db).create_task(
         project_id=project.id,
@@ -96,33 +119,36 @@ def test_branch_cleanup_refuses_missing_project_repo_path(
     )
 
     def fail_git_operation(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("branch cleanup must not inspect or delete branches without repo_path")
+        pytest.fail("branch cleanup must not inspect or delete branches without a checkout")
 
     monkeypatch.setattr(branch_cleanup, "local_branches", fail_git_operation)
     monkeypatch.setattr(branch_cleanup, "current_branch", fail_git_operation)
     monkeypatch.setattr(branch_cleanup, "git", fail_git_operation)
 
-    with pytest.raises(ValueError, match="project repo_path is required"):
+    with pytest.raises(CheckoutNotFoundError):
         branch_cleanup.project_path(temp_db, project.id)
 
     deleted, errors = branch_cleanup.delete_orphan_build_branches(temp_db, project.id, [task])
 
     assert deleted == 0
-    assert errors == ["project repo_path is required for build branch cleanup"]
+    assert errors
+    assert all("repo_path" not in error for error in errors)
+    assert any("checkout" in error.lower() for error in errors)
 
 
 @pytest.mark.asyncio
-async def test_clean_deletes_stale_task_branch(temp_db, tmp_path: Path) -> None:
+async def test_clean_deletes_stale_task_branch(
+    temp_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from gobby.build.branch_cleanup import default_task_branch_name
     from gobby.build.controls import build_clean_target
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
 
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("branch-clean", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="branch-clean")
     task_manager = LocalTaskManager(temp_db)
     task = task_manager.create_task(
         project_id=project.id,
@@ -153,17 +179,18 @@ async def test_clean_deletes_stale_task_branch(temp_db, tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_clean_deletes_stale_integration_branch(temp_db, tmp_path: Path) -> None:
+async def test_clean_deletes_stale_integration_branch(
+    temp_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from gobby.build.branch_cleanup import integration_branch_name
     from gobby.build.controls import build_clean_target
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
 
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("integration-clean", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="integration-clean")
     task_manager = LocalTaskManager(temp_db)
     epic = task_manager.create_task(
         project_id=project.id,
@@ -191,17 +218,17 @@ async def test_clean_deletes_stale_integration_branch(temp_db, tmp_path: Path) -
 async def test_clean_clears_dangling_integration_workspace_id(
     temp_db,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.build.branch_cleanup import integration_branch_name
     from gobby.build.controls import build_clean_target
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
 
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("integration-clean", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="integration-clean")
     task_manager = LocalTaskManager(temp_db)
     epic = task_manager.create_task(
         project_id=project.id,
@@ -242,11 +269,11 @@ async def test_clean_clears_dangling_integration_workspace_id(
 
 @pytest.mark.asyncio
 async def test_clean_force_defers_dirty_descendant_worktree(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.build.controls import build_clean_target
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
 
@@ -255,7 +282,7 @@ async def test_clean_force_defers_dirty_descendant_worktree(
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("dirty-clean", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="dirty-clean")
     task_manager = LocalTaskManager(temp_db)
     root = task_manager.create_task(
         project_id=project.id,
@@ -317,11 +344,11 @@ async def test_clean_force_defers_dirty_descendant_worktree(
 
 @pytest.mark.asyncio
 async def test_clean_dirty_worktree_override_deletes_descendant_worktree(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.build.controls import build_clean_target
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
 
@@ -330,7 +357,7 @@ async def test_clean_dirty_worktree_override_deletes_descendant_worktree(
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("dirty-clean-override", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="dirty-clean-override")
     task_manager = LocalTaskManager(temp_db)
     root = task_manager.create_task(
         project_id=project.id,
@@ -387,3 +414,35 @@ async def test_clean_dirty_worktree_override_deletes_descendant_worktree(
     assert stored_artifacts.worktree_id is None
     assert not artifact.deferred
     assert artifact.deleted
+
+
+def test_get_project_path_uses_machine_checkout(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.build.control_artifacts import get_project_path
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "artifacts-root", name="artifact-checkout", monkeypatch=monkeypatch
+    )
+
+    assert get_project_path(temp_db, isolated.project.id) == Path(isolated.root_path)
+
+
+def test_get_project_path_fails_closed_without_checkout(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.build.control_artifacts import get_project_path
+    from gobby.storage.project_checkouts import CheckoutNotFoundError
+    from gobby.storage.projects import LocalProjectManager
+    from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create("missing-artifact-checkout")
+
+    with pytest.raises(CheckoutNotFoundError):
+        get_project_path(temp_db, project.id)

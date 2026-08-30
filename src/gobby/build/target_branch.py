@@ -8,8 +8,9 @@ from pathlib import Path
 from gobby.build.options import BuildOptions
 from gobby.build.stage_manifest import InputKind
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.project_checkouts import require_root
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.utils.git import git_subprocess_env
 
 
@@ -34,10 +35,7 @@ async def _validate_target_branch(
 ) -> None:
     if not target_branch:
         return
-    project = LocalProjectManager(db).get(project_id)
-    if project is None or project.repo_path is None:
-        return
-    repo_path = Path(project.repo_path)
+    repo_path = _checkout_root(db, project_id)
     if not (repo_path / ".git").exists():
         return
 
@@ -70,11 +68,15 @@ async def _validate_target_branch(
     raise ValueError(f"target branch {target_branch} is missing; available branches: {available}")
 
 
+def _checkout_root(db: HubDatabase, project_id: str) -> Path:
+    machine_id = require_local_machine_id(
+        None, resource_kind="project_checkout", resource_id=project_id
+    )
+    return Path(require_root(db, project_id, machine_id))
+
+
 async def _current_target_branch(db: HubDatabase, project_id: str) -> str | None:
-    project = LocalProjectManager(db).get(project_id)
-    if project is None or project.repo_path is None:
-        return None
-    repo_path = Path(project.repo_path)
+    repo_path = _checkout_root(db, project_id)
     if not (repo_path / ".git").exists():
         return None
 

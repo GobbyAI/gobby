@@ -124,6 +124,19 @@ def _prepare_plan_adversary_evidence(
     return transport, service, prepared.evidence_id
 
 
+def _spawn_operation_root(db: HubDatabase, project_id: str, artifacts: object) -> str:
+    from gobby.storage.project_checkouts import require_root, resolve_operation_root
+    from gobby.storage.workspace_machine_scope import require_local_machine_id
+
+    machine_id = require_local_machine_id(
+        None, resource_kind="project_checkout", resource_id=project_id
+    )
+    overlay = getattr(artifacts, "worktree_path", None) or getattr(artifacts, "clone_path", None)
+    if overlay:
+        return resolve_operation_root(db, project_id, machine_id, overlay_path=str(overlay))
+    return require_root(db, project_id, machine_id)
+
+
 def _expire_failed_adversary_spawn(
     service: PlanReviewEvidenceService | None,
     evidence_id: str | None,
@@ -199,7 +212,7 @@ async def spawn_agent(
         raise DispatchSpawnFailed("project_id_missing")
 
     from gobby.agents.launcher_session import get_or_create_launcher_session
-    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks._artifacts import TaskArtifactManager
     from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
 
     try:
@@ -222,6 +235,10 @@ async def spawn_agent(
     if skill_composition.failure_reason is not None:
         raise DispatchSpawnFailed(skill_composition.failure_reason)
     agent_body = _with_skill_allowed_tools(agent_body, skill_composition.allowed_tools)
+
+    project_path = _spawn_operation_root(
+        db, project_id, TaskArtifactManager(db).get_artifacts(action.task_id)
+    )
 
     parent_session_id = get_or_create_launcher_session(
         session_manager,
@@ -294,8 +311,7 @@ async def spawn_agent(
         artifacts=artifacts,
         isolation=effective_isolation,
     )
-    project = LocalProjectManager(db).get(project_id)
-    project_path = project.repo_path if project is not None else None
+    project_path = _spawn_operation_root(db, project_id, artifacts)
     worktree_id, clone_id = _spawn_workspace_ids(
         task=task,
         action=action,

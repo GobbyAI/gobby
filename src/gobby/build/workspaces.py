@@ -10,8 +10,9 @@ from gobby.build.workspace_git import _merge_required_commits, _refresh_clean_gi
 from gobby.build.workspace_services import _WorkspaceServices
 from gobby.storage.clones import Clone
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.project_checkouts import require_root
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.storage.worktrees import Worktree
 
 __all__ = [
@@ -214,12 +215,12 @@ def _integration_artifact_fields(
 
 
 def _project_repo_path(db: HubDatabase, project_id: str) -> Path:
-    project = LocalProjectManager(db).get(project_id)
-    if project is None or not project.repo_path:
-        raise BuildWorkspaceError("project repo_path is required for integration workspaces")
-    repo_path = Path(project.repo_path)
+    machine_id = require_local_machine_id(
+        None, resource_kind="project_checkout", resource_id=project_id
+    )
+    repo_path = Path(require_root(db, project_id, machine_id))
     if not (repo_path / ".git").exists():
-        raise BuildWorkspaceError(f"project repo_path is not a git repository: {repo_path}")
+        raise BuildWorkspaceError(f"project checkout is not a git repository: {repo_path}")
     return repo_path
 
 
