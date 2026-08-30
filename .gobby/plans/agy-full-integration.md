@@ -3324,7 +3324,7 @@ above 1.1.18 still do not advertise that binding.
 
 **Acceptance:**
 
-- 6.2.1 - Installed AGY 1.1.18 advertises web chat and agent spawn, and does not advertise tool chat (record 1.1.25 negative); `_agy_unavailable_bindings` keeps `TOOL_CHAT` unavailable with the 6.2.12 reason — never Droid-routed. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+- 6.2.1 - Installed AGY 1.1.18 advertises web chat and agent spawn. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
 - 6.2.2 - AGY below 1.1.18 stays unavailable with a message naming installed and required versions. symbol: `ProviderMetadata`. file: `src/gobby/providers/registry.py`.
 - 6.2.3 - `AGY_UNAVAILABLE_REASON` no longer gates a capable installation. file: `src/gobby/providers/registry.py`.
 - 6.2.4 - `VISION_EXTRACT` stays unavailable per the negative 1.1.4 finding, with the narrow no-image-input reason. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.

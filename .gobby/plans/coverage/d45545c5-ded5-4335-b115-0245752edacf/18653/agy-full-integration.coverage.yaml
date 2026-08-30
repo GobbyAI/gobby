@@ -1,11 +1,11 @@
 header:
   plan_id: agy-full-integration
-  plan_hash: f76c6f9e70b63358cc4740f99f315bd676fbd9e208c2126b0774d16bc9c233c8
+  plan_hash: 26b878799b1bb5b23d824477ac53cd0def3f29cf2516852f5cd07412eb89c7d5
   root_task_ref: '18653'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-08-30T02:26:31Z'
+  generated_at: '2026-08-30T02:29:10Z'
   task_tree_source: db
-  task_tree_source_hash: f32c7fddf137feacd25c62e4edf33e4925701f03c98d364d66ff8f73a95740e5
+  task_tree_source_hash: d90ac44083f76e9a6772389b56016a5876ff4fdacab6dc5cbe75a29fb496b134
   evidence_summary: []
   evidence: []
 rows:
@@ -2042,13 +2042,13 @@ rows:
   deferral_target: null
 - section_id: '6.2'
   item_id: 6.2.1
-  plan_node_hash: a1d008b3213032424af9c53db17472533a44097959ab04decfdcdd0626d0ccad
+  plan_node_hash: ca7dca23214639f186a866476ea01eff6bc428498f620525a2c5409ded1862d3
   status: covered
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
-      `_agy_unavailable_bindings` keeps `...'
+      and agent spawn. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+      6.2.2: AGY belo...'
     matched_artifact_ref: _agy_unavailable_bindings
   deferral_target: null
 - section_id: '6.2'
@@ -2058,8 +2058,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
-      `_agy_unavailable_bindings` keeps `...'
+      and agent spawn. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+      6.2.2: AGY belo...'
     matched_artifact_ref: ProviderMetadata
   deferral_target: null
 - section_id: '6.2'
@@ -2069,8 +2069,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
-      `_agy_unavailable_bindings` keeps `...'
+      and agent spawn. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+      6.2.2: AGY belo...'
     matched_artifact_ref: src/gobby/providers/registry.py
   deferral_target: null
 - section_id: '6.2'
@@ -2080,8 +2080,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
-      `_agy_unavailable_bindings` keeps `...'
+      and agent spawn. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+      6.2.2: AGY belo...'
     matched_artifact_ref: _agy_unavailable_bindings
   deferral_target: null
 - section_id: '6.2'
@@ -2091,8 +2091,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
-      `_agy_unavailable_bindings` keeps `...'
+      and agent spawn. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+      6.2.2: AGY belo...'
     matched_artifact_ref: _agy_unavailable_bindings
   deferral_target: null
 - section_id: '6.2'
@@ -2102,8 +2102,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
-      `_agy_unavailable_bindings` keeps `...'
+      and agent spawn. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+      6.2.2: AGY belo...'
     matched_artifact_ref: _daemon_tool_chat_adapter_factories
   deferral_target: null
 - section_id: '6.2'
@@ -2113,8 +2113,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
-      `_agy_unavailable_bindings` keeps `...'
+      and agent spawn. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+      6.2.2: AGY belo...'
     matched_artifact_ref: ToolChatService
   deferral_target: null
 - section_id: '6.2'
@@ -2124,8 +2124,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
-      `_agy_unavailable_bindings` keeps `...'
+      and agent spawn. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+      6.2.2: AGY belo...'
     matched_artifact_ref: web/src/lib/__tests__/providerModels.test.ts
   deferral_target: null
 - section_id: '6.2'
@@ -2135,8 +2135,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
-      `_agy_unavailable_bindings` keeps `...'
+      and agent spawn. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+      6.2.2: AGY belo...'
     matched_artifact_ref: _validate_agy_stdout
   deferral_target: null
 - section_id: '6.2'
@@ -2146,8 +2146,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
-      `_agy_unavailable_bindings` keeps `...'
+      and agent spawn. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+      6.2.2: AGY belo...'
     matched_artifact_ref: tests/servers/routes/test_servers_routes_providers.py
   deferral_target: null
 - section_id: '6.2'
@@ -2157,8 +2157,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
-      `_agy_unavailable_bindings` keeps `...'
+      and agent spawn. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+      6.2.2: AGY belo...'
     matched_artifact_ref: tests/servers/routes/test_servers_routes_providers.py
   deferral_target: null
 - section_id: '6.2'
@@ -2168,8 +2168,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
-      `_agy_unavailable_bindings` keeps `...'
+      and agent spawn. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+      6.2.2: AGY belo...'
     matched_artifact_ref: _agy_unavailable_bindings
   deferral_target: null
 - section_id: '6.3'
