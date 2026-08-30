@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -2153,8 +2153,9 @@ class TestCodexBackend:
         session._connected = True
         session._thread_id = "thread-1"
         session._on_post_tool = AsyncMock()
-        setattr(session, "_get_transcript_offset", AsyncMock(return_value=0))
-        setattr(session, "_get_transcript_assistant_text_since", AsyncMock(return_value=None))
+        any_session = cast(Any, session)
+        any_session._get_transcript_offset = AsyncMock(return_value=0)
+        any_session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
 
         events = [event async for event in backend.send_message(session, "close the task")]
 
