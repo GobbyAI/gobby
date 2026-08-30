@@ -967,6 +967,7 @@ class TestIdKeyedManager:
 
 @pytest.mark.asyncio
 async def test_refresh_server_rotates_secret_for_selected_instance_only() -> None:
+    # named tdd pin for 4.1.5 refresh_server
     project_a = str(uuid4())
     project_b = str(uuid4())
     a = _row(
