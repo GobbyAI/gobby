@@ -544,13 +544,8 @@ def _tool_chat_binding(
         return None
 
     metadata = _metadata_for_generation_binding(entry)
-    if entry.provider == "agy":
-        models = tuple(AGY_MODELS)
-        metadata["model_catalog_source"] = "agy-1.0.10-static"
-        strict_models = True
-    else:
-        models = feature_models_by_provider.get(_normalize_provider(entry.provider), ())
-        strict_models = False
+    models = feature_models_by_provider.get(_normalize_provider(entry.provider), ())
+    strict_models = False
 
     if adapter_style not in _TOOL_CHAT_EXECUTABLE_STYLES:
         metadata["supports_tools"] = False

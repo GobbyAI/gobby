@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 import pytest
@@ -476,6 +477,28 @@ def test_daemon_registry_scopes_agy_to_strict_text_generation_when_installed() -
         assert binding is not None
         assert binding.available is False
         assert binding.reason == AGY_UNAVAILABLE_REASON
+
+
+def test_tool_chat_binding_has_no_agy_branch() -> None:
+    from gobby.ai.registry_builder import _tool_chat_binding
+
+    source = inspect.getsource(_tool_chat_binding)
+    assert "agy" not in source
+
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(),
+        provider_installed=lambda _entry: True,
+    )
+    assert registry.binding(AICapability.TOOL_CHAT, "agy") is None
+    assert (
+        _tool_chat_binding(
+            ProviderMetadata("agy", "agy", "AGY", ".gemini"),
+            lambda _entry: True,
+            {},
+            0.0,
+        )
+        is None
+    )
 
 
 def test_daemon_registry_marks_agy_text_generation_unavailable_when_cli_absent() -> None:

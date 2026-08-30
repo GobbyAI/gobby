@@ -25,6 +25,7 @@ from gobby.ai.codex_endpoint import (
 from gobby.ai.endpoints import parse_endpoint_model_selector, parse_endpoint_selector
 from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
+from gobby.providers import AGY_UNAVAILABLE_REASON
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat.backends import (
@@ -189,7 +190,7 @@ class WebChatRuntimeManager:
             return ProviderBackendHealth(
                 provider=provider,
                 available=False,
-                startup_error="AGY has no documented machine transport for live web chat yet",
+                startup_error=AGY_UNAVAILABLE_REASON,
             )
         if provider == "droid":
             return self._droid_backend.health()
@@ -272,7 +273,7 @@ class WebChatRuntimeManager:
         if provider not in {"claude", "codex", "droid", "grok", "qwen", "agy"}:
             raise RuntimeError(f"Unsupported web chat provider: {provider}")
         if provider == "agy":
-            raise RuntimeError("AGY has no documented machine transport for live web chat yet")
+            raise RuntimeError(AGY_UNAVAILABLE_REASON)
         if provider == "qwen":
             return QwenManagedChatSession(
                 conversation_id=conversation_id,

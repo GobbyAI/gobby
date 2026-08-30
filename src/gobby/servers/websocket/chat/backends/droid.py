@@ -15,7 +15,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from gobby.adapters.acp_client import StreamEvent
+from gobby.adapters.acp_client import (
+    ACP_STREAM_READER_LIMIT_BYTES,
+    DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS,
+    StreamEvent,
+    _resolve_timeout,
+)
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox import SandboxConfig
 from gobby.hooks.normalization import normalize_tool_fields
@@ -44,6 +49,31 @@ from gobby.servers.websocket.chat.backends.droid_stream import parse_droid_strea
 from gobby.servers.websocket.chat.permissions import ManagedWebChatPermissionsMixin
 
 logger = logging.getLogger(__name__)
+
+DROID_ACP_PROMPT_TIMEOUT_ENV = "GOBBY_DROID_ACP_PROMPT_TIMEOUT_SECONDS"
+
+
+class _ProgressDeadline:
+    """Per-turn progress clock that renews only on accepted stream input."""
+
+    def __init__(self, timeout: float) -> None:
+        self._timeout = timeout
+        self._deadline = asyncio.get_running_loop().time() + timeout
+
+    def remaining(self) -> float:
+        return self._deadline - asyncio.get_running_loop().time()
+
+    def renew(self) -> None:
+        self._deadline = asyncio.get_running_loop().time() + self._timeout
+
+
+async def _readline_with_progress(
+    stdout: asyncio.StreamReader, deadline: _ProgressDeadline
+) -> bytes:
+    remaining = deadline.remaining()
+    if remaining <= 0:
+        raise TimeoutError
+    return await asyncio.wait_for(stdout.readline(), timeout=remaining)
 
 
 def _validated_droid_option(value: str, option: str) -> str:
@@ -406,9 +436,15 @@ class DroidWebChatBackend:
         *,
         sandbox_config: SandboxConfig | None = None,
         default_model: str | None = None,
+        prompt_timeout: float | None = None,
     ) -> None:
         self._sandbox_config = sandbox_config
         self._default_model = default_model
+        self._prompt_timeout = _resolve_timeout(
+            prompt_timeout,
+            env_name=DROID_ACP_PROMPT_TIMEOUT_ENV,
+            default=DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS,
+        )
         self._health = ProviderBackendHealth(provider=self.provider, available=False)
         self._handles: dict[str, _DroidProcessHandle] = {}
         self._permission_resolver = DroidPermissionResolver(droid_tool_name_adapter)
@@ -500,6 +536,8 @@ class DroidWebChatBackend:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=ACP_STREAM_READER_LIMIT_BYTES,
+            start_new_session=True,
         )
         stderr_task = None
         process_stderr = getattr(process, "stderr", None)
@@ -566,7 +604,7 @@ class DroidWebChatBackend:
             )
 
         async for event in self._read_until_terminal(handle, session):
-            if event.event_type == "error" and event.data.get("code") == "eof":
+            if event.event_type == "error" and event.data.get("code") in {"eof", "timeout"}:
                 await self.detach_session(session)
             yield event
 
@@ -669,8 +707,15 @@ class DroidWebChatBackend:
             )
             return
 
+        deadline = _ProgressDeadline(self._prompt_timeout)
         while True:
-            line = await stdout.readline()
+            try:
+                line = await _readline_with_progress(stdout, deadline)
+            except TimeoutError as exc:
+                raise TimeoutError(
+                    "Timed out waiting for Droid initialize_session after "
+                    f"{self._prompt_timeout:.1f}s"
+                ) from exc
             if not line:
                 yield StreamEvent(
                     event_type="error",
@@ -680,7 +725,11 @@ class DroidWebChatBackend:
                     },
                 )
                 return
-            for event in parse_droid_stream_line(line):
+            events = parse_droid_stream_line(line)
+            if not events:
+                continue
+            deadline.renew()
+            for event in events:
                 event_request_id = event.data.get("request_id")
                 if event.event_type == "init" and event_request_id == request_id:
                     yield event
@@ -702,30 +751,52 @@ class DroidWebChatBackend:
             )
             return
 
-        while True:
-            line = await stdout.readline()
-            if not line:
-                yield StreamEvent(
-                    event_type="error",
-                    data={"code": "eof", "message": "Droid stream ended before result"},
-                )
-                return
-            events = parse_droid_stream_line(line)
-            permission_events = [
-                event
-                for event in events
-                if event.event_type == "content_delta"
-                and event.data.get("kind") == "permission_request"
-            ]
-            if permission_events:
-                await self._handle_permission_request(handle, session, permission_events)
-
-            for event in events:
-                if event in permission_events:
-                    continue
-                yield event
-                if event.event_type in {"result", "error"}:
+        deadline = _ProgressDeadline(self._prompt_timeout)
+        try:
+            while True:
+                try:
+                    line = await _readline_with_progress(stdout, deadline)
+                except TimeoutError:
+                    await self._abandon_handle(handle, session.conversation_id)
+                    yield StreamEvent(
+                        event_type="error",
+                        data={
+                            "code": "timeout",
+                            "message": (
+                                "Timed out waiting for Droid stream progress after "
+                                f"{self._prompt_timeout:.1f}s"
+                            ),
+                        },
+                    )
                     return
+                if not line:
+                    yield StreamEvent(
+                        event_type="error",
+                        data={"code": "eof", "message": "Droid stream ended before result"},
+                    )
+                    return
+                events = parse_droid_stream_line(line)
+                if not events:
+                    continue
+                deadline.renew()
+                permission_events = [
+                    event
+                    for event in events
+                    if event.event_type == "content_delta"
+                    and event.data.get("kind") == "permission_request"
+                ]
+                if permission_events:
+                    await self._handle_permission_request(handle, session, permission_events)
+
+                for event in events:
+                    if event in permission_events:
+                        continue
+                    yield event
+                    if event.event_type in {"result", "error"}:
+                        return
+        except asyncio.CancelledError:
+            await self._abandon_handle(handle, session.conversation_id)
+            raise
 
     async def _handle_permission_request(
         self,
@@ -752,15 +823,36 @@ class DroidWebChatBackend:
     ) -> str:
         return await self._permission_resolver.resolve(session, events)
 
+    async def _abandon_handle(self, handle: _DroidProcessHandle, conversation_id: str) -> None:
+        current = self._handles.get(conversation_id)
+        if current is handle:
+            self._handles.pop(conversation_id, None)
+        await self._terminate_handle(handle)
+
     async def _terminate_handle(self, handle: _DroidProcessHandle) -> None:
         if handle.process.stdin is not None:
             handle.process.stdin.close()
         if handle.process.returncode is None:
-            handle.process.terminate()
+            pid = getattr(handle.process, "pid", None)
+            signaled = False
+            if pid is not None:
+                try:
+                    os.killpg(pid, signal.SIGTERM)
+                    signaled = True
+                except (AttributeError, ProcessLookupError, PermissionError, OSError):
+                    signaled = False
+            if not signaled:
+                handle.process.terminate()
             try:
                 await asyncio.wait_for(handle.process.wait(), timeout=2.0)
             except TimeoutError:
-                handle.process.kill()
+                if pid is not None:
+                    try:
+                        os.killpg(pid, signal.SIGKILL)
+                    except (AttributeError, ProcessLookupError, PermissionError, OSError):
+                        handle.process.kill()
+                else:
+                    handle.process.kill()
                 await handle.process.wait()
         if handle.stderr_task is not None and not handle.stderr_task.done():
             handle.stderr_task.cancel()

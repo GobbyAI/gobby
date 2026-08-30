@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from gobby.adapters.acp_client import StreamEvent
+from gobby.adapters.acp_client import ACP_STREAM_READER_LIMIT_BYTES, StreamEvent
 from gobby.llm.claude_models import (
     DoneEvent,
     TextChunk,
@@ -66,9 +66,9 @@ class _FakeStdin:
 
 
 class _FakeProcess:
-    def __init__(self, lines: list[str]) -> None:
+    def __init__(self, lines: list[str] | None = None, *, stdout: Any | None = None) -> None:
         self.stdin = _FakeStdin()
-        self.stdout = _FakeStdout(lines)
+        self.stdout = stdout if stdout is not None else _FakeStdout(lines or [])
         self.returncode: int | None = None
         self.signals: list[int] = []
         self.terminated = False
@@ -89,6 +89,63 @@ class _FakeProcess:
         if self.returncode is None:
             self.returncode = 0
         return self.returncode
+
+
+class _HangingStdout:
+    """Yield prefix lines, then hang until the reader is cancelled."""
+
+    def __init__(self, prefix: list[str]) -> None:
+        self._prefix = list(prefix)
+
+    async def readline(self) -> bytes:
+        if self._prefix:
+            return (self._prefix.pop(0) + "\n").encode("utf-8")
+        await asyncio.get_running_loop().create_future()
+        raise AssertionError("hanging stdout resumed")
+
+
+class _TimedStdout:
+    """Each step is (delay_seconds, line). ``line is None`` hangs after the delay."""
+
+    def __init__(self, steps: list[tuple[float, str | None]]) -> None:
+        self._steps = list(steps)
+
+    async def readline(self) -> bytes:
+        if not self._steps:
+            return b""
+        delay, line = self._steps.pop(0)
+        if delay > 0:
+            await asyncio.sleep(delay)
+        if line is None:
+            await asyncio.get_running_loop().create_future()
+            raise AssertionError("timed stdout hang resumed")
+        return (line + "\n").encode("utf-8")
+
+
+class _PrefixThenTrickleStdout:
+    """Emit prefix lines immediately, then a low-rate discarded stream."""
+
+    def __init__(self, prefix: list[str], *, trickle: str, interval_s: float) -> None:
+        self._prefix = list(prefix)
+        self._trickle = trickle
+        self._interval_s = interval_s
+
+    async def readline(self) -> bytes:
+        if self._prefix:
+            return (self._prefix.pop(0) + "\n").encode("utf-8")
+        await asyncio.sleep(self._interval_s)
+        return (self._trickle + "\n").encode("utf-8")
+
+
+def _attached_session(
+    process: _FakeProcess,
+    *,
+    prompt_timeout: float | None = None,
+) -> tuple[DroidWebChatBackend, DroidManagedChatSession]:
+    backend = DroidWebChatBackend(prompt_timeout=prompt_timeout)
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session.project_path = str(Path.cwd())
+    return backend, session
 
 
 def _fixture_lines(name: str) -> list[str]:
@@ -1151,6 +1208,165 @@ async def test_attach_session_rejects_invalid_option_values(
         pytest.raises(ValueError, match=message),
     ):
         await backend.attach_session(session, model=model)
+
+
+@pytest.mark.asyncio
+async def test_attach_session_uses_shared_stream_reader_limit() -> None:
+    process = _FakeProcess([_session_init_line()])
+    backend, session = _attached_session(process)
+
+    with (
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"
+        ),
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
+            return_value=process,
+        ) as create_process,
+    ):
+        await backend.attach_session(session, model="gpt-5.4")
+
+    assert create_process.call_args.kwargs["limit"] == ACP_STREAM_READER_LIMIT_BYTES
+
+
+@pytest.mark.asyncio
+async def test_send_message_progress_timeout_emits_one_error_and_is_reconnectable() -> None:
+    first = _FakeProcess(stdout=_HangingStdout([_session_init_line()]))
+    second = _FakeProcess([_session_init_line(), *_turn_response_lines("Recovered")])
+    backend, session = _attached_session(first, prompt_timeout=0.05)
+
+    with (
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"
+        ),
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
+            side_effect=[first, second],
+        ),
+    ):
+        await backend.attach_session(session, model="gpt-5.4")
+        timed_out = [event async for event in session.send_message("hello")]
+        assert session.conversation_id not in backend._handles
+        recovered = [event async for event in session.send_message("again")]
+
+    error_chunks = [
+        event.content
+        for event in timed_out
+        if isinstance(event, TextChunk)
+        and "Timed out waiting for Droid stream progress" in event.content
+    ]
+    assert len(error_chunks) == 1
+    assert isinstance(timed_out[-1], DoneEvent)
+    assert first.terminated is True
+    assert [event.content for event in recovered if isinstance(event, TextChunk)] == ["Recovered"]
+    assert isinstance(recovered[-1], DoneEvent)
+
+
+@pytest.mark.asyncio
+async def test_send_message_progress_timeout_renews_on_parsed_event() -> None:
+    _result_ack, text_line, idle_line = _turn_response_lines("Still going")
+    del _result_ack
+    process = _FakeProcess(
+        stdout=_TimedStdout(
+            [
+                (0.0, _session_init_line()),
+                (0.04, text_line),
+                (0.04, idle_line),
+            ]
+        )
+    )
+    backend, session = _attached_session(process, prompt_timeout=0.05)
+
+    with (
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"
+        ),
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
+            return_value=process,
+        ),
+    ):
+        await backend.attach_session(session, model="gpt-5.4")
+        events = [event async for event in session.send_message("hello")]
+
+    assert [event.content for event in events if isinstance(event, TextChunk)] == ["Still going"]
+    assert isinstance(events[-1], DoneEvent)
+    assert process.terminated is False
+
+
+@pytest.mark.asyncio
+async def test_send_message_discarded_lines_do_not_renew_progress_timeout() -> None:
+    process = _FakeProcess(
+        stdout=_PrefixThenTrickleStdout(
+            [_session_init_line()],
+            trickle="not-json",
+            interval_s=0.01,
+        )
+    )
+    backend, session = _attached_session(process, prompt_timeout=0.05)
+
+    with (
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"
+        ),
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
+            return_value=process,
+        ),
+    ):
+        await backend.attach_session(session, model="gpt-5.4")
+        events = await asyncio.wait_for(
+            _collect_chat_events(session.send_message("hello")),
+            timeout=1.0,
+        )
+
+    error_chunks = [
+        event.content
+        for event in events
+        if isinstance(event, TextChunk)
+        and "Timed out waiting for Droid stream progress" in event.content
+    ]
+    assert len(error_chunks) == 1
+    assert process.terminated is True
+    assert session.conversation_id not in backend._handles
+
+
+@pytest.mark.asyncio
+async def test_send_message_cancellation_terminates_process_and_clears_handle() -> None:
+    hanging = asyncio.Event()
+
+    class _HangAfterPrefix(_HangingStdout):
+        async def readline(self) -> bytes:
+            if self._prefix:
+                return await super().readline()
+            hanging.set()
+            return await super().readline()
+
+    process = _FakeProcess(stdout=_HangAfterPrefix([_session_init_line()]))
+    backend, session = _attached_session(process)
+
+    with (
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"
+        ),
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
+            return_value=process,
+        ),
+    ):
+        await backend.attach_session(session, model="gpt-5.4")
+        task = asyncio.create_task(_collect_chat_events(session.send_message("hello")))
+        await hanging.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert process.terminated is True
+    assert session.conversation_id not in backend._handles
+
+
+async def _collect_chat_events(stream: AsyncIterator[Any]) -> list[Any]:
+    return [event async for event in stream]
 
 
 @pytest.mark.integration
