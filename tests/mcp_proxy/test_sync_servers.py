@@ -237,3 +237,82 @@ def test_repointing_instance_at_hookless_template_clears_runtime_hook(
     assert repointed.id == row.id
     assert repointed.template == "hookless"
     assert repointed.runtime_hook is None
+
+
+def test_yaml_bool_values_expand_lower_case_for_choices(temp_db: Any, tmp_path: Path) -> None:
+    from gobby.mcp_proxy.sync_servers import sync_mcp_server_files
+    from gobby.mcp_proxy.sync_templates import sync_bundled_mcp_templates
+
+    manager = LocalMCPManager(temp_db)
+    templates = tmp_path / "templates"
+    templates.mkdir(parents=True, exist_ok=True)
+    (templates / "boolean.yaml").write_text(
+        "\n".join(
+            [
+                "name: boolean",
+                "description: Template boolean",
+                "version: 1",
+                "enabled: true",
+                "transport: stdio",
+                "command: npx",
+                'args: ["-y", "boolean-pkg"]',
+                "params:",
+                "  - name: insecure",
+                "    env: INSECURE",
+                "    required: true",
+                '    choices: ["true", "false"]',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    sync_bundled_mcp_templates(temp_db, templates, tag="gobby")
+
+    servers = tmp_path / "servers"
+    servers.mkdir(parents=True, exist_ok=True)
+    (servers / "bool-demo.yaml").write_text(
+        "template: boolean\nenabled: true\nvalues:\n  insecure: true\n",
+        encoding="utf-8",
+    )
+    result = sync_mcp_server_files(
+        temp_db,
+        [servers],
+        project_id=None,
+        project_root=None,
+        secret_store=SecretStore(temp_db),
+    )
+
+    assert result["errors"] == []
+    assert result["synced"] == 1
+    row = manager.get_server("bool-demo", project_id=GLOBAL_PROJECT_ID)
+    assert row is not None
+    assert row.env == {"INSECURE": "true"}
+    assert row.template_values == {"insecure": "true"}
+
+
+def test_non_bool_enabled_is_a_sync_error(temp_db: Any, tmp_path: Path) -> None:
+    from gobby.mcp_proxy.sync_servers import sync_mcp_server_files
+    from gobby.mcp_proxy.sync_templates import sync_bundled_mcp_templates
+
+    manager = LocalMCPManager(temp_db)
+    templates = tmp_path / "templates"
+    _write_template(templates, "demo")
+    sync_bundled_mcp_templates(temp_db, templates, tag="gobby")
+
+    servers = tmp_path / "servers"
+    servers.mkdir(parents=True, exist_ok=True)
+    (servers / "bad-enabled.yaml").write_text(
+        "template: demo\nenabled: 1\nvalues:\n  token: $secret:demo_token\n",
+        encoding="utf-8",
+    )
+    result = sync_mcp_server_files(
+        temp_db,
+        [servers],
+        project_id=None,
+        project_root=None,
+        secret_store=SecretStore(temp_db),
+    )
+
+    assert result["synced"] == 0
+    assert any("invalid enabled value" in error for error in result["errors"])
+    assert manager.get_server("bad-enabled", project_id=GLOBAL_PROJECT_ID) is None

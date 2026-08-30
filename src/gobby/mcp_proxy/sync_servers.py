@@ -57,6 +57,13 @@ def sync_mcp_server_files(
     return result
 
 
+def _scalar_value(value: Any) -> str:
+    """Render a YAML scalar for template expansion; bools stay lower-case."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
 def _iter_yaml_files(root: Path) -> list[Path]:
     files: list[Path] = []
     for yaml_file in sorted(root.rglob("*.yaml")):
@@ -110,7 +117,7 @@ def _sync_instance_file(
     if not isinstance(values_raw, dict):
         result["errors"].append(f"Instance '{yaml_file}' values must be a mapping")
         return
-    values = {str(key): str(value) for key, value in values_raw.items()}
+    values = {str(key): _scalar_value(value) for key, value in values_raw.items()}
     try:
         template = MCPServerTemplate.from_definition(template_row.definition)
         expanded = expand_template(
@@ -131,7 +138,10 @@ def _sync_instance_file(
     config = expanded.config
     enabled = raw.get("enabled", True)
     if not isinstance(enabled, bool):
-        enabled = True
+        result["errors"].append(
+            f"Instance '{yaml_file}' has an invalid enabled value: expected true or false"
+        )
+        return
     server = manager.upsert(
         name=instance_name,
         transport=config.transport,
