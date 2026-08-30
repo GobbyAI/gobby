@@ -208,14 +208,8 @@ def _prune_missing_templates(
         row = MCPServerTemplateRow.from_row(raw)
         if (row.name, row.project_id) in on_disk:
             continue
-        for instance in manager.list_template_instances(row.id):
-            logger.info(
-                "Detached MCP instance %s (%s) from pruned template %s",
-                instance.name,
-                instance.project_id,
-                row.name,
-            )
         manager.delete_template(row.name, project_id=row.project_id)
+        logger.info("Pruned MCP template %s (%s)", row.name, row.project_id)
         result["orphaned"] += 1
         if row.project_id == GLOBAL_PROJECT_ID:
             result["orphaned_global"] += 1

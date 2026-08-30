@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol, cast
+from typing import Any
 
 from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.storage.hub.protocol import HubDatabase
@@ -41,10 +41,6 @@ def _initial_enabled(definition: Mapping[str, Any], enabled: bool | None) -> boo
         return bool(enabled)
     raw = definition.get("enabled", True)
     return bool(raw)
-
-
-class _ServerById(Protocol):
-    def get_server_by_id(self, server_id: str) -> MCPServer | None: ...
 
 
 @normalize_datetime_model(required=("created_at", "updated_at"))
@@ -252,13 +248,14 @@ class MCPTemplateStorageMixin:
 
     def list_template_instances(self, template_id: str) -> list[MCPServer]:
         rows = self.db.fetchall(
-            "SELECT id FROM mcp_servers WHERE template_id = %s ORDER BY name",
+            """
+            SELECT mcp_servers.*, mcp_server_templates.name AS template
+            FROM mcp_servers
+            LEFT JOIN mcp_server_templates
+                ON mcp_server_templates.id = mcp_servers.template_id
+            WHERE mcp_servers.template_id = %s
+            ORDER BY mcp_servers.name
+            """,
             (template_id,),
         )
-        lookup = cast(_ServerById, self)
-        servers: list[MCPServer] = []
-        for row in rows:
-            server = lookup.get_server_by_id(str(row["id"]))
-            if server is not None:
-                servers.append(server)
-        return servers
+        return [MCPServer.from_row(row) for row in rows]

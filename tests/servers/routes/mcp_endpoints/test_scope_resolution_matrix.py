@@ -84,7 +84,7 @@ def test_http_scope_resolution_matrix() -> None:
     server._mcp_db_manager.get_cached_tools.return_value = [cached_tool]
     server.session_manager = None
     server.services = MagicMock()
-    server.services.database = None
+    server.services.database = server._mcp_db_manager.db
     server.resolve_project_id.return_value = PROJECT_ID
     client = _client(server)
 
@@ -178,3 +178,49 @@ def test_http_scope_resolution_matrix() -> None:
     assert per_instance["new"] == 1
     assert per_instance["removed"] == 0
     _ = cast(MCPClientManager, manager)
+
+
+def test_explicit_project_is_unresolvable_when_it_cannot_be_verified() -> None:
+    manager = RecordingManager(scoped_github_configs(), project_id=PROJECT_ID)
+    proxy = MagicMock()
+    proxy.call_tool = AsyncMock(return_value={"success": True, "result": {}})
+    server = MagicMock()
+    server.mcp_manager = as_mcp(manager)
+    server.tool_proxy = proxy
+    server._internal_manager = None
+    server._tools_handler = None
+    server._mcp_db_manager = None
+    server.session_manager = None
+    server.services = MagicMock()
+    server.services.database = None
+    client = _client(server)
+
+    payload = {
+        "server_name": "github",
+        "tool_name": "ping",
+        "arguments": {},
+        "project_id": PROJECT_ID,
+    }
+
+    # No reachable database: the explicit project cannot be verified.
+    no_db = client.post("/api/mcp/tools/call", json=payload)
+    assert no_db.status_code == 400
+    assert no_db.json()["detail"]["error_code"] == "project_scope_unresolved"
+    proxy.call_tool.assert_not_awaited()
+
+    # A database that errors on the lookup is just as unverifiable.
+    failing_db = MagicMock()
+    failing_db.fetchone.side_effect = RuntimeError("connection lost")
+    server.services.database = failing_db
+    db_error = client.post("/api/mcp/tools/call", json=payload)
+    assert db_error.status_code == 400
+    assert db_error.json()["detail"]["error_code"] == "project_scope_unresolved"
+    proxy.call_tool.assert_not_awaited()
+
+    # The global scope stays reachable without verification.
+    server.services.database = None
+    global_ok = client.post(
+        "/api/mcp/tools/call",
+        json={"server_name": "github", "tool_name": "ping", "arguments": {}, "scope": "global"},
+    )
+    assert global_ok.status_code == 200

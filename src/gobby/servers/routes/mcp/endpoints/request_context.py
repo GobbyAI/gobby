@@ -329,7 +329,9 @@ def _project_exists(db: Any, project_id: str) -> bool:
     try:
         row = db.fetchone("SELECT 1 FROM projects WHERE id = %s", (project_id,))
     except Exception:
-        return True
+        # Unverifiable is unresolvable: never accept an arbitrary explicit
+        # project the database cannot confirm.
+        return False
     return row is not None
 
 
@@ -357,7 +359,14 @@ def resolve_http_mcp_scope(
     """Resolve the caller's project for an MCP HTTP route."""
     project_id = _payload_str(payload, "project_id") or (query.get("project_id") if query else None)
     scope = _payload_str(payload, "scope") or (query.get("scope") if query else None)
-    exists = (lambda pid: _project_exists(db, pid)) if db is not None else None
+
+    def exists(pid: str) -> bool:
+        if db is None:
+            # No reachable database: only the global scope is verifiable, so
+            # an explicit project id resolves to project_scope_unresolved.
+            return pid == GLOBAL_PROJECT_ID
+        return _project_exists(db, pid)
+
     try:
         return resolve_request_scope(
             session_project_id=session_project_id,

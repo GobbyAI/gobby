@@ -765,19 +765,9 @@ async def refresh_server(manager: Any, server_id: str) -> None:
             _set_health(manager, config, ConnectionState.DISABLED)
             return
 
-        try:
-            manager._resolve_secrets_in_config(config)
-        except MCPError as exc:
-            if exc.missing_secrets:
-                _set_health(
-                    manager,
-                    config,
-                    ConnectionState.NEEDS_CONFIGURATION,
-                    missing_secrets=list(exc.missing_secrets),
-                    last_error=str(exc),
-                )
-            raise
-
+        # Secret resolution happens off-loop inside the connect path, which
+        # owns missing-secret detection: connect_server reports
+        # needs_configuration and never starts a transport.
         manager._lazy_connector.register_server(server_id)
         session = await _connect_with_retries(manager, server_id, config)
         await _discover_and_cache_tools(manager, config, session)
