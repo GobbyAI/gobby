@@ -6,15 +6,29 @@ import asyncio
 import shlex
 import shutil
 import subprocess
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
-from uuid import uuid4
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID, uuid4
 
 import pytest
 
 from gobby.agents.tmux.output_reader import TmuxOutputReader
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
+from gobby.servers.websocket.server import WebSocketServer
+from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from gobby.storage.terminals import Terminal, TerminalManager
+from gobby.terminals import TerminalRuntimeRegistry
+from gobby.terminals.runtime import TerminalSpawnRequest
+from gobby.terminals.services import TerminalServices
+from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
+from gobby.utils.machine_id import require_machine_id
+from tests.agents.cleanup_test_support import _handler, _stub_runtime_cleanup
+from tests.servers.test_tmux_mixin import MockWebSocket
 
 pytestmark = pytest.mark.integration
 
@@ -57,6 +71,20 @@ async def _wait_for(
     deadline = loop.time() + timeout
     while loop.time() < deadline:
         if predicate():
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("condition was not met before timeout")
+
+
+async def _wait_for_async(
+    predicate: Callable[[], Awaitable[bool]],
+    *,
+    timeout: float = 5.0,
+) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if await predicate():
             return
         await asyncio.sleep(0.05)
     raise AssertionError("condition was not met before timeout")
@@ -156,3 +184,226 @@ async def test_output_reader_streams_multibyte_fifo_data(
         await _wait_for(lambda: "fifo-multibyte: cafe é 漢" in "".join(chunks))
     finally:
         await reader.stop_reader("run-fifo")
+
+
+async def _spawn_gobby_terminal(
+    *,
+    runtime: TmuxTerminalRuntime,
+    manager: TerminalManager,
+    project_id: str,
+    machine_id: str,
+    command: list[str],
+    session_id: str | None = None,
+    agent_run_id: str | None = None,
+) -> Terminal:
+    terminal_id = str(uuid4())
+    spawn_key = f"gobby-{terminal_id}"
+    pending = manager.create_pending(
+        terminal_id=terminal_id,
+        project_id=project_id,
+        backend="tmux",
+        ownership="gobby",
+        spawn_key=spawn_key,
+        machine_id=machine_id,
+        session_id=session_id,
+        agent_run_id=agent_run_id,
+    )
+    prepared = await runtime.prepare_spawn(
+        TerminalSpawnRequest(
+            terminal_id=UUID(terminal_id),
+            spawn_key=spawn_key,
+            command=command,
+        )
+    )
+    assert prepared.stored_locator is not None
+    assert prepared.locator_key is not None
+    live = manager.promote_to_live(
+        pending.id,
+        locator=prepared.stored_locator,
+        locator_key=prepared.locator_key,
+        session_name=spawn_key,
+    )
+    assert live is not None
+    return live
+
+
+async def test_finalise_kills_remain_on_exit_session_and_agrees_with_terminal_list(
+    tmux_manager: TmuxSessionManager,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Finalising an agent run leaves no gobby-socket pane without a live row."""
+    _stub_runtime_cleanup(monkeypatch)
+    monkeypatch.setattr(
+        "gobby.agents.terminal_delivery.deliver_and_cleanup_terminal_run",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.terminal_cleanup.reap_srt_runner_process_tree",
+        AsyncMock(),
+    )
+
+    runtime = TmuxTerminalRuntime(tmux_manager)
+    terminals = TerminalManager(temp_db)
+    machine_id = require_machine_id()
+    session = session_manager.register(
+        external_id="finalise-orphan-session",
+        machine_id=machine_id,
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    arm = LocalAgentRunManager(temp_db)
+    run = arm.create(
+        parent_session_id=session.id,
+        provider="claude",
+        prompt="finalise orphan",
+        child_session_id=session.id,
+    )
+    arm.start(run.id)
+    dying = await _spawn_gobby_terminal(
+        runtime=runtime,
+        manager=terminals,
+        project_id=sample_project["id"],
+        machine_id=machine_id,
+        command=["true"],
+        session_id=session.id,
+        agent_run_id=run.id,
+    )
+    survivor = await _spawn_gobby_terminal(
+        runtime=runtime,
+        manager=terminals,
+        project_id=sample_project["id"],
+        machine_id=machine_id,
+        command=["tail", "-f", "/dev/null"],
+        session_id=session.id,
+    )
+    temp_db.execute(
+        "UPDATE agent_runs SET terminal_id = %s WHERE id = %s",
+        (dying.id, run.id),
+    )
+    fetched = arm.get(run.id)
+    assert fetched is not None
+    run = fetched
+
+    # Pin the regression: finalise only once the pane is remain-on-exit dead.
+    # A still-live pane would have been killed by the pre-fix is_live gate too.
+    async def _pane_dead() -> bool:
+        return not await runtime.is_live(dying)
+
+    await _wait_for_async(_pane_dead)
+    assert await runtime.session_present(dying) is True
+
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
+    services = TerminalServices(manager=terminals, registry=registry)
+    handler = _handler(
+        temp_db,
+        agent_run_manager=arm,
+        session_manager=session_manager,
+        terminal_services=services,
+    )
+    assert await handler.terminalize_successful_run(
+        run.id,
+        notify_result={"status": "completed"},
+        message="done",
+    )
+
+    assert await runtime.session_present(dying) is False
+    assert await runtime.is_live(survivor) is True
+    panes = await tmux_manager.list_panes()
+    assert panes is not None
+    pane_names = {pane.session_name for pane in panes}
+    live_rows = terminals.list_live_by_machine(machine_id)
+    row_names = {row.session_name for row in live_rows if row.session_name}
+    assert pane_names == row_names == {survivor.session_name}
+    assert dying.session_name not in pane_names
+    exited = terminals.get(dying.id)
+    assert exited is not None and exited.state == "exited"
+
+    config = MagicMock()
+    config.host = "localhost"
+    config.port = 60888
+    config.ping_interval = 30
+    config.ping_timeout = 10
+    config.max_message_size = 1024
+    ws_server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="test-user"))
+    ws_server.terminal_manager = terminals
+    ws_server.session_manager = session_manager
+    ws_server._tmux_mgr_gobby = tmux_manager
+    ws_server._tmux_mgr_default = TmuxSessionManager(
+        TmuxConfig(socket_name=f"gobby-empty-{uuid4().hex}", config_file="/dev/null")
+    )
+    ws = MockWebSocket()
+    await ws_server._handle_terminal_list(ws, {"type": "terminal_list", "request_id": "proof"})
+    page = ws.last_message()
+
+    assert page["type"] == "terminal_list"
+    listed_ids = {item["terminal_id"] for item in page["items"]}
+    assert listed_ids == {row.id for row in live_rows} == {survivor.id}
+
+
+async def test_sweep_kills_surviving_session_of_orphaned_row(
+    tmux_manager: TmuxSessionManager,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An orphaned row whose tmux session survived is killed and settled on sweep."""
+    _stub_runtime_cleanup(monkeypatch)
+
+    runtime = TmuxTerminalRuntime(tmux_manager)
+    terminals = TerminalManager(temp_db)
+    machine_id = require_machine_id()
+    session = session_manager.register(
+        external_id="orphan-sweep-session",
+        machine_id=machine_id,
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    arm = LocalAgentRunManager(temp_db)
+    run = arm.create(
+        parent_session_id=session.id,
+        provider="claude",
+        prompt="orphan sweep",
+        child_session_id=session.id,
+    )
+    arm.start(run.id)
+    orphan = await _spawn_gobby_terminal(
+        runtime=runtime,
+        manager=terminals,
+        project_id=sample_project["id"],
+        machine_id=machine_id,
+        command=["tail", "-f", "/dev/null"],
+        session_id=session.id,
+        agent_run_id=run.id,
+    )
+    temp_db.execute(
+        """
+        UPDATE agent_runs
+        SET terminal_id = %s, status = 'success', completed_at = now(), updated_at = now()
+        WHERE id = %s
+        """,
+        (orphan.id, run.id),
+    )
+    assert terminals.mark_orphaned(orphan.id) is not None
+    assert await runtime.session_present(orphan) is True
+
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
+    services = TerminalServices(manager=terminals, registry=registry)
+    handler = _handler(
+        temp_db,
+        agent_run_manager=arm,
+        session_manager=session_manager,
+        terminal_services=services,
+    )
+    assert await handler.cleanup_terminal_tmux_sessions() == 1
+
+    assert await runtime.session_present(orphan) is False
+    settled = terminals.get(orphan.id)
+    assert settled is not None and settled.state == "exited"
+    swept = arm.get(run.id)
+    assert swept is not None and swept.pid is None

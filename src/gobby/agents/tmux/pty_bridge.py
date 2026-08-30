@@ -33,16 +33,19 @@ class BridgeInfo:
     proc: asyncio.subprocess.Process
     session_name: str
     socket_name: str
+    # The terminals row this client views. Required: output frames carry it as
+    # terminal_id, and the web client drops frames it cannot key — a bridge
+    # registered without its row would stream into the void.
+    terminal_id: str
     # The geometry tmux is currently running this client at. A resize to the
     # size it already has is not a resize, and the repaint it would trigger is
     # the one thing an attach must not do: activation's history boundary is
     # only correct for the screen its own repaint painted.
     rows: int = 50
     cols: int = 200
-    # The terminals row this client views, and the config that reaches its
-    # tmux server (socket path or name), so a repaint after resize and the
-    # reap of a stale viewer can find their way back without a lookup.
-    terminal_id: str = ""
+    # The config that reaches this client's tmux server (socket path or name),
+    # so a repaint after resize and the reap of a stale viewer can find their
+    # way back without a lookup.
     config: TmuxConfig | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -67,7 +70,8 @@ class TmuxPTYBridge:
         config: TmuxConfig | None = None,
         rows: int = 50,
         cols: int = 200,
-        terminal_id: str = "",
+        *,
+        terminal_id: str,
     ) -> int:
         """Attach to a tmux session via PTY. Returns master_fd.
 
@@ -77,14 +81,21 @@ class TmuxPTYBridge:
             config: TmuxConfig specifying socket_name and command.
             rows: Initial terminal rows.
             cols: Initial terminal cols.
-            terminal_id: The terminals row this client views.
+            terminal_id: The terminals row this client views. Must be nonempty:
+                output frames key on it and the web client drops unkeyed frames.
 
         Returns:
             The master file descriptor for reading/writing.
 
         Raises:
             RuntimeError: If attach fails.
+            ValueError: If terminal_id is empty.
         """
+        if not terminal_id:
+            raise ValueError(
+                "terminal_id is required: a bridge without its terminals row "
+                "emits frames the client drops"
+            )
         async with self._lock:
             if streaming_id in self._bridges or streaming_id in self._pending_bridges:
                 raise RuntimeError(f"Bridge {streaming_id} already exists")

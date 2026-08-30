@@ -240,16 +240,46 @@ class _StickyRuntime(FakeRuntime):
             self.killed.append(name)
 
 
+class _RemainOnExitRuntime(FakeRuntime):
+    """Pane process has exited; remain-on-exit kept the tmux session."""
+
+    async def is_live(self, terminal: Terminal) -> bool:
+        del terminal
+        return False
+
+    async def session_present(self, terminal: Terminal) -> bool:
+        return terminal.id not in self.killed_ids
+
+
+class _ExplodingProbeRuntime(FakeRuntime):
+    """Presence probe blows up; finalise must survive and transition directly."""
+
+    async def is_live(self, terminal: Terminal) -> bool:
+        del terminal
+        raise RuntimeError("tmux probe boom")
+
+    async def session_present(self, terminal: Terminal) -> bool:
+        del terminal
+        raise RuntimeError("tmux probe boom")
+
+
 def _capture_services(
     *,
     live: bool = True,
     kill_succeeds: bool = True,
+    pane_dead: bool = False,
 ) -> tuple[TerminalServices, FakeRuntime]:
     terminal = make_memory_terminal(terminal_id="wf-live", session_name="wf-live")
     if not live:
         terminal.state = "exited"
     store = MemoryTerminalStore(terminal)
-    runtime: FakeRuntime = FakeRuntime() if kill_succeeds else _StickyRuntime()
+    runtime: FakeRuntime
+    if pane_dead:
+        runtime = _RemainOnExitRuntime()
+    elif kill_succeeds:
+        runtime = FakeRuntime()
+    else:
+        runtime = _StickyRuntime()
     runtime.snapshot_text = "pane output"
     runtime.snapshot_full_result = SnapshotResult(
         text="pane output",
@@ -257,7 +287,7 @@ def _capture_services(
         dropped_bytes=0,
         total_bytes=len(b"pane output"),
     )
-    if live:
+    if live and not pane_dead:
         runtime.live_keys.add("wf-live")
     registry = TerminalRuntimeRegistry()
     registry.register(runtime)
@@ -340,6 +370,49 @@ async def test_terminalize_cancelled_run_captures_live_tmux_before_kill() -> Non
     assert stored.status == "cancelled"
     assert "pane output" in (stored.result or "")
     assert cleanup_runs and cleanup_runs[0].status == "cancelled"
+
+
+async def test_terminalize_successful_run_kills_remain_on_exit_session() -> None:
+    storage = _CaptureWrapperStorage(_tmux_run())
+    services, runtime = _capture_services(pane_dead=True)
+    handler, cleanup_runs = _wrapper_handler(storage, services)
+
+    assert await handler.terminalize_successful_run(
+        "run-1",
+        notify_result={"status": "completed"},
+        message="done",
+    )
+
+    assert runtime.killed == ["wf-live"]
+    stored = storage.get("run-1")
+    assert stored is not None
+    assert stored.status == "success"
+    assert "pane output" in (stored.result or "")
+    assert cleanup_runs and cleanup_runs[0].status == "success"
+    assert await runtime.session_present(services.manager.rows["wf-live"]) is False
+
+
+async def test_terminalize_survives_presence_probe_failure() -> None:
+    storage = _CaptureWrapperStorage(_tmux_run())
+    terminal = make_memory_terminal(terminal_id="wf-live", session_name="wf-live")
+    store = MemoryTerminalStore(terminal)
+    runtime = _ExplodingProbeRuntime()
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
+    services = TerminalServices(manager=store, registry=registry)
+    handler, cleanup_runs = _wrapper_handler(storage, services)
+
+    assert await handler.terminalize_successful_run(
+        "run-1",
+        notify_result={"status": "completed"},
+        message="done",
+    )
+
+    assert runtime.killed == []
+    stored = storage.get("run-1")
+    assert stored is not None
+    assert stored.status == "success"
+    assert cleanup_runs and cleanup_runs[0].status == "success"
 
 
 async def test_terminalize_wrappers_skip_policy_when_session_absent() -> None:
