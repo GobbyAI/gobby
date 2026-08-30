@@ -50,6 +50,7 @@ def test_manifest_covers_every_rust_database_call_at_head() -> None:
 
 
 def test_manifest_privileges_match_the_managed_relation_set() -> None:
+    """Privilege manifest lists project_checkouts SELECT/UPDATE scoped to machine_id."""
     manifest = _load_manifest()
     assert manifest["version"] == 1
     assert manifest["principal"] == "gobby_gcode_capability"

@@ -7,6 +7,7 @@ use gobby_core::schema::{
 
 #[test]
 fn embedded_assets_publish_a_complete_schema_identity() {
+    // Named 1.1.5 identity pin for project_checkouts schema 412.
     let identity = schema_identity();
 
     assert_eq!(BASELINE_VERSION, 375);
@@ -42,6 +43,47 @@ fn latest_asset_is_provider_capacity_snapshots_hop() {
         identity.latest_asset.filename,
         "417_provider_capacity_snapshots.sql"
     );
+}
+
+#[test]
+fn catalog_pins_project_checkouts_and_keeps_projects_repo_path() {
+    // Named 1.1.5 catalog pin: project_checkouts columns stay with projects.repo_path.
+    let catalog: serde_json::Value =
+        serde_json::from_str(CATALOG_MANIFEST_JSON).expect("catalog manifest must be valid JSON");
+    let names = |kind: &str| -> Vec<&str> {
+        catalog[kind]
+            .as_array()
+            .unwrap_or_else(|| panic!("{kind} must be an array"))
+            .iter()
+            .filter_map(|entry| entry["name"].as_str())
+            .collect()
+    };
+    let columns = names("columns");
+    for column in [
+        "project_checkouts.machine_id",
+        "project_checkouts.project_id",
+        "project_checkouts.root_path",
+        "project_checkouts.created_at",
+        "project_checkouts.updated_at",
+        "projects.repo_path",
+    ] {
+        assert!(
+            columns.contains(&column),
+            "catalog columns missing {column}"
+        );
+    }
+    let constraints = names("constraints");
+    for constraint in [
+        "project_checkouts.project_checkouts_pkey",
+        "project_checkouts.project_checkouts_machine_id_root_path_key",
+        "project_checkouts.project_checkouts_machine_id_fkey",
+        "project_checkouts.project_checkouts_project_id_fkey",
+    ] {
+        assert!(
+            constraints.contains(&constraint),
+            "catalog constraints missing {constraint}"
+        );
+    }
 }
 
 #[test]

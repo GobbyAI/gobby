@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -508,7 +510,18 @@ def test_representative_search_symbol_index_freshness_graph_vector_and_status_sq
 def test_project_checkouts_are_machine_isolated_lock_only_and_daemon_writable(
     authorization_fixture: AuthorizationFixture,
 ) -> None:
+    """Machine-isolated lock-only project_checkouts capability plus daemon CRUD."""
     fixture = authorization_fixture
+    privilege_relations = {
+        str(entry["relation"])
+        for entry in json.loads(
+            (
+                Path(__file__).resolve().parents[2]
+                / "crates/gcode/security/managed_postgres_privileges.json"
+            ).read_text()
+        )["relations"]
+    }
+    assert "project_checkouts" in privilege_relations
     checkout_select = (
         "SELECT machine_id, project_id, root_path FROM project_checkouts ORDER BY machine_id"
     )
