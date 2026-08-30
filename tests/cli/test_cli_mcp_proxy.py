@@ -1131,3 +1131,79 @@ def test_list_servers_sends_cwd_project_scope(
         endpoint = mock_daemon_client.call_http_api.call_args[0][0]
         assert endpoint == "/api/mcp/servers?project_id=proj-other"
         assert "lightspeed" in result.output
+
+
+def test_list_tools_sends_cwd_project_scope(
+    cli_runner: CliRunner,
+    mock_daemon_client: MagicMock,
+    mock_config: MagicMock,
+    cwd_project_id: MagicMock,
+) -> None:
+    """list-tools scopes the query to the registered cwd project."""
+    cwd_project_id.return_value = "proj-other"
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {
+            "tools": {"lightspeed": [{"name": "listPets", "brief": "List pets"}]}
+        }
+
+        result = cli_runner.invoke(
+            mcp_proxy, ["list-tools", "--server", "lightspeed"], obj={"config": mock_config}
+        )
+
+        assert result.exit_code == 0
+        endpoint = mock_daemon_client.call_http_api.call_args[0][0]
+        assert endpoint == "/api/mcp/tools?server_filter=lightspeed&project_id=proj-other"
+        assert "listPets" in result.output
+
+
+def test_get_schema_sends_cwd_project_scope(
+    cli_runner: CliRunner,
+    mock_daemon_client: MagicMock,
+    mock_config: MagicMock,
+    cwd_project_id: MagicMock,
+) -> None:
+    """get-schema passes the registered cwd project id in the payload."""
+    cwd_project_id.return_value = "proj-other"
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {
+            "success": True,
+            "schema": {"type": "object"},
+        }
+
+        result = cli_runner.invoke(
+            mcp_proxy, ["get-schema", "lightspeed", "listPets"], obj={"config": mock_config}
+        )
+
+        assert result.exit_code == 0
+        json_data = mock_daemon_client.call_http_api.call_args[1]["json_data"]
+        assert json_data["server_name"] == "lightspeed"
+        assert json_data["project_id"] == "proj-other"
+
+
+def test_call_tool_sends_cwd_project_scope(
+    cli_runner: CliRunner,
+    mock_daemon_client: MagicMock,
+    mock_config: MagicMock,
+    cwd_project_id: MagicMock,
+) -> None:
+    """call-tool passes the registered cwd project id in the payload."""
+    cwd_project_id.return_value = "proj-other"
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {
+            "success": True,
+            "result": {"pets": [{"id": 1, "name": "rex"}]},
+        }
+
+        result = cli_runner.invoke(
+            mcp_proxy, ["call-tool", "lightspeed", "listPets"], obj={"config": mock_config}
+        )
+
+        assert result.exit_code == 0
+        json_data = mock_daemon_client.call_http_api.call_args[1]["json_data"]
+        assert json_data["server_name"] == "lightspeed"
+        assert json_data["tool_name"] == "listPets"
+        assert json_data["project_id"] == "proj-other"
+        assert "rex" in result.output

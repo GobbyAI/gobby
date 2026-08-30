@@ -177,10 +177,15 @@ def list_tools(ctx: click.Context, server: str | None, json_format: bool) -> Non
     if not check_daemon_running(client):
         sys.exit(1)
 
-    endpoint = "/api/mcp/tools"
+    params: list[str] = []
     if server:
-        encoded_server = urllib.parse.quote(server)
-        endpoint = f"/api/mcp/tools?server_filter={encoded_server}"
+        params.append(f"server_filter={urllib.parse.quote(server)}")
+    project_id = _cwd_project_id()
+    if project_id:
+        params.append(f"project_id={project_id}")
+    endpoint = "/api/mcp/tools"
+    if params:
+        endpoint = f"{endpoint}?{'&'.join(params)}"
 
     result = call_mcp_api(client, endpoint, method="GET")
     if result is None:
@@ -223,11 +228,15 @@ def get_schema(ctx: click.Context, server_name: str, tool_name: str) -> None:
     if not check_daemon_running(client):
         sys.exit(1)
 
+    schema_payload: dict[str, Any] = {"server_name": server_name, "tool_name": tool_name}
+    project_id = _cwd_project_id()
+    if project_id:
+        schema_payload["project_id"] = project_id
     result = call_mcp_api(
         client,
         "/api/mcp/tools/schema",
         method="POST",
-        json_data={"server_name": server_name, "tool_name": tool_name},
+        json_data=schema_payload,
     )
     if result is None:
         sys.exit(1)
@@ -284,15 +293,19 @@ def call_tool(
         except json.JSONDecodeError:
             arguments[key] = value
 
+    call_payload: dict[str, Any] = {
+        "server_name": server_name,
+        "tool_name": tool_name,
+        "arguments": arguments,
+    }
+    project_id = _cwd_project_id()
+    if project_id:
+        call_payload["project_id"] = project_id
     result = call_mcp_api(
         client,
         "/api/mcp/tools/call",
         method="POST",
-        json_data={
-            "server_name": server_name,
-            "tool_name": tool_name,
-            "arguments": arguments,
-        },
+        json_data=call_payload,
     )
     if result is None:
         sys.exit(1)
