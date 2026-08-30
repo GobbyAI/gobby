@@ -1329,12 +1329,15 @@ class TestMarkerAuthoritativeInit:
         assert len(wins) == 1
         assert len(losses) == 1
         assert isinstance(losses[0], _name_attach_error())
-        winner_root = left if (left / ".gobby" / "project.json").exists() else right
+        winner = wins[0]
+        registered = _checkout_root(temp_db, machine_id, winner.project_id)
+        assert registered in (str(left), str(right))
+        winner_root = left if registered == str(left) else right
         loser_root = right if winner_root is left else left
         assert (winner_root / ".gobby" / "project.json").exists()
-        if (loser_root / ".gobby" / "project.json").exists():
-            assert _read_marker(loser_root)["id"] == wins[0].project_id
-        assert _checkout_root(temp_db, machine_id, wins[0].project_id) == str(winner_root)
+        assert _read_marker(winner_root)["id"] == winner.project_id
+        assert not (loser_root / ".gobby" / "project.json").exists()
+        assert _checkout_root(temp_db, machine_id, winner.project_id) == str(winner_root)
 
     def test_user_init_restores_soft_deleted_marker_rebind_preserves(
         self,
