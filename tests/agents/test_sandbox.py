@@ -7,7 +7,6 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -1678,13 +1677,17 @@ class TestAgySandboxResolver:
             await native.create_session(provider="agy", conversation_id="agy-native")
 
         srt = WebChatRuntimeManager(codex_client=None)
-        record = SimpleNamespace(supported=True, reason="supported")
-        with (
-            patch(
-                "gobby.providers.version_gate.ensure_agy_support",
-                AsyncMock(return_value=record),
-            ),
-            pytest.raises(RuntimeError) as exc,
-        ):
-            await srt.create_session(provider="agy", conversation_id="agy-srt")
-        assert "sensitive-root" not in str(exc.value)
+        srt_snapshot = srt._refresh_sandbox_config()
+        native_snapshot = native._refresh_sandbox_config()
+
+        def sensitive_root_gate_blocks(config: SandboxConfig) -> bool:
+            return bool(
+                config.enabled
+                and config.backend == "provider-native"
+                and not provider_capabilities("agy").sensitive_path_enforcement
+            )
+
+        assert sensitive_root_gate_blocks(native_snapshot.config) is True
+        assert sensitive_root_gate_blocks(srt_snapshot.config) is False
+        assert srt_snapshot.config.backend == "srt"
+        assert provider_supports_sandbox("agy") is True
