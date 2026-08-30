@@ -12,9 +12,11 @@ metadata:
 
 # Browser Testing
 
-How to drive a browser well with the tools Gobby already ships. Two MCP
-servers are connected at the daemon level — reach them with progressive
-discovery (`list_tools("playwright")`, `list_tools("chrome-devtools")`).
+How to drive a browser well with the tools Gobby already ships. `playwright`
+and `chrome-devtools` are **templates**. Instantiate them before use
+(instance names default to the template name). Then reach the instance with
+progressive discovery (`list_tools("playwright")`,
+`list_tools("chrome-devtools")`). See the `mcp-servers` skill.
 
 ## Tool Routing
 
