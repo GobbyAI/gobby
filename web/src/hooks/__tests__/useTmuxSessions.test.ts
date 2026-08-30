@@ -165,7 +165,9 @@ describe("useTmuxSessions", () => {
     act(() => {
       live.simulateMessage({
         type: "terminal_list",
-        sessions: [{ name: "worker", socket: "default" }],
+        request_id: "init",
+        items: [{ terminal_id: "worker" }],
+        next_cursor: null,
       });
     });
     expect(liveMount.result.current.sessionsLoaded).toBe(true);
@@ -389,6 +391,83 @@ describe("useTmuxSessions", () => {
     expect(mount.result.current.sessions.map((s) => s.terminal_id)).toEqual([
       "t-1",
       "t-2",
+    ]);
+  });
+
+  it("a refresh mid-pagination ignores the superseded walk's pages", () => {
+    const mount = renderHook(() => useTmuxSessions());
+    const ws = mockWs.instances[0];
+    open(ws);
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_list",
+        request_id: "init",
+        items: [{ terminal_id: "t-1" }],
+        next_cursor: "cursor-a",
+      });
+    });
+    const initPage = lastOf(sentMessages(ws, "terminal_list"));
+    expect(initPage).toMatchObject({ cursor: "cursor-a" });
+
+    act(() => mount.result.current.refreshSessions());
+    const refreshId = requestId(ws, "terminal_list");
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_list",
+        request_id: refreshId,
+        items: [{ terminal_id: "t-2" }],
+        next_cursor: "cursor-a",
+      });
+    });
+    const refreshPage = lastOf(sentMessages(ws, "terminal_list"));
+    expect(refreshPage).toMatchObject({ cursor: "cursor-a" });
+    expect(refreshPage?.request_id).not.toBe(initPage?.request_id);
+
+    // The old walk's page lands late: its rows must not merge and its
+    // cursor must not steer the fresh walk.
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_list",
+        request_id: initPage?.request_id,
+        items: [{ terminal_id: "t-stale" }],
+        next_cursor: "cursor-b",
+      });
+    });
+    expect(mount.result.current.sessions.map((s) => s.terminal_id)).toEqual([
+      "t-2",
+    ]);
+    expect(
+      sentMessages(ws, "terminal_list").filter(
+        (message) => message.cursor === "cursor-b",
+      ),
+    ).toHaveLength(0);
+
+    // The fresh walk still fetches its own cursor-b page even though the
+    // stale page already carried that cursor value.
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_list",
+        request_id: refreshPage?.request_id,
+        items: [{ terminal_id: "t-3" }],
+        next_cursor: "cursor-b",
+      });
+    });
+    const followUps = sentMessages(ws, "terminal_list").filter(
+      (message) => message.cursor === "cursor-b",
+    );
+    expect(followUps).toHaveLength(1);
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_list",
+        request_id: followUps[0]?.request_id,
+        items: [{ terminal_id: "t-4" }],
+        next_cursor: null,
+      });
+    });
+    expect(mount.result.current.sessions.map((s) => s.terminal_id)).toEqual([
+      "t-2",
+      "t-3",
+      "t-4",
     ]);
   });
 
@@ -765,7 +844,9 @@ describe("useTmuxSessions", () => {
     act(() => {
       ws.simulateMessage({
         type: "terminal_list",
-        sessions: [{ name: "worker", socket: "default" }],
+        request_id: "init",
+        items: [{ terminal_id: "worker" }],
+        next_cursor: null,
       });
       ws.simulateMessage({
         type: "terminal_kill_result",
@@ -989,7 +1070,7 @@ describe("useTmuxSessions", () => {
     act(() => {
       ws.simulateMessage({
         type: "terminal_list",
-        request_id: "page-1",
+        request_id: pageRequest?.request_id,
         items: [
           {
             terminal_id: "t-100",

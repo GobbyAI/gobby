@@ -148,7 +148,12 @@ export function useTmuxSessions(
   const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const stableOpenTimeoutRef = useRef<number | null>(null);
-  const lastListCursorRef = useRef<string | null>(null);
+  // Cursor state is keyed to one walk (a fresh init/refresh listing plus its
+  // continuation pages); a superseded walk's pages must not merge rows or
+  // steer the cursor, or a refresh started mid-pagination under-fetches.
+  const listWalkRef = useRef<{ id: string; cursor: string | null } | null>(
+    null,
+  );
   const outputCallbackRef = useRef<
     ((runId: string, data: string) => void) | null
   >(null);
@@ -239,7 +244,7 @@ export function useTmuxSessions(
 
   const refreshSessions = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(listRequest(`refresh-${Date.now()}`));
+    wsRef.current.send(listRequest(`refresh-${++requestCounterRef.current}`));
   }, [listRequest]);
 
   const beginAttachRequest = useCallback(
@@ -337,16 +342,28 @@ export function useTmuxSessions(
       }
       switch (data.type) {
         case "terminal_list": {
+          const requestId =
+            typeof data.request_id === "string" ? data.request_id : "";
+          const isFreshWalk =
+            requestId === "init" || requestId.startsWith("refresh");
+          const walk = isFreshWalk
+            ? { id: requestId, cursor: null as string | null }
+            : listWalkRef.current;
+          // A superseded walk's page: merging would resurrect rows the
+          // fresh listing dropped, and its cursor would truncate the
+          // fresh walk.
+          if (
+            walk === null ||
+            (!isFreshWalk && requestId !== `page:${walk.id}`)
+          )
+            break;
+          if (isFreshWalk) listWalkRef.current = walk;
           const pageItems = (
             (data.items as TmuxSession[] | undefined) ?? []
           ).map(asSession);
-          const generation = connectionGenerationRef.current;
-          const requestId =
-            typeof data.request_id === "string" ? data.request_id : "";
           // A fresh listing replaces the table so terminals that vanished
           // drop out; only continuation pages merge.
-          if (requestId === "init" || requestId.startsWith("refresh")) {
-            lastListCursorRef.current = null;
+          if (isFreshWalk) {
             setSessions(pageItems);
           } else {
             setSessions((current) => {
@@ -373,11 +390,11 @@ export function useTmuxSessions(
           if (
             typeof data.next_cursor === "string" &&
             data.next_cursor &&
-            data.next_cursor !== lastListCursorRef.current
+            data.next_cursor !== walk.cursor
           ) {
-            lastListCursorRef.current = data.next_cursor;
+            walk.cursor = data.next_cursor;
             wsRef.current?.send(
-              listRequest(`page-${generation}`, data.next_cursor),
+              listRequest(`page:${walk.id}`, data.next_cursor),
             );
           }
           if (pendingRequestRef.current === null) setIsLoading(false);
@@ -600,6 +617,7 @@ export function useTmuxSessions(
       }
       setConnected(false);
       setSessionsLoaded(false);
+      listWalkRef.current = null;
       fragmentReducerRef.current.disconnect();
       fragmentReducerRef.current = createTerminalWsReducer();
       updateAttachmentRef.current(null, null);
