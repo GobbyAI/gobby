@@ -21,7 +21,13 @@ from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._update_sentinel import UNSET
 
 from .agents import _seed_parent_turn_seq, _seed_wiki_overview_var
-from .context import classify_session_start_context, mark_startup_context_injected
+from .context import (
+    classify_session_start_context,
+    mark_startup_context_injected,
+)
+from .context import (
+    startup_claim_owner_token as _startup_claim_owner_token,
+)
 from .handoff import (
     STARTUP_SOURCES,
     rebind_resumed_session_start,
@@ -441,6 +447,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             session=None,
             session_source=session_source,
             is_existing_session=False,
+            owner_token=_startup_claim_owner_token(event),
         )
         context_mode = context_decision.mode
         additional_context = []
@@ -613,6 +620,7 @@ def handle_pre_created_session(
         session=session_obj,
         session_source=session_source,
         is_existing_session=True,
+        owner_token=_startup_claim_owner_token(event),
     )
 
     if not input_data.get("skip_default_agent_activation"):

@@ -2053,6 +2053,54 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
+      "name": "hook_force_continue_budgets.count",
+      "definition": "integer|int4|NO|0|NEVER"
+    },
+    {
+      "name": "hook_force_continue_budgets.execution_num",
+      "definition": "integer|int4|NO||NEVER"
+    },
+    {
+      "name": "hook_force_continue_budgets.session_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "hook_receipt_effects.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "hook_receipt_effects.current_envelope_id",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "hook_receipt_effects.delivery_generation",
+      "definition": "integer|int4|NO|1|NEVER"
+    },
+    {
+      "name": "hook_receipt_effects.original_envelope_id",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "hook_receipt_effects.receipt_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "hook_receipt_effects.session_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "hook_receipt_effects.staged_payload",
+      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
+    },
+    {
+      "name": "hook_receipt_effects.state",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "hook_receipt_effects.transition_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
       "name": "integration_workspace_mutex.integration_key",
       "definition": "text|text|NO||NEVER"
     },
@@ -4191,6 +4239,18 @@
     {
       "name": "sessions.spawned_by_agent_id",
       "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "sessions.startup_claim_generation",
+      "definition": "integer|int4|NO|0|NEVER"
+    },
+    {
+      "name": "sessions.startup_claim_owner",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "sessions.startup_claim_state",
+      "definition": "text|text|NO|'idle'::text|NEVER"
     },
     {
       "name": "sessions.status",
@@ -6639,6 +6699,26 @@
       "definition": "CHECK (status = ANY (ARRAY['pending'::text, 'processing'::text, 'processed'::text, 'ignored'::text, 'duplicate'::text, 'error'::text]))"
     },
     {
+      "name": "hook_force_continue_budgets.hook_force_continue_budgets_count_nonnegative",
+      "definition": "CHECK (count >= 0)"
+    },
+    {
+      "name": "hook_force_continue_budgets.hook_force_continue_budgets_pkey",
+      "definition": "PRIMARY KEY (session_id, execution_num)"
+    },
+    {
+      "name": "hook_receipt_effects.hook_receipt_effects_delivery_generation_positive",
+      "definition": "CHECK (delivery_generation >= 1)"
+    },
+    {
+      "name": "hook_receipt_effects.hook_receipt_effects_pkey",
+      "definition": "PRIMARY KEY (receipt_id)"
+    },
+    {
+      "name": "hook_receipt_effects.hook_receipt_effects_state_valid",
+      "definition": "CHECK (state = ANY (ARRAY['prepared'::text, 'acknowledged'::text, 'released'::text, 'terminal-undelivered'::text]))"
+    },
+    {
       "name": "integration_workspace_mutex.integration_workspace_mutex_pkey",
       "definition": "PRIMARY KEY (integration_key)"
     },
@@ -7245,6 +7325,14 @@
     {
       "name": "sessions.sessions_project_id_fkey",
       "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) DEFERRABLE"
+    },
+    {
+      "name": "sessions.sessions_startup_claim_generation_nonnegative",
+      "definition": "CHECK (startup_claim_generation >= 0)"
+    },
+    {
+      "name": "sessions.sessions_startup_claim_state_valid",
+      "definition": "CHECK (startup_claim_state = ANY (ARRAY['idle'::text, 'claimed'::text, 'committed'::text, 'invalidated'::text]))"
     },
     {
       "name": "sessions.sessions_summary_revision_fk",
@@ -8065,6 +8153,26 @@
     {
       "name": "gh_triage_deliveries_project_id_delivery_id_key",
       "definition": "CREATE UNIQUE INDEX gh_triage_deliveries_project_id_delivery_id_key ON $schema.gh_triage_deliveries USING btree (project_id, delivery_id)"
+    },
+    {
+      "name": "hook_force_continue_budgets_pkey",
+      "definition": "CREATE UNIQUE INDEX hook_force_continue_budgets_pkey ON $schema.hook_force_continue_budgets USING btree (session_id, execution_num)"
+    },
+    {
+      "name": "hook_receipt_effects_current_envelope_idx",
+      "definition": "CREATE INDEX hook_receipt_effects_current_envelope_idx ON $schema.hook_receipt_effects USING btree (current_envelope_id)"
+    },
+    {
+      "name": "hook_receipt_effects_pkey",
+      "definition": "CREATE UNIQUE INDEX hook_receipt_effects_pkey ON $schema.hook_receipt_effects USING btree (receipt_id)"
+    },
+    {
+      "name": "hook_receipt_effects_session_id_idx",
+      "definition": "CREATE INDEX hook_receipt_effects_session_id_idx ON $schema.hook_receipt_effects USING btree (session_id)"
+    },
+    {
+      "name": "hook_receipt_effects_state_transition_idx",
+      "definition": "CREATE INDEX hook_receipt_effects_state_transition_idx ON $schema.hook_receipt_effects USING btree (state, transition_at)"
     },
     {
       "name": "idx_agent_defs_project",

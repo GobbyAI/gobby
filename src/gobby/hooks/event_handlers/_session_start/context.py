@@ -19,6 +19,20 @@ class SessionStartContextDecision:
     explicit_context_loss: bool
 
 
+def startup_claim_owner_token(event: Any) -> str | None:
+    """Return the private preflight owner token carried on a hook event."""
+    metadata = getattr(event, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    claim = metadata.get("_gobby_startup_claim")
+    if not isinstance(claim, dict):
+        return None
+    token = claim.get("owner_token")
+    if isinstance(token, str) and token:
+        return token
+    return None
+
+
 def classify_session_start_context(
     handler: Any,
     *,
@@ -26,6 +40,7 @@ def classify_session_start_context(
     session: Any | None,
     session_source: str | None,
     is_existing_session: bool,
+    owner_token: str | None = None,
 ) -> SessionStartContextDecision:
     """Decide whether SessionStart should emit full startup or live context."""
     # Kept for callers that still pass the old classifier shape; startup context
@@ -40,13 +55,21 @@ def classify_session_start_context(
         return SessionStartContextDecision("live", variables, explicit_context_loss)
 
     if session_id:
-        claimed_mode = _claim_startup_context_atomically(handler, session_id)
+        claimed_mode = _claim_startup_context_atomically(
+            handler,
+            session_id,
+            owner_token=owner_token,
+        )
         return SessionStartContextDecision(claimed_mode, variables, explicit_context_loss)
 
     return SessionStartContextDecision("full", variables, explicit_context_loss)
 
 
-def _claim_startup_context_atomically(handler: Any, session_id: str | None) -> ContextInjectionMode:
+def _claim_startup_context_atomically(
+    handler: Any,
+    session_id: str | None,
+    owner_token: str | None = None,
+) -> ContextInjectionMode:
     """Atomically claim startup context for this session.
 
     Returns 'full' if this call is first to claim; 'live' if already claimed.
@@ -58,6 +81,8 @@ def _claim_startup_context_atomically(handler: Any, session_id: str | None) -> C
         from gobby.workflows.state_manager import SessionVariableManager
 
         sv_mgr = SessionVariableManager(handler._session_manager.db)
+        if owner_token:
+            return sv_mgr.claim_startup_context(session_id, owner_token=owner_token).mode
         return sv_mgr.claim_startup_context(session_id).mode
     except Exception as e:
         handler.logger.debug("Failed to claim startup context for %s: %s", session_id, e)

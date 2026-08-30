@@ -102,6 +102,9 @@ class AgyAdapter(ACPHookAdapter):
             return super().handle_native(native_event, hook_manager)
 
         original = self.translate_to_hook_event(native_event)
+        claim = native_event.get("_gobby_startup_claim")
+        if isinstance(claim, dict):
+            original.metadata["_gobby_startup_claim"] = claim
         start_event = replace(
             original,
             event_type=HookEventType.SESSION_START,

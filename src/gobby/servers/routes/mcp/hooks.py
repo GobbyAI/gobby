@@ -30,6 +30,13 @@ from gobby.hooks.envelope_dedupe import (
 )
 from gobby.hooks.health_gate import DaemonNotReadyError
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
+from gobby.hooks.startup_claim_preflight import (
+    StartupClaimLease,
+    invalidate_agy_startup_claim,
+    preflight_agy_startup_claim,
+    rollback_agy_startup_claim,
+    strip_private_startup_claim_fields,
+)
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.mcp import hook_hold_open
 from gobby.telemetry.instruments import inc_counter
@@ -422,6 +429,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         hook_type: str | None = None  # Track for error handling
         source: str | None = None  # Track for error handling
         adapter: Any | None = None
+        claim_lease: StartupClaimLease | None = None
         request_metadata: dict[str, Any] = {
             "request_shape": "unknown",
             "schema_version": None,
@@ -431,6 +439,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         envelope_id = request.headers.get(ENVELOPE_ID_HEADER, "").strip()
 
         def mark_processed_and_return(response: dict[str, Any]) -> dict[str, Any]:
+            response = strip_private_startup_claim_fields(response)
             if envelope_id:
                 try:
                     mark_envelope_processed(
@@ -566,6 +575,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 )
 
             # Execute hook via adapter
+            claim_lease = preflight_agy_startup_claim(payload, hook_manager)
             try:
                 config = server.config
                 hook_timeout = (
@@ -621,6 +631,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
             except AgentRunIngressRetryableError as exc:
                 inc_counter("hooks_failed_total")
+                if claim_lease is not None:
+                    rollback_agy_startup_claim(hook_manager, claim_lease)
                 released = bool(envelope_id and release_envelope_processing_claim(envelope_id))
                 logger.warning(
                     "Retrying managed hook until durable run identity is available",
@@ -645,6 +657,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
             except DaemonNotReadyError as exc:
                 inc_counter("hooks_failed_total")
+                if claim_lease is not None:
+                    rollback_agy_startup_claim(hook_manager, claim_lease)
                 released = bool(envelope_id and release_envelope_processing_claim(envelope_id))
                 logger.warning(
                     "Retrying hook after daemon-not-ready gate",
@@ -669,6 +683,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             except ValueError as e:
                 # Invalid request - still return graceful response
                 inc_counter("hooks_failed_total")
+                if claim_lease is not None:
+                    rollback_agy_startup_claim(hook_manager, claim_lease)
                 if _is_codex_root_context_miss(source, payload, e):
                     logger.debug(
                         "Skipping Codex hook without project context: %s",
@@ -693,6 +709,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
             except TimeoutError as exc:
                 inc_counter("hooks_failed_total")
+                if claim_lease is not None:
+                    invalidate_agy_startup_claim(hook_manager, claim_lease)
                 timeout_seconds = hook_timeout
                 timeout_log_extra = {
                     "source": source,
@@ -744,6 +762,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 # Hook execution error - return graceful response so tool proceeds
                 # This prevents confusing "hook failed" warnings in Claude Code
                 inc_counter("hooks_failed_total")
+                if claim_lease is not None:
+                    rollback_agy_startup_claim(hook_manager, claim_lease)
                 logger.exception(
                     "Hook execution failed: %s",
                     hook_type,

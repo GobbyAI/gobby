@@ -24,7 +24,12 @@ from gobby.sessions.handoff import (
 
 from .agents import _seed_parent_turn_seq, _seed_wiki_overview_var
 from .claims import preserve_task_claim_state
-from .context import classify_session_start_context
+from .context import (
+    classify_session_start_context,
+)
+from .context import (
+    startup_claim_owner_token as _startup_claim_owner_token,
+)
 from .handoff import (
     STARTUP_SOURCES,
     SessionStartResolution,
@@ -342,6 +347,7 @@ def activate_materialized_session(
         session=session_obj,
         session_source=session_source,
         is_existing_session=False,
+        owner_token=_startup_claim_owner_token(event),
     )
     event.metadata[_CONTEXT_MODE_METADATA_KEY] = context_decision.mode
 
