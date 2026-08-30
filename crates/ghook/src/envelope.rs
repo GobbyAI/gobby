@@ -14,6 +14,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub const SCHEMA_VERSION: u32 = 1;
+pub const RESPONSE_CAPABILITY: &str = "hook-response.v1";
 
 /// Inbox-envelope schema v1.
 ///
@@ -23,6 +24,8 @@ pub const SCHEMA_VERSION: u32 = 1;
 #[derive(Debug, Serialize)]
 pub struct Envelope {
     pub schema_version: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_capability: Option<String>,
     pub enqueued_at: String,
     pub critical: bool,
     pub hook_type: String,
@@ -41,6 +44,7 @@ impl Envelope {
     ) -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
+            response_capability: Some(RESPONSE_CAPABILITY.to_string()),
             enqueued_at: chrono::Utc::now().to_rfc3339(),
             critical,
             hook_type,
@@ -80,6 +84,7 @@ mod tests {
         assert_eq!(v["headers"]["X-Gobby-Project-Id"], "proj-123");
         assert_eq!(v["headers"]["X-Gobby-Session-Id"], "sess-abc");
         assert_eq!(v["input_data"]["session_id"], "sess-abc");
+        assert_eq!(v["response_capability"], "hook-response.v1");
         assert!(v["enqueued_at"].as_str().unwrap().contains('T'));
     }
 
@@ -120,6 +125,13 @@ mod tests {
         let v: Value = serde_json::to_value(&env).unwrap();
         assert!(v["headers"].is_object());
         assert_eq!(v["headers"].as_object().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn inbox_envelope_schema_mirrors_are_byte_identical() {
+        let crate_schema = include_bytes!("../schemas/inbox-envelope.v1.schema.json");
+        let public_schema = include_bytes!("../../../schemas/inbox-envelope.v1.schema.json");
+        assert_eq!(crate_schema.as_slice(), public_schema.as_slice());
     }
 
     #[test]

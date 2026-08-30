@@ -1211,6 +1211,74 @@ fn daemon_retry_backpressure_continues_noncritical_hook_and_keeps_envelope() -> 
 }
 
 #[test]
+fn daemon_adapter_timeout_fails_closed_on_critical_hook() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let (daemon_url, daemon) = start_daemon(http_json_status(
+        503,
+        "Service Unavailable",
+        r#"{"status":"retry","retry_kind":"adapter_timeout"}"#,
+    ))?;
+
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("claude"),
+        Some("session-end"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+    )?;
+    let _request = join_daemon(daemon)?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("Hook error on critical hook 'session-end'"));
+    assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1);
+
+    Ok(())
+}
+
+#[test]
+fn daemon_adapter_timeout_agy_skip_stdout_is_protojson_legal() -> TestResult {
+    for (hook_type, expected) in [
+        ("PreToolUse", serde_json::json!({"decision": "allow"})),
+        ("PreInvocation", serde_json::json!({})),
+        ("PostInvocation", serde_json::json!({})),
+        ("PostToolUse", serde_json::json!({})),
+        ("Stop", serde_json::json!({})),
+    ] {
+        let home = tempfile::tempdir()?;
+        let gobby_home = tempfile::tempdir()?;
+        let (daemon_url, daemon) = start_daemon(http_json_status(
+            503,
+            "Service Unavailable",
+            r#"{"status":"retry","retry_kind":"adapter_timeout"}"#,
+        ))?;
+        let output = run_ghook_with_dirs(
+            home.path(),
+            gobby_home.path(),
+            Some("agy"),
+            Some(hook_type),
+            &daemon_url,
+            VALID_STDIN,
+            &[],
+        )?;
+        let _request = join_daemon(daemon)?;
+        let stdout: Value = serde_json::from_slice(&output.stdout)?;
+
+        assert_eq!(output.status.code(), Some(0), "{hook_type}");
+        assert_json_stdout(&output, expected.clone())?;
+        assert_ne!(stdout, serde_json::json!({"continue": true}), "{hook_type}");
+        assert_ne!(stdout.get("status"), Some(&Value::String("error".into())));
+        assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1, "{hook_type}");
+    }
+
+    Ok(())
+}
+
+#[test]
 fn daemon_503_without_retry_body_still_blocks_critical_hook() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;

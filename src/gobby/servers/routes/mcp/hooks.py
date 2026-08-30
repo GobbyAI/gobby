@@ -29,7 +29,10 @@ from gobby.hooks.envelope_dedupe import (
     release_envelope_processing_claim,
 )
 from gobby.hooks.health_gate import DaemonNotReadyError
-from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
+from gobby.hooks.runtime_compat import (
+    SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
+    envelope_has_hook_response_capability,
+)
 from gobby.hooks.startup_claim_preflight import (
     StartupClaimLease,
     invalidate_agy_startup_claim,
@@ -188,6 +191,7 @@ def _normalize_hook_request(payload: Any) -> tuple[dict[str, Any], dict[str, Any
         "schema_version": schema_version,
         "critical": bool(payload.get("critical", False)),
         "enqueued_at": payload.get("enqueued_at"),
+        "response_capability": payload.get("response_capability"),
     }
 
     normalized_payload = {
@@ -651,6 +655,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     status_code=503,
                     content={
                         "status": "retry",
+                        "retry_kind": "ingress_backpressure",
                         "reason": "agent_run_identity_pending",
                     },
                 )
@@ -676,6 +681,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     status_code=503,
                     content={
                         "status": "retry",
+                        "retry_kind": "ingress_backpressure",
                         "reason": "daemon_not_ready",
                     },
                 )
@@ -723,6 +729,29 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         exc, "execution_duration_seconds", None
                     ),
                 }
+                if envelope_has_hook_response_capability(
+                    request_metadata.get("response_capability")
+                ):
+                    released = bool(envelope_id and release_envelope_processing_claim(envelope_id))
+                    logger.warning(
+                        "Retrying hook after adapter timeout",
+                        extra=_hook_log_extra(
+                            hook_type,
+                            request_metadata,
+                            timeout_seconds=timeout_seconds,
+                            envelope_id=envelope_id,
+                            processing_claim_released=released,
+                            retry_kind="adapter_timeout",
+                            **timeout_log_extra,
+                        ),
+                    )
+                    return JSONResponse(
+                        status_code=503,
+                        content={
+                            "status": "retry",
+                            "retry_kind": "adapter_timeout",
+                        },
+                    )
                 if not _is_fail_safe_hook(hook_type, request_metadata):
                     logger.warning(
                         "Non-critical hook timed out: %s",

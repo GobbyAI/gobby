@@ -208,6 +208,12 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
                 return emit_exit(continue_action(cfg.source, hook_type));
             }
 
+            if report.is_adapter_timeout()
+                && (cfg.source == "agy" || !cfg.is_critical_hook(hook_type))
+            {
+                return emit_exit(continue_action(cfg.source, hook_type));
+            }
+
             if planned_shutdown::suppress_after_failed_post(
                 hook_type,
                 report.failure_kind,

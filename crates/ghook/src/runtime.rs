@@ -8,6 +8,7 @@ pub(crate) fn write_runtime_stamp() -> Result<()> {
     let stamp = serde_json::json!({
         "schema_version": envelope::SCHEMA_VERSION,
         "ghook_version": diagnose::GHOOK_VERSION,
+        "response_capability": envelope::RESPONSE_CAPABILITY,
     });
     let bytes = serde_json::to_vec_pretty(&stamp)?;
     transport::atomic_write(&stamp_path, &bytes)?;

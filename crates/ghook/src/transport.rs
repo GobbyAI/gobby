@@ -61,14 +61,36 @@ impl DeliveryReport {
     /// retryable signal). The envelope stays in the inbox for drain replay and
     /// the host CLI must be allowed to continue — blocking on this outcome
     /// would live-lock critical hooks against a daemon that keeps saying
-    /// "retry".
+    /// "retry". `adapter_timeout` is a different retry class and is excluded.
     pub fn is_retry_backpressure(&self) -> bool {
-        self.status_code == Some(503)
-            && self
-                .response_body
-                .as_deref()
-                .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok())
-                .is_some_and(|v| v.get("status").and_then(|s| s.as_str()) == Some("retry"))
+        self.retry_payload().is_some() && !self.is_adapter_timeout()
+    }
+
+    /// Adapter evaluation timed out. Unlike ingress backpressure, this honors
+    /// the 2.3 criticality action: critical hooks fail closed; AGY and other
+    /// noncritical hooks continue with the host-legal skip body.
+    pub fn is_adapter_timeout(&self) -> bool {
+        self.retry_kind().as_deref() == Some("adapter_timeout")
+    }
+
+    fn retry_payload(&self) -> Option<serde_json::Value> {
+        if self.status_code != Some(503) {
+            return None;
+        }
+        let value =
+            serde_json::from_str::<serde_json::Value>(self.response_body.as_deref()?).ok()?;
+        if value.get("status").and_then(|s| s.as_str()) == Some("retry") {
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    fn retry_kind(&self) -> Option<String> {
+        self.retry_payload()?
+            .get("retry_kind")?
+            .as_str()
+            .map(str::to_owned)
     }
 }
 
@@ -434,6 +456,17 @@ mod tests {
         // The retry body only counts on 503.
         assert!(!report_with(Some(500), Some(r#"{"status":"retry"}"#)).is_retry_backpressure());
         assert!(!report_with(None, Some(r#"{"status":"retry"}"#)).is_retry_backpressure());
+    }
+
+    #[test]
+    fn adapter_timeout_retry_kind_is_not_ingress_backpressure() {
+        assert!(
+            !report_with(
+                Some(503),
+                Some(r#"{"status":"retry","retry_kind":"adapter_timeout"}"#)
+            )
+            .is_retry_backpressure()
+        );
     }
 
     #[test]

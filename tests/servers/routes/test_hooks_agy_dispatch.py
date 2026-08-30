@@ -9,10 +9,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.hooks.agent_run_ingress import AgentRunIngressRetryableError
+from gobby.hooks.envelope_dedupe import ENVELOPE_ID_HEADER
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import StartupContextClaim
 from tests.servers.conftest import create_http_server
+
+SUPPORTED_HOOK_RESPONSE_CAPABILITY = "hook-response.v1"
 
 pytestmark = pytest.mark.unit
 
@@ -262,3 +266,120 @@ class TestAgyStartupClaimPreflight:
         assert "sess-wrong" in hint_error
         assert captured.get("_gobby_startup_claim") is None
         assert "_gobby_session_hint_error" not in response.json()
+
+
+class TestAgyAdapterTimeoutRetry:
+    def test_timeout_without_capability_returns_graceful_2xx(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = MagicMock()
+        server.app.state.hook_manager.shutdown_async = AsyncMock()
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                side_effect=TimeoutError,
+            ),
+            patch("gobby.servers.routes.mcp.hooks.mark_envelope_processed") as mark_processed,
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: "env-agy-timeout-legacy"},
+                json=_agy_pre_invocation_envelope(),
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body.get("retry_kind") is None
+        assert body.get("status") != "retry"
+        mark_processed.assert_called()
+
+    def test_timeout_with_capability_returns_503_adapter_timeout(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = MagicMock()
+        server.app.state.hook_manager.shutdown_async = AsyncMock()
+        envelope = _agy_pre_invocation_envelope()
+        envelope["response_capability"] = SUPPORTED_HOOK_RESPONSE_CAPABILITY
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                side_effect=TimeoutError,
+            ),
+            patch("gobby.servers.routes.mcp.hooks.mark_envelope_processed") as mark_processed,
+            patch(
+                "gobby.servers.routes.mcp.hooks.release_envelope_processing_claim",
+                return_value=True,
+            ) as release,
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: "env-agy-timeout"},
+                json=envelope,
+            )
+
+        assert response.status_code == 503
+        assert response.json() == {
+            "status": "retry",
+            "retry_kind": "adapter_timeout",
+        }
+        mark_processed.assert_not_called()
+        release.assert_called_once_with("env-agy-timeout")
+
+    def test_ingress_retry_includes_retry_kind_discriminator(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = MagicMock()
+        server.app.state.hook_manager.shutdown_async = AsyncMock()
+        envelope = _agy_pre_invocation_envelope()
+        envelope["response_capability"] = SUPPORTED_HOOK_RESPONSE_CAPABILITY
+        retryable = AgentRunIngressRetryableError(
+            session_id="agy-child",
+            expected_run_id="run-1",
+            reason="run is not durable yet",
+        )
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                side_effect=retryable,
+            ),
+            patch("gobby.servers.routes.mcp.hooks.mark_envelope_processed") as mark_processed,
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: "env-agy-ingress"},
+                json=envelope,
+            )
+
+        assert response.status_code == 503
+        body = response.json()
+        assert body["status"] == "retry"
+        assert body["retry_kind"] == "ingress_backpressure"
+        assert body["reason"] == "agent_run_identity_pending"
+        mark_processed.assert_not_called()

@@ -13,6 +13,7 @@ from gobby.install.bin_freshness_models import is_at_least_version, parse_versio
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
 SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION = 1
+SUPPORTED_HOOK_RESPONSE_CAPABILITY = "hook-response.v1"
 MINIMUM_GHOOK_VERSION_FOR_SUPPORTED_SCHEMA = MANAGED_BIN_VERSION_PINS["ghook"]
 GHOOK_RUNTIME_STAMP_RELATIVE_PATH = Path("bin") / ".ghook-runtime.json"
 
@@ -38,6 +39,7 @@ class GhookRuntimeDiagnostic:
     minimum_ghook_version: str = MINIMUM_GHOOK_VERSION_FOR_SUPPORTED_SCHEMA
     schema_version: int | None = None
     ghook_version: str | None = None
+    response_capability: str | None = None
 
     @property
     def is_degraded(self) -> bool:
@@ -63,6 +65,11 @@ def ghook_runtime_stamp_path(home: Path | None = None) -> Path:
     return (home or get_gobby_home()) / GHOOK_RUNTIME_STAMP_RELATIVE_PATH
 
 
+def envelope_has_hook_response_capability(value: object) -> bool:
+    """True when the request-carried producer advertised the supported floor."""
+    return value == SUPPORTED_HOOK_RESPONSE_CAPABILITY
+
+
 def _diagnostic(
     state: GhookRuntimeState,
     path: Path,
@@ -70,6 +77,7 @@ def _diagnostic(
     *,
     schema_version: int | None = None,
     ghook_version: str | None = None,
+    response_capability: str | None = None,
 ) -> GhookRuntimeDiagnostic:
     return GhookRuntimeDiagnostic(
         state=state,
@@ -77,6 +85,7 @@ def _diagnostic(
         detail=detail,
         schema_version=schema_version,
         ghook_version=ghook_version,
+        response_capability=response_capability,
     )
 
 
@@ -140,6 +149,11 @@ def read_ghook_runtime_diagnostic(
         )
     ghook_version = ghook_version.strip()
 
+    raw_capability = payload.get("response_capability")
+    response_capability = (
+        raw_capability if isinstance(raw_capability, str) and raw_capability else None
+    )
+
     if schema_version != SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION:
         return _diagnostic(
             GhookRuntimeState.SCHEMA_MISMATCH,
@@ -150,6 +164,7 @@ def read_ghook_runtime_diagnostic(
             ),
             schema_version=schema_version,
             ghook_version=ghook_version,
+            response_capability=response_capability,
         )
 
     if not is_at_least_version(
@@ -166,6 +181,7 @@ def read_ghook_runtime_diagnostic(
             ),
             schema_version=schema_version,
             ghook_version=ghook_version,
+            response_capability=response_capability,
         )
 
     return _diagnostic(
@@ -174,6 +190,7 @@ def read_ghook_runtime_diagnostic(
         "ghook runtime stamp matches the daemon envelope schema and version policy.",
         schema_version=schema_version,
         ghook_version=ghook_version,
+        response_capability=response_capability,
     )
 
 
@@ -181,8 +198,10 @@ __all__ = [
     "GHOOK_RUNTIME_STAMP_RELATIVE_PATH",
     "MINIMUM_GHOOK_VERSION_FOR_SUPPORTED_SCHEMA",
     "SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION",
+    "SUPPORTED_HOOK_RESPONSE_CAPABILITY",
     "GhookRuntimeDiagnostic",
     "GhookRuntimeState",
+    "envelope_has_hook_response_capability",
     "ghook_runtime_stamp_path",
     "read_ghook_runtime_diagnostic",
 ]

@@ -12,7 +12,8 @@
 //! Mode 2 prints a JSON diagnostic, no network, no envelope write.
 //!
 //! Mode 3 prints the ghook version and writes
-//! `~/.gobby/bin/.ghook-runtime.json` with `{schema_version, ghook_version}`.
+//! `~/.gobby/bin/.ghook-runtime.json` with
+//! `{schema_version, ghook_version, response_capability}`.
 
 use clap::Parser;
 use std::process::ExitCode;

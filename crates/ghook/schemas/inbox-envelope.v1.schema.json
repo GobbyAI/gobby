@@ -20,6 +20,11 @@
       "const": 1,
       "description": "Envelope schema version; consumers must reject unknown versions."
     },
+    "response_capability": {
+      "type": "string",
+      "const": "hook-response.v1",
+      "description": "Producer hook-response protocol capability advertised by the ghook that will consume the daemon response. Absent on pre-capability envelopes."
+    },
     "enqueued_at": {
       "type": "string",
       "format": "date-time",

@@ -4070,6 +4070,7 @@ class TestHooksEndpoints:
         assert response.status_code == 503
         assert response.json() == {
             "status": "retry",
+            "retry_kind": "ingress_backpressure",
             "reason": reason,
         }
         release.assert_called_once_with(envelope_id)

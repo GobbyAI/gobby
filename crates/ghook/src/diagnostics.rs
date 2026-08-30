@@ -310,6 +310,7 @@ mod tests {
     fn envelope() -> Envelope {
         Envelope {
             schema_version: 1,
+            response_capability: Some(crate::envelope::RESPONSE_CAPABILITY.to_string()),
             enqueued_at: "2026-06-24T00:00:00Z".to_string(),
             critical: true,
             hook_type: "SessionStart".to_string(),
