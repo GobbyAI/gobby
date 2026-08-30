@@ -32,7 +32,31 @@ fn connect_postgres_test_db() -> String {
     database_url
 }
 
+/// Hold the project lock the way production does, stamp included.
 fn hold_project_lock(database_url: &str, project_id: &str) -> Client {
+    let mut conn = db::connect_readwrite(database_url).expect("connect test PostgreSQL hub");
+    let key = project_lock_key(project_id);
+    let acquired = try_acquire_project_key(
+        &mut conn,
+        project_id,
+        key,
+        IndexLockPolicy::BriefTry {
+            total_wait: Duration::from_millis(50),
+            poll: Duration::from_millis(10),
+        },
+        LockDiagnostics::Silent,
+    )
+    .expect("hold project advisory lock");
+    assert_eq!(
+        acquired,
+        IndexLockResult::Acquired(()),
+        "the test holder must own the lock it is meant to hold"
+    );
+    conn
+}
+
+/// Hold the same key without going through this module, so no stamp is left.
+fn hold_project_lock_untagged(database_url: &str, project_id: &str) -> Client {
     let mut conn = db::connect_readwrite(database_url).expect("connect test PostgreSQL hub");
     let key = project_lock_key(project_id);
     conn.execute("SELECT pg_advisory_lock($1)", &[&key])
@@ -477,8 +501,8 @@ mod serial_db {
             "the give-up error must name the holding backend: {error}"
         );
         assert!(
-            error.contains("connection age"),
-            "the give-up error must say how long that backend has been around: {error}"
+            error.contains("held for"),
+            "the give-up error must say how long that backend has held the lock: {error}"
         );
     }
 
@@ -528,9 +552,158 @@ mod serial_db {
             description.contains("state"),
             "holder description must report backend state: {description}"
         );
+        // The hold duration is the point: an operator deciding whether to wait
+        // or terminate needs how long this lock has been held, and a backend
+        // that opened long before it locked would make connection age a wild
+        // over-report.
+        let held_for = description
+            .split_once("held for ")
+            .and_then(|(_, tail)| tail.split_once('s'))
+            .and_then(|(seconds, _)| seconds.parse::<u64>().ok())
+            .unwrap_or_else(|| panic!("holder description must report a hold time: {description}"));
         assert!(
-            description.contains("connection age"),
-            "holder description must report how long the holder has been around: {description}"
+            held_for < 60,
+            "the hold began moments ago, so {held_for}s is not a hold time: {description}"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn the_reported_age_measures_the_hold_not_the_holder_connection() {
+        // A connection that idles before it locks -- the daemon's long-lived
+        // content GC connection is exactly this -- makes its own age a wild
+        // over-report of the contention an operator is deciding about.
+        let database_url = connect_postgres_test_db();
+        let project_id = "gcode-lock-hold-vs-connection";
+        let key = project_lock_key(project_id);
+        let mut holder = db::connect_readwrite(&database_url).expect("connect idle holder");
+        std::thread::sleep(Duration::from_millis(2500));
+        let acquired = try_acquire_project_key(
+            &mut holder,
+            project_id,
+            key,
+            IndexLockPolicy::maintenance_try(),
+            LockDiagnostics::Silent,
+        )
+        .expect("hold project advisory lock");
+        assert_eq!(acquired, IndexLockResult::Acquired(()));
+
+        let mut observer = db::connect_readwrite(&database_url).expect("connect observer");
+        let description =
+            describe_lock_holder(&mut observer, key).expect("a held lock must have a holder");
+        let held_for = description
+            .split_once("held for ")
+            .and_then(|(_, tail)| tail.split_once('s'))
+            .and_then(|(seconds, _)| seconds.parse::<u64>().ok())
+            .unwrap_or_else(|| panic!("holder description must report a hold time: {description}"));
+        let connection_age: f64 = holder
+            .query_one(
+                "SELECT extract(epoch FROM (now() - backend_start))::float8
+                   FROM pg_stat_activity
+                  WHERE pid = pg_backend_pid()",
+                &[],
+            )
+            .expect("read holder connection age")
+            .get(0);
+
+        assert!(
+            connection_age >= 2.0,
+            "the holder idled before locking, so its connection must be older: {connection_age}"
+        );
+        // The stamp floors to whole seconds, so a sub-second hold may render as
+        // 1s; what must never happen is the idle time before the lock being
+        // counted into it.
+        assert!(
+            (held_for as f64) + 1.0 < connection_age,
+            "the lock was taken moments ago, so {connection_age:.1}s of connection age must not \
+             be reported as the hold: {description}"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn an_unstamped_holder_is_still_named_without_a_fabricated_hold_time() {
+        // Nothing stops a psql session or a future caller from taking the key
+        // directly. Diagnostics must degrade to what is knowable rather than
+        // report the connection age as if it were the hold.
+        let database_url = connect_postgres_test_db();
+        let project_id = "gcode-lock-unstamped-holder";
+        let ctx = Context {
+            quiet: false,
+            ..context_for(database_url.clone(), project_id)
+        };
+        let mut holder = hold_project_lock_untagged(&database_url, project_id);
+        let holder_pid: i32 = holder
+            .query_one("SELECT pg_backend_pid()", &[])
+            .expect("read holder backend pid")
+            .get(0);
+
+        let result = with_project_lock::<()>(
+            &ctx,
+            IndexLockPolicy::BriefTry {
+                total_wait: Duration::from_millis(50),
+                poll: Duration::from_millis(10),
+            },
+            || anyhow::bail!("closure must not run while lock is busy"),
+        )
+        .expect("try project lock");
+
+        let IndexLockResult::Busy(Some(description)) = result else {
+            panic!("an unstamped holder must still be identified, got {result:?}");
+        };
+        assert!(
+            description.contains(&format!("backend pid {holder_pid}")),
+            "holder description must name the holding backend: {description}"
+        );
+        assert!(
+            description.contains("connection age")
+                && description.contains("acquisition time not recorded"),
+            "an unstamped holder's age must be labelled as the bound it is: {description}"
+        );
+        assert!(
+            !description.contains("held for"),
+            "an unknown acquisition time must never be reported as a hold: {description}"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn a_released_lease_leaves_no_stamp_to_age_on_the_borrowed_connection() {
+        // `lease_project_lock` borrows a connection that outlives the lease, so
+        // a stamp left behind would age into a fictitious hold reported against
+        // whatever that connection locks next.
+        let database_url = connect_postgres_test_db();
+        let project_id = "gcode-lock-lease-stamp";
+        let mut conn = db::connect_readwrite(&database_url).expect("connect lease holder");
+        let base_name: String = conn
+            .query_one("SELECT current_setting('application_name')", &[])
+            .expect("read application_name")
+            .get(0);
+
+        let lease = lease_project_lock(&mut conn, project_id, IndexLockPolicy::maintenance_try())
+            .expect("lease an uncontended project lock")
+            .expect("an uncontended lease must be granted");
+        drop(lease);
+
+        let after: String = conn
+            .query_one("SELECT current_setting('application_name')", &[])
+            .expect("read application_name")
+            .get(0);
+        assert_eq!(
+            after, base_name,
+            "releasing a lease must restore the connection's own application_name"
         );
     }
 
