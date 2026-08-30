@@ -222,6 +222,20 @@ def test_register_and_rebind_reject_machine_overlays(
     project_id = sample_project["id"]
     worktree_path = "/tmp/wt-overlay"
     clone_path = "/tmp/clone-overlay"
+    assert (
+        temp_db.fetchone(
+            "SELECT 1 FROM worktrees WHERE machine_id = %s AND worktree_path = %s",
+            (machine_id, worktree_path),
+        )
+        is None
+    )
+    assert (
+        temp_db.fetchone(
+            "SELECT 1 FROM clones WHERE machine_id = %s AND clone_path = %s",
+            (machine_id, clone_path),
+        )
+        is None
+    )
     temp_db.execute(
         """
         INSERT INTO worktrees (
