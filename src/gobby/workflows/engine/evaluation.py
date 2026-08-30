@@ -7,7 +7,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookResponse
-from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
+from gobby.hooks.receipt_effects import (
+    STAGED_EFFECTS_FIELD,
+    merge_staged_payloads,
+    peek_worker_staging,
+)
 from gobby.mcp_proxy.metrics_events import MetricsEventRecord
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.telemetry.rule_allow_audit import RuleResult, record_rule_evaluation
@@ -65,6 +69,27 @@ class BlockGate:
     condition: Any | None = None
     acknowledge_variable: str | None = None
     delivery: str = "eager"
+
+
+def _apply_staged_effects_metadata(meta: dict[str, Any], evaluation: EvaluationContext) -> None:
+    """Copy worker-staged and on_receipt variable mutations onto the response."""
+
+    staged = peek_worker_staging()
+    if evaluation.staged_variable_updates:
+        staged = merge_staged_payloads(
+            staged,
+            {
+                "session_id": evaluation.session_id,
+                "session_variables": dict(evaluation.staged_variable_updates),
+            },
+        )
+    elif staged:
+        staged = {
+            **staged,
+            "session_id": evaluation.session_id or staged.get("session_id"),
+        }
+    if staged:
+        meta[STAGED_EFFECTS_FIELD] = staged
 
 
 def _unique_block_gate_feedback(block_gates: list[BlockGate]) -> list[BlockGate]:
@@ -515,11 +540,7 @@ class EvaluationMixin:
 
         ctx_str = "\n\n".join(evaluation.context_parts) if evaluation.context_parts else None
         meta: dict[str, Any] = {"mcp_calls": evaluation.mcp_calls} if evaluation.mcp_calls else {}
-        if evaluation.staged_variable_updates:
-            meta[STAGED_EFFECTS_FIELD] = {
-                "session_id": evaluation.session_id,
-                "session_variables": dict(evaluation.staged_variable_updates),
-            }
+        _apply_staged_effects_metadata(meta, evaluation)
 
         if not include_rule_outputs:
             if override_decision == "block":
@@ -597,11 +618,7 @@ class EvaluationMixin:
                     evaluation.variables[gate.acknowledge_variable] = True
                     if gate.delivery == "on_receipt":
                         evaluation.staged_variable_updates[gate.acknowledge_variable] = True
-            if evaluation.staged_variable_updates:
-                meta[STAGED_EFFECTS_FIELD] = {
-                    "session_id": evaluation.session_id,
-                    "session_variables": dict(evaluation.staged_variable_updates),
-                }
+            _apply_staged_effects_metadata(meta, evaluation)
             return HookResponse(
                 decision="block",
                 reason=block_reason,

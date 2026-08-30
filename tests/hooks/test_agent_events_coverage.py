@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from importlib.resources import files
-from typing import cast
-from unittest.mock import MagicMock, call, patch
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -14,7 +15,8 @@ from gobby.hooks.event_handlers._agent import (
     _GOBBY_CMD_PATTERN,
     AgentEventHandlerMixin,
 )
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, apply_acknowledged_receipt
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -45,6 +47,29 @@ def _make_event(
 
 def _resolve_none() -> None:
     return None
+
+
+PREAMBLE_GUARD = {
+    "_agent_context_injected": True,
+    "_agent_identity_reinject": False,
+    "_agent_context_rehydrate_pending": False,
+}
+
+
+def _staged_preamble_guard(response: HookResponse) -> dict[str, Any]:
+    staged = response.metadata.get(STAGED_EFFECTS_FIELD)
+    if not isinstance(staged, dict):
+        return {}
+    updates = staged.get("session_variables")
+    return dict(updates) if isinstance(updates, dict) else {}
+
+
+def _merge_calls_without_preamble_guard(mock_merge: MagicMock) -> None:
+    for recorded in mock_merge.call_args_list:
+        updates = recorded.args[-1]
+        assert "_agent_context_injected" not in updates
+        assert "_agent_identity_reinject" not in updates
+        assert "_agent_context_rehydrate_pending" not in updates
 
 
 class _TestHandler(AgentEventHandlerMixin):
@@ -235,14 +260,8 @@ class TestHandleBeforeAgent:
         assert "Be technically sharp, candid, concise, and curious." in persona
         assert "<active_skills>" not in result.context
         assert "### brevity" not in result.context
-        mock_merge.assert_any_call(
-            "sess-1",
-            {
-                "_agent_context_injected": True,
-                "_agent_identity_reinject": False,
-                "_agent_context_rehydrate_pending": False,
-            },
-        )
+        assert _staged_preamble_guard(result) == PREAMBLE_GUARD
+        _merge_calls_without_preamble_guard(mock_merge)
 
     def test_agent_preamble_injected_once_on_first_prompt(self) -> None:
         handler = _TestHandler()
@@ -265,44 +284,52 @@ class TestHandleBeforeAgent:
             surfaces=["spawn", "persona"],
         )
 
+        variables: dict[str, Any] = {
+            "_agent_type": "default",
+            "_agent_context_injected": False,
+            "_agent_context_rehydrate_pending": True,
+        }
+
+        def _get_variables(_self: Any, _session_id: str) -> dict[str, Any]:
+            return dict(variables)
+
+        def _merge_variables(_self: Any, _session_id: str, updates: dict[str, Any]) -> bool:
+            variables.update(updates)
+            return True
+
         with (
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.get_variables",
-                side_effect=[
-                    {
-                        "_agent_type": "default",
-                        "_agent_context_injected": False,
-                        "_agent_context_rehydrate_pending": True,
-                    },
-                    {
-                        "_agent_type": "default",
-                        "_agent_context_injected": True,
-                        "_agent_context_rehydrate_pending": False,
-                    },
-                ],
+                _get_variables,
             ),
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
-            ) as mock_merge,
+                _merge_variables,
+            ),
             patch("gobby.workflows.agent_resolver.resolve_agent", return_value=agent),
         ):
             first = handler.handle_before_agent(event)
+            assert first.context is not None
+            assert first.context.count("## Role") == 1
+            assert "## Goal\nKeep the session coherent." in first.context
+            assert first.context.count("## Personality") == 1
+            assert first.context.count("## Instructions") == 1
+            assert _staged_preamble_guard(first) == PREAMBLE_GUARD
+            assert variables["_agent_context_injected"] is False
+            apply_acknowledged_receipt(
+                SimpleNamespace(
+                    receipt_id="preamble-ack",
+                    session_id="sess-1",
+                    staged_payload=first.metadata[STAGED_EFFECTS_FIELD],
+                ),
+                variable_manager=SimpleNamespace(
+                    merge_variables=lambda _sid, updates: variables.update(updates) or True
+                ),
+            )
+            assert variables["_agent_context_injected"] is True
             second = handler.handle_before_agent(event)
 
-        assert first.context is not None
-        assert first.context.count("## Role") == 1
-        assert "## Goal\nKeep the session coherent." in first.context
-        assert first.context.count("## Personality") == 1
-        assert first.context.count("## Instructions") == 1
         assert second.context is None
-        mock_merge.assert_any_call(
-            "sess-1",
-            {
-                "_agent_context_injected": True,
-                "_agent_identity_reinject": False,
-                "_agent_context_rehydrate_pending": False,
-            },
-        )
 
     def test_spawned_hook_reinjects_agent_prompt_only(self) -> None:
         handler = _TestHandler()
@@ -382,6 +409,7 @@ class TestHandleBeforeAgent:
         handler._session_manager.get.assert_called_once_with("sess-1")
         mock_resolve_agent.assert_not_called()
         mock_merge.assert_any_call("sess-1", {"_agent_context_injected": True})
+        assert _staged_preamble_guard(result) == {}
 
     def test_persona_switch_reinjects_agent_preamble_once(self) -> None:
         handler = _TestHandler()
@@ -409,28 +437,29 @@ class TestHandleBeforeAgent:
             surfaces=["spawn", "persona"],
         )
 
+        variables: dict[str, Any] = {
+            "_agent_type": "default",
+            "_persona_name": "operator",
+            "_agent_context_injected": True,
+            "_agent_identity_reinject": True,
+            "_agent_context_rehydrate_pending": False,
+        }
+
+        def _get_variables(_self: Any, _session_id: str) -> dict[str, Any]:
+            return dict(variables)
+
+        def _merge_variables(_session_id: str, updates: dict[str, Any]) -> bool:
+            variables.update(updates)
+            return True
+
         with (
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.get_variables",
-                side_effect=[
-                    {
-                        "_agent_type": "default",
-                        "_persona_name": "operator",
-                        "_agent_context_injected": True,
-                        "_agent_identity_reinject": True,
-                        "_agent_context_rehydrate_pending": False,
-                    },
-                    {
-                        "_agent_type": "default",
-                        "_persona_name": "operator",
-                        "_agent_context_injected": True,
-                        "_agent_identity_reinject": False,
-                        "_agent_context_rehydrate_pending": False,
-                    },
-                ],
+                _get_variables,
             ),
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
+                side_effect=_merge_variables,
             ) as mock_merge,
             patch(
                 "gobby.workflows.agent_resolver.resolve_agent",
@@ -438,29 +467,30 @@ class TestHandleBeforeAgent:
             ) as mock_resolve,
         ):
             first = handler.handle_before_agent(event)
+            assert first.context is not None
+            assert first.context.count("## Role") == 1
+            assert "## Role\nAct as the operator." in first.context
+            assert _staged_preamble_guard(first) == PREAMBLE_GUARD
+            assert variables["_agent_identity_reinject"] is True
+            apply_acknowledged_receipt(
+                SimpleNamespace(
+                    receipt_id="persona-ack",
+                    session_id="sess-1",
+                    staged_payload=first.metadata[STAGED_EFFECTS_FIELD],
+                ),
+                variable_manager=SimpleNamespace(
+                    merge_variables=lambda _sid, updates: variables.update(updates) or True
+                ),
+            )
             second = handler.handle_before_agent(event)
 
-        assert first.context is not None
-        assert first.context.count("## Role") == 1
-        assert "## Role\nAct as the operator." in first.context
         assert second.context is None
         mock_resolve.assert_called_once_with(
             "operator",
             handler._session_manager.db,
             project_id="proj-1",
         )
-        assert mock_merge.call_args_list == [
-            call("sess-1", {"subagent_count": 0, "is_subagent": False}),
-            call(
-                "sess-1",
-                {
-                    "_agent_context_injected": True,
-                    "_agent_identity_reinject": False,
-                    "_agent_context_rehydrate_pending": False,
-                },
-            ),
-            call("sess-1", {"subagent_count": 0, "is_subagent": False}),
-        ]
+        _merge_calls_without_preamble_guard(mock_merge)
 
     def test_explicit_rehydrate_reinjects_agent_preamble_once(self) -> None:
         handler = _TestHandler()
@@ -488,46 +518,50 @@ class TestHandleBeforeAgent:
             surfaces=["spawn", "persona"],
         )
 
+        variables: dict[str, Any] = {
+            "_agent_type": "default",
+            "_agent_context_injected": False,
+            "_agent_context_rehydrate_pending": True,
+        }
+
+        def _get_variables(_self: Any, _session_id: str) -> dict[str, Any]:
+            return dict(variables)
+
+        def _merge_variables(_session_id: str, updates: dict[str, Any]) -> bool:
+            variables.update(updates)
+            return True
+
         with (
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.get_variables",
-                side_effect=[
-                    {
-                        "_agent_type": "default",
-                        "_agent_context_injected": False,
-                        "_agent_context_rehydrate_pending": True,
-                    },
-                    {
-                        "_agent_type": "default",
-                        "_agent_context_injected": True,
-                        "_agent_context_rehydrate_pending": False,
-                    },
-                ],
+                _get_variables,
             ),
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
+                side_effect=_merge_variables,
             ) as mock_merge,
             patch("gobby.workflows.agent_resolver.resolve_agent", return_value=agent),
         ):
             first = handler.handle_before_agent(event)
+            assert first.context is not None
+            assert first.context.count("## Role") == 1
+            assert "## Goal\nRestore prompt context." in first.context
+            assert _staged_preamble_guard(first) == PREAMBLE_GUARD
+            assert variables["_agent_context_injected"] is False
+            apply_acknowledged_receipt(
+                SimpleNamespace(
+                    receipt_id="rehydrate-ack",
+                    session_id="sess-1",
+                    staged_payload=first.metadata[STAGED_EFFECTS_FIELD],
+                ),
+                variable_manager=SimpleNamespace(
+                    merge_variables=lambda _sid, updates: variables.update(updates) or True
+                ),
+            )
             second = handler.handle_before_agent(event)
 
-        assert first.context is not None
-        assert first.context.count("## Role") == 1
-        assert "## Goal\nRestore prompt context." in first.context
         assert second.context is None
-        assert mock_merge.call_args_list == [
-            call("sess-1", {"subagent_count": 0, "is_subagent": False}),
-            call(
-                "sess-1",
-                {
-                    "_agent_context_injected": True,
-                    "_agent_identity_reinject": False,
-                    "_agent_context_rehydrate_pending": False,
-                },
-            ),
-            call("sess-1", {"subagent_count": 0, "is_subagent": False}),
-        ]
+        _merge_calls_without_preamble_guard(mock_merge)
 
 
 # ---------------------------------------------------------------------------

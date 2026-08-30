@@ -281,8 +281,12 @@ class WorkflowRuleEvaluator:
             self.logger.debug(message)
 
     def dedup_memory_results(self, result: dict[str, Any], session_id: str) -> dict[str, Any]:
-        """Filter already-injected memories and track newly-injected IDs."""
+        """Filter already-injected memories and stage newly-injected IDs."""
         try:
+            from gobby.hooks.receipt_effects import (
+                stage_append_set_variables,
+                staged_append_set_values,
+            )
             from gobby.workflows.state_manager import SessionVariableManager
 
             sv_mgr = SessionVariableManager(self.database)
@@ -297,23 +301,23 @@ class WorkflowRuleEvaluator:
                 return result
 
             memory_ids = [m["id"] for m in memories if m.get("id")]
-            claimed_ids = set(
-                sv_mgr.claim_set_variable_values(
-                    session_id,
-                    "injected_memory_ids",
-                    memory_ids,
-                )
-            )
-            filtered = [m for m in memories if not m.get("id") or m["id"] in claimed_ids]
-
+            already = _committed_set_values(sv_mgr, session_id, "injected_memory_ids")
+            already |= staged_append_set_values("injected_memory_ids")
+            new_ids = [memory_id for memory_id in memory_ids if memory_id not in already]
+            filtered = [m for m in memories if not m.get("id") or m["id"] in new_ids]
+            stage_append_set_variables(session_id, "injected_memory_ids", new_ids)
             return {**result, "memories": filtered}
         except Exception as exc:
             self.logger.debug("Memory injection dedup failed (fail-open): %s", exc)
             return result
 
     def dedup_skill_results(self, result: dict[str, Any], session_id: str) -> dict[str, Any]:
-        """Filter already-suggested skills and low-relevance results."""
+        """Filter already-suggested skills and stage newly-suggested names."""
         try:
+            from gobby.hooks.receipt_effects import (
+                stage_append_set_variables,
+                staged_append_set_values,
+            )
             from gobby.workflows.state_manager import SessionVariableManager
 
             sv_mgr = SessionVariableManager(self.database)
@@ -325,20 +329,23 @@ class WorkflowRuleEvaluator:
                 item for item in results_list if item.get("score", 0) >= MIN_SKILL_RELEVANCE
             ]
             relevant_names = [item["skill_name"] for item in relevant if item.get("skill_name")]
-            claimed_names = set(
-                sv_mgr.claim_set_variable_values(
-                    session_id,
-                    "suggested_skill_names",
-                    relevant_names,
-                )
-            )
+            already = _committed_set_values(sv_mgr, session_id, "suggested_skill_names")
+            already |= staged_append_set_values("suggested_skill_names")
+            new_names = [name for name in relevant_names if name not in already]
             filtered = [
                 item
                 for item in relevant
-                if not item.get("skill_name") or item["skill_name"] in claimed_names
+                if not item.get("skill_name") or item["skill_name"] in new_names
             ]
-
+            stage_append_set_variables(session_id, "suggested_skill_names", new_names)
             return {**result, "results": filtered, "count": len(filtered)}
         except Exception as exc:
             self.logger.debug("Skill suggestion dedup failed (fail-open): %s", exc)
             return result
+
+
+def _committed_set_values(sv_mgr: Any, session_id: str, name: str) -> set[str]:
+    existing = sv_mgr.get_variables(session_id).get(name) or []
+    if not isinstance(existing, list):
+        return set()
+    return {str(value) for value in existing if str(value)}

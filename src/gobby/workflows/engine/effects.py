@@ -207,7 +207,9 @@ class EffectsMixin(DeliveryFormattingMixin):
 
                         memory_result_handled = False
                         if isinstance(raw_result, dict) and isinstance(event_obj, HookEvent):
-                            memory_result_handled, formatted = await offload(
+                            from gobby.hooks.receipt_effects import stage_append_set_variables
+
+                            memory_result_handled, formatted, new_lesson_ids = await offload(
                                 self._format_memory_backed_result,
                                 server=effect.server,
                                 tool=effect.tool,
@@ -216,6 +218,12 @@ class EffectsMixin(DeliveryFormattingMixin):
                                 platform_session_id=platform_session_id,
                                 variables=variables,
                             )
+                            if new_lesson_ids and isinstance(platform_session_id, str):
+                                stage_append_set_variables(
+                                    platform_session_id,
+                                    "injected_review_lesson_ids",
+                                    new_lesson_ids,
+                                )
                         if memory_result_handled:
                             pass
                         elif (effect.server, effect.tool) == (

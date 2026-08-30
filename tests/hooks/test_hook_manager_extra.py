@@ -1,7 +1,13 @@
 """Extra tests for HookManager."""
 
+from __future__ import annotations
+
 import asyncio
+import importlib
 import threading
+from collections.abc import Iterator
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,8 +15,65 @@ import pytest
 
 from gobby.hooks import hook_manager as hook_manager_module
 from gobby.hooks.hook_manager import HookManager
+from gobby.hooks.receipt_effects import apply_acknowledged_receipt, take_worker_staging
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
+
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+_RECEIPT_MIGRATION = (
+    Path(__file__).resolve().parents[2]
+    / "crates/gcore/assets/schema/migrations/414_hook_receipt_effects.sql"
+)
+
+
+@pytest.fixture
+def receipts_db(temp_db: HubDatabase) -> HubDatabase:
+    sql = "\n".join(
+        line
+        for line in _RECEIPT_MIGRATION.read_text(encoding="utf-8").splitlines()
+        if not line.strip().startswith("--")
+    )
+    statements = [statement.strip() for statement in sql.split(";") if statement.strip()]
+    with temp_db.transaction() as conn:
+        for statement in statements:
+            conn.execute(statement)
+    return temp_db
+
+
+class _SetStore:
+    def __init__(self) -> None:
+        self.variables: dict[str, dict[str, Any]] = {}
+        self.appended: list[tuple[str, str, list[str]]] = []
+        self.claimed: list[tuple[str, str, list[str]]] = []
+
+    def get_variables(self, session_id: str) -> dict[str, Any]:
+        return dict(self.variables.get(session_id, {}))
+
+    def merge_variables(self, session_id: str, updates: dict[str, Any]) -> bool:
+        self.variables.setdefault(session_id, {}).update(updates)
+        return True
+
+    def append_to_set_variable(
+        self,
+        session_id: str,
+        name: str,
+        values: list[str],
+        *,
+        preserve_order: bool = False,
+    ) -> bool:
+        del preserve_order
+        self.appended.append((session_id, name, list(values)))
+        existing = list(self.variables.setdefault(session_id, {}).get(name, []))
+        for value in values:
+            if value not in existing:
+                existing.append(value)
+        self.variables[session_id][name] = existing
+        return True
+
+    def claim_set_variable_values(self, session_id: str, name: str, values: list[str]) -> list[str]:
+        self.claimed.append((session_id, name, list(values)))
+        return list(values)
 
 
 class TestReregisterActiveSessions:
@@ -196,123 +259,368 @@ class TestDispatchSessionSummaries:
 
 
 class TestDedupMemoryResults:
-    """Tests for _dedup_memory_results filtering and ID tracking."""
+    """Prepare-without-claim memory discovery-dedupe."""
 
-    def _make_manager(self, mock_components=None):
+    @pytest.fixture(autouse=True)
+    def _reset_staging(self) -> Iterator[None]:
+        take_worker_staging()
+        yield
+        take_worker_staging()
+
+    def _make_manager(self, mock_components: MagicMock | None = None) -> HookManager:
         patcher = patch("gobby.hooks.hook_manager.HookManagerFactory.create")
         mock_create = patcher.start()
-        if mock_components is None:
-            mock_components = MagicMock()
-        mock_create.return_value = mock_components
+        mock_create.return_value = mock_components if mock_components is not None else MagicMock()
         manager = HookManager()
         patcher.stop()
         return manager
 
-    def _make_result(self, *ids):
+    def _make_result(self, *ids: str) -> dict[str, Any]:
         return {
             "success": True,
             "memories": [{"id": mid, "content": f"Memory {mid}", "type": "fact"} for mid in ids],
         }
 
+    def _prepare(
+        self,
+        mock_svm: MagicMock,
+        *ids: str,
+        already: list[str] | None = None,
+        session_id: str = SESSION_ID,
+        extra_memories: list[dict[str, Any]] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        mock_svm.get_variables.return_value = {
+            "injected_memory_ids": list(already or []),
+        }
+        payload = self._make_result(*ids)
+        if extra_memories:
+            payload["memories"].extend(extra_memories)
+        result = self._make_manager()._dedup_memory_results(payload, session_id)
+        return result, take_worker_staging()
+
     @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_filters_already_injected(self, MockSVM):
-        """Previously injected memories are excluded from results."""
+    def test_prepare_filters_already_injected_without_claim(self, MockSVM: MagicMock) -> None:
         mock_svm = MockSVM.return_value
-        mock_svm.claim_set_variable_values.return_value = ["c"]
+        result, staged = self._prepare(mock_svm, "a", "b", "c", already=["a", "b"])
 
-        manager = self._make_manager()
-        result = manager._dedup_memory_results(self._make_result("a", "b", "c"), "sess-1")
-
-        assert len(result["memories"]) == 1
-        assert result["memories"][0]["id"] == "c"
-        mock_svm.claim_set_variable_values.assert_called_once_with(
-            "sess-1", "injected_memory_ids", ["a", "b", "c"]
-        )
+        assert [memory["id"] for memory in result["memories"]] == ["c"]
+        mock_svm.claim_set_variable_values.assert_not_called()
+        mock_svm.append_to_set_variable.assert_not_called()
+        assert staged["append_set_variables"]["injected_memory_ids"] == ["c"]
+        assert staged["session_id"] == SESSION_ID
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_first_prompt_no_filtering(self, MockSVM):
-        """First prompt (empty injected_memory_ids) injects all memories."""
+    def test_first_prompt_stages_all_ids_without_claim(self, MockSVM: MagicMock) -> None:
         mock_svm = MockSVM.return_value
-        mock_svm.claim_set_variable_values.return_value = ["a", "b"]
-
-        manager = self._make_manager()
-        result = manager._dedup_memory_results(self._make_result("a", "b"), "sess-1")
+        result, staged = self._prepare(mock_svm, "a", "b", already=[])
 
         assert len(result["memories"]) == 2
-        mock_svm.claim_set_variable_values.assert_called_once_with(
-            "sess-1", "injected_memory_ids", ["a", "b"]
-        )
+        mock_svm.claim_set_variable_values.assert_not_called()
+        assert staged["append_set_variables"]["injected_memory_ids"] == ["a", "b"]
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_no_variable_set_yet(self, MockSVM):
-        """Session with no injected_memory_ids variable injects all."""
+    def test_no_variable_set_yet_stages_without_claim(self, MockSVM: MagicMock) -> None:
         mock_svm = MockSVM.return_value
-        mock_svm.claim_set_variable_values.return_value = ["x"]
-
-        manager = self._make_manager()
-        result = manager._dedup_memory_results(self._make_result("x"), "sess-1")
+        mock_svm.get_variables.return_value = {}
+        result = self._make_manager()._dedup_memory_results(self._make_result("x"), SESSION_ID)
+        staged = take_worker_staging()
 
         assert len(result["memories"]) == 1
-        mock_svm.claim_set_variable_values.assert_called_once_with(
-            "sess-1", "injected_memory_ids", ["x"]
-        )
+        mock_svm.claim_set_variable_values.assert_not_called()
+        assert staged["append_set_variables"]["injected_memory_ids"] == ["x"]
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_all_filtered_returns_empty(self, MockSVM):
-        """When all memories were already injected, returns empty list."""
+    def test_all_filtered_returns_empty_without_staging(self, MockSVM: MagicMock) -> None:
         mock_svm = MockSVM.return_value
-        mock_svm.claim_set_variable_values.return_value = []
-
-        manager = self._make_manager()
-        result = manager._dedup_memory_results(self._make_result("a", "b"), "sess-1")
-
-        assert result["memories"] == []
-        mock_svm.claim_set_variable_values.assert_called_once_with(
-            "sess-1", "injected_memory_ids", ["a", "b"]
-        )
-
-    @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_db_error_fails_open(self, MockSVM):
-        """Database errors return unfiltered results."""
-        MockSVM.side_effect = RuntimeError("db unavailable")
-
-        manager = self._make_manager()
-        original = self._make_result("a", "b")
-        result = manager._dedup_memory_results(original, "sess-1")
-
-        assert result is original
-        assert len(result["memories"]) == 2
-
-    @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_empty_memories_skips_tracking(self, MockSVM):
-        """Empty memory list doesn't call append_to_set_variable."""
-        mock_svm = MockSVM.return_value
-        manager = self._make_manager()
-        result = manager._dedup_memory_results({"success": True, "memories": []}, "sess-1")
+        result, staged = self._prepare(mock_svm, "a", "b", already=["a", "b"])
 
         assert result["memories"] == []
         mock_svm.claim_set_variable_values.assert_not_called()
+        assert staged.get("append_set_variables", {}).get("injected_memory_ids") in (None, [])
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_id_less_memories_pass_through_without_claim(self, MockSVM: MagicMock) -> None:
+        mock_svm = MockSVM.return_value
+        result, staged = self._prepare(
+            mock_svm,
+            "a",
+            already=[],
+            extra_memories=[{"content": "no-id", "type": "fact"}],
+        )
+
+        assert len(result["memories"]) == 2
+        assert any(not memory.get("id") for memory in result["memories"])
+        mock_svm.claim_set_variable_values.assert_not_called()
+        assert staged["append_set_variables"]["injected_memory_ids"] == ["a"]
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_db_error_fails_open(self, MockSVM: MagicMock) -> None:
+        MockSVM.side_effect = RuntimeError("db unavailable")
+
+        original = self._make_result("a", "b")
+        result = self._make_manager()._dedup_memory_results(original, SESSION_ID)
+
+        assert result is original
+        assert len(result["memories"]) == 2
+        assert take_worker_staging() == {}
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_empty_memories_skips_tracking(self, MockSVM: MagicMock) -> None:
+        mock_svm = MockSVM.return_value
+        result = self._make_manager()._dedup_memory_results(
+            {"success": True, "memories": []}, SESSION_ID
+        )
+
+        assert result["memories"] == []
+        mock_svm.get_variables.assert_not_called()
+        mock_svm.claim_set_variable_values.assert_not_called()
+        assert take_worker_staging() == {}
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_same_turn_second_prepare_filters_staged_without_claim(
+        self, MockSVM: MagicMock
+    ) -> None:
+        mock_svm = MockSVM.return_value
+        mock_svm.get_variables.return_value = {"injected_memory_ids": []}
+        manager = self._make_manager()
+        first = manager._dedup_memory_results(self._make_result("a", "b"), SESSION_ID)
+        second = manager._dedup_memory_results(self._make_result("a", "b", "c"), SESSION_ID)
+        staged = take_worker_staging()
+
+        assert [memory["id"] for memory in first["memories"]] == ["a", "b"]
+        assert [memory["id"] for memory in second["memories"]] == ["c"]
+        mock_svm.claim_set_variable_values.assert_not_called()
+        assert staged["append_set_variables"]["injected_memory_ids"] == ["a", "b", "c"]
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_acknowledged_commit_records_new_ids(self, MockSVM: MagicMock) -> None:
+        mock_svm = MockSVM.return_value
+        result, staged = self._prepare(mock_svm, "a", "b", already=[])
+        store = _SetStore()
+
+        apply_acknowledged_receipt(
+            SimpleNamespace(receipt_id="r-ack", session_id=SESSION_ID, staged_payload=staged),
+            variable_manager=store,
+        )
+
+        assert [memory["id"] for memory in result["memories"]] == ["a", "b"]
+        mock_svm.claim_set_variable_values.assert_not_called()
+        assert store.variables[SESSION_ID]["injected_memory_ids"] == ["a", "b"]
+        assert store.claimed == []
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_transport_loss_release_allows_redelivery(
+        self, MockSVM: MagicMock, receipts_db: HubDatabase
+    ) -> None:
+        mock_svm = MockSVM.return_value
+        _result, staged = self._prepare(mock_svm, "a", already=[])
+        receipts = importlib.import_module("gobby.storage.hook_receipts")
+        receipt = receipts.prepare_receipt(
+            receipts_db,
+            session_id=SESSION_ID,
+            envelope_id="env-memory-release",
+            staged_payload=staged,
+        )
+        released = receipts.release_receipt(receipts_db, receipt_id=receipt.receipt_id)
+        store = _SetStore()
+
+        assert released is not None
+        assert released.state == "released"
+        mock_svm.claim_set_variable_values.assert_not_called()
+        assert store.variables == {}
+        assert store.appended == []
+
+        mock_svm.get_variables.return_value = {}
+        retry, retry_staged = self._prepare(mock_svm, "a", already=[])
+        assert [memory["id"] for memory in retry["memories"]] == ["a"]
+        assert retry_staged["append_set_variables"]["injected_memory_ids"] == ["a"]
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_duplicate_ack_is_a_noop(self, MockSVM: MagicMock, receipts_db: HubDatabase) -> None:
+        mock_svm = MockSVM.return_value
+        _result, staged = self._prepare(mock_svm, "a", already=[])
+        receipts = importlib.import_module("gobby.storage.hook_receipts")
+        receipt = receipts.prepare_receipt(
+            receipts_db,
+            session_id=SESSION_ID,
+            envelope_id="env-memory-dup",
+            staged_payload=staged,
+        )
+        store = _SetStore()
+        first = receipts.acknowledge_receipt(
+            receipts_db,
+            receipt_id=receipt.receipt_id,
+            delivery_generation=receipt.delivery_generation,
+        )
+        assert first is not None
+        apply_acknowledged_receipt(first, variable_manager=store)
+        duplicate = receipts.acknowledge_receipt(
+            receipts_db,
+            receipt_id=receipt.receipt_id,
+            delivery_generation=receipt.delivery_generation,
+        )
+        assert duplicate is None
+        apply_acknowledged_receipt(first, variable_manager=store)
+        mock_svm.claim_set_variable_values.assert_not_called()
+        assert store.variables[SESSION_ID]["injected_memory_ids"] == ["a"]
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_terminalization_does_not_commit(
+        self, MockSVM: MagicMock, receipts_db: HubDatabase
+    ) -> None:
+        mock_svm = MockSVM.return_value
+        _result, staged = self._prepare(mock_svm, "a", already=[])
+        receipts = importlib.import_module("gobby.storage.hook_receipts")
+        receipt = receipts.prepare_receipt(
+            receipts_db,
+            session_id=SESSION_ID,
+            envelope_id="env-memory-term",
+            staged_payload=staged,
+        )
+        store = _SetStore()
+        terminalized = receipts.terminalize_receipts_for_envelope(
+            receipts_db,
+            envelope_id=receipt.current_envelope_id,
+        )
+
+        assert terminalized == 1
+        mock_svm.claim_set_variable_values.assert_not_called()
+        assert store.appended == []
+        assert store.variables == {}
 
 
 class TestDedupSkillResults:
+    """Prepare-without-claim skill discovery-dedupe."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_staging(self) -> Iterator[None]:
+        take_worker_staging()
+        yield
+        take_worker_staging()
+
+    def _manager(self) -> HookManager:
+        with patch("gobby.hooks.hook_manager.HookManagerFactory.create", return_value=MagicMock()):
+            return HookManager()
+
+    def _payload(self, *names: str) -> dict[str, Any]:
+        return {"results": [{"skill_name": name, "score": 0.9} for name in names]}
+
     @patch("gobby.workflows.state_manager.SessionVariableManager")
-    @patch("gobby.hooks.hook_manager.HookManagerFactory.create")
-    def test_filters_skills_not_atomically_claimed(self, mock_create, MockSVM):
-        mock_create.return_value = MagicMock()
+    def test_prepare_filters_already_suggested_without_claim(self, MockSVM: MagicMock) -> None:
         mock_svm = MockSVM.return_value
-        mock_svm.claim_set_variable_values.return_value = ["new-skill"]
-        manager = HookManager()
-        payload = {
-            "results": [
-                {"skill_name": "already-seen", "score": 0.9},
-                {"skill_name": "new-skill", "score": 0.8},
-            ]
-        }
-
-        result = manager._dedup_skill_results(payload, "sess-1")
-
-        assert result["results"] == [{"skill_name": "new-skill", "score": 0.8}]
-        assert result["count"] == 1
-        mock_svm.claim_set_variable_values.assert_called_once_with(
-            "sess-1", "suggested_skill_names", ["already-seen", "new-skill"]
+        mock_svm.get_variables.return_value = {"suggested_skill_names": ["already-seen"]}
+        result = self._manager()._dedup_skill_results(
+            self._payload("already-seen", "new-skill"), SESSION_ID
         )
+        staged = take_worker_staging()
+
+        assert result["results"] == [{"skill_name": "new-skill", "score": 0.9}]
+        assert result["count"] == 1
+        mock_svm.claim_set_variable_values.assert_not_called()
+        assert staged["append_set_variables"]["suggested_skill_names"] == ["new-skill"]
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_acknowledged_commit_records_new_names(self, MockSVM: MagicMock) -> None:
+        mock_svm = MockSVM.return_value
+        mock_svm.get_variables.return_value = {}
+        result = self._manager()._dedup_skill_results(self._payload("new-skill"), SESSION_ID)
+        staged = take_worker_staging()
+        store = _SetStore()
+        apply_acknowledged_receipt(
+            SimpleNamespace(receipt_id="r-skill", session_id=SESSION_ID, staged_payload=staged),
+            variable_manager=store,
+        )
+
+        assert result["results"] == [{"skill_name": "new-skill", "score": 0.9}]
+        mock_svm.claim_set_variable_values.assert_not_called()
+        assert store.variables[SESSION_ID]["suggested_skill_names"] == ["new-skill"]
+        assert store.claimed == []
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_transport_loss_release_allows_redelivery(
+        self, MockSVM: MagicMock, receipts_db: HubDatabase
+    ) -> None:
+        mock_svm = MockSVM.return_value
+        mock_svm.get_variables.return_value = {}
+        self._manager()._dedup_skill_results(self._payload("new-skill"), SESSION_ID)
+        staged = take_worker_staging()
+        receipts = importlib.import_module("gobby.storage.hook_receipts")
+        receipt = receipts.prepare_receipt(
+            receipts_db,
+            session_id=SESSION_ID,
+            envelope_id="env-skill-release",
+            staged_payload=staged,
+        )
+        released = receipts.release_receipt(receipts_db, receipt_id=receipt.receipt_id)
+        store = _SetStore()
+        assert released is not None
+        assert released.state == "released"
+        assert store.appended == []
+
+        mock_svm.get_variables.return_value = {}
+        retry = self._manager()._dedup_skill_results(self._payload("new-skill"), SESSION_ID)
+        retry_staged = take_worker_staging()
+        assert retry["results"][0]["skill_name"] == "new-skill"
+        assert retry_staged["append_set_variables"]["suggested_skill_names"] == ["new-skill"]
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_duplicate_ack_is_a_noop(self, MockSVM: MagicMock, receipts_db: HubDatabase) -> None:
+        mock_svm = MockSVM.return_value
+        mock_svm.get_variables.return_value = {}
+        self._manager()._dedup_skill_results(self._payload("new-skill"), SESSION_ID)
+        staged = take_worker_staging()
+        receipts = importlib.import_module("gobby.storage.hook_receipts")
+        receipt = receipts.prepare_receipt(
+            receipts_db,
+            session_id=SESSION_ID,
+            envelope_id="env-skill-dup",
+            staged_payload=staged,
+        )
+        store = _SetStore()
+        first = receipts.acknowledge_receipt(
+            receipts_db,
+            receipt_id=receipt.receipt_id,
+            delivery_generation=receipt.delivery_generation,
+        )
+        assert first is not None
+        apply_acknowledged_receipt(first, variable_manager=store)
+        duplicate = receipts.acknowledge_receipt(
+            receipts_db,
+            receipt_id=receipt.receipt_id,
+            delivery_generation=receipt.delivery_generation,
+        )
+        assert duplicate is None
+        apply_acknowledged_receipt(first, variable_manager=store)
+        assert store.variables[SESSION_ID]["suggested_skill_names"] == ["new-skill"]
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_terminalization_does_not_commit(
+        self, MockSVM: MagicMock, receipts_db: HubDatabase
+    ) -> None:
+        mock_svm = MockSVM.return_value
+        mock_svm.get_variables.return_value = {}
+        self._manager()._dedup_skill_results(self._payload("new-skill"), SESSION_ID)
+        staged = take_worker_staging()
+        receipts = importlib.import_module("gobby.storage.hook_receipts")
+        receipt = receipts.prepare_receipt(
+            receipts_db,
+            session_id=SESSION_ID,
+            envelope_id="env-skill-term",
+            staged_payload=staged,
+        )
+        store = _SetStore()
+        assert (
+            receipts.terminalize_receipts_for_envelope(
+                receipts_db, envelope_id=receipt.current_envelope_id
+            )
+            == 1
+        )
+        assert store.appended == []
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_db_error_fails_open(self, MockSVM: MagicMock) -> None:
+        MockSVM.side_effect = RuntimeError("db unavailable")
+        original = self._payload("new-skill")
+        result = self._manager()._dedup_skill_results(original, SESSION_ID)
+        assert result is original
+        assert take_worker_staging() == {}

@@ -34,20 +34,25 @@ class DeliveryFormattingMixin(InjectionTrackingMixin):
         platform_session_id: str | None,
         variables: dict[str, Any],
         scope_label: str = "matched file",
-    ) -> str | None:
+    ) -> tuple[str | None, list[str]]:
         """Inline pipeline for review lesson results."""
         del variables
         from gobby.review_learning.guidance import format_review_lesson_guidance
 
         if _is_empty_inject_payload(result):
-            return None
+            return None, []
         lessons = result.get("lessons") or []
         if not lessons:
-            return None
+            return None, []
         new_lessons = self._filter_and_track_new_review_lessons(lessons, platform_session_id)
+        new_ids = [
+            str(lesson["memory_id"])
+            for lesson in new_lessons
+            if isinstance(lesson.get("memory_id"), str) and lesson.get("memory_id")
+        ]
         if not new_lessons:
-            return None
-        return format_review_lesson_guidance(new_lessons, scope_label=scope_label)
+            return None, new_ids
+        return format_review_lesson_guidance(new_lessons, scope_label=scope_label), new_ids
 
     def _format_memory_backed_result(
         self,
@@ -58,16 +63,17 @@ class DeliveryFormattingMixin(InjectionTrackingMixin):
         event: HookEvent,
         platform_session_id: str | None,
         variables: dict[str, Any],
-    ) -> tuple[bool, str | None]:
+    ) -> tuple[bool, str | None, list[str]]:
         """Route review guidance through the formatter registry."""
         del event
         formatter = _MEMORY_RESULT_FORMATTERS.get((server, tool))
         if formatter is None:
-            return False, None
+            return False, None, []
         scope_label = "matched lesson class" if formatter == "review_class" else "matched file"
-        return True, self._format_review_lessons_result(
+        formatted, new_ids = self._format_review_lessons_result(
             result,
             platform_session_id,
             variables,
             scope_label,
         )
+        return True, formatted, new_ids

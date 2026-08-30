@@ -23,6 +23,11 @@ class InjectionTrackingMixin:
         if not lessons:
             return new_lessons
 
+        from gobby.hooks.receipt_effects import (
+            stage_append_set_variables,
+            staged_append_set_values,
+        )
+
         sv_mgr = SessionVariableManager(self.db) if platform_session_id else None
         already: set[str] = set()
         if sv_mgr is not None and platform_session_id:
@@ -31,6 +36,7 @@ class InjectionTrackingMixin:
                 already = set(existing_vars.get("injected_review_lesson_ids", []) or [])
             except Exception as exc:  # Tracking failures never block workflow injection.
                 logger.debug("Failed to read injected_review_lesson_ids for dedup: %s", exc)
+        already |= staged_append_set_values("injected_review_lesson_ids")
 
         seen: set[str] = set()
         for lesson in lessons:
@@ -45,14 +51,11 @@ class InjectionTrackingMixin:
             new_lessons.append(lesson)
 
         new_ids = [lesson["memory_id"] for lesson in new_lessons if lesson.get("memory_id")]
-        if new_ids and sv_mgr is not None and platform_session_id:
-            try:
-                sv_mgr.append_to_set_variable(
-                    platform_session_id,
-                    "injected_review_lesson_ids",
-                    new_ids,
-                )
-            except Exception as exc:  # Tracking failures never block workflow injection.
-                logger.debug("Failed to append injected_review_lesson_ids: %s", exc)
+        if new_ids and platform_session_id:
+            stage_append_set_variables(
+                platform_session_id,
+                "injected_review_lesson_ids",
+                new_ids,
+            )
 
         return new_lessons

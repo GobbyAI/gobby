@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.receipt_effects import apply_acknowledged_receipt, take_worker_staging
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
@@ -33,6 +36,13 @@ def db(temp_db: HubDatabase) -> HubDatabase:
         (PROJECT_ID, "delivery-pipeline"),
     )
     return temp_db
+
+
+@pytest.fixture(autouse=True)
+def _reset_worker_staging() -> Iterator[None]:
+    take_worker_staging()
+    yield
+    take_worker_staging()
 
 
 @pytest.fixture
@@ -92,7 +102,7 @@ def test_is_empty_inject_payload_shapes() -> None:
 
 
 def test_review_lesson_formatter_dedup(engine: RuleEngine, db: HubDatabase) -> None:
-    first = engine._format_review_lessons_result(
+    first, first_ids = engine._format_review_lessons_result(
         {
             "lessons": [
                 {
@@ -109,9 +119,10 @@ def test_review_lesson_formatter_dedup(engine: RuleEngine, db: HubDatabase) -> N
 
     assert first is not None
     assert "pattern-a" in first
-    assert _vars(db, PLATFORM_SESSION_ID)["injected_review_lesson_ids"] == ["lesson-1"]
+    assert first_ids == ["lesson-1"]
+    assert "injected_review_lesson_ids" not in _vars(db, PLATFORM_SESSION_ID)
 
-    second = engine._format_review_lessons_result(
+    second, second_ids = engine._format_review_lessons_result(
         {
             "lessons": [
                 {
@@ -135,7 +146,26 @@ def test_review_lesson_formatter_dedup(engine: RuleEngine, db: HubDatabase) -> N
     assert second is not None
     assert "pattern-a" not in second
     assert "pattern-b" in second
-    assert _vars(db, PLATFORM_SESSION_ID)["injected_review_lesson_ids"] == ["lesson-1", "lesson-2"]
+    assert second_ids == ["lesson-2"]
+    staged = take_worker_staging()
+    assert staged["append_set_variables"]["injected_review_lesson_ids"] == [
+        "lesson-1",
+        "lesson-2",
+    ]
+    assert "injected_review_lesson_ids" not in _vars(db, PLATFORM_SESSION_ID)
+
+    apply_acknowledged_receipt(
+        SimpleNamespace(
+            receipt_id="review-ack",
+            session_id=PLATFORM_SESSION_ID,
+            staged_payload=staged,
+        ),
+        variable_manager=SessionVariableManager(db),
+    )
+    assert _vars(db, PLATFORM_SESSION_ID)["injected_review_lesson_ids"] == [
+        "lesson-1",
+        "lesson-2",
+    ]
 
 
 @pytest.mark.asyncio
@@ -188,6 +218,17 @@ async def test_review_lessons_path_survives_orphan_removal(db: HubDatabase) -> N
     assert response.context is not None
     assert "<review-guidance>" in response.context
     assert "Keep review-lesson guidance on the live delivery path" in response.context
+    assert "injected_review_lesson_ids" not in _vars(db, PLATFORM_SESSION_ID)
+    staged = response.metadata.get("_gobby_staged_effects") or take_worker_staging()
+    assert staged["append_set_variables"]["injected_review_lesson_ids"] == ["lesson-survivor"]
+    apply_acknowledged_receipt(
+        SimpleNamespace(
+            receipt_id="review-live",
+            session_id=PLATFORM_SESSION_ID,
+            staged_payload=staged,
+        ),
+        variable_manager=SessionVariableManager(db),
+    )
     assert _vars(db, PLATFORM_SESSION_ID)["injected_review_lesson_ids"] == ["lesson-survivor"]
     assert not hasattr(rule_engine, "_format_search_memories_result")
     assert not hasattr(rule_engine, "_injection_outcome_recorder")

@@ -268,14 +268,26 @@ class AgentEventHandlerMixin(EventHandlersBase):
             else:
                 response.context = preamble
 
-        sv_mgr.merge_variables(
-            session_id,
-            {
+        from gobby.hooks.receipt_effects import (
+            STAGED_EFFECTS_FIELD,
+            merge_staged_payloads,
+            record_worker_staging,
+        )
+
+        staged = {
+            "session_id": session_id,
+            "session_variables": {
                 "_agent_context_injected": True,
                 "_agent_identity_reinject": False,
                 "_agent_context_rehydrate_pending": False,
             },
+        }
+        existing = response.metadata.get(STAGED_EFFECTS_FIELD)
+        response.metadata[STAGED_EFFECTS_FIELD] = merge_staged_payloads(
+            existing if isinstance(existing, dict) else {},
+            staged,
         )
+        record_worker_staging(staged)
 
     def _intercept_skill_command(
         self,
