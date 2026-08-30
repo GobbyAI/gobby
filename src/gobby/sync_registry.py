@@ -33,6 +33,15 @@ SYNC_TARGETS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+def migrate_rule_delivery_dispositions(db: HubDatabase) -> dict[str, Any]:
+    """Narrow rule-disposition migration entry point used at daemon startup."""
+    from gobby.workflows.sync_rules import (
+        migrate_rule_delivery_dispositions as _migrate_rule_delivery_dispositions,
+    )
+
+    return _migrate_rule_delivery_dispositions(db)
+
+
 def sync_bundled_content_to_db(
     db: HubDatabase,
     *,

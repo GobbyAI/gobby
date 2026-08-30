@@ -114,6 +114,28 @@ def test_sync_imported_definition_writes_all_four_kinds(temp_db: HubDatabase) ->
     assert PipelineDefinitionManager(temp_db).get(pipeline.id).name == "imported-pipeline"
 
 
+def test_sync_imported_one_shot_rule_persists_on_receipt(temp_db: HubDatabase) -> None:
+    row = sync_imported_definition(
+        temp_db,
+        {
+            "name": "imported-once",
+            "type": "rule",
+            "event": "turn_start",
+            "when": "not variables.get('shown')",
+            "effects": [
+                {"type": "inject_context", "template": "hello"},
+                {"type": "set_variable", "variable": "shown", "value": True},
+            ],
+        },
+        None,
+    )
+    stored = RuleDefinitionManager(temp_db).get(row.id)
+    assert [effect.get("delivery", "eager") for effect in stored.definition_json["effects"]] == [
+        "on_receipt",
+        "on_receipt",
+    ]
+
+
 def test_sync_imported_definition_refuses_kind_change_by_table(temp_db: HubDatabase) -> None:
     sync_imported_definition(
         temp_db,

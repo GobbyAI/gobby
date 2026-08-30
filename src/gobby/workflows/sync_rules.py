@@ -18,6 +18,13 @@ from pydantic import ValidationError
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import split_rule_definition_data
+from gobby.workflows.delivery_disposition import (
+    DispositionAmbiguousError,
+    prepare_rule_definition_for_persist,
+)
+from gobby.workflows.delivery_disposition import (
+    migrate_rule_delivery_dispositions as migrate_rule_delivery_dispositions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +133,7 @@ def sync_bundled_rules(
     existing_paths = [path for path in rules_paths if path.exists()]
     if not existing_paths:
         logger.debug("Rules path not found", extra={"paths": [str(path) for path in rules_paths]})
-        return result
+        return _complete_rules_sync(db, result)
 
     manager = RuleDefinitionManager(db)
     on_disk: set[tuple[str, str | None]] = set()
@@ -161,7 +168,7 @@ def sync_bundled_rules(
                 logger.debug("Soft-deleted orphaned rule", extra={"rule": row.name, "tag": tag})
                 result["orphaned"] += 1
 
-    result["success"] = not result["errors"]
+    result = _complete_rules_sync(db, result)
 
     total = result["synced"] + result["updated"] + result["skipped"]
     logger.debug(
@@ -171,6 +178,7 @@ def sync_bundled_rules(
             "updated": result["updated"],
             "skipped": result["skipped"],
             "orphaned": result.get("orphaned", 0),
+            "disposition_updated": result.get("disposition_updated", 0),
             "total": total,
         },
     )
@@ -185,7 +193,16 @@ def _new_rules_sync_result() -> dict[str, Any]:
         "updated": 0,
         "skipped": 0,
         "errors": [],
+        "disposition_updated": 0,
     }
+
+
+def _complete_rules_sync(db: HubDatabase, result: dict[str, Any]) -> dict[str, Any]:
+    migration = migrate_rule_delivery_dispositions(db)
+    result["disposition_updated"] = int(migration.get("updated") or 0)
+    result["errors"].extend(str(item) for item in (migration.get("errors") or []))
+    result["success"] = not result["errors"]
+    return result
 
 
 def _sync_rule_file(
@@ -361,6 +378,10 @@ def _sync_single_rule(
     definition_json = json.loads(resolve_sync_placeholders(json.dumps(body_dict)))
     if not isinstance(definition_json, dict):
         raise ValueError("Resolved rule definition must be a JSON object")
+    try:
+        definition_json = prepare_rule_definition_for_persist(rule_name, definition_json)
+    except DispositionAmbiguousError as exc:
+        raise ValueError(str(exc)) from exc
     priority = metadata["priority"]
     description = metadata["description"]
     enabled = metadata["enabled"]

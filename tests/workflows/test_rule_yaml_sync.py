@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -20,6 +21,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.sync_rules import (
     _iter_active_rule_files,
     get_bundled_rules_paths,
+    migrate_rule_delivery_dispositions,
     sync_bundled_rules,
 )
 
@@ -739,3 +741,249 @@ class TestBundledRuleRoots:
         assert result["skipped"] == 1
         skip_records = [record for record in caplog.records if "custom.yaml" in record.getMessage()]
         assert [record.levelno for record in skip_records] == [logging.DEBUG]
+
+
+def _one_shot_body(*, guard: str = "shown") -> dict[str, Any]:
+    return {
+        "event": "turn_start",
+        "when": f"not variables.get('{guard}')",
+        "effects": [
+            {"type": "inject_context", "template": "hello"},
+            {"type": "set_variable", "variable": guard, "value": True},
+        ],
+    }
+
+
+def _effect_delivery(effect: dict[str, Any]) -> str:
+    value = effect.get("delivery", "eager")
+    assert value in {"eager", "on_receipt"}
+    return str(value)
+
+
+class TestDispositionMigration:
+    """User- and project-owned one-shot rows get an explicit disposition."""
+
+    def test_first_run_writes_on_receipt_for_each_ownership_class(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        installed = manager.create(
+            name="installed-global-once",
+            definition_json=_one_shot_body(guard="installed_guard"),
+            source="installed",
+            tags=["gobby"],
+            enabled=True,
+        )
+        user = manager.create(
+            name="user-global-once",
+            definition_json=_one_shot_body(guard="user_guard"),
+            source="installed",
+            tags=["user"],
+            enabled=False,
+        )
+        project = manager.create(
+            name="project-once",
+            definition_json=_one_shot_body(guard="project_guard"),
+            source="custom",
+            tags=["project"],
+            project_id=sample_project["id"],
+            enabled=True,
+        )
+
+        result = migrate_rule_delivery_dispositions(db)
+
+        assert result["success"] is True
+        assert result["updated"] == 3
+        assert result["errors"] == []
+
+        for row_id, guard in (
+            (installed.id, "installed_guard"),
+            (user.id, "user_guard"),
+            (project.id, "project_guard"),
+        ):
+            row = manager.get(row_id)
+            assert [_effect_delivery(effect) for effect in row.definition_json["effects"]] == [
+                "on_receipt",
+                "on_receipt",
+            ]
+            assert row.definition_json["when"] == f"not variables.get('{guard}')"
+
+        assert manager.get(user.id).enabled is False
+        assert manager.get(user.id).source == "installed"
+        assert manager.get(project.id).project_id == sample_project["id"]
+        assert manager.get(project.id).source == "custom"
+
+    def test_repeated_run_is_zero_writes(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        manager.create(
+            name="user-once",
+            definition_json=_one_shot_body(),
+            source="installed",
+            tags=["user"],
+        )
+        first = migrate_rule_delivery_dispositions(db)
+        row = manager.get_by_name("user-once")
+        assert row is not None
+        updated_at = row.updated_at
+
+        second = migrate_rule_delivery_dispositions(db)
+
+        assert first["updated"] == 1
+        assert second["success"] is True
+        assert second["updated"] == 0
+        assert manager.get(row.id).updated_at == updated_at
+
+    def test_ambiguous_row_rolls_back_sibling_writes(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        good = manager.create(
+            name="good-once",
+            definition_json=_one_shot_body(guard="good"),
+            source="installed",
+            tags=["user"],
+        )
+        manager.create(
+            name="ambiguous-once",
+            definition_json={
+                "event": "turn_start",
+                "when": "not variables.get('guard')",
+                "effects": [
+                    {"type": "inject_context", "template": "hello"},
+                    {
+                        "type": "set_variable",
+                        "variable": "guard",
+                        "value": True,
+                        "when": "variables.get('other')",
+                    },
+                ],
+            },
+            source="installed",
+            tags=["user"],
+        )
+
+        result = migrate_rule_delivery_dispositions(db)
+
+        assert result["success"] is False
+        assert result["updated"] == 0
+        assert any(
+            "ambiguous-once" in error and "set_variable" in error for error in result["errors"]
+        )
+        stored = manager.get(good.id)
+        assert [_effect_delivery(effect) for effect in stored.definition_json["effects"]] == [
+            "eager",
+            "eager",
+        ]
+
+    def test_partial_write_failure_rolls_back(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        first = manager.create(
+            name="once-a",
+            definition_json=_one_shot_body(guard="a"),
+            source="installed",
+            tags=["user"],
+        )
+        second = manager.create(
+            name="once-b",
+            definition_json=_one_shot_body(guard="b"),
+            source="installed",
+            tags=["user"],
+        )
+        from gobby.storage.definitions import _shared as definition_shared
+
+        original = definition_shared.apply_definition_update
+        seen = {"count": 0}
+
+        def fail_second(*args: Any, **kwargs: Any) -> Any:
+            seen["count"] += 1
+            if seen["count"] >= 2:
+                raise RuntimeError("injected write failure")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(
+            "gobby.workflows.delivery_disposition.apply_definition_update",
+            fail_second,
+        )
+
+        result = migrate_rule_delivery_dispositions(db)
+
+        assert result["success"] is False
+        assert any(
+            "partial" in error.lower() or "injected write failure" in error
+            for error in result["errors"]
+        )
+        for row_id in (first.id, second.id):
+            stored = manager.get(row_id)
+            assert [_effect_delivery(effect) for effect in stored.definition_json["effects"]] == [
+                "eager",
+                "eager",
+            ]
+
+    def test_concurrent_edit_rolls_back(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        target = manager.create(
+            name="once-concurrent",
+            definition_json=_one_shot_body(guard="concurrent"),
+            source="installed",
+            tags=["user"],
+        )
+        sibling = manager.create(
+            name="once-sibling",
+            definition_json=_one_shot_body(guard="sibling"),
+            source="installed",
+            tags=["user"],
+        )
+        original_list = RuleDefinitionManager.list_all
+
+        def list_then_edit(
+            self: RuleDefinitionManager,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            rows = original_list(self, *args, **kwargs)
+            self.update(target.id, description="edited concurrently")
+            return rows
+
+        monkeypatch.setattr(RuleDefinitionManager, "list_all", list_then_edit)
+
+        result = migrate_rule_delivery_dispositions(db)
+
+        assert result["success"] is False
+        assert any("concurrent" in error.lower() for error in result["errors"])
+        assert manager.get(target.id).description == "edited concurrently"
+        sibling_row = manager.get(sibling.id)
+        assert [_effect_delivery(effect) for effect in sibling_row.definition_json["effects"]] == [
+            "eager",
+            "eager",
+        ]
+
+    def test_sync_bundled_rules_runs_migration(
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
+    ) -> None:
+        manager.create(
+            name="user-once",
+            definition_json=_one_shot_body(),
+            source="installed",
+            tags=["user"],
+        )
+
+        result = sync_bundled_rules(db, rules_dir)
+
+        assert result["success"] is True
+        row = manager.get_by_name("user-once")
+        assert row is not None
+        assert [_effect_delivery(effect) for effect in row.definition_json["effects"]] == [
+            "on_receipt",
+            "on_receipt",
+        ]
+        assert result.get("disposition_updated", 0) >= 1

@@ -59,6 +59,34 @@ def _warn_missing_terminal_dependency(config: DaemonConfig) -> None:
         )
 
 
+def run_startup_content_sync(runner: GobbyRunner) -> None:
+    """Sync bundled content in dev mode, then migrate rule delivery dispositions.
+
+    Non-dev startup skips the aggregator and user-template import. The narrow
+    disposition migration always runs before hook service starts.
+    """
+    from gobby.sync_registry import (
+        migrate_rule_delivery_dispositions,
+        sync_bundled_content_to_db,
+    )
+    from gobby.utils.dev import is_dev_mode
+    from gobby.workflows.delivery_disposition import RuleDispositionMigrationError
+
+    runner._dev_mode = is_dev_mode(Path.cwd())
+    if runner._dev_mode:
+        sync_result = sync_bundled_content_to_db(runner.database)
+        total = sync_result["total_synced"]
+        if total > 0:
+            logger.info("Dev mode: synced %s bundled items on startup", total)
+
+    result = migrate_rule_delivery_dispositions(runner.database)
+    if not result.get("success"):
+        diagnostics = [str(item) for item in (result.get("errors") or [])]
+        raise RuleDispositionMigrationError(
+            diagnostics or ["rule delivery disposition migration failed"]
+        )
+
+
 def init_runtime_capacity(runner: GobbyRunner) -> None:
     """Size runtime capacity from the initial active configuration epoch."""
     from gobby.storage.hub.postgres import PostgresHubDatabase
@@ -238,17 +266,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         add_span_storage_exporter(runner.span_storage, broadcast_callback=_broadcast_proxy)
         logger.debug("Local span storage exporter wired to OTel")
 
-    from gobby.utils.dev import is_dev_mode
-
-    runner._dev_mode = is_dev_mode(Path.cwd())
-
-    if runner._dev_mode:
-        from gobby.sync_registry import sync_bundled_content_to_db
-
-        sync_result = sync_bundled_content_to_db(runner.database)
-        total = sync_result["total_synced"]
-        if total > 0:
-            logger.info("Dev mode: synced %s bundled items on startup", total)
+    run_startup_content_sync(runner)
 
     from gobby.storage.tasks._stage_registry_loader import StageRegistryLoader
 

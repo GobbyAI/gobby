@@ -15,12 +15,14 @@ rules:
       and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)
     effects:
       - type: set_variable
+        delivery: on_receipt
         variable: found_work_shirk_alerted
         value: true
       - type: set_variable
         variable: found_work_shirk_confirmed
         value: "{{ found_work_shirk_confirmed }}"
       - type: block
+        delivery: on_receipt
         reason: >-
           Found-work ladder: fix it now (create_task claim=true), hand it to its active owner via
           send_message, or — edge case — file it labeled needs-decision/clean-window with the

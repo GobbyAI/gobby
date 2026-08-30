@@ -256,6 +256,51 @@ class TestCreateRule:
         resp = client.post("/api/rules", json=body)
         assert resp.status_code == 409
 
+    def test_create_one_shot_persists_on_receipt(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/rules",
+            json={
+                "name": "http-once",
+                "definition": {
+                    "event": "turn_start",
+                    "when": "not variables.get('shown')",
+                    "effects": [
+                        {"type": "inject_context", "template": "hello"},
+                        {"type": "set_variable", "variable": "shown", "value": True},
+                    ],
+                },
+            },
+        )
+        assert resp.status_code == 201
+        effects = resp.json()["rule"]["effects"]
+        assert [effect.get("delivery", "eager") for effect in effects] == [
+            "on_receipt",
+            "on_receipt",
+        ]
+
+    def test_create_ambiguous_one_shot_is_rejected(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/rules",
+            json={
+                "name": "http-maybe",
+                "definition": {
+                    "event": "turn_start",
+                    "when": "not variables.get('guard')",
+                    "effects": [
+                        {"type": "inject_context", "template": "hello"},
+                        {
+                            "type": "set_variable",
+                            "variable": "guard",
+                            "value": True,
+                            "when": "variables.get('other')",
+                        },
+                    ],
+                },
+            },
+        )
+        assert resp.status_code == 400
+        assert "http-maybe" in resp.json()["detail"]
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # GET /api/rules/{name}
@@ -297,6 +342,30 @@ class TestGetRule:
 
 class TestUpdateRule:
     """PUT /api/rules/{name} updates rule fields."""
+
+    def test_update_one_shot_persists_on_receipt(
+        self, client: TestClient, def_manager: RuleDefinitionManager
+    ) -> None:
+        _seed_rule(def_manager, name="http-editable")
+        resp = client.put(
+            "/api/rules/http-editable",
+            json={
+                "definition": {
+                    "event": "turn_start",
+                    "when": "not variables.get('shown')",
+                    "effects": [
+                        {"type": "inject_context", "template": "hello"},
+                        {"type": "set_variable", "variable": "shown", "value": True},
+                    ],
+                }
+            },
+        )
+        assert resp.status_code == 200
+        effects = resp.json()["rule"]["effects"]
+        assert [effect.get("delivery", "eager") for effect in effects] == [
+            "on_receipt",
+            "on_receipt",
+        ]
 
     def test_update_priority(self, client: TestClient, def_manager: RuleDefinitionManager) -> None:
         _seed_rule(def_manager, name="my-rule")

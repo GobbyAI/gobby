@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from gobby.storage.hub.protocol import HubDatabase
+
 pytestmark = pytest.mark.unit
 
 
@@ -337,6 +339,41 @@ class TestImportRules:
         result = cli_runner.invoke(rules, ["import", "/nonexistent.yaml"])
         assert result.exit_code == 1
         assert "not found" in result.output
+
+    def test_import_one_shot_persists_on_receipt(
+        self, cli_runner: CliRunner, tmp_path: Path, temp_db: HubDatabase
+    ) -> None:
+        from gobby.cli.rules import rules
+        from gobby.storage.definitions.rules import RuleDefinitionManager
+
+        rule_file = tmp_path / "once.yaml"
+        rule_file.write_text(
+            "rules:\n"
+            "  once:\n"
+            "    event: turn_start\n"
+            "    when: not variables.get('shown')\n"
+            "    effects:\n"
+            "      - type: inject_context\n"
+            "        template: hello\n"
+            "      - type: set_variable\n"
+            "        variable: shown\n"
+            "        value: true\n",
+            encoding="utf-8",
+        )
+
+        with (
+            patch("gobby.cli.rules.require_cli_database", return_value=temp_db),
+            patch("gobby.cli.installers.shared.registered_project_id", return_value=None),
+        ):
+            result = cli_runner.invoke(rules, ["import", str(rule_file)])
+
+        assert result.exit_code == 0
+        row = RuleDefinitionManager(temp_db).get_by_name("once")
+        assert row is not None
+        assert [effect.get("delivery", "eager") for effect in row.definition_json["effects"]] == [
+            "on_receipt",
+            "on_receipt",
+        ]
 
     def test_import_not_yaml(self, cli_runner, tmp_path) -> None:
         from gobby.cli.rules import rules

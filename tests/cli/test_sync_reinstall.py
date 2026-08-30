@@ -103,3 +103,64 @@ def test_failed_reinstall_leaves_prior_bundled_rows(hub_db: HubDatabase) -> None
     kept = manager.get(prior.id)
     assert kept.name == "keep-prior-rule"
     assert kept.deleted_at is None
+
+
+@patch("gobby.sync_registry.sync_bundled_content_to_db")
+@patch("gobby.cli.runtime.require_cli_database")
+@patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
+@patch("gobby.utils.dev.is_dev_mode", return_value=False)
+def test_reinstall_disposition_failure_raises_click_and_keeps_rows(
+    _dev: MagicMock,
+    _install: MagicMock,
+    mock_load: MagicMock,
+    mock_sync: MagicMock,
+    runner: CliRunner,
+    hub_db: HubDatabase,
+) -> None:
+    manager = RuleDefinitionManager(hub_db)
+    prior = manager.create(
+        name="keep-disposition-rule",
+        definition_json={"event": "before_tool", "effects": [{"type": "block", "reason": "x"}]},
+        source="installed",
+        tags=["gobby"],
+    )
+    mock_load.return_value = hub_db
+    diagnostic = (
+        "delivery disposition: Rule 'maybe' effect 1 (set_variable 'g'): "
+        "ambiguous delivery suppressor"
+    )
+    mock_sync.return_value = {"total_synced": 0, "errors": [diagnostic], "details": {}}
+
+    result = runner.invoke(sync, ["--reinstall", "rules", "--force"])
+
+    assert result.exit_code == 1
+    assert "maybe" in result.output
+    assert "Warning:" not in result.output
+    kept = manager.get(prior.id)
+    assert kept.name == "keep-disposition-rule"
+    assert kept.deleted_at is None
+
+
+@patch("gobby.sync_registry.sync_bundled_content_to_db")
+@patch("gobby.cli.runtime.require_cli_database")
+@patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
+@patch("gobby.utils.dev.is_dev_mode", return_value=False)
+def test_reinstall_partial_disposition_failure_raises_click(
+    _dev: MagicMock,
+    _install: MagicMock,
+    mock_load: MagicMock,
+    mock_sync: MagicMock,
+    runner: CliRunner,
+) -> None:
+    mock_load.return_value = MagicMock()
+    mock_sync.return_value = {
+        "total_synced": 0,
+        "errors": ["delivery disposition: partial failure: injected write failure"],
+        "details": {},
+    }
+
+    result = runner.invoke(sync, ["--reinstall", "rules", "--force"])
+
+    assert result.exit_code == 1
+    assert "partial failure" in result.output
+    assert "Warning:" not in result.output

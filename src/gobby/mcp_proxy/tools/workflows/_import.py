@@ -22,9 +22,6 @@ def reload_cache(
     detection_registry: DetectionManifestRegistry | None = None,
 ) -> dict[str, Any]:
     """Clear the pipeline cache and re-sync imported plus selected bundled types."""
-    loader.clear_cache()
-    logger.info("Workflow cache cleared via reload_cache tool")
-
     result: dict[str, Any] = {"success": True, "message": "Workflow cache cleared"}
 
     if db is not None:
@@ -38,6 +35,21 @@ def reload_cache(
             result["imported_workflow_sync_errors"] = imported["errors"]
 
         sync_result = sync_bundled_content_to_db(db, only=_RELOAD_ONLY)
+        blocking = [
+            str(error)
+            for error in (sync_result.get("errors") or [])
+            if "delivery disposition:" in str(error)
+        ]
+        if blocking:
+            result["success"] = False
+            result["bundled_sync_errors"] = list(sync_result["errors"])
+            result["error"] = blocking[0]
+            logger.warning("%s", blocking[0])
+            return result
+
+        loader.clear_cache()
+        logger.info("Workflow cache cleared via reload_cache tool")
+
         total_synced = 0
         for content_type, detail in sync_result["details"].items():
             if not isinstance(detail, dict):
@@ -58,6 +70,9 @@ def reload_cache(
             logger.warning("%s", error)
         if total_synced > 0:
             result["message"] += f", {total_synced} definitions re-synced to DB"
+    else:
+        loader.clear_cache()
+        logger.info("Workflow cache cleared via reload_cache tool")
 
     if detection_registry is not None:
         result["detection_manifests_reloaded"] = detection_registry.reload()

@@ -263,6 +263,9 @@ def sync(
             click.echo(f"Skipped tampered types: {', '.join(sorted(skipped))}")
 
     if errors:
+        disposition_errors = [str(err) for err in errors if "delivery disposition:" in str(err)]
+        if disposition_errors:
+            raise click.ClickException("\n".join(str(err) for err in errors))
         for err in errors:
             click.echo(f"  Warning: {err}", err=True)
         sys.exit(1)

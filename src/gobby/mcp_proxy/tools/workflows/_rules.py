@@ -17,6 +17,10 @@ from pydantic import ValidationError
 
 from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
+from gobby.workflows.delivery_disposition import (
+    DispositionAmbiguousError,
+    prepare_rule_definition_for_persist,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -256,8 +260,11 @@ def update_rule(
     if definition is not None:
         try:
             local_def, embedded_metadata = split_rule_definition_data(definition)
+            local_def = prepare_rule_definition_for_persist(name, local_def)
         except ValidationError as e:
             return {"success": False, "error": f"Invalid rule definition: {e}"}
+        except DispositionAmbiguousError as e:
+            return {"success": False, "error": str(e)}
 
         for key, value in embedded_metadata.items():
             if key != "name" and key not in fields:
@@ -306,11 +313,13 @@ def create_rule(
     Returns:
         Dict with success and created rule, or error
     """
-    # Validate with Pydantic
     try:
         RuleDefinitionBody.model_validate(definition)
+        definition = prepare_rule_definition_for_persist(name, definition)
     except ValidationError as e:
         return {"success": False, "error": f"Validation failed: {e}"}
+    except DispositionAmbiguousError as e:
+        return {"success": False, "error": str(e)}
 
     existing = def_manager.get_by_name(name)
     if existing is not None:

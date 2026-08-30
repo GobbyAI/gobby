@@ -91,11 +91,13 @@ def _upsert_agent(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
 
 def _upsert_rule(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
     from gobby.workflows.definitions import RuleDefinitionBody
+    from gobby.workflows.delivery_disposition import prepare_rule_definition_for_persist
 
     body = {key: data[key] for key in RuleDefinitionBody.model_fields if key in data}
     RuleDefinitionBody.model_validate(body)
     manager = RuleDefinitionManager(db)
     name = str(data["name"])
+    data = prepare_rule_definition_for_persist(name, data)
     existing = manager.get_by_name(name, project_id=project_id)
     fields = {
         "definition_json": data,

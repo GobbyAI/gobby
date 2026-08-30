@@ -21,6 +21,10 @@ from gobby.mcp_proxy.tools.workflows._rules import (
 )
 from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.workflows.definitions import split_rule_definition_data
+from gobby.workflows.delivery_disposition import (
+    DispositionAmbiguousError,
+    prepare_rule_definition_for_persist,
+)
 from gobby.workflows.pipeline_loader import _is_bundled_template
 
 if TYPE_CHECKING:
@@ -301,8 +305,11 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
         if definition is not None:
             try:
                 definition, embedded_metadata = split_rule_definition_data(definition)
+                definition = prepare_rule_definition_for_persist(name, definition)
             except ValidationError as e:
                 raise HTTPException(status_code=400, detail=f"Invalid rule definition: {e}") from e
+            except DispositionAmbiguousError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
 
             for key, value in embedded_metadata.items():
                 if key != "name" and key not in fields:

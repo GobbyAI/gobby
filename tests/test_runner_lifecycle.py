@@ -5041,3 +5041,99 @@ def test_main_override_env_lets_a_worktree_package_start(
     assert exc_info.value.code == 0
     assert "already healthy" in capsys.readouterr().err
     load_bootstrap.assert_called_once()
+
+
+class TestRuleDispositionStartup:
+    """Narrow disposition migration runs once before hook service."""
+
+    def test_non_dev_runs_migration_once_without_aggregator(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.runner_init.storage import run_startup_content_sync
+
+        calls: list[str] = []
+
+        def record_aggregator(*_args: object, **_kwargs: object) -> dict[str, object]:
+            calls.append("aggregator")
+            return {"total_synced": 0, "errors": [], "details": {}}
+
+        def record_migrate(*_args: object, **_kwargs: object) -> dict[str, object]:
+            calls.append("migrate")
+            return {"success": True, "updated": 0, "errors": []}
+
+        def record_import(*_args: object, **_kwargs: object) -> dict[str, object]:
+            calls.append("import")
+            return {"synced": 0, "errors": []}
+
+        monkeypatch.setattr("gobby.utils.dev.is_dev_mode", lambda _path: False)
+        monkeypatch.setattr("gobby.sync_registry.sync_bundled_content_to_db", record_aggregator)
+        monkeypatch.setattr(
+            "gobby.sync_registry.migrate_rule_delivery_dispositions", record_migrate
+        )
+        monkeypatch.setattr("gobby.workflows.imports.sync_imported_workflows", record_import)
+
+        runner = cast(GobbyRunner, SimpleNamespace(database=object()))
+        run_startup_content_sync(runner)
+
+        assert calls == ["migrate"]
+        assert runner._dev_mode is False
+
+    def test_ambiguous_or_partial_diagnostic_aborts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from gobby.runner_init.storage import run_startup_content_sync
+        from gobby.workflows.delivery_disposition import RuleDispositionMigrationError
+
+        monkeypatch.setattr("gobby.utils.dev.is_dev_mode", lambda _path: False)
+        monkeypatch.setattr(
+            "gobby.sync_registry.migrate_rule_delivery_dispositions",
+            lambda *_args, **_kwargs: {
+                "success": False,
+                "updated": 0,
+                "errors": [
+                    "delivery disposition: Rule 'maybe' effect 1 (set_variable 'g'): ambiguous"
+                ],
+            },
+        )
+
+        with pytest.raises(RuleDispositionMigrationError, match="maybe"):
+            run_startup_content_sync(cast(GobbyRunner, SimpleNamespace(database=object())))
+
+    def test_zero_write_repeat_proceeds(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from gobby.runner_init.storage import run_startup_content_sync
+
+        calls: list[str] = []
+
+        def record_migrate(*_args: object, **_kwargs: object) -> dict[str, object]:
+            calls.append("migrate")
+            return {"success": True, "updated": 0, "errors": []}
+
+        monkeypatch.setattr("gobby.utils.dev.is_dev_mode", lambda _path: False)
+        monkeypatch.setattr(
+            "gobby.sync_registry.migrate_rule_delivery_dispositions", record_migrate
+        )
+
+        run_startup_content_sync(cast(GobbyRunner, SimpleNamespace(database=object())))
+        assert calls == ["migrate"]
+
+    def test_disposition_failure_aborts_before_hook_servers(self) -> None:
+        from gobby.workflows.delivery_disposition import RuleDispositionMigrationError
+
+        def init_storage(runner: GobbyRunner, *_args: object) -> None:
+            runner.startup_config = DaemonConfig()
+            runner.database = MagicMock()
+            raise RuleDispositionMigrationError(
+                ["delivery disposition: Rule 'x' effect 0: ambiguous"]
+            )
+
+        servers = MagicMock()
+        with (
+            patch("gobby.runner_init.init_storage_and_config", side_effect=init_storage),
+            patch("gobby.runner_init.init_runtime_capacity"),
+            patch("gobby.runner_init.init_services"),
+            patch("gobby.runner_init.init_orchestration"),
+            patch("gobby.runner_init.init_servers", servers),
+            pytest.raises(RuleDispositionMigrationError),
+        ):
+            GobbyRunner()
+
+        servers.assert_not_called()
+        assert get_app_context() is None

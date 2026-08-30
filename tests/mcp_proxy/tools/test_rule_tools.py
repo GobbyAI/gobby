@@ -413,6 +413,74 @@ class TestCreateRule:
         assert result["success"] is False
         assert "exists" in result["error"].lower() or "already" in result["error"].lower()
 
+    def test_create_one_shot_persists_on_receipt(
+        self, def_manager: RuleDefinitionManager, rule_tools: dict[str, Any]
+    ) -> None:
+        result = rule_tools["create_rule"](
+            name="once-rule",
+            definition={
+                "event": "turn_start",
+                "when": "not variables.get('shown')",
+                "effects": [
+                    {"type": "inject_context", "template": "hello"},
+                    {"type": "set_variable", "variable": "shown", "value": True},
+                ],
+            },
+        )
+        assert result["success"] is True
+        row = def_manager.get_by_name("once-rule")
+        assert row is not None
+        assert [effect.get("delivery", "eager") for effect in row.definition_json["effects"]] == [
+            "on_receipt",
+            "on_receipt",
+        ]
+
+    def test_create_ambiguous_one_shot_is_rejected(
+        self, def_manager: RuleDefinitionManager, rule_tools: dict[str, Any]
+    ) -> None:
+        result = rule_tools["create_rule"](
+            name="maybe-once",
+            definition={
+                "event": "turn_start",
+                "when": "not variables.get('guard')",
+                "effects": [
+                    {"type": "inject_context", "template": "hello"},
+                    {
+                        "type": "set_variable",
+                        "variable": "guard",
+                        "value": True,
+                        "when": "variables.get('other')",
+                    },
+                ],
+            },
+        )
+        assert result["success"] is False
+        assert "maybe-once" in result["error"]
+        assert def_manager.get_by_name("maybe-once") is None
+
+    def test_update_one_shot_persists_on_receipt(
+        self, def_manager: RuleDefinitionManager, rule_tools: dict[str, Any]
+    ) -> None:
+        _create_test_rule(def_manager, name="editable-once")
+        result = rule_tools["update_rule"](
+            name="editable-once",
+            definition={
+                "event": "turn_start",
+                "when": "not variables.get('shown')",
+                "effects": [
+                    {"type": "inject_context", "template": "hello"},
+                    {"type": "set_variable", "variable": "shown", "value": True},
+                ],
+            },
+        )
+        assert result["success"] is True
+        row = def_manager.get_by_name("editable-once")
+        assert row is not None
+        assert [effect.get("delivery", "eager") for effect in row.definition_json["effects"]] == [
+            "on_receipt",
+            "on_receipt",
+        ]
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # delete_rule
@@ -422,7 +490,9 @@ class TestCreateRule:
 class TestDeleteRule:
     """delete_rule soft-deletes (bundled protected)."""
 
-    def test_deletes_user_rule(self, def_manager, rule_tools) -> None:
+    def test_deletes_user_rule(
+        self, def_manager: RuleDefinitionManager, rule_tools: dict[str, Any]
+    ) -> None:
         _create_test_rule(def_manager, name="custom-rule", tags=["user"])
 
         result = rule_tools["delete_rule"](name="custom-rule")
@@ -432,14 +502,18 @@ class TestDeleteRule:
         row = def_manager.get_by_name("custom-rule")
         assert row is None  # Not visible without include_deleted
 
-    def test_protects_bundled_rule(self, def_manager, rule_tools) -> None:
+    def test_protects_bundled_rule(
+        self, def_manager: RuleDefinitionManager, rule_tools: dict[str, Any]
+    ) -> None:
         _create_test_rule(def_manager, name="bundled-rule", tags=["gobby"])
 
         result = rule_tools["delete_rule"](name="bundled-rule")
         assert result["success"] is False
         assert "bundled" in result["error"].lower()
 
-    def test_force_deletes_bundled(self, def_manager, rule_tools) -> None:
+    def test_force_deletes_bundled(
+        self, def_manager: RuleDefinitionManager, rule_tools: dict[str, Any]
+    ) -> None:
         _create_test_rule(def_manager, name="bundled-rule", tags=["gobby"])
 
         result = rule_tools["delete_rule"](name="bundled-rule", force=True)

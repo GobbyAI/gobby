@@ -14,6 +14,7 @@ rules:
       and not variables.get('task_claimed') and not variables.get('auto_task_ref'))
     effects:
       - type: inject_context
+        delivery: on_receipt
         template: |
           <!-- gobby:injected-context:begin -->
           ## Project Wiki
@@ -24,5 +25,6 @@ rules:
           Query the wiki through the gobby-wiki MCP server (`wiki_search`, `wiki_read`).
           <!-- gobby:injected-context:end -->
       - type: set_variable
+        delivery: on_receipt
         variable: wiki_overview_injected
         value: true
