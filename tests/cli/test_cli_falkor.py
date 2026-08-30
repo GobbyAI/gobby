@@ -117,6 +117,7 @@ class TestDaemonDockerFlag:
         with (
             patch("gobby.cli.daemon.subprocess.run") as mock_run,
             patch("shutil.which", return_value="/usr/bin/docker"),
+            patch("gobby.cli._daemon_services._apply_hub_schema_contract"),
             patch(
                 "gobby.cli.daemon.resolve_compose_runtime",
                 return_value=ComposeRuntime(

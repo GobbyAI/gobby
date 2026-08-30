@@ -68,6 +68,14 @@ def start_managed_services(
         return ServiceStartResult("failed", str(exc))
 
 
+def _apply_hub_schema_contract(gobby_home: Path) -> None:
+    """Bring the hub to the current schema contract before reading it."""
+    from gobby.storage.hub.runtime import runtime_hub_database
+
+    with runtime_hub_database(str(gobby_home / "bootstrap.yaml"), apply_migrations=True):
+        pass
+
+
 def _start_managed_services_locked(
     gobby_home: Path,
     *,
@@ -114,6 +122,14 @@ def _start_managed_services_locked(
     postgres_result = _run_compose_up(compose_file, services_dir, postgres_runtime)
     if postgres_result.outcome != "success":
         return postgres_result
+
+    # The full-profile resolve below reads config_store and SecretStore with
+    # current-contract queries; a schema-advancing upgrade reaches this point
+    # with an older hub, so apply the contract before reading it.
+    try:
+        _apply_hub_schema_contract(gobby_home)
+    except Exception as exc:
+        return ServiceStartResult("failed", f"Could not apply the hub schema contract: {exc}")
 
     try:
         runtime = resolve_runtime(gobby_home)

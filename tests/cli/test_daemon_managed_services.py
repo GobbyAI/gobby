@@ -22,6 +22,18 @@ from gobby.cli.installers.compose_env import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _hub_schema_apply(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """Stub the hub schema apply; record the homes it was invoked for."""
+    applied: list[Path] = []
+    monkeypatch.setattr(
+        daemon_services,
+        "_apply_hub_schema_contract",
+        lambda gobby_home: applied.append(gobby_home),
+    )
+    return applied
+
+
 def _write_compose(home: Path, *, include_falkordb: bool = True) -> Path:
     services = home / "services"
     services.mkdir(parents=True)
@@ -238,6 +250,79 @@ def test_compose_failure_prevents_startup(
         assert "timed out" in result.detail
     else:
         assert "unhealthy" in result.detail
+
+
+def test_schema_contract_applies_after_postgres_up_and_before_full_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/docker")
+    _write_compose(tmp_path)
+    events: list[str] = []
+
+    def _resolve(
+        _home: Path,
+        *,
+        profiles: tuple[str, ...] = MANAGED_SERVICE_PROFILES,
+    ) -> ComposeRuntime:
+        events.append(f"resolve:{','.join(profiles)}")
+        return ComposeRuntime(environment={}, profiles=profiles)
+
+    def _run(command: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        events.append("compose-up")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        daemon_services,
+        "_apply_hub_schema_contract",
+        lambda gobby_home: events.append("apply-schema"),
+    )
+    monkeypatch.setattr(daemon, "resolve_compose_runtime", _resolve)
+    monkeypatch.setattr(subprocess, "run", _run)
+
+    result = daemon._services_start(tmp_path)
+
+    full_resolve = f"resolve:{','.join(MANAGED_SERVICE_PROFILES)}"
+    assert result.outcome == "success"
+    assert events.index("apply-schema") > events.index("compose-up")
+    assert events.index("apply-schema") < events.index(full_resolve)
+
+
+def test_schema_contract_failure_fails_start_before_full_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/docker")
+    _write_compose(tmp_path)
+    resolved_profiles: list[tuple[str, ...]] = []
+
+    def _resolve(
+        _home: Path,
+        *,
+        profiles: tuple[str, ...] = MANAGED_SERVICE_PROFILES,
+    ) -> ComposeRuntime:
+        resolved_profiles.append(profiles)
+        return ComposeRuntime(environment={}, profiles=profiles)
+
+    compose_calls: list[list[str]] = []
+
+    def _run(command: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        compose_calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    def _apply(gobby_home: Path) -> None:
+        raise RuntimeError("hub is unreachable")
+
+    monkeypatch.setattr(daemon_services, "_apply_hub_schema_contract", _apply)
+    monkeypatch.setattr(daemon, "resolve_compose_runtime", _resolve)
+    monkeypatch.setattr(subprocess, "run", _run)
+
+    result = daemon._services_start(tmp_path)
+
+    assert result.outcome == "failed"
+    assert "hub is unreachable" in result.detail
+    assert resolved_profiles == [("postgres",)]
+    assert len(compose_calls) == 1
 
 
 def test_missing_service_config_after_postgres_bootstrap_is_fatal(
