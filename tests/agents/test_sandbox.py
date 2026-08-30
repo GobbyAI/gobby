@@ -26,7 +26,6 @@ from gobby.agents.sandbox import (
 )
 from gobby.agents.sandbox_policy import default_write_paths
 from gobby.agents.sandbox_resolvers import (
-    AgySandboxResolver,
     ClaudeSandboxResolver,
     CodexSandboxResolver,
     QwenSandboxResolver,
@@ -1569,7 +1568,13 @@ _AGY_PROBE_DOMAINS = (
 
 
 def _agy_resolver() -> SandboxResolver:
-    resolver = AgySandboxResolver()
+    from gobby.agents import sandbox_resolvers as module
+
+    resolver_cls = getattr(module, "AgySandboxResolver", None)
+    assert resolver_cls is not None
+    resolver = resolver_cls()
+    if not isinstance(resolver, SandboxResolver):
+        raise AssertionError("AgySandboxResolver did not return a SandboxResolver")
     assert resolver.cli_name == "agy"
     return resolver
 
@@ -1577,6 +1582,8 @@ def _agy_resolver() -> SandboxResolver:
 @pytest.mark.unit
 class TestAgySandboxResolver:
     """AGY sandbox resolver, policy maps, and capability-gate reachability (plan 3.2)."""
+
+    # TDD recapture window for TestAgySandboxResolver.test_* named criteria.
 
     def test_agy_sandbox_resolver_emits_boolean_sandbox_for_provider_native(self) -> None:
         resolver = _agy_resolver()
