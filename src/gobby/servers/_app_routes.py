@@ -29,6 +29,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_configuration_router,
         create_cron_router,
         create_embeddings_router,
+        create_feedback_router,
         create_files_router,
         create_github_triage_router,
         create_health_router,
@@ -76,6 +77,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_sessions_router(server))
     app.include_router(create_memory_router(server))
     app.include_router(create_memory_dream_router(server))
+    app.include_router(create_feedback_router(server))
     app.include_router(create_tasks_router(server))
     app.include_router(create_stages_router(server))
     app.include_router(create_code_index_router(server))

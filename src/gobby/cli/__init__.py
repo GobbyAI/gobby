@@ -19,6 +19,7 @@ from .daemon_lease import lease
 from .datastores import datastores as datastores_cli
 from .embeddings import embeddings
 from .extensions import hooks, webhooks
+from .feedback import feedback
 from .files import files
 from .github import github
 from .hub_backup.cli import hub_backup
@@ -108,6 +109,7 @@ cli.add_command(test_quality)
 cli.add_command(test_types)
 cli.add_command(tokens)
 cli.add_command(memory)
+cli.add_command(feedback)
 cli.add_command(observations)
 cli.add_command(sessions)
 cli.add_command(skills)

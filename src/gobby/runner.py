@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from gobby.daemon_lease import ActiveDaemonLease
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.wake import WakeDispatcher
+    from gobby.feedback.service import FeedbackReviewService
     from gobby.llm import LLMService
     from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.mcp_proxy.metrics import ToolMetricsManager
@@ -226,6 +227,7 @@ class GobbyRunner:
     cron_storage: CronJobStorage | None
     cron_scheduler: CronScheduler | None
     system_automation_loop: Any | None
+    feedback_review_service: FeedbackReviewService | None
     communications_manager: Any | None
 
     # Phase 4: servers (init_servers)

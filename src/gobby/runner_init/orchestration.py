@@ -528,6 +528,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     runner.cron_storage = None
     runner.cron_scheduler = None
     runner.system_automation_loop = None
+    runner.feedback_review_service = None
     try:
         try:
             from gobby.storage.cron import CronJobStorage
@@ -663,7 +664,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
                 from gobby.feedback.service import FeedbackReviewService
 
                 feedback_review_config = config.session_feedback.review
-                feedback_review_service = FeedbackReviewService(
+                runner.feedback_review_service = FeedbackReviewService(
                     runner.database,
                     runner.llm_service,
                     feedback_review_config,
@@ -672,7 +673,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
                 registered = register_feedback_review_cron(
                     cron_storage=runner.cron_storage,
                     cron_executor=cron_executor,
-                    service=feedback_review_service,
+                    service=runner.feedback_review_service,
                     config=feedback_review_config,
                     project_id=runner.project_id,
                 )
