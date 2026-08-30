@@ -8,7 +8,9 @@ from dataclasses import dataclass
 
 from gobby.adapters.capabilities import get_provider_capabilities
 from gobby.hooks.effect_deadline import (
+    BLOCKING_EFFECT_BUDGET_SECONDS,
     BlockingEffectDeadline,
+    elapsed_blocking_effect_seconds,
     remaining_blocking_effect_seconds,
 )
 from gobby.hooks.events import HookEvent
@@ -100,6 +102,25 @@ async def _terminate_process(process: asyncio.subprocess.Process) -> None:
         logger.warning("proxy_hook: failed to reap terminated handler process")
 
 
+def _warn_deadline_exhausted(
+    rule_name: str,
+    deadline: BlockingEffectDeadline | None,
+    *,
+    stage: str,
+    maximum: float,
+) -> None:
+    """Report an exhausted shared budget so the log alone identifies the cause."""
+    logger.warning(
+        "proxy_hook[%s]: blocking deadline exhausted %s "
+        "(shared budget %.1fs of %.1fs spent, effect cap %.1fs)",
+        rule_name,
+        stage,
+        elapsed_blocking_effect_seconds(deadline),
+        BLOCKING_EFFECT_BUDGET_SECONDS,
+        maximum,
+    )
+
+
 class ProxyHooksMixin:
     """Execute an internal registry of trusted command transformers."""
 
@@ -159,7 +180,12 @@ class ProxyHooksMixin:
         maximum = invocation.effect.timeout_seconds or _DEFAULT_PROXY_TIMEOUT_SECONDS
         timeout = remaining_blocking_effect_seconds(blocking_deadline, maximum=maximum)
         if timeout <= 0:
-            logger.warning("proxy_hook[%s]: blocking deadline exhausted", invocation.row.name)
+            _warn_deadline_exhausted(
+                invocation.row.name,
+                blocking_deadline,
+                stage="before the RTK probe",
+                maximum=maximum,
+            )
             return False
 
         probe_timeout = min(0.5, max(timeout / 4, 0.05))
@@ -171,7 +197,12 @@ class ProxyHooksMixin:
 
         timeout = remaining_blocking_effect_seconds(blocking_deadline, maximum=maximum)
         if timeout <= 0:
-            logger.warning("proxy_hook[%s]: blocking deadline exhausted", invocation.row.name)
+            _warn_deadline_exhausted(
+                invocation.row.name,
+                blocking_deadline,
+                stage="after the RTK probe",
+                maximum=maximum,
+            )
             return False
 
         # ``rewrite`` is the contract stock RTK host hooks use, so its heredoc,

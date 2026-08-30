@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sys
 import time
 from datetime import UTC, datetime
@@ -13,9 +14,12 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
-from gobby.hooks.effect_deadline import BlockingEffectDeadline
+from gobby.hooks.effect_deadline import (
+    BLOCKING_EFFECT_BUDGET_SECONDS,
+    BlockingEffectDeadline,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.integrations.rtk import RTK_RULE_NAME, clear_probe_cache
+from gobby.integrations.rtk import RTK_RULE_NAME, RtkProbe, clear_probe_cache, resolve_rtk
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
@@ -142,6 +146,26 @@ def _create_rule(
 
 def _proxy_effect(**kwargs: Any) -> RuleEffect:
     return RuleEffect(type="proxy_hook", handler="rtk", **kwargs)
+
+
+def _parse_exhaustion_warning(
+    caplog: pytest.LogCaptureFixture,
+    *,
+    rule_name: str,
+    stage: str,
+    effect_cap: float,
+) -> float:
+    """Return the spent-budget figure from the one exhaustion warning emitted."""
+    pattern = re.compile(
+        rf"proxy_hook\[{re.escape(rule_name)}\]: blocking deadline exhausted "
+        rf"{re.escape(stage)} \(shared budget (?P<spent>\d+\.\d)s of "
+        rf"{BLOCKING_EFFECT_BUDGET_SECONDS:.1f}s spent, effect cap {effect_cap:.1f}s\)"
+    )
+    matches = [
+        match for message in caplog.messages if (match := pattern.fullmatch(message)) is not None
+    ]
+    assert len(matches) == 1, caplog.messages
+    return float(matches[0].group("spent"))
 
 
 @pytest.mark.parametrize(
@@ -587,7 +611,55 @@ async def test_exhausted_shared_deadline_skips_rtk(
         )
 
     assert response.modified_input is None
-    assert "proxy_hook[proxy-deadline]: blocking deadline exhausted" in caplog.messages
+    spent = _parse_exhaustion_warning(
+        caplog,
+        rule_name="proxy-deadline",
+        stage="before the RTK probe",
+        effect_cap=2.0,
+    )
+    assert spent > BLOCKING_EFFECT_BUDGET_SECONDS
+
+
+async def test_deadline_exhausted_after_the_probe_names_that_site(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The probe itself can spend the last of the budget, and that reads differently.
+
+    Both skip sites used to emit one indistinguishable message, so a log full of
+    them said nothing about where the budget went.
+    """
+    del fake_rtk
+    _create_rule(manager, "proxy-late-deadline", [_proxy_effect()], priority=10)
+    deadline = BlockingEffectDeadline(time.monotonic() + BLOCKING_EFFECT_BUDGET_SECONDS)
+
+    def _resolve_then_exhaust(*, timeout: float) -> RtkProbe | None:
+        """Spend the rest of the budget inside the probe, as a slow probe would."""
+        probe = resolve_rtk(timeout=timeout)
+        deadline.expires_at = time.monotonic() - 1.0
+        return probe
+
+    monkeypatch.setattr(proxy_hooks, "resolve_rtk", _resolve_then_exhaust)
+
+    with caplog.at_level(logging.WARNING, logger=proxy_hooks.logger.name):
+        response = await RuleEngine(db).evaluate(
+            _event(),
+            SESSION_ID,
+            {},
+            blocking_deadline=deadline,
+        )
+
+    assert response.modified_input is None
+    spent = _parse_exhaustion_warning(
+        caplog,
+        rule_name="proxy-late-deadline",
+        stage="after the RTK probe",
+        effect_cap=2.0,
+    )
+    assert spent > BLOCKING_EFFECT_BUDGET_SECONDS
 
 
 async def test_rtk_runs_after_same_session_queue_wait(
