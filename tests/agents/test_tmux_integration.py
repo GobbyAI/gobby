@@ -205,3 +205,4 @@ async def test_agy_live_child_strips_denied_ambient_credentials(
     assert values.get("GOOGLE_APPLICATION_CREDENTIALS", "") == ""
     assert values.get("PATH")
     del quoted
+

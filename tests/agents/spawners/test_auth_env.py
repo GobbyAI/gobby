@@ -135,3 +135,4 @@ def test_agy_passthrough_strips_ignored_google_ambient_keys() -> None:
     assert "GOOGLE_API_KEY" in unset_clause
     assert "GEMINI_API_KEY" in unset_clause
     assert "GOOGLE_APPLICATION_CREDENTIALS" in unset_clause
+

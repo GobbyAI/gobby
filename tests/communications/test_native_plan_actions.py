@@ -192,3 +192,4 @@ async def test_agy_native_plan_actions_dispatch_ctrl_r_then_y(
 
     assert result == "sent"
     assert tmux.sent == [("%42", "C-r", False), ("%42", "y", True)]
+

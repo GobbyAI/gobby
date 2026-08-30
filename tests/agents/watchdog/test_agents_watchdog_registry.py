@@ -61,3 +61,4 @@ def test_registry_returns_agy_reader() -> None:
 
 def test_registry_returns_none_for_uninstalled_readers() -> None:
     assert WatchdogReaderRegistry().for_provider("unknown") is None
+

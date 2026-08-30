@@ -180,7 +180,7 @@ def build_cli_command(
 
     elif cli == "agy":
         # Terminal spawn uses the 1.1.7/1.1.3 recorded TUI flags, not print-mode
-        # `-p` / stream-json. `--mode` is never added (1.1.14/1.1.23).
+        # `-p` / stream-json. `--mode` is never added (records 1.1.14 and 1.1.23).
         if resume_session_id:
             command.extend(["--conversation", resume_session_id])
         if auto_approve:

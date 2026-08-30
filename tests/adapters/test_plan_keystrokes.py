@@ -779,3 +779,4 @@ class TestDefaultRegistry:
         # (#15732), and agy (#20755). No per-CLI source remains pending.
         for source in ("claude", "codex", "droid", "grok", "qwen", "agy"):
             assert DEFAULT_PLAN_KEYSTROKES.has_source(source) is True
+

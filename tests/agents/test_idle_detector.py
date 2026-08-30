@@ -288,6 +288,8 @@ class TestStatusBarFiltering:
 class TestAgyStatusBarFiltering:
     """AGY pane captures from record 1.1.17: prompt `>` and `? for shortcuts`."""
 
+    # Named TDD criteria: idle vs working without Claude footer regex.
+
     def setup_method(self) -> None:
         self.detector = IdleDetector(BundledDetectionRegistry(), "agy")
 
