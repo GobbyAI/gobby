@@ -68,7 +68,10 @@ class TestPlannerSkillLoading:
             (agent.step_workflow.steps if agent.step_workflow else []), "load_skill"
         )
         assert load_step is not None
-        assert load_step.allowed_mcp_tools == ["gobby-skills:get_skill"]
+        assert load_step.allowed_mcp_tools == [
+            "gobby-skills:get_skill",
+            "gobby-skills:get_skill_file",
+        ]
 
     def test_load_skill_sets_skill_loaded_variable(self, agent: AgentDefinitionBody) -> None:
         """on_mcp_success contract: a successful get_skill flips skill_loaded,

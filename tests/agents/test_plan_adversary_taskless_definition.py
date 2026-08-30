@@ -45,6 +45,7 @@ def test_taskless_adversary_loads_plan_review_and_reports_structured_result() ->
 
     assert steps["load_skill"]["allowed_mcp_tools"] == [
         "gobby-skills:get_skill",
+        "gobby-skills:get_skill_file",
         "gobby-plans:get_plan_review_snapshot",
     ]
     status = steps["load_skill"]["status_message"]

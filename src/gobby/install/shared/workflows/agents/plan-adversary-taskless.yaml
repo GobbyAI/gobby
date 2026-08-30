@@ -258,6 +258,7 @@ step_workflow:
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
         - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
         # The spawn prompt directs the reviewer to read the prepared evidence
         # snapshot immediately; allow that read here so an eager first fetch
         # does not burn identical-denial strikes. Skills still gate the
@@ -323,6 +324,7 @@ step_workflow:
         - "gobby-review-learning:recall_review_lessons_by_class"
         - "gobby-review-learning:list_check_keys"
         - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
       on_mcp_success:
         # Delivering the verdict completes the round. `end_agent_run` takes no
         # arguments, so the result must go out first; if the provider process

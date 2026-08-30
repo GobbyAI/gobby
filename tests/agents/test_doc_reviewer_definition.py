@@ -66,7 +66,10 @@ def test_doc_reviewer_loads_required_skills() -> None:
         "tech-writer",
         "tasks",
     ]
-    assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
+    assert load_step["allowed_mcp_tools"] == [
+        "gobby-skills:get_skill",
+        "gobby-skills:get_skill_file",
+    ]
     for skill_name in agent["step_workflow"]["variables"]["required_skills"]:
         assert f'get_skill(name="{skill_name}")' in load_step["status_message"]
     assert "Do not call claim_task" in load_step["status_message"]

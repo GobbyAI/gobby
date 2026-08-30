@@ -9,7 +9,8 @@ is trimmed to the escalation contract plus critical rules.
 
 These tests lock in:
   - a dedicated load_skill step between claim and review,
-  - only gobby-skills:get_skill permitted during that step,
+  - only the gobby-skills skill reads and the snapshot read permitted
+    during that step,
   - transition out gates on skill_loaded,
   - instructions explicitly direct the agent to plan-review,
   - terminate-step exit wiring uses end_agent_run,
@@ -72,6 +73,7 @@ class TestAdversarySkillLoading:
         assert load_step is not None
         assert load_step.allowed_mcp_tools == [
             "gobby-skills:get_skill",
+            "gobby-skills:get_skill_file",
             "gobby-plans:get_plan_review_snapshot",
         ]
 

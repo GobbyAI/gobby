@@ -137,7 +137,10 @@ def test_loads_required_skills_before_review() -> None:
         "proportionality",
     ]
     assert claim_step["transitions"] == [{"to": "load_skills", "when": "vars.task_claimed"}]
-    assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
+    assert load_step["allowed_mcp_tools"] == [
+        "gobby-skills:get_skill",
+        "gobby-skills:get_skill_file",
+    ]
     assert "code-index" in load_step["status_message"]
     assert "tasks" in load_step["status_message"]
     assert "tech-writer" not in load_step["status_message"]

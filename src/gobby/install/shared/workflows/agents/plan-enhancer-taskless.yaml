@@ -127,6 +127,7 @@ step_workflow:
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
         - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
       on_mcp_success:
         - server: gobby-skills
           tool: get_skill
@@ -179,6 +180,7 @@ step_workflow:
         - "gobby-agents:end_agent_run"
         - "gobby-agents:send_message"
         - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
       on_mcp_success:
         # Delivering the result completes the round. `end_agent_run` takes no
         # arguments, so the result must go out first; if the provider process

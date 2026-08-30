@@ -120,6 +120,7 @@ step_workflow:
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
         - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
       on_mcp_success:
         - server: gobby-skills
           tool: get_skill

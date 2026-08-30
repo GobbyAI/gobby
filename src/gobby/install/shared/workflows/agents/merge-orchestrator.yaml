@@ -257,6 +257,7 @@ step_workflow:
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
         - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
       on_mcp_success:
         - server: gobby-skills
           tool: get_skill
@@ -396,6 +397,7 @@ step_workflow:
         - "gobby-tasks:close_task"
         - "gobby-tasks:escalate_task"
         - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
         - "gobby-worktrees:push_branch"
         - "gobby-worktrees:merge_worktree"
         - "gobby-worktrees:mark_worktree_merged"
