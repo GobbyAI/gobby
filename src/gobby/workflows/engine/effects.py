@@ -108,6 +108,7 @@ class EffectsMixin(DeliveryFormattingMixin):
         allowed_funcs: dict[str, Callable[..., Any]],
         context_parts: list[str],
         mcp_calls: list[dict[str, Any]],
+        staged_variable_updates: dict[str, Any],
     ) -> str | None:
         """Apply a single non-block effect.
 
@@ -116,13 +117,15 @@ class EffectsMixin(DeliveryFormattingMixin):
             blocking outcome, otherwise None.
         """
         if effect.type == "set_variable":
-            await offload(
+            wrote = await offload(
                 self._apply_set_variable,
                 effect,
                 variables,
                 ctx,
                 allow_reserved=is_internal_rule(row),
             )
+            if wrote and effect.delivery == "on_receipt" and effect.variable is not None:
+                staged_variable_updates[effect.variable] = variables[effect.variable]
 
         elif effect.type == "inject_context":
             # NOTE: inject_context templates render with rule evaluation context:
@@ -190,6 +193,8 @@ class EffectsMixin(DeliveryFormattingMixin):
                             effect.success_variable
                         ):
                             variables[effect.success_variable] = True
+                            if effect.delivery == "on_receipt":
+                                staged_variable_updates[effect.success_variable] = True
                     if success and dr.get("result"):
                         raw_result = dr["result"]
                         formatted: str | None = None
@@ -832,13 +837,13 @@ class EffectsMixin(DeliveryFormattingMixin):
         eval_context: dict[str, Any],
         *,
         allow_reserved: bool = False,
-    ) -> None:
+    ) -> bool:
         """Apply a set_variable effect, handling expressions."""
         if effect.variable is None:
-            return
+            return False
         if is_reserved_workflow_variable(effect.variable) and not allow_reserved:
             logger.warning("Rule effect cannot write runtime-managed variable %r", effect.variable)
-            return
+            return False
         value = effect.value
 
         # Render Jinja2 templates first, before expression evaluation
@@ -847,7 +852,7 @@ class EffectsMixin(DeliveryFormattingMixin):
             allowed_funcs = self._build_allowed_funcs(ctx)
             rendered = self._render_template(value, ctx, allowed_funcs)
             variables[effect.variable] = self._coerce_rendered_value(rendered)
-            return
+            return True
 
         # If value is a string that looks like an expression, evaluate it
         if isinstance(value, str) and self._is_expression(value):
@@ -861,9 +866,10 @@ class EffectsMixin(DeliveryFormattingMixin):
                 logger.warning(
                     "Failed to evaluate set_variable expression '%s': %s", effect.value, e
                 )
-                return
+                return False
 
         variables[effect.variable] = value
+        return True
 
     def _is_expression(self, value: str) -> bool:
         """Heuristic: is this string an expression rather than a literal?"""

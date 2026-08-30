@@ -207,6 +207,9 @@ class EventEnricher:
             "pending_message_ids": list(rendered.represented_message_ids),
             "pending_message_session_id": platform_session_id,
         }
+        existing = response.metadata.get(STAGED_EFFECTS_FIELD)
+        if isinstance(existing, dict):
+            staged = {**existing, **staged}
         response.metadata[STAGED_EFFECTS_FIELD] = staged
         record_worker_staging(staged)
 

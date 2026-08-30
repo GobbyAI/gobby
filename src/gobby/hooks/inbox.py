@@ -166,9 +166,15 @@ def _consume_inbox_delivery_receipt(
                 delivery_generation=generation,
             )
             if committed is not None:
+                variable_manager = None
+                if db is not None:
+                    from gobby.workflows.state_manager import SessionVariableManager
+
+                    variable_manager = SessionVariableManager(db)
                 apply_acknowledged_receipt(
                     committed,
                     message_manager=getattr(hook_manager, "_inter_session_msg_manager", None),
+                    variable_manager=variable_manager,
                 )
         except Exception as exc:
             logger.warning(

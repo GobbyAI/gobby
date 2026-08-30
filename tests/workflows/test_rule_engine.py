@@ -552,6 +552,180 @@ class TestSetVariableEffect:
         assert variables["unlocked_tools"] == ["gobby-tasks:create_task"]
 
 
+class TestOnReceiptDelivery:
+    """Producer-declared on_receipt mutations stage instead of durable persist."""
+
+    @pytest.mark.asyncio
+    async def test_on_receipt_set_variable_stages_with_payload(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
+
+        _insert_rule(
+            manager,
+            "remind-once",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.SESSION_START,
+                effects=[
+                    RuleEffect(
+                        type="inject_context",
+                        template="Memory reminder.",
+                        delivery="on_receipt",
+                    ),
+                    RuleEffect(
+                        type="set_variable",
+                        variable="one_shot_guard",
+                        value=True,
+                        delivery="on_receipt",
+                    ),
+                ],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.SESSION_START)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+
+        assert response.decision == "allow"
+        assert "Memory reminder." in (response.context or "")
+        assert variables.get("one_shot_guard") is True
+        staged = response.metadata.get(STAGED_EFFECTS_FIELD)
+        assert isinstance(staged, dict)
+        assert staged.get("session_variables") == {"one_shot_guard": True}
+        assert staged.get("session_id") == SESSION_ID
+
+    @pytest.mark.asyncio
+    async def test_mixed_eager_and_on_receipt_stage_only_on_receipt(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
+
+        _insert_rule(
+            manager,
+            "ordinary-state",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.SESSION_START,
+                effects=[
+                    RuleEffect(type="set_variable", variable="brevity_counter", value=1),
+                ],
+            ),
+            priority=10,
+        )
+        _insert_rule(
+            manager,
+            "one-shot-guard",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.SESSION_START,
+                effects=[
+                    RuleEffect(
+                        type="set_variable",
+                        variable="one_shot_guard",
+                        value=True,
+                        delivery="on_receipt",
+                    ),
+                ],
+            ),
+            priority=20,
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+        response = await engine.evaluate(
+            _make_event(HookEventType.SESSION_START),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert variables.get("brevity_counter") == 1
+        assert variables.get("one_shot_guard") is True
+        staged = response.metadata.get(STAGED_EFFECTS_FIELD)
+        assert isinstance(staged, dict)
+        assert staged.get("session_variables") == {"one_shot_guard": True}
+        assert "brevity_counter" not in staged.get("session_variables", {})
+
+    @pytest.mark.asyncio
+    async def test_on_receipt_acknowledge_variable_is_staged(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
+
+        _insert_rule(
+            manager,
+            "nudge-once",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="block",
+                        reason="Write memories after the plan.",
+                        acknowledge_variable="plan_memory_write_nudge_fired",
+                        delivery="on_receipt",
+                    ),
+                ],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+        response = await engine.evaluate(
+            _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"}),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert response.decision == "block"
+        assert "Write memories after the plan." in (response.reason or "")
+        assert variables.get("plan_memory_write_nudge_fired") is True
+        staged = response.metadata.get(STAGED_EFFECTS_FIELD)
+        assert isinstance(staged, dict)
+        assert staged.get("session_variables") == {"plan_memory_write_nudge_fired": True}
+
+    @pytest.mark.asyncio
+    async def test_on_receipt_success_variable_is_staged(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
+
+        _insert_rule(
+            manager,
+            "discover-once",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_AGENT,
+                effects=[
+                    RuleEffect(
+                        type="mcp_call",
+                        server="gobby-skills",
+                        tool="get_skill",
+                        arguments={"name": "loading-skills"},
+                        inject_result=True,
+                        success_variable="skill_discovery_instructions_shown",
+                        delivery="on_receipt",
+                    ),
+                ],
+            ),
+        )
+
+        async def mock_dispatcher(
+            server: str, tool: str, args: dict[str, Any], event: Any
+        ) -> dict[str, Any]:
+            return {"success": True, "inject_result": True, "result": {"ok": True}}
+
+        engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher)
+        variables: dict[str, Any] = {}
+        response = await engine.evaluate(
+            _make_event(HookEventType.BEFORE_AGENT),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert response.decision == "allow"
+        assert variables.get("skill_discovery_instructions_shown") is True
+        staged = response.metadata.get(STAGED_EFFECTS_FIELD)
+        assert isinstance(staged, dict)
+        assert staged.get("session_variables") == {"skill_discovery_instructions_shown": True}
+
+
 class TestInjectContextEffect:
     @pytest.mark.asyncio
     async def test_inject_context_adds_system_message(

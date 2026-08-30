@@ -16,7 +16,7 @@ import logging
 import threading
 from collections.abc import Coroutine
 from datetime import UTC, datetime
-from typing import NoReturn
+from typing import Any, NoReturn
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -731,6 +731,165 @@ class TestVariablePersistence:
         variables = session_var_manager.get_variables(SESSION_ID)
         assert variables.get("my_counter") == 1
 
+    def _make_session_start_event(self, session_id: str = SESSION_ID) -> HookEvent:
+        return HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id=session_id,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={},
+            metadata={"_platform_session_id": session_id},
+        )
+
+    def _insert_on_receipt_reminder_rule(self, db: HubDatabase) -> None:
+        definition = {
+            "event": "session_start",
+            "when": "not variables.get('one_shot_guard')",
+            "effects": [
+                {
+                    "type": "inject_context",
+                    "template": "Memory reminder.",
+                    "delivery": "on_receipt",
+                },
+                {
+                    "type": "set_variable",
+                    "variable": "one_shot_guard",
+                    "value": True,
+                    "delivery": "on_receipt",
+                },
+            ],
+        }
+        db.execute(
+            """
+            INSERT INTO rule_definitions (
+                id, name, definition_json, enabled, source
+            )
+            VALUES (%s, %s, %s, %s, 'custom')
+            """,
+            (str(uuid4()), "on-receipt-reminder", json.dumps(definition), True),
+        )
+
+    @pytest.mark.asyncio
+    async def test_on_receipt_set_variable_is_not_persisted_until_receipt(
+        self,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: Any,
+    ) -> None:
+        from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, take_worker_staging
+
+        self._insert_on_receipt_reminder_rule(db)
+        take_worker_staging()
+        event = self._make_session_start_event()
+
+        response = await handler._evaluate_rules(event)
+
+        assert "Memory reminder." in (response.context or "")
+        stored = session_var_manager.get_variables(SESSION_ID)
+        assert stored.get("one_shot_guard") is None
+        staged = response.metadata.get(STAGED_EFFECTS_FIELD)
+        assert isinstance(staged, dict)
+        assert staged.get("session_variables") == {"one_shot_guard": True}
+        worker_staged = take_worker_staging()
+        assert worker_staged.get("session_variables") == {"one_shot_guard": True}
+
+        second = await handler._evaluate_rules(event)
+        assert "Memory reminder." in (second.context or "")
+        stored_again = session_var_manager.get_variables(SESSION_ID)
+        assert stored_again.get("one_shot_guard") is None
+
+    @pytest.mark.asyncio
+    async def test_eager_sibling_still_persists_when_on_receipt_is_staged(
+        self,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: Any,
+    ) -> None:
+        from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
+
+        eager = {
+            "event": "session_start",
+            "effects": [
+                {"type": "set_variable", "variable": "brevity_counter", "value": 1},
+            ],
+        }
+        staged = {
+            "event": "session_start",
+            "effects": [
+                {
+                    "type": "set_variable",
+                    "variable": "one_shot_guard",
+                    "value": True,
+                    "delivery": "on_receipt",
+                },
+            ],
+        }
+        for name, definition in (("eager-state", eager), ("on-receipt-guard", staged)):
+            db.execute(
+                """
+                INSERT INTO rule_definitions (
+                    id, name, definition_json, enabled, source
+                )
+                VALUES (%s, %s, %s, %s, 'custom')
+                """,
+                (str(uuid4()), name, json.dumps(definition), True),
+            )
+
+        response = await handler._evaluate_rules(self._make_session_start_event())
+        stored = session_var_manager.get_variables(SESSION_ID)
+        assert stored.get("brevity_counter") == 1
+        assert stored.get("one_shot_guard") is None
+        staged_payload = response.metadata.get(STAGED_EFFECTS_FIELD)
+        assert isinstance(staged_payload, dict)
+        assert staged_payload.get("session_variables") == {"one_shot_guard": True}
+
+    @pytest.mark.asyncio
+    async def test_on_receipt_acknowledge_variable_is_not_persisted(
+        self,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: Any,
+    ) -> None:
+        from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
+
+        definition = {
+            "event": "before_tool",
+            "effects": [
+                {
+                    "type": "block",
+                    "reason": "Write memories after the plan.",
+                    "acknowledge_variable": "plan_memory_write_nudge_fired",
+                    "delivery": "on_receipt",
+                },
+            ],
+        }
+        db.execute(
+            """
+            INSERT INTO rule_definitions (
+                id, name, definition_json, enabled, source
+            )
+            VALUES (%s, %s, %s, %s, 'custom')
+            """,
+            (str(uuid4()), "on-receipt-block", json.dumps(definition), True),
+        )
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"tool_name": "Edit"},
+            metadata={"_platform_session_id": SESSION_ID},
+        )
+
+        response = await handler._evaluate_rules(event)
+
+        assert response.decision == "block"
+        stored = session_var_manager.get_variables(SESSION_ID)
+        assert stored.get("plan_memory_write_nudge_fired") is None
+        staged = response.metadata.get(STAGED_EFFECTS_FIELD)
+        assert isinstance(staged, dict)
+        assert staged.get("session_variables") == {"plan_memory_write_nudge_fired": True}
+
     @pytest.mark.asyncio
     async def test_variables_accumulate_across_evaluations(
         self, db, handler, session_var_manager
@@ -1440,7 +1599,7 @@ class TestStopFailsClosedOnVariableLoadError:
         mock_var_manager.merge_variables.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_stop_blocked_when_claim_reconciliation_fails(self, rule_engine) -> None:
+    async def test_stop_blocked_when_claim_reconciliation_fails(self, rule_engine: Any) -> None:
         """STOP should be blocked when claimed tasks cannot be listed."""
         import psycopg
 
@@ -1458,7 +1617,7 @@ class TestStopFailsClosedOnVariableLoadError:
         )
 
     @pytest.mark.asyncio
-    async def test_stop_blocked_when_claim_lookup_fails(self, rule_engine) -> None:
+    async def test_stop_blocked_when_claim_lookup_fails(self, rule_engine: Any) -> None:
         """STOP should be blocked when an existing claim cannot be loaded."""
         import psycopg
 
@@ -1675,14 +1834,14 @@ class TestProjectPathResolution:
     """Workflow hook evaluation should recover project_path when only project_id is known."""
 
     @pytest.fixture
-    def db(self, temp_db: HubDatabase):
+    def db(self, temp_db: HubDatabase) -> HubDatabase:
         database = temp_db
         return database
 
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
     async def test_codex_after_tool_uses_project_repo_path_when_cwd_missing(
-        self, mock_get_dirty, db, caplog
+        self, mock_get_dirty: Any, db: HubDatabase, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Codex synthesized AFTER_TOOL events should derive project_path from project_id."""
         from gobby.storage.projects import LocalProjectManager

@@ -170,6 +170,32 @@ def test_context_capable_providers_share_inline_reference_and_ack_contract(
     assert STAGED_EFFECTS_KEY not in native_response
 
 
+def test_pending_message_staging_merges_existing_session_variables() -> None:
+    adapter = ClaudeCodeAdapter()
+    event = adapter.translate_to_hook_event(_native_event("user-prompt-submit"))
+    event.metadata["_platform_session_id"] = RECIPIENT_SESSION_ID
+    message_manager = MagicMock()
+    message_manager.get_undelivered_messages.return_value = [
+        _message("small lossless notification")
+    ]
+    response = HookResponse(context="existing workflow context")
+    response.metadata[STAGED_EFFECTS_KEY] = {
+        "session_id": RECIPIENT_SESSION_ID,
+        "session_variables": {"one_shot_guard": True},
+    }
+
+    EventEnricher(
+        session_manager=None,
+        injected_sessions=set(),
+        inter_session_msg_manager=message_manager,
+    ).enrich(event, response)
+
+    staged = _staged_pending(response)
+    assert staged["session_variables"] == {"one_shot_guard": True}
+    assert staged["pending_message_ids"] == ["msg-lossless"]
+    assert staged["pending_message_session_id"] == RECIPIENT_SESSION_ID
+
+
 @pytest.mark.parametrize(
     ("adapter_type", "hook_type"),
     ((DroidAdapter, "PreToolUse"),),

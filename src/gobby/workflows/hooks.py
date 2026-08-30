@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, record_worker_staging
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 from gobby.workflows.block_audit import audit_source_block, audit_source_block_sync
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
@@ -758,11 +759,22 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     blocking_deadline=blocking_deadline,
                 )
 
+                staged_payload = response.metadata.get(STAGED_EFFECTS_FIELD)
+                staged_keys: set[str] = set()
+                if isinstance(staged_payload, dict):
+                    record_worker_staging(staged_payload)
+                    updates = staged_payload.get("session_variables")
+                    if isinstance(updates, dict):
+                        staged_keys = {key for key in updates if isinstance(key, str)}
+
                 # Persist all variables changed by observers OR rule effects.
                 # Skip when session state could not be loaded or session_id is "".
+                # on_receipt mutations stay in the receipt until acknowledgment.
                 if self._session_var_manager and session_id and not variable_load_failed:
                     changed = {
-                        k: v for k, v in variables.items() if k not in pre_eval or pre_eval[k] != v
+                        k: v
+                        for k, v in variables.items()
+                        if k not in staged_keys and (k not in pre_eval or pre_eval[k] != v)
                     }
                     if changed:
                         await asyncio.to_thread(

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
 from gobby.mcp_proxy.metrics_events import MetricsEventRecord
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.telemetry.rule_allow_audit import RuleResult, record_rule_evaluation
@@ -52,6 +53,7 @@ class EvaluationContext:
     context_parts: list[str] = field(default_factory=list)
     mcp_calls: list[dict[str, Any]] = field(default_factory=list)
     proxy_hooks: list[ProxyHookInvocation] = field(default_factory=list)
+    staged_variable_updates: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,7 @@ class BlockGate:
     reason: str
     condition: Any | None = None
     acknowledge_variable: str | None = None
+    delivery: str = "eager"
 
 
 def _unique_block_gate_feedback(block_gates: list[BlockGate]) -> list[BlockGate]:
@@ -141,6 +144,7 @@ class EvaluationMixin:
             allowed_funcs: dict[str, Callable[..., Any]],
             context_parts: list[str],
             mcp_calls: list[dict[str, Any]],
+            staged_variable_updates: dict[str, Any],
         ) -> str | None: ...
 
         def _check_catastrophic_failure(
@@ -367,6 +371,7 @@ class EvaluationMixin:
                             reason=reason,
                             condition=combined_rule_condition(body.when, effect.when),
                             acknowledge_variable=effect.acknowledge_variable,
+                            delivery=effect.delivery,
                         )
                     )
                     break
@@ -411,6 +416,7 @@ class EvaluationMixin:
                     allowed_funcs,
                     evaluation.context_parts,
                     evaluation.mcp_calls,
+                    evaluation.staged_variable_updates,
                 )
                 if inline_block_reason:
                     rule_blocked = True
@@ -440,6 +446,7 @@ class EvaluationMixin:
                             reason=rendered_block_reason,
                             condition=combined_rule_condition(body.when, deferred_block.when),
                             acknowledge_variable=deferred_block.acknowledge_variable,
+                            delivery=deferred_block.delivery,
                         )
                     )
                     # Track the blocked tool so repeated retries can escalate,
@@ -507,7 +514,12 @@ class EvaluationMixin:
             block_reason = f"Rule enforced by Gobby: [{gate.rule_name}]\n{gate.reason}"
 
         ctx_str = "\n\n".join(evaluation.context_parts) if evaluation.context_parts else None
-        meta = {"mcp_calls": evaluation.mcp_calls} if evaluation.mcp_calls else {}
+        meta: dict[str, Any] = {"mcp_calls": evaluation.mcp_calls} if evaluation.mcp_calls else {}
+        if evaluation.staged_variable_updates:
+            meta[STAGED_EFFECTS_FIELD] = {
+                "session_id": evaluation.session_id,
+                "session_variables": dict(evaluation.staged_variable_updates),
+            }
 
         if not include_rule_outputs:
             if override_decision == "block":
@@ -583,6 +595,13 @@ class EvaluationMixin:
             for gate in block_gates:
                 if gate.acknowledge_variable:
                     evaluation.variables[gate.acknowledge_variable] = True
+                    if gate.delivery == "on_receipt":
+                        evaluation.staged_variable_updates[gate.acknowledge_variable] = True
+            if evaluation.staged_variable_updates:
+                meta[STAGED_EFFECTS_FIELD] = {
+                    "session_id": evaluation.session_id,
+                    "session_variables": dict(evaluation.staged_variable_updates),
+                }
             return HookResponse(
                 decision="block",
                 reason=block_reason,
