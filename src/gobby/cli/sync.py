@@ -208,8 +208,8 @@ def sync(
     _check_bundled_source_checkout(install_dir, force=force)
 
     # --- Initialize DB and sync ---
+    from gobby.cli.installers.shared import sync_bundled_content_to_db
     from gobby.cli.runtime import require_cli_database
-    from gobby.sync_registry import sync_bundled_content_to_db
 
     try:
         db = require_cli_database()

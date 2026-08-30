@@ -383,8 +383,8 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
     click.echo(f"{action} gdaemon {gdaemon_result['version']} via {gdaemon_result['method']}")
 
     try:
+        from gobby.cli.installers.shared import sync_bundled_content_to_db
         from gobby.storage.hub.runtime import runtime_hub_database
-        from gobby.sync_registry import sync_bundled_content_to_db
 
         with runtime_hub_database() as db:
             click.echo("PostgreSQL hub initialized")

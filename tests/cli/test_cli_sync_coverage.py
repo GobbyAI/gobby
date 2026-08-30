@@ -36,6 +36,15 @@ def no_running_daemon() -> Iterator[MagicMock]:
         yield probe
 
 
+@pytest.fixture(autouse=True)
+def user_content_sync() -> Iterator[MagicMock]:
+    """Stub the user-content import the sync wrapper runs outside dev mode."""
+    with patch(
+        "gobby.cli.installers.shared._sync_user_templates_to_db", return_value=0
+    ) as mock_user_sync:
+        yield mock_user_sync
+
+
 # All lazy imports in sync() need to be patched at the source module:
 #   from gobby.utils.dev import is_dev_mode          -> gobby.utils.dev.is_dev_mode
 #   from gobby.sync.integrity import ...             -> gobby.sync.integrity.*
@@ -610,3 +619,68 @@ class TestRunningDaemonInstallDir:
         from gobby.cli.sync import _running_daemon_install_dir
 
         assert _running_daemon_install_dir() is None
+
+
+# ---------------------------------------------------------------------------
+# User-content wiring — gobby sync must go through the installers.shared wrapper
+# ---------------------------------------------------------------------------
+class TestSyncUserContentWiring:
+    @patch("gobby.sync_registry.sync_bundled_content_to_db")
+    @patch("gobby.cli.runtime.require_cli_database")
+    @patch("gobby.sync.integrity.get_dirty_content_types", return_value=set())
+    @patch("gobby.sync.integrity.verify_bundled_integrity")
+    @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
+    @patch("gobby.utils.dev.is_dev_mode", return_value=False)
+    def test_prod_sync_imports_user_content(
+        self,
+        _dev: MagicMock,
+        _install: MagicMock,
+        mock_verify: MagicMock,
+        _dirty: MagicMock,
+        mock_load: MagicMock,
+        mock_sync: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+        user_content_sync: MagicMock,
+    ) -> None:
+        integrity_result = MagicMock()
+        integrity_result.git_available = True
+        integrity_result.all_clean = True
+        integrity_result.dirty_files = []
+        integrity_result.untracked_files = []
+        mock_verify.return_value = integrity_result
+
+        mock_config = MagicMock()
+        mock_config.database_url = str(tmp_path / "test.db")
+        mock_load.return_value = mock_config
+        (tmp_path / "test.db").write_text("")
+
+        mock_sync.return_value = {"total_synced": 0, "errors": [], "details": {}}
+        user_content_sync.return_value = 3
+
+        result = runner.invoke(sync, [], catch_exceptions=False)
+
+        assert result.exit_code == 0
+        user_content_sync.assert_called_once()
+        assert "Synced 3 bundled items to database" in result.output
+
+    @patch("gobby.sync_registry.sync_bundled_content_to_db")
+    @patch("gobby.sync.integrity.verify_bundled_integrity")
+    @patch("gobby.cli.runtime.require_cli_database")
+    def test_dev_mode_sync_skips_user_content(
+        self,
+        mock_db: MagicMock,
+        mock_verify: MagicMock,
+        mock_sync: MagicMock,
+        runner: CliRunner,
+        user_content_sync: MagicMock,
+    ) -> None:
+        mock_db.return_value = MagicMock()
+        mock_sync.return_value = {"total_synced": 0, "errors": [], "details": {}}
+
+        result = runner.invoke(sync, [], catch_exceptions=False)
+
+        assert result.exit_code == 0
+        mock_sync.assert_called_once()
+        assert "No changes to sync" in result.output
+        user_content_sync.assert_not_called()
