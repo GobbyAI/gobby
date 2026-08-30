@@ -109,6 +109,12 @@ class TestAgyPayloadAliases:
         assert tool_map["view_file"] == "Read"
         assert tool_map["find_by_name"] == "Glob"
         assert tool_map["call_mcp_tool"] == "mcp__gobby__call_tool"
+        assert "write_to_file" in tool_map
+        assert tool_map["write_to_file"] == "Write"
+        assert "replace_file_content" in tool_map
+        assert tool_map["replace_file_content"] == "Edit"
+        assert "grep_search" in tool_map
+        assert tool_map["grep_search"] == "Grep"
 
     def test_force_continue_limit_is_a_positive_int(self) -> None:
         limit = getattr(agy_contract, "AGY_FORCE_CONTINUE_LIMIT", None)

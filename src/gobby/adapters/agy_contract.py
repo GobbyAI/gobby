@@ -82,6 +82,9 @@ AGY_TOOL_MAP: dict[str, str] = {
     "run_command": "Bash",
     "view_file": "Read",
     "find_by_name": "Glob",
+    "write_to_file": "Write",
+    "replace_file_content": "Edit",
+    "grep_search": "Grep",
     "call_mcp_tool": "mcp__gobby__call_tool",
 }
 
