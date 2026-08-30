@@ -334,14 +334,32 @@ def test_hook_manager_forwards_injected_memory_manager() -> None:
     assert create.call_args.kwargs["session_manager"] is session_manager
 
 
-def test_factory_create_supplies_registry_and_does_not_build_claude_parser() -> None:
+def test_factory_create_supplies_registry_and_does_not_build_claude_parser(
+    session_manager: SessionManager,
+    default_config: DaemonConfig,
+) -> None:
     from gobby.sessions.transcripts import get_parser
     from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
     from gobby.sessions.transcripts.droid import DroidTranscriptParser
 
-    source = inspect.getsource(HookManagerFactory.create)
-    assert "ClaudeTranscriptParser(" not in source
-    assert "get_parser" in source
-    parser = get_parser("droid")
+    workflow_components, autonomous_components = _patched_subsystems()
+
+    with (
+        patch(
+            "gobby.sessions.transcripts.claude.ClaudeTranscriptParser",
+            wraps=ClaudeTranscriptParser,
+        ) as claude_cls,
+        patch.object(HookManagerFactory, "_create_autonomous", return_value=autonomous_components),
+        patch.object(HookManagerFactory, "_create_memory", return_value=MagicMock()),
+        patch.object(
+            HookManagerFactory, "_create_workflow_engine", return_value=workflow_components
+        ),
+        patch.object(HookManagerFactory, "_create_webhooks", return_value=MagicMock()),
+    ):
+        components = HookManagerFactory.create(**_create_kwargs(session_manager, default_config))
+
+    assert components.transcript_processor is get_parser
+    claude_cls.assert_not_called()
+    parser = components.transcript_processor("droid")
     assert isinstance(parser, DroidTranscriptParser)
     assert not isinstance(parser, ClaudeTranscriptParser)

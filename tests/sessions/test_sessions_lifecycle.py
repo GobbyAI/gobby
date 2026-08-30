@@ -1562,6 +1562,27 @@ class TestProcessSessionTranscriptParsers:
             assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
+    async def test_droid_session_is_not_parsed_by_claude_parser(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
+        from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
+
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text('{"type": "message"}\n')
+        session = MagicMock()
+        session.source = "droid"
+        session.transcript_path = str(transcript_path)
+        manager.session_manager.get.return_value = session
+
+        with patch(
+            "gobby.sessions.transcripts.claude.ClaudeTranscriptParser",
+            wraps=ClaudeTranscriptParser,
+        ) as claude_cls:
+            await manager._process_session_transcript("s1", str(transcript_path))
+
+        claude_cls.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_unknown_source_raises(
         self, tmp_path: Path, manager: SessionLifecycleManager
     ) -> None:
