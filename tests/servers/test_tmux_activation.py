@@ -286,11 +286,20 @@ class TestTmuxAttachReservation:
         ws = MockWebSocket()
 
         with activation_harness(server, bridge=make_bridge(terminal_id=native.id)) as harness:
-            await reserve(server, ws, native)
+            await server._handle_terminal_attach(
+                ws,
+                {
+                    "terminal_id": native.id,
+                    "frame_delivery": "direct",
+                    "request_id": "r1",
+                },
+            )
 
+        result = ws.messages_of_type("terminal_attach_result")[0]
+        assert result["success"] is True
+        assert result["backend"] == "native"
         assert server._tmux_pending == {}
         harness.attach.assert_not_awaited()
-        assert ws.messages_of_type("terminal_attach_result")[0]["backend"] == "native"
 
 
 class TestTmuxActivation:

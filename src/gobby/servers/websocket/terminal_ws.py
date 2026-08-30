@@ -30,6 +30,25 @@ logger = logging.getLogger(__name__)
 
 WRITE_FAULT_NAME = "terminal_write_fault"
 
+PROXY_ATTACH_FAILURE_REASONS: dict[str, str] = {
+    "runtime_unavailable": "no terminal runtime for backend",
+    "proxy_unavailable": "proxy frame opener is not available",
+    "locator_failed": "attach_locator raised",
+    "locator_invalid": "attach_locator did not return an AttachLocator",
+    "host_unavailable": "proxy frame handshake failed",
+}
+
+
+def _log_proxy_attach_failure(terminal_id: str, code: str, *, exc_info: bool = False) -> str:
+    logger.warning(
+        "proxy attach failed terminal_id=%s code=%s reason=%s",
+        terminal_id,
+        code,
+        PROXY_ATTACH_FAILURE_REASONS[code],
+        exc_info=exc_info,
+    )
+    return code
+
 
 def write_handler_faulted() -> bool:
     """True when the isolated-daemon write-handler fault file is present."""
@@ -87,7 +106,22 @@ class TerminalWsMixin:
         registry = self._leases()
         record = registry.attach(terminal_id, str(delivery), websocket=websocket)
         if str(delivery) != "direct":
-            await self._start_proxy_attach(websocket, row, record)
+            failure = await self._start_proxy_attach(websocket, row, record)
+            if failure is not None:
+                registry.finalize(record.attachment_id, failure)
+                await self._send_json(
+                    websocket,
+                    {
+                        "type": "terminal_attach_result",
+                        "request_id": request_id,
+                        "terminal_id": terminal_id,
+                        "attachment_id": record.attachment_id,
+                        "success": False,
+                        "code": failure,
+                        "reason": PROXY_ATTACH_FAILURE_REASONS[failure],
+                    },
+                )
+                return
         await self._send_json(
             websocket,
             {
@@ -673,23 +707,23 @@ class TerminalWsMixin:
             return None
         return runtime
 
-    async def _start_proxy_attach(self, websocket: Any, row: Any, record: Any) -> None:
+    async def _start_proxy_attach(self, websocket: Any, row: Any, record: Any) -> str | None:
         runtime = self._runtime_for(row.backend)
+        if runtime is None:
+            return _log_proxy_attach_failure(row.id, "runtime_unavailable")
         opener = getattr(self, "open_proxy_frame", None)
-        if runtime is None or not callable(opener):
-            return
+        if not callable(opener):
+            return _log_proxy_attach_failure(row.id, "proxy_unavailable")
         try:
             locator = await runtime.attach_locator(row)
         except Exception:
-            logger.debug("proxy attach_locator failed", exc_info=True)
-            return
+            return _log_proxy_attach_failure(row.id, "locator_failed", exc_info=True)
         if not isinstance(locator, AttachLocator):
-            return
+            return _log_proxy_attach_failure(row.id, "locator_invalid")
         try:
             frame = await opener(locator)
         except Exception:
-            logger.debug("proxy frame open failed", exc_info=True)
-            return
+            return _log_proxy_attach_failure(row.id, "host_unavailable", exc_info=True)
         await self._proxy().start_proxy(
             websocket,
             terminal_id=row.id,
@@ -697,6 +731,7 @@ class TerminalWsMixin:
             locator=locator,
             frame=frame,
         )
+        return None
 
     async def _wait_joined_write(self, attachment_id: str, seq: int) -> tuple[str, str | None]:
         deadline = asyncio.get_running_loop().time() + 2.0
