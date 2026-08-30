@@ -87,7 +87,13 @@ class MCPServerStorageMixin:
         template_values: dict[str, Any] | None = None,
         runtime_hook: str | None = None,
     ) -> MCPServer:
-        """Persist a server row for the exact `(name, project_id)` key."""
+        """Persist a server row for the exact `(name, project_id)` key.
+
+        A supplied `template_id` writes the template-owned columns
+        (`template_id`, `template_values`, `runtime_hook`) as a unit, so
+        re-pointing an instance at a hook-less template clears the stale hook;
+        manual upserts without template fields preserve existing provenance.
+        """
         server_id = str(uuid.uuid4())
         requires_oauth_value = _parse_mcp_bool(
             requires_oauth,
@@ -140,8 +146,14 @@ class MCPServerStorageMixin:
                     END,
                     connect_timeout = COALESCE(excluded.connect_timeout, mcp_servers.connect_timeout),
                     template_id = COALESCE(excluded.template_id, mcp_servers.template_id),
-                    template_values = COALESCE(excluded.template_values, mcp_servers.template_values),
-                    runtime_hook = COALESCE(excluded.runtime_hook, mcp_servers.runtime_hook),
+                    template_values = CASE
+                        WHEN excluded.template_id IS NOT NULL THEN excluded.template_values
+                        ELSE COALESCE(excluded.template_values, mcp_servers.template_values)
+                    END,
+                    runtime_hook = CASE
+                        WHEN excluded.template_id IS NOT NULL THEN excluded.runtime_hook
+                        ELSE COALESCE(excluded.runtime_hook, mcp_servers.runtime_hook)
+                    END,
                     updated_at = now()
                 """,
                 (

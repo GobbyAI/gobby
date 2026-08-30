@@ -338,6 +338,56 @@ class TestLocalMCPManager:
         assert server2.oauth_provider == "github"
         assert server2.connect_timeout == 45.0
 
+    def test_upsert_with_template_id_writes_template_columns_as_a_unit(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        hooked = mcp_manager.upsert_template(
+            name="hooked",
+            project_id=GLOBAL_PROJECT_ID,
+            owner="gobby",
+            definition=_template_definition(runtime_hook="chrome_executable_path"),
+        )
+        hookless = mcp_manager.upsert_template(
+            name="hookless",
+            project_id=GLOBAL_PROJECT_ID,
+            owner="gobby",
+            definition=_template_definition(runtime_hook=None),
+        )
+        created = mcp_manager.upsert(
+            name="browser",
+            transport="stdio",
+            command="npx",
+            project_id=sample_project["id"],
+            template_id=hooked.id,
+            template_values={"channel": "stable"},
+            runtime_hook="chrome_executable_path",
+        )
+
+        manual = mcp_manager.upsert(
+            name="browser",
+            transport="stdio",
+            command="npx",
+            project_id=sample_project["id"],
+        )
+        assert manual.id == created.id
+        assert manual.template == "hooked"
+        assert manual.template_values == {"channel": "stable"}
+        assert manual.runtime_hook == "chrome_executable_path"
+
+        repointed = mcp_manager.upsert(
+            name="browser",
+            transport="stdio",
+            command="uvx",
+            project_id=sample_project["id"],
+            template_id=hookless.id,
+        )
+        assert repointed.id == created.id
+        assert repointed.template == "hookless"
+        assert repointed.template_values is None
+        assert repointed.runtime_hook is None
+
     def test_to_config_preserves_stored_zero_timeout(
         self,
         mcp_manager: LocalMCPManager,

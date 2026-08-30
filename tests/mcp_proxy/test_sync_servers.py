@@ -14,10 +14,17 @@ from gobby.storage.secrets import SecretStore
 pytestmark = pytest.mark.unit
 
 
-def _write_template(directory: Path, name: str, *, enabled: bool = True) -> Path:
+def _write_template(
+    directory: Path,
+    name: str,
+    *,
+    enabled: bool = True,
+    runtime_hook: str | None = None,
+) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{name}.yaml"
     enabled_line = "true" if enabled else "false"
+    hook_lines = [f"runtime_hook: {runtime_hook}"] if runtime_hook else []
     path.write_text(
         "\n".join(
             [
@@ -25,6 +32,7 @@ def _write_template(directory: Path, name: str, *, enabled: bool = True) -> Path
                 f"description: Template {name}",
                 "version: 1",
                 f"enabled: {enabled_line}",
+                *hook_lines,
                 "transport: stdio",
                 "command: npx",
                 f'args: ["-y", "{name}-pkg"]',
@@ -185,3 +193,47 @@ def test_instance_name_and_template_name_are_independent(temp_db: Any, tmp_path:
     assert row.template == "openapi"
     assert manager.get_server("fancy", project_id=GLOBAL_PROJECT_ID) is None
     assert manager.get_server("openapi", project_id=GLOBAL_PROJECT_ID) is None
+
+
+def test_repointing_instance_at_hookless_template_clears_runtime_hook(
+    temp_db: Any, tmp_path: Path
+) -> None:
+    from gobby.mcp_proxy.sync_servers import sync_mcp_server_files
+    from gobby.mcp_proxy.sync_templates import sync_bundled_mcp_templates
+
+    manager = LocalMCPManager(temp_db)
+    templates = tmp_path / "templates"
+    _write_template(templates, "hooked", runtime_hook="chrome_executable_path")
+    _write_template(templates, "hookless")
+    sync_bundled_mcp_templates(temp_db, templates, tag="gobby")
+
+    servers = tmp_path / "servers"
+    _write_instance(servers, "browser.yaml", template="hooked", name="browser")
+    result = sync_mcp_server_files(
+        temp_db,
+        [servers],
+        project_id=None,
+        project_root=None,
+        secret_store=SecretStore(temp_db),
+    )
+    assert result["errors"] == []
+    row = manager.get_server("browser", project_id=GLOBAL_PROJECT_ID)
+    assert row is not None
+    assert row.template == "hooked"
+    assert row.runtime_hook == "chrome_executable_path"
+
+    _write_instance(servers, "browser.yaml", template="hookless", name="browser")
+    result = sync_mcp_server_files(
+        temp_db,
+        [servers],
+        project_id=None,
+        project_root=None,
+        secret_store=SecretStore(temp_db),
+    )
+    assert result["errors"] == []
+    assert result["updated"] == 1
+    repointed = manager.get_server("browser", project_id=GLOBAL_PROJECT_ID)
+    assert repointed is not None
+    assert repointed.id == row.id
+    assert repointed.template == "hookless"
+    assert repointed.runtime_hook is None
