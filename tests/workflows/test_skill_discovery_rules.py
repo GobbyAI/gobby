@@ -219,10 +219,12 @@ class TestDiscoverSkillHubsOnTurnStart:
             "mcp_call",
         ]
         assert body.effects[0].skill == "loading-skills"
+        assert getattr(body.effects[0], "delivery", None) == "on_receipt"
         assert body.effects[1].server == "gobby-skills"
         assert body.effects[1].tool == "list_hubs"
         assert body.effects[1].inject_result is True
         assert body.effects[1].success_variable == "skill_discovery_instructions_shown"
+        assert getattr(body.effects[1], "delivery", None) == "on_receipt"
 
     @pytest.mark.asyncio
     async def test_injects_guidance_and_sets_guard_after_success(self, db) -> None:
@@ -3420,9 +3422,9 @@ class TestRequireBashSkillStructure:
         row = manager.get_by_name("require-bash-skill")
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
-        assert len(body.effects) == 1
-        assert body.effects[0].type == "block"
-        assert body.effects[0].reason == _skill_fetch_template("bash")
+        assert len(body.resolved_effects) == 1
+        assert body.resolved_effects[0].type == "block"
+        assert body.resolved_effects[0].reason == _skill_fetch_template("bash")
 
 
 # --- require-bash-skill condition evaluation ---

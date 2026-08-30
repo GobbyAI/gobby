@@ -11,8 +11,10 @@ rules:
       and not variables.get('handoff_pull_pending')
     effects:
       - type: load_skill
+        delivery: on_receipt
         skill: loading-skills
       - type: mcp_call
+        delivery: on_receipt
         server: gobby-skills
         tool: list_hubs
         arguments: {}

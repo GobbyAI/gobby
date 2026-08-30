@@ -169,6 +169,8 @@ class TestHandlePlanModeEntry:
         assert effects[1].type == "set_variable"
         assert effects[1].variable == "gobby_plan_consider_shown"
         assert effects[1].value is True
+        assert getattr(effects[0], "delivery", None) == "on_receipt"
+        assert getattr(effects[1], "delivery", None) == "on_receipt"
 
     @pytest.mark.asyncio
     async def test_consider_guidance_fires_once_for_default_agent(self, db) -> None:
@@ -317,6 +319,8 @@ class TestTeachQwenGcodePlanMode:
         assert effects[1].type == "set_variable"
         assert effects[1].variable == "qwen_gcode_plan_hint_shown"
         assert effects[1].value is True
+        assert getattr(effects[0], "delivery", None) == "on_receipt"
+        assert getattr(effects[1], "delivery", None) == "on_receipt"
 
 
 class TestHandlePlanModeExit:

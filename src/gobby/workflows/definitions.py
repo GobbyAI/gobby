@@ -188,6 +188,8 @@ class RuleEffect(BaseModel):
 
     # Per-effect condition (gates this individual effect within a multi-effect rule)
     when: str | None = None
+    # `on_receipt` stages with the payload it suppresses; `eager` persists now.
+    delivery: Literal["eager", "on_receipt"] = "eager"
 
     # block — prevent the action
     reason: str | None = None
@@ -411,6 +413,7 @@ class RuleEffect(BaseModel):
         _default_skip = {
             "background",
             "when",
+            "delivery",
             "auto_approve",
             "inject_result",
             "block_on_failure",

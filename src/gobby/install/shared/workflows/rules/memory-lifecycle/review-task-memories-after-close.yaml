@@ -31,6 +31,7 @@ rules:
       and not variables.get('_memory_review_stop_delivered')
     effects:
       - type: block
+        delivery: on_receipt
         mcp_tools:
           - "gobby-sessions:set_handoff"
         acknowledge_variable: _memory_review_stop_delivered
@@ -53,6 +54,7 @@ rules:
       and not variables.get('_memory_review_stop_delivered')
     effects:
       - type: block
+        delivery: on_receipt
         acknowledge_variable: _memory_review_stop_delivered
         reason: |
           Closed task(s) need one bounded memory review:

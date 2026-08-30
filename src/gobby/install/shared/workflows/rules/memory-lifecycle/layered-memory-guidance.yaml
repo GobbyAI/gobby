@@ -35,6 +35,7 @@ rules:
             {"name": "memory"}
           )
       - type: block
+        delivery: on_receipt
         when: >
           not skill_loaded('memory')
           and not has_open_tool_error(
@@ -57,9 +58,11 @@ rules:
           != variables.get('parent_turn_seq')
     effects:
       - type: inject_context
+        delivery: on_receipt
         template: >
           Memory reminder: search `gobby-memory` before touching unfamiliar code;
           record durable knowledge with a rationale. Most turns need no memory write.
       - type: set_variable
+        delivery: on_receipt
         variable: _memory_reminder_turn_seq
         value: "{{ variables.get('parent_turn_seq') }}"

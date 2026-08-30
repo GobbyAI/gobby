@@ -54,6 +54,7 @@ rules:
       and not variables.get('_gobby_feedback_epoch_reviewed')
     effects:
       - type: block
+        delivery: on_receipt
         mcp_tools:
           - "gobby-sessions:set_handoff"
         acknowledge_variable: _gobby_feedback_epoch_reviewed
@@ -82,6 +83,7 @@ rules:
       and not variables.get('_gobby_feedback_epoch_reviewed')
     effects:
       - type: block
+        delivery: on_receipt
         acknowledge_variable: _gobby_feedback_epoch_reviewed
         reason: |
           Perform one bounded Gobby-experience survey using only first-hand

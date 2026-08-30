@@ -329,6 +329,39 @@ class TestRuleEffect:
         assert effect.tool is None
         assert effect.arguments is None
         assert effect.background is False
+        assert getattr(effect, "delivery", None) == "eager"
+
+    def test_on_receipt_round_trips_through_json(self) -> None:
+        from gobby.workflows.definitions import RuleEffect
+
+        payload = {
+            "type": "set_variable",
+            "variable": "gobby_plan_consider_shown",
+            "value": True,
+            "delivery": "on_receipt",
+        }
+        effect = RuleEffect.model_validate(payload)
+        assert effect.delivery == "on_receipt"
+        dumped = json.loads(effect.model_dump_json())
+        assert dumped["delivery"] == "on_receipt"
+        restored = RuleEffect.model_validate(dumped)
+        assert restored.delivery == "on_receipt"
+
+    def test_legacy_row_without_delivery_deserializes_eager(self) -> None:
+        from gobby.workflows.definitions import RuleEffect
+
+        effect = RuleEffect.model_validate(
+            {"type": "inject_context", "template": "hello"},
+        )
+        assert getattr(effect, "delivery", None) == "eager"
+
+    def test_invalid_delivery_rejected(self) -> None:
+        from gobby.workflows.definitions import RuleEffect
+
+        with pytest.raises(ValidationError):
+            RuleEffect.model_validate(
+                {"type": "block", "reason": "x", "delivery": "later"},
+            )
 
 
 # --- RuleDefinitionBody tests ---

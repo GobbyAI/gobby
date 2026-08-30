@@ -10,6 +10,7 @@ rules:
     when: "variables.get('plan_mode') and not variables.get('gobby_plan_consider_shown')"
     effects:
       - type: inject_context
+        delivery: on_receipt
         template: |
           Investigate the user's request and repository before mentioning Gobby planning.
 
@@ -32,6 +33,7 @@ rules:
 
           Do not load the `plan` skill until the user chooses Gobby planning or explicitly invokes `$gobby plan` or `/gobby plan`.
       - type: set_variable
+        delivery: on_receipt
         variable: gobby_plan_consider_shown
         value: true
 
@@ -46,10 +48,12 @@ rules:
       and not variables.get('qwen_gcode_plan_hint_shown')
     effects:
       - type: inject_context
+        delivery: on_receipt
         template: |
           Qwen plan mode permits `gcode` through shell command execution for code navigation.
           Use `gcode outline path/to/file`, `gcode search "query"`, and `gcode symbol <full-uuid>` when inspecting code. Get full UUIDs from search or outline results.
           File edits and write/destructive shell commands remain blocked until plan approval.
       - type: set_variable
+        delivery: on_receipt
         variable: qwen_gcode_plan_hint_shown
         value: true

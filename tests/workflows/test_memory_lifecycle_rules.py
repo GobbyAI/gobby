@@ -368,6 +368,7 @@ class TestLayeredMemoryGuidance:
         assert body.event.value == "turn_start"
         assert effects[0].type == "load_skill"
         assert effects[0].skill == "memory"
+        assert getattr(effects[0], "delivery", None) == "eager"
         assert "_memory_initial_stop_checked" in (body.when or "")
         assert "has_open_tool_error" in (body.when or "")
         assert "handoff_pull_pending" in (body.when or "")
@@ -439,10 +440,12 @@ class TestLayeredMemoryGuidance:
         assert effects[0].type == "set_variable"
         assert effects[0].variable == "_memory_initial_stop_checked"
         assert effects[0].value is True
+        assert getattr(effects[0], "delivery", None) == "eager"
         assert "skill_loaded('memory')" in (effects[0].when or "")
         assert "has_open_tool_error" in (effects[0].when or "")
         assert effects[1].type == "block"
         assert effects[1].acknowledge_variable == "_memory_initial_stop_checked"
+        assert getattr(effects[1], "delivery", None) == "on_receipt"
         assert "not skill_loaded('memory')" in (effects[1].when or "")
         assert "has_open_tool_error" in (effects[1].when or "")
 
@@ -476,6 +479,10 @@ class TestLayeredMemoryGuidance:
             "Memory reminder: search `gobby-memory` before touching unfamiliar code; "
             "record durable knowledge with a rationale. Most turns need no memory write.\n"
         )
+        assert getattr(body.resolved_effects[0], "delivery", None) == "on_receipt"
+        assert body.resolved_effects[1].type == "set_variable"
+        assert body.resolved_effects[1].variable == "_memory_reminder_turn_seq"
+        assert getattr(body.resolved_effects[1], "delivery", None) == "on_receipt"
 
         first = SafeExpressionEvaluator(
             {
@@ -958,6 +965,7 @@ class TestGuardPlanMemoryWrites:
             "gobby-memory:update_memory",
         ]
         assert effect.acknowledge_variable == "plan_memory_write_nudge_fired"
+        assert getattr(effect, "delivery", None) == "on_receipt"
         assert effect.reason == (
             "Use the plan artifact or evidence for plan drafts, enhancement "
             "suggestions, and review findings. Memory is reserved for explicit "
