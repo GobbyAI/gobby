@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
+from gobby.mcp_proxy.client_manager import server_registry as server_registry_mod
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
@@ -1041,7 +1042,7 @@ def test_import_mcp_server_respects_project_and_global_scope(
     with patch(
         "gobby.mcp_proxy.importer.MCPServerImporter",
         return_value=importer,
-    ):
+    ) as importer_cls:
         project = client.post(
             "/api/mcp/servers/import",
             json={"from_project": "other", "project_id": project_id},
@@ -1054,6 +1055,8 @@ def test_import_mcp_server_respects_project_and_global_scope(
     assert project.json()["success"] is True
     assert global_scope.json()["success"] is True
     assert importer.import_from_project.await_count == 2
+    assert importer_cls.call_args_list[0].kwargs["current_project_id"] == project_id
+    assert importer_cls.call_args_list[1].kwargs["current_project_id"] == GLOBAL_PROJECT_ID
 
 
 @pytest.mark.asyncio
@@ -1346,8 +1349,34 @@ async def test_concurrent_patches_and_delete_serialize_under_per_id_lock(
     server_id = added["id"]
     app = _mcp_app(_http_server_for(manager))
     transport = ASGITransport(app=app)
+    orig_patch = server_registry_mod._update_server_patch
+    orig_remove = server_registry_mod.remove_server
+
+    async def _race(count: int, left: Any, right: Any) -> tuple[Any, Any]:
+        barrier = asyncio.Barrier(count)
+
+        async def gated_patch(
+            mgr: Any,
+            sid: str,
+            patch: Any,
+            project_id: str | None = None,
+        ) -> dict[str, Any]:
+            await barrier.wait()
+            return await orig_patch(mgr, sid, patch, project_id)
+
+        async def gated_remove(mgr: Any, sid: str, project_id: str | None = None) -> dict[str, Any]:
+            await barrier.wait()
+            return await orig_remove(mgr, sid, project_id)
+
+        with (
+            patch.object(server_registry_mod, "_update_server_patch", gated_patch),
+            patch.object(server_registry_mod, "remove_server", gated_remove),
+        ):
+            return await asyncio.gather(left, right)
+
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        first, second = await asyncio.gather(
+        first, second = await _race(
+            2,
             client.patch(
                 "/api/mcp/servers/demo-instance",
                 json={"values": {"region": "eu"}, "project_id": project_id},
@@ -1364,10 +1393,30 @@ async def test_concurrent_patches_and_delete_serialize_under_per_id_lock(
         assert _template_values(row)["region"] == "eu"
         assert _template_values(row)["mode"] == "slow"
 
-        patch_task, delete_task = await asyncio.gather(
+        null_resp, other_resp = await _race(
+            2,
             client.patch(
                 "/api/mcp/servers/demo-instance",
                 json={"values": {"tag": None}, "project_id": project_id},
+            ),
+            client.patch(
+                "/api/mcp/servers/demo-instance",
+                json={"values": {"region": "ap"}, "project_id": project_id},
+            ),
+        )
+        assert null_resp.status_code == 200
+        assert other_resp.status_code == 200
+        row = storage.get_server_by_id(server_id)
+        assert row is not None
+        assert "tag" not in _template_values(row)
+        assert _template_values(row)["region"] == "ap"
+        assert _template_values(row)["mode"] == "slow"
+
+        patch_task, delete_task = await _race(
+            2,
+            client.patch(
+                "/api/mcp/servers/demo-instance",
+                json={"values": {"mode": "fast"}, "project_id": project_id},
             ),
             client.delete(
                 "/api/mcp/servers/demo-instance",

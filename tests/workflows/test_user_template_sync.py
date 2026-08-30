@@ -9,8 +9,9 @@ Covers:
 
 import json
 from pathlib import Path
-from typing import Literal
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from typing import Any, Literal
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -611,12 +612,17 @@ class TestMCPUserTemplateSync:
         assert server.template == "demo"
 
 
-def test_synced_instance_is_reconciled_into_live_manager(
+@pytest.mark.asyncio
+async def test_synced_instance_is_reconciled_into_live_manager(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import gobby.paths
     import gobby.utils.project_context
-    from gobby.cli.installers.shared import _sync_user_templates_to_db
+    from gobby.cli.installers.shared import (
+        _reconcile_synced_mcp_instances,
+        _sync_user_templates_to_db,
+    )
+    from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.projects import GLOBAL_PROJECT_ID
 
@@ -646,7 +652,13 @@ def test_synced_instance_is_reconciled_into_live_manager(
 
     calls: list[dict[str, object]] = []
 
-    def fake_call_mcp_api(client, endpoint, method="POST", json_data=None, timeout=30.0):
+    def fake_call_mcp_api(
+        client: Any,
+        endpoint: str,
+        method: str = "POST",
+        json_data: dict[str, Any] | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
         calls.append({"endpoint": endpoint, "method": method, "json": dict(json_data or {})})
         return {"success": True}
 
@@ -668,9 +680,26 @@ def test_synced_instance_is_reconciled_into_live_manager(
     assert body.get("server_id") == row.id
     assert body.get("scope") == "global" or body.get("project_id") == str(row.project_id)
 
+    live = MCPClientManager(
+        server_configs=[],
+        project_id=GLOBAL_PROJECT_ID,
+        mcp_db_manager=LocalMCPManager(temp_db),
+        lazy_connect=True,
+    )
+    assert live.get_server_config(str(row.id)) is None
+    session = MagicMock()
+    session.list_tools = AsyncMock(return_value=SimpleNamespace(tools=[]))
+    with patch(
+        "gobby.mcp_proxy.client_manager.connections._connect_with_retries",
+        AsyncMock(return_value=session),
+    ):
+        await live.refresh_server(str(row.id))
+    loaded = live.get_server_config(str(row.id))
+    assert loaded is not None
+    assert loaded.name == "live-instance"
+    assert live.has_server(str(row.id))
+
     monkeypatch.setattr(mcp_proxy_mod, "call_mcp_api", lambda *args, **kwargs: None)
     with patch("click.echo") as echo:
-        skipped = _sync_user_templates_to_db(temp_db)
-    assert skipped >= 0
-    echoed = " ".join(str(call.args[0]) for call in echo.call_args_list if call.args)
-    assert "skip" in echoed.lower() or "not running" in echoed.lower() or echo.called
+        _reconcile_synced_mcp_instances(temp_db, [row.id])
+    echo.assert_called_with("MCP live reconcile skipped: daemon not reachable")
