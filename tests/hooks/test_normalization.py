@@ -1004,7 +1004,7 @@ class TestCanonicalToolMetadata:
     def test_exec_command_search_over_non_source_files_is_not_code_navigation(self) -> None:
         for command in (
             "grep -n '^#' .gobby/plans/herdr-terminal-client.md",
-            "grep pattern docs/research/gobby-feedback/inbox/2026-08-27T183821-claude.md",
+            "grep pattern docs/research/agent-feedback-loops.md",
             "git diff --numstat a..b | awk '{print $3}'; grep -n needle .gobby/plans/x.md",
             "rg -n needle notes.txt CHANGELOG.md",
         ):

@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.handoff import (
+    FEEDBACK_DISPOSITIONS,
+    FEEDBACK_FREQUENCIES,
+    FEEDBACK_KINDS,
     consume_pending_handoff,
     normalize_feedback_observations,
     write_feedback_batch,
@@ -21,12 +24,27 @@ FEEDBACK_OBSERVATION_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "source": {"type": "string"},
-        "kind": {"type": "string"},
+        "kind": {
+            "type": "string",
+            "enum": list(FEEDBACK_KINDS),
+            "description": (
+                "Pick the closest listed kind. Use 'other' only when no listed kind fits; "
+                "it requires kind_other_label."
+            ),
+        },
+        "kind_other_label": {
+            "type": "string",
+            "description": (
+                "Short label naming the unlisted kind. Required iff kind is 'other'; "
+                "rejected when it restates a listed kind. Recurring labels are promoted "
+                "to the enum by the nightly review loop."
+            ),
+        },
         "evidence": {"type": "string"},
         "impact": {"type": "string"},
-        "frequency": {"type": "string"},
+        "frequency": {"type": "string", "enum": list(FEEDBACK_FREQUENCIES)},
         "suggestion": {"type": "string"},
-        "disposition": {"type": "string"},
+        "disposition": {"type": "string", "enum": list(FEEDBACK_DISPOSITIONS)},
     },
     "required": ["source", "kind", "evidence", "impact", "frequency"],
     "additionalProperties": False,

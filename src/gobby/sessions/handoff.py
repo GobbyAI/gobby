@@ -18,6 +18,10 @@ ADVISORY_SKILLS_VARIABLE = "compact_resume_advisory_skills"
 
 _OPTIONAL_FEEDBACK_FIELDS = ("suggestion", "disposition")
 
+FEEDBACK_KINDS = ("friction", "bug", "noise", "surprise", "missing-affordance", "useful", "other")
+FEEDBACK_FREQUENCIES = ("once", "repeated", "always")
+FEEDBACK_DISPOSITIONS = ("worked-around", "filed-task", "fixed", "escalated", "noted")
+
 
 def build_handoff_continue_prompt() -> str:
     """Return the pull-only continuation directive used after compact and clear."""
@@ -36,6 +40,7 @@ class FeedbackObservation:
     frequency: str
     suggestion: str | None = None
     disposition: str | None = None
+    kind_other_label: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,18 +104,53 @@ def normalize_feedback_observations(
             optional[field] = (
                 None if value is None else _nonblank(value, f"observations[{index}].{field}")
             )
+        kind = _nonblank(raw.get("kind"), f"observations[{index}].kind")
+        if kind not in FEEDBACK_KINDS:
+            raise ValueError(
+                f"observations[{index}].kind must be one of {', '.join(FEEDBACK_KINDS)}"
+            )
+        frequency = _nonblank(raw.get("frequency"), f"observations[{index}].frequency")
+        if frequency not in FEEDBACK_FREQUENCIES:
+            raise ValueError(
+                f"observations[{index}].frequency must be one of {', '.join(FEEDBACK_FREQUENCIES)}"
+            )
+        if optional["disposition"] is not None and optional["disposition"] not in (
+            FEEDBACK_DISPOSITIONS
+        ):
+            raise ValueError(
+                f"observations[{index}].disposition must be one of "
+                f"{', '.join(FEEDBACK_DISPOSITIONS)}"
+            )
         normalized.append(
             FeedbackObservation(
                 source=_nonblank(raw.get("source"), f"observations[{index}].source"),
-                kind=_nonblank(raw.get("kind"), f"observations[{index}].kind"),
+                kind=kind,
                 evidence=_nonblank(raw.get("evidence"), f"observations[{index}].evidence"),
                 impact=_nonblank(raw.get("impact"), f"observations[{index}].impact"),
-                frequency=_nonblank(raw.get("frequency"), f"observations[{index}].frequency"),
+                frequency=frequency,
                 suggestion=optional["suggestion"],
                 disposition=optional["disposition"],
+                kind_other_label=_normalize_other_label(raw.get("kind_other_label"), kind, index),
             )
         )
     return normalized
+
+
+def _normalize_other_label(value: Any, kind: str, index: int) -> str | None:
+    """Enforce the strict `other` gate: label present iff kind is `other`."""
+    if kind != "other":
+        if value is not None:
+            raise ValueError(
+                f"observations[{index}].kind_other_label is only allowed when kind is 'other'"
+            )
+        return None
+    label = _nonblank(value, f"observations[{index}].kind_other_label (required for kind 'other')")
+    slug = label.lower().replace("_", "-").replace(" ", "-")
+    if slug in FEEDBACK_KINDS:
+        raise ValueError(
+            f"observations[{index}].kind_other_label restates the '{slug}' kind; use it directly"
+        )
+    return label
 
 
 def write_feedback_batch(
@@ -328,10 +368,10 @@ def _insert_feedback_rows(
     conn.executemany(
         """
         INSERT INTO session_feedback (
-            id, session_id, source, kind, evidence, impact, frequency,
+            id, session_id, source, kind, kind_other_label, evidence, impact, frequency,
             suggestion, disposition, reviewed, created_at
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s)
         """,
         [
             (
@@ -339,6 +379,7 @@ def _insert_feedback_rows(
                 session_id,
                 observation.source,
                 observation.kind,
+                observation.kind_other_label,
                 observation.evidence,
                 observation.impact,
                 observation.frequency,

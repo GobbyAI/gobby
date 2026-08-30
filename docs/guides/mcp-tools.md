@@ -511,7 +511,7 @@ contract and [spec-writing.md](./spec-writing.md) for the authoring flow.
 | `search_session_messages` | Search rendered transcript messages by substring. |
 | `get_session_commits` | Git commits made during a session timeframe. |
 | `get_usage_breakdown` | Token usage broken down by source and model over a period. |
-| `feedback` | Write Gobby-experience survey observations into `session_feedback`. Empty `observations` is valid. |
+| `feedback` | Write Gobby-experience survey observations into `session_feedback` (enum `kind`/`frequency`/`disposition`; `kind` `other` requires `kind_other_label`). Empty `observations` is valid. |
 | `set_handoff` | Set handoff context (agent-authored or auto-fallback). Optional `to_session` peer delivery. |
 | `get_handoff` | Read handoff context from a session. |
 | `get_handoff` | Wait for a session's `summary_markdown` to become available. |

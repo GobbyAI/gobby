@@ -261,6 +261,13 @@ is never rendered into the handoff. Bundled survey gates require the dedicated
 `gobby-sessions:feedback` tool and must not duplicate the same observations in
 `gobby_feedback` on retry.
 
+Observation labels are enums: `kind` is `friction`, `bug`, `noise`, `surprise`,
+`missing-affordance`, `useful`, or `other`; `frequency` is `once`, `repeated`, or
+`always`; optional `disposition` is `worked-around`, `filed-task`, `fixed`,
+`escalated`, or `noted`. Use `other` only when no listed kind fits — it requires
+`kind_other_label`, which is rejected when it restates a listed kind. Recurring
+labels are candidates for promotion into the enum by the nightly review loop.
+
 ```python
 call_tool("gobby-sessions", "feedback", {
     "observations": [],

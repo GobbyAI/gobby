@@ -209,6 +209,8 @@ class TestSessionFeedbackRules:
         stop_body = RuleDefinitionBody.model_validate(stop.definition_json)
         stop_reason = stop_body.resolved_effects[0].reason or ""
         assert "gobby-sessions:feedback" in stop_reason
+        assert "missing-affordance" in stop_reason
+        assert "kind_other_label" in stop_reason
         assert INBOX_PATH not in stop_reason
         assert "#21128" not in stop_reason
 
@@ -218,6 +220,8 @@ class TestSessionFeedbackRules:
         handoff_body = RuleDefinitionBody.model_validate(handoff.definition_json)
         handoff_reason = handoff_body.resolved_effects[0].reason or ""
         assert "gobby-sessions:feedback" in handoff_reason
+        assert "missing-affordance" in handoff_reason
+        assert "kind_other_label" in handoff_reason
         assert INBOX_PATH not in handoff_reason
         assert "set_handoff" in (handoff_body.when or "")
         assert "compact_self" not in (handoff_body.when or "")
