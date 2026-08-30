@@ -370,7 +370,12 @@ def purge_project(project_ref: str, confirm: str) -> None:
 @click.argument("project_ref")
 @click.argument("path", required=False)
 def rebind_project(project_ref: str, path: str | None) -> None:
-    """Rebind this machine's checkout for PROJECT_REF to PATH (default: cwd)."""
+    """Rebind this machine's checkout for PROJECT_REF to PATH (default: cwd).
+
+    Verifies the local machine, validates the marker at PATH, then rebinds.
+    Soft-deleted projects stay deleted. Ambiguous deleted names need a UUID
+    or a PATH whose marker selects one row.
+    """
     manager = get_project_manager()
     candidate = _ordinary_root_candidate(path)
     with _checkout_cli():
