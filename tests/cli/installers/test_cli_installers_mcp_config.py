@@ -1,7 +1,6 @@
 """Tests for MCP config installation functions.
 
-Covers configure/remove for JSON, TOML, and project-scoped config files,
-as well as install_default_mcp_servers.
+Covers configure/remove for JSON, TOML, and project-scoped config files.
 """
 
 from __future__ import annotations
@@ -10,16 +9,14 @@ import json
 import tomllib
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import psycopg
 import pytest
 
 from gobby.cli.installers.mcp_config import (
     configure_mcp_server_json,
     configure_mcp_server_toml,
     configure_project_mcp_server,
-    install_default_mcp_servers,
     remove_mcp_server_json,
     remove_mcp_server_toml,
     remove_project_mcp_server,
@@ -27,8 +24,6 @@ from gobby.cli.installers.mcp_config import (
 )
 from gobby.cli.installers.mcp_config_json import _resolved_gobby_mcp_command
 from gobby.cli.installers.mcp_config_shared import _remove_toml_table_block
-
-_CHROME_DEVTOOLS_PACKAGE = "chrome-devtools-mcp@0.21.0"
 
 pytestmark = pytest.mark.unit
 
@@ -853,292 +848,3 @@ class TestRemoveProjectMCPServer:
             result = remove_project_mcp_server(project_path)
         assert result["success"] is False
         assert "Failed to create backup" in result["error"]
-
-
-# ---------------------------------------------------------------------------
-# install_default_mcp_servers
-# ---------------------------------------------------------------------------
-
-
-class TestInstallDefaultMCPServers:
-    """Tests for install_default_mcp_servers."""
-
-    def test_installs_defaults(self, tmp_path: Path) -> None:
-        mcp_path = tmp_path / ".gobby" / ".mcp.json"
-        mock_secret_store = MagicMock()
-        mock_secret_store.exists.return_value = False
-        with (
-            patch(
-                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
-                return_value=mcp_path,
-            ),
-            patch("gobby.storage.hub.runtime.runtime_hub_database"),
-            patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
-            patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
-        ):
-            mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 3
-            result = install_default_mcp_servers()
-        assert result["success"] is True
-        assert len(result["servers_added"]) > 0
-        assert "github" in result["servers_added"]
-        assert "playwright" in result["servers_added"]
-        assert "chrome-devtools" in result["servers_added"]
-        mock_mcp_mgr.return_value.import_from_mcp_json.assert_called_once()
-
-        config = json.loads(mcp_path.read_text())
-        playwright_server = next(
-            server for server in config["servers"] if server["name"] == "playwright"
-        )
-        assert playwright_server["args"] == ["-y", "@playwright/mcp@latest"]
-        chrome_server = next(
-            server for server in config["servers"] if server["name"] == "chrome-devtools"
-        )
-        assert chrome_server["args"] == [
-            "-y",
-            _CHROME_DEVTOOLS_PACKAGE,
-            "--no-usage-statistics",
-        ]
-
-    def test_skips_existing_servers(self, tmp_path: Path) -> None:
-        mcp_path = tmp_path / ".gobby" / ".mcp.json"
-        mcp_path.parent.mkdir(parents=True, exist_ok=True)
-        mcp_path.write_text(
-            json.dumps(
-                {
-                    "servers": [
-                        {"name": "github", "transport": "stdio", "command": "npx"},
-                        {"name": "linear", "transport": "stdio", "command": "npx"},
-                        {"name": "brave-search", "transport": "stdio", "command": "npx"},
-                        {"name": "context7", "transport": "stdio", "command": "npx"},
-                        {"name": "playwright", "transport": "stdio", "command": "npx"},
-                        {"name": "chrome-devtools", "transport": "stdio", "command": "npx"},
-                    ]
-                }
-            )
-        )
-        mock_secret_store = MagicMock()
-        mock_secret_store.exists.return_value = False
-        with (
-            patch(
-                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
-                return_value=mcp_path,
-            ),
-            patch("gobby.storage.hub.runtime.runtime_hub_database"),
-            patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
-            patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
-        ):
-            mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 0
-            result = install_default_mcp_servers()
-        assert result["success"] is True
-        assert len(result["servers_skipped"]) == 6
-        assert len(result["servers_added"]) == 0
-        mock_mcp_mgr.return_value.import_from_mcp_json.assert_called_once()
-
-    def test_read_error(self, tmp_path: Path) -> None:
-        mcp_path = tmp_path / ".gobby" / ".mcp.json"
-        mcp_path.parent.mkdir(parents=True, exist_ok=True)
-        mcp_path.write_text("bad json{{{")
-        with patch(
-            "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
-            return_value=mcp_path,
-        ):
-            result = install_default_mcp_servers()
-        assert result["success"] is False
-        assert "Failed to read" in result["error"]
-
-    def test_empty_file(self, tmp_path: Path) -> None:
-        mcp_path = tmp_path / ".gobby" / ".mcp.json"
-        mcp_path.parent.mkdir(parents=True, exist_ok=True)
-        mcp_path.write_text("")
-        mock_secret_store = MagicMock()
-        mock_secret_store.exists.return_value = False
-        with (
-            patch(
-                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
-                return_value=mcp_path,
-            ),
-            patch("gobby.storage.hub.runtime.runtime_hub_database"),
-            patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
-            patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
-        ):
-            mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 3
-            result = install_default_mcp_servers()
-        assert result["success"] is True
-        assert len(result["servers_added"]) > 0
-        assert mcp_path.read_text() != ""
-
-    def test_repairs_misconfigured_transport(self, tmp_path: Path) -> None:
-        mcp_path = tmp_path / ".gobby" / ".mcp.json"
-        mcp_path.parent.mkdir(parents=True, exist_ok=True)
-        mcp_path.write_text(
-            json.dumps(
-                {
-                    "servers": [
-                        {
-                            "name": "github",
-                            "transport": "http",
-                            "url": "http://old-url",
-                            "env": {"WRONG_KEY": "old"},
-                        },
-                    ]
-                }
-            )
-        )
-        mock_secret_store = MagicMock()
-        mock_secret_store.exists.return_value = False
-        with (
-            patch(
-                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
-                return_value=mcp_path,
-            ),
-            patch("gobby.storage.hub.runtime.runtime_hub_database"),
-            patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
-            patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
-        ):
-            mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 3
-            result = install_default_mcp_servers()
-        assert result["success"] is True
-        assert "github" in result["servers_repaired"]
-
-    def test_no_servers_key_in_existing_config(self, tmp_path: Path) -> None:
-        mcp_path = tmp_path / ".gobby" / ".mcp.json"
-        mcp_path.parent.mkdir(parents=True, exist_ok=True)
-        mcp_path.write_text(json.dumps({"other_key": True}))
-        mock_secret_store = MagicMock()
-        mock_secret_store.exists.return_value = False
-        with (
-            patch(
-                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
-                return_value=mcp_path,
-            ),
-            patch("gobby.storage.hub.runtime.runtime_hub_database"),
-            patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
-            patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
-        ):
-            mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 3
-            result = install_default_mcp_servers()
-        assert result["success"] is True
-        assert len(result["servers_added"]) > 0
-
-    def test_optional_secret_args_store_secret_reference(self, tmp_path: Path) -> None:
-        """Existing optional secrets should be stored as references, not plaintext."""
-        mcp_path = tmp_path / ".gobby" / ".mcp.json"
-        mock_secret_store = MagicMock()
-        mock_secret_store.exists.return_value = True
-        mock_secret_store.get.return_value = "plain-secret"
-
-        with (
-            patch(
-                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
-                return_value=mcp_path,
-            ),
-            patch("gobby.storage.hub.runtime.runtime_hub_database"),
-            patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
-            patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
-        ):
-            mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 3
-            result = install_default_mcp_servers()
-
-        assert result["success"] is True
-        config = json.loads(mcp_path.read_text())
-        context7 = next(server for server in config["servers"] if server["name"] == "context7")
-        assert context7["args"] == [
-            "-y",
-            "@upstash/context7-mcp",
-            "--api-key",
-            "$secret:context7_api_key",
-        ]
-        mock_secret_store.get.assert_not_called()
-
-    def test_secret_store_operational_error_skips_optional_args(
-        self,
-        tmp_path: Path,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """Expected PostgreSQL failures should skip optional secret-backed MCP args."""
-        mcp_path = tmp_path / ".gobby" / ".mcp.json"
-
-        with (
-            caplog.at_level("WARNING", logger="gobby.cli.installers.mcp_config"),
-            patch(
-                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
-                return_value=mcp_path,
-            ),
-            patch("gobby.storage.hub.runtime.runtime_hub_database"),
-            patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
-            patch(
-                "gobby.storage.secrets.SecretStore",
-                side_effect=psycopg.OperationalError("database is locked"),
-            ),
-        ):
-            mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 3
-            result = install_default_mcp_servers()
-
-        assert result["success"] is True
-        assert "Failed to initialize secret store for optional MCP args" in caplog.text
-        config = json.loads(mcp_path.read_text())
-        context7 = next(server for server in config["servers"] if server["name"] == "context7")
-        assert context7["args"] == ["-y", "@upstash/context7-mcp"]
-
-    def test_secret_store_unexpected_init_error_reraises(self, tmp_path: Path) -> None:
-        """Unexpected secret-store init errors should still surface."""
-        mcp_path = tmp_path / ".gobby" / ".mcp.json"
-
-        with (
-            patch(
-                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
-                return_value=mcp_path,
-            ),
-            patch("gobby.storage.hub.runtime.runtime_hub_database"),
-            patch("gobby.storage.secrets.SecretStore", side_effect=TypeError("bad init")),
-        ):
-            with pytest.raises(TypeError, match="bad init"):
-                install_default_mcp_servers()
-
-    def test_optional_secret_read_postgres_error_skips_extra_args(
-        self,
-        tmp_path: Path,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """Expected PostgreSQL read failures should omit optional extra args."""
-        mcp_path = tmp_path / ".gobby" / ".mcp.json"
-        mock_secret_store = MagicMock()
-        mock_secret_store.exists.side_effect = psycopg.DatabaseError("read failed")
-
-        with (
-            caplog.at_level("WARNING", logger="gobby.cli.installers.mcp_config"),
-            patch(
-                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
-                return_value=mcp_path,
-            ),
-            patch("gobby.storage.hub.runtime.runtime_hub_database"),
-            patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
-            patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
-        ):
-            mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 3
-            result = install_default_mcp_servers()
-
-        assert result["success"] is True
-        assert "Failed to read optional MCP secret" in caplog.text
-        assert "context7_api_key" not in caplog.text
-        config = json.loads(mcp_path.read_text())
-        context7 = next(server for server in config["servers"] if server["name"] == "context7")
-        assert context7["args"] == ["-y", "@upstash/context7-mcp"]
-
-    def test_optional_secret_read_unexpected_error_reraises(self, tmp_path: Path) -> None:
-        """Unexpected optional-secret read errors should still surface."""
-        mcp_path = tmp_path / ".gobby" / ".mcp.json"
-        mock_secret_store = MagicMock()
-        mock_secret_store.exists.side_effect = TypeError("bad read")
-
-        with (
-            patch(
-                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
-                return_value=mcp_path,
-            ),
-            patch("gobby.storage.hub.runtime.runtime_hub_database"),
-            patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
-        ):
-            with pytest.raises(TypeError, match="bad read"):
-                install_default_mcp_servers()
-        assert mock_secret_store.get.call_count == 0

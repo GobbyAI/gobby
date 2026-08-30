@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, call, patch
 
@@ -22,6 +23,7 @@ from gobby.cli.install import install as install_command
 from gobby.cli.install_setup_rtk import RtkInstallStatus
 from gobby.config.skills import HubConfig, SkillsConfig
 from gobby.storage.config_mutations import ConfigPatch
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
 
@@ -333,26 +335,23 @@ class TestPromptHubApiKeys:
 
 
 class TestInstallSummary:
-    def test_forwards_injected_db_and_secret_store_to_prompts(self) -> None:
+    def test_forwards_injected_db_and_secret_store_to_prompts(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         db = MagicMock()
         db.fetchone.return_value = None
+        db.list_templates.return_value = [SimpleNamespace(name="github")]
         secret_store = MagicMock()
 
-        with (
-            patch(
-                "gobby.cli._install_prompts._prompt_api_keys",
-                return_value={"stored": 0, "skipped": 0, "env_found": 0, "already_configured": 1},
-            ) as mock_prompt_api,
-            patch(
-                "gobby.cli._install_prompts._prompt_hub_api_keys",
-                return_value={
-                    "stored": 0,
-                    "skipped": 0,
-                    "already_configured": 0,
-                    "unresolved": [],
-                },
-            ) as mock_prompt_hub,
-        ):
+        with patch(
+            "gobby.cli._install_prompts._prompt_hub_api_keys",
+            return_value={
+                "stored": 0,
+                "skipped": 0,
+                "already_configured": 0,
+                "unresolved": [],
+            },
+        ) as mock_prompt_hub:
             assert (
                 _echo_install_summary(
                     {"codex": {"success": True}},
@@ -363,13 +362,11 @@ class TestInstallSummary:
                 is True
             )
 
-        mock_prompt_api.assert_called_once_with(
-            no_interactive=True,
-            db=db,
-            secret_store=secret_store,
-        )
-        assert mock_prompt_api.call_count == 1
-        assert mock_prompt_api.call_args is not None
+        output = capsys.readouterr().out
+        assert "github" in output
+        assert "gobby mcp-proxy add-server <name> --template <template> [--global]" in output
+        db.list_templates.assert_called_once_with(project_id=GLOBAL_PROJECT_ID)
+        assert db.list_templates.call_count == 1
         mock_prompt_hub.assert_called_once_with(
             no_interactive=True,
             db=db,
