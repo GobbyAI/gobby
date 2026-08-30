@@ -52,6 +52,25 @@ class MCPError(Exception):
         self.missing_secrets = missing_secrets
 
 
+class TemplateOwnedFieldsError(ValueError):
+    """A PATCH named template-owned runtime fields on a templated instance."""
+
+    error = "template_owned_fields"
+
+    def __init__(self, fields: list[str]) -> None:
+        self.fields = fields
+        super().__init__("template_owned_fields")
+
+
+class TemplateValuesInvalidError(ValueError):
+    """Merged template values failed expand_template validation."""
+
+    error = "template_values_invalid"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
 class ToolProxyErrorCode(str, Enum):
     """Structured error codes for ToolProxyService responses.
 

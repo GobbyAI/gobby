@@ -250,20 +250,51 @@ available at `/mcp`.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/mcp/servers` | List internal and configured external MCP servers. |
-| `POST` | `/api/mcp/servers` | Add an MCP server config. |
-| `POST` | `/api/mcp/servers/import` | Import MCP server config from a project, GitHub repo, or search query. |
-| `DELETE` | `/api/mcp/servers/{name}` | Remove an MCP server config. |
+| `GET` | `/api/mcp/servers` | List servers visible to the resolved project. Each row includes `id`, `scope`, `template`, `template_values`, and `missing_secrets`. |
+| `POST` | `/api/mcp/servers` | Add a server. Accepts a manual payload (`name`, `transport`, `command`, `args`, `url`, `env`, `enabled`) or `template`/`values`/`scope`. |
+| `PATCH` | `/api/mcp/servers/{name}` | Patch the exact `(name, resolved project)` row. Templated instances reject template-owned runtime fields with `400 template_owned_fields`. |
+| `POST` | `/api/mcp/servers/import` | Import MCP server config from a project, GitHub repo, or search query. Honors `scope`/`project_id`. |
+| `DELETE` | `/api/mcp/servers/{name}` | Remove the exact `(name, resolved project)` row. |
+| `GET` | `/api/mcp/templates` | List templates visible to the resolved project with parameter contracts. |
 | `GET` | `/api/mcp/status` | Return MCP registry/status data. |
-| `POST` | `/api/mcp/refresh` | Refresh MCP tool registry data. |
+| `POST` | `/api/mcp/refresh` | Refresh one resolved instance via `refresh_server`. Body may include `server`, `server_id`, `project_id`, `scope`, and `force`. |
 | `GET` | `/api/mcp/tools` | List tools across servers. |
 | `POST` | `/api/mcp/tools/search` | Search tools. |
 | `POST` | `/api/mcp/tools/recommend` | Recommend tools for a task. |
 | `POST` | `/api/mcp/tools/embed` | Generate tool embeddings. |
-| `POST` | `/api/mcp/tools/schema` | Get one tool schema. |
-| `POST` | `/api/mcp/tools/call` | Call a tool through the progressive-discovery REST endpoint. |
+| `POST` | `/api/mcp/tools/schema` | Get one tool schema. Accepts `server_name` or `server_id`. |
+| `POST` | `/api/mcp/tools/call` | Call a tool through the progressive-discovery REST endpoint. Accepts `server_name` or `server_id`. |
 | `GET` | `/api/mcp/{server_name}/tools` | List tools for one MCP server. |
 | `POST` | `/api/mcp/{server_name}/tools/{tool_name}` | Backward-compatible direct tool call endpoint. |
+
+Scope resolution is the shared `resolve_request_scope` table: `scope: "global"` wins, a session-bound request uses its project, an explicit registered `project_id` is used when no session is bound, `scope: "project"` without a project returns `400 project_scope_unresolved`, and the sessionless web-tab payload (`project_id: ""`, no `scope`) lands in the global scope.
+
+`POST /api/mcp/servers` template body:
+
+```json
+{
+  "name": "demo-instance",
+  "template": "demo",
+  "values": {"region": "us"},
+  "scope": "project",
+  "project_id": "11111111-1111-4111-8111-111111111111"
+}
+```
+
+Manual web-tab body (unchanged):
+
+```json
+{
+  "name": "my-server",
+  "transport": "http",
+  "url": "https://example.test/mcp",
+  "command": null,
+  "args": null,
+  "env": {},
+  "enabled": true,
+  "project_id": ""
+}
+```
 
 ### Preferred Tool Calls
 

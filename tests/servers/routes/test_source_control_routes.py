@@ -6,6 +6,7 @@ functions using create_http_server() with mocked services.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import time
 from types import SimpleNamespace
@@ -338,7 +339,7 @@ class TestGetGithub:
     def test_returns_github_integration_when_mcp_available(self, mock_server) -> None:
         mock_server.services.mcp_manager = MagicMock()
 
-        with patch("gobby.servers.routes.source_control.GitHubIntegration") as mock_cls:
+        with patch("gobby.servers.routes.source_control_github.GitHubIntegration") as mock_cls:
             mock_cls.return_value = MagicMock()
 
             from gobby.servers.routes.source_control import _get_github
@@ -355,7 +356,7 @@ class TestCallGithubMcp:
         from gobby.servers.routes.source_control import _call_github_mcp
 
         with pytest.raises(HTTPException) as exc_info:
-            await _call_github_mcp(mock_server, "some_tool", {})
+            await _call_github_mcp(mock_server, None, "some_tool", {})
         assert exc_info.value.status_code == 503
 
     @pytest.mark.asyncio
@@ -374,7 +375,7 @@ class TestCallGithubMcp:
 
         from gobby.servers.routes.source_control import _call_github_mcp
 
-        result = await _call_github_mcp(mock_server, "test_tool", {"arg": "val"})
+        result = await _call_github_mcp(mock_server, None, "test_tool", {"arg": "val"})
         assert result == {"key": "value"}
         assert mock_session.call_tool.await_args.args == ("test_tool", {"arg": "val"})
 
@@ -394,7 +395,7 @@ class TestCallGithubMcp:
 
         from gobby.servers.routes.source_control import _call_github_mcp
 
-        result = await _call_github_mcp(mock_server, "test_tool", {})
+        result = await _call_github_mcp(mock_server, None, "test_tool", {})
         assert result == "plain text response"
         assert mock_session.call_tool.await_args.args == ("test_tool", {})
 
@@ -408,7 +409,7 @@ class TestCallGithubMcp:
         from gobby.servers.routes.source_control import _call_github_mcp
 
         with pytest.raises(HTTPException) as exc_info:
-            await _call_github_mcp(mock_server, "test_tool", {})
+            await _call_github_mcp(mock_server, None, "test_tool", {})
         assert exc_info.value.status_code == 502
 
 
@@ -1385,7 +1386,7 @@ class TestListCICDRuns:
         assert len(data["runs"]) == 1
         assert data["runs"][0]["name"] == "CI"
         assert data["runs"][0]["conclusion"] == "success"
-        assert mock_call_github.call_args.args[2]["per_page"] == limit
+        assert mock_call_github.call_args.args[3]["per_page"] == limit
 
     @pytest.mark.parametrize("limit", [-1, 101])
     def test_cicd_rejects_out_of_range_limit(self, client, limit: int) -> None:
@@ -1962,3 +1963,48 @@ class TestSyncClone:
         assert data["success"] is True
         assert data["id"] == "clone-1"
         mock_storage.record_sync.assert_called_once_with("clone-1")
+
+
+@pytest.mark.asyncio
+async def test_github_routes_resolve_project_instance(mock_server: MagicMock) -> None:
+    from gobby.mcp_proxy.models import MCPServerConfig
+    from gobby.servers.routes.source_control_github import _call_github_mcp
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+    project_id = "11111111-1111-4111-8111-111111111111"
+    project_server_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    global_server_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    manager = MagicMock()
+    configs = [
+        MCPServerConfig(
+            name="github",
+            project_id=project_id,
+            url="https://project.example.test",
+            id=project_server_id,
+        ),
+        MCPServerConfig(
+            name="github",
+            project_id=GLOBAL_PROJECT_ID,
+            url="https://global.example.test",
+            id=global_server_id,
+        ),
+    ]
+    manager.server_configs = configs
+    manager._configs = {config.id: config for config in configs}
+    manager.get_server_config.side_effect = lambda sid: manager._configs.get(sid)
+    payload = {"ok": True, "id": project_server_id}
+    session = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=MagicMock(content=[SimpleNamespace(text=json.dumps(payload))])
+    )
+    manager.get_client_session = AsyncMock(return_value=session)
+    mock_server.services.mcp_manager = manager
+
+    result = await _call_github_mcp(
+        mock_server, project_id, "list_issues", {"owner": "o", "repo": "r"}
+    )
+    assert result == payload
+    manager.get_client_session.assert_awaited_once_with(project_server_id)
+    session.call_tool.assert_awaited_once_with("list_issues", {"owner": "o", "repo": "r"})
+    dispatched = [call.args[0] for call in manager.get_client_session.await_args_list]
+    assert global_server_id not in dispatched

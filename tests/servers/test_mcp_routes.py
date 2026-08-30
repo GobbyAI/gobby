@@ -27,7 +27,7 @@ import concurrent.futures
 import json
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -59,7 +59,7 @@ from gobby.mcp_proxy.wait_tools import (
 from gobby.servers.http import HTTPServer
 from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.utils.session_context import TERMINAL_CONTEXT_HEADER
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
@@ -198,7 +198,11 @@ class FakeServerConfig:
         self.args: list[str] | None = None
         self.env: dict[str, str] | None = None
         self.headers: dict[str, str] | None = None
-        self.project_id = "test-project"
+        self.id = name
+        self.project_id = GLOBAL_PROJECT_ID
+        self.template: str | None = None
+        self.template_id: str | None = None
+        self.template_values: dict[str, str] | None = None
         self.description: str | None = None
         self.requires_oauth = False
         self.oauth_provider: str | None = None
@@ -246,13 +250,37 @@ class FakeMCPManager:
         self.connections: dict[str, Any] = {}
         self.health: dict[str, FakeServerHealth] = {}
         self._configs: dict[str, FakeServerConfig] = {}
-        self.project_id = "test-project"
+        self.project_id = GLOBAL_PROJECT_ID
         self.last_project_id: str | None = None
         self._sessions: dict[str, FakeMCPSession] = {}
 
+    def put(self, config: FakeServerConfig) -> FakeServerConfig:
+        self._configs[config.name] = config
+        self._configs[config.id] = config
+        if all(existing is not config for existing in self.server_configs):
+            self.server_configs.append(config)
+        return config
+
     def has_server(self, server_name: str) -> bool:
         """Check if server is configured."""
-        return server_name in self._configs
+        return server_name in self._configs or any(
+            getattr(config, "id", None) == server_name or config.name == server_name
+            for config in self.server_configs
+        )
+
+    def get_server_config(self, server_id: str) -> FakeServerConfig | None:
+        if server_id in self._configs:
+            return self._configs[server_id]
+        for config in self.server_configs:
+            if config.name == server_id or getattr(config, "id", None) == server_id:
+                return config
+        return None
+
+    def is_connected(self, server_id: str) -> bool:
+        if server_id in self.connections:
+            return True
+        config = self.get_server_config(server_id)
+        return bool(config is not None and config.name in self.connections)
 
     async def ensure_connected(self, server_name: str) -> FakeMCPSession:
         """Get or create a session for a server."""
@@ -274,40 +302,69 @@ class FakeMCPManager:
         """Get tool input schema."""
         return {"type": "object", "properties": {}}
 
-    async def add_server(self, config: Any) -> None:
+    async def add_server(self, config: Any) -> dict[str, Any]:
         """Add a server configuration."""
-        self._configs[config.name] = config
-        self.server_configs.append(config)
+        self.put(config)
+        return {
+            "success": True,
+            "id": getattr(config, "id", config.name),
+            "connected": False,
+        }
+
+    async def disconnect_all(self) -> None:
+        self.connections.clear()
+        self._sessions.clear()
 
     async def remove_server(self, name: str, project_id: str | None = None) -> None:
         """Remove a server configuration."""
         self.last_project_id = project_id
-        if name not in self._configs:
+        config = self.get_server_config(name)
+        if config is None:
             raise ValueError(f"Server not found: {name}")
-        del self._configs[name]
-        self.server_configs = [c for c in self.server_configs if c.name != name]
+        self._configs.pop(config.name, None)
+        self._configs.pop(getattr(config, "id", ""), None)
+        self.server_configs = [item for item in self.server_configs if item.name != config.name]
 
     async def update_server(
         self, name: str, config: Any, project_id: str | None = None
     ) -> dict[str, Any]:
         """Update a server configuration."""
         self.last_project_id = project_id
-        if name not in self._configs:
+        existing = self.get_server_config(name)
+        if existing is None:
             raise ValueError(f"Server not found: {name}")
-        self._configs[name] = config
-        self.server_configs = [c for c in self.server_configs if c.name != name]
-        self.server_configs.append(config)
-        return {"success": True, "name": name}
+        if isinstance(config, Mapping):
+            for field in (
+                "transport",
+                "url",
+                "command",
+                "args",
+                "env",
+                "headers",
+                "description",
+                "enabled",
+                "requires_oauth",
+                "oauth_provider",
+                "connect_timeout",
+            ):
+                if field in config:
+                    setattr(existing, field, config[field])
+            stored = existing
+        else:
+            stored = config
+        self.put(stored)
+        return {"success": True, "name": existing.name, "id": getattr(stored, "id", existing.name)}
 
     async def set_server_enabled(
         self, name: str, enabled: bool, project_id: str | None = None
     ) -> dict[str, Any]:
         """Toggle a server's enabled flag, mirroring the real manager."""
         self.last_project_id = project_id
-        if name not in self._configs:
+        config = self.get_server_config(name)
+        if config is None:
             raise ValueError(f"Server not found: {name}")
-        self._configs[name].enabled = enabled
-        return {"success": True, "name": name, "enabled": enabled}
+        config.enabled = enabled
+        return {"success": True, "name": config.name, "enabled": enabled}
 
 
 class FakeInternalRegistry:
@@ -911,7 +968,7 @@ class TestGetToolSchema:
         """Test getting schema with missing required fields."""
         response = client.post("/api/mcp/tools/schema", json={"server_name": "test"})
         assert response.status_code == 400
-        assert "server_name, tool_name" in response.json()["detail"]["error"]
+        assert "tool_name" in response.json()["detail"]["error"]
 
     def test_get_schema_internal_server_success(self, session_storage: SessionManager) -> None:
         """Test getting schema from internal server."""
@@ -1163,7 +1220,7 @@ class TestGetToolSchema:
             session_manager=session_storage,
         )
         mcp_manager = FakeMCPManager()
-        mcp_manager._configs["external-server"] = FakeServerConfig(name="external-server")
+        mcp_manager.put(FakeServerConfig(name="external-server"))
         mcp_manager.get_tool_info = AsyncMock(
             return_value={
                 "name": "get_item",
@@ -1171,7 +1228,14 @@ class TestGetToolSchema:
             }
         )
         server.mcp_manager = mcp_manager
-        server._tools_handler = MagicMock(tool_proxy=MagicMock())
+        tool_proxy = MagicMock()
+        tool_proxy.get_tool_schema = AsyncMock(
+            return_value={
+                "success": True,
+                "tool": {"name": "get_item", "inputSchema": {"type": "object"}},
+            }
+        )
+        server._tools_handler = MagicMock(tool_proxy=tool_proxy)
 
         with patch("gobby.servers.routes.mcp.endpoints.execution.record_schema_shown") as record:
             with TestClient(server.app) as client:
@@ -1667,8 +1731,13 @@ class TestCallMCPTool:
             test_mode=True,
             session_manager=session_storage,
         )
+        config = FakeServerConfig(name="slow-server")
         mcp_manager = MagicMock()
+        mcp_manager.server_configs = [config]
+        mcp_manager.get_server_config.return_value = config
+        mcp_manager.project_id = GLOBAL_PROJECT_ID
         mcp_manager.call_tool = AsyncMock(side_effect=TimeoutError)
+        server.mcp_manager = mcp_manager
         server._tools_handler = MagicMock(
             tool_proxy=ToolProxyService(mcp_manager, validate_arguments=False)
         )
@@ -1689,7 +1758,11 @@ class TestCallMCPTool:
         assert data["error_code"] == "CONNECTION_ERROR"
         assert "response_time_ms" in data
         mcp_manager.call_tool.assert_awaited_once_with(
-            "slow-server", "slow_tool", {}, session_id=None, timeout=0.01
+            "slow-server",
+            tool_name="slow_tool",
+            arguments={},
+            session_id=None,
+            timeout=0.01,
         )
 
 
@@ -1729,8 +1802,10 @@ class TestAddMCPServer:
                 },
             )
 
-        assert response.status_code == 400
-        assert "No current project" in response.json()["detail"]["error"]
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data.get("scope") == "global"
 
     def test_add_server_no_mcp_manager(self, session_storage: SessionManager) -> None:
         """Test adding server when MCP manager not available."""
@@ -1908,16 +1983,10 @@ class TestUpdateMCPServer:
             session_manager=session_storage,
         )
         mcp_manager = FakeMCPManager()
-        mcp_manager._configs["github"] = FakeServerConfig(name="github", transport="stdio")
+        mcp_manager.put(FakeServerConfig(name="github", transport="stdio"))
         server.mcp_manager = mcp_manager
 
-        with (
-            TestClient(server.app) as client,
-            patch(
-                "gobby.utils.project_context.get_project_context",
-                return_value={"id": "route-project"},
-            ),
-        ):
+        with TestClient(server.app) as client:
             response = client.put(
                 "/api/mcp/servers/github",
                 json={
@@ -1928,7 +1997,7 @@ class TestUpdateMCPServer:
                     "env": {"GITHUB_TOKEN": "secret"},
                     "headers": {"Authorization": "Bearer token"},
                     "description": "GitHub tools",
-                    "project_id": "route-project",
+                    "scope": "global",
                     "enabled": False,
                     "requires_oauth": True,
                     "oauth_provider": "github",
@@ -1948,7 +2017,7 @@ class TestUpdateMCPServer:
         assert updated.requires_oauth is True
         assert updated.oauth_provider == "github"
         assert updated.connect_timeout == 45
-        assert mcp_manager.last_project_id == "route-project"
+        assert mcp_manager.last_project_id == GLOBAL_PROJECT_ID
 
 
 # ============================================================================
@@ -1975,17 +2044,11 @@ class TestRemoveMCPServer:
             session_manager=session_storage,
         )
         mcp_manager = FakeMCPManager()
-        mcp_manager._configs["test-server"] = FakeServerConfig(name="test-server")
+        mcp_manager.put(FakeServerConfig(name="test-server"))
         mcp_manager.remove_server = AsyncMock()
         server.mcp_manager = mcp_manager
 
-        with (
-            TestClient(server.app) as client,
-            patch(
-                "gobby.utils.project_context.get_project_context",
-                return_value={"id": "route-project"},
-            ),
-        ):
+        with TestClient(server.app) as client:
             response = client.delete("/api/mcp/servers/test-server")
 
         assert response.status_code == 200
@@ -1993,7 +2056,7 @@ class TestRemoveMCPServer:
         assert data["success"] is True
         mcp_manager.remove_server.assert_awaited_once_with(
             "test-server",
-            project_id="route-project",
+            project_id=GLOBAL_PROJECT_ID,
         )
 
     def test_remove_server_not_found(self, session_storage: SessionManager) -> None:
@@ -2004,16 +2067,13 @@ class TestRemoveMCPServer:
             session_manager=session_storage,
         )
         mcp_manager = FakeMCPManager()
-        mcp_manager.remove_server = AsyncMock(side_effect=ValueError("Server not found"))
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
             response = client.delete("/api/mcp/servers/nonexistent")
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is False
-        assert "Server not found" in data["error"]
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"]["error"]
 
 
 # ============================================================================
@@ -2033,7 +2093,7 @@ class TestSetMCPServerEnabled:
         assert "MCP manager not available" in data["error"]
 
     def test_set_enabled_requires_boolean(self, session_storage: SessionManager) -> None:
-        """Test that a missing/non-boolean enabled field is rejected."""
+        """Empty PATCH of an unknown server is 404; non-boolean enabled is 400."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -2044,7 +2104,7 @@ class TestSetMCPServerEnabled:
         with TestClient(server.app) as client:
             response = client.patch("/api/mcp/servers/test-server", json={})
 
-        assert response.status_code == 400
+        assert response.status_code == 404
 
         with TestClient(server.app) as client:
             response = client.patch("/api/mcp/servers/test-server", json={"enabled": "true"})
@@ -2060,28 +2120,22 @@ class TestSetMCPServerEnabled:
         )
         mcp_manager = FakeMCPManager()
         config = FakeServerConfig(name="github", transport="http", enabled=True)
-        mcp_manager._configs["github"] = config
+        mcp_manager.put(config)
         server.mcp_manager = mcp_manager
 
-        with (
-            TestClient(server.app) as client,
-            patch(
-                "gobby.utils.project_context.get_project_context",
-                return_value={"id": "route-project"},
-            ),
-        ):
+        with TestClient(server.app) as client:
             disable = client.patch("/api/mcp/servers/github", json={"enabled": False})
             assert disable.status_code == 200
             assert disable.json()["success"] is True
             assert disable.json()["enabled"] is False
             assert config.enabled is False
-            assert mcp_manager.last_project_id == "route-project"
+            assert mcp_manager.last_project_id == GLOBAL_PROJECT_ID
 
             enable = client.patch("/api/mcp/servers/github", json={"enabled": True})
             assert enable.status_code == 200
             assert enable.json()["enabled"] is True
             assert config.enabled is True
-            assert mcp_manager.last_project_id == "route-project"
+            assert mcp_manager.last_project_id == GLOBAL_PROJECT_ID
 
     def test_set_enabled_not_found(self, session_storage: SessionManager) -> None:
         """Test toggling a server that is not configured."""
@@ -2091,18 +2145,13 @@ class TestSetMCPServerEnabled:
             session_manager=session_storage,
         )
         mcp_manager = FakeMCPManager()
-        mcp_manager.set_server_enabled = AsyncMock(  # type: ignore[method-assign]
-            side_effect=ValueError("MCP server 'nope' not found")
-        )
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
             response = client.patch("/api/mcp/servers/nope", json={"enabled": True})
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is False
-        assert "not found" in data["error"]
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"]["error"]
 
     @pytest.mark.parametrize(
         "error",
@@ -2122,6 +2171,7 @@ class TestSetMCPServerEnabled:
             session_manager=session_storage,
         )
         mcp_manager = FakeMCPManager()
+        mcp_manager.put(FakeServerConfig(name="github"))
         mcp_manager.set_server_enabled = AsyncMock(side_effect=error)  # type: ignore[method-assign]
         server.mcp_manager = mcp_manager
 
@@ -2142,6 +2192,7 @@ class TestSetMCPServerEnabled:
             session_manager=session_storage,
         )
         mcp_manager = FakeMCPManager()
+        mcp_manager.put(FakeServerConfig(name="github"))
         mcp_manager.set_server_enabled = AsyncMock(  # type: ignore[method-assign]
             side_effect=PermissionError("permission denied")
         )
@@ -2190,7 +2241,7 @@ class TestImportMCPServer:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
-        assert "No current project" in data["error"]
+        assert "other-project" in data["error"]
 
     def test_import_preview_does_not_broadcast_imported_event(
         self, session_storage: SessionManager
@@ -2651,16 +2702,16 @@ class TestMCPProxy:
         server._internal_manager = FakeInternalManager(
             [
                 FakeInternalRegistry(
-                    name="gobby-sessions",
-                    tools=[{"name": "get_handoff", "description": "Wait for a summary"}],
+                    name="gobby-agents",
+                    tools=[{"name": "wait_for_output", "description": "Wait for output"}],
                 ),
             ]
         )
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/api/mcp/gobby-sessions/tools/get_handoff",
-                json={"session_id": "sess-123"},
+                "/api/mcp/gobby-agents/tools/wait_for_output",
+                json={"run_id": "run-123", "timeout_seconds": 1},
             )
 
         assert response.status_code == 200
@@ -2681,17 +2732,17 @@ class TestMCPProxy:
         server._internal_manager = FakeInternalManager(
             [
                 FakeInternalRegistry(
-                    name="gobby-sessions",
-                    tools=[{"name": "get_handoff", "description": "Wait for a summary"}],
+                    name="gobby-agents",
+                    tools=[{"name": "wait_for_output", "description": "Wait for output"}],
                 ),
             ]
         )
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/api/mcp/gobby-sessions/tools/get_handoff",
+                "/api/mcp/gobby-agents/tools/wait_for_output",
                 headers={MCP_WRAPPER_PROTOCOL_VERSION_HEADER: "0"},
-                json={"session_id": "sess-123"},
+                json={"run_id": "run-123", "timeout_seconds": 1},
             )
 
         assert response.status_code == 200
@@ -3098,7 +3149,7 @@ class TestRefreshMCPTools:
         mock_store_hash.assert_called_once_with(
             server_name="gobby-tasks",
             tool_name="list_tasks",
-            project_id="test-project",
+            project_id=GLOBAL_PROJECT_ID,
             schema_hash=compute_schema_hash(schema, description="New description"),
         )
 

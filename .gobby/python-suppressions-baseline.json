@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 226,
+  "site_count": 225,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -1401,16 +1401,6 @@
         "method-assign"
       ],
       "statement": "mcp_manager . set_server_enabled = AsyncMock ( side_effect = error )"
-    },
-    {
-      "fingerprint": "3ea2c0b8591be2cf226b7988b5ca321ab60f9648e7d5447cc3a0fda86328c1cd",
-      "path": "tests/servers/test_mcp_routes.py",
-      "symbol": "TestSetMCPServerEnabled.test_set_enabled_not_found",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "mcp_manager . set_server_enabled = AsyncMock ( side_effect = ValueError ( \"MCP server 'nope' not found\" ) )"
     },
     {
       "fingerprint": "3c8528512be0d43cd4310d701dac4cd24a087d22324535dfe66c86ab93e384af",

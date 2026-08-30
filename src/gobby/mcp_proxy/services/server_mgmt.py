@@ -139,6 +139,7 @@ class ServerManagementService:
                 )
                 server_config = expanded.config
                 server_config.template_id = row.id
+                server_config.enabled = enabled
                 missing_secrets = list(expanded.missing_secrets)
             else:
                 if not transport:
@@ -194,6 +195,8 @@ class ServerManagementService:
                     server_config = adopted
                 else:
                     add_result = await self._mcp_manager.add_server(server_config)
+                    if not isinstance(add_result, Mapping):
+                        add_result = {}
                     if add_result.get("id"):
                         loaded = self._mcp_manager.get_server_config(str(add_result["id"]))
                         if loaded is not None:

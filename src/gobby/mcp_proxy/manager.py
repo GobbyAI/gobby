@@ -168,7 +168,7 @@ class MCPClientManager:
     async def update_server(
         self,
         server_id: str,
-        config: MCPServerConfig,
+        config: MCPServerConfig | Mapping[str, Any],
         project_id: str | None = None,
     ) -> dict[str, Any]:
         return await server_registry.update_server(self, server_id, config, project_id)

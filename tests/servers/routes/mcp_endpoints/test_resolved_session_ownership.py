@@ -141,7 +141,9 @@ async def test_get_schema_does_not_probe_unconfigured_proxy_namespace(
 
     assert result["success"] is False
     server.mcp_manager.get_tool_info.assert_not_called()
-    server.tool_proxy.get_tool_schema.assert_awaited_once_with("gobby", "call_tool")
+    server.tool_proxy.get_tool_schema.assert_awaited_once_with(
+        "gobby", "call_tool", project_id=PROJECT_ID
+    )
 
 
 @pytest.mark.parametrize("endpoint", ["call", "proxy"])

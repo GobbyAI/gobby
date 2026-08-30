@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPServerConfig
+from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.servers.routes.dependencies import get_metrics_manager, get_server
 from gobby.servers.routes.mcp.tools import create_mcp_router
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.mcp import LocalMCPManager
+from gobby.storage.projects import GLOBAL_PROJECT_ID
+from tests.mcp_proxy.services.test_scope_resolution_matrix import PROJECT_ID
 
 pytestmark = pytest.mark.unit
 
@@ -276,13 +284,11 @@ class TestMCPRegistryRoutes:
         assert "not configured" in data["error"]
 
     def test_refresh_project_resolve_fail(self, client: TestClient, mock_server: MagicMock) -> None:
-        mock_server.resolve_project_id.side_effect = ValueError("No project")
-
-        response = client.post("/api/mcp/refresh", json={"cwd": "/tmp"})
-        assert response.status_code == 200
+        response = client.post("/api/mcp/refresh", json={"scope": "project"})
+        assert response.status_code == 400
         data = response.json()
-        assert data["success"] is False
-        assert "No project" in data["error"]
+        detail = data.get("detail", data)
+        assert detail.get("error") == "project_scope_unresolved"
 
     def test_refresh_no_servers(self, client: TestClient, mock_server: MagicMock) -> None:
         mock_server._mcp_db_manager = MagicMock()
@@ -447,17 +453,6 @@ class TestMCPRegistryRoutes:
         mock_server.mcp_manager = MagicMock()
         mock_server.mcp_manager.server_configs = [ext_config]
 
-        def cache_discovered_tools(server_name: str, tools: list[dict[str, object]]) -> None:
-            assert server_name == "github-mcp"
-            ext_config.tools = [
-                {"name": tool["name"], "brief": tool["description"]} for tool in tools
-            ]
-
-        mock_server.mcp_manager.cache_discovered_tools = MagicMock(
-            side_effect=cache_discovered_tools
-        )
-
-        # Mock MCP tool
         mock_tool = MagicMock()
         mock_tool.name = "list_repos"
         mock_tool.description = "List GitHub repos"
@@ -466,7 +461,13 @@ class TestMCPRegistryRoutes:
         mock_tools_result = MagicMock()
         mock_tools_result.tools = [mock_tool]
         mock_session.list_tools.return_value = mock_tools_result
-        mock_server.mcp_manager.ensure_connected = AsyncMock(return_value=mock_session)
+
+        async def ensure_connected(_server_id: object) -> AsyncMock:
+            ext_config.tools = [{"name": "list_repos", "brief": "List GitHub repos"}]
+            return mock_session
+
+        mock_server.mcp_manager.ensure_connected = AsyncMock(side_effect=ensure_connected)
+        mock_server.mcp_manager.refresh_server = AsyncMock()
 
         with (
             patch("gobby.mcp_proxy.schema_hash.SchemaHashManager") as MockSHM,
@@ -491,19 +492,8 @@ class TestMCPRegistryRoutes:
         assert data["success"] is True
         assert data["stats"]["servers_processed"] == 1
         assert "github-mcp" in data["stats"]["by_server"]
-        mock_server.mcp_manager.cache_discovered_tools.assert_called_once_with(
-            "github-mcp",
-            [
-                {
-                    "name": "list_repos",
-                    "description": "List GitHub repos",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {"org": {"type": "string"}},
-                    },
-                }
-            ],
-        )
+        mock_server.mcp_manager.refresh_server.assert_called()
+        mock_server.mcp_manager.ensure_connected.assert_awaited()
 
         inventory_response = client.get("/api/mcp/tools")
 
@@ -849,3 +839,544 @@ class TestMCPRegistryRoutes:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
+
+
+def _demo_template() -> dict[str, Any]:
+    return {
+        "name": "demo",
+        "description": "Demo MCP template",
+        "version": 1,
+        "transport": "stdio",
+        "command": "uvx",
+        "args": ["demo"],
+        "params": [
+            {"name": "region", "env": "REGION", "required": True},
+            {
+                "name": "mode",
+                "env": "MODE",
+                "required": False,
+                "choices": ["fast", "slow"],
+            },
+            {"name": "tag", "arg_flag": "--tag", "required": False},
+        ],
+    }
+
+
+def _mcp_app(http_server: Any) -> FastAPI:
+    app = FastAPI()
+    app.include_router(create_mcp_router())
+
+    async def override_server() -> Any:
+        return http_server
+
+    app.dependency_overrides[get_server] = override_server
+    app.dependency_overrides[get_metrics_manager] = lambda: None
+    return app
+
+
+def _http_server_for(manager: Any) -> MagicMock:
+    server = MagicMock()
+    server.mcp_manager = manager
+    server._internal_manager = None
+    server._tools_handler = None
+    server._mcp_db_manager = getattr(manager, "mcp_db_manager", None)
+    server.session_manager = None
+    server.config = MagicMock()
+    server.llm_service = None
+    server.tool_proxy = None
+    server.services = MagicMock()
+    server.services.websocket_server = None
+    server.services.database = getattr(getattr(manager, "mcp_db_manager", None), "db", None)
+    return server
+
+
+async def _add_templated_instance(
+    temp_db: HubDatabase,
+    project_id: str,
+    *,
+    values: dict[str, str] | None = None,
+    name: str = "demo-instance",
+) -> tuple[MCPClientManager, dict[str, Any]]:
+    storage = LocalMCPManager(temp_db)
+    storage.upsert_template(
+        name="demo",
+        project_id=project_id,
+        owner="user",
+        definition=_demo_template(),
+        enabled=True,
+    )
+    manager = MCPClientManager(
+        server_configs=[],
+        project_id=project_id,
+        mcp_db_manager=storage,
+        lazy_connect=True,
+    )
+    service = ServerManagementService(manager, config_manager=MagicMock())
+    added = await service.add_server(
+        name,
+        template="demo",
+        values=values or {"region": "us", "mode": "fast", "tag": "alpha"},
+        scope="project",
+        project_id=project_id,
+        enabled=False,
+    )
+    assert added["success"] is True
+    return manager, added
+
+
+def _detail(response: Any) -> dict[str, Any]:
+    payload = response.json()
+    if isinstance(payload, dict) and isinstance(payload.get("detail"), dict):
+        return cast(dict[str, Any], payload["detail"])
+    return cast(dict[str, Any], payload if isinstance(payload, dict) else {})
+
+
+def _storage(manager: MCPClientManager) -> LocalMCPManager:
+    db = manager.mcp_db_manager
+    assert isinstance(db, LocalMCPManager)
+    return db
+
+
+def _template_values(row: Any) -> dict[str, Any]:
+    values = getattr(row, "template_values", None)
+    assert isinstance(values, dict)
+    return values
+
+
+def test_project_scope_precedence_and_web_legacy_payload(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project_id = sample_project["id"]
+    manager = MCPClientManager(
+        server_configs=[],
+        project_id=project_id,
+        mcp_db_manager=LocalMCPManager(temp_db),
+        lazy_connect=True,
+    )
+    server = _http_server_for(manager)
+    client = TestClient(_mcp_app(server))
+
+    web = client.post(
+        "/api/mcp/servers",
+        json={
+            "name": "web-tab",
+            "transport": "http",
+            "url": "https://web.example.test/mcp",
+            "command": None,
+            "args": None,
+            "env": {},
+            "enabled": False,
+            "project_id": "",
+        },
+    )
+    web_body = web.json()
+    assert web.status_code == 200
+    assert web_body["success"] is True
+    listed = client.get("/api/mcp/servers")
+    servers = listed.json()["servers"]
+    web_row = next(row for row in servers if row["name"] == "web-tab")
+    assert web_row["scope"] == "global"
+    assert web_row["project_id"] == GLOBAL_PROJECT_ID
+    assert "id" in web_row
+    assert "missing_secrets" in web_row
+
+    scoped = client.post(
+        "/api/mcp/servers",
+        json={
+            "name": "project-tab",
+            "transport": "http",
+            "url": "https://project.example.test/mcp",
+            "enabled": False,
+            "project_id": project_id,
+        },
+    )
+    assert scoped.json()["success"] is True
+    assert scoped.json()["scope"] == "project"
+
+    missing = client.post(
+        "/api/mcp/servers",
+        json={
+            "name": "missing-project",
+            "transport": "http",
+            "url": "https://x.example.test/mcp",
+            "enabled": False,
+            "scope": "project",
+        },
+    )
+    assert missing.status_code == 400
+    assert _detail(missing)["error"] == "project_scope_unresolved"
+
+    unknown = client.post(
+        "/api/mcp/servers",
+        json={
+            "name": "unknown-project",
+            "transport": "http",
+            "url": "https://x.example.test/mcp",
+            "enabled": False,
+            "project_id": "00000000-0000-4000-8000-000000000099",
+        },
+    )
+    assert unknown.status_code == 400
+    assert _detail(unknown)["error"] == "project_scope_unresolved"
+
+
+def test_import_mcp_server_respects_project_and_global_scope(
+    sample_project: dict[str, Any],
+) -> None:
+    project_id = sample_project["id"]
+    importer = MagicMock()
+    importer.import_from_project = AsyncMock(
+        return_value={"success": True, "imported": ["context7"], "project_id": project_id}
+    )
+    server = MagicMock()
+    server.mcp_manager = MagicMock()
+    server.config = MagicMock()
+    server.llm_service = None
+    server.services.database = MagicMock()
+    server.services.websocket_server = None
+    server.session_manager = None
+    client = TestClient(_mcp_app(server))
+
+    with patch(
+        "gobby.mcp_proxy.importer.MCPServerImporter",
+        return_value=importer,
+    ):
+        project = client.post(
+            "/api/mcp/servers/import",
+            json={"from_project": "other", "project_id": project_id},
+        )
+        global_scope = client.post(
+            "/api/mcp/servers/import",
+            json={"from_project": "other", "scope": "global"},
+        )
+
+    assert project.json()["success"] is True
+    assert global_scope.json()["success"] is True
+    assert importer.import_from_project.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_update_mcp_server_preserves_identity_and_rejects_template_owned_fields(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project_id = sample_project["id"]
+    manager, added = await _add_templated_instance(temp_db, project_id)
+    server_id = added["id"]
+    storage = _storage(manager)
+    client = TestClient(_mcp_app(_http_server_for(manager)))
+
+    owned = client.patch(
+        "/api/mcp/servers/demo-instance",
+        json={
+            "command": "npx",
+            "project_id": project_id,
+            "values": {"region": "eu"},
+        },
+    )
+    assert owned.status_code == 400
+    detail = _detail(owned)
+    assert detail["error"] == "template_owned_fields"
+    fields = detail.get("fields") or detail.get("template_owned_fields") or []
+    assert "command" in fields
+
+    updated = client.patch(
+        "/api/mcp/servers/demo-instance",
+        json={"values": {"region": "eu"}, "project_id": project_id},
+    )
+    assert updated.status_code == 200
+    body = updated.json()
+    assert body["success"] is True
+    assert body.get("id") == server_id
+    row = storage.get_server("demo-instance", project_id)
+    assert row is not None
+    assert row.id == server_id
+    assert str(row.project_id) == project_id
+    assert row.template == "demo"
+    assert _template_values(row)["region"] == "eu"
+    assert row.command == "uvx"
+    refreshed = storage.refresh_template_instances(
+        lambda _template, server: {
+            "transport": server.transport,
+            "url": server.url,
+            "command": server.command,
+            "args": server.args,
+            "env": server.env,
+            "headers": server.headers,
+            "connect_timeout": server.connect_timeout,
+            "runtime_hook": server.runtime_hook,
+        },
+        server_id=server_id,
+    )
+    assert refreshed["refreshed"] == 1
+    after = storage.get_server_by_id(server_id)
+    assert after is not None
+    assert after.command == "uvx"
+    assert after.env is not None
+    assert after.env["REGION"] == "eu"
+
+
+@pytest.mark.asyncio
+async def test_update_mcp_server_merges_values_and_null_removes_parameter(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project_id = sample_project["id"]
+    manager, _added = await _add_templated_instance(temp_db, project_id)
+    storage = _storage(manager)
+    client = TestClient(_mcp_app(_http_server_for(manager)))
+
+    merged = client.patch(
+        "/api/mcp/servers/demo-instance",
+        json={"values": {"region": "eu"}, "project_id": project_id},
+    )
+    assert merged.status_code == 200
+    row = storage.get_server("demo-instance", project_id)
+    assert row is not None
+    assert _template_values(row)["region"] == "eu"
+    assert _template_values(row)["mode"] == "fast"
+    assert row.env is not None
+    assert row.env["REGION"] == "eu"
+    assert row.env["MODE"] == "fast"
+
+    removed = client.patch(
+        "/api/mcp/servers/demo-instance",
+        json={"values": {"tag": None}, "project_id": project_id},
+    )
+    assert removed.status_code == 200
+    row = storage.get_server("demo-instance", project_id)
+    assert row is not None
+    assert "tag" not in _template_values(row)
+    assert "--tag" not in (row.args or [])
+
+    invalid = client.patch(
+        "/api/mcp/servers/demo-instance",
+        json={"values": {"mode": "invalid"}, "project_id": project_id},
+    )
+    assert invalid.status_code == 400
+    assert _detail(invalid)["error"] == "template_values_invalid"
+    row = storage.get_server("demo-instance", project_id)
+    assert row is not None
+    assert _template_values(row)["mode"] == "fast"
+
+
+@pytest.mark.asyncio
+async def test_project_scoped_mutations_never_fall_back_to_global(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project_id = sample_project["id"]
+    storage = LocalMCPManager(temp_db)
+    manager = MCPClientManager(
+        server_configs=[],
+        project_id=project_id,
+        mcp_db_manager=storage,
+        lazy_connect=True,
+    )
+    service = ServerManagementService(manager, config_manager=MagicMock())
+    added = await service.add_server(
+        "only-global",
+        "http",
+        url="https://global.example.test/mcp",
+        enabled=False,
+        scope="global",
+        project_id=project_id,
+    )
+    assert added["success"] is True
+    global_id = added["id"]
+    client = TestClient(_mcp_app(_http_server_for(manager)))
+
+    patched = client.patch(
+        "/api/mcp/servers/only-global",
+        json={"description": "nope", "project_id": project_id},
+    )
+    deleted = client.delete(
+        "/api/mcp/servers/only-global",
+        params={"project_id": project_id},
+    )
+    enabled = client.patch(
+        "/api/mcp/servers/only-global",
+        json={"enabled": True, "project_id": project_id},
+    )
+    for response in (patched, deleted, enabled):
+        assert response.status_code == 404
+        assert storage.get_server_by_id(global_id) is not None
+
+    ok = client.patch(
+        "/api/mcp/servers/only-global",
+        json={"description": "global-ok", "scope": "global"},
+    )
+    assert ok.status_code == 200
+    row = storage.get_server("only-global", GLOBAL_PROJECT_ID)
+    assert row is not None
+    assert row.description == "global-ok"
+
+
+def test_refresh_preserves_schema_hash_and_embedding_pipeline() -> None:
+    config = MCPServerConfig(
+        name="github",
+        project_id=PROJECT_ID,
+        url="https://project.example.test",
+        id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        enabled=True,
+    )
+    manager = MagicMock()
+    manager.server_configs = [config]
+    manager.refresh_server = AsyncMock()
+    manager.get_server_config.return_value = config
+    tool = MagicMock()
+    tool.name = "list_repos"
+    tool.description = "List repos"
+    tool.input_schema = {"type": "object"}
+    session = AsyncMock()
+    session.list_tools.return_value = MagicMock(tools=[tool])
+    manager.ensure_connected = AsyncMock(return_value=session)
+    db = MagicMock()
+    db.db = MagicMock()
+    db.get_server.return_value = MagicMock(id=config.id, name="github", project_id=PROJECT_ID)
+    db.get_cached_tools.return_value = []
+    manager.mcp_db_manager = db
+    semantic = MagicMock()
+    semantic.embed_tool = AsyncMock()
+    server = _http_server_for(manager)
+    server._mcp_db_manager = db
+    server._tools_handler = MagicMock()
+    server._tools_handler._semantic_search = semantic
+    client = TestClient(_mcp_app(server))
+
+    with (
+        patch("gobby.mcp_proxy.schema_hash.SchemaHashManager") as mock_hash_cls,
+        patch("gobby.mcp_proxy.schema_hash.compute_schema_hash", return_value="h1"),
+    ):
+        hashes = mock_hash_cls.return_value
+        hashes.check_tools_for_changes.return_value = {
+            "new": ["list_repos"],
+            "changed": [],
+            "unchanged": [],
+        }
+        hashes.cleanup_stale_hashes.return_value = 1
+        response = client.post(
+            "/api/mcp/refresh",
+            json={"server": "github", "project_id": PROJECT_ID, "force": True},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    manager.refresh_server.assert_awaited()
+    assert config.id in [call.args[0] for call in manager.refresh_server.await_args_list]
+    stats = body["stats"]
+    by_server = stats["by_server"]
+    entry = by_server.get(config.id) or by_server.get("github")
+    assert entry is not None
+    hashes.store_hash.assert_called()
+    hashes.cleanup_stale_hashes.assert_called()
+    semantic.embed_tool.assert_awaited()
+
+
+def test_refresh_embeddings_carry_scoped_server_identity() -> None:
+    config = MCPServerConfig(
+        name="github",
+        project_id=PROJECT_ID,
+        url="https://project.example.test",
+        id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        enabled=True,
+    )
+    manager = MagicMock()
+    manager.server_configs = [config]
+    manager.refresh_server = AsyncMock()
+    tool = MagicMock()
+    tool.name = "list_repos"
+    tool.description = "List repos"
+    tool.input_schema = {"type": "object"}
+    session = AsyncMock()
+    session.list_tools.return_value = MagicMock(tools=[tool])
+    manager.ensure_connected = AsyncMock(return_value=session)
+    db = MagicMock()
+    db.db = MagicMock()
+    stored_tool = MagicMock()
+    stored_tool.name = "list_repos"
+    stored_tool.id = "tool-1"
+    db.get_server.return_value = MagicMock(id=config.id)
+    db.get_cached_tools.return_value = [stored_tool]
+    manager.mcp_db_manager = db
+    captured: dict[str, Any] = {}
+
+    async def embed_tool(**kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    semantic = MagicMock()
+    semantic.embed_tool = AsyncMock(side_effect=embed_tool)
+    server = _http_server_for(manager)
+    server._mcp_db_manager = db
+    server._tools_handler = MagicMock()
+    server._tools_handler._semantic_search = semantic
+    client = TestClient(_mcp_app(server))
+
+    with (
+        patch("gobby.mcp_proxy.schema_hash.SchemaHashManager") as mock_hash_cls,
+        patch("gobby.mcp_proxy.schema_hash.compute_schema_hash", return_value="h1"),
+    ):
+        mock_hash_cls.return_value.check_tools_for_changes.return_value = {
+            "new": ["list_repos"],
+            "changed": [],
+            "unchanged": [],
+        }
+        mock_hash_cls.return_value.cleanup_stale_hashes.return_value = 0
+        response = client.post(
+            "/api/mcp/refresh",
+            json={"server": "github", "project_id": PROJECT_ID},
+        )
+
+    assert response.status_code == 200
+    assert captured.get("server_id") == config.id
+    assert captured.get("server_name") == "github"
+    assert captured.get("project_id") == PROJECT_ID
+
+
+@pytest.mark.asyncio
+async def test_concurrent_patches_and_delete_serialize_under_per_id_lock(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project_id = sample_project["id"]
+    manager, added = await _add_templated_instance(temp_db, project_id)
+    storage = _storage(manager)
+    server_id = added["id"]
+    app = _mcp_app(_http_server_for(manager))
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        first, second = await asyncio.gather(
+            client.patch(
+                "/api/mcp/servers/demo-instance",
+                json={"values": {"region": "eu"}, "project_id": project_id},
+            ),
+            client.patch(
+                "/api/mcp/servers/demo-instance",
+                json={"values": {"mode": "slow"}, "project_id": project_id},
+            ),
+        )
+        assert first.status_code == 200
+        assert second.status_code == 200
+        row = storage.get_server_by_id(server_id)
+        assert row is not None
+        assert _template_values(row)["region"] == "eu"
+        assert _template_values(row)["mode"] == "slow"
+
+        patch_task, delete_task = await asyncio.gather(
+            client.patch(
+                "/api/mcp/servers/demo-instance",
+                json={"values": {"tag": None}, "project_id": project_id},
+            ),
+            client.delete(
+                "/api/mcp/servers/demo-instance",
+                params={"project_id": project_id},
+            ),
+        )
+        assert delete_task.status_code in {200, 404}
+        assert patch_task.status_code in {200, 404}
+        if patch_task.status_code == 404:
+            assert _detail(patch_task).get("success") is False
+        assert storage.get_server("demo-instance", project_id) is None
+        assert storage.get_server_by_id(server_id) is None

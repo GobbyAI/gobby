@@ -109,6 +109,9 @@ class RecordingManager:
     async def ensure_connected(self, server_id: str) -> Any:
         return await self.get_client_session(server_id)
 
+    async def refresh_server(self, server_id: str) -> None:
+        self.calls.append(("refresh_server", server_id))
+
     def method_ids(self, method: str) -> list[str]:
         return [str(call[1]) for call in self.calls if call and call[0] == method]
 
@@ -365,7 +368,7 @@ async def test_resolve_request_scope_is_total_over_explicit_inputs() -> None:
             AsyncMock(return_value=SeededContextTokens()),
         ),
         patch(
-            "gobby.servers.routes.mcp.endpoints.execution.resolve_request_scope",
+            "gobby.servers.routes.mcp.endpoints.request_context.resolve_request_scope",
             side_effect=http_spy,
         ),
     ):

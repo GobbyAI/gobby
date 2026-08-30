@@ -55,8 +55,11 @@ def test_list_servers_success(cli_runner, mock_daemon_client, mock_config) -> No
 
         assert result.exit_code == 0
         assert "MCP Servers (1/2 connected):" in result.output
-        assert "● server1 (connected)" in result.output
-        assert "○ server2 (disconnected)" in result.output
+        assert "server1" in result.output
+        assert "connected" in result.output
+        assert "server2" in result.output
+        assert "disconnected" in result.output
+        assert "NAME  SCOPE  TEMPLATE  STATE" in result.output
 
 
 def test_list_servers_json(cli_runner, mock_daemon_client, mock_config) -> None:
@@ -165,7 +168,15 @@ def test_add_server_http(cli_runner, mock_daemon_client, mock_config) -> None:
 
         result = cli_runner.invoke(
             mcp_proxy,
-            ["add-server", "my-http-server", "-t", "http", "-u", "https://api.example.com/mcp"],
+            [
+                "add-server",
+                "my-http-server",
+                "-t",
+                "http",
+                "-u",
+                "https://api.example.com/mcp",
+                "--global",
+            ],
             obj={"config": mock_config},
         )
 
@@ -185,6 +196,7 @@ def test_add_server_http(cli_runner, mock_daemon_client, mock_config) -> None:
                 "env": None,
                 "headers": None,
                 "enabled": True,
+                "scope": "global",
             },
             timeout=30.0,
         )
@@ -207,6 +219,7 @@ def test_add_server_stdio(cli_runner, mock_daemon_client, mock_config) -> None:
                 "npx",
                 "--args",
                 '["mcp-server"]',
+                "--global",
             ],
             obj={"config": mock_config},
         )
@@ -258,6 +271,7 @@ def test_add_server_with_env(cli_runner, mock_daemon_client, mock_config) -> Non
                 "node",
                 "-e",
                 '{"API_KEY": "secret123"}',
+                "--global",
             ],
             obj={"config": mock_config},
         )
@@ -273,7 +287,16 @@ def test_add_server_disabled(cli_runner, mock_daemon_client, mock_config) -> Non
 
         result = cli_runner.invoke(
             mcp_proxy,
-            ["add-server", "my-server", "-t", "http", "-u", "http://example.com", "--disabled"],
+            [
+                "add-server",
+                "my-server",
+                "-t",
+                "http",
+                "-u",
+                "http://example.com",
+                "--disabled",
+                "--global",
+            ],
             obj={"config": mock_config},
         )
 
@@ -920,3 +943,114 @@ def test_api_error_response(cli_runner, mock_daemon_client, mock_config) -> None
 
         assert result.exit_code == 1
         assert "Internal Server Error" in result.output
+
+
+def test_add_server_from_template_prompts_for_missing_secrets(
+    cli_runner: CliRunner, mock_daemon_client: MagicMock, mock_config: MagicMock
+) -> None:
+    project_id = "11111111-1111-4111-8111-111111111111"
+    add_payload = {
+        "success": True,
+        "name": "demo-instance",
+        "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "scope": "project",
+        "template": "demo",
+        "missing_secrets": ["demo_token"],
+        "needs_configuration": True,
+        "configure": ["gobby secrets set demo_token"],
+    }
+    refresh_payload = {"success": True, "stats": {}}
+    mock_daemon_client.call_http_api.return_value.status_code = 200
+    mock_daemon_client.call_http_api.return_value.json.side_effect = [
+        add_payload,
+        refresh_payload,
+        {"success": True, "templates": [{"name": "demo", "params": [{"name": "region"}]}]},
+        {
+            "success": True,
+            "template": {
+                "name": "demo",
+                "params": [{"name": "region", "required": True}],
+            },
+        },
+    ]
+    store = MagicMock()
+    with (
+        patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client),
+        patch("gobby.cli.mcp_proxy.require_cli_database", return_value=MagicMock()),
+        patch(
+            "gobby.cli.installers.shared.registered_project_id",
+            return_value=project_id,
+        ),
+        patch("gobby.cli.mcp_proxy.click.prompt", return_value="secret-value"),
+        patch("gobby.cli.mcp_proxy._stdin_is_tty", return_value=True),
+        patch("gobby.cli.mcp_proxy.store_cli_secret", store),
+    ):
+        result = cli_runner.invoke(
+            mcp_proxy,
+            [
+                "add-server",
+                "demo-instance",
+                "--template",
+                "demo",
+                "--set",
+                "region=us",
+            ],
+            obj={"config": mock_config},
+        )
+    assert result.exit_code == 0
+    add_call = mock_daemon_client.call_http_api.call_args_list[0]
+    assert add_call.args[0] == "/api/mcp/servers"
+    posted = add_call.kwargs["json_data"]
+    assert posted["template"] == "demo"
+    assert posted["values"]["region"] == "us"
+    assert posted["project_id"] == project_id
+    store.assert_called()
+    refresh_call = mock_daemon_client.call_http_api.call_args_list[1]
+    assert refresh_call.args[0] == "/api/mcp/refresh"
+
+    mock_daemon_client.call_http_api.return_value.json.side_effect = None
+    mock_daemon_client.call_http_api.return_value.json.return_value = add_payload
+    with (
+        patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client),
+        patch("gobby.cli.mcp_proxy.require_cli_database", return_value=MagicMock()),
+        patch(
+            "gobby.cli.installers.shared.registered_project_id",
+            return_value=project_id,
+        ),
+        patch("gobby.cli.mcp_proxy._stdin_is_tty", return_value=False),
+    ):
+        non_interactive = cli_runner.invoke(
+            mcp_proxy,
+            ["add-server", "demo-instance", "--template", "demo", "--set", "region=us"],
+            obj={"config": mock_config},
+        )
+    assert non_interactive.exit_code == 0
+    assert "gobby secrets set demo_token" in non_interactive.output
+    assert "needs_configuration" in non_interactive.output or "demo_token" in non_interactive.output
+
+    templates_payload = {
+        "success": True,
+        "templates": [
+            {
+                "name": "demo",
+                "scope": "project",
+                "owner": "gobby",
+                "params": [{"name": "region", "required": True}],
+            }
+        ],
+    }
+    mock_daemon_client.call_http_api.return_value.json.return_value = templates_payload
+    with (
+        patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client),
+        patch("gobby.cli.mcp_proxy.require_cli_database", return_value=MagicMock()),
+        patch(
+            "gobby.cli.installers.shared.registered_project_id",
+            return_value=project_id,
+        ),
+    ):
+        listed = cli_runner.invoke(mcp_proxy, ["list-templates"], obj={"config": mock_config})
+        shown = cli_runner.invoke(mcp_proxy, ["show-template", "demo"], obj={"config": mock_config})
+    assert listed.exit_code == 0
+    assert shown.exit_code == 0
+    assert "demo" in listed.output
+    assert "region" in shown.output

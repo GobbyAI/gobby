@@ -10,9 +10,14 @@ from typing import TYPE_CHECKING, Any, Literal, NoReturn
 from fastapi import HTTPException, Request
 
 from gobby.mcp_proxy.models import ToolProxyErrorCode
+from gobby.mcp_proxy.services.server_resolution import (
+    ProjectScopeUnresolvedError,
+    resolve_request_scope,
+)
 from gobby.mcp_proxy.terminal_context import TERMINAL_CONTEXT_KEYS
 from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_PROTOCOL_VERSION_HEADER
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.utils.session_context import (
     AGENT_RUN_ID_HEADER,
@@ -294,3 +299,113 @@ async def _bind_agent_run_context(
 def _reset_context(tokens: SeededContextTokens) -> None:
     """Reset project and session context vars."""
     reset_seeded_contexts(tokens)
+
+
+def _header_project_id(request: Request | None) -> str | None:
+    if request is None:
+        return None
+    headers = request.headers
+    for name in ("x-gobby-caller-project-id", "x-gobby-project-id"):
+        value = headers.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _payload_str(payload: Mapping[str, Any] | None, key: str) -> str | None:
+    if not payload:
+        return None
+    value = payload.get(key)
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        return value.strip() or None
+    return str(value)
+
+
+def _project_exists(db: Any, project_id: str) -> bool:
+    if project_id == GLOBAL_PROJECT_ID:
+        return True
+    try:
+        row = db.fetchone("SELECT 1 FROM projects WHERE id = %s", (project_id,))
+    except Exception:
+        return True
+    return row is not None
+
+
+def db_for_scope(server: HTTPServer) -> Any | None:
+    session_manager = getattr(server, "session_manager", None)
+    db = getattr(session_manager, "db", None) if session_manager is not None else None
+    if db is not None:
+        return db
+    services = getattr(server, "services", None)
+    database = getattr(services, "database", None) if services is not None else None
+    if database is not None:
+        return database
+    mcp_manager = getattr(server, "mcp_manager", None)
+    mcp_db = getattr(mcp_manager, "mcp_db_manager", None) if mcp_manager is not None else None
+    return getattr(mcp_db, "db", None) if mcp_db is not None else None
+
+
+def resolve_http_mcp_scope(
+    *,
+    session_project_id: str | None,
+    payload: Mapping[str, Any] | None = None,
+    query: Mapping[str, str] | None = None,
+    db: Any | None = None,
+) -> str:
+    """Resolve the caller's project for an MCP HTTP route."""
+    project_id = _payload_str(payload, "project_id") or (query.get("project_id") if query else None)
+    scope = _payload_str(payload, "scope") or (query.get("scope") if query else None)
+    exists = (lambda pid: _project_exists(db, pid)) if db is not None else None
+    try:
+        return resolve_request_scope(
+            session_project_id=session_project_id,
+            project_id=project_id,
+            scope=scope,
+            fallback_project_id=GLOBAL_PROJECT_ID,
+            project_exists=exists,
+        )
+    except ProjectScopeUnresolvedError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "success": False,
+                "error": exc.error_code,
+                "error_code": exc.error_code,
+            },
+        ) from exc
+
+
+def _query_map(request: Request) -> dict[str, str]:
+    params = getattr(request, "query_params", None)
+    if not params:
+        return {}
+    multi = getattr(params, "multi_items", None)
+    if callable(multi):
+        try:
+            items = multi()
+        except TypeError:
+            items = None
+        if isinstance(items, list | tuple):
+            return {str(key): str(value) for key, value in items}
+    if isinstance(params, Mapping):
+        return {str(key): str(value) for key, value in params.items()}
+    return {}
+
+
+def request_mcp_scope(
+    request: Request,
+    server: HTTPServer,
+    payload: Mapping[str, Any] | None = None,
+    *,
+    session_project_id: str | None = None,
+) -> str:
+    """Scope an MCP HTTP request from headers, body, and query."""
+    session = session_project_id or _header_project_id(request)
+    return resolve_http_mcp_scope(
+        session_project_id=session,
+        payload=payload,
+        query=_query_map(request),
+        db=db_for_scope(server),
+    )

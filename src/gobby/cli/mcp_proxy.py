@@ -14,10 +14,12 @@ Provides CLI access to MCP proxy functionality:
 import json
 import sys
 import urllib.parse
+from pathlib import Path
 from typing import Any, cast
 
 import click
 
+from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils_config import get_daemon_client as _shared_daemon_client
 from gobby.utils.daemon_client import DaemonClient, DaemonHealthError
 from gobby.utils.json_helpers import json_dumps
@@ -44,6 +46,47 @@ def check_daemon_running(client: DaemonClient) -> bool:
             click.echo(f"Error: Cannot connect to daemon: {error}", err=True)
         return False
     return True
+
+
+def resolve_cli_mcp_project(*, global_scope: bool) -> tuple[str | None, str]:
+    """Return (project_id, scope) for a scoped mcp-proxy command."""
+    if global_scope:
+        return None, "global"
+    from gobby.cli.installers.shared import registered_project_id
+
+    project_id = registered_project_id(require_cli_database(), Path.cwd())
+    if not project_id:
+        raise click.ClickException(
+            "not inside a registered Gobby project; pass --global for a machine-wide instance"
+        )
+    return project_id, "project"
+
+
+def _stdin_is_tty() -> bool:
+    isatty = getattr(sys.stdin, "isatty", None)
+    return bool(isatty()) if callable(isatty) else False
+
+
+def store_cli_secret(
+    name: str,
+    value: str,
+    *,
+    project_id: str | None,
+    global_scope: bool,
+) -> None:
+    """Store a secret in the instance's scope via the secrets store."""
+    from gobby.storage.config_store import ConfigStore
+    from gobby.storage.secrets import SecretStore
+
+    db = require_cli_database()
+    ConfigStore(db).set_named_secret(
+        SecretStore(db),
+        name,
+        value,
+        category="general",
+        description=None,
+        project_id=None if global_scope else project_id,
+    )
 
 
 def call_mcp_api(
@@ -101,10 +144,12 @@ def list_servers(ctx: click.Context, json_format: bool) -> None:
     connected = result.get("connected", 0)
     total = result.get("total", 0)
     click.echo(f"MCP Servers ({connected}/{total} connected):")
+    click.echo("NAME  SCOPE  TEMPLATE  STATE")
     for server in servers:
         state = server.get("state", "unknown")
-        status_icon = "●" if state == "connected" else "○"
-        click.echo(f"  {status_icon} {server['name']} ({state})")
+        scope = server.get("scope", "")
+        template = server.get("template") or ""
+        click.echo(f"{server['name']}  {scope}  {template}  {state}")
 
 
 @mcp_proxy.command("list-tools")
@@ -254,36 +299,47 @@ def call_tool(
 
 @mcp_proxy.command("add-server")
 @click.argument("name")
-@click.option("--transport", "-t", required=True, type=click.Choice(["http", "stdio", "websocket"]))
+@click.option("--transport", "-t", type=click.Choice(["http", "stdio", "websocket"]))
 @click.option("--url", "-u", help="Server URL (for http/websocket)")
 @click.option("--command", "-c", help="Command to run (for stdio)")
 @click.option("--args", "-A", "cmd_args", help="Command arguments as JSON array (for stdio)")
 @click.option("--env", "-e", help="Environment variables as JSON object")
 @click.option("--headers", help="HTTP headers as JSON object")
 @click.option("--disabled", is_flag=True, help="Add server as disabled")
+@click.option("--template", help="Instantiate from a named MCP server template")
+@click.option("--set", "value_sets", multiple=True, help="Template value as key=value")
+@click.option("--description", help="Instance description")
+@click.option("--global", "global_scope", is_flag=True, help="Create a machine-wide instance")
 @click.pass_context
 def add_server(
     ctx: click.Context,
     name: str,
-    transport: str,
+    transport: str | None,
     url: str | None,
     command: str | None,
     cmd_args: str | None,
     env: str | None,
     headers: str | None,
     disabled: bool,
+    template: str | None,
+    value_sets: tuple[str, ...],
+    description: str | None,
+    global_scope: bool,
 ) -> None:
     """Add a new MCP server configuration.
 
     Examples:
         gobby mcp-proxy add-server my-http -t http -u https://api.example.com/mcp
         gobby mcp-proxy add-server my-stdio -t stdio -c npx --args '["mcp-server"]'
+        gobby mcp-proxy add-server demo --template demo --set region=us
     """
     client = get_daemon_client(ctx)
     if not check_daemon_running(client):
         sys.exit(1)
 
-    # Validate transport requirements
+    if not template and not transport:
+        click.echo("Error: --transport is required without --template", err=True)
+        sys.exit(1)
     if transport in ("http", "websocket") and not url:
         click.echo(f"Error: --url is required for {transport} transport", err=True)
         sys.exit(1)
@@ -291,10 +347,10 @@ def add_server(
         click.echo("Error: --command is required for stdio transport", err=True)
         sys.exit(1)
 
-    # Parse JSON options
     parsed_args = None
     parsed_env = None
     parsed_headers = None
+    values: dict[str, str] = {}
 
     if cmd_args:
         try:
@@ -317,29 +373,59 @@ def add_server(
             click.echo(f"Error: Invalid JSON for --headers: {e}", err=True)
             sys.exit(1)
 
-    result = call_mcp_api(
-        client,
-        "/api/mcp/servers",
-        method="POST",
-        json_data={
-            "name": name,
-            "transport": transport,
-            "url": url,
-            "command": command,
-            "args": parsed_args,
-            "env": parsed_env,
-            "headers": parsed_headers,
-            "enabled": not disabled,
-        },
-    )
+    for item in value_sets:
+        if "=" not in item:
+            click.echo(f"Error: Invalid --set '{item}'. Use key=value", err=True)
+            sys.exit(1)
+        key, raw = item.split("=", 1)
+        values[key] = raw
+
+    project_id, scope = resolve_cli_mcp_project(global_scope=global_scope)
+    payload: dict[str, Any] = {
+        "name": name,
+        "transport": transport,
+        "url": url,
+        "command": command,
+        "args": parsed_args,
+        "env": parsed_env,
+        "headers": parsed_headers,
+        "enabled": not disabled,
+        "scope": scope,
+    }
+    if project_id:
+        payload["project_id"] = project_id
+    if template:
+        payload["template"] = template
+        payload["values"] = values
+    if description:
+        payload["description"] = description
+
+    result = call_mcp_api(client, "/api/mcp/servers", method="POST", json_data=payload)
     if result is None:
         sys.exit(1)
 
-    if result.get("success"):
-        click.echo(f"Added MCP server: {name}")
-    else:
+    if not result.get("success"):
         click.echo(f"Error: {result.get('error', 'Failed to add server')}", err=True)
         sys.exit(1)
+
+    missing = list(result.get("missing_secrets") or [])
+    if missing and _stdin_is_tty():
+        for secret in missing:
+            value = click.prompt(f"Secret {secret}", hide_input=True)
+            store_cli_secret(secret, value, project_id=project_id, global_scope=global_scope)
+        refresh_payload: dict[str, Any] = {"server": name, "scope": scope}
+        if project_id:
+            refresh_payload["project_id"] = project_id
+        call_mcp_api(client, "/api/mcp/refresh", method="POST", json_data=refresh_payload)
+        click.echo(f"Added MCP server: {name}")
+        return
+    if missing:
+        click.echo("needs_configuration")
+        for command in result.get("configure") or []:
+            click.echo(command)
+        sys.exit(0)
+
+    click.echo(f"Added MCP server: {name}")
 
 
 @mcp_proxy.command("remove-server")
@@ -712,3 +798,13 @@ def proxy_status(ctx: click.Context, json_format: bool) -> None:
             if failures > 0:
                 click.echo(f" - {failures} failures", nl=False)
             click.echo()
+
+
+def register_template_commands() -> None:
+    """Load template subcommands after the Click group exists."""
+    import gobby.cli.mcp_proxy_templates as template_commands
+
+    _ = (template_commands.list_templates, template_commands.show_template)
+
+
+register_template_commands()

@@ -406,10 +406,50 @@ def _sync_user_templates_to_db(db: "HubDatabase") -> int:
             total += synced
             if synced > 0:
                 logger.info("Synced %s user mcp_servers from %s", synced, server_roots)
+            _reconcile_synced_mcp_instances(db, sync_result.get("affected_ids") or [])
         except Exception as e:
             logger.warning("Failed to sync user mcp_servers from %s: %s", server_roots, e)
 
     return total
+
+
+def _reconcile_synced_mcp_instances(db: "HubDatabase", affected_ids: list[Any]) -> None:
+    """Refresh each synced instance in the running daemon, or skip if unreachable."""
+    if not affected_ids:
+        return
+    import importlib
+
+    import click
+
+    mcp_mod = importlib.import_module("gobby.cli.mcp_proxy")
+    call_mcp_api = mcp_mod.call_mcp_api
+    check_daemon_running = mcp_mod.check_daemon_running
+    get_daemon_client = mcp_mod.get_daemon_client
+    from gobby.storage.mcp import LocalMCPManager
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+    try:
+        client = get_daemon_client(None)
+    except Exception:
+        click.echo("MCP live reconcile skipped: daemon client unavailable")
+        return
+    if not check_daemon_running(client):
+        click.echo("MCP live reconcile skipped: daemon not running")
+        return
+    manager = LocalMCPManager(db)
+    for server_id in affected_ids:
+        row = manager.get_server_by_id(str(server_id))
+        if row is None:
+            continue
+        payload: dict[str, Any] = {"server_id": str(row.id)}
+        if str(row.project_id) == GLOBAL_PROJECT_ID:
+            payload["scope"] = "global"
+        else:
+            payload["project_id"] = str(row.project_id)
+        result = call_mcp_api(client, "/api/mcp/refresh", method="POST", json_data=payload)
+        if result is None:
+            click.echo("MCP live reconcile skipped: daemon not reachable")
+            return
 
 
 def install_cli_content(cli_name: str, target_path: Path) -> dict[str, list[str]]:

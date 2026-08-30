@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException, Query
 
-from gobby.integrations.github import GitHubIntegration
+from gobby.servers.routes import source_control_github as _source_control_github
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.worktrees.deletion import (
@@ -22,6 +22,10 @@ from gobby.worktrees.deletion import (
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+
+_call_github_mcp = _source_control_github._call_github_mcp
+_get_github = _source_control_github._get_github
+_parse_github_repo = _source_control_github._parse_github_repo
 
 logger = logging.getLogger(__name__)
 
@@ -114,45 +118,6 @@ def _resolve_project(server: HTTPServer, project_id: str | None) -> tuple[str | 
     except (ValueError, OSError, HTTPException) as e:
         logger.debug("Failed to resolve project %s: %s", project_id, e)
     return None, None
-
-
-def _get_github(server: HTTPServer) -> GitHubIntegration | None:
-    """Get GitHubIntegration if MCP manager is available."""
-    if server.services.mcp_manager:
-        return GitHubIntegration(server.services.mcp_manager)
-    return None
-
-
-async def _call_github_mcp(server: HTTPServer, tool_name: str, arguments: dict[str, Any]) -> Any:
-    """Call a tool on the GitHub MCP server."""
-    if not server.services.mcp_manager:
-        raise HTTPException(503, "MCP manager not available")
-
-    try:
-        session = await server.services.mcp_manager.get_client_session("github")
-        result = await session.call_tool(tool_name, arguments)
-        # Extract text content from MCP response
-        if hasattr(result, "content") and result.content:
-            import json
-
-            for item in result.content:
-                if hasattr(item, "text"):
-                    try:
-                        return json.loads(item.text)
-                    except (json.JSONDecodeError, TypeError):
-                        return item.text
-        return result
-    except Exception as e:
-        logger.warning("GitHub MCP call failed (%s): %s", tool_name, e, exc_info=True)
-        raise HTTPException(502, "GitHub MCP call failed") from e
-
-
-def _parse_github_repo(github_repo: str | None) -> tuple[str, str] | None:
-    """Parse 'owner/repo' string into (owner, repo) tuple."""
-    if not github_repo or "/" not in github_repo:
-        return None
-    parts = github_repo.split("/", 1)
-    return parts[0], parts[1]
 
 
 def create_source_control_router(server: HTTPServer) -> APIRouter:
@@ -508,6 +473,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         try:
             data = await _call_github_mcp(
                 server,
+                project_id,
                 "list_pull_requests",
                 {"owner": owner, "repo": repo, "state": state},
             )
@@ -556,6 +522,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         owner, repo = parsed
         data = await _call_github_mcp(
             server,
+            project_id,
             "get_pull_request",
             {"owner": owner, "repo": repo, "pull_number": number},
         )
@@ -577,6 +544,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             # Get PR to find head SHA
             pr = await _call_github_mcp(
                 server,
+                project_id,
                 "get_pull_request",
                 {"owner": owner, "repo": repo, "pull_number": number},
             )
@@ -587,6 +555,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             # Get check runs for commit
             checks = await _call_github_mcp(
                 server,
+                project_id,
                 "list_commits",
                 {"owner": owner, "repo": repo, "sha": head_sha},
             )
@@ -623,6 +592,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         try:
             data = await _call_github_mcp(
                 server,
+                project_id,
                 "list_issues",
                 {"owner": owner, "repo": repo, "state": state},
             )
@@ -678,6 +648,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         try:
             data = await _call_github_mcp(
                 server,
+                project_id,
                 "get_issue",
                 {"owner": owner, "repo": repo, "issue_number": number},
             )
@@ -712,6 +683,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         try:
             data = await _call_github_mcp(
                 server,
+                project_id,
                 "list_workflow_runs",
                 {"owner": owner, "repo": repo, "per_page": min(limit, 100)},
             )
