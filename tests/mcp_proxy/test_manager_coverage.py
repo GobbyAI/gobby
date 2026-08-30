@@ -92,6 +92,27 @@ def test_resolve_secrets_in_config_resolves_args() -> None:
     store.get.assert_called_with("context7_api_key", project_id="proj-1")
 
 
+def test_resolve_secrets_fails_closed_without_db_handle() -> None:
+    manager = MagicMock()
+    manager.mcp_db_manager = None
+    config = MCPServerConfig(
+        name="context7",
+        transport="stdio",
+        command="npx",
+        args=["--api-key", "$secret:context7_api_key"],
+        env={"TOKEN": "$secret:context7_env_token"},
+        project_id="proj-1",
+    )
+
+    with pytest.raises(MCPError) as exc_info:
+        resolve_secrets_in_config(manager, config, logging.getLogger("test"))
+
+    # Reference collection order follows headers -> env -> args.
+    assert exc_info.value.missing_secrets == ["context7_env_token", "context7_api_key"]
+    assert "needs configuration" in str(exc_info.value)
+    assert "context7_api_key" in str(exc_info.value)
+
+
 def test_resolve_secrets_in_config_does_not_warn_when_no_arg_stripped(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

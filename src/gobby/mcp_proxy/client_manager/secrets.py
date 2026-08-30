@@ -39,7 +39,20 @@ def resolve_secrets_in_config(
 
         db = getattr(manager.mcp_db_manager, "db", None) if manager.mcp_db_manager else None
         if not db:
-            return config
+            # Fail closed: launching a transport with literal $secret: strings
+            # would authenticate with the reference text itself.
+            names = list(
+                dict.fromkeys(
+                    match.group(1)
+                    for text_value in texts
+                    for match in SECRET_REF_PATTERN.finditer(text_value)
+                )
+            )
+            raise MCPError(
+                f"Server '{config.name}' needs configuration: cannot resolve secret(s) "
+                f"{', '.join(names)} without a database handle",
+                missing_secrets=names,
+            )
 
         store = SecretStore(db)
         missing: list[str] = []
