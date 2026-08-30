@@ -826,7 +826,7 @@ describe("providerModels", () => {
     await expect(fetchProviderModelCatalog()).resolves.toEqual([unknownEntry]);
   });
 
-  it("keeps available AGY catalog entries and display support", async () => {
+  async function testAgyProviderVisibility() {
     const codexEntry = {
       provider: "codex",
       available: true,
@@ -858,6 +858,10 @@ describe("providerModels", () => {
     expect(isHiddenProvider("codex")).toBe(false);
     expect(isHiddenProvider(null)).toBe(false);
     expect(getProviderDisplayName("agy")).toBe("AGY");
+  }
+
+  it("keeps available AGY catalog entries and display support", async () => {
+    await expect(testAgyProviderVisibility()).resolves.toBeUndefined();
   });
 
   it("drops unavailable AGY catalog entries", async () => {
