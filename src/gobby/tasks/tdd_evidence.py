@@ -99,13 +99,12 @@ def evaluate_tdd_evidence(
     tests: tuple[AcceptanceTest, ...],
     evidence: TranscriptEvidence,
 ) -> TddEvidenceResult:
-    """Require assertion-backed red before implementation and a later pass."""
+    """Require one assertion-backed cycle and later coverage of every named test."""
     if not tests:
         return TddEvidenceResult(True, True, ())
 
     findings: list[str] = []
-    red_commands: list[str] = []
-    green_commands: list[str] = []
+    cycle: tuple[TranscriptValidationRun, TranscriptEdit] | None = None
     for test in tests:
         test_edits = sorted(
             (edit for edit in evidence.edits if edit.path == test.path),
@@ -143,7 +142,10 @@ def evaluate_tdd_evidence(
             )
             if green is not None:
                 red = window_red
+                cycle = (red, first_production_edit)
                 break
+        if cycle is not None:
+            break
         if not production_edit_seen:
             findings.append(f"{test.reference}: no production edit follows the test edit")
             continue
@@ -153,10 +155,28 @@ def evaluate_tdd_evidence(
                 "and before the first production edit"
             )
             continue
-        red_commands.append(red.command)
         if green is None:
             findings.append(
                 f"{test.reference}: assertion-backed red has no later production edit and pass"
+            )
+
+    if cycle is None:
+        return TddEvidenceResult(False, False, tuple(findings))
+
+    red, production_edit = cycle
+    findings = []
+    green_commands: list[str] = []
+    for test in tests:
+        green = _find_green_run(
+            test,
+            evidence,
+            red,
+            after_order=production_edit.order,
+        )
+        if green is None:
+            findings.append(
+                f"{test.reference}: no pass after the production edit that completed "
+                "the task-level TDD cycle"
             )
             continue
         green_commands.append(green.command)
@@ -165,7 +185,7 @@ def evaluate_tdd_evidence(
         passed=not findings,
         skipped=False,
         findings=tuple(findings),
-        red_runs=tuple(red_commands),
+        red_runs=(red.command,),
         green_runs=tuple(green_commands),
     )
 

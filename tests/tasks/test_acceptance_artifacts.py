@@ -490,6 +490,72 @@ def test_tdd_evidence_accepts_later_repair_cycle() -> None:
     assert evaluate_tdd_evidence((test,), test_only_green).passed is False
 
 
+def test_tdd_evidence_accepts_one_cycle_with_multiple_green_artifacts() -> None:
+    started = datetime(2026, 8, 30, tzinfo=UTC)
+    driving = AcceptanceTest(
+        reference="tests/test_feature.py::test_driving_behavior",
+        path="tests/test_feature.py",
+        symbol="test_driving_behavior",
+        body="def test_driving_behavior(): assert feature() == 1",
+    )
+    supporting = AcceptanceTest(
+        reference="tests/test_support.py::test_supporting_behavior",
+        path="tests/test_support.py",
+        symbol="test_supporting_behavior",
+        body="def test_supporting_behavior(): assert feature() != 2",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit("tests/test_feature.py", started, 1),
+            _edit("tests/test_support.py", started + timedelta(seconds=30), 2),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            _run(
+                driving,
+                started + timedelta(minutes=1),
+                "failure",
+                "FAILED tests/test_feature.py::test_driving_behavior\nE assert 0 == 1",
+                2,
+            ),
+            _run(
+                driving,
+                started + timedelta(minutes=3),
+                "success",
+                "tests/test_feature.py::test_driving_behavior PASSED",
+                4,
+            ),
+            _run(
+                supporting,
+                started + timedelta(minutes=4),
+                "success",
+                "tests/test_support.py::test_supporting_behavior PASSED",
+                5,
+            ),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((driving, supporting), evidence)
+
+    assert result.passed is True
+    assert result.red_runs == (f"pytest {driving.reference}",)
+    assert result.green_runs == (
+        f"pytest {driving.reference}",
+        f"pytest {supporting.reference}",
+    )
+
+    missing_supporting_green = TranscriptEvidence(
+        edits=evidence.edits,
+        validation_runs=evidence.validation_runs[:-1],
+    )
+    incomplete = evaluate_tdd_evidence(
+        (driving, supporting),
+        missing_supporting_green,
+    )
+    assert incomplete.passed is False
+    assert any(supporting.reference in finding for finding in incomplete.findings)
+
+
 def test_tdd_evidence_merges_handoff_sessions_by_position() -> None:
     """Owner red and closer green form one cycle once merged order is global."""
     started = datetime(2026, 8, 21, tzinfo=UTC)
