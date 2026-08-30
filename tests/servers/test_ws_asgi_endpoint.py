@@ -16,7 +16,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocketDisconnect
-from websockets.exceptions import ConnectionClosedError, InvalidStatus
+from websockets.exceptions import ConnectionClosedError
 
 from gobby.servers._app_ui import _mount_ws_endpoint
 from gobby.servers.http import HTTPServer
@@ -200,7 +200,7 @@ def test_unauthenticated_handshake_is_rejected_before_handler(
     assert "AttributeError" not in caplog.text
 
 
-async def test_unauthenticated_handshake_closes_without_accept() -> None:
+async def test_unauthenticated_handshake_accepts_before_close() -> None:
     websocket_server = _WebSocketServer()
     app = FastAPI()
     server = SimpleNamespace(
@@ -220,8 +220,7 @@ async def test_unauthenticated_handshake_closes_without_accept() -> None:
 
     await route.endpoint(websocket)
 
-    assert events == ["close"]
-    websocket.accept.assert_not_awaited()
+    assert events == ["accept", "close"]
     websocket.close.assert_awaited_once_with(code=4401, reason="Authentication required")
     assert websocket_server.handler_calls == 0
 
@@ -399,10 +398,21 @@ async def test_pre_accept_rejection_hangup_does_not_raise_in_uvicorn(
 
 
 @pytest.mark.asyncio
-async def test_unauthenticated_live_client_is_handshake_rejected() -> None:
-    async with _live_ws_server(_WebSocketServer()) as url:
-        with pytest.raises(InvalidStatus) as exc_info:
-            async with websockets.connect(url, open_timeout=2.0, close_timeout=2.0):
-                pass
+async def test_unauthenticated_live_client_closes_with_4401_without_traceback() -> None:
+    probe = _LogProbe()
+    logger = logging.getLogger("uvicorn.error")
+    logger.addHandler(probe)
+    try:
+        async with _live_ws_server(_WebSocketServer()) as url:
+            async with websockets.connect(url, open_timeout=2.0, close_timeout=2.0) as websocket:
+                with pytest.raises(ConnectionClosedError) as exc_info:
+                    await websocket.recv()
+    finally:
+        logger.removeHandler(probe)
 
-    assert exc_info.value.response.status_code == 403
+    assert exc_info.value.code == 4401
+    assert exc_info.value.reason == "Authentication required"
+    combined = probe.text()
+    assert "Exception in ASGI application" not in combined
+    assert "transfer_data_task" not in combined
+    assert "AttributeError" not in combined

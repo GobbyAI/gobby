@@ -14,7 +14,7 @@ import httpx
 import pytest
 import websockets
 from websockets.asyncio.client import ClientConnection
-from websockets.exceptions import InvalidStatus
+from websockets.exceptions import ConnectionClosedError, InvalidStatus
 
 from gobby.identity import hash_password
 from gobby.storage.hub.protocol import HubDatabase
@@ -278,10 +278,14 @@ async def test_ws_auth(daemon_instance: DaemonInstance) -> None:
         headers=[("Authorization", f"Bearer {token}")],
     )
 
-    await _assert_handshake_rejected(
+    async with websockets.connect(
         f"ws://localhost:{daemon_instance.http_port}/ws",
-        status_code=403,
-    )
+        open_timeout=5.0,
+        close_timeout=2.0,
+    ) as websocket:
+        with pytest.raises(ConnectionClosedError) as http_ws_closed:
+            await websocket.recv()
+    assert http_ws_closed.value.code == 4401
     cookie = _browser_session_cookie(daemon_instance)
     await _assert_websocket_frames(
         f"ws://localhost:{daemon_instance.http_port}/ws",

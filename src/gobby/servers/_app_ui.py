@@ -27,6 +27,21 @@ logger = logging.getLogger("gobby.servers.app_factory")
 _DAEMON_OWNED_UI_PREFIXES = frozenset(
     ("__gobby__", "admin", "api", "health", "mcp", "memories", "sessions", "skills", "tasks", "ws")
 )
+
+
+async def _close_websocket(websocket: WebSocket, *, code: int, reason: str) -> None:
+    """Close after accept without logging uvicorn's incomplete-handshake bug.
+
+    uvicorn's legacy WebSocketProtocol.close awaits transfer_data_task, which
+    is missing when the client hangs up before the handshake task is assigned.
+    """
+    try:
+        await websocket.close(code=code, reason=reason)
+    except AttributeError as exc:
+        if "transfer_data_task" not in str(exc):
+            raise
+
+
 _HOP_BY_HOP_HEADERS = frozenset(
     (
         "connection",
@@ -49,7 +64,8 @@ def _mount_ws_endpoint(app: FastAPI, server: "HTTPServer") -> None:
         del path
         websocket_server = server.services.websocket_server or server.websocket_server
         if websocket_server is None:
-            await websocket.close(code=1013, reason="WebSocket server unavailable")
+            await websocket.accept()
+            await _close_websocket(websocket, code=1013, reason="WebSocket server unavailable")
             return
 
         authenticated = await websocket_server.run_db(
@@ -57,10 +73,8 @@ def _mount_ws_endpoint(app: FastAPI, server: "HTTPServer") -> None:
             websocket,
         )
         if not authenticated:
-            # Close without accept: uvicorn's legacy WebSocketProtocol raises
-            # AttributeError (missing transfer_data_task) if the client hangs
-            # up after accept() and before the handshake task is assigned.
-            await websocket.close(code=4401, reason="Authentication required")
+            await websocket.accept()
+            await _close_websocket(websocket, code=4401, reason="Authentication required")
             return
 
         adapter = ASGIWebSocketAdapter(websocket, user_id=f"local-web-{uuid4().hex[:8]}")
