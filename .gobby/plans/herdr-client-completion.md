@@ -206,6 +206,7 @@ Targets:
 - `tests/terminals/test_write_input.py`
 - `tests/servers/test_terminal_ws_input.py`
 - `tests/servers/test_native_web_proxy.py::*` — scope-reason: Guard-set-H RecordingRuntime gains write_input and existing terminal_input assertions follow the raw-input route
+- `tests/servers/test_tmux_activation.py::*` — scope-reason: the raw-input direct-handler test replaces its patched bridge os.write assertion with a TerminalRuntime.write_input assertion
 
 Task #21191, verified live on the landed daemon: a browser `terminal_input` of raw
 keystroke bytes (`\r`, `\x03`, `\x04`, `\x7f`, `\x1b[A`) reaches
@@ -276,8 +277,10 @@ the contract unsatisfiable. A **backend** failure — deterministic, partial, or
 happens while the client's WebSocket is still usable, so the handler completes the ledger
 and answers `terminal_write_outcome` normally; that is the only branch that produces a
 reply. **Handler-task cancellation** means the connection itself is going away, so there
-is nothing left to answer: the ledger entry closes in `finally` and `CancelledError`
-re-raises unchanged, with no `terminal_write_outcome` sent and none expected. A branch
+is nothing left to answer: the ledger entry completes in `finally` as
+`outcome="indeterminate", reason="indeterminate_backend"` — the exact tuple a
+same-fingerprint replay is later served — before `CancelledError` re-raises unchanged,
+with no `terminal_write_outcome` sent and none expected. A branch
 cannot both re-raise cancellation and promise a reply on the socket that is disappearing,
 so the two are specified and tested independently.
 
@@ -292,6 +295,24 @@ from `handlers/core.py` together with its `run_id`-keyed legacy branch, and make
 The `2367e0fb25` guarantee — a tmux id is never parsed as an agent uuid — moves with the
 handler and keeps its test.
 
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per
+   `docs/guides/gterminal-development-guide.md` § "Rebuild and reinstall").
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
+
 **Acceptance:**
 
 - 1.1.1 - `TerminalRuntime` declares `write_input(terminal, data: bytes)` and both runtimes implement it: tmux invokes `send-keys -H` with the hex of the UTF-8 bytes in ≤512-byte chunks, native sends a `kind="input"` host write; a payload over 64 KiB raises `InputPayloadTooLargeError` before any subprocess or socket write. test: `tests/terminals/test_write_input.py::test_write_input_uses_send_keys_hex_and_host_input`.
@@ -300,9 +321,9 @@ handler and keeps its test.
 - 1.1.4 - Exactly one `_handle_terminal_input` exists under `src/gobby/servers/websocket/`, the dispatch table binds it by qualified name, and a `terminal_input` naming a tmux id is never parsed as an agent uuid. test: `tests/servers/test_terminal_ws_input.py::test_single_input_handler_is_bound_and_backend_neutral`.
 - 1.1.5 - In a chunked tmux `write_input`, a deterministic failure on the first invocation yields the ordinary failed outcome with no bytes delivered, a deterministic failure on a middle or final invocation raises `TerminalWriteError(stage="partial")` reporting the bytes known to have landed, and a backend timeout at any invocation raises `stage="partial"` with an unknown delivered count — handler-task cancellation is not this branch, because `write_input` propagates `CancelledError` unchanged instead of converting it to a `TerminalWriteError`, and 1.1.7 owns that outcome; no code path resends a payload after any `partial` outcome. test: `tests/terminals/test_write_input.py::test_chunked_write_classifies_partial_delivery`.
 - 1.1.6 - Over the real WebSocket path, with the connection still usable, a chunked `terminal_input` whose middle invocation fails deterministically returns `terminal_write_outcome` with `outcome="indeterminate"` and `reason="indeterminate_partial_delivered:<n>"`, and a backend timeout mid-chunk returns `outcome="indeterminate"` with `reason="indeterminate_backend"`; no new outcome value appears on the wire. test: `tests/servers/test_terminal_ws_input.py::test_partial_write_reports_indeterminate_on_the_wire`.
-- 1.1.7 - Every `write_input` failure, backend timeout, and handler-task cancellation completes the `client_write_seq` in the lease ledger: after each of those outcomes a replay of the same seq with a different payload fingerprint is refused with `write_seq_conflict`, a same-fingerprint replay is served the completed entry's recorded outcome rather than joining a dead in-flight entry, and the next seq is admitted and delivered, so no attachment is left permanently unwritable. The cancellation branch is asserted separately — the ledger entry closes, `CancelledError` propagates out of the handler, and no `terminal_write_outcome` is written to the socket. test: `tests/servers/test_terminal_ws_input.py::test_failed_write_completes_ledger_and_admits_next_seq`, `tests/servers/test_terminal_ws_input.py::test_disconnect_cancellation_closes_ledger_without_replying`.
+- 1.1.7 - Every `write_input` failure, backend timeout, and handler-task cancellation completes the `client_write_seq` in the lease ledger: after each of those outcomes a replay of the same seq with a different payload fingerprint is refused with `write_seq_conflict`, a same-fingerprint replay is served the completed entry's recorded outcome rather than joining a dead in-flight entry, and the next seq is admitted and delivered, so no attachment is left permanently unwritable. The cancellation branch is asserted separately — the ledger entry completes as exactly `outcome="indeterminate", reason="indeterminate_backend"`, a later same-fingerprint replay is served that exact tuple, `CancelledError` propagates out of the handler, and no `terminal_write_outcome` is written to the socket. test: `tests/servers/test_terminal_ws_input.py::test_failed_write_completes_ledger_and_admits_next_seq`, `tests/servers/test_terminal_ws_input.py::test_disconnect_cancellation_closes_ledger_without_replying`.
 
-### 1.2 Close out attach honesty: drive the `attach_terminal` unwind branch and port the stale e2e mocks [category: test] (depends: 1.1)
+### 1.2 Close out attach honesty: drive the `attach_terminal` unwind branch and port the stale e2e mocks [category: test]
 `kind: deliverable`
 
 Targets:
@@ -351,12 +372,30 @@ filed by the merge review: #21266 (cache the attachment→terminal mapping at br
 creation), #21267 (fragmented-output e2e vitest), #21268 (tighten the
 `terminal_attach_history` `|| terminal_id` fallback).
 
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per
+   `docs/guides/gterminal-development-guide.md` § "Rebuild and reinstall").
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
+
 **Acceptance:**
 
 - 1.2.1 - A proxy frame whose `handshake` succeeds and whose `attach_terminal` raises yields `success: false, code: "proxy_start_failed"`, a closed frame, no lease record, and no `attachments`/`by_socket` entry. test: `tests/servers/test_terminal_ws_attach_honesty.py::test_proxy_attach_failures_are_typed_and_finalized` (new parametrize row `attach_raises`).
 - 1.2.2 - Both Playwright specs' WebSocket mocks emit the merged wire shape and their terminal-surface assertions pass against the attachment-routed hook. test: `cd web && npx playwright test tests/style-surfaces.spec.ts tests/terminal-colors.spec.ts`.
 
-### 1.3 Negotiate the frame encoding on `terminal_attach`, add the `direct` block, and relay cell frames [category: code] (depends: 1.2)
+### 1.3 Negotiate the frame encoding on `terminal_attach`, add the `direct` block, and relay cell frames [category: code] (depends: 1.1, 1.2)
 `kind: deliverable`
 
 Targets:
@@ -402,6 +441,24 @@ Two additions to the attach handshake, both consumed by P2:
    does) and answers `success: false, code: "locator_failed"` on failure, reusing the
    landed `PROXY_ATTACH_FAILURE_REASONS` reply path (#21207/#21258).
 
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per
+   `docs/guides/gterminal-development-guide.md` § "Rebuild and reinstall").
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
+
 **Acceptance:**
 
 - 1.3.1 - A proxy attach with `encoding: "semantic_frame"` handshakes the host with that encoding and relays each host frame as a `terminal_frame` whose base64 payload decodes to the exact bincode bytes the fake host wrote; `terminal_ansi` and an omitted `encoding` still yield `terminal_output` byte-identical to the pre-change fixture; an unknown encoding is refused `invalid_encoding`. test: `tests/servers/test_native_web_proxy.py::test_semantic_frame_proxy_relays_bincode_payloads`.
@@ -430,12 +487,16 @@ Targets:
 - `src/gobby/servers/websocket/terminal_ws.py::TerminalWsMixin._handle_terminal_kill`
 - `src/gobby/servers/websocket/proxy_relay.py::_Queued`
 - `src/gobby/servers/websocket/proxy_relay.py::SocketRelay`
+- `tests/servers/test_terminal_ws_create.py::*` — scope-reason: successful create gains a result-before-ordered-event message, so existing direct-handler message-count assertions change
 
 gclient's subscribe-first reconciliation (2.1) needs to know which buffered lifecycle
 events predate the roster it just fetched. Give `TerminalLeaseRegistry` — already
 process-wide and the owner of `next_message_seq` — a `daemon_epoch: str` (uuid4 minted
 in `__init__`) and `next_lifecycle_seq() -> int` guarded by the same lock the
-broadcaster uses. Every lifecycle emission stamps `seq` and `daemon_epoch`:
+broadcaster uses. `next_lifecycle_seq` shares `next_message_seq`'s JavaScript
+safe-integer ceiling: at `2**53 - 1` the registry rotates — mints a fresh `daemon_epoch`
+and resets the counter — atomically under the same publisher lock, so no emission is
+stamped outside the safe range and no two emissions straddle the rotation unordered. Every lifecycle emission stamps `seq` and `daemon_epoch`:
 `terminal_event` (`broadcast_tmux_session_event`; the legacy emitter in
 `servers/websocket/tmux.py` calls it instead of building its own dict),
 `terminal_lease_lost` (`_fanout_lease_lost`), and `terminal_attachment_finalized`
@@ -455,8 +516,9 @@ same critical section, so a lifecycle emission is numbered and published as one
 indivisible step and no emitter can interleave between the two.
 
 That queue is bounded, because a consumer that awaits each fanout is a consumer one stalled
-socket can hold. It carries a fixed entry ceiling, and a submitter arriving at a full queue
-waits for space rather than having its event dropped — backpressure preserves the ordering
+socket can hold. Its ceiling is fixed at 256 entries, owned by
+`LIFECYCLE_PUBLICATION_QUEUE_MAXSIZE` in `src/gobby/terminals/leases.py`, and a submitter
+arriving at the full queue waits for space rather than having its event dropped — backpressure preserves the ordering
 the path exists for, where dropping would silently break it. Per entry the consumer reuses
 the send deadlines the relay already enforces (`TERMINAL_WS_LIFECYCLE_SEND_TIMEOUT_S`, whose
 expiry shuts that relay down), so one wedged client cannot stall the path indefinitely.
@@ -476,14 +538,32 @@ tracks the highest `seq` it has applied and discards any buffered lifecycle even
 below it during replay, which makes the ordered path's guarantee survive reconnect
 buffering.
 
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per
+   `docs/guides/gterminal-development-guide.md` § "Rebuild and reinstall").
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
+
 **Acceptance:**
 
 - 1.4.1 - The first `terminal_list` page (WS and REST) carries `snapshot.daemon_epoch` and `snapshot.seq`; continuation pages carry `snapshot: null`; a `terminal_event` emitted after the snapshot was taken has `seq` greater than the snapshot's, one emitted before has `seq` ≤ it. test: `tests/servers/test_terminal_list_watermark.py::test_snapshot_orders_lifecycle_events`.
-- 1.4.2 - `terminal_event`, `terminal_lease_lost`, and `terminal_attachment_finalized` all carry `seq` and `daemon_epoch`, `seq` is strictly increasing across the three emitters, and the legacy tmux emitter produces the same shape. test: `tests/servers/test_terminal_list_watermark.py::test_every_lifecycle_emitter_is_stamped`.
+- 1.4.2 - `terminal_event`, `terminal_lease_lost`, and `terminal_attachment_finalized` all carry `seq` and `daemon_epoch`, `seq` is strictly increasing across the three emitters, and the legacy tmux emitter produces the same shape; a registry forced to `2**53 - 1` rotates `daemon_epoch` and resets `seq` atomically under the publisher lock before the next emission. test: `tests/servers/test_terminal_list_watermark.py::test_every_lifecycle_emitter_is_stamped`.
 - 1.4.3 - With all three emitters firing concurrently and a forced yield injected between sequence allocation and fanout in each, the bytes observed on a subscribed socket arrive in strictly increasing `seq` order and the resulting reducer state matches serial emission of the same events; the snapshot `seq` returned by a `terminal_list` interleaved with that traffic never exceeds the highest sequence whose fanout has completed. test: `tests/servers/test_terminal_list_watermark.py::test_publication_order_matches_sequence_under_forced_yields`.
 - 1.4.4 - Direct detach finalization and the unregistered-requester takeover fallback both publish stamped lifecycle events through the ordered registry path, preserving strictly increasing observed seq. test: `tests/servers/test_terminal_list_watermark.py::test_direct_lifecycle_fallbacks_are_ordered`.
 - 1.4.5 - A successful `terminal_create` publishes a stamped `terminal_event` carrying the full created row, resolved through the same by-id read the REST route uses, after the `terminal_create_result` is sent; a successful `terminal_kill` publishes a stamped exit event naming the terminal id. Both are stamped and ordered like every other lifecycle emission, a refused create or kill publishes nothing, and a duplicate kill of an already-exited terminal publishes at most one exit event. test: `tests/servers/test_terminal_list_watermark.py::test_create_and_kill_publish_ordered_lifecycle_events`.
-- 1.4.6 - With the proxy relay sender paused after enqueue, committed lifecycle high-water does not advance and no later direct lifecycle event is observed first; releasing the sender publishes both in strictly increasing sequence order. With the queue driven to its entry ceiling the next submitter waits for space rather than dropping its event, the drain stays in strictly increasing sequence order, and an event whose submitter is cancelled after admission is still published and still advances the committed high-water. test: `tests/servers/test_terminal_list_watermark.py::test_proxy_relay_ack_precedes_committed_high_water`.
+- 1.4.6 - With the proxy relay sender paused after enqueue, committed lifecycle high-water does not advance and no later direct lifecycle event is observed first; releasing the sender publishes both in strictly increasing sequence order. With the queue holding its full 256 entries (`LIFECYCLE_PUBLICATION_QUEUE_MAXSIZE`), submitter 257 waits until space is released rather than having its event dropped, no admitted event is dropped, the drain stays in strictly increasing sequence order, and an event whose submitter is cancelled after admission is still published and still advances the committed high-water. test: `tests/servers/test_terminal_list_watermark.py::test_proxy_relay_ack_precedes_committed_high_water`.
 
 ### 1.5 Move the golden corpus to `tests/fixtures/terminal_ws_golden/` and compare real emitters [category: test] (depends: 1.1, 1.2, 1.3, 1.4)
 `kind: deliverable`
@@ -601,11 +681,29 @@ plus `manifest.json`), and the parity check compares the directory *minus*
 itself is validated as metadata — well-formed JSON with the expected key set — never
 replayed.
 
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per
+   `docs/guides/gterminal-development-guide.md` § "Rebuild and reinstall").
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
+
 **Acceptance:**
 
 - 1.5.1 - `tests/fixtures/terminal_ws_golden/manifest.json` lists exactly 38 fixture entries (the 31 moved fixtures plus the seven new shapes); the directory holds exactly 39 files, and the directory's contents minus `manifest.json` equal the manifest's entry list in both directions; `manifest.json` parses as well-formed JSON with the expected key set and is never listed as one of its own entries; `tests/servers/fixtures/terminal_ws_golden/` holds no files; and `golden_fixtures` no longer exists in production code. file: `tests/fixtures/terminal_ws_golden/manifest.json`.
 - 1.5.2 - Every reply and server-initiated shape produced by the real Python emitters matches its fixture byte-for-byte after canonicalization, including `terminal_frame`, `attach_result_direct`, `create_result_refused`, `list_snapshot`, `kill_result`, and `detach_result`. test: `tests/servers/test_terminal_ws_golden.py::test_emitters_match_golden_replies`.
-- 1.5.3 - `crates/gclient/tests/ws_golden.rs` and the vitest hook suite replay all 38 manifest entries from the canonical path as WebSocket messages and decode the new shapes, neither harness attempting to replay `manifest.json` itself; the Rust safe-integer guard holds across every sequence field rather than at one point: `message_seq`, `lease_generation`, and `client_write_seq` each survive production encoding and decoding as JSON numbers, `2^53-2` and `2^53-1` remain distinct encodings, and `2^53`, a string, and a float are each refused rather than coerced. test: `crates/gclient/tests/ws_golden.rs::corpus_replays_from_canonical_manifest`.
+- 1.5.3 - `crates/gclient/tests/ws_golden.rs` and the vitest hook suite replay all 38 manifest entries from the canonical path as WebSocket messages and decode the new shapes, neither harness attempting to replay `manifest.json` itself; the Rust safe-integer guard holds across every sequence field rather than at one point: `message_seq`, `lease_generation`, `client_write_seq`, and lifecycle `seq` each survive production encoding and decoding as JSON numbers, `2^53-2` and `2^53-1` remain distinct encodings, and `2^53`, a string, and a float are each refused rather than coerced. test: `crates/gclient/tests/ws_golden.rs::corpus_replays_from_canonical_manifest`.
 
 ## P2: gclient data plane and frame sources
 `kind: framing`
@@ -644,7 +742,7 @@ pub trait Daemon: Send + Sync {
     async fn mark_seen(&self, entry: &str, attention_id: &str) -> Result<(), DaemonError>;
     async fn spawn(&self, req: SpawnRequest) -> Result<SpawnOutcome, DaemonError>;      // terminal_create over WS
     async fn terminate(&self, terminal_id: &str) -> Result<KillOutcome, DaemonError>;   // terminal_kill over WS
-    fn subscribe(&self) -> (Generation, broadcast::Receiver<DaemonEvent>);
+    fn subscribe(&self) -> (SubscribeSnapshot, broadcast::Receiver<DaemonEvent>);  // SubscribeSnapshot { generation, ready, last_error }
     async fn send(&self, msg: WsMessage) -> Result<WsReply, DaemonError>;   // correlated
     async fn notify(&self, msg: WsMessage) -> Result<(), DaemonError>;      // one-way (viewport, resize)
     async fn reconnect(&self, observed: Generation) -> Result<Generation, DaemonError>;
@@ -654,8 +752,10 @@ pub enum DaemonError { Unauthorized, NotFound, Unavailable { retry_after: Option
 ```
 
 `LiveDaemon` (`live.rs`, `live_reader.rs`, `rest.rs`): `reqwest` with the bearer on
-every request for `GET /api/terminals` (follows `next_cursor` to termination; pins the
-first page's `snapshot`), `GET /api/terminals/{id}`, `GET /api/attention/roster`,
+every request for `GET /api/terminals` (each `list_terminals` call returns one
+authenticated page and retains no cursor, roster, or project state; `Workspace` follows
+`next_cursor`, pins the first page's `snapshot`, installs the roster, and replays
+buffered events — 2.1.1), `GET /api/terminals/{id}`, `GET /api/attention/roster`,
 `POST /api/attention/{entry}/respond`, `POST /api/attention/{entry}/seen`; 401/403 →
 `Unauthorized`, 404 → `NotFound`, 5xx/connection → `Unavailable`, a body the golden
 decoder rejects → `Protocol`. `tokio-tungstenite` against `/ws` with
@@ -666,14 +766,27 @@ correlation maps keyed the way the wire actually is — `request_id → oneshot`
 oneshot` for `terminal_write_outcome` (which carries no `request_id`), and a
 single-flight `attachment_id → oneshot` control waiter for `terminal_control_result`
 (a second concurrent control request on one attachment is refused locally with
-`ControlRequestInFlight`). Lifecycle messages (`terminal_event`, `terminal_lease_lost`,
+`ControlRequestInFlight`). Correlated waits run against the deadlines Named defaults
+fixes, carried here as named constants in `live.rs`: `REQUEST_DEADLINE` (5 s) for the
+`request_id` and `(attachment_id, client_write_seq)` maps and `CONTROL_REQUEST_DEADLINE`
+(2 s) for the control waiter; the paused-clock tests in 2.1.9 and 2.1.14 cross those
+exact boundaries. Lifecycle messages (`terminal_event`, `terminal_lease_lost`,
 `terminal_attachment_finalized`, `terminal_output`, `terminal_frame`,
 `terminal_attach_history`, `terminal_scroll_offset_applied`, reassembled
 `terminal_ws_fragment`s) and attention broadcasts — carried on the wire as the agent
 event `attention_metadata_changed` (`agents/attention_metadata.py`), not as a message
 named `attention` — fan out to subscribers through a
-256-entry broadcast channel; a lagging receiver gets `DaemonEvent::Lagged` and must
-re-list.
+256-entry broadcast channel. The reader is the client's sole fragment reassembler: it
+buffers `terminal_ws_fragment` slices keyed by `(attachment_id, message_seq)`, enforces
+fragment-index continuity, base64 validity, and the reassembled-size ceiling, drops
+duplicate slices and refuses gaps, finalizes the buffer into one complete event on the
+last fragment, and discards partial buffers on `terminal_attachment_finalized` and on
+generation teardown — `Workspace` and `ProxyFrameSource` receive only complete events
+and hold no accumulator of their own. A lagging receiver gets `DaemonEvent::Lagged`,
+re-subscribes, and reads the returned snapshot before re-listing: when `ready` is false
+— the generation disconnected while the receiver lagged past its sole `Disconnected`
+event — it first runs the same read-only/clear/recovery transition `Disconnected`
+drives, submitting exactly one recovery episode, and only then re-lists.
 
 `DaemonEvent` carries `Attention { epoch, seq, payload }` and
 `Disconnected { generation, error }` alongside the terminal lifecycle variants.
@@ -766,9 +879,13 @@ arrives, and it settles the release — reporting the wrong outcome for an opera
 never got one. That is the cross-request alias the cleanup rule exists to prevent,
 reintroduced by the cleanup itself.
 
-Split the two cases by whether the request reached the socket. Cancellation **before**
-the transport write means no reply can ever exist, so the key is released and
-immediately reusable. Timeout or cancellation **after** the write leaves the outcome
+Split the two cases at a boundary the client can observe. "Reached the socket" is not
+that boundary: a cancelled in-progress sink send can already have buffered bytes while
+its future never completes, so send completion cannot partition the space. The partition
+key is `write_started`, set immediately before the sink send is invoked. Cancellation
+with `write_started` unset means no reply can ever exist, so the key is released and
+immediately reusable. Timeout or cancellation with `write_started` set — including
+cancellation while the send future is still in progress — leaves the outcome
 genuinely unknown, so removal also **tombstones that attachment's control scope**: the
 entry is gone, and no new take or release waiter may be registered for that
 `attachment_id` until the attachment is retired — a detach, a
@@ -817,7 +934,10 @@ state.
 that *applies* events: it tracks the highest lifecycle `seq` it has applied within the
 current `daemon_epoch` and discards any buffered event at or below that high-water during
 replay, so a reconnect's replay can never rewind state the live stream already advanced
-past. An epoch change resets the high-water along with the roster refetch.
+past. Lifecycle `seq` reaches that comparison through the same Rust safe-integer guard
+as `message_seq`, `lease_generation`, and `client_write_seq` (1.5.3), so a non-integer
+or out-of-range value is refused at decode rather than coerced into a wrong high-water.
+An epoch change resets the high-water along with the roster refetch.
 
 The terminal roster reconciles under the same ownership rule as attention, and for the
 same reason. Subscribe-first is a sequence of steps that *installs state*: buffer,
@@ -837,8 +957,9 @@ epoch, and refetch on epoch change. `LiveDaemon` supplies exactly two things: th
 subscription and the one-page REST/WS operation each traversal step calls.
 **Generation-ready** stays on the transport where it belongs and means what the transport
 can actually know — a socket generation is connected and serving — published as a readable
-value (`subscribe()` returns it beside the stream) so a `Workspace` that subscribes late
-still sees it. Roster readiness is `Workspace`'s own, reached when its handshake finishes.
+value (`subscribe()` returns the `{generation, ready, last_error}` snapshot beside the
+stream) so a `Workspace` that subscribes late, or re-subscribes after a lag, still sees
+whether the generation it joined is serving and the disconnect it may have lagged across. Roster readiness is `Workspace`'s own, reached when its handshake finishes.
 `LiveDaemon` issues no `terminal_attach` of its own: `Workspace` is the sole issuer and
 attaches each shown pane at most once per generation, driven by generation-ready. `ScriptedDaemon` implements the same trait with
 scripted replies and faults so the existing reducer tests keep running unchanged.
@@ -855,6 +976,24 @@ client as a `Protocol` error. The refusal is a D1 daemon deliverable and is not 
 client handles it now so that landing D1 does not turn a routine restart into a failed
 listing, and the cost is one mock fault plus one branch into an existing path.
 
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per
+   `docs/guides/gterminal-development-guide.md` § "Rebuild and reinstall").
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
+
 **Acceptance:**
 
 - 2.1.1 - `Workspace<LiveDaemon>` follows `next_cursor` across three mock pages through repeated `Daemon::list_terminals` calls, yields every row once, and pins page one's `snapshot`; every page request it issues selects only pending and live rows through the comma-separated `states=pending,live` filter (`_parse_states`), no request reaches an unpaged listing, and retained history is fetched only through a separate explicit query the roster traversal never makes; `LiveDaemon::list_terminals` itself returns one page and retains no cursor, roster, or project state between calls. test: `crates/gclient/tests/daemon_live.rs::list_terminals_follows_cursor_and_pins_snapshot`.
@@ -865,12 +1004,12 @@ listing, and the cost is one mock fault plus one branch into an existing path.
 - 2.1.6 - `Workspace<D: Daemon>` compiles against both `LiveDaemon` and `ScriptedDaemon`, and every pre-existing reducer test passes unchanged on the scripted double. symbol: `Workspace`.
 - 2.1.7 - Driven directly as a `LiveDaemon` harness (this criterion owns the single-flight property of the primitive; 3.2.9 owns pane-originated concurrency, and panes never call `reconnect` themselves): two concurrent callers passing the same observation cause one replacement WS handshake, one reader, and one generation-ready publication shared by both, and both receive that generation; the transport performs no listing and no replay of its own, which stay `Workspace`'s under 2.1.5. A third caller suspended across the ready boundary and released afterwards passes its now-stale observation, receives the already-current generation, and causes no second handshake. A scripted failed attempt settles every caller for that observation and a later call performs one retry. A caller still holding the G1 observation that arrives while G2's own recovery is in flight joins that attempt rather than starting a third handshake, and one that arrives after G2 connected and dropped receives the typed `Unavailable` — never G2 as a success — and starts no competing replacement. test: `crates/gclient/tests/reconciliation.rs::concurrent_reconnect_is_single_flight`.
 - 2.1.8 - After a reconnect whose buffer holds a lifecycle event with `seq` at or below the highest `Workspace` has already applied in the same `daemon_epoch`, its replay discards the event and leaves the live-stream state intact; an epoch change resets the high-water and refetches instead of discarding; `LiveDaemon` holds no applied-seq state of its own. test: `crates/gclient/tests/reconciliation.rs::replay_never_rewinds_applied_state`.
-- 2.1.9 - Across fifty requests whose replies are withheld until timeout and fifty more cancelled by the caller, every entry is removed from all three correlation maps by its exact key and each map's size returns to zero; a withheld reply that arrives after its entry was removed is dropped and recreates nothing. Reuse follows the transport-write boundary: a `request_id` or `(attachment_id, client_write_seq)` key is immediately reusable after exact-key removal on every path, and a control request that was cancelled *before* its bytes reached the socket leaves the attachment's control scope immediately reusable, so the next take or release is admitted normally. A control request whose bytes did reach the socket and then timed out or was cancelled drains its waiter and tombstones that attachment's control scope instead — 2.1.14 owns that case, and the two criteria partition the space rather than overlapping. test: `crates/gclient/tests/daemon_live.rs::correlation_maps_drain_on_every_terminal_path`.
+- 2.1.9 - Across fifty requests whose replies are withheld until the exact `REQUEST_DEADLINE` (5 s) boundary under a paused clock — control waiters at the exact `CONTROL_REQUEST_DEADLINE` (2 s) — and fifty more cancelled by the caller, every entry is removed from all three correlation maps by its exact key and each map's size returns to zero; a withheld reply that arrives after its entry was removed is dropped and recreates nothing. Reuse follows the `write_started` boundary: a `request_id` or `(attachment_id, client_write_seq)` key is immediately reusable after exact-key removal on every path, and a control request cancelled before `write_started` is set — its sink send never invoked — leaves the attachment's control scope immediately reusable, so the next take or release is admitted normally. A control request whose sink send was invoked and that then timed out or was cancelled — including cancellation while the send future is paused mid-send — drains its waiter and tombstones that attachment's control scope instead — 2.1.14 owns that case, and the two criteria partition the space rather than overlapping. test: `crates/gclient/tests/daemon_live.rs::correlation_maps_drain_on_every_terminal_path`.
 - 2.1.10 - During `Workspace`'s subscribe-first handshake, the 1,025th buffered lifecycle event discards the partial listing and its pinned snapshot and restarts the listing from a fresh snapshot rather than replaying against a stale pin; a `cursor_stale` refusal mid-listing produces the same restart-and-re-pin, and the resulting pane set converges with the mock's roster. test: `crates/gclient/tests/reconciliation.rs::buffer_overflow_and_cursor_stale_restart_the_listing`.
-- 2.1.11 - A `Workspace` driven 256 entries behind receives `DaemonEvent::Lagged`, re-subscribes, re-lists its project, and converges on the mock's current roster without reusing any pre-lag buffered event or pinned snapshot. test: `crates/gclient/tests/reconciliation.rs::lagged_subscriber_relists_and_converges`.
+- 2.1.11 - A `Workspace` driven 256 entries behind receives `DaemonEvent::Lagged`, re-subscribes, re-lists its project, and converges on the mock's current roster without reusing any pre-lag buffered event or pinned snapshot; when the lag spans the generation's sole `Disconnected` event, the re-subscribe snapshot reads `ready: false` with the disconnect in `last_error`, and the workspace runs the read-only/clear/recovery transition and submits exactly one recovery episode before re-listing. test: `crates/gclient/tests/reconciliation.rs::lagged_subscriber_relists_and_converges`.
 - 2.1.12 - `Workspace<LiveDaemon>::reconcile_subscribe_first` runs the attention handshake over the mock transport with no second reducer or snapshot watch anywhere in the client: attention broadcasts arriving before, during, and after `GET /api/attention/roster` all land, in `seq` order, with none lost and none applied twice; an attention broadcast in a different `epoch` refetches the roster instead of applying; the resulting entry set and applied-`seq` sequence match the mock's ground truth. test: `crates/gclient/tests/reconciliation.rs::live_attention_subscribe_first_no_regression`.
 - 2.1.13 - Every outbound WebSocket message emitted by LiveDaemon and Workspace production send/notify paths matches its canonical request fixture byte-for-byte after canonicalization. test: `crates/gclient/tests/daemon_live.rs::outbound_messages_match_corpus`.
-- 2.1.14 - A take-control request that times out after reaching the socket tombstones its attachment's control scope: a release attempted afterwards on that same `attachment_id` is refused locally with the distinct `DaemonError::ControlScopeIndeterminate` — not `ControlRequestInFlight`, which would tell the caller to wait for a reply that will never settle — rather than registered, and when the original take's `terminal_control_result` finally arrives it settles nothing and is dropped. A take cancelled *before* the transport write leaves the scope immediately reusable and the next control request is admitted normally. After a detach, a `terminal_attachment_finalized`, or a fresh attach yielding a new id, control requests are admitted again. test: `crates/gclient/tests/daemon_live.rs::late_control_reply_cannot_settle_a_newer_request`.
+- 2.1.14 - A take-control request whose sink send was invoked and that then times out at the exact `CONTROL_REQUEST_DEADLINE` (2 s) boundary under a paused clock tombstones its attachment's control scope: a release attempted afterwards on that same `attachment_id` is refused locally with the distinct `DaemonError::ControlScopeIndeterminate` — not `ControlRequestInFlight`, which would tell the caller to wait for a reply that will never settle — rather than registered, and when the original take's `terminal_control_result` finally arrives it settles nothing and is dropped. A take cancelled before its sink send is invoked (`write_started` unset) leaves the scope immediately reusable and the next control request is admitted normally, a take cancelled while its send future is paused mid-send tombstones the scope exactly as the timeout does, and a take cancelled after the send future completes does the same — the three paused-sink schedules are each driven. After a detach, a `terminal_attachment_finalized`, or a fresh attach yielding a new id, control requests are admitted again. test: `crates/gclient/tests/daemon_live.rs::late_control_reply_cannot_settle_a_newer_request`.
 - 2.1.15 - `Daemon::close` is idempotent and terminal: after it returns, every new `send`, `notify`, and `reconnect` fails typed without touching the socket, every outstanding waiter in all three maps has been failed and cleared, the reader task has stopped, and the sink is closed; a second `close` is a no-op. With a reconnect episode paused inside its handshake and `close` raced against it, the episode is cancelled and awaited, every joiner settles with the terminal close error rather than a generation, and after `close` returns no sink, reader task, or generation-ready value has been installed — including when the paused attempt is released past its last await point, where the pre-publication fence check discards the connection it just built. test: `crates/gclient/tests/daemon_live.rs::close_is_idempotent_and_rejects_later_requests`.
 
 ### 2.2 Build the direct Unix-socket and cell-mode proxy frame sources [category: code] (depends: 2.1)
@@ -1021,7 +1160,8 @@ the same gap reopens on every lag recovery and every fresh proxy attach. So the 
 takes a `DaemonEvent` receiver **before** writing `terminal_attach` and hands that
 already-buffering receiver to `ProxyFrameSource` once the reply supplies the id; the
 source filters it by that `attachment_id` and applies the state boundary exactly once
-before any delta. This costs nothing new — `subscribe()` already returns a buffering
+before any delta. Fragments never reach it: the LiveDaemon reader (2.1) is the client's
+sole reassembler, so this source — like `Workspace` — consumes only complete events. This costs nothing new — `subscribe()` already returns a buffering
 receiver — it only fixes when it is called. The source then base64-decodes each
 `terminal_frame.payload` and decodes it with the same `ServerMessage` codec, consuming
 that attachment's `terminal_frame` / `terminal_attach_history` /
@@ -1051,6 +1191,24 @@ and `Scripted(ScriptedFrameSource)` variants, each of `recv`/`send`/`transport` 
 on the variant and calling the concrete method. Dispatch stays static, the trait stays as
 written for the concrete types, and heterogeneous panes are representable because the
 enum — not the trait object — is what a pane owns.
+
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per
+   `docs/guides/gterminal-development-guide.md` § "Rebuild and reinstall").
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
 
 **Acceptance:**
 
@@ -1165,6 +1323,24 @@ herdr's agents/workspaces model to Gobby's roster/terminal rows:
   disjuncts — that the sidebar, navigator, and status renders contain the scripted
   roster's terminal titles and attention marker.
 
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per
+   `docs/guides/gterminal-development-guide.md` § "Rebuild and reinstall").
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
+
 **Acceptance:**
 
 - 3.1.1 - Every keep-set module exists under `crates/gclient/src/ui/` with its upstream header, every dropped module is absent, and the guard fails when a rejected module is added, a header is removed, or a render omits the scripted roster data. test: `crates/gclient/tests/ui_carve_guard.rs::carve_matches_upstream_map_and_renders_data`.
@@ -1175,6 +1351,7 @@ herdr's agents/workspaces model to Gobby's roster/terminal rows:
 - 3.1.6 - The default keep-set action/key pairs equal the herdr v0.8.0 map; a client-local override replaces exactly one known action by name and leaves every other default unchanged; worktree/mobile action names remain unavailable; a reserved plugin action remains non-dispatchable and absent from keybind help even when the override file names it. test: `crates/gclient/tests/keymap.rs::overrides_preserve_defaults_and_cannot_activate_deferred_actions`.
 - 3.1.7 - An override binding an action to a chord another active action already owns is rejected with an error naming the chord and both actions, and the resulting keymap is the unmodified default; an override reusing a chord owned only by a `reserved: true` action is accepted; after any accepted merge every active chord dispatches to exactly one action. test: `crates/gclient/tests/keymap.rs::colliding_override_is_rejected_and_defaults_survive`.
 - 3.1.8 - `gobby-client` declares `toml` as a direct dependency in `crates/gclient/Cargo.toml`, the `gobby-client` package entry in `Cargo.lock` lists it, and no hand-written TOML parsing exists under `crates/gclient/src`. file: `crates/gclient/Cargo.toml`.
+- 3.1.9 - Representative chrome renders in both dark and light themes, and the brand-accent keyboard-focus ring plus its position cue meet WCAG 2.2 AA contrast against every surface in each theme while state colors retain distinct grayscale ranks. test: `crates/gclient/tests/theme.rs::tokens_match_design_contract_and_survive_monochrome`.
 
 ### 3.2 Build the app shell, event loop, and terminal views [category: code] (depends: 3.1, 2.2)
 `kind: deliverable`
@@ -1184,7 +1361,7 @@ Targets:
 - `crates/gclient/src/views/mod.rs::*` — scope-reason: `run_ready` becomes the real loop entry
 - `crates/gclient/src/views/grid.rs`
 - `crates/gclient/src/app/mod.rs::*` — scope-reason: the reducer drives real transports and the fallback state machine
-- `crates/gclient/src/app/apply.rs::*` — scope-reason: fragments are reassembled into frames and history instead of counted and discarded
+- `crates/gclient/src/app/apply.rs::*` — scope-reason: the fragment accumulator is removed; apply.rs consumes only complete events reassembled by the LiveDaemon reader (2.1)
 - `crates/gclient/src/app/pane.rs::*` — scope-reason: pane state gains the attach state machine and grid
 - `crates/gclient/src/app/attach.rs`
 - `crates/gclient/src/app/run_loop.rs`
@@ -1221,7 +1398,11 @@ for either `terminal_detach_result` or the lifecycle `terminal_attachment_finali
 naming that id — either alone advances it — then issues a fresh proxy attach and enters
 `Attached` only on a result carrying a different `attachment_id`; the old id is
 tombstoned so late frames, lease events, and write outcomes for it are dropped; control
-is not carried across. `Detaching` is bounded by the 2 s deadline: on expiry the pane
+is not carried across. A fresh proxy attach the daemon *refuses* —
+`terminal_attach_result` with `success: false` and the landed `code`/`reason` (#21207) —
+is a terminal outcome, not a retry: the old id stays tombstoned, the pane settles
+`Detached` and read-only with the returned code and reason shown in the status bar, and
+no frame-source, viewport, or control state is installed. `Detaching` is bounded by the 2 s deadline: on expiry the pane
 submits a recovery intent tagged with the generation it was attached under to the run
 loop's `ReconnectSupervisor`, awaits that episode's shared result, and re-attaches on
 generation-ready. The pane never calls `LiveDaemon::reconnect` itself — see **Reconnect
@@ -1344,7 +1525,10 @@ clears every lease and control state, discards `pending_input` with the reason s
 suppresses terminal writes and control requests for the duration — and only then does it
 submit the generation-tagged recovery intent to the `ReconnectSupervisor`, so the
 read-only transition is ordered strictly ahead of the first reconnect attempt rather than
-racing it. Direct `FrameSource` panes keep receiving and rendering throughout —
+racing it. `Disconnected` is a one-shot broadcast, so a receiver that lagged across it
+learns the same fact from the re-subscribe snapshot instead — `ready: false` with the
+disconnect in `last_error` (2.1) — and drives this identical transition, submitting one
+recovery intent the supervisor coalesces into the same episode. Direct `FrameSource` panes keep receiving and rendering throughout —
 their frames come from the host socket, which the daemon's absence does not touch, and
 that is precisely the property the source clause names. Proxy panes have no frame path
 without the daemon and show the disconnected treatment. On generation-ready the client
@@ -1366,12 +1550,30 @@ reducer — and an owner that cannot reach the request-producing code cannot enf
 guarantee. 3.3 consumes the latch: it owns what happens *after* it sets, the ordered
 `shutdown(workspace, daemon, deadline)` phase and the local terminal restore.
 
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per
+   `docs/guides/gterminal-development-guide.md` § "Rebuild and reinstall").
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
+
 **Acceptance:**
 
 - 3.2.1 - Against the scripted daemon and scripted frame source the loop renders frames into the pane grid, routes a keystroke to `terminal_input` only when the client holds the lease, keeps rendering and applying events across idle ticks, and exits on the quit key with the already-armed `TerminalGuard` restored — its stage-aware successor is 3.3's to deliver. test: `crates/gclient/tests/client_loop.rs::loop_routes_input_and_frames`.
 - 3.2.2 - Focus-follows-control: take on focus, release on focus change with the pane still attached, read-only with take-back on `terminal_lease_lost`, a lower-generation delayed grant ignored, the triggering keystroke sent exactly once on `granted:true` and discarded with a shown reason on every other exit. test: `crates/gclient/tests/client_loop.rs::focus_moves_control_and_settles_pending_input_once`.
-- 3.2.3 - Direct→proxy fallback: after a direct-frame failure the pane detaches the old id, advances on either finalization signal, attaches afresh with `frame_delivery: "proxy", encoding: "semantic_frame"`, notifies the viewport, installs the new id and generation, drops late events for the tombstoned id, holds no control until take-control succeeds; a swallowed finalization expires the 2 s deadline, reconnects, and re-attaches on generation-ready with exactly one attach per pane. test: `crates/gclient/tests/client_loop.rs::proxy_fallback_uses_fresh_attachment`.
-- 3.2.4 - `terminal_write_outcome` transitions: `delivered` writable, `indeterminate` uncertain read-only with no resend, refusals and seq errors clear the in-flight mark without a second write; `terminal_attachment_finalized` mid-fragment drops the stale slice. test: `crates/gclient/tests/client_loop.rs::write_outcomes_drive_pane_state`.
+- 3.2.3 - Direct→proxy fallback: after a direct-frame failure the pane detaches the old id, advances on either finalization signal, attaches afresh with `frame_delivery: "proxy", encoding: "semantic_frame"`, notifies the viewport, installs the new id and generation, drops late events for the tombstoned id, holds no control until take-control succeeds; a swallowed finalization expires the 2 s deadline, reconnects, and re-attaches on generation-ready with exactly one attach per pane; a fresh proxy attach refused with `success: false` settles the pane `Detached` and read-only with the returned code and reason shown, keeps the old id tombstoned, and installs no frame-source, viewport, or control state. test: `crates/gclient/tests/client_loop.rs::proxy_fallback_uses_fresh_attachment`.
+- 3.2.4 - `terminal_write_outcome` transitions: `delivered` writable, `indeterminate` uncertain read-only with no resend, refusals and seq errors clear the in-flight mark without a second write; a `terminal_attachment_finalized` arriving mid-reassembly surfaces no partial event — the reader (2.1) discards that attachment's partial buffer and the reducer holds no accumulator of its own. test: `crates/gclient/tests/client_loop.rs::write_outcomes_drive_pane_state`.
 - 3.2.5 - An actionable prompt in the roster opens the imported dialog and its answer reaches `Daemon::respond` with the correct `attention_id`; a 409 renders the stale-episode notice. test: `crates/gclient/tests/attention_flow.rs::respond_reaches_daemon`.
 - 3.2.6 - `input.rs` encodes arrows, function keys, and modifier combinations to the bytes crossterm's kitty and legacy protocols define, and the loop uses it for every keystroke. test: `crates/gclient/tests/client_loop.rs::input_encoder_covers_named_keys`.
 - 3.2.7 - Under a paused clock the supervisor issues attempt one with no preceding delay, then sleeps exactly 250 ms, 500 ms, 1 s, and 2 s before attempts two through five, and ends the episode on the fifth failure with no trailing sleep — five `reconnect` calls and four sleeps for one episode, however many panes observed the loss; a completed `Workspace` roster handshake between attempts resets both counter and schedule while a bare generation-ready does not, so a daemon whose socket connects on every attempt but whose listing fails each time exhausts the same five-attempt budget instead of resetting it; an `Unavailable{retry_after}` from failure N replaces only the sleep before attempt N+1, clamped into `[250 ms, 4 s]`, and one returned by the fifth failure is discarded; the fifth failure sets the exit latch and enters the shutdown seam once; and setting the latch during a backoff sleep abandons the sleep with no further `reconnect`. test: `crates/gclient/tests/client_loop.rs::reconnect_supervisor_counts_delays_resets_and_cancels`.
@@ -1461,6 +1663,24 @@ call exactly once, and quit, `SIGINT`, `SIGTERM`, `SIGHUP`, and reconnect-budget
 exhaustion differ only in the reason logged. Panic remains the stated RAII-only path.
 `logging.rs` routes `tracing` to
 `~/.gobby/logs/gclient.log` with daily rotation and nothing to stdout.
+
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per
+   `docs/guides/gterminal-development-guide.md` § "Rebuild and reinstall").
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
 
 **Acceptance:**
 
@@ -1560,6 +1780,24 @@ session with the status-bar notice, and the same three states are the same refus
 Refusing a host that is running and answering because of a diagnostic string from an
 hour ago is a worse failure than any it could prevent.
 
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per
+   `docs/guides/gterminal-development-guide.md` § "Rebuild and reinstall").
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
+
 **Acceptance:**
 
 - 3.4.1 - `gclient --version` exits 0 with `gclient <version>` and the installer's version probe reads it. test: `crates/gclient/tests/startup.rs::version_flag_prints_and_exits_zero`.
@@ -1648,6 +1886,24 @@ revision time from the pinned tree. `mod.rs` asserts that digest over the commit
 in `UPSTREAM.md`. Editing the inventory to match an incomplete port breaks the digest, so
 the three artifacts can no longer agree with each other while disagreeing with upstream.
 
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per
+   `docs/guides/gterminal-development-guide.md` § "Rebuild and reinstall").
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
+
 **Acceptance:**
 
 - 4.1.1 - Every keep-set render test exists under `crates/gclient/tests/parity/` with unchanged row-text expectations and passes. test: `crates/gclient/tests/parity.rs`.
@@ -1670,6 +1926,24 @@ panes with a live (scripted) frame; keybind help with a dialog open — into a 1
 mapped through `token_map`, and compare against the committed captures. Regeneration is
 `GOBBY_UPDATE_SCREENS=1 cargo nextest run -p gobby-client --test screens`, and a
 regenerated capture must be byte-identical across two consecutive runs.
+
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per
+   `docs/guides/gterminal-development-guide.md` § "Rebuild and reinstall").
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
 
 **Acceptance:**
 
@@ -1707,6 +1981,24 @@ sends keys. Against the module's isolated daemon (temporary state, ports, and da
   host state instead of reaching a workspace whose panes can never receive a frame. The
   paired case is `test_gclient_remote_session_uses_proxy` above, which runs with the host
   up; together they cover both sides of 3.4's narrowed remote exception.
+
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per
+   `docs/guides/gterminal-development-guide.md` § "Rebuild and reinstall").
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
 
 **Acceptance:**
 
@@ -1843,9 +2135,9 @@ Without an internal edge each becomes dispatchable the moment expansion creates 
 it, which is exactly the floating follow-up the contract forbids. Each of D1, D2, and D3
 therefore takes one `blocked-by` edge on **5.1**; since 5.1 already depends on all of P4,
 that single edge is the smallest ordering that guarantees the complete client epic has
-landed first. On top of it, D2 keeps `blocked-by` #19600 and #19647, and D3 takes the
-`blocked-by` edge on whatever public-API prerequisite it names, or none if it has no
-external prerequisite. Stop and report rather than create or mutate if any check fails —
+landed first. On top of it, D2 keeps `blocked-by` #19600 and #19647; D3's sole current prerequisite
+is that internal edge on 5.1 and its external prerequisite set is explicitly empty —
+#20201 requires only the gclient/API surface this epic's 5.1 closes over. Stop and report rather than create or mutate if any check fails —
 more than one legacy candidate, a candidate that is not the expected task, a task that is
 closed or no longer a planning task, or more than one new-provenance match.
 
@@ -1886,12 +2178,30 @@ This leaf's own work is the document. With the stable D1/D2/D3 refs known, updat
 transports; "Remaining path" replaces item 1 (Stage 0 rework) with the two new epics and
 the Stage-3 gate they wait on; the citations table gains this plan.
 
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per
+   `docs/guides/gterminal-development-guide.md` § "Rebuild and reinstall").
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
+
 **Acceptance:**
 
 - 5.1.1 - `evolution.md` names the client as landed, lists the D1 and D2 epics by task ref in the remaining path, and cites this plan. behavior: "Remaining path" in `docs/architecture/evolution.md`.
-- 5.1.2 - By the time this leaf runs, D1, D2, and D3 each resolve to exactly one open `planning` task carrying `deferred-from:herdr-client-completion:<D>` provenance, parented under this plan's epic as tail work, with its dependency closure recorded as `blocked-by` edges — one internal edge on 5.1 for each of D1, D2, and D3, plus #19600 and #19647 for D2 — so none of the three is dispatchable before this epic has landed; `evolution.md` names those stable refs and this leaf creates, adopts, and re-points nothing. behavior: "follow-on epics" in `docs/architecture/evolution.md`.
-- 5.1.3 - D2 resolves to the adopted #20202, which carries `deferred-from:herdr-terminal-client:D2` beside the new `deferred-from:herdr-client-completion:D2`, and D3 resolves to the adopted #20201, which carries `deferred-from:herdr-terminal-client:D1` — the previous plan's section id for the plugin epic, not D3 — beside the new `deferred-from:herdr-client-completion:D3`; no duplicate epic exists for either, and a lookup keyed on the current section id rather than the mapped legacy one stops the step instead of creating one; #20202's title, description, and validation criteria state the cell-mode proxy source and the daemon-addressable client as landed prerequisites and scope it to the hub roster, endpoint resolution, capability-token lifecycle, and hub↔node relay; re-running adoption resolves the same refs through the new provenance and mutates nothing further; an ambiguous or unexpected legacy candidate stops the step instead of creating or mutating; and each adopted task's `original_acceptance_items` match its typed deferral object exactly — D1 [5.1.2], D2 [5.1.2, 5.1.3], D3 [3.1.4, 5.1.3]. behavior: "follow-on epics" in `docs/architecture/evolution.md`.
-- 5.1.4 - Adoption is performed by the coordinator running expansion through `gobby-tasks` MCP calls, and it converges rather than skipping: re-running it against a task that already carries the new `deferred-from:herdr-client-completion:<D>` provenance re-verifies every other postcondition and repairs any that is missing — so a task left with the label but no tail-work parent, no internal `blocked-by` edge on 5.1, or an unrewritten #20202 description is brought to the same final state as a first run, and a fully converged task is mutated no further. D1's create branch is guarded by that same provenance lookup, so a second run adopts and converges the epic the first run made instead of creating a duplicate, and more than one match stops the step. behavior: "follow-on epics" in `docs/architecture/evolution.md`.
+- 5.1.2 - By the time this leaf runs, D1, D2, and D3 each resolve to exactly one open `planning` task carrying `deferred-from:herdr-client-completion:<D>` provenance, parented under this plan's epic as tail work, with its dependency closure recorded as `blocked-by` edges — one internal edge on 5.1 for each of D1, D2, and D3, plus #19600 and #19647 for D2, and no external edge for D3, whose external prerequisite set is explicitly empty — so none of the three is dispatchable before this epic has landed; `evolution.md` names those stable refs and this leaf creates, adopts, and re-points nothing. behavior: "follow-on epics" in `docs/architecture/evolution.md`.
+- 5.1.3 - D2 resolves to the adopted #20202, which carries `deferred-from:herdr-terminal-client:D2` beside the new `deferred-from:herdr-client-completion:D2`, and D3 resolves to the adopted #20201, which carries `deferred-from:herdr-terminal-client:D1` — the previous plan's section id for the plugin epic, not D3 — beside the new `deferred-from:herdr-client-completion:D3`; no duplicate epic exists for either, and a lookup keyed on the current section id rather than the mapped legacy one stops the step instead of creating one; #20202's title, description, and validation criteria state the cell-mode proxy source and the daemon-addressable client as landed prerequisites and scope it to the hub roster, endpoint resolution, capability-token lifecycle, and hub↔node relay; D3's recorded closure is exactly the internal 5.1 edge with no external edge; re-running adoption resolves the same refs through the new provenance and mutates nothing further; an ambiguous or unexpected legacy candidate stops the step instead of creating or mutating; and each adopted task's `original_acceptance_items` match its typed deferral object exactly — D1 [5.1.2], D2 [5.1.2, 5.1.3], D3 [3.1.4, 5.1.3]. behavior: "follow-on epics" in `docs/architecture/evolution.md`.
+- 5.1.4 - Adoption is performed by the coordinator running expansion through `gobby-tasks` MCP calls, and it converges rather than skipping: re-running it against a task that already carries the new `deferred-from:herdr-client-completion:<D>` provenance re-verifies every other postcondition and repairs any that is missing — so a task left with the label but no tail-work parent, no internal `blocked-by` edge on 5.1, or an unrewritten #20202 description is brought to the same final state as a first run, a fully converged task is mutated no further, and convergence adds no external edge to D3. D1's create branch is guarded by that same provenance lookup, so a second run adopts and converges the epic the first run made instead of creating a duplicate, and more than one match stops the step. behavior: "follow-on epics" in `docs/architecture/evolution.md`.
 
 ## D1 Native runtime completion
 `kind: deferred`
@@ -1945,9 +2255,10 @@ reserved and hidden by 3.1 until the Gobby plugin system hosts on the public API
 this plan's D3 but the previous plan's **D1**, so its live label is
 `deferred-from:herdr-terminal-client:D1` and adoption looks it up by that legacy id, never
 by `:D3`. Its scope is unchanged and its description is not rewritten; adoption repairs only
-its provenance, its tail-work parent, and its dependency closure — including the internal
-`blocked-by` edge on 5.1 — which the contract requires of every deferral target this plan
-names.
+its provenance, its tail-work parent, and its dependency closure — exactly the internal
+`blocked-by` edge on 5.1, with an explicitly empty external prerequisite set (#20201
+requires only the gclient/API surface 5.1 closes over) — which the contract requires of
+every deferral target this plan names.
 
 ```yaml
 deferral:
@@ -2092,6 +2403,31 @@ Round 5 reached the configured cap of five. Every finding was processed and vote
   budget, `hand off to build` skips remaining review, and `stop` leaves this
   base-validated artifact as the canonical one.
 
+**Round 6** `kind: verification`
+
+- reviewer_run: b8dc92d2-879e-42d8-be09-b3342b53313e
+- reviewer_session: #11252
+- verdict: needs_review
+- findings:
+- R6-F01-guard-h-leaf-visibility / blocking / Fifteen deliverables require Guard set H but omit its commands, isolated database environment, new-inode install rule, and host-leak check from their section-only payloads.
+- R6-F02-lifecycle-queue-capacity / blocking / The ordered lifecycle publication queue must backpressure at a ceiling that neither §1.4 nor Named defaults specifies.
+- R6-F03-pagination-owner-conflict / blocking / Section 2.1 simultaneously makes LiveDaemon follow next_cursor and pin page one, then requires LiveDaemon to return one stateless page while Workspace owns traversal and pinning.
+- R6-F04-request-deadline-visibility / blocking / Section 2.1 requires request and control timeout behavior without carrying the exact 5 s and 2 s deadlines its implementer and paused-clock tests need.
+- R6-F05-light-theme-aa-coverage / blocking / Acceptance 3.1.5 does not render the light peer or prove WCAG 2.2 AA contrast for the brand-accent focus ring against every surface.
+- R6-F06-proxy-refusal-transition / blocking / The fallback state machine specifies only a successful fresh proxy attach, omitting the carried QA branch where terminal_attach_result refuses the proxy request.
+- R6-F07-d3-prerequisite-closure / blocking / D1 and D2 have exact closures, while D3 may gain an unspecified future public-API prerequisite or none.
+- R6-F08-residual-dependency / nit / Section 1.2 has no Target or behavioral input from §1.1 yet remains serialized behind the raw-input leaf.
+- R6-F09-handler-test-targets / blocking / The raw-input test in test_tmux_activation patches the bridge os.write route §1.1 replaces, and test_terminal_ws_create destructures the pre-event message count §1.4 changes.
+- R6-F10-write-cancellation-outcome / blocking / Handler-task cancellation closes client_write_seq and re-raises CancelledError, yet the outcome and reason recorded for same-fingerprint replay are undefined.
+- R6-F11-lifecycle-seq-bound / blocking / Lifecycle seq is unbounded on the producer and absent from the Python/Rust safe-integer inventory.
+- R6-F12-control-send-cancellation-boundary / blocking / A cancelled in-progress WebSocket send can have buffered bytes while the future has not completed; treating that gray zone as pre-write lets a late reply settle a newer control request.
+- R6-F13-fragment-reassembly-owner / blocking / LiveDaemon is told to fan out reassembled terminal_ws_fragment messages while Workspace/apply.rs is also assigned reassembly.
+- R6-F14-lagged-disconnect-observability / blocking / A receiver can lag across the generation's sole Disconnected event, re-subscribe with readiness already cleared, and never submit the supervisor episode that would restore the socket.
+- resolution_notes: All 14 findings accepted by the interactive reviewer; typed repairs (R6-F05, R6-F09) and the 12 prose fixes applied after this checkpoint.
+
+```json plan-review-round
+{"evidence_id":"9ad235cb-0e83-4cb2-be88-c6dd81da0b1d","plan_hash":"8e8f5bc234298218cc2292c6eeced071e758daa679746dc3739edc1954414d53","round_number":6,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"ba083ba0d5be775e9b16f7d1541e0e796c8a6bf4a02ac6be4f6f2fb74121b32e","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":1,"emitted_findings":14,"total":15},"evidence_id":"9ad235cb-0e83-4cb2-be88-c6dd81da0b1d","lanes":[{"candidate_count":9,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":1,"lane_id":"repository_blast_radius","status":"delegated-verified"},{"candidate_count":5,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":16,"manifest_digest":"9ed343588ded7112283c36d3a5d5f113fb2b913fa6bc62e82fec9e2abd932134","status":"valid"},"source_digest":"8f33085b0234f84a62fa346c566b8fd8460ed1715c8182c9fc57a8b80d3f029c","version":1},"findings":[{"category":"gobby-format","check_key":"plan.self-contained-guard-h","description":"Fifteen deliverables require Guard set H but omit its commands, isolated database environment, new-inode install rule, and host-leak check from their section-only payloads.","finding_id":"R6-F01-guard-h-leaf-visibility","fix":"At restraint rung 6, copy the exact existing Guard set H block into §§1.1–4.3 and §5.1; reuse the same block verbatim and add no second validation framework.","location":"All deliverables except §4.4; global Guard set H","prevention":"For every global close gate, inspect the expanded section payload for each deliverable before review approval.","principle":"An expanded leaf must carry every mandatory validation instruction because its implementer receives only that section.","root_cause":"Guard set H was centralized in framing and copied only into the late documentation leaf.","section_id":"1.1","severity":"blocking"},{"category":"missing-requirement","check_key":"lifecycle.publication-queue-capacity","description":"The ordered lifecycle publication queue must backpressure at a ceiling that neither §1.4 nor Named defaults specifies.","finding_id":"R6-F02-lifecycle-queue-capacity","fix":"At restraint rung 6, set the existing publication queue to 256 entries, name its owning constant, and make acceptance 1.4.6 prove entry 257 waits until space is released with no admitted event dropped.","location":"§1.4 ordered lifecycle publisher and acceptance 1.4.6","prevention":"Inventory every bounded buffer and require capacity, overflow policy, and boundary acceptance together.","principle":"Every bounded queue contract needs a fixed production ceiling and a boundary test at that ceiling.","root_cause":"The plan named adjacent channel and replay capacities but left the lifecycle publication queue abstract.","section_id":"1.4","severity":"blocking"},{"category":"traceability","check_key":"roster.pagination-single-owner","description":"Section 2.1 simultaneously makes LiveDaemon follow next_cursor and pin page one, then requires LiveDaemon to return one stateless page while Workspace owns traversal and pinning.","finding_id":"R6-F03-pagination-owner-conflict","fix":"Replace the earlier LiveDaemon sentence with the final contract: each list_terminals call returns one authenticated page; Workspace follows next_cursor, pins the first snapshot, installs the roster, and replays buffered events.","location":"§2.1 LiveDaemon REST paragraph, Workspace ownership paragraph, and acceptance 2.1.1","prevention":"After moving ownership, search the whole deliverable for every old owner verb and state field.","principle":"One stateful reconciliation step has one owner and one advertised interface.","root_cause":"The settled Workspace-owned paging repair did not replace the earlier sentence assigning traversal and snapshot pinning to LiveDaemon.","section_id":"2.1","severity":"blocking"},{"category":"traceability","check_key":"daemon.deadline-section-visibility","description":"Section 2.1 requires request and control timeout behavior without carrying the exact 5 s and 2 s deadlines its implementer and paused-clock tests need.","finding_id":"R6-F04-request-deadline-visibility","fix":"Copy the existing 5 s request deadline and 2 s control-request deadline into §2.1, name their constants, and make the existing timeout tests cross those exact boundaries.","location":"§2.1 correlation cleanup and acceptance 2.1.9/2.1.14","prevention":"For every timeout branch, verify the owning deliverable repeats the exact duration and clock boundary.","principle":"A section-only leaf must name exact timing constants that determine its state transitions and tests.","root_cause":"The five-second request and two-second control deadlines remain only in global framing.","section_id":"2.1","severity":"blocking"},{"category":"weak-testability","check_key":"theme.light-aa-focus","description":"Acceptance 3.1.5 does not render the light peer or prove WCAG 2.2 AA contrast for the brand-accent focus ring against every surface.","finding_id":"R6-F05-light-theme-aa-coverage","fix":"Extend the existing theme test across dark and light rendering and assert AA focus-ring contrast against each surface while retaining the current grayscale and position-cue assertions.","location":"§3.1 theme prose and acceptance 3.1.5","prevention":"Map every .impeccable.md theme and WCAG obligation to a named assertion before approving UI work.","principle":"Accessibility and theme requirements need observable acceptance in every supported theme.","repairs":[{"items":[{"artifact":"test: `crates/gclient/tests/theme.rs::tokens_match_design_contract_and_survive_monochrome`","prose":"Representative chrome renders in both dark and light themes, and the brand-accent keyboard-focus ring plus its position cue meet WCAG 2.2 AA contrast against every surface in each theme while state colors retain distinct grayscale ranks."}],"kind":"add_acceptance","section_id":"3.1"}],"root_cause":"The carried design contract was reduced to token identity, grayscale rank, and accent presence.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"attach.proxy-refusal-transition","description":"The fallback state machine specifies only a successful fresh proxy attach, omitting the carried QA branch where terminal_attach_result refuses the proxy request.","finding_id":"R6-F06-proxy-refusal-transition","fix":"Add the refused-result branch to §3.2: tombstone the old id, settle the pane Detached and read-only, show the returned code and reason, install no frame/control state, and extend the existing 3.2.3 test.","location":"§3.2 direct-to-proxy fallback and acceptance 3.2.3","prevention":"Enumerate success, typed refusal, transport failure, timeout, and cancellation for every attach transition.","principle":"Every attach request outcome needs a terminal pane-state transition and a user-visible typed result.","root_cause":"The carried QA refusal branch was lost while the fallback path was rewritten around fresh attachment success.","section_id":"3.2","severity":"blocking"},{"category":"bad-sequencing","check_key":"deferral.d3-prerequisite-closure","description":"D1 and D2 have exact closures, while D3 may gain an unspecified future public-API prerequisite or none; current task #20201 only requires the gclient/API surface landed by §5.1.","finding_id":"R6-F07-d3-prerequisite-closure","fix":"State that D3's sole current prerequisite is its internal blocked-by edge on §5.1 and that it has no external prerequisite; mirror that settled closure in acceptance 5.1.2–5.1.4.","location":"§5.1 D3 adoption and ## D3","prevention":"Resolve every deferral to an exact set of internal and external edges, including an explicit empty external set.","principle":"A deferral handoff records its complete current dependency closure before expansion.","root_cause":"D3's external edge was delegated to whatever prerequisite a later run might name.","section_id":"5.1","severity":"blocking"},{"category":"bad-sequencing","check_key":"dependency.residual-1.2","description":"Section 1.2 has no Target or behavioral input from §1.1 yet remains serialized behind the raw-input leaf.","finding_id":"R6-F08-residual-dependency","fix":"Remove `(depends: 1.1)` from §1.2; retain §1.5's explicit dependencies on both leaves.","location":"§1.2 heading","prevention":"After shrinking a deliverable to residual work, recompute both incoming and outgoing dependencies from its remaining Targets.","principle":"A dependency edge represents a concrete artifact or behavioral precondition.","root_cause":"The original pre-merge P1 chain survived the rewrite of §1.2 into independent residual tests.","section_id":"1.2","severity":"nit"},{"category":"traceability","check_key":"targets.handler-direct-test-consumers","description":"The raw-input test in test_tmux_activation patches the bridge os.write route §1.1 replaces, and test_terminal_ws_create destructures the pre-event message count §1.4 changes.","finding_id":"R6-F09-handler-test-targets","fix":"Add the two existing test files to their owning Targets and update only the affected assertions; the existing dependency chain already orders shared ownership.","location":"§1.1 and §1.4 Targets","prevention":"Run a literal handler-name sweep in addition to symbol callers, then inspect exact-message assertions for each changed outcome.","principle":"A leaf owns every existing test whose assertion must change with its targeted handler behavior.","repairs":[{"entries":["`tests/servers/test_tmux_activation.py::*` — scope-reason: the raw-input direct-handler test replaces its patched bridge os.write assertion with a TerminalRuntime.write_input assertion"],"kind":"add_targets","section_id":"1.1"},{"entries":["`tests/servers/test_terminal_ws_create.py::*` — scope-reason: successful create gains a result-before-ordered-event message, so existing direct-handler message-count assertions change"],"kind":"add_targets","section_id":"1.4"}],"root_cause":"The sweep covered new focused tests but missed direct-handler tests with old routing and message-count assertions.","section_id":"1.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"write.cancellation-completed-outcome","description":"Handler-task cancellation closes client_write_seq and re-raises CancelledError, yet the outcome and reason recorded for same-fingerprint replay are undefined.","finding_id":"R6-F10-write-cancellation-outcome","fix":"At restraint rung 2, complete cancellation as `outcome=\"indeterminate\", reason=\"indeterminate_backend\"` before re-raising, send no reply on the disappearing socket, and assert that exact tuple on later replay in 1.1.7.","location":"§1.1 cancellation prose and acceptance 1.1.7","prevention":"For success, failure, timeout, and cancellation, specify immediate reply behavior separately from the durable replay record.","principle":"Every admitted idempotency key leaves in-flight state with one defined replayable outcome.","root_cause":"The repair required finally-based ledger completion and no socket reply but omitted the tuple stored for later replay.","section_id":"1.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"lifecycle.seq-safe-integer-bound","description":"Lifecycle `seq` is unbounded on the producer and absent from the Python/Rust safe-integer inventory, so invalid types or values can corrupt snapshot/replay ordering.","finding_id":"R6-F11-lifecycle-seq-bound","fix":"Reuse the existing safe-integer guard and publisher lock: validate `seq`, prove 2^53-2 and 2^53-1 remain distinct, reject 2^53/string/float, and rotate daemon_epoch plus reset seq atomically before overflow.","location":"§1.4 lifecycle seq, §1.5.3 safe-integer corpus, and §2.1 reducer","prevention":"Generate the safe-integer inventory from every ordered JSON field and test producer, decoder, and comparison boundaries together.","principle":"Every cross-language ordering integer needs the same type/range guard and a producer transition at its maximum.","root_cause":"The round-5 safe-integer repair enumerated three fields and omitted lifecycle `seq`.","section_id":"1.4","severity":"blocking"},{"category":"unhandled-edge","check_key":"control-send.cancellation-boundary","description":"A cancelled in-progress WebSocket send can have buffered bytes while the future has not completed; treating that gray zone as pre-write lets a late reply settle a newer control request.","finding_id":"R6-F12-control-send-cancellation-boundary","fix":"Set `write_started` immediately before invoking the sink send; tombstone any cancellation after that point, permit immediate reuse only before invocation, and add the three paused-sink schedules to 2.1.9/2.1.14.","location":"§2.1 control waiter cleanup and §3.2 recovery","prevention":"Test cancellation before send invocation, during the send future, and after completion for every non-unique correlation scope.","principle":"A correlation key is reusable only when the prior request provably cannot produce a reply.","root_cause":"The pre-write/post-write partition did not define cancellation while the async send future is in progress.","section_id":"2.1","severity":"blocking"},{"category":"over-engineering","check_key":"fragments.single-reassembly-owner","description":"LiveDaemon is told to fan out reassembled terminal_ws_fragment messages while Workspace/apply.rs is also assigned reassembly; the second accumulator has no distinct consumer and leaves ProxyFrameSource's boundary ambiguous.","finding_id":"R6-F13-fragment-reassembly-owner","fix":"Use the existing single LiveDaemon reader as the sole reassembler, keyed by `(attachment_id, message_seq)` with continuity, base64, size, duplicate/gap, finalization, and generation cleanup; remove Workspace reassembly and deliver complete events to both Workspace and ProxyFrameSource.","location":"§2.1 LiveDaemon reader, §2.2 ProxyFrameSource, and §3.2/apply.rs","prevention":"For each transform, name one owner and delete or retarget every adjacent implementation of the same transform.","principle":"One wire-fragment stream has one bounded reassembly owner; downstream consumers receive one complete event.","root_cause":"The plan retained Workspace's existing accumulator after assigning reassembled fragments to the new single reader.","section_id":"2.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"lagged.disconnect-durable-observation","description":"A receiver can lag across the generation's sole Disconnected event, re-subscribe with readiness already cleared, and never submit the supervisor episode that would restore the socket.","finding_id":"R6-F14-lagged-disconnect-observability","fix":"Extend the existing re-subscribe snapshot to return `{generation, ready, last_error}`; when ready is false, run the same read-only/clear/recovery transition before re-listing. Add a capacity test that lags across Disconnected and admits exactly one episode.","location":"§2.1 Disconnected ordering, readiness value, and Lagged recovery; §3.2 supervisor","prevention":"Cross every lossy subscription path with connection failure and prove recovery from the replacement subscriber's durable state.","principle":"Connection loss remains observable until the state owner has entered read-only mode and admitted recovery.","root_cause":"Disconnected is a one-shot broadcast event, while the lag branch discards its receiver after the retained ready value has been cleared.","section_id":"2.1","severity":"blocking"}],"reviewer_session":"#11252","round":6,"verdict":"needs_review"},"session_id":"5dcb338e-df86-4030-bb4c-c566efc62d44"}
+```
 
 ## Task Mapping
 `kind: framing`
