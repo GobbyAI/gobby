@@ -231,6 +231,29 @@ class GrokSandboxResolver(SandboxResolver):
         return (["--sandbox", profile], {})
 
 
+class AgySandboxResolver(SandboxResolver):
+    """Sandbox resolver for AGY's boolean `--sandbox` flag.
+
+    AGY's native sandbox mounts `.git` read-only (1.1.10 changelog), so
+    provider-native is a degraded mode for Git-writing workflows. SRT remains
+    the default boundary; when SRT enforces, this resolver's only contribution
+    is the `--sandbox=false` pin recorded under 1.1.7.
+    """
+
+    @property
+    def cli_name(self) -> str:
+        return "agy"
+
+    def resolve(
+        self, config: SandboxConfig, paths: ResolvedSandboxPaths
+    ) -> tuple[list[str], dict[str, str]]:
+        if not config.enabled:
+            return ([], {})
+        if config.backend == "srt":
+            return (["--sandbox=false"], {})
+        return (["--sandbox"], {})
+
+
 def merge_claude_settings(
     base_settings: dict[str, Any],
     config: SandboxConfig,
@@ -421,7 +444,7 @@ def get_sandbox_resolver(cli: str) -> SandboxResolver:
     Factory function to get the appropriate sandbox resolver for a CLI.
 
     Args:
-        cli: The CLI name ("claude", "codex", "grok", or "qwen")
+        cli: The CLI name ("claude", "codex", "grok", "qwen", or "agy")
 
     Returns:
         The appropriate SandboxResolver subclass instance.
@@ -434,6 +457,7 @@ def get_sandbox_resolver(cli: str) -> SandboxResolver:
         "codex": CodexSandboxResolver,
         "grok": GrokSandboxResolver,
         "qwen": QwenSandboxResolver,
+        "agy": AgySandboxResolver,
     }
 
     if not provider_supports_sandbox(cli) or cli not in resolvers:

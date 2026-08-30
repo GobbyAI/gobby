@@ -43,6 +43,11 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapabilities] = {
         sandbox=True,
         sensitive_path_enforcement=False,
     ),
+    "agy": ProviderCapabilities(
+        reasoning_flag="claude-effort",
+        sandbox=True,
+        sensitive_path_enforcement=False,
+    ),
 }
 
 

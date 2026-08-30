@@ -7,22 +7,26 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from gobby.agents import sandbox_policy
 from gobby.agents.constants import GOBBY_SESSION_ID, get_agent_session_cache_dir
-from gobby.agents.provider_capabilities import provider_capabilities
+from gobby.agents.provider_capabilities import provider_capabilities, provider_supports_sandbox
 from gobby.agents.sandbox import (
+    _DAEMON_SANDBOX_POLICY_VERSION,
     ResolvedSandboxPaths,
     SandboxConfig,
-    _DAEMON_SANDBOX_POLICY_VERSION,
     _resolve_git_metadata_path,
     coerce_sandbox_config,
     compute_sandbox_paths,
     daemon_owned_sandbox_policy_hash,
     web_chat_sandbox_policy_hash,
 )
+from gobby.agents.sandbox_policy import default_write_paths
 from gobby.agents.sandbox_resolvers import (
+    AgySandboxResolver,
     ClaudeSandboxResolver,
     CodexSandboxResolver,
     QwenSandboxResolver,
@@ -32,13 +36,14 @@ from gobby.agents.sandbox_resolvers import (
     materialize_claude_settings,
     materialize_claude_settings_async,
 )
-from gobby.agents.sandbox_policy import default_write_paths
 from gobby.agents.spawn_cache_policy import (
     SANDBOX_CACHE_ENV_VARS,
     build_spawn_cache_env,
     sandbox_config_for_spawn,
 )
+from gobby.config.app import DaemonConfig
 from gobby.integrations.rtk import platform_paths
+from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 
 pytestmark = pytest.mark.unit
 
@@ -1544,3 +1549,135 @@ class TestDaemonOwnedSandboxPolicyHash:
         assert web_chat_sandbox_policy_hash(daemon) == daemon_owned_sandbox_policy_hash(
             raw, scope="web_chat"
         )
+
+
+_AGY_PATHS = ResolvedSandboxPaths(
+    workspace_path="/project",
+    read_paths=[],
+    write_paths=["/project"],
+    allow_external_network=False,
+)
+
+_AGY_PROBE_DOMAINS = (
+    "daily-cloudcode-pa.googleapis.com",
+    "oauth2.googleapis.com",
+    "accounts.google.com",
+    "play.googleapis.com",
+    "playwright*.azureedge.net",
+    "googleusercontent.com",
+)
+
+
+def _agy_resolver() -> SandboxResolver:
+    resolver = AgySandboxResolver()
+    assert resolver.cli_name == "agy"
+    return resolver
+
+
+@pytest.mark.unit
+class TestAgySandboxResolver:
+    """AGY sandbox resolver, policy maps, and capability-gate reachability (plan 3.2)."""
+
+    def test_agy_sandbox_resolver_emits_boolean_sandbox_for_provider_native(self) -> None:
+        resolver = _agy_resolver()
+        assert resolver.__doc__ is not None
+        assert ".git" in resolver.__doc__
+        assert "read-only" in resolver.__doc__.lower()
+
+        args, env = resolver.resolve(
+            SandboxConfig(enabled=True, backend="provider-native"),
+            _AGY_PATHS,
+        )
+        assert args == ["--sandbox"]
+        assert env == {}
+
+    def test_agy_sandbox_resolver_emits_sandbox_false_when_srt_enforces(self) -> None:
+        resolver = _agy_resolver()
+        args, env = resolver.resolve(
+            SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            _AGY_PATHS,
+        )
+        assert args == ["--sandbox=false"]
+        assert env == {}
+
+    def test_get_sandbox_resolver_returns_agy_through_capability_gate(self) -> None:
+        assert provider_supports_sandbox("agy") is True
+        try:
+            resolver = get_sandbox_resolver("agy")
+        except ValueError as exc:
+            raise AssertionError("get_sandbox_resolver('agy') refused the provider") from exc
+        assert type(resolver).__name__ == "AgySandboxResolver"
+        assert resolver.cli_name == "agy"
+
+    def test_agy_provider_capabilities_admit_sandbox_without_sensitive_path_proof(self) -> None:
+        caps = provider_capabilities("agy")
+        assert caps.sandbox is True
+        assert caps.sensitive_path_enforcement is False
+        assert caps.reasoning_flag == "claude-effort"
+        assert provider_supports_sandbox("agy") is True
+
+    def test_agy_sandbox_policy_uses_probe_recorded_domains_roots_and_empty_credential_env(
+        self,
+    ) -> None:
+        domains = sandbox_policy._PROVIDER_DOMAINS.get("agy")
+        assert domains is not None
+        assert domains == _AGY_PROBE_DOMAINS
+
+        auth_paths = sandbox_policy._PROVIDER_AUTH_PATHS.get("agy")
+        assert auth_paths is not None
+        assert "~/.gemini/antigravity-cli" in auth_paths
+        assert "~/Library/Caches/ms-playwright-go" in auth_paths
+
+        read_only = sandbox_policy._PROVIDER_AUTH_READ_ONLY_PATHS.get("agy")
+        assert read_only is not None
+        assert "~/.gemini/config/projects" in read_only
+        assert "~/Library/Keychains/login.keychain-db" in read_only
+
+        assert "agy" in sandbox_policy._PROVIDER_CREDENTIAL_ENV
+        assert sandbox_policy._PROVIDER_CREDENTIAL_ENV["agy"] == ()
+
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path="/project",
+            provider="agy",
+            env={"PATH": ""},
+        )
+        for domain in _AGY_PROBE_DOMAINS:
+            assert domain in paths.allowed_domains
+        write_roots = sandbox_policy.provider_write_exceptions("agy")
+        read_roots = sandbox_policy.provider_read_exceptions("agy", {"PATH": ""})
+        for root in write_roots:
+            assert root in paths.write_paths
+            assert root in paths.read_paths
+        for root in read_roots:
+            assert root in paths.read_paths
+        assert paths.credential_env_vars == []
+
+    async def test_create_session_admits_agy_under_srt_and_rejects_provider_native(self) -> None:
+        caps = provider_capabilities("agy")
+        assert caps.sandbox is True
+        assert caps.sensitive_path_enforcement is False
+
+        native = WebChatRuntimeManager(
+            codex_client=None,
+            daemon_config=DaemonConfig(
+                web_chat_sandbox={"enabled": True, "backend": "provider-native"}
+            ),
+        )
+        with pytest.raises(
+            RuntimeError,
+            match="agy cannot prove the sensitive-root contract under provider-native sandbox",
+        ):
+            await native.create_session(provider="agy", conversation_id="agy-native")
+
+        srt = WebChatRuntimeManager(codex_client=None)
+        record = SimpleNamespace(supported=True, reason="supported")
+        with (
+            patch(
+                "gobby.providers.version_gate.ensure_agy_support",
+                AsyncMock(return_value=record),
+            ),
+            pytest.raises(RuntimeError) as exc,
+        ):
+            await srt.create_session(provider="agy", conversation_id="agy-srt")
+        assert "sensitive-root" not in str(exc.value)

@@ -25,6 +25,14 @@ _PROVIDER_DOMAINS: dict[str, tuple[str, ...]] = {
     "qwen": ("dashscope.aliyuncs.com", "*.aliyuncs.com"),
     "droid": ("api.factory.ai", "*.factory.ai"),
     "grok": ("api.x.ai", "*.x.ai", "grok.com", "*.grok.com"),
+    "agy": (
+        "daily-cloudcode-pa.googleapis.com",
+        "oauth2.googleapis.com",
+        "accounts.google.com",
+        "play.googleapis.com",
+        "playwright*.azureedge.net",
+        "googleusercontent.com",
+    ),
 }
 
 _PROVIDER_AUTH_PATHS: dict[str, tuple[str, ...]] = {
@@ -34,10 +42,18 @@ _PROVIDER_AUTH_PATHS: dict[str, tuple[str, ...]] = {
     "qwen": ("~/.qwen",),
     "droid": ("~/.factory",),
     "grok": ("~/.grok",),
+    "agy": (
+        "~/.gemini/antigravity-cli",
+        "~/Library/Caches/ms-playwright-go",
+    ),
 }
 
 _PROVIDER_AUTH_READ_ONLY_PATHS: dict[str, tuple[str, ...]] = {
     "claude": ("~/.claude.json", "~/Library/Keychains/login.keychain-db"),
+    "agy": (
+        "~/.gemini/config/projects",
+        "~/Library/Keychains/login.keychain-db",
+    ),
 }
 
 _PROVIDER_CREDENTIAL_ENV: dict[str, tuple[str, ...]] = {
@@ -47,6 +63,7 @@ _PROVIDER_CREDENTIAL_ENV: dict[str, tuple[str, ...]] = {
     "qwen": ("DASHSCOPE_API_KEY", "QWEN_API_KEY"),
     "droid": ("FACTORY_API_KEY",),
     "grok": ("XAI_API_KEY",),
+    "agy": (),
 }
 
 _RUN_CACHE_ENV_VARS = (
