@@ -47,3 +47,27 @@ async def test_pty_output_callback_without_bridge_leaves_attachment_id_null() ->
     assert msg["terminal_id"] == "run-1"
     assert msg["attachment_id"] is None
     assert msg["data"] == "hello"
+
+
+class _ExplodingLookupServer(FakeBroadcaster):
+    async def _tmux_bridge_for(self, attachment_id: object) -> Any | None:
+        raise RuntimeError("bridge registry boom")
+
+
+@pytest.mark.asyncio
+async def test_pty_output_lookup_failure_warns_and_still_emits(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The fallback frame is one the client may drop, so the log must say why."""
+    server = _ExplodingLookupServer()
+    ws = _make_ws(subscriptions={"terminal_output"})
+    server.clients[ws] = {}
+    with caplog.at_level("WARNING", logger="gobby.runner_broadcasting"):
+        await _emit_pty_terminal_output(server, ATTACHMENT_ID, "bytes")
+    msg = _sent_message(ws)
+    assert msg["terminal_id"] == ATTACHMENT_ID
+    assert msg["attachment_id"] is None
+    assert any(
+        "terminal output id lookup failed" in record.message and record.levelname == "WARNING"
+        for record in caplog.records
+    )

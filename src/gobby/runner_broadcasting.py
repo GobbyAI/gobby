@@ -49,7 +49,9 @@ async def _emit_pty_terminal_output(websocket_server: object, run_id: str, data:
         try:
             bridge = await lookup(run_id)
         except Exception:
-            logger.debug("terminal output id lookup failed for %s", run_id, exc_info=True)
+            # The web client drops frames whose attachment_id doesn't match a
+            # live attachment; a frozen terminal must be diagnosable from here.
+            logger.warning("terminal output id lookup failed for %s", run_id, exc_info=True)
         else:
             row_id = getattr(bridge, "terminal_id", None)
             if isinstance(row_id, str) and row_id:
