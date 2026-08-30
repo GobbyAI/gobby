@@ -481,16 +481,20 @@ def test_resolve_task_repo_path_refuses_foreign_session_machine(  # tdd-red wind
         temp_db, tmp_path / "repo", monkeypatch=monkeypatch
     )
     foreign = insert_isolated_machine(temp_db)
-    patch_local_machine_id(monkeypatch, foreign)
     task_manager, project_manager, task = _checkout_task(temp_db, isolated.project.id)
 
-    with pytest.raises((CheckoutNotFoundError, MachineOwnershipMismatchError)):
+    with pytest.raises(MachineOwnershipMismatchError) as exc_info:
         resolve_task_repo_path(
             task_manager=task_manager,
             project_manager=project_manager,
             task=cast("Task", task),
             project_path=None,
+            machine_id=foreign,
         )
+
+    assert exc_info.value.owner_machine_id == foreign
+    assert exc_info.value.current_machine_id == isolated.machine_id
+    assert exc_info.value.resource_kind == "project_checkout"
 
 
 def test_resolve_project_repo_path_uses_machine_checkout(  # tdd-red window
