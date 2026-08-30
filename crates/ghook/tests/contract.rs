@@ -633,6 +633,14 @@ fn unmanaged_statusline_never_emits_hook_action_json() -> TestResult {
         &without_downstream,
         "unmanaged statusline without downstream",
     )?;
+    let inbox = gobby_home.path().join("hooks").join("inbox");
+    assert!(
+        !inbox.exists()
+            || std::fs::read_dir(&inbox)
+                .map(|entries| entries.filter_map(Result::ok).next().is_none())
+                .unwrap_or(true),
+        "statusline must not construct an inbox envelope"
+    );
 
     Ok(())
 }

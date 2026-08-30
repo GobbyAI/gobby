@@ -55,6 +55,7 @@ def _hook_payload() -> dict[str, object]:
         "schema_version": 1,
         "enqueued_at": "2026-07-10T12:00:00Z",
         "critical": False,
+        "response_capability": "hook-response.v1",
         "hook_type": "session-start",
         "source": "claude",
         "input_data": {

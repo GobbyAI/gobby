@@ -65,6 +65,7 @@ def _agy_pre_invocation_envelope(*, conversation_id: str = "agy-conv-1") -> dict
         "schema_version": 1,
         "enqueued_at": "2026-06-24T12:00:00Z",
         "critical": False,
+        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "hook_type": "PreInvocation",
         "source": "agy",
         "input_data": {
@@ -105,6 +106,7 @@ def test_execute_hook_dispatches_agy_adapter(session_storage: SessionManager) ->
                 "schema_version": 1,
                 "enqueued_at": "2026-06-24T12:00:00Z",
                 "critical": False,
+                "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
                 "hook_type": "PreToolUse",
                 "source": "agy",
                 "input_data": {
@@ -307,18 +309,25 @@ class TestAgyStartupClaimPreflight:
         assert "_gobby_session_hint_error" not in response.json()
 
 
+def _capability_gate_server(session_storage: SessionManager) -> Any:
+    server = create_http_server(
+        port=60887,
+        test_mode=True,
+        session_manager=session_storage,
+    )
+    server.app.state.hook_manager = MagicMock()
+    server.app.state.hook_manager.shutdown_async = AsyncMock()
+    return server
+
+
 class TestAgyAdapterTimeoutRetry:
-    def test_timeout_without_capability_returns_graceful_2xx(
+    def test_timeout_without_capability_rejects_before_adapter(
         self,
         session_storage: SessionManager,
     ) -> None:
-        server = create_http_server(
-            port=60887,
-            test_mode=True,
-            session_manager=session_storage,
-        )
-        server.app.state.hook_manager = MagicMock()
-        server.app.state.hook_manager.shutdown_async = AsyncMock()
+        server = _capability_gate_server(session_storage)
+        envelope = _agy_pre_invocation_envelope()
+        envelope.pop("response_capability", None)
 
         with (
             TestClient(server.app) as client,
@@ -326,22 +335,25 @@ class TestAgyAdapterTimeoutRetry:
                 "gobby.servers.routes.mcp.hooks._run_adapter_hook",
                 new_callable=AsyncMock,
                 side_effect=TimeoutError,
-            ),
+            ) as run_adapter,
             patch("gobby.servers.routes.mcp.hooks.finalize_envelope_processed") as finalize,
             patch("gobby.servers.routes.mcp.hooks.mark_envelope_processed") as mark_processed,
+            patch("gobby.storage.hook_receipts.prepare_receipt") as prepare_receipt,
         ):
             response = client.post(
                 "/api/hooks/execute",
                 headers={ENVELOPE_ID_HEADER: "env-agy-timeout-legacy"},
-                json=_agy_pre_invocation_envelope(),
+                json=envelope,
             )
 
         assert response.status_code == 200
         body = response.json()
         assert body.get("retry_kind") is None
         assert body.get("status") != "retry"
-        finalize.assert_called()
+        run_adapter.assert_not_called()
+        finalize.assert_not_called()
         mark_processed.assert_not_called()
+        prepare_receipt.assert_not_called()
 
     def test_timeout_with_capability_returns_503_adapter_timeout(
         self,
@@ -773,3 +785,138 @@ class TestAgyAdapterTimeoutFencing:
             gate.set()
             processed = _wait_for_marker_status(processed_dir, envelope_id, "processed")
             assert processed.get("response") == {"continue": True}
+
+
+class TestHookResponseCapabilityGate:
+    def test_direct_post_missing_capability_rejects_before_adapter(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        server = _capability_gate_server(session_storage)
+        envelope = _agy_pre_invocation_envelope()
+        envelope.pop("response_capability", None)
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value={"decision": "allow"},
+            ) as run_adapter,
+        ):
+            response = client.post("/api/hooks/execute", json=envelope)
+
+        assert response.status_code == 200
+        assert response.json().get("retry_kind") is None
+        run_adapter.assert_not_called()
+
+    def test_direct_post_advertised_below_floor_rejects_before_adapter(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        server = _capability_gate_server(session_storage)
+        envelope = _agy_pre_invocation_envelope()
+        envelope["response_capability"] = "hook-response.v0"
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value={"decision": "allow"},
+            ) as run_adapter,
+        ):
+            response = client.post("/api/hooks/execute", json=envelope)
+
+        assert response.status_code == 200
+        run_adapter.assert_not_called()
+
+    def test_detached_post_missing_capability_rejects_before_adapter(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        server = _capability_gate_server(session_storage)
+        envelope = _agy_pre_invocation_envelope()
+        envelope.pop("response_capability", None)
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value={"decision": "allow"},
+            ) as run_adapter,
+            patch("gobby.servers.routes.mcp.hooks.claim_envelope_processing") as claim,
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: "env-agy-detached-legacy"},
+                json=envelope,
+            )
+
+        assert response.status_code == 200
+        run_adapter.assert_not_called()
+        claim.assert_not_called()
+
+    def test_compatible_stamp_does_not_lift_below_floor_request(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.hooks.runtime_compat import (
+            SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
+            GhookRuntimeDiagnostic,
+            GhookRuntimeState,
+        )
+
+        stamp = tmp_path / ".ghook-runtime.json"
+        monkeypatch.setattr(
+            "gobby.hooks.runtime_compat.read_ghook_runtime_diagnostic",
+            lambda _path=None: GhookRuntimeDiagnostic(
+                state=GhookRuntimeState.COMPATIBLE,
+                stamp_path=str(stamp),
+                detail="reinstalled",
+                schema_version=SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
+                ghook_version="0.7.3",
+                response_capability=SUPPORTED_HOOK_RESPONSE_CAPABILITY,
+            ),
+        )
+        server = _capability_gate_server(session_storage)
+        envelope = _agy_pre_invocation_envelope()
+        envelope.pop("response_capability", None)
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value={"decision": "allow"},
+            ) as run_adapter,
+        ):
+            response = client.post("/api/hooks/execute", json=envelope)
+
+        assert response.status_code == 200
+        run_adapter.assert_not_called()
+
+    def test_capable_request_still_runs_adapter(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        server = _capability_gate_server(session_storage)
+        envelope = _agy_pre_invocation_envelope()
+        envelope["response_capability"] = SUPPORTED_HOOK_RESPONSE_CAPABILITY
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value={"decision": "allow"},
+            ) as run_adapter,
+        ):
+            response = client.post("/api/hooks/execute", json=envelope)
+
+        assert response.status_code == 200
+        assert response.json() == {"decision": "allow"}
+        run_adapter.assert_awaited_once()

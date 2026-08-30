@@ -901,10 +901,13 @@ class CLIEventSimulator:
         self.client.close()
 
     def _hook_envelope(self, **payload: Any) -> dict[str, Any]:
+        from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
+
         envelope = {
             "schema_version": 1,
             "enqueued_at": "2026-04-16T12:00:00Z",
             "critical": False,
+            "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
             "input_data": {},
         }
         envelope.update(payload)

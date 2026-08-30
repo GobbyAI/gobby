@@ -465,6 +465,26 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     ),
                 )
 
+            if not envelope_has_hook_response_capability(
+                request_metadata.get("response_capability")
+            ):
+                logger.warning(
+                    "Rejecting hook below hook-response capability floor",
+                    extra=_hook_log_extra(
+                        hook_type,
+                        request_metadata,
+                        source=source,
+                        protocol_diagnostic=(
+                            "request-carried response_capability is below hook-response.v1"
+                        ),
+                    ),
+                )
+                return _graceful_error_response(
+                    hook_type,
+                    "hook-response capability below floor",
+                    source=source,
+                )
+
             if envelope_id and not claim_envelope_processing(envelope_id):
                 stored_response = envelope_terminal_response(envelope_id)
                 if stored_response is not None:

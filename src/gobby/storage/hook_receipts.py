@@ -153,6 +153,20 @@ def reprepare_receipt(
     return _row_to_receipt(row) if row is not None else None
 
 
+def terminalize_receipts_for_envelope(db: HubDatabase, *, envelope_id: str) -> int:
+    """CAS prepared or released rows for this carrying envelope to undelivered."""
+
+    now = utc_now()
+    with db.transaction() as conn:
+        result = conn.execute(
+            "UPDATE hook_receipt_effects SET state = 'terminal-undelivered', "
+            "transition_at = %s WHERE current_envelope_id = %s "
+            "AND state IN ('prepared', 'released')",
+            (now, envelope_id),
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
+
+
 def increment_force_continue(
     db: HubDatabase,
     session_id: str,

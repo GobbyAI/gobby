@@ -18,6 +18,7 @@ from gobby.hooks.envelope_dedupe import (
     mark_envelope_processed,
     read_envelope_marker,
 )
+from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from tests.servers.conftest import create_http_server
@@ -45,6 +46,7 @@ def _post_claude_hook(temp_db: HubDatabase, payload: dict, headers: dict | None 
 
         envelope = {
             "schema_version": 1,
+            "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
             "enqueued_at": "2026-04-16T12:00:00Z",
             "critical": False,
             "input_data": {},
@@ -88,6 +90,7 @@ def test_envelope_id_marks_processed_and_skips_duplicate(
 
     envelope = {
         "schema_version": 1,
+        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
         "hook_type": "session-start",
@@ -143,6 +146,7 @@ def test_envelope_id_active_processing_duplicate_returns_conflict(
     claim_envelope_processing(envelope_id, processed_dir=processed_dir)
     envelope = {
         "schema_version": 1,
+        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
         "hook_type": "session-start",
@@ -196,6 +200,7 @@ def test_envelope_id_malformed_marker_returns_clear_conflict(
     marker_path.write_text("[]\n", encoding="utf-8")
     envelope = {
         "schema_version": 1,
+        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
         "hook_type": "session-start",
@@ -238,6 +243,7 @@ def test_envelope_id_replays_terminal_denial(
 
     envelope = {
         "schema_version": 1,
+        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": True,
         "hook_type": "PreToolUse",
@@ -294,6 +300,7 @@ def test_aged_stop_block_is_reevaluated_instead_of_replayed(
 
     envelope = {
         "schema_version": 1,
+        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": True,
         "hook_type": "Stop",
@@ -363,6 +370,7 @@ def test_envelope_id_processed_marker_without_response_returns_conflict(
     mark_envelope_processed(envelope_id, processed_dir=processed_dir)
     envelope = {
         "schema_version": 1,
+        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
         "hook_type": "session-start",
@@ -393,6 +401,7 @@ def test_envelope_headers_cannot_override_real_session_header(temp_db: HubDataba
         temp_db,
         {
             "schema_version": 1,
+            "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
             "headers": {"X-Gobby-Session-Id": "embedded-session"},
             "hook_type": "session-start",
             "source": "claude",
@@ -411,6 +420,7 @@ def test_embedded_envelope_headers_are_ignored_without_real_header(
         temp_db,
         {
             "schema_version": 1,
+            "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
             "headers": {"X-Gobby-Session-Id": "embedded-session"},
             "hook_type": "session-start",
             "source": "claude",
@@ -455,6 +465,7 @@ def test_codex_stop_hook_timeout_blocks_fail_safe(
             "/api/hooks/execute",
             json={
                 "schema_version": 1,
+                "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
                 "enqueued_at": "2026-04-16T12:00:00Z",
                 "critical": True,
                 "hook_type": hook_type,
@@ -463,10 +474,6 @@ def test_codex_stop_hook_timeout_blocks_fail_safe(
             },
         )
 
-        assert response.status_code == 200
-        assert response.json() == {
-            "continue": False,
-            "decision": "block",
-            "reason": "timed out",
-        }
-        adapter.translate_from_hook_response.assert_called_once()
+        assert response.status_code == 503
+        assert response.json() == {"status": "retry", "retry_kind": "adapter_timeout"}
+        adapter.translate_from_hook_response.assert_not_called()

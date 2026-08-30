@@ -294,6 +294,7 @@ async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
         "schema_version": 1,
         "enqueued_at": "2026-07-26T20:00:00Z",
         "critical": False,
+        "response_capability": "hook-response.v1",
         "hook_type": "SessionEnd",
         "input_data": {
             "session_id": external_id,

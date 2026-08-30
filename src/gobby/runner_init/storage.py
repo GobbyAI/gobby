@@ -135,6 +135,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner._metric_snapshot_task = None
     runner._resource_monitor_task = None
     runner._hook_inbox_task = None
+    runner._hook_quarantine_retention_task = None
     runner._bin_freshness_task = None
     runner._expired_isolation_task = None
     runner._tmux_window_repair_task = None

@@ -33,6 +33,7 @@ from gobby.hooks.inbox import (
     drain_hook_inbox_barrier,
     drain_hook_inbox_once,
 )
+from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 from gobby.storage import workspace_machine_scope
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
@@ -53,6 +54,7 @@ def _valid_envelope() -> dict[str, Any]:
         "schema_version": 1,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
+        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "hook_type": "session-start",
         "input_data": {},
         "source": "claude",
@@ -396,6 +398,7 @@ async def test_drain_hook_inbox_replays_full_envelope_with_promoted_headers(tmp_
         "schema_version": 1,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
+        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "hook_type": "session-start",
         "input_data": {"session_id": "sess-123"},
         "source": "claude",
@@ -446,6 +449,7 @@ async def test_drain_hook_inbox_skips_already_processed_envelope(
         "schema_version": 1,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
+        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "hook_type": "session-start",
         "input_data": {"session_id": "sess-123"},
         "source": "claude",
@@ -601,6 +605,7 @@ async def test_drain_hook_inbox_keeps_failed_replay_files(
         "schema_version": 1,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
+        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "hook_type": "session-start",
         "input_data": {},
         "source": "claude",
@@ -727,3 +732,177 @@ def test_release_envelope_processing_claim_preserves_finalized_or_absent_marker(
     assert marker is not None
     assert marker["status"] == "processed"
     assert release_envelope_processing_claim("", processed_dir=processed_dir) is False
+
+
+def _below_floor_envelope() -> dict[str, Any]:
+    envelope = _valid_envelope()
+    envelope.pop("response_capability", None)
+    return envelope
+
+
+def _write_inbox_envelope(inbox_dir: Path, envelope_id: str, envelope: dict[str, Any]) -> Path:
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+    path = inbox_dir / f"{envelope_id}.json"
+    path.write_text(json.dumps(envelope), encoding="utf-8")
+    return path
+
+
+@pytest.mark.asyncio
+async def test_below_floor_enqueue_only_is_terminally_quarantined_without_post(
+    tmp_path: Path,
+) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    envelope_id = "n-0000000000001-below-floor"
+    envelope_path = _write_inbox_envelope(inbox_dir, envelope_id, _below_floor_envelope())
+    app = FastAPI()
+    app.state.hook_manager = MagicMock()
+
+    with patch("gobby.hooks.inbox._post_envelope", new_callable=AsyncMock) as post:
+        post.return_value.status_code = 200
+        replayed = await drain_hook_inbox_once(app, inbox_dir=inbox_dir, include_fresh=True)
+
+    assert replayed == 1
+    post.assert_not_awaited()
+    assert not envelope_path.exists()
+    quarantined = inbox_dir / "quarantine" / envelope_path.name
+    assert quarantined.exists()
+    meta = json.loads((inbox_dir / "quarantine" / f"{envelope_path.name}.meta.json").read_text())
+    assert meta["reason"] == "below_floor_response_capability"
+    assert "quarantined_at" in meta
+
+
+@pytest.mark.asyncio
+async def test_below_floor_quarantine_releases_lease_and_settles_barrier(
+    tmp_path: Path,
+) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    envelope_id = "n-0000000000001-below-lease"
+    envelope_path = _write_inbox_envelope(inbox_dir, envelope_id, _below_floor_envelope())
+    processed_dir = inbox_dir / "processed"
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+    app = FastAPI()
+
+    with patch("gobby.hooks.inbox._post_envelope", new_callable=AsyncMock) as post:
+        post.return_value.status_code = 200
+        barrier = await drain_hook_inbox_barrier(app, inbox_dir, timeout_seconds=0.2)
+
+    post.assert_not_awaited()
+    assert barrier.timed_out is False
+    assert not envelope_path.exists()
+    assert read_envelope_marker(envelope_id, processed_dir=processed_dir) is None
+
+
+@pytest.mark.asyncio
+async def test_repeated_drain_does_not_repost_quarantined_below_floor(tmp_path: Path) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    envelope_id = "n-0000000000001-below-repeat"
+    _write_inbox_envelope(inbox_dir, envelope_id, _below_floor_envelope())
+    app = FastAPI()
+
+    with patch("gobby.hooks.inbox._post_envelope", new_callable=AsyncMock) as post:
+        post.return_value.status_code = 200
+        first = await drain_hook_inbox_once(app, inbox_dir=inbox_dir, include_fresh=True)
+        second = await drain_hook_inbox_once(app, inbox_dir=inbox_dir, include_fresh=True)
+
+    assert first == 1
+    assert second == 0
+    post.assert_not_awaited()
+
+
+def test_quarantine_retention_window_is_a_fixed_positive_constant() -> None:
+    import gobby.hooks.inbox as inbox
+
+    window = getattr(inbox, "HOOK_QUARANTINE_RETENTION_WINDOW", None)
+    assert isinstance(window, float)
+    assert window > 0
+
+
+def test_quarantine_prune_retains_inside_and_exact_boundary_deletes_outside(
+    tmp_path: Path,
+) -> None:
+    import gobby.hooks.inbox as inbox
+
+    prune = getattr(inbox, "prune_hook_quarantine", None)
+    assert callable(prune)
+    window = inbox.HOOK_QUARANTINE_RETENTION_WINDOW
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    quarantine = inbox.get_hook_quarantine_dir(inbox_dir)
+    quarantine.mkdir(parents=True)
+    now = 1_700_000_000.0
+    cases = {
+        "inside.json": now - (window - 1.0),
+        "exact.json": now - window,
+        "outside.json": now - (window + 1.0),
+    }
+    for name, quarantined_at in cases.items():
+        (quarantine / name).write_text("{}", encoding="utf-8")
+        (quarantine / f"{name}.meta.json").write_text(
+            json.dumps(
+                {
+                    "reason": "below_floor_response_capability",
+                    "detail": name,
+                    "quarantined_at": datetime.fromtimestamp(quarantined_at, tz=UTC).isoformat(),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    result = prune(inbox_dir, now=now)
+    assert (quarantine / "inside.json").exists()
+    assert (quarantine / "inside.json.meta.json").exists()
+    assert (quarantine / "exact.json").exists()
+    assert (quarantine / "exact.json.meta.json").exists()
+    assert not (quarantine / "outside.json").exists()
+    assert not (quarantine / "outside.json.meta.json").exists()
+    assert result.deleted >= 2
+
+
+def test_quarantine_prune_recovers_orphan_payload_and_sidecar(tmp_path: Path) -> None:
+    import gobby.hooks.inbox as inbox
+
+    prune = getattr(inbox, "prune_hook_quarantine", None)
+    assert callable(prune)
+    window = inbox.HOOK_QUARANTINE_RETENTION_WINDOW
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    quarantine = inbox.get_hook_quarantine_dir(inbox_dir)
+    quarantine.mkdir(parents=True)
+    now = 1_700_000_000.0
+    stale = now - (window + 10.0)
+    payload = quarantine / "orphan-payload.json"
+    sidecar = quarantine / "orphan-sidecar.json.meta.json"
+    payload.write_text("{}", encoding="utf-8")
+    sidecar.write_text(
+        json.dumps(
+            {
+                "reason": "below_floor_response_capability",
+                "detail": "orphan",
+                "quarantined_at": datetime.fromtimestamp(stale, tz=UTC).isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    os.utime(payload, (stale, stale))
+
+    prune(inbox_dir, now=now)
+    assert not payload.exists()
+    assert not sidecar.exists()
+
+
+def test_quarantine_prune_is_bounded(tmp_path: Path) -> None:
+    import gobby.hooks.inbox as inbox
+
+    prune = getattr(inbox, "prune_hook_quarantine", None)
+    assert callable(prune)
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    quarantine = inbox.get_hook_quarantine_dir(inbox_dir)
+    quarantine.mkdir(parents=True)
+    for index in range(4):
+        (quarantine / f"{index}.json").write_text("{}", encoding="utf-8")
+        (quarantine / f"{index}.json.meta.json").write_text(
+            json.dumps({"reason": "below_floor_response_capability", "detail": str(index)}),
+            encoding="utf-8",
+        )
+
+    result = prune(inbox_dir, now=1_700_000_000.0, max_entries=2)
+    assert result.examined <= 2
+    assert result.truncated is True

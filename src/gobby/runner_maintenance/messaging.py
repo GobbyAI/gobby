@@ -30,6 +30,19 @@ async def drain_hook_inbox_loop(
     )
 
 
+async def hook_quarantine_retention_loop(
+    is_shutdown_requested: Callable[[], bool],
+    interval_seconds: int = 3600,
+) -> None:
+    """Prune expired hook inbox quarantine files on the maintenance loop."""
+    from gobby.hooks.inbox import hook_quarantine_retention_loop as _hook_quarantine_retention_loop
+
+    await _hook_quarantine_retention_loop(
+        is_shutdown_requested,
+        interval_seconds=interval_seconds,
+    )
+
+
 async def cleanup_zombie_messages_loop(
     db: Any,
     is_shutdown_requested: Callable[[], bool],

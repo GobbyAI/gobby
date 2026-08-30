@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from tests.servers.conftest import create_http_server
@@ -41,6 +42,7 @@ def test_execute_hook_dispatches_droid_adapter(session_storage: SessionManager) 
                 "schema_version": 1,
                 "enqueued_at": "2026-04-16T12:00:00Z",
                 "critical": False,
+                "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
                 "hook_type": "PreToolUse",
                 "source": "droid",
                 "input_data": {"session_id": "droid-123", "cwd": "/tmp"},

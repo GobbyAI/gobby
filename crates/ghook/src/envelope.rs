@@ -172,4 +172,27 @@ mod tests {
             panic!("envelope failed schema validation: {errs:?}");
         }
     }
+
+    #[test]
+    fn envelope_without_response_capability_validates_as_legacy() {
+        let schema_bytes = include_bytes!("../schemas/inbox-envelope.v1.schema.json");
+        let schema: Value = serde_json::from_slice(schema_bytes).unwrap();
+        let compiled = jsonschema::JSONSchema::options()
+            .with_draft(jsonschema::Draft::Draft7)
+            .compile(&schema)
+            .expect("schema compiles");
+        let instance = json!({
+            "schema_version": 1,
+            "enqueued_at": "2026-04-16T12:00:00Z",
+            "critical": false,
+            "hook_type": "session-start",
+            "input_data": {},
+            "source": "claude",
+            "headers": {}
+        });
+        if let Err(errors) = compiled.validate(&instance) {
+            let errs: Vec<_> = errors.map(|e| format!("{e}")).collect();
+            panic!("absent response_capability must parse as legacy, not malformed: {errs:?}");
+        }
+    }
 }

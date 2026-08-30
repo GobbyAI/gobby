@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from random import SystemRandom
 from typing import Any, Final
@@ -28,9 +30,14 @@ from gobby.hooks.envelope_dedupe import (
     mark_envelope_processed,
     prune_directory_by_age,
     prune_processed_envelope_markers,
+    release_envelope_processing_claim,
     remove_envelope_marker,
 )
-from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
+from gobby.hooks.runtime_compat import (
+    SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
+    envelope_has_hook_response_capability,
+)
+from gobby.utils.datetime import utc_now
 from gobby.utils.local_token import read_local_api_token
 
 logger = logging.getLogger(__name__)
@@ -50,6 +57,12 @@ ORPHANED_TEMP_RETENTION_SECONDS: Final = 60 * 60.0
 # this many entries, so a backlog drains over successive passes while each pass
 # stays short. The inbox holds tens of entries in steady state.
 ORPHANED_TEMP_PRUNE_MAX_ENTRIES: Final = 100_000
+
+# Quarantined envelopes are diagnostic artifacts. The window is fixed: no
+# config override, measured on wall-clock time against the sidecar timestamp.
+HOOK_QUARANTINE_RETENTION_WINDOW: Final = 24 * 60 * 60.0
+HOOK_QUARANTINE_PRUNE_MAX_ENTRIES: Final = 100_000
+_META_SUFFIX: Final = ".meta.json"
 
 
 def get_hook_inbox_dir() -> Path:
@@ -85,7 +98,15 @@ def _quarantine_file(path: Path, *, reason: str, detail: str) -> bool:
         target.write_bytes(path.read_bytes())
         path.unlink(missing_ok=True)
         meta_path.write_text(
-            json.dumps({"reason": reason, "detail": detail}, indent=2) + "\n",
+            json.dumps(
+                {
+                    "reason": reason,
+                    "detail": detail,
+                    "quarantined_at": utc_now().isoformat(),
+                },
+                indent=2,
+            )
+            + "\n",
             encoding="utf-8",
         )
     except FileNotFoundError:
@@ -114,6 +135,27 @@ def _quarantine_or_warn(path: Path, *, reason: str, detail: str) -> None:
             "Skipping hook inbox file %s after quarantine failed (reason=%s)",
             path,
             reason,
+        )
+
+
+def _terminalize_below_floor_receipts(app: Any, envelope_id: str) -> None:
+    """Best-effort: any prepared receipt for this envelope becomes undelivered."""
+    from gobby.storage.hook_receipts import terminalize_receipts_for_envelope
+
+    state = getattr(app, "state", None)
+    db = getattr(state, "database", None)
+    if db is None:
+        hook_manager = getattr(state, "hook_manager", None)
+        db = getattr(hook_manager, "db", None)
+    if db is None:
+        return
+    try:
+        terminalize_receipts_for_envelope(db, envelope_id=envelope_id)
+    except Exception as exc:
+        logger.warning(
+            "Failed to terminalize receipts for below-floor envelope %s: %s",
+            envelope_id,
+            exc,
         )
 
 
@@ -243,6 +285,22 @@ async def _drain_hook_inbox_once_locked(
         envelope_id = envelope_id_from_inbox_path(path)
         envelope = _load_envelope(path)
         if envelope is None:
+            continue
+
+        if not envelope_has_hook_response_capability(envelope.get("response_capability")):
+            if envelope_id and is_envelope_processed(envelope_id, processed_dir=processed_dir):
+                logger.debug("Skipping already-processed hook inbox envelope %s", path.name)
+                path.unlink(missing_ok=True)
+                continue
+            if envelope_id:
+                release_envelope_processing_claim(envelope_id, processed_dir=processed_dir)
+                _terminalize_below_floor_receipts(app, envelope_id)
+            _quarantine_or_warn(
+                path,
+                reason="below_floor_response_capability",
+                detail="request-carried response_capability is below hook-response.v1",
+            )
+            replayed += 1
             continue
 
         hook_manager = getattr(getattr(app, "state", None), "hook_manager", None)
@@ -488,6 +546,148 @@ async def prune_hook_inbox(inbox_dir: Path | None = None) -> int:
             },
         )
     return markers.deleted + temps.deleted
+
+
+def _parse_quarantined_at(value: object) -> float | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.timestamp()
+
+
+def _sidecar_quarantined_at(meta_path: Path) -> float | None:
+    try:
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return _parse_quarantined_at(payload.get("quarantined_at"))
+
+
+def _file_mtime(path: Path) -> float | None:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _unlink_quiet(path: Path) -> bool:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+    return True
+
+
+def _payload_name_for_quarantine_entry(name: str) -> str | None:
+    if name.endswith(_META_SUFFIX):
+        payload = name[: -len(_META_SUFFIX)]
+        return payload if payload.endswith(".json") else None
+    if name.endswith(".json"):
+        return name
+    return None
+
+
+def _prune_quarantine_pair(
+    quarantine_dir: Path,
+    payload_name: str,
+    *,
+    cutoff: float,
+) -> int:
+    """Delete a payload/sidecar pair (or orphan) when strictly older than cutoff."""
+    payload_path = quarantine_dir / payload_name
+    meta_path = quarantine_dir / f"{payload_name}{_META_SUFFIX}"
+    timestamp = _sidecar_quarantined_at(meta_path)
+    if timestamp is None:
+        timestamp = _file_mtime(payload_path) or _file_mtime(meta_path)
+    if timestamp is None or timestamp >= cutoff:
+        return 0
+    deleted = 0
+    if _unlink_quiet(payload_path):
+        deleted += 1
+    if _unlink_quiet(meta_path):
+        deleted += 1
+    return deleted
+
+
+def prune_hook_quarantine(
+    inbox_dir: Path | None = None,
+    *,
+    now: float | None = None,
+    retention_seconds: float | None = None,
+    max_entries: int = HOOK_QUARANTINE_PRUNE_MAX_ENTRIES,
+) -> DirectoryPruneResult:
+    """Drop quarantined envelopes past the retention window, in bounded batches.
+
+    Eligibility is strictly after the cutoff against the sidecar timestamp.
+    An entry exactly at the boundary is retained. Payload and sidecar are
+    removed together; orphaned halves of a pair are recovered.
+    """
+    root = inbox_dir if inbox_dir is not None else get_hook_inbox_dir()
+    quarantine_dir = get_hook_quarantine_dir(root)
+    window = HOOK_QUARANTINE_RETENTION_WINDOW if retention_seconds is None else retention_seconds
+    cutoff = (now if now is not None else time.time()) - window
+    examined = 0
+    deleted = 0
+    truncated = False
+    seen: set[str] = set()
+    try:
+        with os.scandir(quarantine_dir) as entries:
+            for entry in entries:
+                if examined >= max_entries:
+                    truncated = True
+                    break
+                examined += 1
+                payload_name = _payload_name_for_quarantine_entry(entry.name)
+                if payload_name is None or payload_name in seen:
+                    continue
+                seen.add(payload_name)
+                deleted += _prune_quarantine_pair(quarantine_dir, payload_name, cutoff=cutoff)
+    except OSError:
+        return DirectoryPruneResult(examined=examined, deleted=deleted)
+    return DirectoryPruneResult(examined=examined, deleted=deleted, truncated=truncated)
+
+
+async def hook_quarantine_retention_loop(
+    is_shutdown_requested: Callable[[], bool],
+    interval_seconds: int = 3600,
+    inbox_dir: Path | None = None,
+) -> None:
+    """Periodic prune of the hook inbox quarantine directory."""
+    try:
+        await asyncio.to_thread(prune_hook_quarantine, inbox_dir)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.error("Initial hook quarantine prune failed: %s", exc)
+
+    while not is_shutdown_requested():
+        try:
+            await asyncio.sleep(interval_seconds)
+            result = await asyncio.to_thread(prune_hook_quarantine, inbox_dir)
+            if result.deleted:
+                logger.info(
+                    "Pruned %s expired hook quarantine file(s)",
+                    result.deleted,
+                    extra={
+                        "event": "hook_quarantine_pruned",
+                        "examined": result.examined,
+                        "deleted": result.deleted,
+                        "backlog_remaining": result.truncated,
+                    },
+                )
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.error("Hook quarantine prune loop failed: %s", exc)
 
 
 async def drain_hook_inbox_loop(
