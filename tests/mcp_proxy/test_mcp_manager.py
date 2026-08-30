@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from anyio import ClosedResourceError
 
 from gobby.mcp_proxy.manager import (
     ConnectionState,
@@ -1075,6 +1076,138 @@ async def test_refresh_server_is_linearizable_against_concurrent_calls() -> None
     db.servers.pop(row.id, None)
     with pytest.raises(MCPError, match="[Uu]nknown|[Nn]ot found"):
         await manager.refresh_server(row.id)
+
+
+class _WitnessLock(asyncio.Lock):
+    """Counts acquisition attempts so a test can prove lock sharing."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.acquire_started = 0
+
+    async def acquire(self) -> Literal[True]:
+        self.acquire_started += 1
+        return await super().acquire()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    ["reconnect", "remove_server", "update_server", "set_server_enabled"],
+)
+async def test_registry_mutations_share_the_per_id_connection_lock(operation: str) -> None:
+    project_id = str(uuid4())
+    row = _row(name="github", project_id=project_id, env={"TOKEN": "plain"})
+    db = FakeMCPDb([row])
+    created, factory = _patch_transport()
+    with (
+        patch("gobby.mcp_proxy.manager.create_transport_connection", side_effect=factory),
+        patch.object(MCPClientManager, "_resolve_secrets_in_config", _resolve_with_store({})),
+    ):
+        manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
+        await manager.connect_all()
+        assert len(created) == 1
+        lock = _WitnessLock()
+        manager._lazy_connector._connection_locks[row.id] = lock
+        await lock.acquire()
+        try:
+            coro: Coroutine[Any, Any, Any]
+            if operation == "reconnect":
+                coro = manager._reconnect(row.id)
+            elif operation == "remove_server":
+                coro = manager.remove_server(row.id)
+            elif operation == "update_server":
+                coro = manager.update_server(row.id, {"description": "patched"})
+            else:
+                coro = manager.set_server_enabled(row.id, False)
+            task = asyncio.create_task(coro)
+            for _ in range(20):
+                await asyncio.wait({task}, timeout=0)
+                if lock.acquire_started == 2:
+                    break
+            # The operation reached this exact per-id lock and is parked on it.
+            assert lock.acquire_started == 2
+            assert not task.done()
+        finally:
+            lock.release()
+        await asyncio.wait_for(task, timeout=5)
+
+        if operation == "reconnect":
+            assert len(created) == 2
+            assert manager.is_connected(row.id)
+        elif operation == "remove_server":
+            assert row.id not in manager._configs
+            assert db.get_server_by_id(row.id) is None
+        elif operation == "update_server":
+            assert manager._configs[row.id].description == "patched"
+        else:
+            assert manager._configs[row.id].enabled is False
+            assert row.id not in manager._connections
+
+
+@pytest.mark.asyncio
+async def test_stale_discard_pops_only_the_connection_the_failed_call_used() -> None:
+    project_id = str(uuid4())
+    row = _row(
+        name="github",
+        project_id=project_id,
+        env={"TOKEN": "$secret:github_token"},
+    )
+    db = FakeMCPDb([row])
+    store = {"github_token": "before"}
+    created, factory = _patch_transport()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class DyingSession(FakeToolSession):
+        async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+            entered.set()
+            await release.wait()
+            raise ClosedResourceError
+
+    class DyingConnection(RecordingConnection):
+        async def connect(self) -> FakeToolSession:
+            self.connect_calls += 1
+            self.is_connected = True
+            self.session = DyingSession(self)
+            return self.session
+
+    dying: list[RecordingConnection] = []
+
+    def first_factory(
+        config: MCPServerConfig, stdio_errlog_path: str | None = None
+    ) -> RecordingConnection:
+        if not dying:
+            connection = DyingConnection(config)
+            dying.append(connection)
+            return connection
+        return factory(config, stdio_errlog_path)
+
+    with (
+        patch(
+            "gobby.mcp_proxy.manager.create_transport_connection",
+            side_effect=first_factory,
+        ),
+        patch.object(MCPClientManager, "_resolve_secrets_in_config", _resolve_with_store(store)),
+    ):
+        manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
+        await manager.connect_all()
+        old = cast(RecordingConnection, manager._connections[row.id])
+        assert old is dying[0]
+        in_flight = asyncio.create_task(manager.call_tool(row.id, "probe", {}))
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        store["github_token"] = "after"
+        await manager.refresh_server(row.id)
+        fresh = cast(RecordingConnection, manager._connections[row.id])
+        assert fresh is not old
+        release.set()
+        result = await asyncio.wait_for(in_flight, timeout=5)
+
+    assert result["token"] == "after"
+    assert cast(RecordingConnection, manager._connections[row.id]) is fresh
+    assert fresh.disconnect_calls == 0
+    assert old.disconnect_calls == 1
+    assert len(created) == 1
 
 
 @pytest.mark.asyncio

@@ -14,13 +14,14 @@ from httpx import ASGITransport, AsyncClient
 from gobby.mcp_proxy.client_manager import server_registry as server_registry_mod
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPServerConfig
+from gobby.mcp_proxy.schema_hash import SchemaHashManager, compute_schema_hash
+from gobby.mcp_proxy.semantic_search import DEFAULT_EMBEDDING_DIM, SemanticToolSearch
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.servers.routes.dependencies import get_metrics_manager, get_server
 from gobby.servers.routes.mcp.tools import create_mcp_router
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID
-from tests.mcp_proxy.services.test_scope_resolution_matrix import PROJECT_ID
 
 pytestmark = pytest.mark.unit
 
@@ -1216,126 +1217,251 @@ async def test_project_scoped_mutations_never_fall_back_to_global(
     assert row.description == "global-ok"
 
 
-def test_refresh_preserves_schema_hash_and_embedding_pipeline() -> None:
+def test_refresh_preserves_schema_hash_and_embedding_pipeline(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project_id = sample_project["id"]
+    storage = LocalMCPManager(temp_db)
+    row = storage.insert_server(
+        name="github",
+        transport="http",
+        project_id=project_id,
+        url="https://project.example.test/mcp",
+    )
+    assert row is not None
+    server_id = row.id
+
+    old_schema = {"type": "object", "properties": {"q": {"type": "string"}}}
+    new_schema = {
+        "type": "object",
+        "properties": {"q": {"type": "string"}, "page": {"type": "integer"}},
+    }
+    storage.cache_tools(
+        server_id,
+        [
+            {"name": "list_repos", "description": "List repos", "inputSchema": old_schema},
+            {"name": "old_tool", "description": "Dropped", "inputSchema": {"type": "object"}},
+        ],
+    )
+    before_ids = {tool.name: tool.id for tool in storage.get_cached_tools(server_id)}
+
+    hashes = SchemaHashManager(db=temp_db)
+    hashes.store_hash(
+        server_name="github",
+        tool_name="list_repos",
+        project_id=project_id,
+        schema_hash=compute_schema_hash(old_schema, description="List repos"),
+    )
+    hashes.store_hash(
+        server_name="github",
+        tool_name="old_tool",
+        project_id=project_id,
+        schema_hash=compute_schema_hash({"type": "object"}, description="Dropped"),
+    )
+
     config = MCPServerConfig(
         name="github",
-        project_id=PROJECT_ID,
-        url="https://project.example.test",
-        id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        project_id=project_id,
+        transport="http",
+        url="https://project.example.test/mcp",
+        id=server_id,
+        enabled=True,
+    )
+    manager = MagicMock()
+    manager.server_configs = [config]
+    manager.get_server_config.return_value = config
+    manager.mcp_db_manager = storage
+
+    def rediscover(refreshed_id: str) -> None:
+        storage.cache_tools(
+            refreshed_id,
+            [
+                {"name": "list_repos", "description": "List repos", "inputSchema": new_schema},
+                {
+                    "name": "get_repo",
+                    "description": "Get one repo",
+                    "inputSchema": {"type": "object"},
+                },
+            ],
+        )
+
+    manager.refresh_server = AsyncMock(side_effect=rediscover)
+    embedded: list[dict[str, Any]] = []
+
+    async def record_embed(**kwargs: Any) -> None:
+        embedded.append(kwargs)
+
+    semantic = MagicMock()
+    semantic.embed_tool = AsyncMock(side_effect=record_embed)
+    server = _http_server_for(manager)
+    server._tools_handler = MagicMock()
+    server._tools_handler._semantic_search = semantic
+    client = TestClient(_mcp_app(server))
+
+    response = client.post(
+        "/api/mcp/refresh",
+        json={"server": "github", "project_id": project_id},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    entry = body["stats"]["by_server"][server_id]
+    assert entry["name"] == "github"
+    assert entry["scope"] == "project"
+    assert entry["new"] == 1
+    assert entry["changed"] == 1
+    assert entry["unchanged"] == 0
+    assert entry["removed"] == 1
+    assert entry["embeddings"] == 2
+
+    stored = {
+        record.tool_name: record.schema_hash
+        for record in hashes.get_hashes_for_server("github", project_id)
+    }
+    assert set(stored) == {"list_repos", "get_repo"}
+    assert stored["list_repos"] == compute_schema_hash(new_schema, description="List repos")
+
+    tombstoned = {
+        str(change_row["source_id"])
+        for change_row in temp_db.fetchall(
+            "SELECT source_id FROM embedding_projection_changes "
+            "WHERE source_kind = 'tool' AND is_tombstone = TRUE",
+        )
+    }
+    assert before_ids["old_tool"] in tombstoned
+
+    after_ids = {tool.name: tool.id for tool in storage.get_cached_tools(server_id)}
+    calls = {call_kwargs["name"]: call_kwargs for call_kwargs in embedded}
+    assert set(calls) == {"list_repos", "get_repo"}
+    assert calls["list_repos"]["tool_id"] == after_ids["list_repos"]
+    assert calls["get_repo"]["tool_id"] == after_ids["get_repo"]
+    for call_kwargs in embedded:
+        assert call_kwargs["server_id"] == server_id
+        assert call_kwargs["project_id"] == project_id
+        assert call_kwargs["server_name"] == "github"
+
+
+class _RecordingVectorStore:
+    """In-memory vector store: refresh-route upserts are visible to search."""
+
+    def __init__(self) -> None:
+        self.points: dict[str, tuple[list[float], dict[str, Any]]] = {}
+
+    async def ensure_collection(
+        self, name: str, dim: int, recreate_on_mismatch: bool = False
+    ) -> None:
+        return None
+
+    async def get_collection_dimension(self, name: str) -> int | None:
+        return None
+
+    async def upsert(
+        self,
+        memory_id: str,
+        embedding: list[float],
+        payload: dict[str, Any],
+        collection_name: str | None = None,
+    ) -> None:
+        self.points[memory_id] = (embedding, payload)
+
+    async def search_with_payload(
+        self,
+        query_embedding: list[float],
+        limit: int,
+        filters: dict[str, Any] | None = None,
+        collection_name: str | None = None,
+    ) -> list[tuple[str, float, dict[str, Any]]]:
+        matches = []
+        for point_id, (_embedding, payload) in self.points.items():
+            if filters and any(
+                str(payload.get(key)) != str(value) for key, value in filters.items()
+            ):
+                continue
+            matches.append((point_id, 0.9, payload))
+        return matches[:limit]
+
+
+def test_refresh_embeddings_carry_scoped_server_identity(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project_id = sample_project["id"]
+    storage = LocalMCPManager(temp_db)
+    row = storage.insert_server(
+        name="github",
+        transport="http",
+        project_id=project_id,
+        url="https://project.example.test/mcp",
+    )
+    assert row is not None
+    server_id = row.id
+    storage.cache_tools(
+        server_id,
+        [{"name": "list_repos", "description": "List repos", "inputSchema": {"type": "object"}}],
+    )
+
+    config = MCPServerConfig(
+        name="github",
+        project_id=project_id,
+        transport="http",
+        url="https://project.example.test/mcp",
+        id=server_id,
         enabled=True,
     )
     manager = MagicMock()
     manager.server_configs = [config]
     manager.refresh_server = AsyncMock()
     manager.get_server_config.return_value = config
-    tool = MagicMock()
-    tool.name = "list_repos"
-    tool.description = "List repos"
-    tool.input_schema = {"type": "object"}
-    session = AsyncMock()
-    session.list_tools.return_value = MagicMock(tools=[tool])
-    manager.ensure_connected = AsyncMock(return_value=session)
-    db = MagicMock()
-    db.db = MagicMock()
-    db.get_server.return_value = MagicMock(id=config.id, name="github", project_id=PROJECT_ID)
-    db.get_cached_tools.return_value = []
-    manager.mcp_db_manager = db
-    semantic = MagicMock()
-    semantic.embed_tool = AsyncMock()
-    server = _http_server_for(manager)
-    server._mcp_db_manager = db
-    server._tools_handler = MagicMock()
-    server._tools_handler._semantic_search = semantic
-    client = TestClient(_mcp_app(server))
+    manager.mcp_db_manager = storage
 
-    with (
-        patch("gobby.mcp_proxy.schema_hash.SchemaHashManager") as mock_hash_cls,
-        patch("gobby.mcp_proxy.schema_hash.compute_schema_hash", return_value="h1"),
-    ):
-        hashes = mock_hash_cls.return_value
-        hashes.check_tools_for_changes.return_value = {
-            "new": ["list_repos"],
-            "changed": [],
-            "unchanged": [],
-        }
-        hashes.cleanup_stale_hashes.return_value = 1
-        response = client.post(
-            "/api/mcp/refresh",
-            json={"server": "github", "project_id": PROJECT_ID, "force": True},
-        )
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["success"] is True
-    manager.refresh_server.assert_awaited()
-    assert config.id in [call.args[0] for call in manager.refresh_server.await_args_list]
-    stats = body["stats"]
-    by_server = stats["by_server"]
-    entry = by_server.get(config.id) or by_server.get("github")
-    assert entry is not None
-    hashes.store_hash.assert_called()
-    hashes.cleanup_stale_hashes.assert_called()
-    semantic.embed_tool.assert_awaited()
-
-
-def test_refresh_embeddings_carry_scoped_server_identity() -> None:
-    config = MCPServerConfig(
-        name="github",
-        project_id=PROJECT_ID,
-        url="https://project.example.test",
-        id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        enabled=True,
+    vector_store = _RecordingVectorStore()
+    vector_store.points["foreign-tool"] = (
+        [0.5] * DEFAULT_EMBEDDING_DIM,
+        {
+            "server_name": "github",
+            "tool_name": "foreign_tool",
+            "description": "Another project's tool",
+            "project_id": "someone-elses-project",
+            "server_id": "someone-elses-server",
+        },
     )
-    manager = MagicMock()
-    manager.server_configs = [config]
-    manager.refresh_server = AsyncMock()
-    tool = MagicMock()
-    tool.name = "list_repos"
-    tool.description = "List repos"
-    tool.input_schema = {"type": "object"}
-    session = AsyncMock()
-    session.list_tools.return_value = MagicMock(tools=[tool])
-    manager.ensure_connected = AsyncMock(return_value=session)
-    db = MagicMock()
-    db.db = MagicMock()
-    stored_tool = MagicMock()
-    stored_tool.name = "list_repos"
-    stored_tool.id = "tool-1"
-    db.get_server.return_value = MagicMock(id=config.id)
-    db.get_cached_tools.return_value = [stored_tool]
-    manager.mcp_db_manager = db
-    captured: dict[str, Any] = {}
-
-    async def embed_tool(**kwargs: Any) -> None:
-        captured.update(kwargs)
-
-    semantic = MagicMock()
-    semantic.embed_tool = AsyncMock(side_effect=embed_tool)
+    semantic = SemanticToolSearch(
+        temp_db,
+        embedding_api_key="sk-test",
+        vector_store=cast(Any, vector_store),
+    )
     server = _http_server_for(manager)
-    server._mcp_db_manager = db
     server._tools_handler = MagicMock()
     server._tools_handler._semantic_search = semantic
     client = TestClient(_mcp_app(server))
 
-    with (
-        patch("gobby.mcp_proxy.schema_hash.SchemaHashManager") as mock_hash_cls,
-        patch("gobby.mcp_proxy.schema_hash.compute_schema_hash", return_value="h1"),
+    with patch.object(
+        SemanticToolSearch,
+        "embed_text",
+        new=AsyncMock(return_value=[0.5] * DEFAULT_EMBEDDING_DIM),
     ):
-        mock_hash_cls.return_value.check_tools_for_changes.return_value = {
-            "new": ["list_repos"],
-            "changed": [],
-            "unchanged": [],
-        }
-        mock_hash_cls.return_value.cleanup_stale_hashes.return_value = 0
         response = client.post(
             "/api/mcp/refresh",
-            json={"server": "github", "project_id": PROJECT_ID},
+            json={"server": "github", "project_id": project_id, "force": True},
+        )
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+        cached = {tool.name: tool.id for tool in storage.get_cached_tools(server_id)}
+        _embedding, payload = vector_store.points[cached["list_repos"]]
+        assert payload["server_id"] == server_id
+        assert payload["server_name"] == "github"
+        assert payload["project_id"] == project_id
+
+        results = asyncio.run(
+            semantic.search_tools(query="repos", project_id=project_id, mcp_manager=manager)
         )
 
-    assert response.status_code == 200
-    assert captured.get("server_id") == config.id
-    assert captured.get("server_name") == "github"
-    assert captured.get("project_id") == PROJECT_ID
+    assert [result.tool_id for result in results] == [cached["list_repos"]]
+    assert results[0].server_name == "github"
+    assert results[0].tool_name == "list_repos"
 
 
 @pytest.mark.asyncio
