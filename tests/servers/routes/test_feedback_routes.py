@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -10,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.app_context import ServiceContainer
 from gobby.feedback.storage import FeedbackReviewRun
 from gobby.servers.routes.feedback import create_feedback_router
 
@@ -73,6 +75,13 @@ def test_review_post_failure_maps_to_500_with_detail() -> None:
 
     assert response.status_code == 500
     assert response.json()["detail"] == "provider unavailable"
+
+
+def test_service_container_declares_the_attribute_the_routes_read() -> None:
+    """The routes resolve server.services.feedback_review_service, so the
+    real ServiceContainer must declare that field (regression: #21309)."""
+    field_names = {field.name for field in dataclasses.fields(ServiceContainer)}
+    assert "feedback_review_service" in field_names
 
 
 def test_routes_return_503_when_service_unavailable() -> None:

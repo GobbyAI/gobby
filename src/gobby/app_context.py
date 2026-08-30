@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from gobby.config.terminal_host import TerminalHostConfig
     from gobby.config.terminals import TerminalConfig
     from gobby.events.wake import WakeDispatcher
+    from gobby.feedback.service import FeedbackReviewService
     from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.memory.dream.coordinator import MemoryDreamCoordinator
     from gobby.storage.managed_credentials import ManagedCredentialManager
@@ -66,6 +67,7 @@ class ServiceContainer:
     # Advanced Features
     memory_manager: MemoryManager | None = None
     memory_dream_coordinator: MemoryDreamCoordinator | None = None
+    feedback_review_service: FeedbackReviewService | None = None
     text_generation_service: TextGenerationService | None = None
     tool_chat_service: ToolChatService | None = None
     llm_service: LLMService | None = None

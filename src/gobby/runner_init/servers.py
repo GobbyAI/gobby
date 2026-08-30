@@ -142,6 +142,7 @@ def init_servers(runner: GobbyRunner) -> None:
         memory_backup_manager=runner.memory_backup_manager,
         memory_manager=runner.memory_manager,
         memory_dream_coordinator=runner.memory_dream_coordinator,
+        feedback_review_service=runner.feedback_review_service,
         text_generation_service=runner.text_generation_service,
         tool_chat_service=runner.tool_chat_service,
         llm_service=runner.llm_service,
