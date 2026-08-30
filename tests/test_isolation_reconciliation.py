@@ -26,10 +26,12 @@ from gobby.storage.hub.protocol import (
     HubDatabase,
     IsolationRegistryReconciliation,
 )
-from gobby.storage.projects import LocalProjectManager, Project
+from gobby.storage.projects import Project
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.worktrees.git import WorktreeGitManager, WorktreeInfo
 from gobby.worktrees.git import _status as worktree_git_status
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.integration
 
@@ -82,9 +84,20 @@ async def test_reconciliation_adopts_each_stray_once_and_logs_one_summary(
     _create_stray_worktree(repo, worktree_path, "task/reconcile")
     _create_stray_clone(repo, clone_path, detached=True)
     _create_stray_clone(repo, nested_clone_path)
-    project = LocalProjectManager(temp_db).create(
+    isolated = install_isolated_checkout_project(
+        temp_db,
+        repo,
         name="reconcile-project",
-        repo_path=str(repo),
+        monkeypatch=monkeypatch,
+    )
+    project = isolated.project
+    monkeypatch.setattr(
+        "gobby.storage.worktrees.require_machine_id",
+        lambda: isolated.machine_id,
+    )
+    monkeypatch.setattr(
+        "gobby.storage.clones.require_machine_id",
+        lambda: isolated.machine_id,
     )
     monkeypatch.setattr(clone_git, "CLONES_ROOT", clones_root)
     db_calls: list[str] = []
@@ -97,12 +110,12 @@ async def test_reconciliation_adopts_each_stray_once_and_logs_one_summary(
 
     first = await reconcile_isolation_registry(
         temp_db,
-        machine_id="machine-reconcile",
+        machine_id=isolated.machine_id,
         run_db=run_db,
     )
     second = await reconcile_isolation_registry(
         temp_db,
-        machine_id="machine-reconcile",
+        machine_id=isolated.machine_id,
         run_db=run_db,
     )
 
@@ -112,15 +125,18 @@ async def test_reconciliation_adopts_each_stray_once_and_logs_one_summary(
     clone = LocalCloneManager(temp_db).get_by_path(str(clone_path.resolve()))
     assert worktree is not None
     assert worktree.project_id == project.id
+    assert worktree.machine_id == isolated.machine_id
     assert worktree.branch_name == "task/reconcile"
     assert worktree.base_branch == "main"
     assert clone is not None
     assert clone.project_id == project.id
+    assert clone.machine_id == isolated.machine_id
     assert clone.branch_name is None
     assert clone.base_branch == "main"
     assert clone.remote_url == str(repo)
     assert LocalCloneManager(temp_db).get_by_path(str(nested_clone_path.resolve())) is None
-    assert "LocalProjectManager.list" in db_calls
+    assert "LocalProjectCheckoutManager.list_for_machine" in db_calls
+    assert "LocalProjectManager.get" in db_calls
     assert "LocalWorktreeManager.register_adopted" in db_calls
     assert "LocalCloneManager.register_adopted" in db_calls
     summaries = [
@@ -187,7 +203,7 @@ async def test_worktree_scan_skips_primary_bare_prunable_and_reserved_names(
     )
     project = cast(
         "Project",
-        SimpleNamespace(id="project-1", name="project", repo_path=str(repo)),
+        SimpleNamespace(id="project-1", name="project"),
     )
 
     async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -195,6 +211,7 @@ async def test_worktree_scan_skips_primary_bare_prunable_and_reserved_names(
 
     adopted = await reconciliation._reconcile_project_worktrees(
         project,
+        str(repo),
         storage,
         run_db=run_db,
     )
@@ -227,12 +244,13 @@ async def test_worktree_scan_skips_git_probe_failure_without_error_log(
     )
     project = cast(
         "Project",
-        SimpleNamespace(id="project-1", name="project", repo_path=str(repo)),
+        SimpleNamespace(id="project-1", name="project"),
     )
     caplog.set_level(logging.DEBUG, logger="gobby.worktrees.git._status")
 
     adopted = await reconciliation._reconcile_project_worktrees(
         project,
+        str(repo),
         storage,
         run_db=None,
     )
@@ -260,9 +278,11 @@ async def test_reconciliation_ignores_hidden_and_unregistered_projects(
     _create_repository(hidden_repo)
     _create_stray_worktree(hidden_repo, hidden_worktree, "task/hidden")
     _create_stray_clone(hidden_repo, hidden_clone)
-    LocalProjectManager(temp_db).create(
+    hidden = install_isolated_checkout_project(
+        temp_db,
+        hidden_repo,
         name="_orphaned-hidden",
-        repo_path=str(hidden_repo),
+        monkeypatch=monkeypatch,
     )
 
     unregistered_repo = tmp_path / "unregistered-repo"
@@ -272,19 +292,37 @@ async def test_reconciliation_ignores_hidden_and_unregistered_projects(
     _create_stray_worktree(unregistered_repo, unregistered_worktree, "task/unregistered")
     _create_stray_clone(unregistered_repo, unregistered_clone)
 
-    result = await reconcile_isolation_registry(temp_db, machine_id="machine-reconcile")
+    foreign_repo = tmp_path / "foreign-repo"
+    foreign_worktree = tmp_path / "foreign-worktree"
+    foreign_clone = clones_root / "foreign" / "clone"
+    _create_repository(foreign_repo)
+    _create_stray_worktree(foreign_repo, foreign_worktree, "task/foreign")
+    _create_stray_clone(foreign_repo, foreign_clone)
+    install_isolated_checkout_project(
+        temp_db,
+        foreign_repo,
+        name="foreign",
+    )
+
+    result = await reconcile_isolation_registry(temp_db, machine_id=hidden.machine_id)
 
     assert result == IsolationReconciliationResult()
     assert LocalWorktreeManager(temp_db).get_by_path(str(hidden_worktree.resolve())) is None
     assert LocalCloneManager(temp_db).get_by_path(str(hidden_clone.resolve())) is None
     assert LocalWorktreeManager(temp_db).get_by_path(str(unregistered_worktree.resolve())) is None
     assert LocalCloneManager(temp_db).get_by_path(str(unregistered_clone.resolve())) is None
+    assert LocalWorktreeManager(temp_db).get_by_path(str(foreign_worktree.resolve())) is None
+    assert LocalCloneManager(temp_db).get_by_path(str(foreign_clone.resolve())) is None
 
 
 @pytest.mark.asyncio
 async def test_reconciliation_uses_machine_scoped_advisory_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        "gobby.storage.workspace_machine_scope.require_machine_id",
+        lambda: "machine-42",
+    )
     db = MagicMock(spec=HubDatabase)
     observed: list[IsolationRegistryReconciliation] = []
 
@@ -303,7 +341,23 @@ async def test_reconciliation_uses_machine_scoped_advisory_lock(
 
     assert result == IsolationReconciliationResult()
     assert observed == [IsolationRegistryReconciliation(machine_id="machine-42")]
-    reconcile_once.assert_awaited_once_with(db, run_db=None)
+    reconcile_once.assert_awaited_once_with(db, "machine-42", run_db=None)
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_rejects_foreign_machine_before_checkout_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "gobby.storage.workspace_machine_scope.require_machine_id",
+        lambda: "local-machine",
+    )
+    db = MagicMock(spec=HubDatabase)
+
+    with pytest.raises(MachineOwnershipMismatchError):
+        await reconcile_isolation_registry(db, machine_id="foreign-machine")
+
+    db.advisory_lock.assert_not_called()
 
 
 @pytest.mark.asyncio

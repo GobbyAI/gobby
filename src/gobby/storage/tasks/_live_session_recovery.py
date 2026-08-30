@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.project_checkouts import (
+    CheckoutNotFoundError,
+    MissingMachineContextError,
+    require_root,
+)
+from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import (
     LIVE_SESSION_STATUSES,
@@ -18,6 +23,7 @@ from gobby.storage.tasks._transitions import (
     escalate_task_if_owned,
     release_task_claim_if_owned,
 )
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.git_utils import resolve_git_worktree_root
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import remove_claimed_task, task_edited_file_set
@@ -45,7 +51,7 @@ def recover_expired_live_session_claims(
     task_manager = LocalTaskManager(db)
     session_manager = SessionManager(db)
     variable_manager = SessionVariableManager(db)
-    project_manager = LocalProjectManager(db)
+    local_machine_id = require_machine_id()
     tasks = task_manager.list_tasks(
         project_id=project_id,
         claimed=True,
@@ -60,7 +66,7 @@ def recover_expired_live_session_claims(
     raced = 0
     for task in tasks:
         owner = task.claimed_by_session_id
-        if not owner:
+        if not owner or task.project_id in CHECKOUT_FREE_PROJECT_IDS:
             continue
         session_lookup_failed = False
         try:
@@ -74,6 +80,8 @@ def recover_expired_live_session_claims(
             )
             session = None
             session_lookup_failed = True
+        if session is not None and session.machine_id != local_machine_id:
+            continue
         variables = _session_variables(db, variable_manager, owner)
         if session is not None and (
             session.status in _LIVE_OWNER_STATUSES
@@ -97,7 +105,7 @@ def recover_expired_live_session_claims(
         elif attributed_paths is None:
             dirty_paths = None
         else:
-            workspace = _resolve_workspace(session, project_manager, task.project_id)
+            workspace = _resolve_workspace(db, session, task.project_id)
             dirty_paths = (
                 task_dirty_paths(attributed_paths, workspace) if workspace is not None else None
             )
@@ -160,8 +168,8 @@ def _session_variables_exist(db: HubDatabase, session_id: str) -> bool:
 
 
 def _resolve_workspace(
+    db: HubDatabase,
     session: object | None,
-    project_manager: LocalProjectManager,
     project_id: str,
 ) -> str | None:
     session_cwd: str | None = None
@@ -170,9 +178,12 @@ def _resolve_workspace(
         raw_cwd = terminal_context.get("cwd")
         if isinstance(raw_cwd, str):
             session_cwd = raw_cwd
-    project = project_manager.get(project_id)
-    project_path = project.repo_path if project is not None else None
-    return resolve_git_worktree_root(session_cwd, project_path)
+    machine_id = getattr(session, "machine_id", None)
+    try:
+        checkout_root = require_root(db, project_id, machine_id)
+    except (CheckoutNotFoundError, MissingMachineContextError):
+        return None
+    return resolve_git_worktree_root(session_cwd, checkout_root)
 
 
 def _escalation_reason(

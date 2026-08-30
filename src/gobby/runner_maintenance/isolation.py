@@ -160,12 +160,11 @@ async def cleanup_expired_isolation_loop(
     import shutil
 
     from gobby.storage.clones import LocalCloneManager
-    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.project_checkouts import require_root
     from gobby.storage.worktrees import LocalWorktreeManager
 
     worktree_storage = LocalWorktreeManager(db)
     clone_storage = LocalCloneManager(db)
-    project_storage = LocalProjectManager(db)
     interval_seconds = interval_hours * 3600
 
     while not is_shutdown_requested():
@@ -177,26 +176,27 @@ async def cleanup_expired_isolation_loop(
             for wt in expired_worktrees:
                 try:
                     path = wt.worktree_path
-                    project = await _run_db(run_db, project_storage.get, wt.project_id)
-                    if project is None or not project.repo_path:
-                        raise ValueError(
-                            f"Project {wt.project_id} has no repository path for worktree {wt.id}"
-                        )
-                    repo_path = project.repo_path
+                    checkout_root = await _run_db(
+                        run_db,
+                        require_root,
+                        db,
+                        wt.project_id,
+                        wt.machine_id,
+                    )
                     # Try git worktree remove first, fall back to shutil
                     removed = False
                     try:
                         result = await asyncio.to_thread(
                             _run_git_command,
                             ["git", "worktree", "remove", "--force", path],
-                            cwd=repo_path,
+                            cwd=checkout_root,
                         )
                         removed = result == 0
                         if not removed:
                             logger.warning(
                                 "git worktree remove failed for %s in %s (exit code %d)",
                                 path,
-                                repo_path,
+                                checkout_root,
                                 result,
                             )
                     except Exception as e:
@@ -207,12 +207,12 @@ async def cleanup_expired_isolation_loop(
                     prune_result = await asyncio.to_thread(
                         _run_git_command,
                         ["git", "worktree", "prune"],
-                        cwd=repo_path,
+                        cwd=checkout_root,
                     )
                     if prune_result != 0:
                         logger.warning(
                             "git worktree prune failed in %s (exit code %d)",
-                            repo_path,
+                            checkout_root,
                             prune_result,
                         )
                     # Delete the branch
@@ -220,13 +220,13 @@ async def cleanup_expired_isolation_loop(
                         branch_result = await asyncio.to_thread(
                             _run_git_command,
                             ["git", "branch", "-D", wt.branch_name],
-                            cwd=repo_path,
+                            cwd=checkout_root,
                         )
                         if branch_result != 0:
                             logger.warning(
                                 "git branch deletion failed for %s in %s (exit code %d)",
                                 wt.branch_name,
-                                repo_path,
+                                checkout_root,
                                 branch_result,
                             )
                     # Remove DB record
