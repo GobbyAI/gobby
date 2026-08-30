@@ -24,6 +24,7 @@ from gobby.sessions.transcript_index import (
     load_index_sidecar,
     persist_index_sidecar,
 )
+from gobby.sessions.transcripts import PARSER_REGISTRY
 from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.storage.token_events import TokenEvent
@@ -215,10 +216,104 @@ class TestSessionRegistration:
         processor.register_session("claude-session", str(transcript), source="claude")
         processor.register_session("qwen-session", str(transcript), source="qwen")
         processor.register_session("codex-session", str(transcript), source="codex")
+        assert "agy" in PARSER_REGISTRY
+        processor.register_session("agy-session", str(transcript), source="agy")
 
         assert "claude-session" in processor._parsers
         assert "qwen-session" in processor._parsers
         assert "codex-session" in processor._parsers
+        assert getattr(processor._parsers["agy-session"], "cli_name", None) == "agy"
+
+    def test_agy_sidecar_admits_append_only_growth(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
+        from gobby.sessions.transcripts import PARSER_REGISTRY
+
+        assert "agy" in PARSER_REGISTRY
+        transcript = tmp_path / "transcript_full.jsonl"
+        prefix = (
+            json.dumps(
+                {
+                    "step_index": 2,
+                    "source": "MODEL",
+                    "type": "PLANNER_RESPONSE",
+                    "status": "DONE",
+                    "created_at": "2026-08-22T08:21:24Z",
+                    "tool_calls": [
+                        {"name": "run_command", "args": {"CommandLine": "pwd"}},
+                    ],
+                }
+            )
+            + "\n"
+        )
+        result = (
+            json.dumps(
+                {
+                    "step_index": 3,
+                    "source": "MODEL",
+                    "type": "GENERIC",
+                    "status": "DONE",
+                    "created_at": "2026-08-22T08:21:26Z",
+                    "content": "The command exited with code 0.\n",
+                }
+            )
+            + "\n"
+        )
+        transcript.write_text(prefix, encoding="utf-8")
+        st = transcript.stat()
+        index = build_index_from_file(
+            str(transcript), "agy", "sid", mtime_ns=st.st_mtime_ns, size=st.st_size
+        )
+        persist_index_sidecar(str(transcript), index)
+        transcript.write_text(prefix + result, encoding="utf-8")
+
+        processor.register_session("sid", str(transcript), source="agy")
+
+        assert processor._byte_offsets["sid"] == st.st_size
+        pending = processor._parsers["sid"].snapshot_state()
+        assert pending
+
+    def test_agy_sidecar_is_never_written_under_gemini(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
+        from gobby.paths import get_gobby_home
+        from gobby.sessions.transcripts import PARSER_REGISTRY
+
+        assert "agy" in PARSER_REGISTRY
+        gemini = (
+            tmp_path
+            / ".gemini"
+            / "antigravity-cli"
+            / "brain"
+            / "conv-1"
+            / ".system_generated"
+            / "logs"
+        )
+        gemini.mkdir(parents=True)
+        transcript = gemini / "transcript_full.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "step_index": 1,
+                    "source": "USER_EXPLICIT",
+                    "type": "USER_INPUT",
+                    "status": "DONE",
+                    "created_at": "2026-08-22T08:21:24Z",
+                    "content": "hello",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        st = transcript.stat()
+        index = build_index_from_file(
+            str(transcript), "agy", "sid", mtime_ns=st.st_mtime_ns, size=st.st_size
+        )
+        persist_index_sidecar(str(transcript), index)
+
+        assert list(gemini.rglob("*.gobby-index.json")) == []
+        cache = get_gobby_home() / "cache" / "transcript-indexes"
+        assert any(cache.glob("*.gobby-index.json"))
 
     def test_register_qwen_json_creates_incremental_index_appender(
         self, processor: SessionMessageProcessor, tmp_path: Path
@@ -1341,6 +1436,57 @@ class TestProcessSession:
             await processor._process_session("session-1", str(transcript))
 
         assert parser.snapshot_state()["pending_tool_search_use_ids"] == ["call-search"]
+        assert process_batch.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_process_session_restores_agy_parser_state_after_batch_failure(
+        self,
+        processor: SessionMessageProcessor,
+        tmp_path: Path,
+    ) -> None:
+        assert "agy" in PARSER_REGISTRY
+        transcript = tmp_path / "transcript_full.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "step_index": 1,
+                    "source": "USER_EXPLICIT",
+                    "type": "USER_INPUT",
+                    "status": "DONE",
+                    "created_at": "2026-08-22T08:21:24Z",
+                    "content": "run pwd",
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "step_index": 2,
+                    "source": "MODEL",
+                    "type": "PLANNER_RESPONSE",
+                    "status": "DONE",
+                    "created_at": "2026-08-22T08:21:24Z",
+                    "tool_calls": [{"name": "run_command", "args": {"CommandLine": "pwd"}}],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        processor.register_session("session-1", str(transcript), source="agy")
+        parser = processor._parsers["session-1"]
+        initial_state = parser.snapshot_state()
+        process_batch = AsyncMock(
+            side_effect=[RuntimeError("mid-batch failure"), {"message_count": 1}]
+        )
+
+        with patch.object(processor, "_process_parsed_batch", process_batch):
+            with pytest.raises(RuntimeError, match="mid-batch failure"):
+                await processor._process_session("session-1", str(transcript))
+
+            assert parser.snapshot_state() == initial_state
+
+            await processor._process_session("session-1", str(transcript))
+
+        assert parser.snapshot_state() != initial_state
         assert process_batch.await_count == 2
 
     @pytest.mark.asyncio

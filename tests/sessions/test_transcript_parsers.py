@@ -2336,12 +2336,15 @@ class TestParserRegistry:
 
     def test_registry_has_correct_parsers(self) -> None:
         """Verify each source maps to the correct parser class."""
-        assert set(PARSER_REGISTRY) == {"claude", "grok", "qwen", "codex", "droid"}
+        assert set(PARSER_REGISTRY) == {"claude", "grok", "qwen", "codex", "droid", "agy"}
         assert PARSER_REGISTRY["claude"] is ClaudeTranscriptParser
         assert PARSER_REGISTRY["grok"] is GrokTranscriptParser
         assert PARSER_REGISTRY["qwen"] is QwenTranscriptParser
         assert PARSER_REGISTRY["codex"] is CodexTranscriptParser
         assert PARSER_REGISTRY["droid"] is DroidTranscriptParser
+        agy_cls = PARSER_REGISTRY.get("agy")
+        assert agy_cls is not None
+        assert agy_cls.__name__ == "AgyTranscriptParser"
 
     def test_get_parser_returns_correct_instances(self) -> None:
         """get_parser should return instances of the correct parser class."""
@@ -2350,6 +2353,8 @@ class TestParserRegistry:
         assert isinstance(get_parser("qwen"), QwenTranscriptParser)
         assert isinstance(get_parser("codex"), CodexTranscriptParser)
         assert isinstance(get_parser("droid"), DroidTranscriptParser)
+        assert "agy" in PARSER_REGISTRY
+        assert type(get_parser("agy")).__name__ == "AgyTranscriptParser"
 
     def test_get_parser_threads_transcript_path_to_droid(self) -> None:
         """Droid parser construction keeps the transcript path for sidecar lookup."""

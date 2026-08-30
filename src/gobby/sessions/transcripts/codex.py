@@ -249,6 +249,8 @@ class CodexTranscriptParser(BaseTranscriptParser):
     transcript format.
     """
 
+    supports_incremental_state = True
+
     def __init__(
         self,
         session_id: str | None = None,

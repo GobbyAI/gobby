@@ -255,6 +255,7 @@ class ProcessorLifecycleMixin:
         except OSError:
             return
 
+        parser = self._parsers.get(session_id)
         index = load_index_sidecar(
             transcript_path,
             source,
@@ -262,7 +263,7 @@ class ProcessorLifecycleMixin:
             seek_mode="byte",
             mtime_ns=st.st_mtime_ns,
             size=st.st_size,
-            allow_append=source == "codex",
+            allow_append=bool(getattr(parser, "supports_incremental_state", False)),
         )
         if index is None:
             return

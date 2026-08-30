@@ -431,6 +431,9 @@ class BaseTranscriptParser:
     #: Maximum number of *following* raw lines this parser may inspect before
     #: emitting an event (0 = no forward lookahead). Claude overrides to 1.
     max_lookahead: int = 0
+    #: When true, incremental processing snapshots and hydrates parser-private
+    #: state and admits verified append-only sidecar reconstruction.
+    supports_incremental_state: bool = False
 
     def __init__(
         self,

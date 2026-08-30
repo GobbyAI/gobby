@@ -10,6 +10,7 @@ from gobby.adapters.acp_hook_adapter import ACPHookAdapter
 from gobby.adapters.agy_contract import (
     AGY_EVENT_MAP,
     AGY_HOOK_ALIASES,
+    AGY_TOOL_MAP,
     apply_agy_payload_aliases,
     get_agy_contract,
 )
@@ -24,14 +25,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_AGY_TOOL_MAP = {
-    "list_dir": "Ls",
-    "run_command": "Bash",
-    "view_file": "Read",
-    "find_by_name": "Glob",
-    "call_mcp_tool": "mcp__gobby__call_tool",
-}
-
 
 def _join_response_text(*parts: str | None) -> str | None:
     values = [part for part in parts if part]
@@ -45,7 +38,7 @@ class AgyAdapter(ACPHookAdapter):
 
     EVENT_MAP = dict(AGY_EVENT_MAP)
     HOOK_EVENT_NAME_MAP = dict(AGY_HOOK_ALIASES)
-    TOOL_MAP = {**ACPHookAdapter.TOOL_MAP, **_AGY_TOOL_MAP}
+    TOOL_MAP = {**ACPHookAdapter.TOOL_MAP, **AGY_TOOL_MAP}
 
     @property
     def source(self) -> SessionSource:

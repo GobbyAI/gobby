@@ -32,13 +32,17 @@ def _parser_source(parser: object | None) -> str | None:
     return source if isinstance(source, str) else None
 
 
+def _parser_supports_incremental_state(parser: object | None) -> bool:
+    return bool(getattr(parser, "supports_incremental_state", False))
+
+
 def _parse_incremental_records(
     parser: TranscriptParser,
     lines: list[str],
     *,
     start_index: int,
 ) -> list[ParsedMessage | ParsedToolEvent]:
-    if _parser_source(parser) != "codex":
+    if not _parser_supports_incremental_state(parser):
         return parser.parse_lines(lines, start_index=start_index)
 
     records: list[ParsedMessage | ParsedToolEvent] = []
@@ -217,7 +221,9 @@ class ProcessorTranscriptMixin:
         if not parser:
             return
 
-        parser_state = parser.snapshot_state() if _parser_source(parser) == "codex" else None
+        parser_state = (
+            parser.snapshot_state() if _parser_supports_incremental_state(parser) else None
+        )
         try:
             raw_records = _parse_incremental_records(
                 parser,

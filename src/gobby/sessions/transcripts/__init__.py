@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from gobby.sessions.transcripts.agy import AgyTranscriptParser
 from gobby.sessions.transcripts.base import ParsedMessage, TranscriptParser
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -17,6 +18,7 @@ __all__ = [
     "QwenTranscriptParser",
     "CodexTranscriptParser",
     "DroidTranscriptParser",
+    "AgyTranscriptParser",
     "get_parser",
     "PARSER_REGISTRY",
 ]
@@ -27,6 +29,7 @@ PARSER_REGISTRY: dict[str, type[TranscriptParser]] = {
     "qwen": QwenTranscriptParser,
     "codex": CodexTranscriptParser,
     "droid": DroidTranscriptParser,
+    "agy": AgyTranscriptParser,
 }
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -74,6 +75,17 @@ def strip_unbudgeted_force_continue(response: dict[str, Any]) -> dict[str, Any]:
     visible = dict(response)
     visible.pop("terminationBehavior", None)
     return visible
+
+
+AGY_TOOL_MAP: dict[str, str] = {
+    "list_dir": "Ls",
+    "run_command": "Bash",
+    "view_file": "Read",
+    "find_by_name": "Glob",
+    "call_mcp_tool": "mcp__gobby__call_tool",
+}
+
+_AGY_EXIT_RE = re.compile(r"(?m)^[ \t]*The command exited with code (-?\d+)\.[ \t]*$")
 
 
 AGY_PAYLOAD_ALIASES: dict[str, str] = {
@@ -149,6 +161,23 @@ def decode_agy_tool_args(value: Any) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return value
+
+
+def parse_agy_command_exit(content: str | None) -> int | None:
+    """Parse AGY's free-text `The command exited with code N.` sentence."""
+
+    if not isinstance(content, str):
+        return None
+    match = _AGY_EXIT_RE.search(content)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def normalize_agy_tool_name(name: str) -> str:
+    """Map an AGY snake_case call name through the shared tool table."""
+
+    return AGY_TOOL_MAP.get(name, name)
 
 
 def apply_agy_payload_aliases(payload: dict[str, Any]) -> dict[str, Any]:

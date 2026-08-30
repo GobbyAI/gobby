@@ -7,6 +7,7 @@ via session_manager.  It does NOT write to a session_messages table.
 
 import json
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -209,3 +210,53 @@ async def test_concurrent_sessions(processor, tmp_path):
 
     assert stats_s1.get("message_count", 0) >= 1
     assert stats_s2.get("message_count", 0) >= 1
+
+
+def test_agy_sidecar_reconstruction_admits_appended_result(
+    processor: SessionMessageProcessor, tmp_path: Path
+) -> None:
+    from gobby.sessions.transcript_index import build_index_from_file, persist_index_sidecar
+    from gobby.sessions.transcripts import PARSER_REGISTRY
+
+    assert "agy" in PARSER_REGISTRY
+    transcript = tmp_path / "transcript_full.jsonl"
+    prefix = (
+        json.dumps(
+            {
+                "step_index": 2,
+                "source": "MODEL",
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "created_at": "2026-08-22T08:21:24Z",
+                "tool_calls": [{"name": "run_command", "args": {"CommandLine": "pwd"}}],
+            }
+        )
+        + "\n"
+    )
+    result = (
+        json.dumps(
+            {
+                "step_index": 3,
+                "source": "MODEL",
+                "type": "GENERIC",
+                "status": "DONE",
+                "created_at": "2026-08-22T08:21:26Z",
+                "content": "The command exited with code 0.\n",
+            }
+        )
+        + "\n"
+    )
+    transcript.write_text(prefix, encoding="utf-8")
+    st = transcript.stat()
+    persist_index_sidecar(
+        str(transcript),
+        build_index_from_file(
+            str(transcript), "agy", "session-1", mtime_ns=st.st_mtime_ns, size=st.st_size
+        ),
+    )
+    transcript.write_text(prefix + result, encoding="utf-8")
+
+    processor.register_session("session-1", str(transcript), source="agy")
+
+    assert processor._byte_offsets["session-1"] == st.st_size
+    assert processor._parsers["session-1"].snapshot_state()
