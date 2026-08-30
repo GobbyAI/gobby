@@ -37,6 +37,13 @@ _CHROME_DEVTOOLS_PACKAGE = "chrome-devtools-mcp@0.21.0"
 pytestmark = pytest.mark.unit
 
 
+def _id(manager: MCPClientManager, name: str) -> str:
+    for config in manager.server_configs:
+        if config.name == name:
+            return config.id
+    return name
+
+
 def test_truncate_tool_brief_handles_non_positive_lengths() -> None:
     assert truncate_tool_brief("abcdef", max_chars=0) == ""
     assert truncate_tool_brief("abcdef", max_chars=-1) == ""
@@ -56,8 +63,8 @@ def test_mcp_proxy_source_does_not_register_legacy_gobby_code_server() -> None:
     ]
     manager = MCPClientManager(server_configs=configs)
 
-    assert "gobby-code" not in manager.get_available_servers()
-    assert "github" in manager.get_available_servers()
+    assert "gobby-code" not in manager.get_available_servers(project_id="project-id")
+    assert "github" in manager.get_available_servers(project_id="project-id")
 
 
 def test_resolve_secrets_in_config_resolves_args() -> None:
@@ -228,12 +235,13 @@ async def test_remove_server_unregisters_lazy_connection_state() -> None:
             )
         ],
     )
-    assert "lazy-server" in manager.get_lazy_connection_states()
+    server_id = _id(manager, "lazy-server")
+    assert server_id in manager.get_lazy_connection_states()
 
-    result = await manager.remove_server("lazy-server")
+    result = await manager.remove_server(server_id)
 
-    assert result == {"success": True, "name": "lazy-server"}
-    assert "lazy-server" not in manager.get_lazy_connection_states()
+    assert result == {"success": True, "name": "lazy-server", "id": server_id}
+    assert server_id not in manager.get_lazy_connection_states()
 
 
 class MockDBServer:
@@ -251,7 +259,14 @@ class MockDBServer:
         enabled: bool = True,
         description: str | None = None,
         project_id: str = "test-project",
-        id: str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01",
+        id: str | None = None,
+        template_id: str | None = None,
+        template: str | None = None,
+        runtime_hook: str | None = None,
+        template_values: dict[str, Any] | None = None,
+        requires_oauth: bool = False,
+        oauth_provider: str | None = None,
+        connect_timeout: float = 30.0,
     ):
         self.name = name
         self.transport = transport
@@ -263,7 +278,68 @@ class MockDBServer:
         self.enabled = enabled
         self.description = description
         self.project_id = project_id
-        self.id = id
+        self.id = id or f"{name}-{project_id}"
+        self.template_id = template_id
+        self.template = template
+        self.runtime_hook = runtime_hook
+        self.template_values = template_values
+        self.requires_oauth = requires_oauth
+        self.oauth_provider = oauth_provider
+        self.connect_timeout = connect_timeout
+
+    def to_config(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "name": self.name,
+            "project_id": self.project_id,
+            "transport": self.transport,
+            "enabled": self.enabled,
+            "id": self.id,
+            "requires_oauth": self.requires_oauth,
+            "connect_timeout": self.connect_timeout,
+            "template_id": self.template_id,
+            "template": self.template,
+            "runtime_hook": self.runtime_hook,
+            "template_values": self.template_values,
+        }
+        if self.url:
+            data["url"] = self.url
+        if self.command:
+            data["command"] = self.command
+        if self.args:
+            data["args"] = self.args
+        if self.env:
+            data["env"] = self.env
+        if self.headers:
+            data["headers"] = self.headers
+        if self.description:
+            data["description"] = self.description
+        if self.oauth_provider:
+            data["oauth_provider"] = self.oauth_provider
+        return data
+
+
+_INSERT_FIELDS = {
+    "name",
+    "transport",
+    "url",
+    "command",
+    "args",
+    "env",
+    "headers",
+    "enabled",
+    "description",
+    "project_id",
+    "template_id",
+    "template_values",
+    "runtime_hook",
+    "requires_oauth",
+    "oauth_provider",
+    "connect_timeout",
+}
+
+
+def _insert_row(**kwargs: Any) -> MockDBServer:
+    return MockDBServer(**{k: v for k, v in kwargs.items() if k in _INSERT_FIELDS})
 
 
 class MockCachedTool:
@@ -280,7 +356,7 @@ class TestMCPClientManagerDatabaseInit:
     def test_init_with_db_manager_and_project_id(self) -> None:
         """Test loading servers from database with project_id."""
         mock_db = MagicMock()
-        mock_db.list_runtime_servers.return_value = [
+        mock_db.list_all_servers.return_value = [
             MockDBServer(
                 name="db-server-1",
                 transport="http",
@@ -303,12 +379,9 @@ class TestMCPClientManagerDatabaseInit:
         )
 
         assert len(manager.server_configs) == 2
-        assert manager.has_server("db-server-1")
-        assert manager.has_server("db-server-2")
-        mock_db.list_runtime_servers.assert_called_once_with(
-            project_id="test-project",
-            enabled_only=False,
-        )
+        assert manager.has_server(_id(manager, "db-server-1"))
+        assert manager.has_server(_id(manager, "db-server-2"))
+        mock_db.list_all_servers.assert_called_once_with(enabled_only=False)
 
     def test_init_with_db_manager_no_project_id(self) -> None:
         """Test loading all servers from database without project_id."""
@@ -325,14 +398,14 @@ class TestMCPClientManagerDatabaseInit:
         manager = MCPClientManager(mcp_db_manager=mock_db)
 
         assert len(manager.server_configs) == 1
-        assert manager.has_server("global-server")
+        assert manager.has_server(_id(manager, "global-server"))
         mock_db.list_all_servers.assert_called_once_with(enabled_only=False)
 
     def test_init_with_db_manager_loads_cached_tools(self) -> None:
         """Test that cached tools are loaded from database."""
         mock_db = MagicMock()
         long_description = "Another tool" + "x" * 200
-        mock_db.list_runtime_servers.return_value = [
+        mock_db.list_all_servers.return_value = [
             MockDBServer(
                 name="server-with-tools",
                 transport="http",
@@ -350,7 +423,7 @@ class TestMCPClientManagerDatabaseInit:
             project_id="test-project",
         )
 
-        config = manager._configs["server-with-tools"]
+        config = manager._configs[_id(manager, "server-with-tools")]
         assert config.tools is not None
         assert len(config.tools) == 2
         assert config.tools[0]["name"] == "tool1"
@@ -414,7 +487,7 @@ class TestMCPClientManagerServerOperations:
 
         manager = MCPClientManager(server_configs=configs)
 
-        available = manager.get_available_servers()
+        available = manager.get_available_servers(project_id="test-project")
         assert "server1" in available
         assert "server2" in available
         assert len(available) == 2
@@ -430,13 +503,13 @@ class TestMCPClientManagerServerOperations:
 
         manager = MCPClientManager(server_configs=[config])
 
-        assert manager.has_server("test-server") is True
+        assert manager.has_server(_id(manager, "test-server")) is True
 
     def test_has_server_false(self) -> None:
         """Test has_server returns False for unknown server."""
         manager = MCPClientManager(server_configs=[])
 
-        assert manager.has_server("nonexistent") is False
+        assert manager.has_server(_id(manager, "nonexistent")) is False
 
     def test_get_client_configured_but_not_connected(self) -> None:
         """Test get_client raises when server configured but not connected."""
@@ -449,8 +522,8 @@ class TestMCPClientManagerServerOperations:
 
         manager = MCPClientManager(server_configs=[config])
 
-        with pytest.raises(ValueError, match="Client 'test-server' not connected"):
-            manager.get_client("test-server")
+        with pytest.raises(ValueError, match="not connected"):
+            manager.get_client(_id(manager, "test-server"))
 
     def test_get_client_returns_connection(self) -> None:
         """Test get_client returns connection when connected."""
@@ -465,9 +538,9 @@ class TestMCPClientManagerServerOperations:
 
         # Add a mock connection
         mock_connection = MagicMock()
-        manager._connections["test-server"] = mock_connection
+        manager._connections[_id(manager, "test-server")] = mock_connection
 
-        result = manager.get_client("test-server")
+        result = manager.get_client(_id(manager, "test-server"))
         assert result is mock_connection
 
 
@@ -493,7 +566,7 @@ class TestMCPClientManagerAddServer:
         assert result["name"] == "new-server"
         assert result["connected"] is False
         assert result["full_tool_schemas"] == []
-        assert manager.has_server("new-server")
+        assert manager.has_server(_id(manager, "new-server"))
 
     @pytest.mark.asyncio
     async def test_add_server_persists_to_database(self) -> None:
@@ -501,7 +574,18 @@ class TestMCPClientManagerAddServer:
         mock_db = MagicMock()
         event_loop_thread = threading.get_ident()
         db_threads: list[int] = []
-        mock_db.upsert.side_effect = lambda **_kwargs: db_threads.append(threading.get_ident())
+
+        def _insert(**kwargs: Any) -> MockDBServer:
+            db_threads.append(threading.get_ident())
+            return MockDBServer(
+                **{
+                    k: v
+                    for k, v in kwargs.items()
+                    if k in MockDBServer.__init__.__code__.co_varnames
+                }
+            )
+
+        mock_db.insert_server.side_effect = _insert
         manager = MCPClientManager(server_configs=[], mcp_db_manager=mock_db)
 
         config = MCPServerConfig(
@@ -514,8 +598,8 @@ class TestMCPClientManagerAddServer:
 
         await manager.add_server(config)
 
-        mock_db.upsert.assert_called_once()
-        call_kwargs = mock_db.upsert.call_args[1]
+        mock_db.insert_server.assert_called_once()
+        call_kwargs = mock_db.insert_server.call_args[1]
         assert call_kwargs["name"] == "new-server"
         assert call_kwargs["project_id"] == "test-project"
         assert len(db_threads) == 1
@@ -525,6 +609,7 @@ class TestMCPClientManagerAddServer:
     async def test_add_server_does_not_rewrite_legacy_bundled_names(self) -> None:
         """Instance names are no longer forced global or arg-normalized."""
         mock_db = MagicMock()
+        mock_db.insert_server.side_effect = _insert_row
         manager = MCPClientManager(server_configs=[], mcp_db_manager=mock_db)
 
         config = MCPServerConfig(
@@ -543,7 +628,7 @@ class TestMCPClientManagerAddServer:
 
         await manager.add_server(config)
 
-        call_kwargs = mock_db.upsert.call_args[1]
+        call_kwargs = mock_db.insert_server.call_args[1]
         assert call_kwargs["project_id"] == "test-project"
         assert call_kwargs["args"] == [
             "-y",
@@ -556,6 +641,7 @@ class TestMCPClientManagerAddServer:
     async def test_add_server_connects_and_lists_tools(self) -> None:
         """Test add_server connects and lists tools for enabled server."""
         mock_db = MagicMock()
+        mock_db.insert_server.side_effect = _insert_row
         event_loop_thread = threading.get_ident()
         cache_threads: list[int] = []
         mock_db.cache_tools.side_effect = lambda *_args, **_kwargs: cache_threads.append(
@@ -594,6 +680,7 @@ class TestMCPClientManagerAddServer:
     async def test_add_server_keeps_config_when_initial_connection_fails(self) -> None:
         """A persisted config remains available for a later lazy connection."""
         mock_db = MagicMock()
+        mock_db.insert_server.side_effect = _insert_row
         manager = MCPClientManager(
             server_configs=[],
             mcp_db_manager=mock_db,
@@ -614,20 +701,18 @@ class TestMCPClientManagerAddServer:
         with patch.object(manager, "_connect_server", new=connect_server):
             result = await manager.add_server(config)
 
-            assert result == {
-                "success": True,
-                "name": "recovering-server",
-                "connected": False,
-                "error": "target unreachable",
-                "full_tool_schemas": [],
-            }
-            stored_config = manager.get_server_config("recovering-server")
+            assert result["success"] is True
+            assert result["name"] == "recovering-server"
+            assert result["connected"] is False
+            assert result["error"] == "target unreachable"
+            assert result["full_tool_schemas"] == []
+            stored_config = manager.get_server_config(_id(manager, "recovering-server"))
             assert stored_config is not None
             assert stored_config.url == config.url
             assert stored_config.enabled is True
-            mock_db.upsert.assert_called_once()
+            mock_db.insert_server.assert_called_once()
 
-            session = await manager.ensure_connected("recovering-server")
+            session = await manager.ensure_connected(_id(manager, "recovering-server"))
 
         assert session is recovered_session
         assert connect_server.await_count == 2
@@ -656,15 +741,18 @@ class TestMCPClientManagerAddServer:
             patch.object(manager, "_connect_server", new=connect_server),
             patch.object(manager, "cache_discovered_tools") as cache_discovered_tools,
         ):
-            result = await manager.set_server_enabled("existing-server", True)
+            result = await manager.set_server_enabled(_id(manager, "existing-server"), True)
 
-        assert result == {"success": True, "name": "existing-server", "enabled": True}
-        assert manager.get_server_config("existing-server") == config
+        assert result["success"] is True
+        assert result["name"] == "existing-server"
+        assert result["enabled"] is True
+        assert result["id"] == config.id
+        assert manager.get_server_config(_id(manager, "existing-server")) == config
         assert config.enabled is True
         connect_server.assert_awaited_once_with(config)
         mock_session.list_tools.assert_awaited_once_with()
         cache_discovered_tools.assert_called_once_with(
-            "existing-server",
+            config.id,
             [
                 {
                     "name": "enabled-tool",
@@ -685,7 +773,7 @@ class TestMCPClientManagerAddServer:
         manager = MCPClientManager(server_configs=[config])
 
         with pytest.raises(ValueError, match="Internal MCP server"):
-            await manager.set_server_enabled("gobby-tasks", False)
+            await manager.set_server_enabled(_id(manager, "gobby-tasks"), False)
 
     @pytest.mark.asyncio
     async def test_set_server_enabled_keeps_memory_state_when_db_update_fails(self) -> None:
@@ -703,19 +791,19 @@ class TestMCPClientManagerAddServer:
         mock_session.list_tools.return_value = MagicMock(tools=[])
 
         async def connect_server(server_config: MCPServerConfig) -> AsyncMock:
-            manager._connections[server_config.name] = mock_session
+            manager._connections[server_config.id] = mock_session
             return mock_session
 
         with (
             patch.object(manager, "_connect_server", new=AsyncMock(side_effect=connect_server)),
             pytest.raises(RuntimeError, match="db down"),
         ):
-            await manager.set_server_enabled("existing-server", True)
+            await manager.set_server_enabled(_id(manager, "existing-server"), True)
 
         assert config.enabled is False
-        assert manager.get_server_config("existing-server") is config
+        assert manager.get_server_config(_id(manager, "existing-server")) is config
         mock_session.disconnect.assert_awaited_once_with()
-        assert "existing-server" not in manager.health
+        assert _id(manager, "existing-server") not in manager.health
 
     @pytest.mark.asyncio
     async def test_set_server_enabled_false_unregisters_lazy_server(self) -> None:
@@ -727,14 +815,17 @@ class TestMCPClientManagerAddServer:
             enabled=True,
         )
         manager = MCPClientManager(server_configs=[config])
-        manager._tool_schema_cache["existing-server"] = [{"name": "test-tool"}]
+        manager._tool_schema_cache[_id(manager, "existing-server")] = [{"name": "test-tool"}]
 
-        result = await manager.set_server_enabled("existing-server", False)
+        result = await manager.set_server_enabled(_id(manager, "existing-server"), False)
 
-        assert result == {"success": True, "name": "existing-server", "enabled": False}
+        assert result["success"] is True
+        assert result["name"] == "existing-server"
+        assert result["enabled"] is False
+        assert result["id"] == config.id
         assert config.enabled is False
-        assert manager._lazy_connector.get_state("existing-server") is None
-        assert "existing-server" not in manager._tool_schema_cache
+        assert manager._lazy_connector.get_state(config.id) is None
+        assert _id(manager, "existing-server") not in manager._tool_schema_cache
 
     @pytest.mark.asyncio
     async def test_add_server_handles_list_tools_failure(self) -> None:
@@ -776,20 +867,20 @@ class TestMCPClientManagerRemoveServer:
 
         # Add mock connection and health
         mock_connection = AsyncMock()
-        manager._connections["test-server"] = mock_connection
-        manager._tool_schema_cache["test-server"] = [{"name": "test-tool"}]
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager._connections[_id(manager, "test-server")] = mock_connection
+        manager._tool_schema_cache[_id(manager, "test-server")] = [{"name": "test-tool"}]
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
 
-        result = await manager.remove_server("test-server")
+        result = await manager.remove_server(_id(manager, "test-server"))
 
         assert result["success"] is True
-        assert "test-server" not in manager._configs
-        assert "test-server" not in manager._connections
-        assert "test-server" not in manager._tool_schema_cache
-        assert "test-server" not in manager.health
+        assert _id(manager, "test-server") not in manager._configs
+        assert _id(manager, "test-server") not in manager._connections
+        assert _id(manager, "test-server") not in manager._tool_schema_cache
+        assert _id(manager, "test-server") not in manager.health
         mock_connection.disconnect.assert_called_once()
 
     @pytest.mark.asyncio
@@ -805,7 +896,7 @@ class TestMCPClientManagerRemoveServer:
 
         manager = MCPClientManager(server_configs=[config], mcp_db_manager=mock_db)
 
-        await manager.remove_server("test-server")
+        await manager.remove_server(_id(manager, "test-server"))
 
         mock_db.remove_server.assert_called_once_with("test-server", "config-project")
         assert mock_db.remove_server.call_count == 1
@@ -824,7 +915,7 @@ class TestMCPClientManagerRemoveServer:
 
         manager = MCPClientManager(server_configs=[config], mcp_db_manager=mock_db)
 
-        await manager.remove_server("test-server", project_id="override-project")
+        await manager.remove_server(_id(manager, "test-server"), project_id="override-project")
 
         mock_db.remove_server.assert_called_once_with("test-server", "override-project")
         assert mock_db.remove_server.call_count == 1
@@ -872,7 +963,7 @@ class TestMCPClientManagerConnectAll:
         assert "preconnect-server" in connect_calls
         assert "server1" not in connect_calls
         # Results should show the preconnect server was connected
-        assert results.get("preconnect-server") is True
+        assert results.get(_id(manager, "preconnect-server")) is True
 
     @pytest.mark.asyncio
     async def test_connect_all_eager_mode_connects_all(self) -> None:
@@ -910,8 +1001,8 @@ class TestMCPClientManagerConnectAll:
         assert "server1" in connect_calls
         assert "server2" in connect_calls
         # Both servers should be connected successfully
-        assert results.get("server1") is True
-        assert results.get("server2") is True
+        assert results.get(_id(manager, "server1")) is True
+        assert results.get(_id(manager, "server2")) is True
 
     @pytest.mark.asyncio
     async def test_connect_all_handles_connection_errors(self) -> None:
@@ -935,7 +1026,7 @@ class TestMCPClientManagerConnectAll:
         ):
             results = await manager.connect_all()
 
-        assert results["failing-server"] is False
+        assert results[_id(manager, "failing-server")] is False
 
     @pytest.mark.asyncio
     async def test_connect_all_starts_health_monitor(self) -> None:
@@ -965,7 +1056,7 @@ class TestMCPClientManagerConnectAll:
 
         await manager.connect_all(configs=configs)
 
-        assert manager.has_server("new-server")
+        assert manager.has_server(_id(manager, "new-server"))
         await manager.disconnect_all()
 
 
@@ -985,9 +1076,9 @@ class TestMCPClientManagerLazyConnection:
 
         states = manager.get_lazy_connection_states()
 
-        assert "test-server" in states
-        assert states["test-server"]["is_connected"] is False
-        assert "configured_at" in states["test-server"]
+        assert config.id in states
+        assert states[config.id]["is_connected"] is False
+        assert "configured_at" in states[config.id]
 
 
 class TestMCPClientManagerEnsureConnected:
@@ -999,7 +1090,7 @@ class TestMCPClientManagerEnsureConnected:
         manager = MCPClientManager(server_configs=[])
 
         with pytest.raises(KeyError, match="Server 'unknown' not configured"):
-            await manager.ensure_connected("unknown")
+            await manager.ensure_connected(_id(manager, "unknown"))
 
     @pytest.mark.asyncio
     async def test_ensure_connected_disabled_server(self) -> None:
@@ -1015,7 +1106,7 @@ class TestMCPClientManagerEnsureConnected:
         manager = MCPClientManager(server_configs=[config])
 
         with pytest.raises(MCPError, match="Server 'disabled-server' is disabled"):
-            await manager.ensure_connected("disabled-server")
+            await manager.ensure_connected(_id(manager, "disabled-server"))
 
     @pytest.mark.asyncio
     async def test_ensure_connected_already_connected(self) -> None:
@@ -1034,9 +1125,9 @@ class TestMCPClientManagerEnsureConnected:
         mock_connection = MagicMock()
         mock_connection.is_connected = True
         mock_connection.session = mock_session
-        manager._connections["test-server"] = mock_connection
+        manager._connections[_id(manager, "test-server")] = mock_connection
 
-        result = await manager.ensure_connected("test-server")
+        result = await manager.ensure_connected(_id(manager, "test-server"))
 
         assert result is mock_session
 
@@ -1053,13 +1144,13 @@ class TestMCPClientManagerEnsureConnected:
         manager = MCPClientManager(server_configs=[config])
 
         # Trip the circuit breaker
-        state = manager._lazy_connector.get_state("test-server")
+        state = manager._lazy_connector.get_state(config.id)
         assert state is not None
         state.circuit_breaker.state = CircuitState.OPEN
         state.circuit_breaker.last_failure_time = float("inf")  # Never recovers
 
         with pytest.raises(CircuitBreakerOpen):
-            await manager.ensure_connected("test-server")
+            await manager.ensure_connected(_id(manager, "test-server"))
 
     @pytest.mark.asyncio
     async def test_ensure_connected_retries_on_failure(self) -> None:
@@ -1089,7 +1180,7 @@ class TestMCPClientManagerEnsureConnected:
 
         with patch.object(manager, "_connect_server", side_effect=failing_connect):
             with pytest.raises(MCPError, match="Failed to connect"):
-                await manager.ensure_connected("test-server")
+                await manager.ensure_connected(_id(manager, "test-server"))
 
         # Should have tried 3 times (initial + 2 retries)
         assert call_count == 3
@@ -1115,7 +1206,7 @@ class TestMCPClientManagerEnsureConnected:
 
         with patch.object(manager, "_connect_server", side_effect=slow_connect):
             with pytest.raises(MCPError, match="Connection timeout"):
-                await manager.ensure_connected("test-server")
+                await manager.ensure_connected(_id(manager, "test-server"))
 
 
 class TestMCPClientManagerConnectServer:
@@ -1153,7 +1244,7 @@ class TestMCPClientManagerConnectServer:
             result = await manager._connect_server(config)
 
         assert result is mock_session
-        assert manager.health["test-server"].state == ConnectionState.CONNECTED
+        assert manager.health[_id(manager, "test-server")].state == ConnectionState.CONNECTED
         assert len(secret_threads) == 1
         assert secret_threads[0] != event_loop_thread
 
@@ -1180,8 +1271,8 @@ class TestMCPClientManagerConnectServer:
             with pytest.raises(Exception, match="Connection failed"):
                 await manager._connect_server(config)
 
-        assert manager.health["test-server"].state == ConnectionState.FAILED
-        assert manager.is_connected("test-server") is False
+        assert manager.health[_id(manager, "test-server")].state == ConnectionState.FAILED
+        assert manager.is_connected(_id(manager, "test-server")) is False
         assert manager.list_connections() == []
 
     @pytest.mark.asyncio
@@ -1282,8 +1373,8 @@ class TestMCPClientManagerDisconnect:
         manager = MCPClientManager(server_configs=[])
         connection = AsyncMock()
         connection.is_connected = False
-        manager._connections["connecting-server"] = connection
-        manager.health["connecting-server"] = MCPConnectionHealth(
+        manager._connections[_id(manager, "connecting-server")] = connection
+        manager.health[_id(manager, "connecting-server")] = MCPConnectionHealth(
             name="connecting-server",
             state=ConnectionState.CONNECTING,
         )
@@ -1292,7 +1383,9 @@ class TestMCPClientManagerDisconnect:
 
         connection.disconnect.assert_awaited_once_with()
         assert manager._connections == {}
-        assert manager.health["connecting-server"].state is ConnectionState.DISCONNECTED
+        assert (
+            manager.health[_id(manager, "connecting-server")].state is ConnectionState.DISCONNECTED
+        )
 
     @pytest.mark.asyncio
     async def test_disconnect_all_handles_timeout(self) -> None:
@@ -1314,8 +1407,8 @@ class TestMCPClientManagerDisconnect:
 
         mock_connection.disconnect = slow_disconnect
         mock_connection.is_connected = True
-        manager._connections["slow-server"] = mock_connection
-        manager.health["slow-server"] = MCPConnectionHealth(
+        manager._connections[_id(manager, "slow-server")] = mock_connection
+        manager.health[_id(manager, "slow-server")] = MCPConnectionHealth(
             name="slow-server",
             state=ConnectionState.CONNECTED,
         )
@@ -1345,13 +1438,15 @@ class TestMCPClientManagerCallTool:
         mock_session.call_tool.return_value = {"result": "success"}
 
         # Set up health tracking
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
 
         with patch.object(manager, "get_client_session", return_value=mock_session):
-            result = await manager.call_tool("test-server", "test-tool", {"arg": "val"})
+            result = await manager.call_tool(
+                _id(manager, "test-server"), "test-tool", {"arg": "val"}
+            )
 
         assert result == {"result": "success"}
         mock_session.call_tool.assert_called_once_with("test-tool", {"arg": "val"})
@@ -1376,14 +1471,16 @@ class TestMCPClientManagerCallTool:
 
         mock_session.call_tool = slow_tool
 
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
 
         with patch.object(manager, "get_client_session", return_value=mock_session):
             with pytest.raises(asyncio.TimeoutError):
-                await manager.call_tool("test-server", "slow-tool", None, timeout=0.01)
+                await manager.call_tool(
+                    _id(manager, "test-server"), "slow-tool", None, timeout=0.01
+                )
 
     @pytest.mark.asyncio
     async def test_call_tool_records_metrics(self) -> None:
@@ -1411,13 +1508,13 @@ class TestMCPClientManagerCallTool:
         mock_session = AsyncMock()
         mock_session.call_tool.return_value = {"result": "success"}
 
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
 
         with patch.object(manager, "get_client_session", return_value=mock_session):
-            await manager.call_tool("test-server", "test-tool", {})
+            await manager.call_tool(_id(manager, "test-server"), "test-tool", {})
 
         mock_metrics.record_call.assert_called_once()
         call_kwargs = mock_metrics.record_call.call_args[1]
@@ -1446,14 +1543,14 @@ class TestMCPClientManagerCallTool:
         mock_session = AsyncMock()
         mock_session.call_tool.side_effect = Exception("Tool failed")
 
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
 
         with patch.object(manager, "get_client_session", return_value=mock_session):
             with pytest.raises(Exception, match="Tool failed"):
-                await manager.call_tool("test-server", "test-tool", {})
+                await manager.call_tool(_id(manager, "test-server"), "test-tool", {})
 
         mock_metrics.record_call.assert_called_once()
         call_kwargs = mock_metrics.record_call.call_args[1]
@@ -1479,14 +1576,14 @@ class TestMCPClientManagerCallTool:
         mock_session = AsyncMock()
         mock_session.call_tool.return_value = {"result": "success"}
 
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
 
         with patch.object(manager, "get_client_session", return_value=mock_session):
             # Should not raise despite metrics failure
-            result = await manager.call_tool("test-server", "test-tool", {})
+            result = await manager.call_tool(_id(manager, "test-server"), "test-tool", {})
 
         assert result == {"result": "success"}
 
@@ -1509,13 +1606,13 @@ class TestMCPClientManagerReadResource:
         mock_session = AsyncMock()
         mock_session.read_resource.return_value = {"content": "resource data"}
 
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
 
         with patch.object(manager, "get_client_session", return_value=mock_session):
-            result = await manager.read_resource("test-server", "file://test.txt")
+            result = await manager.read_resource(_id(manager, "test-server"), "file://test.txt")
 
         assert result == {"content": "resource data"}
 
@@ -1534,16 +1631,16 @@ class TestMCPClientManagerReadResource:
         mock_session = AsyncMock()
         mock_session.read_resource.side_effect = Exception("Read failed")
 
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
 
         with patch.object(manager, "get_client_session", return_value=mock_session):
             with pytest.raises(Exception, match="Read failed"):
-                await manager.read_resource("test-server", "file://test.txt")
+                await manager.read_resource(_id(manager, "test-server"), "file://test.txt")
 
-        assert manager.health["test-server"].consecutive_failures == 1
+        assert manager.health[_id(manager, "test-server")].consecutive_failures == 1
 
 
 class TestMCPClientManagerListTools:
@@ -1568,13 +1665,13 @@ class TestMCPClientManagerListTools:
         mock_tool.input_schema = {"type": "object"}
         mock_session.list_tools.return_value = MagicMock(tools=[mock_tool])
 
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
 
         with patch.object(manager, "get_client_session", return_value=mock_session):
-            result = await manager.list_tools("test-server")
+            result = await manager.list_tools(_id(manager, "test-server"))
 
         assert "test-server" in result
         assert len(result["test-server"]) == 1
@@ -1592,9 +1689,9 @@ class TestMCPClientManagerListTools:
         )
 
         manager = MCPClientManager(server_configs=[config])
-        manager._connections["test-server"] = MagicMock()
+        manager._connections[_id(manager, "test-server")] = MagicMock()
 
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
@@ -1612,7 +1709,7 @@ class TestMCPClientManagerListTools:
             ),
             pytest.raises(MCPError, match="reconnect retry failed: reconnect refused"),
         ):
-            await manager.list_tools("test-server")
+            await manager.list_tools(_id(manager, "test-server"))
 
 
 class TestMCPClientManagerGetToolInputSchema:
@@ -1637,7 +1734,7 @@ class TestMCPClientManagerGetToolInputSchema:
             "_list_tools_for_server",
             new=AsyncMock(return_value=[{"name": "test-tool", "inputSchema": expected_schema}]),
         ):
-            result = await manager.get_tool_input_schema("test-server", "test-tool")
+            result = await manager.get_tool_input_schema(_id(manager, "test-server"), "test-tool")
 
         assert result == expected_schema
 
@@ -1659,7 +1756,7 @@ class TestMCPClientManagerGetToolInputSchema:
             new=AsyncMock(return_value=[]),
         ):
             with pytest.raises(MCPError, match="Tool nonexistent not found"):
-                await manager.get_tool_input_schema("test-server", "nonexistent")
+                await manager.get_tool_input_schema(_id(manager, "test-server"), "nonexistent")
 
     def test_cache_discovered_tools_writes_only_when_inventory_changes(self) -> None:
         config = MCPServerConfig(
@@ -1681,13 +1778,13 @@ class TestMCPClientManagerGetToolInputSchema:
             }
         ]
 
-        manager.cache_discovered_tools("test-server", tools)
-        manager.cache_discovered_tools("test-server", [dict(tools[0])])
+        manager.cache_discovered_tools(config.id, tools)
+        manager.cache_discovered_tools(config.id, [dict(tools[0])])
 
-        mock_db.cache_tools.assert_called_once_with(stored.id, tools)
+        mock_db.cache_tools.assert_called_once_with(config.id, tools)
 
         changed_tools = [*tools, {"name": "other-tool", "inputSchema": {}}]
-        manager.cache_discovered_tools("test-server", changed_tools)
+        manager.cache_discovered_tools(config.id, changed_tools)
         assert mock_db.cache_tools.call_count == 2
 
     def test_cache_discovered_tools_retries_transient_persistence_failure(self) -> None:
@@ -1702,11 +1799,11 @@ class TestMCPClientManagerGetToolInputSchema:
         manager = MCPClientManager(server_configs=[config], mcp_db_manager=mock_db)
         tools = [{"name": "test-tool", "inputSchema": {"type": "object"}}]
 
-        manager.cache_discovered_tools("test-server", tools)
+        manager.cache_discovered_tools(config.id, tools)
 
-        assert manager._tool_schema_cache["test-server"] == tools
-        manager.cache_discovered_tools("test-server", [dict(tools[0])])
-        manager.cache_discovered_tools("test-server", [dict(tools[0])])
+        assert manager._tool_schema_cache[config.id] == tools
+        manager.cache_discovered_tools(config.id, [dict(tools[0])])
+        manager.cache_discovered_tools(config.id, [dict(tools[0])])
 
         assert mock_db.cache_tools.call_count == 2
 
@@ -1719,11 +1816,11 @@ class TestMCPClientManagerGetToolInputSchema:
             url="http://localhost:8001",
         )
         manager = MCPClientManager(server_configs=[config])
-        manager._tool_schema_cache["test-server"] = [{"name": "test-tool"}]
+        manager._tool_schema_cache[_id(manager, "test-server")] = [{"name": "test-tool"}]
 
-        await manager.disconnect_server("test-server")
+        await manager.disconnect_server(_id(manager, "test-server"))
 
-        assert "test-server" not in manager._tool_schema_cache
+        assert _id(manager, "test-server") not in manager._tool_schema_cache
 
 
 class TestMCPClientManagerHealthCheck:
@@ -1744,8 +1841,8 @@ class TestMCPClientManagerHealthCheck:
         mock_connection = AsyncMock()
         mock_connection.is_connected = True
         mock_connection.health_check.return_value = True
-        manager._connections["test-server"] = mock_connection
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager._connections[_id(manager, "test-server")] = mock_connection
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
             consecutive_failures=2,
@@ -1754,10 +1851,10 @@ class TestMCPClientManagerHealthCheck:
 
         result = await manager.health_check_all()
 
-        assert result["test-server"] is True
+        assert result[config.id] is True
         mock_connection.health_check.assert_called_once_with(timeout=5.0)
-        assert manager.health["test-server"].consecutive_failures == 0
-        assert manager.health["test-server"].last_error is None
+        assert manager.health[_id(manager, "test-server")].consecutive_failures == 0
+        assert manager.health[_id(manager, "test-server")].last_error is None
 
     @pytest.mark.asyncio
     async def test_health_check_all_records_failures(self) -> None:
@@ -1774,17 +1871,17 @@ class TestMCPClientManagerHealthCheck:
         mock_connection = AsyncMock()
         mock_connection.is_connected = True
         mock_connection.health_check.return_value = False
-        manager._connections["test-server"] = mock_connection
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager._connections[_id(manager, "test-server")] = mock_connection
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
 
         result = await manager.health_check_all()
 
-        assert result["test-server"] is False
-        assert manager.health["test-server"].consecutive_failures == 1
-        assert manager.health["test-server"].last_error == "Health check failed"
+        assert result[config.id] is False
+        assert manager.health[_id(manager, "test-server")].consecutive_failures == 1
+        assert manager.health[_id(manager, "test-server")].last_error == "Health check failed"
 
     @pytest.mark.asyncio
     async def test_health_check_all_formats_raised_failure(self) -> None:
@@ -1799,16 +1896,19 @@ class TestMCPClientManagerHealthCheck:
         mock_connection = AsyncMock()
         mock_connection.is_connected = True
         mock_connection.health_check.side_effect = RuntimeError("probe failed\nhard")
-        manager._connections["test-server"] = mock_connection
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager._connections[_id(manager, "test-server")] = mock_connection
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
 
         result = await manager.health_check_all()
 
-        assert result["test-server"] is False
-        assert manager.health["test-server"].last_error == "RuntimeError: probe failed hard"
+        assert result[config.id] is False
+        assert (
+            manager.health[_id(manager, "test-server")].last_error
+            == "RuntimeError: probe failed hard"
+        )
 
 
 class TestMCPClientManagerReconnect:
@@ -1828,18 +1928,18 @@ class TestMCPClientManagerReconnect:
 
         old_conn = AsyncMock()
         old_conn.is_connected = False
-        manager._connections["test-server"] = old_conn
-        manager._tool_schema_cache["test-server"] = [{"name": "test-tool"}]
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager._connections[_id(manager, "test-server")] = old_conn
+        manager._tool_schema_cache[_id(manager, "test-server")] = [{"name": "test-tool"}]
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTING,
         )
 
         with patch.object(manager, "_connect_server", return_value=MagicMock()):
-            await manager._reconnect("test-server")
+            await manager._reconnect(_id(manager, "test-server"))
 
         old_conn.disconnect.assert_awaited_once()
-        assert "test-server" not in manager._tool_schema_cache
+        assert _id(manager, "test-server") not in manager._tool_schema_cache
         assert old_conn.disconnect.await_count == 1
         assert old_conn.disconnect.await_args is not None
 
@@ -1856,7 +1956,7 @@ class TestMCPClientManagerReconnect:
         manager = MCPClientManager(server_configs=[config])
 
         with patch.object(manager, "_connect_server", return_value=MagicMock()) as mock_connect:
-            await manager._reconnect("test-server")
+            await manager._reconnect(_id(manager, "test-server"))
 
         mock_connect.assert_awaited_once()
         assert mock_connect.await_count == 1
@@ -1876,10 +1976,10 @@ class TestMCPClientManagerReconnect:
 
         old_conn = AsyncMock()
         old_conn.disconnect.side_effect = Exception("disconnect exploded")
-        manager._connections["test-server"] = old_conn
+        manager._connections[_id(manager, "test-server")] = old_conn
 
         with patch.object(manager, "_connect_server", return_value=MagicMock()) as mock_connect:
-            await manager._reconnect("test-server")
+            await manager._reconnect(_id(manager, "test-server"))
 
         mock_connect.assert_awaited_once()
         assert mock_connect.await_count == 1
@@ -1890,8 +1990,8 @@ class TestMCPClientManagerReconnect:
         """Test _reconnect handles unknown server gracefully."""
         manager = MCPClientManager(server_configs=[])
 
-        await manager._reconnect("unknown-server")
-        assert "unknown-server" not in manager._connections
+        await manager._reconnect(_id(manager, "unknown-server"))
+        assert _id(manager, "unknown-server") not in manager._connections
 
     @pytest.mark.asyncio
     async def test_reconnect_handles_failure(self) -> None:
@@ -1910,8 +2010,8 @@ class TestMCPClientManagerReconnect:
             "_connect_server",
             side_effect=Exception("Reconnect failed"),
         ):
-            await manager._reconnect("test-server")
-            assert "test-server" not in manager._connections
+            await manager._reconnect(_id(manager, "test-server"))
+            assert _id(manager, "test-server") not in manager._connections
 
     @pytest.mark.asyncio
     async def test_reconnect_and_ensure_connected_share_one_connect(self) -> None:
@@ -1950,16 +2050,16 @@ class TestMCPClientManagerReconnect:
             connection = MagicMock()
             connection.is_connected = True
             connection.session = session
-            manager._connections["test-server"] = connection
+            manager._connections[_id(manager, "test-server")] = connection
             return session
 
         with (
             patch.object(connections, "_acquire_connection_lock", side_effect=tracked_acquire_lock),
             patch.object(manager, "_connect_server", side_effect=controlled_connect),
         ):
-            reconnect_task = asyncio.create_task(manager._reconnect("test-server"))
+            reconnect_task = asyncio.create_task(manager._reconnect(_id(manager, "test-server")))
             await connect_started.wait()
-            ensure_task = asyncio.create_task(manager.ensure_connected("test-server"))
+            ensure_task = asyncio.create_task(manager.ensure_connected(_id(manager, "test-server")))
             await asyncio.wait_for(ensure_waiting.wait(), timeout=1.0)
             assert not ensure_task.done()
             release_connect.set()
@@ -1996,7 +2096,7 @@ class TestMCPClientManagerReconnect:
             await release_teardown.wait()
 
         old_connection.disconnect = AsyncMock(side_effect=controlled_disconnect)
-        manager._connections["test-server"] = old_connection
+        manager._connections[_id(manager, "test-server")] = old_connection
         connect_calls = 0
         acquire_calls = 0
         original_acquire_lock = connections._acquire_connection_lock
@@ -2014,16 +2114,16 @@ class TestMCPClientManagerReconnect:
             connection = MagicMock()
             connection.is_connected = True
             connection.session = new_session
-            manager._connections["test-server"] = connection
+            manager._connections[_id(manager, "test-server")] = connection
             return new_session
 
         with (
             patch.object(connections, "_acquire_connection_lock", side_effect=tracked_acquire_lock),
             patch.object(manager, "_connect_server", side_effect=controlled_connect),
         ):
-            reconnect_task = asyncio.create_task(manager._reconnect("test-server"))
+            reconnect_task = asyncio.create_task(manager._reconnect(_id(manager, "test-server")))
             await asyncio.wait_for(teardown_started.wait(), timeout=1.0)
-            ensure_task = asyncio.create_task(manager.ensure_connected("test-server"))
+            ensure_task = asyncio.create_task(manager.ensure_connected(_id(manager, "test-server")))
             await asyncio.wait_for(ensure_waiting.wait(), timeout=1.0)
 
             assert not ensure_task.done()
@@ -2058,7 +2158,7 @@ class TestMCPClientManagerReconnect:
                 connect_cancelled.set()
 
         with patch.object(manager, "_connect_server", side_effect=wedged_connect):
-            await asyncio.wait_for(manager._reconnect("test-server"), timeout=0.2)
+            await asyncio.wait_for(manager._reconnect(_id(manager, "test-server")), timeout=0.2)
 
         assert connect_cancelled.is_set()
 
@@ -2079,8 +2179,8 @@ class TestMCPClientManagerServerConfig:
 
         manager.add_server_config(config)
 
-        assert manager.has_server("new-server")
-        assert "new-server" in manager.health
+        assert manager.has_server(_id(manager, "new-server"))
+        assert _id(manager, "new-server") in manager.health
 
     def test_add_server_config_initializes_health(self) -> None:
         """Test add_server_config initializes health tracking."""
@@ -2096,7 +2196,7 @@ class TestMCPClientManagerServerConfig:
         manager.add_server_config(config)
 
         # Default lazy_connect=True, so new servers start as PENDING
-        assert manager.health["new-server"].state == ConnectionState.PENDING
+        assert manager.health[_id(manager, "new-server")].state == ConnectionState.PENDING
 
     def test_remove_server_config_success(self) -> None:
         """Test remove_server_config removes config."""
@@ -2109,9 +2209,9 @@ class TestMCPClientManagerServerConfig:
 
         manager = MCPClientManager(server_configs=[config])
 
-        manager.remove_server_config("test-server")
+        manager.remove_server_config(_id(manager, "test-server"))
 
-        assert not manager.has_server("test-server")
+        assert not manager.has_server(_id(manager, "test-server"))
 
     def test_remove_server_config_with_connection_raises(self) -> None:
         """Test remove_server_config raises when connection exists."""
@@ -2123,10 +2223,10 @@ class TestMCPClientManagerServerConfig:
         )
 
         manager = MCPClientManager(server_configs=[config])
-        manager._connections["test-server"] = MagicMock()
+        manager._connections[_id(manager, "test-server")] = MagicMock()
 
         with pytest.raises(RuntimeError, match="Cannot remove config"):
-            manager.remove_server_config("test-server")
+            manager.remove_server_config(_id(manager, "test-server"))
 
 
 class TestMCPClientManagerServerHealth:
@@ -2136,7 +2236,7 @@ class TestMCPClientManagerServerHealth:
         """Test get_server_health returns formatted health data."""
         manager = MCPClientManager(server_configs=[])
 
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
             health=HealthState.HEALTHY,
@@ -2177,8 +2277,8 @@ class TestMCPClientManagerMonitorHealth:
         mock_connection = AsyncMock()
         mock_connection.is_connected = True
         mock_connection.health_check.return_value = True
-        manager._connections["test-server"] = mock_connection
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager._connections[_id(manager, "test-server")] = mock_connection
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
@@ -2212,8 +2312,8 @@ class TestMCPClientManagerMonitorHealth:
         mock_connection = AsyncMock()
         mock_connection.is_connected = True
         mock_connection.health_check.return_value = False
-        manager._connections["test-server"] = mock_connection
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager._connections[_id(manager, "test-server")] = mock_connection
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
             health=HealthState.UNHEALTHY,
@@ -2261,8 +2361,8 @@ class TestMCPClientManagerMonitorHealth:
         mock_connection.is_connected = True
         mock_connection.health_check.return_value = False
         mock_connection.last_health_error = "list_tools timed out after 5s"
-        manager._connections["test-server"] = mock_connection
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager._connections[_id(manager, "test-server")] = mock_connection
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
@@ -2275,8 +2375,11 @@ class TestMCPClientManagerMonitorHealth:
         with patch("gobby.mcp_proxy.manager.asyncio.sleep", side_effect=one_interval):
             await manager._monitor_health()
 
-        assert manager.health["test-server"].consecutive_failures == 1
-        assert manager.health["test-server"].last_error == "list_tools timed out after 5s"
+        assert manager.health[_id(manager, "test-server")].consecutive_failures == 1
+        assert (
+            manager.health[_id(manager, "test-server")].last_error
+            == "list_tools timed out after 5s"
+        )
         assert "Health check failed for test-server" not in caplog.text
 
     @pytest.mark.asyncio
@@ -2294,8 +2397,8 @@ class TestMCPClientManagerMonitorHealth:
         mock_connection = AsyncMock()
         mock_connection.is_connected = True
         mock_connection.health_check.return_value = False
-        manager._connections["test-server"] = mock_connection
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager._connections[_id(manager, "test-server")] = mock_connection
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
             health=HealthState.DEGRADED,
@@ -2313,7 +2416,7 @@ class TestMCPClientManagerMonitorHealth:
         ):
             await manager._monitor_health()
 
-        assert manager.health["test-server"].health == HealthState.UNHEALTHY
+        assert manager.health[_id(manager, "test-server")].health == HealthState.UNHEALTHY
         assert "Health check failed for test-server" in caplog.text
 
     @pytest.mark.asyncio
@@ -2332,8 +2435,8 @@ class TestMCPClientManagerMonitorHealth:
         mock_connection.is_connected = True
         mock_connection.health_check.return_value = False
         mock_connection.last_health_error = "list_tools timed out after 5s"
-        manager._connections["test-server"] = mock_connection
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager._connections[_id(manager, "test-server")] = mock_connection
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
             health=HealthState.UNHEALTHY,
@@ -2376,7 +2479,7 @@ class TestMCPClientManagerMonitorHealth:
         # Add a disconnected connection
         mock_connection = MagicMock()
         mock_connection.is_connected = False
-        manager._connections["test-server"] = mock_connection
+        manager._connections[_id(manager, "test-server")] = mock_connection
 
         async def one_interval(_delay: float) -> None:
             manager._running = False
@@ -2408,8 +2511,8 @@ class TestMCPClientManagerMonitorHealth:
         mock_connection.is_connected = True
         # Raise exception on health check
         mock_connection.health_check.side_effect = RuntimeError("Unexpected error")
-        manager._connections["test-server"] = mock_connection
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager._connections[_id(manager, "test-server")] = mock_connection
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
@@ -2422,7 +2525,7 @@ class TestMCPClientManagerMonitorHealth:
             await manager._monitor_health()
 
         assert mock_connection.health_check.await_count >= 1
-        assert manager.health["test-server"].consecutive_failures >= 1
+        assert manager.health[_id(manager, "test-server")].consecutive_failures >= 1
 
 
 class TestMCPClientManagerConnectAllEager:
@@ -2465,7 +2568,7 @@ class TestMCPClientManagerConnectAllEager:
         # Only enabled server should be connected
         assert "enabled-server" in connect_calls
         assert "disabled-server" not in connect_calls
-        assert results["disabled-server"] is False
+        assert results[_id(manager, "disabled-server")] is False
 
         await manager.disconnect_all()
 
@@ -2488,8 +2591,8 @@ class TestMCPClientManagerDisconnectErrors:
         mock_connection = AsyncMock()
         mock_connection.is_connected = True
         mock_connection.disconnect.side_effect = RuntimeError("Disconnect failed")
-        manager._connections["error-server"] = mock_connection
-        manager.health["error-server"] = MCPConnectionHealth(
+        manager._connections[_id(manager, "error-server")] = mock_connection
+        manager.health[_id(manager, "error-server")] = MCPConnectionHealth(
             name="error-server",
             state=ConnectionState.CONNECTED,
         )
@@ -2517,7 +2620,7 @@ class TestMCPClientManagerCircuitBreakerEdgeCases:
 
         # Set circuit to open without failure time and mock can_attempt_connection
         # to return False (simulating open circuit breaker)
-        state = manager._lazy_connector.get_state("test-server")
+        state = manager._lazy_connector.get_state(config.id)
         assert state is not None
         state.circuit_breaker.state = CircuitState.OPEN
         state.circuit_breaker.last_failure_time = None
@@ -2529,7 +2632,7 @@ class TestMCPClientManagerCircuitBreakerEdgeCases:
             return_value=False,
         ):
             with pytest.raises(MCPError, match="Circuit breaker open"):
-                await manager.ensure_connected("test-server")
+                await manager.ensure_connected(_id(manager, "test-server"))
 
 
 class TestMCPClientManagerConcurrentConnection:
@@ -2557,7 +2660,7 @@ class TestMCPClientManagerConcurrentConnection:
             mock_connection = MagicMock()
             mock_connection.is_connected = True
             mock_connection.session = mock_session
-            manager._connections["test-server"] = mock_connection
+            manager._connections[_id(manager, "test-server")] = mock_connection
             connection_established.set()
 
         async def slow_connect(cfg: MCPServerConfig) -> Any:
@@ -2570,7 +2673,7 @@ class TestMCPClientManagerConcurrentConnection:
         concurrent_task = asyncio.create_task(simulate_concurrent_connect())
 
         with patch.object(manager, "_connect_server", side_effect=slow_connect):
-            result = await manager.ensure_connected("test-server")
+            result = await manager.ensure_connected(_id(manager, "test-server"))
 
         await concurrent_task
         assert result is mock_session
@@ -2597,7 +2700,7 @@ class TestMCPClientManagerNullSession:
         # Return None from connect
         with patch.object(manager, "_connect_server", return_value=None):
             with pytest.raises(MCPError, match="Connection returned no session"):
-                await manager.ensure_connected("test-server")
+                await manager.ensure_connected(_id(manager, "test-server"))
 
 
 class TestMCPClientManagerGetClientSession:
@@ -2618,9 +2721,9 @@ class TestMCPClientManagerGetClientSession:
         mock_session = MagicMock()
 
         with patch.object(manager, "ensure_connected", return_value=mock_session) as mock_ensure:
-            result = await manager.get_client_session("test-server")
+            result = await manager.get_client_session(_id(manager, "test-server"))
 
-        mock_ensure.assert_called_once_with("test-server")
+        mock_ensure.assert_called_once_with(config.id)
         assert result is mock_session
 
 
@@ -2647,13 +2750,13 @@ class TestMCPClientManagerCallToolMetricsEdgeCases:
         mock_session = AsyncMock()
         mock_session.call_tool.return_value = {"result": "success"}
 
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
 
         with patch.object(manager, "get_client_session", return_value=mock_session):
-            result = await manager.call_tool("test-server", "test-tool", {})
+            result = await manager.call_tool(_id(manager, "test-server"), "test-tool", {})
 
         assert result == {"result": "success"}
         # Metrics should NOT be recorded when no project_id
@@ -2679,13 +2782,13 @@ class TestMCPClientManagerCallToolMetricsEdgeCases:
         mock_session = AsyncMock()
         mock_session.call_tool.return_value = {"result": "success"}
 
-        manager.health["test-server"] = MCPConnectionHealth(
+        manager.health[_id(manager, "test-server")] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
 
         with patch.object(manager, "get_client_session", return_value=mock_session):
-            await manager.call_tool("test-server", "test-tool", {})
+            await manager.call_tool(_id(manager, "test-server"), "test-tool", {})
 
         # Should use config's project_id
         call_kwargs = mock_metrics.record_call.call_args[1]
@@ -2714,8 +2817,8 @@ class TestMCPClientManagerListToolsAllServers:
         ]
 
         manager = MCPClientManager(server_configs=configs)
-        manager._connections["server1"] = MagicMock()
-        manager._connections["server2"] = MagicMock()
+        manager._connections[_id(manager, "server1")] = MagicMock()
+        manager._connections[_id(manager, "server2")] = MagicMock()
 
         mock_session = AsyncMock()
         mock_tool = MagicMock()
@@ -2724,17 +2827,17 @@ class TestMCPClientManagerListToolsAllServers:
         mock_tool.input_schema = {}
         mock_session.list_tools.return_value = MagicMock(tools=[mock_tool])
 
-        manager.health["server1"] = MCPConnectionHealth(
+        manager.health[_id(manager, "server1")] = MCPConnectionHealth(
             name="server1",
             state=ConnectionState.CONNECTED,
         )
-        manager.health["server2"] = MCPConnectionHealth(
+        manager.health[_id(manager, "server2")] = MCPConnectionHealth(
             name="server2",
             state=ConnectionState.CONNECTED,
         )
 
         with patch.object(manager, "get_client_session", return_value=mock_session):
-            result = await manager.list_tools()  # No server_name = all connected
+            result = await manager.list_tools(project_id="test-project")
 
         assert "server1" in result
         assert "server2" in result

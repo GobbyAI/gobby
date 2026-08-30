@@ -63,8 +63,11 @@ def resolve_secrets_in_config(
         if config.args:
             updates["args"] = [resolve_text(value) for value in config.args]
         if missing:
-            names = ", ".join(dict.fromkeys(missing))
-            raise MCPError(f"Server '{config.name}' needs configuration: missing secret(s) {names}")
+            names = list(dict.fromkeys(missing))
+            raise MCPError(
+                f"Server '{config.name}' needs configuration: missing secret(s) {', '.join(names)}",
+                missing_secrets=names,
+            )
         return dataclasses.replace(config, **updates)
     except MCPError:
         raise

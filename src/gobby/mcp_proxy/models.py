@@ -24,21 +24,32 @@ class ConnectionState(str, Enum):
     CONNECTING = "connecting"
     CONNECTED = "connected"
     FAILED = "failed"
+    NEEDS_CONFIGURATION = "needs_configuration"
+    STALE_TEMPLATE = "stale_template"
+    DISABLED = "disabled"
 
 
 class MCPError(Exception):
     """Base exception for MCP client errors."""
 
-    def __init__(self, message: str, code: int | None = None):
+    def __init__(
+        self,
+        message: str,
+        code: int | None = None,
+        *,
+        missing_secrets: list[str] | None = None,
+    ):
         """
         Initialize MCP error.
 
         Args:
             message: Error message
             code: JSON-RPC error code (if applicable)
+            missing_secrets: Secret names that blocked a fail-closed connect
         """
         super().__init__(message)
         self.code = code
+        self.missing_secrets = missing_secrets
 
 
 class ToolProxyErrorCode(str, Enum):
@@ -82,6 +93,8 @@ class MCPConnectionHealth:
     consecutive_failures: int = 0
     last_error: str | None = None
     response_time_ms: float | None = None
+    project_id: str | None = None
+    missing_secrets: list[str] | None = None
 
     def record_success(self, response_time_ms: float | None = None) -> None:
         """

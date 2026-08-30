@@ -289,6 +289,42 @@ def expand_template(
     )
 
 
+def expand_server_instance(
+    definition: Mapping[str, Any],
+    *,
+    name: str,
+    project_id: str,
+    template_values: Mapping[str, Any] | None,
+    description: str | None,
+    secret_exists: Callable[[str], bool],
+) -> dict[str, Any]:
+    """Expand a stored template row into template-owned connection fields."""
+    template = MCPServerTemplate.from_definition(dict(definition))
+    values = {
+        str(key): value if isinstance(value, str) else str(value)
+        for key, value in (template_values or {}).items()
+    }
+    expanded = expand_template(
+        template,
+        name=name,
+        project_id=project_id,
+        values=values,
+        description=description,
+        secret_exists=secret_exists,
+    )
+    config = expanded.config
+    return {
+        "transport": config.transport,
+        "url": config.url,
+        "command": config.command,
+        "args": config.args,
+        "env": config.env,
+        "headers": config.headers,
+        "connect_timeout": config.connect_timeout,
+        "runtime_hook": config.runtime_hook,
+    }
+
+
 def _normalize_secret_value(
     param_name: str,
     raw: str,

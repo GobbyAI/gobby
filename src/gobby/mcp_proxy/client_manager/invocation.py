@@ -26,7 +26,7 @@ class _InvocationManager(Protocol):
     metrics_manager: Any | None
     project_id: str | None
 
-    def get_client_session(self, server_name: str) -> Awaitable[Any]: ...
+    def get_client_session(self, server_id: str) -> Awaitable[Any]: ...
 
 
 async def _call_session_tool(
@@ -44,7 +44,7 @@ async def _call_session_tool(
 
 async def call_tool(
     manager: _InvocationManager,
-    server_name: str,
+    server_id: str,
     tool_name: str,
     arguments: dict[str, Any] | None,
     timeout: float | None,
@@ -54,12 +54,15 @@ async def call_tool(
     """Call a tool on a downstream MCP server with tracing and metrics."""
     start_time = time.perf_counter()
     success = False
+    server_config = manager._configs.get(server_id)
+    server_label = server_config.name if server_config is not None else server_id
     with create_span(
         "mcp.call_tool",
-        attributes={"server_name": server_name, "tool_name": tool_name},
+        attributes={"server_id": server_id, "server_name": server_label, "tool_name": tool_name},
     ) as span:
         try:
-            session = await manager.get_client_session(server_name)
+            session = await manager.get_client_session(server_id)
+            used_connection = manager._connections.get(server_id)
             try:
                 result = await _call_session_tool(
                     session,
@@ -71,36 +74,37 @@ async def call_tool(
                 error_message = describe_exception(exc)
                 logger.warning(
                     "Discarding dead connection for %s after %s failed: %s",
-                    server_name,
+                    server_label,
                     tool_name,
                     error_message,
                 )
-                if server_name in manager.health:
-                    manager.health[server_name].record_failure(error_message)
+                if server_id in manager.health:
+                    manager.health[server_id].record_failure(error_message)
                 await discard_connection(
-                    server_name,
+                    server_id,
                     manager._connections,
                     manager.health,
                     manager._lazy_connector,
                     logger,
                     tool_schema_cache=manager._tool_schema_cache,
+                    expected=used_connection,
                 )
-                session = await manager.get_client_session(server_name)
+                session = await manager.get_client_session(server_id)
                 result = await _call_session_tool(
                     session,
                     tool_name,
                     arguments or {},
                     timeout,
                 )
-            if server_name in manager.health:
-                manager.health[server_name].record_success()
+            if server_id in manager.health:
+                manager.health[server_id].record_success()
             success = True
             if span.is_recording():
                 span.set_attribute("success", True)
             return result
         except Exception as exc:
-            if server_name in manager.health:
-                manager.health[server_name].record_failure(str(exc))
+            if server_id in manager.health:
+                manager.health[server_id].record_failure(str(exc))
             if span.is_recording():
                 span.set_attribute("success", False)
                 span.record_exception(exc)
@@ -112,7 +116,7 @@ async def call_tool(
                 span.set_attribute("latency_ms", latency_ms)
 
             if manager.metrics_manager:
-                server_config = manager._configs.get(server_name)
+                server_config = manager._configs.get(server_id)
                 metrics_project_id = (
                     server_config.project_id if server_config else manager.project_id
                 )
@@ -120,7 +124,7 @@ async def call_tool(
                     try:
                         await asyncio.to_thread(
                             manager.metrics_manager.record_call,
-                            server_name=server_name,
+                            server_name=server_label,
                             tool_name=tool_name,
                             project_id=metrics_project_id,
                             latency_ms=latency_ms,
@@ -130,21 +134,21 @@ async def call_tool(
                     except Exception:
                         logger.warning(
                             "Failed to record metrics for %s.%s",
-                            server_name,
+                            server_label,
                             tool_name,
                             exc_info=True,
                         )
 
 
-async def read_resource(manager: _InvocationManager, server_name: str, uri: str) -> Any:
+async def read_resource(manager: _InvocationManager, server_id: str, uri: str) -> Any:
     """Read a resource from a downstream MCP server."""
     try:
-        session = await manager.get_client_session(server_name)
+        session = await manager.get_client_session(server_id)
         result = await session.read_resource(uri)
-        if server_name in manager.health:
-            manager.health[server_name].record_success()
+        if server_id in manager.health:
+            manager.health[server_id].record_success()
         return result
     except Exception as exc:
-        if server_name in manager.health:
-            manager.health[server_name].record_failure(str(exc))
+        if server_id in manager.health:
+            manager.health[server_id].record_failure(str(exc))
         raise

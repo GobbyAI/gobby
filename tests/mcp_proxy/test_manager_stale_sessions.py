@@ -75,7 +75,7 @@ class FakeConnection(BaseTransportConnection):
         self._state = ConnectionState.DISCONNECTED
 
 
-def make_manager() -> MCPClientManager:
+def make_manager() -> tuple[MCPClientManager, MCPServerConfig]:
     config = MCPServerConfig(
         name="external",
         project_id="test-project",
@@ -83,19 +83,20 @@ def make_manager() -> MCPClientManager:
         command="example-mcp",
     )
     manager = MCPClientManager(server_configs=[config], max_connection_retries=0)
-    manager.health["external"] = MCPConnectionHealth(
+    manager.health[config.id] = MCPConnectionHealth(
         name="external",
         state=ConnectionState.CONNECTED,
+        project_id=config.project_id,
     )
-    manager._lazy_connector.mark_connected("external")
-    return manager
+    manager._lazy_connector.mark_connected(config.id)
+    return manager, config
 
 
 @pytest.mark.asyncio
 async def test_single_server_list_tools_reconnects_after_closed_session() -> None:
-    manager = make_manager()
+    manager, config = make_manager()
     stale_connection = FakeConnection(ClosedSession())
-    manager._connections["external"] = stale_connection
+    manager._connections[config.id] = stale_connection
 
     fresh_tool = SimpleNamespace(
         name="fresh_tool",
@@ -108,7 +109,7 @@ async def test_single_server_list_tools_reconnects_after_closed_session() -> Non
         "gobby.mcp_proxy.manager.create_transport_connection",
         return_value=fresh_connection,
     ):
-        result = await manager.list_tools("external")
+        result = await manager.list_tools(config.id)
 
     assert result == {
         "external": [
@@ -120,7 +121,7 @@ async def test_single_server_list_tools_reconnects_after_closed_session() -> Non
         ]
     }
     assert stale_connection.disconnect_calls == 1
-    assert manager._connections["external"] is fresh_connection
+    assert manager._connections[config.id] is fresh_connection
 
 
 @pytest.mark.parametrize(
@@ -130,9 +131,9 @@ async def test_single_server_list_tools_reconnects_after_closed_session() -> Non
 async def test_call_tool_reconnects_after_dead_session(
     error_type: type[Exception],
 ) -> None:
-    manager = make_manager()
+    manager, config = make_manager()
     stale_connection = FakeConnection(ClosedSession(error_type()))
-    manager._connections["external"] = stale_connection
+    manager._connections[config.id] = stale_connection
 
     expected = {"result": "fresh"}
     fresh_connection = FakeConnection(FakeSession(tool_result=expected))
@@ -141,17 +142,17 @@ async def test_call_tool_reconnects_after_dead_session(
         "gobby.mcp_proxy.manager.create_transport_connection",
         return_value=fresh_connection,
     ):
-        result = await manager.call_tool("external", "fresh_tool", {"value": 1})
+        result = await manager.call_tool(config.id, "fresh_tool", {"value": 1})
 
     assert result == expected
     assert stale_connection.disconnect_calls == 1
-    assert manager._connections["external"] is fresh_connection
+    assert manager._connections[config.id] is fresh_connection
 
 
 async def test_call_tool_retries_dead_session_only_once() -> None:
-    manager = make_manager()
+    manager, config = make_manager()
     stale_connection = FakeConnection(ClosedSession())
-    manager._connections["external"] = stale_connection
+    manager._connections[config.id] = stale_connection
     retry_connection = FakeConnection(ClosedSession(anyio.BrokenResourceError()))
 
     with patch(
@@ -159,7 +160,7 @@ async def test_call_tool_retries_dead_session_only_once() -> None:
         return_value=retry_connection,
     ) as create_connection:
         with pytest.raises(anyio.BrokenResourceError):
-            await manager.call_tool("external", "still_dead", {})
+            await manager.call_tool(config.id, "still_dead", {})
 
     create_connection.assert_called_once()
     assert stale_connection.disconnect_calls == 1
@@ -168,8 +169,8 @@ async def test_call_tool_retries_dead_session_only_once() -> None:
 
 @pytest.mark.asyncio
 async def test_schema_lookup_reports_reconnect_failure_not_missing_tool() -> None:
-    manager = make_manager()
-    manager._connections["external"] = FakeConnection(ClosedSession())
+    manager, config = make_manager()
+    manager._connections[config.id] = FakeConnection(ClosedSession())
     failing_connection = FakeConnection(
         FakeSession(),
         connect_error=RuntimeError("connect failed"),
@@ -180,7 +181,7 @@ async def test_schema_lookup_reports_reconnect_failure_not_missing_tool() -> Non
         return_value=failing_connection,
     ):
         with pytest.raises(MCPError) as exc_info:
-            await manager.get_tool_input_schema("external", "fresh_tool")
+            await manager.get_tool_input_schema(config.id, "fresh_tool")
 
     message = str(exc_info.value)
     assert "initial listing failed: ClosedResourceError" in message
