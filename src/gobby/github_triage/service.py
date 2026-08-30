@@ -314,6 +314,7 @@ class GitHubIssueTriageService:
                             "per_page": 100,
                             "page": page,
                         },
+                        project_id=project_id,
                     )
                 except Exception as exc:
                     logger.warning(
@@ -393,7 +394,9 @@ class GitHubIssueTriageService:
         config = self.store.get_config(project_id, fallback_repo=project.github_repo)
         if not config.triage_enabled:
             raise TriageDisabledError("GitHub issue triage is disabled")
-        issue_data = issue_data or await self._fetch_issue(repo, issue_number)
+        issue_data = issue_data or await self._fetch_issue(
+            repo, issue_number, project_id=project_id
+        )
         if issue_data.get("pull_request"):
             outcome = TriageOutcome("skip", "GitHub pull requests are not triaged as issues")
             issue = IssueSnapshot.from_github(project_id=project_id, repo=repo, issue=issue_data)
@@ -609,11 +612,14 @@ class GitHubIssueTriageService:
                 validation_criteria=validation_criteria,
             )
 
-    async def _fetch_issue(self, repo: str, issue_number: int) -> dict[str, Any]:
+    async def _fetch_issue(
+        self, repo: str, issue_number: int, *, project_id: str
+    ) -> dict[str, Any]:
         owner, repo_name = parse_github_repo(repo)
         result = await self._github_call(
             "get_issue",
             {"owner": owner, "repo": repo_name, "issue_number": issue_number},
+            project_id=project_id,
         )
         if not isinstance(result, dict):
             raise RuntimeError(f"GitHub get_issue returned {type(result).__name__}")
@@ -632,6 +638,7 @@ class GitHubIssueTriageService:
                     "labels": deduped_labels,
                 },
                 required=False,
+                project_id=issue.project_id,
             )
 
     async def _comment(self, issue: IssueSnapshot, comment: str) -> None:
@@ -645,6 +652,7 @@ class GitHubIssueTriageService:
                 "body": comment,
             },
             required=False,
+            project_id=issue.project_id,
         )
 
     async def _close_issue(self, issue: IssueSnapshot) -> None:
@@ -658,6 +666,7 @@ class GitHubIssueTriageService:
                 "state": "closed",
             },
             required=False,
+            project_id=issue.project_id,
         )
 
     async def _run_build(self, task: Task) -> None:
