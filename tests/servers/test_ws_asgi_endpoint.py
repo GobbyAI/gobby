@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import uvicorn
+import websockets
 from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocketDisconnect
-from websockets.exceptions import ConnectionClosedError
+from websockets.exceptions import ConnectionClosedError, InvalidStatus
 
 from gobby.servers._app_ui import _mount_ws_endpoint
 from gobby.servers.http import HTTPServer
@@ -175,9 +180,12 @@ async def test_disconnect_during_welcome_cleans_up_without_unexpected_error(
     assert "Unexpected error for client" not in caplog.text
 
 
-def test_unauthenticated_handshake_is_rejected_before_handler() -> None:
+def test_unauthenticated_handshake_is_rejected_before_handler(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     websocket_server = _WebSocketServer()
     client = _client(websocket_server)
+    caplog.set_level(logging.ERROR)
 
     with pytest.raises(WebSocketDisconnect) as exc_info:
         with client.websocket_connect("/ws") as websocket:
@@ -187,9 +195,12 @@ def test_unauthenticated_handshake_is_rejected_before_handler() -> None:
     assert exc_info.value.reason == "Authentication required"
     assert websocket_server.handler_calls == 0
     assert websocket_server.clients == {}
+    assert "Exception in ASGI application" not in caplog.text
+    assert "transfer_data_task" not in caplog.text
+    assert "AttributeError" not in caplog.text
 
 
-async def test_unauthenticated_handshake_accepts_before_close() -> None:
+async def test_unauthenticated_handshake_closes_without_accept() -> None:
     websocket_server = _WebSocketServer()
     app = FastAPI()
     server = SimpleNamespace(
@@ -209,7 +220,8 @@ async def test_unauthenticated_handshake_accepts_before_close() -> None:
 
     await route.endpoint(websocket)
 
-    assert events == ["accept", "close"]
+    assert events == ["close"]
+    websocket.accept.assert_not_awaited()
     websocket.close.assert_awaited_once_with(code=4401, reason="Authentication required")
     assert websocket_server.handler_calls == 0
 
@@ -292,3 +304,105 @@ def test_authentication_is_always_checked() -> None:
 
     assert exc_info.value.code == 4401
     assert websocket_server.handler_calls == 0
+
+
+class _LogProbe(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        rendered = record.getMessage()
+        if record.exc_info:
+            rendered = f"{rendered}\n{logging.Formatter().formatException(record.exc_info)}"
+        self.messages.append(rendered)
+
+    def text(self) -> str:
+        return "\n".join(self.messages)
+
+
+@asynccontextmanager
+async def _live_ws_server(websocket_server: _WebSocketServer | None) -> AsyncIterator[str]:
+    app = FastAPI()
+    server = SimpleNamespace(
+        auth_service=_AuthService(),
+        services=SimpleNamespace(websocket_server=websocket_server),
+        websocket_server=websocket_server,
+    )
+    _mount_ws_endpoint(app, cast(HTTPServer, server))
+    config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=0,
+        log_level="warning",
+        access_log=False,
+        lifespan="off",
+        log_config=None,
+        ws="websockets",
+    )
+    http = uvicorn.Server(config)
+    task = asyncio.create_task(http.serve())
+    try:
+        while not http.started:
+            if task.done():
+                await task
+            await asyncio.sleep(0)
+        sockets = http.servers[0].sockets
+        assert sockets is not None
+        port = int(sockets[0].getsockname()[1])
+        yield f"ws://127.0.0.1:{port}/ws"
+    finally:
+        http.should_exit = True
+        await asyncio.wait_for(task, timeout=5)
+
+
+async def _hangup_upgrade(url: str) -> None:
+    host_port = url.removeprefix("ws://").split("/", 1)[0]
+    host, port_s = host_port.rsplit(":", 1)
+    _reader, writer = await asyncio.open_connection(host, int(port_s))
+    writer.write(
+        b"GET /ws HTTP/1.1\r\n"
+        b"Host: 127.0.0.1\r\n"
+        b"Upgrade: websocket\r\n"
+        b"Connection: Upgrade\r\n"
+        b"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        b"Sec-WebSocket-Version: 13\r\n"
+        b"\r\n"
+    )
+    await writer.drain()
+    writer.close()
+    await writer.wait_closed()
+    await asyncio.sleep(0.2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "websocket_server",
+    [pytest.param(_WebSocketServer(), id="unauthenticated"), pytest.param(None, id="no-server")],
+)
+async def test_pre_accept_rejection_hangup_does_not_raise_in_uvicorn(
+    websocket_server: _WebSocketServer | None,
+) -> None:
+    probe = _LogProbe()
+    logger = logging.getLogger("uvicorn.error")
+    logger.addHandler(probe)
+    try:
+        async with _live_ws_server(websocket_server) as url:
+            await _hangup_upgrade(url)
+    finally:
+        logger.removeHandler(probe)
+
+    combined = probe.text()
+    assert "Exception in ASGI application" not in combined
+    assert "transfer_data_task" not in combined
+    assert "AttributeError" not in combined
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_live_client_is_handshake_rejected() -> None:
+    async with _live_ws_server(_WebSocketServer()) as url:
+        with pytest.raises(InvalidStatus) as exc_info:
+            async with websockets.connect(url, open_timeout=2.0, close_timeout=2.0):
+                pass
+
+    assert exc_info.value.response.status_code == 403
