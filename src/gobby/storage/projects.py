@@ -40,6 +40,10 @@ class NameAttachRejectedError(ValueError):
     """Raised when init tries to attach a checkout by project name instead of marker id."""
 
 
+class AmbiguousProjectRefError(ValueError):
+    """Raised when a project name matches more than one unique row."""
+
+
 def personal_project_path(gobby_home: Path | None = None) -> Path:
     """Hub-owner _personal directory. Raises FilesHomeNotOnThisDaemonError on a node."""
     del gobby_home
