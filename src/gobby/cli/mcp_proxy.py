@@ -458,18 +458,28 @@ def add_server(
 
 @mcp_proxy.command("remove-server")
 @click.argument("name")
+@click.option(
+    "--global",
+    "global_scope",
+    is_flag=True,
+    help="Remove a machine-wide (global) server instance",
+)
 @click.confirmation_option(prompt="Are you sure you want to remove this server?")
 @click.pass_context
-def remove_server(ctx: click.Context, name: str) -> None:
+def remove_server(ctx: click.Context, name: str, global_scope: bool) -> None:
     """Remove an MCP server configuration."""
     client = get_daemon_client(ctx)
     if not check_daemon_running(client):
         sys.exit(1)
 
+    project_id, scope = resolve_cli_mcp_project(global_scope=global_scope)
     encoded_name = urllib.parse.quote(name, safe="")
+    endpoint = f"/api/mcp/servers/{encoded_name}?scope={scope}"
+    if project_id:
+        endpoint += f"&project_id={urllib.parse.quote(project_id, safe='')}"
     result = call_mcp_api(
         client,
-        f"/api/mcp/servers/{encoded_name}",
+        endpoint,
         method="DELETE",
     )
     if result is None:
@@ -624,6 +634,12 @@ def search_tools(
 @click.option("--query", "-q", help="Search for MCP server by name/description")
 @click.option("--server", "-s", "servers", multiple=True, help="Specific servers to import")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
+@click.option(
+    "--global",
+    "global_scope",
+    is_flag=True,
+    help="Import as machine-wide (global) server instances",
+)
 @click.pass_context
 def import_server(
     ctx: click.Context,
@@ -632,6 +648,7 @@ def import_server(
     query: str | None,
     servers: tuple[str, ...],
     json_format: bool,
+    global_scope: bool,
 ) -> None:
     """Import MCP server(s) from various sources.
 
@@ -653,6 +670,7 @@ def import_server(
         )
         sys.exit(1)
 
+    project_id, scope = resolve_cli_mcp_project(global_scope=global_scope)
     result = call_mcp_api(
         client,
         "/api/mcp/servers/import",
@@ -662,6 +680,8 @@ def import_server(
             "github_url": github_url,
             "query": query,
             "servers": list(servers) if servers else None,
+            "project_id": project_id,
+            "scope": scope,
         },
     )
     if result is None:

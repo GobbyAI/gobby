@@ -40,6 +40,21 @@ def cwd_project_id() -> Iterator[MagicMock]:
         yield mock_scope
 
 
+@pytest.fixture(autouse=True)
+def cli_mcp_project() -> Iterator[MagicMock]:
+    """Keep scoped write commands off the real hub project registry."""
+
+    def fake_resolve(*, global_scope: bool) -> tuple[str | None, str]:
+        if global_scope:
+            return None, "global"
+        return "proj-other", "project"
+
+    with patch(
+        "gobby.cli.mcp_proxy.resolve_cli_mcp_project", side_effect=fake_resolve
+    ) as mock_resolve:
+        yield mock_resolve
+
+
 def test_get_daemon_client_rejects_non_mapping_context_obj() -> None:
     ctx = click.Context(mcp_proxy, obj=object())
 
@@ -368,6 +383,44 @@ def test_remove_server_failure(cli_runner, mock_daemon_client, mock_config) -> N
         assert "Server not found" in result.output
 
 
+def test_remove_server_sends_cwd_project_scope(
+    cli_runner: CliRunner, mock_daemon_client: MagicMock, mock_config: MagicMock
+) -> None:
+    """Inside a project, remove-server targets the exact project row."""
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {"success": True}
+
+        result = cli_runner.invoke(
+            mcp_proxy,
+            ["remove-server", "old-server", "--yes"],
+            obj={"config": mock_config},
+        )
+
+        assert result.exit_code == 0
+        endpoint = mock_daemon_client.call_http_api.call_args[0][0]
+        assert endpoint == "/api/mcp/servers/old-server?scope=project&project_id=proj-other"
+
+
+def test_remove_server_global_scope(
+    cli_runner: CliRunner, mock_daemon_client: MagicMock, mock_config: MagicMock
+) -> None:
+    """--global removes the machine-wide row without a project id."""
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {"success": True}
+
+        result = cli_runner.invoke(
+            mcp_proxy,
+            ["remove-server", "old-server", "--global", "--yes"],
+            obj={"config": mock_config},
+        )
+
+        assert result.exit_code == 0
+        endpoint = mock_daemon_client.call_http_api.call_args[0][0]
+        assert endpoint == "/api/mcp/servers/old-server?scope=global"
+
+
 # ==============================================================================
 # Tests for recommend-tools command
 # ==============================================================================
@@ -638,6 +691,56 @@ def test_import_server_with_specific_servers(cli_runner, mock_daemon_client, moc
         )
 
         assert result.exit_code == 0
+
+
+def test_import_server_sends_cwd_project_scope(
+    cli_runner: CliRunner, mock_daemon_client: MagicMock, mock_config: MagicMock
+) -> None:
+    """Inside a project, import-server imports into that project."""
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {
+            "success": True,
+            "imported": ["server1"],
+            "skipped": [],
+            "failed": [],
+        }
+
+        result = cli_runner.invoke(
+            mcp_proxy,
+            ["import-server", "--from-project", "prod"],
+            obj={"config": mock_config},
+        )
+
+        assert result.exit_code == 0
+        payload = mock_daemon_client.call_http_api.call_args[1]["json_data"]
+        assert payload["project_id"] == "proj-other"
+        assert payload["scope"] == "project"
+
+
+def test_import_server_global_scope(
+    cli_runner: CliRunner, mock_daemon_client: MagicMock, mock_config: MagicMock
+) -> None:
+    """--global imports machine-wide rows without a project id."""
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {
+            "success": True,
+            "imported": ["server1"],
+            "skipped": [],
+            "failed": [],
+        }
+
+        result = cli_runner.invoke(
+            mcp_proxy,
+            ["import-server", "--from-project", "prod", "--global"],
+            obj={"config": mock_config},
+        )
+
+        assert result.exit_code == 0
+        payload = mock_daemon_client.call_http_api.call_args[1]["json_data"]
+        assert payload["project_id"] is None
+        assert payload["scope"] == "global"
 
 
 # ==============================================================================
@@ -954,9 +1057,13 @@ def test_api_error_response(cli_runner, mock_daemon_client, mock_config) -> None
 
 
 def test_add_server_from_template_prompts_for_missing_secrets(
-    cli_runner: CliRunner, mock_daemon_client: MagicMock, mock_config: MagicMock
+    cli_runner: CliRunner,
+    mock_daemon_client: MagicMock,
+    mock_config: MagicMock,
+    cli_mcp_project: MagicMock,
 ) -> None:
     project_id = "11111111-1111-4111-8111-111111111111"
+    cli_mcp_project.side_effect = lambda *, global_scope: (project_id, "project")
     add_payload = {
         "success": True,
         "name": "demo-instance",
