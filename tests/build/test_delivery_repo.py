@@ -33,7 +33,7 @@ def test_github_repo_from_url_strips_remote_dot_git_suffix() -> None:
     assert github_repo_from_url("git@github.com:owner/repo.git") == "owner/repo"
 
 
-def test_resolve_project_source_repo_uses_checkout_origin(
+def test_resolve_project_source_repo_uses_checkout_origin(  # tdd-red window
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -57,7 +57,7 @@ def test_resolve_project_source_repo_uses_checkout_origin(
     assert resolve_project_source_repo(temp_db, isolated.project.id) == "owner/from-origin"
 
 
-def test_resolve_project_source_repo_fails_closed_without_checkout(
+def test_resolve_project_source_repo_fails_closed_without_checkout(  # tdd-red window
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

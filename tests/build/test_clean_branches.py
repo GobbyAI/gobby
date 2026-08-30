@@ -97,7 +97,7 @@ def test_branch_cleanup_ignores_branch_already_deleted(
     assert errors == []
 
 
-def test_branch_cleanup_refuses_missing_project_repo_path(
+def test_branch_cleanup_refuses_missing_project_repo_path(  # tdd-red window
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
 ) -> None:
@@ -416,7 +416,7 @@ async def test_clean_dirty_worktree_override_deletes_descendant_worktree(
     assert artifact.deleted
 
 
-def test_get_project_path_uses_machine_checkout(
+def test_get_project_path_uses_machine_checkout(  # tdd-red window
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -431,7 +431,7 @@ def test_get_project_path_uses_machine_checkout(
     assert get_project_path(temp_db, isolated.project.id) == Path(isolated.root_path)
 
 
-def test_get_project_path_fails_closed_without_checkout(
+def test_get_project_path_fails_closed_without_checkout(  # tdd-red window
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

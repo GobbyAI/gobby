@@ -1597,7 +1597,7 @@ async def test_execute_merge_workspace_resolves_represented_docs_guides_readme_q
     assert task_manager.artifacts.get_artifacts(leaf.id).worktree_id is None
 
 
-async def test_workspace_merge_uses_machine_checkout(
+async def test_workspace_merge_uses_machine_checkout(  # tdd-red window
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1624,7 +1624,7 @@ async def test_workspace_merge_uses_machine_checkout(
     assert _project_repo_path(temp_db, isolated.project.id) == Path(isolated.root_path)
 
 
-async def test_workspace_merge_fails_closed_without_checkout(
+async def test_workspace_merge_fails_closed_without_checkout(  # tdd-red window
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -4162,7 +4162,7 @@ async def test_dispatch_spawn_uses_task_project_context_for_cross_project_build(
 
 
 @pytest.mark.asyncio
-async def test_dispatch_spawn_uses_machine_checkout(
+async def test_dispatch_spawn_uses_machine_checkout(  # tdd-red window
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     tmp_path: Path,
@@ -4219,7 +4219,7 @@ async def test_dispatch_spawn_uses_machine_checkout(
 
 
 @pytest.mark.asyncio
-async def test_dispatch_spawn_uses_registered_overlay_cwd(
+async def test_dispatch_spawn_uses_registered_overlay_cwd(  # tdd-red window
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     tmp_path: Path,
@@ -4290,7 +4290,7 @@ async def test_dispatch_spawn_uses_registered_overlay_cwd(
 
 
 @pytest.mark.asyncio
-async def test_dispatch_spawn_fails_closed_without_checkout(
+async def test_dispatch_spawn_fails_closed_without_checkout(  # tdd-red window
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
 ) -> None:

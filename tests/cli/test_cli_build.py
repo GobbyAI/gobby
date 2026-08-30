@@ -1045,7 +1045,7 @@ def test_unregistered_build_command_objects_are_removed() -> None:
     assert not hasattr(build_cli, "build_resume_command")
 
 
-def test_project_repo_path_uses_machine_checkout(
+def test_project_repo_path_uses_machine_checkout(  # tdd-red window
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1061,7 +1061,7 @@ def test_project_repo_path_uses_machine_checkout(
     assert _project_repo_path(isolated.project.id) == Path(isolated.root_path)
 
 
-def test_project_repo_path_fails_closed_without_checkout(
+def test_project_repo_path_fails_closed_without_checkout(  # tdd-red window
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

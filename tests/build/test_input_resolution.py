@@ -33,7 +33,7 @@ def _checkout_project(
     return isolated.project.id
 
 
-def test_resolve_plan_file_path_uses_machine_checkout(
+def test_resolve_plan_file_path_uses_machine_checkout(  # tdd-red window
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -109,7 +109,7 @@ def test_resolve_plan_file_path_prefers_registered_overlay(
     assert resolved == plan_file.resolve()
 
 
-def test_plan_file_base_dir_fails_closed_without_checkout(
+def test_plan_file_base_dir_fails_closed_without_checkout(  # tdd-red window
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

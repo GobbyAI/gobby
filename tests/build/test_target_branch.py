@@ -63,7 +63,7 @@ def _project(
 
 
 @pytest.mark.asyncio
-async def test_target_branch_none_resolves_to_head_when_project_repo_has_git(
+async def test_target_branch_none_resolves_to_head_when_project_repo_has_git(  # tdd-red window
     monkeypatch: pytest.MonkeyPatch, temp_db, tmp_path: Path
 ) -> None:
     project_id, repo_path = _project(temp_db, tmp_path, monkeypatch)
@@ -83,7 +83,7 @@ async def test_target_branch_none_resolves_to_head_when_project_repo_has_git(
 
 
 @pytest.mark.asyncio
-async def test_current_target_branch_fails_closed_without_checkout(
+async def test_current_target_branch_fails_closed_without_checkout(  # tdd-red window
     temp_db,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
