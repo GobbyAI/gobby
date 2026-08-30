@@ -30,6 +30,34 @@ logger = logging.getLogger(__name__)
 RunDbHook = Callable[..., Awaitable[Any]] | Callable[..., Any]
 
 
+async def _emit_pty_terminal_output(websocket_server: object, run_id: str, data: str) -> None:
+    """Broadcast PTY/tmux bytes with terminal_id and attachment_id distinct.
+
+    The PTY reader keys streams by streaming_id, which for a tmux web attach
+    is the attachment id. Look that id up on the live bridge so the frame
+    carries the terminals row in ``terminal_id`` and the attachment in
+    ``attachment_id``. Agent/FIFO streams have no bridge and keep
+    ``terminal_id=run_id`` with ``attachment_id=None``.
+    """
+    broadcast = getattr(websocket_server, "broadcast_terminal_output", None)
+    if not callable(broadcast):
+        return
+    terminal_id = run_id
+    attachment_id: str | None = None
+    lookup = getattr(websocket_server, "_tmux_bridge_for", None)
+    if callable(lookup):
+        try:
+            bridge = await lookup(run_id)
+        except Exception:
+            logger.debug("terminal output id lookup failed for %s", run_id, exc_info=True)
+        else:
+            row_id = getattr(bridge, "terminal_id", None)
+            if isinstance(row_id, str) and row_id:
+                terminal_id = row_id
+                attachment_id = run_id
+    await broadcast(terminal_id, data, attachment_id)
+
+
 class CommunicationsEventBroadcaster(Protocol):
     """WebSocket surface used by communications event fan-out."""
 
@@ -154,8 +182,7 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
     # Set up output callbacks to broadcast via WebSocket
     async def broadcast_terminal_output(run_id: str, data: str) -> None:
         """Broadcast terminal output via WebSocket."""
-        if websocket_server:
-            await websocket_server.broadcast_terminal_output(run_id, data)
+        await _emit_pty_terminal_output(websocket_server, run_id, data)
 
     pty_manager.set_output_callback(broadcast_terminal_output)
     tmux_reader.set_output_callback(broadcast_terminal_output)

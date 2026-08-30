@@ -820,6 +820,39 @@ describe("useTmuxSessions", () => {
     });
   });
 
+  it("routes terminal_output by attachment_id and ignores a terminal-row-only frame", () => {
+    const mount = renderHook(() => useTmuxSessions());
+    const [ws] = mockWs.instances;
+    open(ws);
+
+    const received: Array<[string, string]> = [];
+    act(() =>
+      mount.result.current.onOutput((id, data) => received.push([id, data])),
+    );
+
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_output",
+        terminal_id: "row-1",
+        attachment_id: "att-1",
+        data: "hello",
+      });
+      ws.simulateMessage({
+        type: "terminal_output",
+        terminal_id: "row-1",
+        attachment_id: null,
+        data: "should-not-route",
+      });
+      ws.simulateMessage({
+        type: "terminal_output",
+        terminal_id: "row-1",
+        data: "also-not-route",
+      });
+    });
+
+    expect(received).toEqual([["att-1", "hello"]]);
+  });
+
   it("test_terminal_list_follows_pages", () => {
     const { result } = renderHook(() => useTmuxSessions());
     const ws = mockWs.instances[0];

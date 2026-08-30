@@ -510,14 +510,13 @@ export function useTmuxSessions(
           break;
         }
 
-        case "terminal_output":
-          if (outputCallbackRef.current) {
-            outputCallbackRef.current(
-              (data.attachment_id as string) || (data.terminal_id as string),
-              data.data as string,
-            );
+        case "terminal_output": {
+          const attachmentId = data.attachment_id;
+          if (outputCallbackRef.current && typeof attachmentId === "string") {
+            outputCallbackRef.current(attachmentId, data.data as string);
           }
           break;
+        }
       }
     },
     [
