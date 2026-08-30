@@ -135,6 +135,11 @@ async def test_consumers_resolve_project_instance_by_id() -> None:
         },
     )
     _assert_project_id(github_manager, "call_tool")
+    github_manager.calls.clear()
+    unknown = await handler._call_external_mcp("missing-server", "ping", {})
+    assert unknown["success"] is False
+    assert unknown["error_code"] == "SERVER_NOT_FOUND"
+    assert github_manager.method_ids("call_tool") == []
 
     ctx = SimpleNamespace(mcp_manager=github_manager, project_id=PROJECT_ID)
     github_manager.calls.clear()

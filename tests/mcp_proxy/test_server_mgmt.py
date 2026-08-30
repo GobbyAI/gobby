@@ -467,8 +467,8 @@ async def test_concurrent_add_same_name_and_scope_has_one_winner(
         )
 
     first, second = await asyncio.gather(
-        add({"TOKEN": "winner-token", "WINNER_ONLY": "keep"}),
-        add({"TOKEN": "loser-token", "LOSER_ONLY": "drop"}),
+        add({"TOKEN": "winner-token", "WINNER_TOKEN": "keep"}),
+        add({"TOKEN": "loser-token", "LOSER_TOKEN": "drop"}),
     )
     results = [first, second]
     winners = [item for item in results if item.get("success") is True]
@@ -484,6 +484,22 @@ async def test_concurrent_add_same_name_and_scope_has_one_winner(
     stored = storage.get_server("shared-name", project_id)
     assert stored is not None
     stored_env = stored.env or {}
-    assert ("WINNER_ONLY" in stored_env) != ("LOSER_ONLY" in stored_env)
-    loser_token = "loser-token" if "WINNER_ONLY" in stored_env else "winner-token"
-    assert loser_token not in str(stored_env)
+    from gobby.storage.secrets import SecretStore
+
+    store = SecretStore(temp_db)
+    secret_rows = temp_db.fetchall(
+        "SELECT name, description FROM secrets WHERE project_id = %s",
+        (project_id,),
+    )
+    managed = [
+        row
+        for row in secret_rows
+        if str(row.get("description") or "").startswith("Gobby-managed MCP secret:")
+    ]
+    plain_values = {store.get(str(row["name"]), project_id=project_id) for row in managed}
+    winner_kept_extra = "WINNER_TOKEN" in str(stored_env)
+    assert winner_kept_extra != ("LOSER_TOKEN" in str(stored_env))
+    if winner_kept_extra:
+        assert plain_values == {"winner-token", "keep"}
+    else:
+        assert plain_values == {"loser-token", "drop"}

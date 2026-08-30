@@ -4,18 +4,21 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import ConnectionState, MCPServerConfig
+from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.mcp_proxy.services.server_resolution import (
     ProjectScopeUnresolvedError,
     resolve_request_scope,
 )
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
+from gobby.servers.routes.mcp.endpoints.execution import call_mcp_tool
 from gobby.storage.projects import GLOBAL_PROJECT_ID
+from gobby.utils.session_context import SeededContextTokens
 
 pytestmark = pytest.mark.unit
 
@@ -234,7 +237,8 @@ async def test_scope_resolution_matrix() -> None:
         assert GLOBAL_SERVER_ID in dispatched
 
 
-def test_resolve_request_scope_is_total_over_explicit_inputs() -> None:
+@pytest.mark.asyncio
+async def test_resolve_request_scope_is_total_over_explicit_inputs() -> None:
     fallback = "fallback-project"
     exists = {"known-project": True}
 
@@ -314,6 +318,60 @@ def test_resolve_request_scope_is_total_over_explicit_inputs() -> None:
             fallback_project_id=fallback,
             project_exists=project_exists,
         )
+
+    mcp_fallbacks: list[str] = []
+    http_fallbacks: list[str] = []
+    real = resolve_request_scope
+
+    def mcp_spy(**kwargs: Any) -> str:
+        mcp_fallbacks.append(str(kwargs["fallback_project_id"]))
+        return real(**kwargs)
+
+    def http_spy(**kwargs: Any) -> str:
+        http_fallbacks.append(str(kwargs["fallback_project_id"]))
+        return real(**kwargs)
+
+    tools = GobbyDaemonTools(
+        mcp_manager=as_mcp(RecordingManager([], project_id=None)),
+        daemon_port=1,
+        websocket_port=2,
+        start_time=0.0,
+        internal_manager=MagicMock(),
+        db=None,
+    )
+    with (
+        patch("gobby.utils.project_context.get_project_context", return_value={"id": fallback}),
+        patch(
+            "gobby.mcp_proxy.services.server_resolution.resolve_request_scope",
+            side_effect=mcp_spy,
+        ),
+    ):
+        await tools.list_mcp_servers()
+    assert fallback in mcp_fallbacks
+
+    request = MagicMock()
+    request.json = AsyncMock(
+        return_value={"server_name": "github", "tool_name": "ping", "arguments": {}}
+    )
+    request.headers = {}
+    http_server = MagicMock()
+    http_server.tool_proxy = MagicMock()
+    http_server.tool_proxy.call_tool = AsyncMock(return_value={"success": True})
+    http_server._internal_manager = None
+    http_server.mcp_manager = None
+    with (
+        patch(
+            "gobby.servers.routes.mcp.endpoints.request_context._set_context_for_request",
+            AsyncMock(return_value=SeededContextTokens()),
+        ),
+        patch(
+            "gobby.servers.routes.mcp.endpoints.execution.resolve_request_scope",
+            side_effect=http_spy,
+        ),
+    ):
+        await call_mcp_tool(request, http_server)
+    assert http_fallbacks == [GLOBAL_PROJECT_ID]
+    assert mcp_fallbacks != http_fallbacks
 
 
 # tdd-pin: 4.2 named module-level nodeids for close-gate red/green evidence

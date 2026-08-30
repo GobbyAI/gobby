@@ -14,6 +14,10 @@ from fastapi import Depends, HTTPException, Request
 
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
+from gobby.mcp_proxy.services.server_resolution import (
+    ProjectScopeUnresolvedError,
+    resolve_request_scope,
+)
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
@@ -22,6 +26,7 @@ from gobby.mcp_proxy.wait_tools import (
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
 from gobby.servers.routes.mcp.endpoints import request_context
 from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 from gobby.utils.datetime import to_json_safe
 from gobby.utils.session_context import get_current_session_id
@@ -71,6 +76,19 @@ def _success_response_payload(result: Any, response_time_ms: float) -> dict[str,
             "result": result,
             "response_time_ms": response_time_ms,
         }
+    )
+
+
+def _http_request_scope(ctx_token: Any, body: Any) -> str:
+    """Sessionless HTTP fallback is always the global project."""
+    payload = body if isinstance(body, dict) else {}
+    raw_project_id = payload.get("project_id")
+    raw_scope = payload.get("scope")
+    return resolve_request_scope(
+        session_project_id=getattr(ctx_token, "resolved_project_id", None),
+        project_id=raw_project_id if isinstance(raw_project_id, str) else None,
+        scope=raw_scope if isinstance(raw_scope, str) else None,
+        fallback_project_id=GLOBAL_PROJECT_ID,
     )
 
 
@@ -590,6 +608,17 @@ async def call_mcp_tool(
         # InternalToolRegistry.call strips unknown kwargs via signature inspection.
         try:
             timeout = _mcp_call_timeout(server)
+            try:
+                scope_project = _http_request_scope(ctx_token, body)
+            except ProjectScopeUnresolvedError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "success": False,
+                        "error": str(exc),
+                        "error_code": exc.error_code,
+                    },
+                ) from exc
             # Route through ToolProxyService for consistent error enrichment
             if server.tool_proxy:
                 result = await server.tool_proxy.call_tool(
@@ -600,6 +629,7 @@ async def call_mcp_tool(
                     timeout=timeout,
                     wrapper_originated=True,
                     intent=intent,
+                    project_id=scope_project,
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
@@ -697,6 +727,17 @@ async def mcp_proxy(
         ctx_token = await request_context._set_context_for_request(server, arguments, request)
         try:
             timeout = _mcp_call_timeout(server)
+            try:
+                scope_project = _http_request_scope(ctx_token, arguments)
+            except ProjectScopeUnresolvedError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "success": False,
+                        "error": str(exc),
+                        "error_code": exc.error_code,
+                    },
+                ) from exc
             # Route through ToolProxyService for consistent error enrichment
             if server.tool_proxy:
                 result = await server.tool_proxy.call_tool(
@@ -707,6 +748,7 @@ async def mcp_proxy(
                     timeout=timeout,
                     wrapper_originated=True,
                     intent=intent,
+                    project_id=scope_project,
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)

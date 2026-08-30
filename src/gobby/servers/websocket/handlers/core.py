@@ -68,7 +68,13 @@ class HandlerMixin:
         )
         server_id = resolved_server_id(self.mcp_manager, mcp_name, project_id=str(project_id))
         if server_id is None:
-            return await self.mcp_manager.call_tool(mcp_name, tool_name=tool_name, arguments=args)
+            return {
+                "success": False,
+                "error": f"Server '{mcp_name}' not found in project scope {project_id}",
+                "error_code": "SERVER_NOT_FOUND",
+                "server_name": mcp_name,
+                "tool_name": tool_name,
+            }
         return await self.mcp_manager.call_tool(server_id, tool_name=tool_name, arguments=args)
 
     async def _handle_tool_call(self, websocket: Any, data: dict[str, Any]) -> None:

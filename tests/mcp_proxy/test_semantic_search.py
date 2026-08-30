@@ -1114,14 +1114,40 @@ async def test_scoped_payload_backfill_rewrites_legacy_points_once(
         ],
     )
     config_store = _Store()
+    from gobby.runner_init.mcp_stack import init_mcp_stack
 
-    first = await maybe_backfill_scoped_tool_embeddings(
-        search,
-        manager,
-        config_store=config_store,
-        vector_store=mock_vs,
+    scheduled: list[Any] = []
+    from gobby.runner import GobbyRunner
+
+    runner = cast(
+        GobbyRunner,
+        SimpleNamespace(
+            database=temp_db,
+            startup_config=SimpleNamespace(logging=SimpleNamespace()),
+            mcp_db_manager=None,
+            mcp_proxy=None,
+            metrics_event_store=None,
+            metrics_manager=None,
+            semantic_search=search,
+            config_store=config_store,
+        ),
     )
+    with (
+        patch("gobby.runner_init.mcp_stack.LocalMCPManager", return_value=MagicMock()),
+        patch("gobby.runner_init.mcp_stack.MCPClientManager", return_value=manager),
+        patch("gobby.runner_init.mcp_stack.ToolMetricsManager"),
+        patch("gobby.runner_init.mcp_stack.MetricsEventStore"),
+        patch("gobby.runner_init.mcp_stack.resolved_log_path", return_value="/tmp/gobby.log"),
+        patch("asyncio.get_running_loop", side_effect=RuntimeError("no loop")),
+        patch("asyncio.run", side_effect=scheduled.append),
+    ):
+        init_mcp_stack(runner)
+    assert scheduled
+    first = await scheduled[0]
     assert first["rewritten"] is True
+    mock_vs.delete_many.assert_awaited()
+    deleted_ids = mock_vs.delete_many.await_args.args[0]
+    assert "legacy-tool" in deleted_ids
     assert stored["legacy-tool"]["server_id"] == "id-project"
     assert stored["legacy-tool"]["server_name"] == "github"
     assert stored["legacy-tool"]["project_id"] == project_id
