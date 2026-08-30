@@ -17,21 +17,31 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 411);
+    assert_eq!(identity.latest_asset.version, 412);
     assert_eq!(
         identity.latest_asset.filename,
-        "411_terminals.sql"
+        "412_mcp_templates_project_secrets.sql"
     );
     assert_eq!(
         identity.latest_asset.checksum,
-        "d70abddeec801fab9845861c18610efcb0ecb7b84b2eec9d27e78ac2ae5ed34a"
+        "f126ac50673377e92ef8a157410ed6fce1c5f386f7c1b733dca1e9f6121cf5c9"
     );
     assert_eq!(
         identity.root_hash,
-        "988afb7b02150b7d5e2fed3e90d81748522e38d3ec4af59d78d8a4345ba50ca8"
+        "dc02093a72253c617961f9f1f8f2e5755159c7a452f63b95390d42835ed053d3"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
+}
+
+#[test]
+fn latest_asset_is_mcp_templates_project_secrets_hop() {
+    let identity = schema_identity();
+    assert_eq!(identity.latest_asset.version, 412);
+    assert_eq!(
+        identity.latest_asset.filename,
+        "412_mcp_templates_project_secrets.sql"
+    );
 }
 
 #[test]

@@ -2193,6 +2193,46 @@
       "definition": "text|text|NO||NEVER"
     },
     {
+      "name": "mcp_server_templates.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "mcp_server_templates.definition",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
+      "name": "mcp_server_templates.definition_hash",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "mcp_server_templates.enabled",
+      "definition": "boolean|bool|NO|true|NEVER"
+    },
+    {
+      "name": "mcp_server_templates.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "mcp_server_templates.name",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "mcp_server_templates.owner",
+      "definition": "text|text|NO|'user'::text|NEVER"
+    },
+    {
+      "name": "mcp_server_templates.project_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "mcp_server_templates.source_path",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "mcp_server_templates.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
       "name": "mcp_servers.args",
       "definition": "jsonb|jsonb|YES||NEVER"
     },
@@ -2243,6 +2283,18 @@
     {
       "name": "mcp_servers.requires_oauth",
       "definition": "boolean|bool|YES|false|NEVER"
+    },
+    {
+      "name": "mcp_servers.runtime_hook",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "mcp_servers.template_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "mcp_servers.template_values",
+      "definition": "jsonb|jsonb|YES||NEVER"
     },
     {
       "name": "mcp_servers.transport",
@@ -3847,6 +3899,10 @@
     {
       "name": "secrets.name",
       "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "secrets.project_id",
+      "definition": "uuid|uuid|NO|'00000000-0000-0000-0000-000000000002'::uuid|NEVER"
     },
     {
       "name": "secrets.updated_at",
@@ -6675,12 +6731,24 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
+      "name": "mcp_server_templates.mcp_server_templates_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "mcp_server_templates.mcp_server_templates_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE"
+    },
+    {
       "name": "mcp_servers.mcp_servers_pkey",
       "definition": "PRIMARY KEY (id)"
     },
     {
       "name": "mcp_servers.mcp_servers_project_id_fkey",
       "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
+    },
+    {
+      "name": "mcp_servers.mcp_servers_template_id_fkey",
+      "definition": "FOREIGN KEY (template_id) REFERENCES mcp_server_templates(id) ON DELETE SET NULL"
     },
     {
       "name": "memories.memories_dream_action_check",
@@ -7083,12 +7151,12 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
-      "name": "secrets.secrets_name_key",
-      "definition": "UNIQUE (name)"
-    },
-    {
       "name": "secrets.secrets_pkey",
       "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "secrets.secrets_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE"
     },
     {
       "name": "session_feedback.session_feedback_disposition_nonblank",
@@ -8511,6 +8579,10 @@
       "definition": "CREATE INDEX idx_machines_owner_user_id ON $schema.machines USING btree (owner_user_id)"
     },
     {
+      "name": "idx_mcp_server_templates_name_project",
+      "definition": "CREATE UNIQUE INDEX idx_mcp_server_templates_name_project ON $schema.mcp_server_templates USING btree (name, project_id)"
+    },
+    {
       "name": "idx_mcp_servers_enabled",
       "definition": "CREATE INDEX idx_mcp_servers_enabled ON $schema.mcp_servers USING btree (enabled)"
     },
@@ -8525,6 +8597,10 @@
     {
       "name": "idx_mcp_servers_project_id",
       "definition": "CREATE INDEX idx_mcp_servers_project_id ON $schema.mcp_servers USING btree (project_id)"
+    },
+    {
+      "name": "idx_mcp_servers_template_id",
+      "definition": "CREATE INDEX idx_mcp_servers_template_id ON $schema.mcp_servers USING btree (template_id)"
     },
     {
       "name": "idx_me_created",
@@ -8777,6 +8853,10 @@
     {
       "name": "idx_secrets_category",
       "definition": "CREATE INDEX idx_secrets_category ON $schema.secrets USING btree (category)"
+    },
+    {
+      "name": "idx_secrets_name_project",
+      "definition": "CREATE UNIQUE INDEX idx_secrets_name_project ON $schema.secrets USING btree (name, project_id)"
     },
     {
       "name": "idx_session_feedback_session_created",
@@ -9179,6 +9259,10 @@
       "definition": "CREATE UNIQUE INDEX maintenance_epochs_pkey ON $schema.maintenance_epochs USING btree (id)"
     },
     {
+      "name": "mcp_server_templates_pkey",
+      "definition": "CREATE UNIQUE INDEX mcp_server_templates_pkey ON $schema.mcp_server_templates USING btree (id)"
+    },
+    {
       "name": "mcp_servers_pkey",
       "definition": "CREATE UNIQUE INDEX mcp_servers_pkey ON $schema.mcp_servers USING btree (id)"
     },
@@ -9349,10 +9433,6 @@
     {
       "name": "secret_key_material_pkey",
       "definition": "CREATE UNIQUE INDEX secret_key_material_pkey ON $schema.secret_key_material USING btree (id)"
-    },
-    {
-      "name": "secrets_name_key",
-      "definition": "CREATE UNIQUE INDEX secrets_name_key ON $schema.secrets USING btree (name)"
     },
     {
       "name": "secrets_pkey",
