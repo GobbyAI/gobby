@@ -38,6 +38,7 @@ from gobby.hooks.envelope_dedupe import (
     release_envelope_processing_claim,
 )
 from gobby.hooks.health_gate import DaemonNotReadyError
+from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
 from gobby.hooks.runtime_compat import (
     SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
     envelope_has_hook_response_capability,
@@ -367,6 +368,7 @@ def _attach_delivery_receipt(
     db: Any,
     envelope_id: str,
     session_id: str,
+    staged_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if db is None:
         return response
@@ -377,6 +379,7 @@ def _attach_delivery_receipt(
             db,
             session_id=session_id,
             envelope_id=envelope_id,
+            staged_payload=staged_payload,
         )
     except Exception:
         logger.warning(
@@ -442,6 +445,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         platform_session_id = ""
 
         def mark_processed_and_return(response: dict[str, Any]) -> dict[str, Any]:
+            staged_payload = response.get(STAGED_EFFECTS_FIELD)
             response = strip_private_startup_claim_fields(response)
             if envelope_id:
                 response = _attach_delivery_receipt(
@@ -454,6 +458,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         platform_session_id=platform_session_id,
                         envelope_id=envelope_id,
                     ),
+                    staged_payload=(staged_payload if isinstance(staged_payload, dict) else None),
                 )
             if envelope_id and owner_token:
                 try:

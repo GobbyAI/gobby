@@ -67,6 +67,7 @@ class TestHookReceiptLifecycle:
         assert receipt.delivery_generation == 1
         assert receipt.state == "prepared"
         assert receipt.session_id == session_id
+        assert receipt.staged_payload == {"context": "startup"}
 
     def test_acknowledge_commits_prepared_row(self, receipts_db: HubDatabase) -> None:
         receipts = _receipts()

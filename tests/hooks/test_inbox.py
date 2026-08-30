@@ -927,6 +927,78 @@ async def test_drain_consumes_delivery_receipt_without_posting(tmp_path: Path) -
     post.assert_not_awaited()
 
 
+def test_consume_delivery_receipt_applies_pending_message_marks(tmp_path: Path) -> None:
+    from gobby.hooks.inbox import _consume_inbox_delivery_receipt
+    from gobby.storage.hook_receipts import HookReceipt
+
+    path = tmp_path / "ack.json"
+    path.write_text("{}", encoding="utf-8")
+    processed_dir = tmp_path / "processed"
+    processed_dir.mkdir()
+    message_manager = MagicMock()
+    app = FastAPI()
+    app.state.database = object()
+    app.state.hook_manager = MagicMock()
+    app.state.hook_manager._inter_session_msg_manager = message_manager
+    receipt = HookReceipt(
+        receipt_id="r1",
+        original_envelope_id="env-1",
+        current_envelope_id="env-1",
+        session_id="recipient-session",
+        delivery_generation=1,
+        state="acknowledged",
+        staged_payload={
+            "pending_message_ids": ["msg-lossless"],
+            "pending_message_session_id": "recipient-session",
+        },
+    )
+    with patch(
+        "gobby.storage.hook_receipts.acknowledge_receipt",
+        return_value=receipt,
+    ):
+        _consume_inbox_delivery_receipt(
+            app,
+            _delivery_receipt_envelope(),
+            path,
+            "env-1",
+            processed_dir=processed_dir,
+        )
+
+    message_manager.mark_delivered_batch.assert_called_once_with(
+        ["msg-lossless"],
+        "recipient-session",
+    )
+    assert not path.exists()
+
+
+def test_consume_delivery_receipt_duplicate_ack_does_not_mark(tmp_path: Path) -> None:
+    from gobby.hooks.inbox import _consume_inbox_delivery_receipt
+
+    path = tmp_path / "ack.json"
+    path.write_text("{}", encoding="utf-8")
+    processed_dir = tmp_path / "processed"
+    processed_dir.mkdir()
+    message_manager = MagicMock()
+    app = FastAPI()
+    app.state.database = object()
+    app.state.hook_manager = MagicMock()
+    app.state.hook_manager._inter_session_msg_manager = message_manager
+    with patch(
+        "gobby.storage.hook_receipts.acknowledge_receipt",
+        return_value=None,
+    ):
+        _consume_inbox_delivery_receipt(
+            app,
+            _delivery_receipt_envelope(),
+            path,
+            "env-1",
+            processed_dir=processed_dir,
+        )
+
+    message_manager.mark_delivered_batch.assert_not_called()
+    assert not path.exists()
+
+
 def test_quarantine_prune_is_bounded(tmp_path: Path) -> None:
     import gobby.hooks.inbox as inbox
 

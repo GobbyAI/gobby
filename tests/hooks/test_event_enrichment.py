@@ -126,9 +126,10 @@ class TestPiggybackEventTypes:
 
         assert response.context is not None
         assert "Turn-start message" in response.context
-        enricher._inter_session_msg_manager.mark_delivered_batch.assert_called_once_with(
-            ["msg-1"], "sess-abc"
-        )
+        enricher._inter_session_msg_manager.mark_delivered_batch.assert_not_called()
+        staged = response.metadata["_gobby_staged_effects"]
+        assert staged["pending_message_ids"] == ["msg-1"]
+        assert staged["pending_message_session_id"] == "sess-abc"
 
     def test_piggyback_skips_session_start(self) -> None:
         """SESSION_START should NOT trigger piggyback delivery."""
@@ -245,22 +246,17 @@ class TestMessageDeliveryOrdering:
         enricher._inter_session_msg_manager.mark_delivered_batch.assert_not_called()
         assert response.context is None
 
-    def test_mark_failure_warns_and_leaves_attached_message(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_attached_message_is_not_marked_at_enrich_time(self) -> None:
         msg = _make_msg()
         enricher = _make_enricher([msg])
-        enricher._inter_session_msg_manager.mark_delivered_batch.side_effect = RuntimeError(
-            "database unavailable"
-        )
         response = HookResponse()
 
-        with caplog.at_level("WARNING", logger="gobby.hooks.event_enrichment"):
-            enricher.enrich(_make_event(HookEventType.BEFORE_AGENT), response)
+        enricher.enrich(_make_event(HookEventType.BEFORE_AGENT), response)
 
         assert response.context is not None
         assert "hello" in response.context
-        assert "Failed to mark piggyback messages delivered" in caplog.text
+        enricher._inter_session_msg_manager.mark_delivered_batch.assert_not_called()
+        assert response.metadata["_gobby_staged_effects"]["pending_message_ids"] == ["msg-1"]
 
 
 class TestUrgentPriority:

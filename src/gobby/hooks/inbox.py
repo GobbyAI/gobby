@@ -33,6 +33,7 @@ from gobby.hooks.envelope_dedupe import (
     release_envelope_processing_claim,
     remove_envelope_marker,
 )
+from gobby.hooks.receipt_effects import apply_acknowledged_receipt
 from gobby.hooks.runtime_compat import (
     SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
     envelope_has_hook_response_capability,
@@ -153,17 +154,22 @@ def _consume_inbox_delivery_receipt(
     receipt_id = envelope.get("receipt_id")
     generation = envelope.get("delivery_generation")
     state = getattr(app, "state", None)
+    hook_manager = getattr(state, "hook_manager", None)
     db = getattr(state, "database", None)
     if db is None:
-        hook_manager = getattr(state, "hook_manager", None)
         db = getattr(hook_manager, "db", None)
     if db is not None and isinstance(receipt_id, str) and isinstance(generation, int):
         try:
-            acknowledge_receipt(
+            committed = acknowledge_receipt(
                 db,
                 receipt_id=receipt_id,
                 delivery_generation=generation,
             )
+            if committed is not None:
+                apply_acknowledged_receipt(
+                    committed,
+                    message_manager=getattr(hook_manager, "_inter_session_msg_manager", None),
+                )
         except Exception as exc:
             logger.warning(
                 "Failed to consume delivery receipt %s generation %s: %s",

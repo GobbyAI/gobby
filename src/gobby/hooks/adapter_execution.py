@@ -15,6 +15,7 @@ from gobby.hooks.envelope_dedupe import (
     release_envelope_processing_claim,
     renew_envelope_processing_lease,
 )
+from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, take_worker_staging
 from gobby.workflows.hooks import WorkflowEvaluationTimeout
 
 logger = logging.getLogger(__name__)
@@ -96,8 +97,15 @@ async def run_adapter_hook(
     def run_adapter() -> dict[str, Any]:
         nonlocal started_at, finished_at
         started_at = time.perf_counter()
+        take_worker_staging()
         try:
-            return cast(dict[str, Any], adapter.handle_native(payload, hook_manager))
+            result = cast(dict[str, Any], adapter.handle_native(payload, hook_manager))
+            staged = take_worker_staging()
+            if not staged:
+                return result
+            attached = dict(result) if isinstance(result, dict) else {}
+            attached[STAGED_EFFECTS_FIELD] = staged
+            return attached
         finally:
             finished_at = time.perf_counter()
 

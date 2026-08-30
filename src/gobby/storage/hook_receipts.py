@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
@@ -46,10 +47,21 @@ class HookReceipt:
     staged_payload: dict[str, Any]
 
 
+def _payload_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
 def _row_to_receipt(row: Any) -> HookReceipt:
-    payload = row["staged_payload"]
-    if not isinstance(payload, dict):
-        payload = {}
+    payload = _payload_dict(row["staged_payload"])
     state = row["state"]
     return HookReceipt(
         receipt_id=str(row["receipt_id"]),
@@ -120,13 +132,6 @@ def acknowledge_receipt(
             (now, receipt_id, delivery_generation, cutoff),
         ).fetchone()
     if row is None:
-        existing = _get_receipt(db, receipt_id)
-        if (
-            existing is not None
-            and existing.state == "acknowledged"
-            and existing.delivery_generation == delivery_generation
-        ):
-            return existing
         return None
     return _row_to_receipt(row)
 
@@ -233,12 +238,3 @@ def prune_hook_receipts(
         deleted=deleted,
         truncated=deleted == limit,
     )
-
-
-def _get_receipt(db: HubDatabase, receipt_id: str) -> HookReceipt | None:
-    with db.transaction() as conn:
-        row = conn.execute(
-            f"SELECT {_RECEIPT_COLUMNS} FROM hook_receipt_effects WHERE receipt_id = %s",
-            (receipt_id,),
-        ).fetchone()
-    return _row_to_receipt(row) if row is not None else None

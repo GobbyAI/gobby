@@ -13,6 +13,7 @@ _PRIVATE_RESPONSE_KEYS = frozenset(
     {
         "_gobby_startup_claim",
         "_gobby_session_hint_error",
+        "_gobby_staged_effects",
         "owner_token",
         "startup_claim_generation",
         "receipt_id",

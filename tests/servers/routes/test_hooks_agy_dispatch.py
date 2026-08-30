@@ -994,6 +994,80 @@ class TestExecuteHookDeliveryReceipt:
         assert kwargs["envelope_id"] == "env-durable-1"
         assert kwargs["session_id"]
 
+    def test_durable_envelope_stages_pending_message_effects(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+        envelope = _agy_pre_invocation_envelope()
+        staged = {
+            "pending_message_ids": ["msg-lossless"],
+            "pending_message_session_id": "recipient-session",
+        }
+        receipt = SimpleNamespace(
+            receipt_id="receipt-staged-1",
+            original_envelope_id="env-staged-1",
+            delivery_generation=1,
+        )
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value={"decision": "allow", "_gobby_staged_effects": staged},
+            ),
+            patch(
+                "gobby.storage.hook_receipts.prepare_receipt",
+                return_value=receipt,
+            ) as prepare_receipt,
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: "env-staged-1"},
+                json=envelope,
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["decision"] == "allow"
+        assert "_gobby_staged_effects" not in body
+        assert body["_gobby_delivery_receipt"]["receipt_id"] == "receipt-staged-1"
+        prepare_receipt.assert_called_once()
+        assert prepare_receipt.call_args.kwargs["staged_payload"] == staged
+
+    def test_identity_less_strips_staged_effects_without_preparing(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+        envelope = _agy_pre_invocation_envelope()
+        staged = {
+            "pending_message_ids": ["msg-lossless"],
+            "pending_message_session_id": "recipient-session",
+        }
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value={"decision": "allow", "_gobby_staged_effects": staged},
+            ),
+            patch("gobby.storage.hook_receipts.prepare_receipt") as prepare_receipt,
+        ):
+            response = client.post("/api/hooks/execute", json=envelope)
+
+        assert response.status_code == 200
+        assert response.json() == {"decision": "allow"}
+        prepare_receipt.assert_not_called()
+
     def test_identity_less_direct_post_does_not_prepare_or_attach(
         self,
         session_storage: SessionManager,

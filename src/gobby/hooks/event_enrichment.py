@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING, Any
 from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
 from gobby.hooks import grok_pending_context
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.hooks.pending_messages import render_pending_messages
+from gobby.hooks.pending_messages import PendingMessageRenderResult, render_pending_messages
+from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, record_worker_staging
 
 # Only inject full session metadata (IDs, terminal context) on context-building
 # events, never on lifecycle events like Stop or per-tool events.
@@ -171,6 +172,10 @@ class EventEnricher:
         if not undelivered:
             return
 
+        rendered = render_pending_messages(
+            undelivered,
+            resolve_sender=self._resolve_sender_label,
+        )
         if event.source == SessionSource.GROK:
             grok_pending_context.enqueue_pending_messages(
                 self._session_manager,
@@ -178,12 +183,9 @@ class EventEnricher:
                 undelivered,
                 self._resolve_sender_label,
             )
+            self._stage_pending_messages(response, rendered, platform_session_id)
             return
 
-        rendered = render_pending_messages(
-            undelivered,
-            resolve_sender=self._resolve_sender_label,
-        )
         pending_context = rendered.context
         if not pending_context:
             return
@@ -191,17 +193,22 @@ class EventEnricher:
             response.context = f"{pending_context}\n\n{response.context}"
         else:
             response.context = pending_context
+        self._stage_pending_messages(response, rendered, platform_session_id)
 
-        try:
-            self._inter_session_msg_manager.mark_delivered_batch(
-                list(rendered.represented_message_ids),
-                platform_session_id,
-            )
-        except Exception:
-            logger.warning(
-                "Failed to mark piggyback messages delivered; they will be retried",
-                exc_info=True,
-            )
+    @staticmethod
+    def _stage_pending_messages(
+        response: HookResponse,
+        rendered: PendingMessageRenderResult,
+        platform_session_id: str,
+    ) -> None:
+        if not rendered.represented_message_ids:
+            return
+        staged = {
+            "pending_message_ids": list(rendered.represented_message_ids),
+            "pending_message_session_id": platform_session_id,
+        }
+        response.metadata[STAGED_EFFECTS_FIELD] = staged
+        record_worker_staging(staged)
 
     @staticmethod
     def _hook_supports_context(event: HookEvent) -> bool:
