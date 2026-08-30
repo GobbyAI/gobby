@@ -48,5 +48,28 @@ noted).
 5. Write a one-or-two-sentence `digest_note` per cluster for the human digest:
    what the cluster says and what, if anything, was proposed.
 
-Return JSON matching the provided schema. Do not invent observation ids, task
-refs, or behavior beyond the evidence.
+## Output
+
+Return strict JSON only, exactly this shape:
+
+{
+  "clusters": [
+    {
+      "observation_ids": ["b3d2…", "9f41…"],
+      "theme": "close_task reruns validation after every retry",
+      "classification": "defect",
+      "proposed_task": {
+        "title": "Cache close-gate validation verdicts per evidence state",
+        "description": "Two sessions observed …",
+        "labels": ["feedback-review"],
+        "priority": 1
+      },
+      "digest_note": "Close gates re-ran validation on unchanged evidence; a caching task is proposed."
+    }
+  ]
+}
+
+Every cluster requires `observation_ids`, `theme` (a short specific phrase naming
+the underlying behavior), `classification`, and `digest_note`; `proposed_task`
+is null when no task is warranted. Do not add other keys. Do not invent
+observation ids, task refs, or behavior beyond the evidence.

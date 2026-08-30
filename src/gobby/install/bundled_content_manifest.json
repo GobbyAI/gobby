@@ -38,7 +38,7 @@
     "prompts/features/skill_description.md": "4a4451901ef94d6204241f77f6c2cd48e21d4cb5748cdf86d89501ef50167e02",
     "prompts/features/tool_summary.md": "1f53a5049fa9d3e31fd6160058bcc7e6619a4ae357af555f57d7aa89a9eba7b5",
     "prompts/features/tool_summary_system.md": "15f9c43b70f579ab5c03496ef160a2869ba8adbbe9627f96007577bf5bde5aa0",
-    "prompts/feedback/review.md": "0f03137efb5ac8f99349ef9381fcdf195e8026e924e60e17563450e5e87823d9",
+    "prompts/feedback/review.md": "e58b23a71b5d5f70d8272cdd11f0585bc061df9369697b20225b7d5d48750aa1",
     "prompts/handoff/session_end.md": "8b747ddb1b4ea714584d2b1d2844aeee269bbb310daf60588379f0ca9368b72b",
     "prompts/import/github_fetch.md": "f354de54d8e699f1d1127eb7caccbd97da02a05f3119b735c31e53f103394941",
     "prompts/import/search_fetch.md": "c4e02d306fe15537ccc7a75b3f1d0f73e0a4d5a5e2cd3f1a95f5a1feda4a41cc",
