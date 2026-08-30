@@ -10,10 +10,6 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass
 
-AGY_UNAVAILABLE_REASON = (
-    "AGY has no documented machine transport for live web chat or agent spawning yet."
-)
-
 
 @dataclass(frozen=True)
 class ProviderMetadata:
@@ -67,10 +63,6 @@ _PROVIDERS: tuple[ProviderMetadata, ...] = (
         "AGY",
         # AGY retains the upstream CLI's historical config-directory name.
         ".gemini",
-        supports_web_chat=False,
-        supports_agent_spawn=False,
-        live_model_discovery=False,
-        unavailable_reason=AGY_UNAVAILABLE_REASON,
     ),
 )
 

@@ -53,3 +53,9 @@ def test_provider_metadata_preserves_order_and_live_api_metadata() -> None:
     assert metadata["installed"] is True
     assert metadata["supports_web_chat"] is True
     assert "user_directory" not in metadata
+
+    agy = entries[-1]
+    assert agy.supports_web_chat is True
+    assert agy.supports_agent_spawn is True
+    assert agy.live_model_discovery is True
+    assert agy.unavailable_reason is None

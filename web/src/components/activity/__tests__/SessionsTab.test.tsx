@@ -15,6 +15,7 @@ import {
 import { SessionsTab } from "../SessionsTab";
 import { defaultSessionsFilters } from "../sessionsFilters";
 import { useActivityPanel } from "../useActivityPanel";
+import { providerNamesFromRegistry } from "../useSessionProviderOptions";
 import { TerminalTab } from "../terminal/TerminalTab";
 import {
   createMockFetch,
@@ -508,6 +509,18 @@ describe("SessionsTab", () => {
     vi.restoreAllMocks();
   });
 
+  it("omits unavailable AGY while preserving historical providers", () => {
+    expect(
+      providerNamesFromRegistry({
+        providers: [
+          { name: "qwen", available: false },
+          { name: "agy", available: false },
+          { name: "codex", available: true },
+        ],
+      }),
+    ).toEqual(["qwen", "codex"]);
+  });
+
   it("names the scoped project in the unfiltered empty state", async () => {
     render(<SessionsTab sessions={[]} projectName="Personal" />);
     expect(
@@ -550,7 +563,7 @@ describe("SessionsTab", () => {
     });
     const lastFilterChange =
       onFiltersChange.mock.calls[onFiltersChange.mock.calls.length - 1][0];
-    expect(Array.from(lastFilterChange.providers)).toEqual(["codex"]);
+    expect(Array.from(lastFilterChange.providers)).toEqual(["codex", "agy"]);
 
     fireEvent.click(screen.getByRole("button", { name: "Filter sessions" }));
     expect(screen.getByLabelText("Codex")).toBeInTheDocument();
@@ -558,8 +571,7 @@ describe("SessionsTab", () => {
     expect(screen.queryByLabelText("Cron")).toBeNull();
     expect(screen.queryByLabelText("Pipeline")).toBeNull();
     expect(screen.queryByLabelText("System")).toBeNull();
-    // AGY is hidden throughout the UI and never offered as a filter (#20049).
-    expect(screen.queryByLabelText("AGY")).toBeNull();
+    expect(screen.getByLabelText("AGY")).toBeInTheDocument();
 
     rerender(
       <SessionsTab

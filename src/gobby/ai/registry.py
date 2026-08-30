@@ -141,6 +141,10 @@ class CapabilityBinding:
     _available: bool = field(repr=False)
     _reason: str | None = field(default=None, repr=False)
     _availability_probe: Callable[[], bool] | None = field(default=None, repr=False)
+    _unavailable_reason_probe: Callable[[], str | None] | None = field(
+        default=None,
+        repr=False,
+    )
     _availability_probe_ttl_seconds: float = field(default=PROVIDER_INSTALL_PROBE_TTL_SECONDS)
     _availability_checked_at: float | None = field(default=None, repr=False, compare=False)
     _availability_probe_result: bool | None = field(default=None, repr=False, compare=False)
@@ -157,6 +161,7 @@ class CapabilityBinding:
         strict_models: bool = False,
         metadata: Mapping[str, Any] | None = None,
         availability_probe: Callable[[], bool] | None = None,
+        unavailable_reason_probe: Callable[[], str | None] | None = None,
         availability_probe_ttl_seconds: float | None = None,
     ) -> None:
         normalized_capability = normalize_capability(capability)
@@ -181,6 +186,7 @@ class CapabilityBinding:
         object.__setattr__(self, "_available", available)
         object.__setattr__(self, "_reason", normalized_reason)
         object.__setattr__(self, "_availability_probe", availability_probe)
+        object.__setattr__(self, "_unavailable_reason_probe", unavailable_reason_probe)
         object.__setattr__(
             self,
             "_availability_probe_ttl_seconds",
@@ -249,6 +255,17 @@ class CapabilityBinding:
         """Return current unavailable reason, clearing stale install errors when available."""
         if self.available:
             return None
+        reason_probe = self._unavailable_reason_probe
+        if reason_probe is not None:
+            try:
+                return reason_probe() or self._reason
+            except Exception as exc:
+                logger.warning(
+                    "AI capability reason probe failed for %s/%s: %s",
+                    self.provider,
+                    self.capability.value,
+                    exc,
+                )
         return self._reason
 
     def supports_model(self, model: str | None) -> bool:

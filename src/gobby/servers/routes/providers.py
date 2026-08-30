@@ -27,6 +27,7 @@ from gobby.servers.local_provider_models import (
 from gobby.servers.provider_model_defaults import AGY_MODELS
 
 if TYPE_CHECKING:
+    from gobby.providers.version_gate import AgySupportRecord
     from gobby.servers.http import HTTPServer
 
 _PROVIDER_DEFS = [(entry.provider, entry.binary) for entry in provider_metadata()]
@@ -140,10 +141,11 @@ def _pending_snapshot_payload() -> dict[str, Any]:
     }
 
 
-def _agy_snapshot_payload() -> dict[str, Any]:
-    from gobby.providers.version_gate import peek_agy_support
+def _agy_snapshot_payload(record: AgySupportRecord | None = None) -> dict[str, Any]:
+    if record is None:
+        from gobby.providers.version_gate import peek_agy_support
 
-    record = peek_agy_support()
+        record = peek_agy_support()
     return {
         "models": [
             {key: value for key, value in model.items() if key != "effort_display"}
@@ -246,11 +248,14 @@ def _provider_health(
     server: HTTPServer | None,
     provider: str,
     path: str | None,
+    agy_support: AgySupportRecord | None = None,
 ) -> tuple[bool, str | None]:
     """Resolve provider availability using runtime backend health when available."""
     meta = _PROVIDER_META.get(provider)
     if meta and not meta.supports_web_chat:
         return False, meta.unavailable_reason
+    if agy_support is not None and (path is None or not agy_support.supported):
+        return False, agy_support.reason
 
     runtime_manager = getattr(getattr(server, "services", None), "web_chat_runtime_manager", None)
     if runtime_manager is None:
@@ -275,7 +280,11 @@ async def _probe_providers() -> list[tuple[str, str | None]]:
     return [(name, path) for (name, _binary), path in zip(_PROVIDER_DEFS, paths, strict=False)]
 
 
-def _provider_metadata_fields(name: str, path: str | None) -> dict[str, Any]:
+def _provider_metadata_fields(
+    name: str,
+    path: str | None,
+    agy_support: AgySupportRecord | None = None,
+) -> dict[str, Any]:
     meta = _PROVIDER_META[name]
     return {
         "display_name": meta.display_name,
@@ -284,8 +293,20 @@ def _provider_metadata_fields(name: str, path: str | None) -> dict[str, Any]:
         "deprecation_message": meta.deprecation_message,
         "supports_web_chat": meta.supports_web_chat,
         "supports_agent_spawn": meta.supports_agent_spawn,
-        "unavailable_reason": meta.unavailable_reason,
+        "unavailable_reason": (
+            agy_support.reason if agy_support is not None and not agy_support.supported else None
+        )
+        if name == "agy"
+        else meta.unavailable_reason,
     }
+
+
+def _agy_support_record(name: str) -> AgySupportRecord | None:
+    if name != "agy":
+        return None
+    from gobby.providers.version_gate import peek_agy_support
+
+    return peek_agy_support()
 
 
 def _configured_endpoints(
@@ -356,14 +377,15 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
         probed = await _probe_providers()
         providers = []
         for name, path in probed:
-            available, startup_error = _provider_health(server, name, path)
+            agy_support = _agy_support_record(name)
+            available, startup_error = _provider_health(server, name, path, agy_support)
             providers.append(
                 {
                     "name": name,
                     "available": available,
                     "path": path,
                     "startup_error": startup_error,
-                    **_provider_metadata_fields(name, path),
+                    **_provider_metadata_fields(name, path, agy_support),
                 }
             )
         providers.extend(_configured_endpoint_provider_entries(server))
@@ -389,9 +411,10 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
         codex_available = False
         codex_unavailable_reason: str | None = None
         for name, path in probed:
-            available, startup_error = _provider_health(server, name, path)
+            agy_support = _agy_support_record(name)
+            available, startup_error = _provider_health(server, name, path, agy_support)
             if name == "agy":
-                capability_payload = _agy_snapshot_payload()
+                capability_payload = _agy_snapshot_payload(agy_support)
             else:
                 snapshot = (
                     capability_service.get_provider_snapshot(name)
@@ -407,7 +430,7 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
                 "provider": name,
                 "available": available,
                 "startup_error": startup_error,
-                **_provider_metadata_fields(name, path),
+                **_provider_metadata_fields(name, path, agy_support),
                 **capability_payload,
             }
             if name == "codex":

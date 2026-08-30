@@ -65,7 +65,6 @@ _DROID_FACTORY_ALLOWED_PLUGIN_DIRS = frozenset({("plugins", "marketplaces")})
 _DROID_FACTORY_ALLOWED_FILE_KEYWORDS = frozenset(
     {"auth", "cert", "config", "credential", "hint", "host", "mcp", "setting", "token"}
 )
-_AGY_ERROR_STDOUT_PREFIX = "Error:"
 
 
 def _extend_reasoning_args(command: list[str], provider: str, reasoning_effort: str | None) -> None:
@@ -513,8 +512,6 @@ def _validate_agy_stdout(stdout: str) -> str:
     text = stdout.strip()
     if not text:
         raise RuntimeError("AGY CLI returned empty stdout")
-    if text.startswith(_AGY_ERROR_STDOUT_PREFIX):
-        raise RuntimeError(f"AGY CLI failed: {text}")
     return text
 
 

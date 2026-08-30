@@ -51,11 +51,8 @@ const ENDPOINT_LABELS: Record<string, string> = {
   vllm: "vLLM",
 };
 
-// Providers that must never be offered as a choice anywhere in the web UI
-// (filters, pickers, spawn forms). Existing sessions from these providers
-// still render with their labels/badges. AGY is hidden until fully supported
-// (#20049).
-const HIDDEN_PROVIDERS = new Set(["agy"]);
+// Providers that must never be offered as a choice anywhere in the web UI.
+const HIDDEN_PROVIDERS = new Set<string>();
 
 export function isHiddenProvider(value?: string | null): boolean {
   return value ? HIDDEN_PROVIDERS.has(value.toLowerCase()) : false;
@@ -96,7 +93,9 @@ export async function fetchProviderModelCatalog(): Promise<
           .filter(isProviderModelEntry)
           .map(mapProviderModelEntry)
           .filter(
-            (entry: ProviderModelEntry) => !isHiddenProvider(entry.provider),
+            (entry: ProviderModelEntry) =>
+              !isHiddenProvider(entry.provider) &&
+              (entry.provider.toLowerCase() !== "agy" || entry.available),
           );
         cachedModels = validModels;
         cachedModelsTimestamp = now;

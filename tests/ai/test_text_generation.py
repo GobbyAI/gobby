@@ -4245,16 +4245,19 @@ def test_agy_cli_text_generate_adapter_rejects_blank_explicit_model() -> None:
 
 
 @pytest.mark.parametrize(
-    "stdout_bytes",
+    ("stdout_bytes", "stderr_bytes", "returncode", "error_match"),
     [
-        b"",
-        b"Error: timed out waiting for response\n",
+        (b"", b"", 0, "empty stdout"),
+        (b"partial output", b"quota exceeded", 2, "exit code 2: quota exceeded"),
     ],
 )
 @pytest.mark.asyncio
-async def test_agy_cli_text_generate_adapter_rejects_empty_or_error_stdout(
+async def test_agy_cli_text_generate_adapter_rejects_empty_or_failed_process_stdout(
     monkeypatch: pytest.MonkeyPatch,
     stdout_bytes: bytes,
+    stderr_bytes: bytes,
+    returncode: int,
+    error_match: str,
 ) -> None:
     async def fake_create_subprocess_exec(
         *command: str,
@@ -4265,13 +4268,38 @@ async def test_agy_cli_text_generate_adapter_rejects_empty_or_error_stdout(
         env: dict[str, str],
         start_new_session: bool,
     ) -> FakeProcess:
-        return FakeProcess(stdout_bytes)
+        return FakeProcess(stdout_bytes, stderr_bytes, returncode=returncode)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match=error_match):
         await adapter.generate(TextGenerationRequest(prompt="explain", model="gemini-3.5-flash"))
+
+
+@pytest.mark.asyncio
+async def test_agy_cli_text_generate_adapter_returns_error_prefixed_success_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_create_subprocess_exec(
+        *command: str,
+        stdin: int,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+        start_new_session: bool,
+    ) -> FakeProcess:
+        return FakeProcess(b"Error: this is model output\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
+
+    result = await adapter.generate(
+        TextGenerationRequest(prompt="explain", model="gemini-3.5-flash")
+    )
+
+    assert result == "Error: this is model output"
 
 
 @pytest.mark.asyncio

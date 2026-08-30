@@ -193,7 +193,8 @@ class TestProviderRoutes:
             assert providers["droid"]["available"] is False
             assert providers["droid"]["path"] is None
             assert providers["agy"]["available"] is False
-            assert providers["agy"]["supports_web_chat"] is False
+            assert providers["agy"]["supports_web_chat"] is True
+            assert providers["agy"]["supports_agent_spawn"] is True
 
     def test_all_providers_unavailable(self, client: TestClient) -> None:
         """All providers unavailable when no binaries found."""
@@ -204,8 +205,8 @@ class TestProviderRoutes:
                 assert p["available"] is False
                 assert p["path"] is None
 
-    def test_all_binaries_found_agy_still_unavailable(self, client: TestClient) -> None:
-        """All binaries are found while agy remains unavailable."""
+    def test_all_supported_binaries_are_available(self, client: TestClient) -> None:
+        """All binaries are available when AGY meets its version floor."""
         paths = {
             "claude": "/usr/local/bin/claude",
             "grok": "/usr/local/bin/grok",
@@ -214,19 +215,96 @@ class TestProviderRoutes:
             "droid": "/usr/local/bin/droid",
             "agy": "/usr/local/bin/agy",
         }
-        with patch(
-            "gobby.servers.routes.providers.shutil.which",
-            side_effect=lambda b: paths.get(b),
+        support = SimpleNamespace(
+            installed_version="1.1.18",
+            required_version="1.1.18",
+            supported=True,
+            reason="AGY 1.1.18 meets required version 1.1.18.",
+        )
+        with (
+            patch(
+                "gobby.servers.routes.providers.shutil.which",
+                side_effect=lambda binary: paths.get(binary),
+            ),
+            patch("gobby.providers.version_gate.peek_agy_support", return_value=support),
         ):
-            response = client.get("/api/providers")
-            data = response.json()
-            for p in data["providers"]:
-                assert p["available"] is (p["name"] != "agy")
-                assert p["path"] == paths[p["name"]]
-            providers = {p["name"]: p for p in data["providers"]}
-            assert set(providers) == set(paths)
-            assert providers["grok"]["supports_agent_spawn"] is True
-            assert providers["agy"]["unavailable_reason"]
+            providers = {p["name"]: p for p in client.get("/api/providers").json()["providers"]}
+
+        assert set(providers) == set(paths)
+        for name, provider in providers.items():
+            assert provider["available"] is True
+            assert provider["path"] == paths[name]
+        assert providers["grok"]["supports_agent_spawn"] is True
+        assert providers["agy"]["supports_web_chat"] is True
+        assert providers["agy"]["supports_agent_spawn"] is True
+        assert providers["agy"]["unavailable_reason"] is None
+
+    def test_agy_below_version_floor_is_unavailable(self, client: TestClient) -> None:
+        reason = "AGY 1.1.17 is installed; version 1.1.18 or newer is required."
+        support = SimpleNamespace(
+            installed_version="1.1.17",
+            required_version="1.1.18",
+            supported=False,
+            reason=reason,
+        )
+        with (
+            patch("gobby.servers.routes.providers.shutil.which", return_value="/usr/bin/agy"),
+            patch("gobby.providers.version_gate.peek_agy_support", return_value=support),
+        ):
+            providers = {p["name"]: p for p in client.get("/api/providers").json()["providers"]}
+            model_providers = {
+                p["provider"]: p for p in client.get("/api/providers/models").json()["providers"]
+            }
+
+        for provider in (providers["agy"], model_providers["agy"]):
+            assert provider["available"] is False
+            assert provider["supports_web_chat"] is True
+            assert provider["supports_agent_spawn"] is True
+            assert provider["unavailable_reason"] == reason
+        assert model_providers["agy"]["support"] == {
+            "installed_version": "1.1.17",
+            "required_version": "1.1.18",
+            "supported": False,
+            "reason": reason,
+        }
+
+    def test_agy_support_record_changes_are_visible_without_router_restart(
+        self,
+        client: TestClient,
+    ) -> None:
+        supported = SimpleNamespace(
+            installed_version="1.1.18",
+            required_version="1.1.18",
+            supported=True,
+            reason="AGY 1.1.18 meets required version 1.1.18.",
+        )
+        unsupported = SimpleNamespace(
+            installed_version="1.1.17",
+            required_version="1.1.18",
+            supported=False,
+            reason="AGY 1.1.17 is installed; version 1.1.18 or newer is required.",
+        )
+        current = {"record": supported}
+        with (
+            patch("gobby.servers.routes.providers.shutil.which", return_value="/usr/bin/agy"),
+            patch(
+                "gobby.providers.version_gate.peek_agy_support",
+                side_effect=lambda: current["record"],
+            ),
+        ):
+            first = {p["name"]: p for p in client.get("/api/providers").json()["providers"]}
+            current["record"] = unsupported
+            second = {p["name"]: p for p in client.get("/api/providers").json()["providers"]}
+            models = {
+                p["provider"]: p for p in client.get("/api/providers/models").json()["providers"]
+            }
+
+        assert first["agy"]["available"] is True
+        assert first["agy"]["unavailable_reason"] is None
+        assert second["agy"]["available"] is False
+        assert second["agy"]["unavailable_reason"] == unsupported.reason
+        assert models["agy"]["available"] is False
+        assert models["agy"]["support"]["installed_version"] == "1.1.17"
 
     def test_runtime_health_does_not_disable_lazy_acp_provider(self) -> None:
         app = FastAPI()
@@ -418,7 +496,8 @@ class TestProviderModelsRoute:
         }
         assert providers["agy"]["support"]["supported"] is False
         assert providers["agy"]["support"]["required_version"] == "1.1.18"
-        assert providers["agy"]["supports_web_chat"] is False
+        assert providers["agy"]["supports_web_chat"] is True
+        assert providers["agy"]["supports_agent_spawn"] is True
         assert providers["agy"]["available"] is False
         agy_by_id = {model["value"]: model for model in agy_models}
         assert "gemini-3.5-flash-low" not in agy_by_id

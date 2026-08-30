@@ -826,7 +826,41 @@ describe("providerModels", () => {
     await expect(fetchProviderModelCatalog()).resolves.toEqual([unknownEntry]);
   });
 
-  it("drops hidden providers from the catalog while keeping display support (#20049)", async () => {
+  it("keeps available AGY catalog entries and display support", async () => {
+    const codexEntry = {
+      provider: "codex",
+      available: true,
+      source: "live",
+      models: [{ value: "gpt-5.4", label: "GPT-5.4" }],
+    };
+    const agyEntry = {
+      provider: "agy",
+      available: true,
+      source: "live",
+      models: [{ value: "agy-1", label: "AGY 1" }],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          providers: [codexEntry, agyEntry],
+        }),
+      }),
+    );
+
+    await expect(fetchProviderModelCatalog()).resolves.toEqual([
+      codexEntry,
+      agyEntry,
+    ]);
+    expect(isHiddenProvider("agy")).toBe(false);
+    expect(isHiddenProvider("AGY")).toBe(false);
+    expect(isHiddenProvider("codex")).toBe(false);
+    expect(isHiddenProvider(null)).toBe(false);
+    expect(getProviderDisplayName("agy")).toBe("AGY");
+  });
+
+  it("drops unavailable AGY catalog entries", async () => {
     const codexEntry = {
       provider: "codex",
       available: true,
@@ -842,9 +876,9 @@ describe("providerModels", () => {
             codexEntry,
             {
               provider: "agy",
-              available: true,
-              source: "live",
-              models: [{ value: "agy-1", label: "AGY 1" }],
+              available: false,
+              source: "unsupported",
+              models: [],
             },
           ],
         }),
@@ -852,12 +886,6 @@ describe("providerModels", () => {
     );
 
     await expect(fetchProviderModelCatalog()).resolves.toEqual([codexEntry]);
-    // Rendering support for existing AGY sessions stays intact.
-    expect(isHiddenProvider("agy")).toBe(true);
-    expect(isHiddenProvider("AGY")).toBe(true);
-    expect(isHiddenProvider("codex")).toBe(false);
-    expect(isHiddenProvider(null)).toBe(false);
-    expect(getProviderDisplayName("agy")).toBe("AGY");
   });
 
   it("preserves nonblank execution-provider metadata and catalog identity", async () => {

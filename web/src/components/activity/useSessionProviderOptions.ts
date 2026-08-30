@@ -17,8 +17,11 @@ export function providerNamesFromRegistry(data: unknown): string[] {
       providers
         .map((provider) => {
           if (typeof provider !== "object" || provider === null) return "";
-          const name = (provider as { name?: unknown }).name;
-          return typeof name === "string" ? name.trim() : "";
+          const entry = provider as { name?: unknown; available?: unknown };
+          const name = typeof entry.name === "string" ? entry.name.trim() : "";
+          if (name.toLowerCase() === "agy" && entry.available !== true)
+            return "";
+          return name;
         })
         .filter(
           (name) =>

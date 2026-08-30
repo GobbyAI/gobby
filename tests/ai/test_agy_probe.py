@@ -1,8 +1,9 @@
 """Opt-in live probe: AGY as a primary text-gen candidate at feature_low/mid.
 
 Skipped unless ``GOBBY_RUN_AGY_PROBE=1`` (mirrors the ``GOBBY_RUN_AGY_MODELS_LIVE``
-live-models check in ``tests/servers/test_provider_models.py``). It spawns the real
-``agy`` CLI, so it is intentionally excluded from the default suite.
+drift check in
+``tests/providers/capabilities/collectors/test_providers_capabilities_collectors_agy.py``).
+It spawns the real ``agy`` CLI, so it is intentionally excluded from the default suite.
 
 Confirms AGY returns usable text and parseable JSON when it is the sole candidate,
 that ``reasoning_effort="auto"`` resolves to each base model's catalog default

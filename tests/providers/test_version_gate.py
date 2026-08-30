@@ -20,7 +20,6 @@ from gobby.ai import (
     build_daemon_tool_chat_service,
 )
 from gobby.config.app import DaemonConfig
-from gobby.providers import AGY_UNAVAILABLE_REASON
 from gobby.providers.version_gate import (
     AGY_REQUIRED_VERSION,
     AGY_REVALIDATING_REASON,
@@ -174,7 +173,7 @@ async def test_sync_consumers_do_not_reprobe_when_identity_is_unchanged(
         )
         web_chat = bindings.binding(AICapability.WEB_CHAT, "agy")
         assert web_chat is not None
-        assert web_chat.available is False
+        assert web_chat.available is True
         payload = _agy_snapshot_payload()
         assert payload["support"]["supported"] is True
         await ensure_agy_support()
@@ -381,7 +380,7 @@ async def test_peek_never_awaits_or_subprocesses_on_identity_mismatch(
 
 
 @pytest.mark.asyncio
-async def test_tool_chat_registry_sees_published_record_without_second_probe(
+async def test_agy_capability_registry_uses_published_support_record_without_second_probe(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -393,12 +392,25 @@ async def test_tool_chat_registry_sees_published_record_without_second_probe(
     service = build_daemon_tool_chat_service(DaemonConfig())
     web_chat = service.registry.binding(AICapability.WEB_CHAT, "agy")
     spawn = service.registry.binding(AICapability.AGENT_SPAWN, "agy")
+    tool_chat = service.registry.binding(AICapability.TOOL_CHAT, "agy")
+    vision = service.registry.binding(AICapability.VISION_EXTRACT, "agy")
     payload = _agy_snapshot_payload()
 
     assert web_chat is not None
     assert spawn is not None
-    assert web_chat.available is False
-    assert web_chat.reason == AGY_UNAVAILABLE_REASON
+    assert tool_chat is not None
+    assert vision is not None
+    assert web_chat.available is True
+    assert spawn.available is True
+    assert tool_chat.available is False
+    assert tool_chat.reason == (
+        "AGY configures MCP servers only globally; a per-request controlled-tool set "
+        "cannot be confined to one process"
+    )
+    assert vision.available is False
+    assert vision.reason == (
+        "AGY accepts no image input; vision requires the model to open a file path itself"
+    )
     assert web_chat.metadata["agy_supported"] is True
     assert web_chat.metadata["agy_installed_version"] == "1.1.18"
     assert spawn.metadata["agy_supported"] is True
@@ -406,6 +418,47 @@ async def test_tool_chat_registry_sees_published_record_without_second_probe(
     assert payload["support"]["installed_version"] == "1.1.18"
     assert payload["refresh"]["sources"] == [{"source_key": "version_gate", "state": "ok"}]
     version.assert_awaited_once()
+
+
+def test_agy_capability_registry_tracks_support_record_replacements() -> None:
+    supported = AgySupportRecord(
+        installed_version="1.1.18",
+        required_version=AGY_REQUIRED_VERSION,
+        supported=True,
+        reason="AGY 1.1.18 meets required version 1.1.18.",
+        identity=None,
+    )
+    unsupported = AgySupportRecord(
+        installed_version="1.1.17",
+        required_version=AGY_REQUIRED_VERSION,
+        supported=False,
+        reason="AGY 1.1.17 is installed; version 1.1.18 or newer is required.",
+        identity=None,
+    )
+    current = {"record": supported}
+
+    with patch(
+        "gobby.providers.version_gate.peek_agy_support",
+        side_effect=lambda: current["record"],
+    ):
+        registry = build_daemon_ai_capability_registry(
+            DaemonConfig(),
+            provider_installed=lambda _entry: True,
+        )
+        web_chat = registry.binding(AICapability.WEB_CHAT, "agy")
+        spawn = registry.binding(AICapability.AGENT_SPAWN, "agy")
+
+        assert web_chat is not None
+        assert spawn is not None
+        assert web_chat.available is True
+        assert spawn.available is True
+
+        current["record"] = unsupported
+
+        assert web_chat.available is False
+        assert web_chat.reason == unsupported.reason
+        assert spawn.available is False
+        assert spawn.reason == unsupported.reason
 
 
 def test_lifespan_asserts_publication_and_does_not_probe() -> None:
@@ -443,37 +496,6 @@ def test_get_cli_version_has_no_agy_caller_outside_version_gate() -> None:
             if isinstance(arg0, ast.Constant) and arg0.value == "agy":
                 offenders.append(f"{path}:{node.lineno}")
     assert offenders == []
-
-
-@pytest.mark.asyncio
-async def test_execute_spawn_awaits_ensure_before_agy_result() -> None:
-    from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
-
-    ensure = AsyncMock(
-        return_value=AgySupportRecord(
-            installed_version="1.1.18",
-            required_version=AGY_REQUIRED_VERSION,
-            supported=True,
-            reason="AGY 1.1.18 meets required version 1.1.18.",
-            identity=None,
-        )
-    )
-    request = SpawnRequest(
-        prompt="Test",
-        cwd="/path",
-        provider="agy",
-        session_id="sess",
-        run_id="run",
-        parent_session_id="parent",
-        project_id="proj",
-        prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
-    )
-    with patch("gobby.providers.version_gate.ensure_agy_support", ensure):
-        result = await execute_spawn(request)
-    ensure.assert_awaited_once()
-    assert result.success is False
-    assert AGY_UNAVAILABLE_REASON in (result.error or "")
 
 
 @pytest.mark.asyncio
@@ -543,11 +565,11 @@ async def test_capability_refresh_awaits_ensure_for_agy() -> None:
 
 
 def test_side_effect_owners_use_peek_or_ensure() -> None:
-    from gobby.agents.spawn_executor import execute_spawn
+    from gobby.agents.spawn_executor import _spawn_agy_terminal
     from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
     from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 
-    assert "ensure_agy_support" in inspect.getsource(execute_spawn)
+    assert "ensure_agy_support" in inspect.getsource(_spawn_agy_terminal)
     assert "ensure_agy_support" in inspect.getsource(CapabilityRefreshCoordinator._refresh_provider)
     assert "peek_agy_support" in inspect.getsource(WebChatRuntimeManager.health)
     assert "ensure_agy_support" in inspect.getsource(WebChatRuntimeManager.create_session)

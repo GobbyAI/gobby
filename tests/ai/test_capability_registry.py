@@ -20,11 +20,13 @@ from gobby.config.app import DaemonConfig
 from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
 from gobby.llm.service import LLMService
-from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata
+from gobby.providers import ProviderMetadata
 from gobby.providers.version_gate import AGY_UNPUBLISHED_REASON
 from gobby.servers.provider_model_defaults import AGY_MODELS
 
 pytestmark = pytest.mark.unit
+
+_TEST_UNAVAILABLE_REASON = "AGY has no documented test transport."
 
 
 def test_empty_registry_advertises_every_canonical_capability() -> None:
@@ -57,7 +59,7 @@ def test_registry_tracks_available_and_unavailable_bindings() -> None:
             CapabilityBinding.unavailable(
                 AICapability.TEXT_GENERATE,
                 "agy",
-                reason=AGY_UNAVAILABLE_REASON,
+                reason=_TEST_UNAVAILABLE_REASON,
             ),
         ]
     )
@@ -69,7 +71,7 @@ def test_registry_tracks_available_and_unavailable_bindings() -> None:
     agy = registry.binding(AICapability.TEXT_GENERATE, "agy")
     assert agy is not None
     assert agy.available is False
-    assert agy.reason == AGY_UNAVAILABLE_REASON
+    assert agy.reason == _TEST_UNAVAILABLE_REASON
 
 
 def test_select_reports_unavailable_provider_reason() -> None:
@@ -78,7 +80,7 @@ def test_select_reports_unavailable_provider_reason() -> None:
             CapabilityBinding.unavailable(
                 AICapability.VISION_EXTRACT,
                 "agy",
-                reason=AGY_UNAVAILABLE_REASON,
+                reason=_TEST_UNAVAILABLE_REASON,
             )
         ]
     )
@@ -469,19 +471,30 @@ def test_daemon_registry_scopes_agy_to_strict_text_generation_when_installed() -
     with pytest.raises(CapabilityUnavailableError, match="does not support requested model"):
         registry.select(AICapability.TEXT_GENERATE, provider="agy", model="bad-model")
 
-    for capability in (
-        AICapability.VISION_EXTRACT,
-        AICapability.AGENT_SPAWN,
-        AICapability.WEB_CHAT,
-    ):
+    for capability in (AICapability.AGENT_SPAWN, AICapability.WEB_CHAT):
         binding = registry.binding(capability, "agy")
         assert binding is not None
         assert binding.available is False
         assert binding.reason == AGY_UNPUBLISHED_REASON
         assert binding.metadata["agy_supported"] is False
 
+    vision = registry.binding(AICapability.VISION_EXTRACT, "agy")
+    assert vision is not None
+    assert vision.available is False
+    assert vision.reason == (
+        "AGY accepts no image input; vision requires the model to open a file path itself"
+    )
 
-def test_tool_chat_binding_has_no_agy_branch() -> None:
+    tool_chat = registry.binding(AICapability.TOOL_CHAT, "agy")
+    assert tool_chat is not None
+    assert tool_chat.available is False
+    assert tool_chat.reason == (
+        "AGY configures MCP servers only globally; a per-request controlled-tool set "
+        "cannot be confined to one process"
+    )
+
+
+def test_tool_chat_binding_keeps_agy_unavailable_without_adapter_branch() -> None:
     from gobby.ai.registry_builder import _tool_chat_binding
 
     source = inspect.getsource(_tool_chat_binding)
@@ -491,7 +504,11 @@ def test_tool_chat_binding_has_no_agy_branch() -> None:
         DaemonConfig(),
         provider_installed=lambda _entry: True,
     )
-    assert registry.binding(AICapability.TOOL_CHAT, "agy") is None
+    binding = registry.binding(AICapability.TOOL_CHAT, "agy")
+    assert binding is not None
+    assert binding.available is False
+    assert binding.adapter_style == AIAdapterStyle.UNAVAILABLE
+    assert "only globally" in (binding.reason or "")
     assert (
         _tool_chat_binding(
             ProviderMetadata("agy", "agy", "AGY", ".gemini"),

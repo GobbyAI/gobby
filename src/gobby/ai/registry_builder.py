@@ -28,7 +28,7 @@ from gobby.config.feature_base import (
     parse_feature_candidate,
 )
 from gobby.llm.local_provider_adapters import OPENAI_CLIENT_PROTOCOLS
-from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata, provider_metadata
+from gobby.providers import ProviderMetadata, provider_metadata
 from gobby.servers.provider_model_defaults import AGY_MODELS
 
 if TYPE_CHECKING:
@@ -718,22 +718,42 @@ def _agy_unavailable_bindings() -> tuple[CapabilityBinding, ...]:
     from gobby.providers.version_gate import peek_agy_support
 
     record = peek_agy_support()
-    reason = record.reason if not record.supported else AGY_UNAVAILABLE_REASON
     metadata = {
         "agy_installed_version": record.installed_version,
         "agy_required_version": record.required_version,
         "agy_supported": record.supported,
     }
-    return tuple(
+    available_bindings = tuple(
+        CapabilityBinding(
+            capability=capability,
+            provider="agy",
+            adapter_style=_adapter_style_for_provider(capability, "agy"),
+            available=record.supported,
+            reason=record.reason,
+            metadata=metadata,
+            availability_probe=lambda: peek_agy_support().supported,
+            unavailable_reason_probe=lambda: peek_agy_support().reason,
+            availability_probe_ttl_seconds=0.0,
+        )
+        for capability in (AICapability.AGENT_SPAWN, AICapability.WEB_CHAT)
+    )
+    unavailable_bindings = tuple(
         CapabilityBinding.unavailable(
             capability,
             "agy",
             reason=reason,
             metadata=metadata,
         )
-        for capability in (
-            AICapability.VISION_EXTRACT,
-            AICapability.AGENT_SPAWN,
-            AICapability.WEB_CHAT,
+        for capability, reason in (
+            (
+                AICapability.TOOL_CHAT,
+                "AGY configures MCP servers only globally; a per-request controlled-tool set "
+                "cannot be confined to one process",
+            ),
+            (
+                AICapability.VISION_EXTRACT,
+                "AGY accepts no image input; vision requires the model to open a file path itself",
+            ),
         )
     )
+    return (*available_bindings, *unavailable_bindings)
