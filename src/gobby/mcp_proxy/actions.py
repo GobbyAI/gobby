@@ -81,7 +81,7 @@ async def add_mcp_server(
                 description = await generate_server_description(
                     server_name=name, tool_summaries=full_tool_schemas
                 )
-                await mcp_manager.set_server_description(name, description)
+                await mcp_manager.set_server_description(result["id"], description)
             except Exception as e:
                 logger.warning("Failed to generate server description: %s", e)
                 description = None
