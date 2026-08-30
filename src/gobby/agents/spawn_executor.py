@@ -241,6 +241,7 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
 
 
 async def _spawn_agy_terminal(request: SpawnRequest) -> SpawnResult:
+    """Dispatch a supported AGY spawn; refuse from the 2.5 record before any side effect."""
     from gobby.providers.version_gate import ensure_agy_support
 
     record = await ensure_agy_support()
