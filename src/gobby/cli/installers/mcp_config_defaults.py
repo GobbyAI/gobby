@@ -8,11 +8,59 @@ from typing import Any, cast
 import psycopg
 
 from gobby.config.mcp import DEFAULT_MCP_CONFIG_PATH
-from gobby.mcp_proxy.bundled import DEFAULT_EXTERNAL_MCP_SERVERS
 
 from .mcp_config_shared import _facade_attr, _facade_logger
 
-DEFAULT_MCP_SERVERS = DEFAULT_EXTERNAL_MCP_SERVERS
+DEFAULT_MCP_SERVERS: list[dict[str, Any]] = [
+    {
+        "name": "github",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-github"],
+        "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "$secret:github_personal_access_token"},
+        "description": "GitHub API integration for issues, PRs, repos, and code search",
+    },
+    {
+        "name": "linear",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "mcp-linear"],
+        "env": {"LINEAR_API_KEY": "$secret:linear_api_key"},
+        "description": "Linear issue tracking integration",
+    },
+    {
+        "name": "brave-search",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "@brave/brave-search-mcp-server"],
+        "env": {"BRAVE_API_KEY": "$secret:brave_api_key"},
+        "description": "Brave Search API for web search, local search, and news",
+    },
+    {
+        "name": "context7",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "@upstash/context7-mcp"],
+        "optional_secret_args": {"context7_api_key": ["--api-key"]},
+        "description": (
+            "Context7 library documentation lookup (set context7_api_key secret for private repos)"
+        ),
+    },
+    {
+        "name": "playwright",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "@playwright/mcp@latest"],
+        "description": "Playwright MCP for browser automation and inspection",
+    },
+    {
+        "name": "chrome-devtools",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "chrome-devtools-mcp@0.21.0", "--no-usage-statistics"],
+        "description": "Chrome DevTools MCP for browser debugging and automation",
+    },
+]
 
 
 def _default_mcp_servers() -> list[dict[str, Any]]:
@@ -191,7 +239,6 @@ def install_default_mcp_servers() -> dict[str, Any]:
         with runtime_hub_database(apply_migrations=False) as db:
             mcp_db = LocalMCPManager(db)
             imported = mcp_db.import_from_mcp_json(mcp_config_path, project_id=GLOBAL_PROJECT_ID)
-            mcp_db.normalize_bundled_servers()
             if imported:
                 logger.info("Synced %s MCP servers to database", imported)
     except Exception as e:

@@ -1,0 +1,12 @@
+name: context7
+description: Context7 library documentation lookup (set context7_api_key secret for private repos)
+version: 1
+enabled: true
+transport: stdio
+command: npx
+args: ["-y", "@upstash/context7-mcp"]
+params:
+  - name: api_key
+    arg_flag: --api-key
+    secret: true
+    default_secret: context7_api_key

@@ -27,7 +27,8 @@ from gobby.cli.installers.mcp_config import (
 )
 from gobby.cli.installers.mcp_config_json import _resolved_gobby_mcp_command
 from gobby.cli.installers.mcp_config_shared import _remove_toml_table_block
-from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE
+
+_CHROME_DEVTOOLS_PACKAGE = "chrome-devtools-mcp@0.21.0"
 
 pytestmark = pytest.mark.unit
 
@@ -882,7 +883,7 @@ class TestInstallDefaultMCPServers:
         assert "github" in result["servers_added"]
         assert "playwright" in result["servers_added"]
         assert "chrome-devtools" in result["servers_added"]
-        mock_mcp_mgr.return_value.normalize_bundled_servers.assert_called_once_with()
+        mock_mcp_mgr.return_value.import_from_mcp_json.assert_called_once()
 
         config = json.loads(mcp_path.read_text())
         playwright_server = next(
@@ -894,7 +895,7 @@ class TestInstallDefaultMCPServers:
         )
         assert chrome_server["args"] == [
             "-y",
-            CHROME_DEVTOOLS_NPM_PACKAGE,
+            _CHROME_DEVTOOLS_PACKAGE,
             "--no-usage-statistics",
         ]
 
@@ -931,7 +932,7 @@ class TestInstallDefaultMCPServers:
         assert result["success"] is True
         assert len(result["servers_skipped"]) == 6
         assert len(result["servers_added"]) == 0
-        mock_mcp_mgr.return_value.normalize_bundled_servers.assert_called_once_with()
+        mock_mcp_mgr.return_value.import_from_mcp_json.assert_called_once()
 
     def test_read_error(self, tmp_path: Path) -> None:
         mcp_path = tmp_path / ".gobby" / ".mcp.json"

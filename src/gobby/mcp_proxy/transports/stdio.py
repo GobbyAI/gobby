@@ -9,10 +9,7 @@ from typing import TYPE_CHECKING, TextIO
 from mcp.client import Transport
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-from gobby.mcp_proxy.bundled import (
-    is_bundled_external_mcp_server,
-    resolve_runtime_stdio_args,
-)
+from gobby.mcp_proxy.bundled import prefers_offline_npx, resolve_runtime_stdio_args
 from gobby.mcp_proxy.transports.base import OwnerTaskTransportConnection
 from gobby.utils.env import expand_env_mapping, expand_env_variables
 
@@ -80,10 +77,10 @@ class StdioTransportConnection(OwnerTaskTransportConnection):
             raise RuntimeError("Command is required for stdio transport")
 
         # Expand ${VAR} patterns in args and env values
-        runtime_args = resolve_runtime_stdio_args(self.config.name, self.config.args)
+        runtime_args = resolve_runtime_stdio_args(self.config.runtime_hook, self.config.args)
         expanded_args = _expand_args(runtime_args) or []
         expanded_env = expand_env_mapping(self.config.env)
-        if self.config.command == "npx" and is_bundled_external_mcp_server(self.config.name):
+        if prefers_offline_npx(self.config.command):
             expanded_env = dict(expanded_env or {})
             expanded_env.setdefault("npm_config_prefer_offline", "true")
 

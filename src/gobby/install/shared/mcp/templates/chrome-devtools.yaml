@@ -1,0 +1,8 @@
+name: chrome-devtools
+description: Chrome DevTools MCP for browser debugging and automation
+version: 1
+enabled: true
+transport: stdio
+command: npx
+args: ["-y", "chrome-devtools-mcp@0.21.0", "--no-usage-statistics"]
+runtime_hook: chrome_executable_path

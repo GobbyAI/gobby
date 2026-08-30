@@ -1,0 +1,13 @@
+name: linear
+description: Linear issue tracking integration
+version: 1
+enabled: true
+transport: stdio
+command: npx
+args: ["-y", "mcp-linear"]
+params:
+  - name: api_key
+    env: LINEAR_API_KEY
+    required: true
+    secret: true
+    default_secret: linear_api_key

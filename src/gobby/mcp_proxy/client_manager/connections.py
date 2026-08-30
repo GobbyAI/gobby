@@ -10,7 +10,6 @@ from typing import Any, cast
 
 from mcp import ClientSession
 
-from gobby.mcp_proxy.bundled import normalize_bundled_server_config
 from gobby.mcp_proxy.connection_cleanup import (
     clear_connection_state,
     disconnect_connection,
@@ -111,9 +110,8 @@ async def connect_all(manager: Any, configs: list[MCPServerConfig] | None) -> di
     configs_to_connect = configs if configs is not None else manager.server_configs
 
     if configs:
-        normalized_configs = [normalize_bundled_server_config(config) for config in configs]
-        configs_to_connect = normalized_configs
-        for config in normalized_configs:
+        configs_to_connect = configs
+        for config in configs:
             manager._configs[config.name] = config
             manager._lazy_connector.register_server(config.name)
 

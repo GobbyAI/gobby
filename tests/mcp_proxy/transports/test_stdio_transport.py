@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE, resolve_runtime_stdio_args
+from gobby.mcp_proxy.bundled import resolve_runtime_stdio_args
 from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
 from gobby.mcp_proxy.transports.stdio import StdioTransportConnection, _expand_args
 from gobby.utils.env import expand_env_mapping, expand_env_variables
@@ -35,7 +35,7 @@ pytestmark = pytest.mark.unit
 
 def _make_config(**overrides: Any) -> MCPServerConfig:
     """Create a real MCPServerConfig for stdio transport."""
-    defaults = {
+    defaults: dict[str, Any] = {
         "name": "test-stdio",
         "project_id": "proj-002",
         "transport": "stdio",
@@ -203,21 +203,19 @@ class TestExpandArgs:
             assert result == ["--dir", "/tmp", "--verbose"]
 
 
+_CHROME_DEVTOOLS_ARGS = ["-y", "chrome-devtools-mcp@0.21.0", "--no-usage-statistics"]
+
+
 class TestResolveRuntimeStdioArgs:
     @patch(
         "gobby.mcp_proxy.bundled.resolve_chrome_devtools_executable_path",
         return_value="/tmp/chrome",
     )
     def test_injects_chrome_executable_at_runtime(self, _mock_path: MagicMock) -> None:
-        args = resolve_runtime_stdio_args(
-            "chrome-devtools",
-            ["-y", CHROME_DEVTOOLS_NPM_PACKAGE, "--no-usage-statistics"],
-        )
+        args = resolve_runtime_stdio_args("chrome_executable_path", list(_CHROME_DEVTOOLS_ARGS))
 
         assert args == [
-            "-y",
-            CHROME_DEVTOOLS_NPM_PACKAGE,
-            "--no-usage-statistics",
+            *_CHROME_DEVTOOLS_ARGS,
             "--executable-path=/tmp/chrome",
         ]
 
@@ -227,10 +225,10 @@ class TestResolveRuntimeStdioArgs:
     )
     def test_replaces_persisted_chrome_executable_arg(self, _mock_path: MagicMock) -> None:
         args = resolve_runtime_stdio_args(
-            "chrome-devtools",
+            "chrome_executable_path",
             [
                 "-y",
-                CHROME_DEVTOOLS_NPM_PACKAGE,
+                "chrome-devtools-mcp@0.21.0",
                 "--executable-path=/tmp/old-chrome",
                 "--no-usage-statistics",
             ],
@@ -245,11 +243,20 @@ class TestResolveRuntimeStdioArgs:
     )
     def test_does_not_pin_package_version_at_runtime(self, _mock_path: MagicMock) -> None:
         args = resolve_runtime_stdio_args(
-            "chrome-devtools",
+            "chrome_executable_path",
             ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"],
         )
 
         assert args == ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"]
+
+    @patch(
+        "gobby.mcp_proxy.bundled.resolve_chrome_devtools_executable_path",
+        return_value="/tmp/chrome",
+    )
+    def test_skips_chrome_injection_without_runtime_hook(self, _mock_path: MagicMock) -> None:
+        args = resolve_runtime_stdio_args(None, list(_CHROME_DEVTOOLS_ARGS))
+
+        assert args == _CHROME_DEVTOOLS_ARGS
 
 
 # ===========================================================================
@@ -375,12 +382,17 @@ class TestStdioConnectSuccess:
                 {"npm_config_prefer_offline": "false", "KEY": "value"},
                 {"npm_config_prefer_offline": "false", "KEY": "value"},
             ),
-            ("custom-server", "npx", {"KEY": "value"}, {"KEY": "value"}),
+            (
+                "custom-server",
+                "npx",
+                {"KEY": "value"},
+                {"KEY": "value", "npm_config_prefer_offline": "true"},
+            ),
             ("brave-search", "node", None, None),
         ],
-        ids=["bundled-npx", "explicit-override", "custom-npx", "bundled-non-npx"],
+        ids=["bundled-npx", "explicit-override", "custom-npx", "non-npx"],
     )
-    async def test_connect_configures_prefer_offline_only_for_bundled_npx(
+    async def test_connect_configures_prefer_offline_for_every_npx_command(
         self,
         name: str,
         command: str,
@@ -398,6 +410,48 @@ class TestStdioConnectSuccess:
         assert harness.params.command == command
         assert harness.params.args == []
         assert harness.params.env == expected_env
+
+    async def test_runtime_hook_dispatches_on_config_not_name(self) -> None:
+        harness = _ClientHarness()
+        stdio_patch, client_patch = harness.patches()
+        chrome_args = ["-y", "chrome-devtools-mcp@0.21.0", "--no-usage-statistics"]
+        with (
+            stdio_patch,
+            client_patch,
+            patch(
+                "gobby.mcp_proxy.bundled.resolve_chrome_devtools_executable_path",
+                return_value="/tmp/chrome",
+            ),
+        ):
+            hooked = StdioTransportConnection(
+                _make_config(
+                    name="other-chrome",
+                    command="npx",
+                    args=list(chrome_args),
+                    runtime_hook="chrome_executable_path",
+                    env=None,
+                )
+            )
+            unhooked = StdioTransportConnection(
+                _make_config(
+                    name="chrome-devtools",
+                    command="npx",
+                    args=list(chrome_args),
+                    runtime_hook=None,
+                    env=None,
+                )
+            )
+            await hooked.connect()
+            hooked_params = harness.params
+            await hooked.disconnect()
+            await unhooked.connect()
+            unhooked_params = harness.transport_calls[1][0]
+            await unhooked.disconnect()
+
+        assert hooked_params.args == [*chrome_args, "--executable-path=/tmp/chrome"]
+        assert hooked_params.env == {"npm_config_prefer_offline": "true"}
+        assert unhooked_params.args == chrome_args
+        assert unhooked_params.env == {"npm_config_prefer_offline": "true"}
 
 
 # ===========================================================================

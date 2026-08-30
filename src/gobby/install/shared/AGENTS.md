@@ -33,3 +33,17 @@ path under `.gobby/install/<kind>/<name>/`. If the user copy keeps the same iden
 a bundled template, it must include an explicit `override: true` label. Loading fails loud
 when a project-local copy shadows a bundled template without that label, so accidental
 shadowing cannot silently change runtime behavior.
+
+MCP server templates and instances use dedicated roots instead of
+`.gobby/install/<kind>/`:
+
+- Project templates: `.gobby/mcp/templates/<name>.yaml`
+- Project instances: `.gobby/mcp/servers/<name>.yaml`
+- Machine templates: `~/.gobby/mcp/templates/<name>.yaml`
+- Machine instances: `~/.gobby/mcp/servers/<name>.yaml`
+
+A project or machine template that reuses a bundled MCP template name must set
+`override: true`. A same-named project template shadows the global/bundled
+template in that project whether or not it is enabled; instantiation then uses
+the project row. See `mcp/AGENTS.md` for the template schema, secret-reference
+rule, and instance YAML format.

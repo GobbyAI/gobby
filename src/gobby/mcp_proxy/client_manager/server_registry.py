@@ -7,7 +7,6 @@ import logging
 from dataclasses import replace
 from typing import Any, Protocol, cast
 
-from gobby.mcp_proxy.bundled import normalize_bundled_server_config
 from gobby.mcp_proxy.models import ConnectionState, MCPConnectionHealth, MCPServerConfig
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
 
@@ -176,7 +175,7 @@ async def _discover_and_cache_tools(
 
 async def add_server(manager: Any, config: MCPServerConfig) -> dict[str, Any]:
     """Add a server config, persist it, and discover tools if enabled."""
-    config = normalize_bundled_server_config(replace(config))
+    config = replace(config)
     if config.name in manager._configs:
         raise ValueError(f"MCP server '{config.name}' already exists")
 
@@ -270,7 +269,7 @@ async def update_server(
 
     The existing enabled state is preserved; use set_server_enabled to change it.
     """
-    config = normalize_bundled_server_config(replace(config))
+    config = replace(config)
     if name not in manager._configs:
         raise ValueError(f"MCP server '{name}' not found")
     if config.name != name:
@@ -421,7 +420,6 @@ def server_configs(manager: Any) -> list[MCPServerConfig]:
 
 def add_server_config(manager: Any, config: MCPServerConfig) -> None:
     """Register a server config for future lazy/eager connection."""
-    config = normalize_bundled_server_config(config)
     manager._configs[config.name] = config
     manager._lazy_connector.register_server(config.name)
     if config.name not in manager.health:

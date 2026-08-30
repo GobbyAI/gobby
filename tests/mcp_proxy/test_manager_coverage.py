@@ -18,7 +18,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE, DEFAULT_EXTERNAL_MCP_SERVERS
 from gobby.mcp_proxy.client_manager import connections
 from gobby.mcp_proxy.client_manager.secrets import resolve_secrets_in_config
 from gobby.mcp_proxy.client_manager.server_registry import truncate_tool_brief
@@ -32,6 +31,8 @@ from gobby.mcp_proxy.models import (
     MCPServerConfig,
 )
 from tests._timing import wait_forever
+
+_CHROME_DEVTOOLS_PACKAGE = "chrome-devtools-mcp@0.21.0"
 
 pytestmark = pytest.mark.unit
 
@@ -47,17 +48,16 @@ def test_mcp_proxy_source_does_not_register_legacy_gobby_code_server() -> None:
     configs = [
         MCPServerConfig(
             project_id="project-id",
-            name=server["name"],
-            transport=server["transport"],
-            command=server.get("command"),
-            args=server.get("args"),
-            description=server.get("description"),
+            name="github",
+            transport="stdio",
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-github"],
         )
-        for server in DEFAULT_EXTERNAL_MCP_SERVERS
     ]
     manager = MCPClientManager(server_configs=configs)
 
     assert "gobby-code" not in manager.get_available_servers()
+    assert "github" in manager.get_available_servers()
 
 
 def test_resolve_secrets_in_config_resolves_args() -> None:
@@ -522,8 +522,8 @@ class TestMCPClientManagerAddServer:
         assert db_threads[0] != event_loop_thread
 
     @pytest.mark.asyncio
-    async def test_add_server_canonicalizes_bundled_server_scope(self) -> None:
-        """Bundled servers are persisted under the global project scope."""
+    async def test_add_server_does_not_rewrite_legacy_bundled_names(self) -> None:
+        """Instance names are no longer forced global or arg-normalized."""
         mock_db = MagicMock()
         manager = MCPClientManager(server_configs=[], mcp_db_manager=mock_db)
 
@@ -534,7 +534,7 @@ class TestMCPClientManagerAddServer:
             command="npx",
             args=[
                 "-y",
-                CHROME_DEVTOOLS_NPM_PACKAGE,
+                _CHROME_DEVTOOLS_PACKAGE,
                 "--executable-path=/tmp/chrome",
                 "--no-usage-statistics",
             ],
@@ -544,10 +544,11 @@ class TestMCPClientManagerAddServer:
         await manager.add_server(config)
 
         call_kwargs = mock_db.upsert.call_args[1]
-        assert call_kwargs["project_id"] == "00000000-0000-0000-0000-000000000002"
+        assert call_kwargs["project_id"] == "test-project"
         assert call_kwargs["args"] == [
             "-y",
-            CHROME_DEVTOOLS_NPM_PACKAGE,
+            _CHROME_DEVTOOLS_PACKAGE,
+            "--executable-path=/tmp/chrome",
             "--no-usage-statistics",
         ]
 

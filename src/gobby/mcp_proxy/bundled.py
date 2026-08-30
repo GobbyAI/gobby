@@ -1,4 +1,4 @@
-"""Bundled external MCP server definitions and normalization helpers."""
+"""Template-keyed runtime hooks for bundled MCP stdio servers."""
 
 from __future__ import annotations
 
@@ -6,135 +6,27 @@ import os
 import platform
 import shutil
 from collections.abc import Iterable
-from dataclasses import replace
 from pathlib import Path
-from typing import Any
 
-from gobby.mcp_proxy.models import MCPServerConfig
-
-CHROME_DEVTOOLS_SERVER_NAME = "chrome-devtools"
-CHROME_DEVTOOLS_NPM_PACKAGE = "chrome-devtools-mcp@0.21.0"
-PLAYWRIGHT_SERVER_NAME = "playwright"
-# Keep this helper module leaf-level to avoid import cycles through gobby.storage.__init__.
-GLOBAL_PROJECT_ID = "00000000-0000-0000-0000-000000000002"
-
-DEFAULT_EXTERNAL_MCP_SERVERS: list[dict[str, Any]] = [
-    {
-        "name": "github",
-        "transport": "stdio",
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-github"],
-        "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "$secret:github_personal_access_token"},
-        "description": "GitHub API integration for issues, PRs, repos, and code search",
-    },
-    {
-        "name": "linear",
-        "transport": "stdio",
-        "command": "npx",
-        "args": ["-y", "mcp-linear"],
-        "env": {"LINEAR_API_KEY": "$secret:linear_api_key"},
-        "description": "Linear issue tracking integration",
-    },
-    {
-        "name": "brave-search",
-        "transport": "stdio",
-        "command": "npx",
-        "args": ["-y", "@brave/brave-search-mcp-server"],
-        "env": {"BRAVE_API_KEY": "$secret:brave_api_key"},
-        "description": "Brave Search API for web search, local search, and news",
-    },
-    {
-        "name": "context7",
-        "transport": "stdio",
-        "command": "npx",
-        "args": ["-y", "@upstash/context7-mcp"],
-        "optional_secret_args": {"context7_api_key": ["--api-key"]},
-        "description": (
-            "Context7 library documentation lookup (set context7_api_key secret for private repos)"
-        ),
-    },
-    {
-        "name": PLAYWRIGHT_SERVER_NAME,
-        "transport": "stdio",
-        "command": "npx",
-        "args": ["-y", "@playwright/mcp@latest"],
-        "description": "Playwright MCP for browser automation and inspection",
-    },
-    {
-        "name": CHROME_DEVTOOLS_SERVER_NAME,
-        "transport": "stdio",
-        "command": "npx",
-        # Pin the package version so local installs and CI use the same DevTools server build.
-        "args": ["-y", CHROME_DEVTOOLS_NPM_PACKAGE, "--no-usage-statistics"],
-        "description": "Chrome DevTools MCP for browser debugging and automation",
-    },
-]
-
-BUNDLED_EXTERNAL_MCP_SERVER_NAMES = frozenset(
-    server["name"].lower() for server in DEFAULT_EXTERNAL_MCP_SERVERS
-)
+CHROME_EXECUTABLE_PATH_HOOK = "chrome_executable_path"
 
 
-def is_bundled_external_mcp_server(name: str) -> bool:
-    """Return True when a server name is managed by Gobby as a bundled external MCP."""
-    return name.lower() in BUNDLED_EXTERNAL_MCP_SERVER_NAMES
+def prefers_offline_npx(command: str | None) -> bool:
+    """Return True when an npx launch should prefer the local npm cache."""
+    return command == "npx"
 
 
-def canonical_project_id_for_server(name: str, project_id: str) -> str:
-    """Return the canonical project scope for a server."""
-    if is_bundled_external_mcp_server(name):
-        return GLOBAL_PROJECT_ID
-    return project_id
-
-
-def normalize_persisted_args(name: str, args: list[str] | None) -> list[str]:
-    """Strip runtime-only arguments before persisting server config."""
-    if not args:
-        return []
-
-    normalized_name = name.lower()
-    normalized_args = list(args)
-    if normalized_name == CHROME_DEVTOOLS_SERVER_NAME:
-        normalized_args = _strip_flag_args(normalized_args, "--executable-path")
-
-    return normalized_args
-
-
-def normalize_bundled_managed_args(name: str, args: list[str] | None) -> list[str]:
-    """Normalize args for Gobby-managed bundled server rows before persistence."""
-    normalized_args = normalize_persisted_args(name, args)
-    if name.lower() == CHROME_DEVTOOLS_SERVER_NAME:
-        normalized_args = _pin_chrome_devtools_package(normalized_args)
-    return normalized_args
-
-
-def normalize_bundled_server_config(config: MCPServerConfig) -> MCPServerConfig:
-    """Return a config normalized to Gobby's bundled-server storage rules."""
-    project_id = canonical_project_id_for_server(config.name, config.project_id)
-    args = normalize_bundled_managed_args(config.name, config.args)
-    if project_id == config.project_id and args == config.args:
-        return config
-    return replace(config, project_id=project_id, args=args)
-
-
-def resolve_runtime_stdio_args(name: str, args: list[str] | None) -> list[str]:
-    """Resolve runtime stdio args, adding host-specific browser paths only at launch time."""
-    runtime_args = list(normalize_persisted_args(name, args) or [])
-    if name.lower() != CHROME_DEVTOOLS_SERVER_NAME:
+def resolve_runtime_stdio_args(runtime_hook: str | None, args: list[str] | None) -> list[str]:
+    """Resolve runtime stdio args from the instance's declared runtime hook."""
+    runtime_args = list(args or [])
+    hook = _RUNTIME_STDIO_HOOKS.get(runtime_hook or "")
+    if hook is None:
         return runtime_args
-
-    if _has_flag(runtime_args, "--executable-path"):
-        return runtime_args
-
-    executable_path = resolve_chrome_devtools_executable_path()
-    if executable_path:
-        runtime_args.append(f"--executable-path={executable_path}")
-
-    return runtime_args
+    return hook(runtime_args)
 
 
 def resolve_chrome_devtools_executable_path() -> str | None:
-    """Resolve a Chrome executable path for chrome-devtools-mcp when one is available."""
+    """Resolve a Chrome executable path when one is available."""
     env_path = _first_existing_path(
         os.environ.get(var_name)
         for var_name in (
@@ -228,9 +120,12 @@ def resolve_chrome_devtools_executable_path() -> str | None:
     return None
 
 
-def _has_flag(args: list[str], flag: str) -> bool:
-    """Return True when args already contain a flag or flag=value form."""
-    return any(arg == flag or arg.startswith(f"{flag}=") for arg in args)
+def _inject_chrome_executable_path(args: list[str]) -> list[str]:
+    runtime_args = _strip_flag_args(args, "--executable-path")
+    executable_path = resolve_chrome_devtools_executable_path()
+    if executable_path:
+        runtime_args.append(f"--executable-path={executable_path}")
+    return runtime_args
 
 
 def _strip_flag_args(args: list[str], flag: str) -> list[str]:
@@ -250,16 +145,6 @@ def _strip_flag_args(args: list[str], flag: str) -> list[str]:
     return stripped
 
 
-def _pin_chrome_devtools_package(args: list[str]) -> list[str]:
-    """Normalize bundled chrome-devtools-mcp launches to Gobby's tested package pin."""
-    return [
-        CHROME_DEVTOOLS_NPM_PACKAGE
-        if arg == "chrome-devtools-mcp" or arg.startswith("chrome-devtools-mcp@")
-        else arg
-        for arg in args
-    ]
-
-
 def _first_existing_path(candidates: Iterable[str | None]) -> str | None:
     """Return the first existing file path from an iterable of string candidates."""
     for candidate in candidates:
@@ -269,3 +154,8 @@ def _first_existing_path(candidates: Iterable[str | None]) -> str | None:
         if path.exists():
             return str(path)
     return None
+
+
+_RUNTIME_STDIO_HOOKS = {
+    CHROME_EXECUTABLE_PATH_HOOK: _inject_chrome_executable_path,
+}
