@@ -241,3 +241,7 @@ class SessionFeedbackConfig(BaseModel):
             "off: no prompts; gobby-sessions:feedback remains callable."
         ),
     )
+    review: FeedbackReviewConfig = Field(
+        default_factory=FeedbackReviewConfig,
+        description="Scheduled review loop that distills unreviewed feedback rows",
+    )
