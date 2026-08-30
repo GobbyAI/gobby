@@ -70,10 +70,17 @@ export const MessageList = memo(
     // userScrolledUpRef and suppresses every later auto-scroll.
     const pinToBottomRef = useRef(false);
     const pinChaseFramesRef = useRef(0);
+    // The chase cap stops the rAF loop, but the off-bottom reports that keep
+    // arriving afterwards are still programmatic measurement shifts — they
+    // must not latch userScrolledUpRef until a real user gesture arrives.
+    const chaseExhaustedRef = useRef(false);
+    const lastAtBottomRef = useRef(true);
+    const isStreamingRef = useRef(isStreaming);
 
     const beginPinnedBottom = useCallback(() => {
       pinToBottomRef.current = true;
       pinChaseFramesRef.current = 0;
+      chaseExhaustedRef.current = false;
     }, []);
 
     const setScrollerRef = useCallback(
@@ -123,11 +130,24 @@ export const MessageList = memo(
       if (!pinToBottomRef.current) return;
       if (pinChaseFramesRef.current >= MESSAGE_LIST_PIN_CHASE_MAX_FRAMES) {
         pinToBottomRef.current = false;
+        chaseExhaustedRef.current = true;
         return;
       }
       pinChaseFramesRef.current += 1;
       scheduleScrollScrollerToBottom();
     }, [scheduleScrollScrollerToBottom]);
+
+    // Wheel, touch, or pointer input is the only trustworthy signal of user
+    // intent after the chase cap; it re-arms normal latching, and latches
+    // immediately when the scroller is already off the bottom (no further
+    // atBottomStateChange will fire for scrolling that starts off-bottom).
+    const handleUserScrollIntent = useCallback(() => {
+      if (!chaseExhaustedRef.current) return;
+      chaseExhaustedRef.current = false;
+      if (!lastAtBottomRef.current && !isStreamingRef.current) {
+        userScrolledUpRef.current = true;
+      }
+    }, []);
 
     useLayoutEffect(
       () => () => {
@@ -153,14 +173,20 @@ export const MessageList = memo(
           scheduleScrollScrollerToBottom();
         },
       }),
-      [beginPinnedBottom, scrollScrollerToBottom, scheduleScrollScrollerToBottom],
+      [
+        beginPinnedBottom,
+        scrollScrollerToBottom,
+        scheduleScrollScrollerToBottom,
+      ],
     );
 
     const handleAtBottomStateChange = useCallback(
       (atBottom: boolean) => {
+        lastAtBottomRef.current = atBottom;
         if (atBottom) {
           pinToBottomRef.current = false;
           pinChaseFramesRef.current = 0;
+          chaseExhaustedRef.current = false;
           userScrolledUpRef.current = false;
           return;
         }
@@ -170,6 +196,9 @@ export const MessageList = memo(
           chasePinnedBottom();
           return;
         }
+        // After the cap released the pin the shifts keep coming; only a real
+        // user gesture (handleUserScrollIntent) may re-arm latching.
+        if (chaseExhaustedRef.current) return;
         // Don't flip the flag during streaming — content growth can briefly
         // push us past atBottomThreshold before followOutput scrolls back,
         // which causes the "bounce" where auto-scroll stops mid-stream.
@@ -191,6 +220,7 @@ export const MessageList = memo(
     // Reset scroll flag when streaming starts so stale scroll-up state
     // from before the agent began doesn't prevent auto-scroll.
     useLayoutEffect(() => {
+      isStreamingRef.current = isStreaming;
       if (isStreaming) {
         userScrolledUpRef.current = false;
       }
@@ -309,6 +339,9 @@ export const MessageList = memo(
             <div
               {...props}
               ref={(node) => setScrollerRef(node, forwardedRef)}
+              onWheel={handleUserScrollIntent}
+              onTouchMove={handleUserScrollIntent}
+              onPointerDown={handleUserScrollIntent}
               style={{
                 ...style,
                 scrollBehavior: "auto",
@@ -318,7 +351,7 @@ export const MessageList = memo(
             />
           );
         }),
-      [setScrollerRef],
+      [handleUserScrollIntent, setScrollerRef],
     );
 
     const virtuosoComponents = useMemo<Components<ChatMessage>>(

@@ -250,6 +250,112 @@ describe("useTmuxSessions", () => {
     expect(mockWs.instances.length).toBeLessThan(12);
   });
 
+  it("keeps backing off when the server accepts then immediately closes", () => {
+    renderHook(() => useTmuxSessions());
+    // Accept-then-close (the /ws 4401 contract): the socket opens but dies
+    // before the stable-open window, so the open must not reset backoff.
+    open(mockWs.instances[0]);
+    act(() => mockWs.instances[0].simulateClose());
+    act(() => vi.advanceTimersByTime(2_000));
+    expect(mockWs.instances).toHaveLength(2);
+
+    open(mockWs.instances[1]);
+    act(() => mockWs.instances[1].simulateClose());
+    act(() => vi.advanceTimersByTime(3_999));
+    expect(mockWs.instances).toHaveLength(2);
+    act(() => vi.advanceTimersByTime(1));
+    expect(mockWs.instances).toHaveLength(3);
+  });
+
+  it("resets backoff only after the socket stays open", () => {
+    renderHook(() => useTmuxSessions());
+    act(() => mockWs.instances[0].simulateClose());
+    act(() => vi.advanceTimersByTime(2_000));
+    act(() => mockWs.instances[1].simulateClose());
+    act(() => vi.advanceTimersByTime(4_000));
+
+    open(mockWs.instances[2]);
+    act(() => vi.advanceTimersByTime(1_000));
+    act(() => mockWs.instances[2].simulateClose());
+    // The stable open reset the ladder: the retry uses the base delay again.
+    act(() => vi.advanceTimersByTime(1_999));
+    expect(mockWs.instances).toHaveLength(3);
+    act(() => vi.advanceTimersByTime(1));
+    expect(mockWs.instances).toHaveLength(4);
+  });
+
+  it("treats a failed attach as failed even when it carries the lease id", () => {
+    const mount = renderHook(() => useTmuxSessions());
+    const ws = mockWs.instances[0];
+    open(ws);
+
+    act(() => mount.result.current.attachSession("worker", "default"));
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_attach_result",
+        request_id: requestId(ws, "terminal_attach"),
+        success: false,
+        attachment_id: "lease-1",
+        terminal_id: "worker",
+        code: "runtime_unavailable",
+        reason: "the terminal backend is not running",
+      });
+    });
+    expect(mount.result.current.attachedTarget).toBeNull();
+    expect(mount.result.current.streamingId).toBeNull();
+    expect(mount.result.current.attachError).toBe(
+      "the terminal backend is not running",
+    );
+    expect(mount.result.current.isLoading).toBe(false);
+
+    // Failure frames without a reason fall back to naming the code.
+    act(() => mount.result.current.clearAttachError());
+    act(() => mount.result.current.attachSession("worker", "default"));
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_attach_result",
+        request_id: requestId(ws, "terminal_attach"),
+        success: false,
+        terminal_id: "worker",
+        code: "terminal_gone",
+      });
+    });
+    expect(mount.result.current.attachedTarget).toBeNull();
+    expect(mount.result.current.attachError).toBe(
+      "Attach failed: terminal_gone",
+    );
+  });
+
+  it("clears loading when the final list page repeats its cursor", () => {
+    const mount = renderHook(() => useTmuxSessions());
+    const ws = mockWs.instances[0];
+    open(ws);
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_list",
+        request_id: "init",
+        items: [{ terminal_id: "t-1" }],
+        next_cursor: "cursor-a",
+      });
+    });
+    const pageRequest = sentMessages(ws, "terminal_list").filter(
+      (message) => message.cursor === "cursor-a",
+    );
+    expect(pageRequest).toHaveLength(1);
+
+    act(() => mount.result.current.killSession("t-1"));
+    expect(mount.result.current.isLoading).toBe(true);
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_list",
+        request_id: pageRequest[0]?.request_id,
+        items: [],
+        next_cursor: "cursor-a",
+      });
+    });
+    expect(mount.result.current.isLoading).toBe(false);
+  });
+
   it("does not re-request the same list cursor", () => {
     const mount = renderHook(() => useTmuxSessions());
     const ws = mockWs.instances[0];
@@ -692,6 +798,8 @@ describe("useTmuxSessions", () => {
     act(() => vi.advanceTimersByTime(2_000));
     const second = mockWs.instances[1];
     open(second);
+    // Let the stable-open window elapse so this connection resets backoff.
+    act(() => vi.advanceTimersByTime(1_000));
     act(() => result.current.attachSession("worker", "default"));
     const liveAttachId = requestId(second, "terminal_attach");
     expect(result.current.requestPending).toBe(true);

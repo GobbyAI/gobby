@@ -11,6 +11,7 @@ import { createTerminalWsReducer } from "./terminalWsFragments";
 export const TMUX_REQUEST_TIMEOUT_MS = 10_000;
 export const TMUX_RECONNECT_BASE_MS = 2_000;
 export const TMUX_RECONNECT_MAX_MS = 30_000;
+export const TMUX_STABLE_OPEN_MS = 1_000;
 
 function asSession(
   row: Partial<TmuxSession> & { terminal_id?: string },
@@ -146,6 +147,7 @@ export function useTmuxSessions(
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
+  const stableOpenTimeoutRef = useRef<number | null>(null);
   const lastListCursorRef = useRef<string | null>(null);
   const outputCallbackRef = useRef<
     ((runId: string, data: string) => void) | null
@@ -368,8 +370,11 @@ export function useTmuxSessions(
           ) {
             setSessionEnded(true);
           }
-          if (typeof data.next_cursor === "string" && data.next_cursor) {
-            if (data.next_cursor === lastListCursorRef.current) break;
+          if (
+            typeof data.next_cursor === "string" &&
+            data.next_cursor &&
+            data.next_cursor !== lastListCursorRef.current
+          ) {
             lastListCursorRef.current = data.next_cursor;
             wsRef.current?.send(
               listRequest(`page-${generation}`, data.next_cursor),
@@ -389,14 +394,22 @@ export function useTmuxSessions(
           )
             break;
 
-          if (data.success || typeof data.attachment_id === "string") {
-            const attachedId = data.attachment_id as string;
+          // Failure frames also carry attachment_id (the finalized lease), so
+          // only an explicit success verdict may mark the attach live.
+          if (data.success === true && typeof data.attachment_id === "string") {
+            const attachedId = data.attachment_id;
             fragmentReducerRef.current.markLive(attachedId);
             updateAttachment(pending.target, attachedId);
           } else {
-            setAttachError(
-              typeof data.message === "string" ? data.message : "Attach failed",
-            );
+            const reason =
+              typeof data.reason === "string"
+                ? data.reason
+                : typeof data.message === "string"
+                  ? data.message
+                  : typeof data.code === "string"
+                    ? `Attach failed: ${data.code}`
+                    : "Attach failed";
+            setAttachError(reason);
           }
           clearPendingRequest();
           break;
@@ -558,7 +571,16 @@ export function useTmuxSessions(
 
     ws.onopen = () => {
       if (!isCurrentConnection()) return;
-      reconnectAttemptsRef.current = 0;
+      // Accept-then-close (e.g. 4401 after accept) must not reset backoff;
+      // only a socket that stays open counts as a recovered connection.
+      if (stableOpenTimeoutRef.current !== null) {
+        clearTimeout(stableOpenTimeoutRef.current);
+      }
+      stableOpenTimeoutRef.current = window.setTimeout(() => {
+        stableOpenTimeoutRef.current = null;
+        if (!isCurrentConnection()) return;
+        reconnectAttemptsRef.current = 0;
+      }, TMUX_STABLE_OPEN_MS);
       setConnected(true);
       ws.send(
         JSON.stringify({
@@ -572,6 +594,10 @@ export function useTmuxSessions(
 
     ws.onclose = () => {
       if (!isCurrentConnection()) return;
+      if (stableOpenTimeoutRef.current !== null) {
+        clearTimeout(stableOpenTimeoutRef.current);
+        stableOpenTimeoutRef.current = null;
+      }
       setConnected(false);
       setSessionsLoaded(false);
       fragmentReducerRef.current.disconnect();
@@ -776,6 +802,10 @@ export function useTmuxSessions(
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
+      }
+      if (stableOpenTimeoutRef.current !== null) {
+        clearTimeout(stableOpenTimeoutRef.current);
+        stableOpenTimeoutRef.current = null;
       }
       if (pendingRequestTimeoutRef.current !== null) {
         clearTimeout(pendingRequestTimeoutRef.current);

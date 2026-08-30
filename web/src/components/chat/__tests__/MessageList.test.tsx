@@ -1,5 +1,11 @@
 import * as React from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatMessage } from "../../../types/chat";
@@ -101,6 +107,47 @@ function message(id: string, content = "hello"): ChatMessage {
     content,
     timestamp: new Date("2026-05-13T12:00:00Z"),
   };
+}
+
+function stubAnimationFrames() {
+  const pending = new Map<number, FrameRequestCallback>();
+  let nextId = 1;
+  const originalRaf = window.requestAnimationFrame;
+  const originalCancel = window.cancelAnimationFrame;
+  window.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+    const id = nextId++;
+    pending.set(id, cb);
+    return id;
+  }) as typeof window.requestAnimationFrame;
+  window.cancelAnimationFrame = ((id: number) => {
+    pending.delete(id);
+  }) as typeof window.cancelAnimationFrame;
+  return {
+    flushPending: () => {
+      const batch = [...pending.values()];
+      pending.clear();
+      for (const cb of batch) cb(0);
+    },
+    restore: () => {
+      window.requestAnimationFrame = originalRaf;
+      window.cancelAnimationFrame = originalCancel;
+    },
+  };
+}
+
+// Drives enough off-bottom / height-growth reports through the pinned chase
+// to exhaust MESSAGE_LIST_PIN_CHASE_MAX_FRAMES and keep reporting afterwards.
+function exhaustPinChase(
+  latestProps: () => (typeof virtuosoProps)[number] | undefined,
+  flushPending: () => void,
+) {
+  for (let i = 0; i < MESSAGE_LIST_PIN_CHASE_MAX_FRAMES * 4; i += 1) {
+    act(() => {
+      latestProps()?.atBottomStateChange?.(false);
+      latestProps()?.totalListHeightChanged?.(2_000 + i);
+      flushPending();
+    });
+  }
 }
 
 describe("MessageList", () => {
@@ -321,6 +368,88 @@ describe("MessageList", () => {
     } finally {
       window.requestAnimationFrame = originalRaf;
       window.cancelAnimationFrame = originalCancel;
+    }
+  });
+
+  it("still auto-scrolls appends after the chase cap exhausts without user input", async () => {
+    const frames = stubAnimationFrames();
+    try {
+      const ref = React.createRef<MessageListHandle>();
+      const { rerender } = render(
+        <MessageList
+          ref={ref}
+          messages={[message("m1")]}
+          isStreaming={false}
+          isThinking={false}
+        />,
+      );
+      act(() => {
+        ref.current?.scrollToBottom();
+      });
+      const latestProps = () => virtuosoProps[virtuosoProps.length - 1];
+      exhaustPinChase(latestProps, frames.flushPending);
+
+      // Post-exhaustion off-bottom reports are still programmatic layout
+      // shifts; they must not latch the scrolled-up flag.
+      act(() => {
+        latestProps()?.atBottomStateChange?.(false);
+      });
+
+      scrollToIndexMock.mockClear();
+      rerender(
+        <MessageList
+          ref={ref}
+          messages={[message("m1"), message("m2")]}
+          isStreaming={false}
+          isThinking={false}
+        />,
+      );
+      await waitFor(() => {
+        expect(scrollToIndexMock).toHaveBeenCalledWith({
+          index: "LAST",
+          behavior: "auto",
+          align: "end",
+        });
+      });
+    } finally {
+      frames.restore();
+    }
+  });
+
+  it("latches a real user scroll gesture after the chase cap exhausts", () => {
+    const frames = stubAnimationFrames();
+    try {
+      const ref = React.createRef<MessageListHandle>();
+      const { rerender } = render(
+        <MessageList
+          ref={ref}
+          messages={[message("m1")]}
+          isStreaming={false}
+          isThinking={false}
+        />,
+      );
+      act(() => {
+        ref.current?.scrollToBottom();
+      });
+      const latestProps = () => virtuosoProps[virtuosoProps.length - 1];
+      exhaustPinChase(latestProps, frames.flushPending);
+
+      // The user grabs the wheel while the scroller sits off the bottom:
+      // that is real intent, so later appends must not yank them back down.
+      fireEvent.wheel(screen.getByTestId("virtuoso"), { deltaY: -120 });
+
+      scrollToIndexMock.mockClear();
+      rerender(
+        <MessageList
+          ref={ref}
+          messages={[message("m1"), message("m2")]}
+          isStreaming={false}
+          isThinking={false}
+        />,
+      );
+      expect(scrollToIndexMock).not.toHaveBeenCalled();
+    } finally {
+      frames.restore();
     }
   });
 
