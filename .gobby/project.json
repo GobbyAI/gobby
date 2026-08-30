@@ -9,10 +9,18 @@
     "format": "uv run ruff format --check src/",
     "security": "uv run bandit -c pyproject.toml -r src/",
     "build": "uv build",
+    "doc_tests": "cargo test --doc -p gobby-code",
     "custom": {
+      "cargo_build": "cargo build",
+      "cargo_doc_tests": "cargo test --doc",
+      "cargo_fmt": "cargo fmt --check",
+      "cargo_test": "cargo nextest run",
+      "clippy": "cargo clippy",
       "frontend_build": "cd web && npm run build",
+      "frontend_format": "cd web && npm run format:check",
       "frontend_lint": "cd web && npm run lint",
       "frontend_tests": "cd web && npm test",
+      "node_tests": "npm test",
       "ts_check": "cd web && npm run type-check"
     }
   },
