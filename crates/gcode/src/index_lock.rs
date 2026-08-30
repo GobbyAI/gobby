@@ -75,7 +75,36 @@ impl IndexLockPolicy {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum IndexLockResult<T> {
     Acquired(T),
-    Busy,
+    /// Contended, carrying the holder description when one was looked up.
+    Busy(Option<String>),
+}
+
+/// Whether a contended acquisition should pay for holder diagnostics.
+///
+/// Naming the holder costs one catalog query on the acquiring connection, so
+/// callers that would discard the answer ask to stay silent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LockDiagnostics {
+    /// Identify the holder while a blocking wait drags on, and again when an
+    /// acquisition ends busy, so the caller can name who holds the lock instead
+    /// of reporting bare contention.
+    Report,
+    /// Skip the lookup: `--quiet` runs, and per-item maintenance loops where one
+    /// query per contended item would cost more than it explains.
+    Silent,
+}
+
+impl LockDiagnostics {
+    pub(crate) fn for_context(quiet: bool) -> Self {
+        if quiet { Self::Silent } else { Self::Report }
+    }
+
+    fn describe(self, conn: &mut Client, key: i64) -> Option<String> {
+        match self {
+            Self::Report => describe_lock_holder(conn, key),
+            Self::Silent => None,
+        }
+    }
 }
 
 pub(crate) fn with_project_lock<T>(
@@ -84,34 +113,32 @@ pub(crate) fn with_project_lock<T>(
     f: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<IndexLockResult<T>> {
     match acquire_project_lock(ctx, policy)? {
-        ProjectIndexLockAttempt::Acquired(_guard) => f().map(IndexLockResult::Acquired),
-        ProjectIndexLockAttempt::Busy => Ok(IndexLockResult::Busy),
+        IndexLockResult::Acquired(_guard) => f().map(IndexLockResult::Acquired),
+        IndexLockResult::Busy(holder) => Ok(IndexLockResult::Busy(holder)),
     }
-}
-
-enum ProjectIndexLockAttempt {
-    Acquired(Box<ProjectIndexLock>),
-    Busy,
 }
 
 pub(crate) fn lock_project_by_id(
     database_url: &str,
     project_id: &str,
     policy: IndexLockPolicy,
-) -> anyhow::Result<Option<ProjectIndexLock>> {
+    diagnostics: LockDiagnostics,
+) -> anyhow::Result<IndexLockResult<ProjectIndexLock>> {
     let key = project_lock_key(project_id);
     let mut conn = db::connect_readwrite(database_url)
         .with_context(|| "failed to connect PostgreSQL hub for gcode index lock")?;
-    let acquired = try_acquire_project_key(&mut conn, project_id, key, policy)?;
 
-    // `then` builds the guard only once the lock is held. An eagerly built
-    // guard was dropped on the busy path, and its `Drop` sent
-    // `pg_advisory_unlock` for a lock this session never owned (#21053).
-    Ok(acquired.then(|| ProjectIndexLock {
-        conn,
-        key,
-        quiet: true,
-    }))
+    // The guard is built only once the lock is held. An eagerly built guard was
+    // dropped on the busy path, and its `Drop` sent `pg_advisory_unlock` for a
+    // lock this session never owned (#21053).
+    match try_acquire_project_key(&mut conn, project_id, key, policy, diagnostics)? {
+        IndexLockResult::Acquired(()) => Ok(IndexLockResult::Acquired(ProjectIndexLock {
+            conn,
+            key,
+            quiet: true,
+        })),
+        IndexLockResult::Busy(holder) => Ok(IndexLockResult::Busy(holder)),
+    }
 }
 
 /// Lease the project lock on a caller-owned connection; released on drop.
@@ -126,7 +153,13 @@ pub(crate) fn lease_project_lock<'a>(
     policy: IndexLockPolicy,
 ) -> anyhow::Result<Option<ProjectIndexLease<'a>>> {
     let key = project_lock_key(project_id);
-    let acquired = try_acquire_project_key(conn, project_id, key, policy)?;
+    // Silent: content GC leases once per candidate version, so a holder lookup
+    // per contended project would cost more than it explains, and the caller
+    // only counts busy projects.
+    let acquired = matches!(
+        try_acquire_project_key(conn, project_id, key, policy, LockDiagnostics::Silent)?,
+        IndexLockResult::Acquired(()),
+    );
     Ok(acquired.then(|| ProjectIndexLease { conn, key }))
 }
 
@@ -135,7 +168,8 @@ fn try_acquire_project_key(
     project_id: &str,
     key: i64,
     policy: IndexLockPolicy,
-) -> anyhow::Result<bool> {
+    diagnostics: LockDiagnostics,
+) -> anyhow::Result<IndexLockResult<()>> {
     match policy {
         IndexLockPolicy::Wait { max_wait } => {
             // Poll rather than block in `pg_advisory_lock`: a parked blocking
@@ -144,19 +178,28 @@ fn try_acquire_project_key(
             // codewiki run indefinitely. Bounded + poll-based means a killed
             // waiter is idle between polls, and a genuinely hung holder trips
             // the cap and fails loudly below instead of hanging forever.
-            if !try_advisory_lock_until(conn, key, max_wait, WAIT_LOCK_POLL)? {
+            let notify_every = match diagnostics {
+                LockDiagnostics::Report => Some(advisory_lock_delay_warning()),
+                LockDiagnostics::Silent => None,
+            };
+            if !try_advisory_lock_until(conn, key, max_wait, WAIT_LOCK_POLL, notify_every)? {
+                // Name the holder even under `--quiet`: quiet suppresses
+                // warnings, and giving up on the lock is an error.
                 anyhow::bail!(
-                    "gave up acquiring gcode index lock for project {} after {}s: \
-                     a lock holder is likely hung (check for a stalled index or \
-                     codewiki run)",
+                    "gave up acquiring gcode index lock for project {} after {}s; {}",
                     project_id,
                     max_wait.as_secs(),
+                    holder_detail(conn, key),
                 );
             }
-            Ok(true)
+            Ok(IndexLockResult::Acquired(()))
         }
         IndexLockPolicy::BriefTry { total_wait, poll } => {
-            try_advisory_lock_until(conn, key, total_wait, poll)
+            if try_advisory_lock_until(conn, key, total_wait, poll, None)? {
+                Ok(IndexLockResult::Acquired(()))
+            } else {
+                Ok(IndexLockResult::Busy(diagnostics.describe(conn, key)))
+            }
         }
     }
 }
@@ -164,11 +207,16 @@ fn try_acquire_project_key(
 fn acquire_project_lock(
     ctx: &Context,
     policy: IndexLockPolicy,
-) -> anyhow::Result<ProjectIndexLockAttempt> {
+) -> anyhow::Result<IndexLockResult<Box<ProjectIndexLock>>> {
     let started = Instant::now();
 
-    match lock_project_by_id(&ctx.database_url, &ctx.project_id, policy)? {
-        Some(mut guard) => {
+    match lock_project_by_id(
+        &ctx.database_url,
+        &ctx.project_id,
+        policy,
+        LockDiagnostics::for_context(ctx.quiet),
+    )? {
+        IndexLockResult::Acquired(mut guard) => {
             guard.quiet = ctx.quiet;
             let elapsed = started.elapsed();
             if !ctx.quiet && elapsed >= advisory_lock_delay_warning() {
@@ -177,9 +225,9 @@ fn acquire_project_lock(
                     elapsed.as_millis()
                 );
             }
-            Ok(ProjectIndexLockAttempt::Acquired(Box::new(guard)))
+            Ok(IndexLockResult::Acquired(Box::new(guard)))
         }
-        None => Ok(ProjectIndexLockAttempt::Busy),
+        IndexLockResult::Busy(holder) => Ok(IndexLockResult::Busy(holder)),
     }
 }
 
@@ -188,8 +236,10 @@ fn try_advisory_lock_until(
     key: i64,
     total_wait: Duration,
     poll: Duration,
+    notify_every: Option<Duration>,
 ) -> anyhow::Result<bool> {
     let started = Instant::now();
+    let mut next_notice = notify_every;
     loop {
         if try_advisory_lock(conn, key)? {
             return Ok(true);
@@ -198,6 +248,21 @@ fn try_advisory_lock_until(
         let elapsed = started.elapsed();
         if elapsed >= total_wait {
             return Ok(false);
+        }
+
+        // Name the holder while still blocked. The wait cap is generous enough
+        // that silence is indistinguishable from a hang, which is what cost a
+        // session 20 minutes and a daemon restart (#21233).
+        if let Some(due) = next_notice.filter(|due| elapsed >= *due) {
+            let notice = format!(
+                "waiting for the gcode index lock ({}s elapsed, giving up after {}s); {}",
+                elapsed.as_secs(),
+                total_wait.as_secs(),
+                holder_detail(conn, key),
+            );
+            log::warn!("{notice}");
+            eprintln!("warning: {notice}");
+            next_notice = notify_every.map(|interval| due + interval);
         }
 
         let remaining = total_wait - elapsed;
@@ -221,6 +286,58 @@ fn try_advisory_lock(conn: &mut Client, key: i64) -> anyhow::Result<bool> {
         .query_one("SELECT pg_try_advisory_lock($1)", &[&key])
         .with_context(|| "failed to try gcode index lock")?;
     row.try_get(0).map_err(Into::into)
+}
+
+/// Best-effort one-line identity of the backend holding `key`.
+///
+/// `pg_locks` records no grant timestamp, so the age reported is the holder's
+/// connection age. Every one-shot gcode lock opens its connection immediately
+/// before acquiring ([`lock_project_by_id`]), which makes the two the same
+/// number in practice; a lease on a caller-owned connection
+/// ([`lease_project_lock`]) reports an upper bound, which is why the text says
+/// "connection age" rather than claiming a hold time it cannot know.
+///
+/// Diagnostics must never mask the contention they describe, so every failure
+/// here returns `None` and the caller falls back to reporting bare contention.
+fn describe_lock_holder(conn: &mut Client, key: i64) -> Option<String> {
+    // `pg_advisory_lock(bigint)` splits its key across `classid` (high 32 bits)
+    // and `objid` (low 32 bits) with `objsubid = 1`. Comparing in that direction
+    // keeps the reassembled key out of SQL, where shifting the high word of a
+    // negative key back overflows `bigint`.
+    let classid = (key >> 32) & 0xFFFF_FFFF;
+    let objid = key & 0xFFFF_FFFF;
+    let row = conn
+        .query_opt(
+            "SELECT activity.pid,
+                    coalesce(nullif(activity.application_name, ''), '<unnamed>'),
+                    coalesce(activity.state, '<unknown>'),
+                    extract(epoch FROM (now() - activity.backend_start))::float8
+               FROM pg_locks locks
+               JOIN pg_stat_activity activity ON activity.pid = locks.pid
+              WHERE locks.locktype = 'advisory'
+                AND locks.granted
+                AND locks.classid::bigint = $1
+                AND locks.objid::bigint = $2
+                AND locks.objsubid = 1
+                AND activity.datname = current_database()
+              LIMIT 1",
+            &[&classid, &objid],
+        )
+        .ok()??;
+    let pid: i32 = row.try_get(0).ok()?;
+    let application_name: String = row.try_get(1).ok()?;
+    let state: String = row.try_get(2).ok()?;
+    let connection_age: f64 = row.try_get(3).ok()?;
+    Some(format!(
+        "holder: backend pid {pid}, application_name {application_name:?}, state {state:?}, \
+         connection age {connection_age:.0}s"
+    ))
+}
+
+/// The holder description, or a plain statement that none could be read.
+fn holder_detail(conn: &mut Client, key: i64) -> String {
+    describe_lock_holder(conn, key)
+        .unwrap_or_else(|| "the lock holder could not be identified".to_string())
 }
 
 pub(crate) fn project_lock_key(project_id: &str) -> i64 {
@@ -302,446 +419,5 @@ impl Drop for ProjectIndexLock {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-    use std::time::Duration;
-
-    use super::*;
-
-    fn context_for(database_url: String, project_id: &str) -> Context {
-        Context {
-            database_url,
-            project_root: PathBuf::from("/tmp/gcode-index-lock-test"),
-            project_id: project_id.to_string(),
-            quiet: true,
-            falkordb: None,
-            qdrant: None,
-            embedding: None,
-            code_vectors: crate::config::CodeVectorSettings::default(),
-            runtime_config_capture_degraded: false,
-            indexing: gobby_core::config::IndexingConfig::default(),
-            daemon_url: None,
-            grant_ai: None,
-            index_scope: crate::config::ProjectIndexScope::Single,
-        }
-    }
-
-    fn connect_postgres_test_db() -> String {
-        let database_url = crate::test_env::postgres_test_database_url("index-lock tests");
-        db::connect_readwrite(&database_url).expect("connect index-lock PostgreSQL test database");
-        database_url
-    }
-
-    fn hold_project_lock(database_url: &str, project_id: &str) -> Client {
-        let mut conn = db::connect_readwrite(database_url).expect("connect test PostgreSQL hub");
-        let key = project_lock_key(project_id);
-        conn.execute("SELECT pg_advisory_lock($1)", &[&key])
-            .expect("hold project advisory lock");
-        conn
-    }
-
-    #[test]
-    fn project_lock_key_matches_fixture() {
-        assert_eq!(project_lock_key("proj"), -9102099203869195108);
-    }
-
-    #[test]
-    fn project_lock_key_is_project_scoped() {
-        assert_ne!(project_lock_key("proj-a"), project_lock_key("proj-b"));
-    }
-
-    #[test]
-    fn brief_index_flush_try_is_a_bounded_non_blocking_policy() {
-        // The flush policy must be a bounded BriefTry (never Wait): a blocking
-        // Wait waiter that is later killed pileup-wedges the index (#17701).
-        match IndexLockPolicy::brief_index_flush_try() {
-            IndexLockPolicy::BriefTry { total_wait, poll } => {
-                assert!(total_wait > Duration::ZERO);
-                assert!(poll > Duration::ZERO);
-                assert!(poll < total_wait);
-            }
-            IndexLockPolicy::Wait { .. } => {
-                panic!("flush policy must not be the blocking Wait policy")
-            }
-        }
-    }
-
-    /// Records every `log` line so a test can prove which SQL a lock path sent:
-    /// the postgres driver logs each prepared statement at debug level.
-    struct RecordingLogger {
-        records: std::sync::Mutex<Vec<String>>,
-    }
-
-    impl RecordingLogger {
-        fn lock_records(&self) -> std::sync::MutexGuard<'_, Vec<String>> {
-            self.records
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-        }
-    }
-
-    impl log::Log for RecordingLogger {
-        fn enabled(&self, _metadata: &log::Metadata<'_>) -> bool {
-            true
-        }
-
-        fn log(&self, record: &log::Record<'_>) {
-            self.lock_records()
-                .push(format!("{}: {}", record.level(), record.args()));
-        }
-
-        fn flush(&self) {}
-    }
-
-    static RECORDING_LOGGER: RecordingLogger = RecordingLogger {
-        records: std::sync::Mutex::new(Vec::new()),
-    };
-    static RECORDING_LOGGER_INIT: std::sync::Once = std::sync::Once::new();
-
-    fn capture_logs<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
-        RECORDING_LOGGER_INIT.call_once(|| {
-            log::set_logger(&RECORDING_LOGGER).expect("install recording logger");
-            log::set_max_level(log::LevelFilter::Debug);
-        });
-        RECORDING_LOGGER.lock_records().clear();
-        let result = f();
-        let records = RECORDING_LOGGER.lock_records().clone();
-        (result, records)
-    }
-
-    fn unlock_lines(records: &[String]) -> Vec<&String> {
-        records
-            .iter()
-            .filter(|line| {
-                line.contains("pg_advisory_unlock") || line.contains("was not held during unlock")
-            })
-            .collect()
-    }
-
-    mod serial_db {
-        use super::*;
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn busy_project_id_lock_sends_no_unlock_while_an_acquired_guard_does() {
-            let database_url = connect_postgres_test_db();
-            let project_id = "gcode-lock-by-id-busy-no-unlock";
-            let holder = hold_project_lock(&database_url, project_id);
-
-            let (busy, busy_logs) = capture_logs(|| {
-                lock_project_by_id(
-                    &database_url,
-                    project_id,
-                    IndexLockPolicy::maintenance_try(),
-                )
-            });
-
-            assert!(
-                busy.expect("busy project lock must defer without error")
-                    .is_none(),
-                "busy project lock must return None"
-            );
-            let leaked = unlock_lines(&busy_logs);
-            assert!(
-                leaked.is_empty(),
-                "a busy try-lock must not release a lock it never acquired: {leaked:?}"
-            );
-
-            drop(holder);
-
-            let (_, acquired_logs) = capture_logs(|| {
-                let guard = lock_project_by_id(
-                    &database_url,
-                    project_id,
-                    IndexLockPolicy::maintenance_try(),
-                )
-                .expect("acquire project lock by id")
-                .expect("project lock should be available once the holder releases it");
-                drop(guard);
-            });
-
-            assert!(
-                acquired_logs
-                    .iter()
-                    .any(|line| line.contains("pg_advisory_unlock")),
-                "an acquired guard must release its lock on drop: {acquired_logs:?}"
-            );
-            assert!(
-                !acquired_logs
-                    .iter()
-                    .any(|line| line.contains("was not held during unlock")),
-                "an acquired guard must own the lock it releases: {acquired_logs:?}"
-            );
-        }
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn project_id_lock_acquires_and_releases_guard() {
-            let database_url = connect_postgres_test_db();
-            let project_id = "gcode-lock-by-id-acquire";
-
-            let guard = lock_project_by_id(
-                &database_url,
-                project_id,
-                IndexLockPolicy::maintenance_try(),
-            )
-            .expect("acquire project lock by id")
-            .expect("project lock should be available");
-
-            assert!(
-                lock_project_by_id(
-                    &database_url,
-                    project_id,
-                    IndexLockPolicy::maintenance_try(),
-                )
-                .expect("retry project lock by id")
-                .is_none(),
-                "guard must hold the project advisory lock"
-            );
-
-            drop(guard);
-
-            assert!(
-                lock_project_by_id(
-                    &database_url,
-                    project_id,
-                    IndexLockPolicy::maintenance_try(),
-                )
-                .expect("reacquire released project lock by id")
-                .is_some(),
-                "dropping the guard must release the project advisory lock"
-            );
-        }
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn leased_lock_on_a_borrowed_connection_releases_on_drop() {
-            let database_url = connect_postgres_test_db();
-            let project_id = "gcode-lock-lease";
-            let mut conn = db::connect_readwrite(&database_url).expect("connect lease connection");
-
-            let lease =
-                lease_project_lock(&mut conn, project_id, IndexLockPolicy::maintenance_try())
-                    .expect("lease project lock")
-                    .expect("project lock should be available");
-            assert!(
-                lock_project_by_id(
-                    &database_url,
-                    project_id,
-                    IndexLockPolicy::maintenance_try(),
-                )
-                .expect("retry project lock from another session")
-                .is_none(),
-                "the lease must hold the project advisory lock"
-            );
-
-            drop(lease);
-
-            assert!(
-                lease_project_lock(&mut conn, project_id, IndexLockPolicy::maintenance_try())
-                    .expect("re-lease on the same connection")
-                    .is_some(),
-                "dropping the lease must release the lock without closing the connection"
-            );
-        }
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn maintenance_project_id_lock_defers_when_busy() {
-            let database_url = connect_postgres_test_db();
-            let project_id = "gcode-lock-by-id-busy";
-            let _holder = hold_project_lock(&database_url, project_id);
-            let started = Instant::now();
-
-            let result = lock_project_by_id(
-                &database_url,
-                project_id,
-                IndexLockPolicy::maintenance_try(),
-            )
-            .expect("busy project lock must defer without error");
-
-            assert!(result.is_none(), "busy project lock must return None");
-            assert!(
-                started.elapsed() >= Duration::from_millis(150),
-                "maintenance lock must try for its full bounded wait"
-            );
-        }
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn brief_try_returns_busy_while_same_project_lock_is_held() {
-            let database_url = connect_postgres_test_db();
-            let ctx = context_for(database_url.clone(), "gcode-lock-brief-try");
-            let _holder = hold_project_lock(&database_url, &ctx.project_id);
-
-            let result = with_project_lock::<()>(
-                &ctx,
-                IndexLockPolicy::BriefTry {
-                    total_wait: Duration::from_millis(50),
-                    poll: Duration::from_millis(10),
-                },
-                || anyhow::bail!("closure must not run while lock is busy"),
-            )
-            .expect("try project lock");
-
-            assert_eq!(result, IndexLockResult::Busy);
-        }
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn wait_blocks_until_same_project_lock_is_released() {
-            let database_url = connect_postgres_test_db();
-            let project_id = "gcode-lock-wait";
-            let ctx = context_for(database_url.clone(), project_id);
-            let holder = hold_project_lock(&database_url, project_id);
-
-            let (done_tx, done_rx) = std::sync::mpsc::channel();
-            let handle = std::thread::spawn(move || {
-                let result =
-                    with_project_lock(&ctx, IndexLockPolicy::wait(), || Ok::<_, anyhow::Error>(()));
-                done_tx.send(()).expect("send wait lock completion");
-                result
-            });
-            assert!(
-                done_rx.recv_timeout(Duration::from_millis(100)).is_err(),
-                "wait policy did not block"
-            );
-
-            drop(holder);
-            let result = handle
-                .join()
-                .expect("wait lock thread joins")
-                .expect("wait lock succeeds");
-            assert_eq!(result, IndexLockResult::Acquired(()));
-        }
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn different_project_ids_do_not_block_each_other() {
-            let database_url = connect_postgres_test_db();
-            let _holder = hold_project_lock(&database_url, "gcode-lock-held-project");
-            let ctx = context_for(database_url, "gcode-lock-free-project");
-
-            let result = with_project_lock(
-                &ctx,
-                IndexLockPolicy::BriefTry {
-                    total_wait: Duration::from_millis(10),
-                    poll: Duration::from_millis(1),
-                },
-                || Ok::<_, anyhow::Error>(7),
-            )
-            .expect("try different project lock");
-
-            assert_eq!(result, IndexLockResult::Acquired(7));
-        }
-
-        /// Regression guard for #17482: `commands::index::run` runs the
-        /// graph/vector projection sync INSIDE the `with_project_lock` closure,
-        /// so the per-project advisory lock is held for the entire index+sync run.
-        /// This proves that once execution is inside the locked closure — past the
-        /// index phase, in the projection-sync phase — a competing acquirer of the
-        /// same `project_lock_key` on another connection is still refused (Busy).
-        /// If the sync were moved back outside the lock, the projection phase would
-        /// no longer be covered; this test pins the lock over the full closure body.
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn projection_sync_phase_is_covered_by_the_project_lock() {
-            let database_url = connect_postgres_test_db();
-            let project_id = "gcode-lock-projection-phase";
-            let ctx = context_for(database_url.clone(), project_id);
-            let key = project_lock_key(project_id);
-
-            // Model run()'s locked body: the index phase has completed and the
-            // projection-sync phase is now running — still inside the closure.
-            // From there, a second acquirer must observe the lock as held.
-            let observed = with_project_lock(&ctx, IndexLockPolicy::wait(), || {
-                let mut competitor =
-                    db::connect_readwrite(&database_url).expect("connect competing acquirer");
-                let acquired = try_advisory_lock(&mut competitor, key)
-                    .expect("probe project lock during projection-sync phase");
-                if acquired {
-                    // Never expected; release so a violated guarantee doesn't leak.
-                    competitor
-                        .execute("SELECT pg_advisory_unlock($1)", &[&key])
-                        .expect("release probe lock");
-                }
-                Ok::<_, anyhow::Error>(!acquired)
-            })
-            .expect("acquire project lock");
-
-            assert_eq!(
-                observed,
-                IndexLockResult::Acquired(true),
-                "project lock must remain held during the projection-sync phase"
-            );
-        }
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn wait_policy_errors_after_cap_when_holder_never_releases() {
-            // A hung holder must surface as a loud error, not an indefinite
-            // hang: the bounded Wait acquisition gives up after its cap and
-            // returns Err (never a silent Busy), so a stalled index or codewiki
-            // run fails visibly instead of parking forever in pg_advisory_lock
-            // (#17709).
-            let database_url = connect_postgres_test_db();
-            let project_id = "gcode-lock-wait-cap";
-            let ctx = context_for(database_url.clone(), project_id);
-            let _holder = hold_project_lock(&database_url, project_id);
-
-            let started = Instant::now();
-            let result = with_project_lock(
-                &ctx,
-                IndexLockPolicy::Wait {
-                    max_wait: Duration::from_millis(300),
-                },
-                || Ok::<_, anyhow::Error>(()),
-            );
-
-            assert!(
-                result.is_err(),
-                "bounded Wait must error when the holder never releases, got {result:?}"
-            );
-            assert!(
-                started.elapsed() < Duration::from_secs(30),
-                "bounded Wait must give up near its cap, not hang"
-            );
-        }
-    }
-}
+#[path = "index_lock/tests.rs"]
+mod tests;

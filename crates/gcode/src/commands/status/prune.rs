@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use crate::cli_error::CliError;
 use crate::config::{self, Context};
 use crate::daemon::GlobalPruneOutcome;
-use crate::index_lock::{IndexLockPolicy, lock_project_by_id};
+use crate::index_lock::{IndexLockPolicy, IndexLockResult, LockDiagnostics, lock_project_by_id};
 
 use super::content_gc::{ContentGcCandidate, discover_content_gc, prune_content_versions};
 use super::invalidate::invalidate_project_locked;
@@ -253,10 +253,12 @@ fn mutate_project_scoped_stale(discovery: &GlobalPruneDiscovery) -> ReconcileTot
         .map(|project| project.id.clone())
         .collect::<Vec<_>>();
     sweep_discovered_ids_with(&project_ids, |project_id| {
-        let Some(_lock) = lock_project_by_id(
+        // Silent: the sweep reports a per-project busy count, not a holder.
+        let IndexLockResult::Acquired(_lock) = lock_project_by_id(
             &discovery.services.database_url,
             project_id,
             IndexLockPolicy::maintenance_try(),
+            LockDiagnostics::Silent,
         )?
         else {
             return Ok(SweepOutcome::Busy);

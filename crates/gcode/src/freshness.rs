@@ -18,8 +18,31 @@ pub enum FreshnessScope {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FreshnessStatus {
     Checked,
-    SkippedBusy,
+    /// The refresh was skipped because another indexer holds the project lock,
+    /// carrying that holder's identity when it could be read.
+    SkippedBusy(Option<String>),
     Degraded(String),
+}
+
+impl FreshnessStatus {
+    /// Warning text for a refresh skipped by a busy index lock, naming the
+    /// holder when one was identified.
+    ///
+    /// Both CLIs that surface this warning render it here so the two cannot
+    /// drift apart.
+    pub fn busy_warning(&self) -> Option<String> {
+        let Self::SkippedBusy(holder) = self else {
+            return None;
+        };
+        Some(match holder {
+            Some(holder) => format!(
+                "warning: gcode index refresh already running; reading existing index ({holder})"
+            ),
+            None => {
+                "warning: gcode index refresh already running; reading existing index".to_string()
+            }
+        })
+    }
 }
 
 pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<FreshnessStatus> {
@@ -89,7 +112,7 @@ fn freshness_from_lock(result: IndexLockResult<Result<(), String>>) -> Freshness
     match result {
         IndexLockResult::Acquired(Ok(())) => FreshnessStatus::Checked,
         IndexLockResult::Acquired(Err(message)) => FreshnessStatus::Degraded(message),
-        IndexLockResult::Busy => FreshnessStatus::SkippedBusy,
+        IndexLockResult::Busy(holder) => FreshnessStatus::SkippedBusy(holder),
     }
 }
 
@@ -383,6 +406,28 @@ mod tests {
         visibility::tombstone_count(&mut conn, ctx)
     }
 
+    #[test]
+    fn busy_warning_names_the_holder_when_one_was_identified() {
+        let named = FreshnessStatus::SkippedBusy(Some("holder: backend pid 4242".to_string()))
+            .busy_warning()
+            .expect("a busy status must produce a warning");
+        assert!(named.contains("index refresh already running"), "{named}");
+        assert!(named.contains("holder: backend pid 4242"), "{named}");
+
+        // An unlooked-up holder must read as plain contention rather than
+        // implying the lookup ran and found nobody.
+        let unnamed = FreshnessStatus::SkippedBusy(None)
+            .busy_warning()
+            .expect("a busy status must produce a warning");
+        assert!(!unnamed.contains("holder"), "{unnamed}");
+
+        assert_eq!(FreshnessStatus::Checked.busy_warning(), None);
+        assert_eq!(
+            FreshnessStatus::Degraded("disk full".to_string()).busy_warning(),
+            None
+        );
+    }
+
     mod serial_db {
         use super::*;
 
@@ -410,7 +455,10 @@ mod tests {
 
             let status = ensure_fresh(&ctx, FreshnessScope::Project).expect("freshness status");
 
-            assert_eq!(status, FreshnessStatus::SkippedBusy);
+            assert!(
+                matches!(status, FreshnessStatus::SkippedBusy(_)),
+                "a held project lock must skip the refresh, got {status:?}"
+            );
         }
 
         #[test]
@@ -454,7 +502,10 @@ mod tests {
                 SystemTime::now() + std::time::Duration::from_secs(3600),
             );
             let status = ensure_fresh(&ctx, FreshnessScope::Project).expect("freshness status");
-            assert_eq!(status, FreshnessStatus::SkippedBusy);
+            assert!(
+                matches!(status, FreshnessStatus::SkippedBusy(_)),
+                "the changed file must take the lock path, got {status:?}"
+            );
             drop(holder);
 
             invalidate_test_project(&ctx);

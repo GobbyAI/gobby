@@ -68,7 +68,10 @@ pub fn run(
 
     let run_output = match run_output {
         IndexLockResult::Acquired(run_output) => run_output,
-        IndexLockResult::Busy => {
+        IndexLockResult::Busy(holder) => {
+            let holder = holder
+                .map(|holder| format!("; {holder}"))
+                .unwrap_or_default();
             if skip_if_locked {
                 // A concurrent indexer (typically a full reindex, which covers
                 // these files anyway) holds the lock. Yield without blocking;
@@ -76,15 +79,16 @@ pub fn run(
                 // treat this as success or a hard error (#17701).
                 if !target_ctx.quiet {
                     eprintln!(
-                        "index lock busy for project {}; skipped (another indexer is running)",
-                        target_ctx.project_id
+                        "index lock busy for project {}; skipped (another indexer is running{})",
+                        target_ctx.project_id, holder
                     );
                 }
                 std::process::exit(3);
             }
             anyhow::bail!(
-                "index lock is busy for project {}; wait policy did not acquire it",
-                target_ctx.project_id
+                "index lock is busy for project {}; wait policy did not acquire it{}",
+                target_ctx.project_id,
+                holder
             )
         }
     };

@@ -1,7 +1,7 @@
 use crate::config::Context;
 use crate::db;
 use crate::index::indexer;
-use crate::index_lock::{IndexLockPolicy, lock_project_by_id};
+use crate::index_lock::{IndexLockPolicy, IndexLockResult, LockDiagnostics, lock_project_by_id};
 use crate::output::Format;
 
 pub fn invalidate(ctx: &Context, force: bool, _format: Format) -> anyhow::Result<()> {
@@ -30,17 +30,21 @@ pub fn invalidate(ctx: &Context, force: bool, _format: Format) -> anyhow::Result
 }
 
 pub(crate) fn invalidate_project(ctx: &Context) -> anyhow::Result<()> {
-    let _lock = lock_project_by_id(
+    let _lock = match lock_project_by_id(
         &ctx.database_url,
         &ctx.project_id,
         IndexLockPolicy::maintenance_try(),
-    )?
-    .ok_or_else(|| {
-        anyhow::anyhow!(
-            "gcode index lock is busy for project {}; retry invalidation later",
-            ctx.project_id
-        )
-    })?;
+        LockDiagnostics::for_context(ctx.quiet),
+    )? {
+        IndexLockResult::Acquired(lock) => lock,
+        IndexLockResult::Busy(holder) => anyhow::bail!(
+            "gcode index lock is busy for project {}; retry invalidation later{}",
+            ctx.project_id,
+            holder
+                .map(|holder| format!(" ({holder})"))
+                .unwrap_or_default()
+        ),
+    };
 
     invalidate_project_locked(ctx).map(|_| ())
 }

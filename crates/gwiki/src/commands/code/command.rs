@@ -179,9 +179,7 @@ pub(crate) fn run_command(options: CodeCommandOptions) -> Result<CommandOutcome,
         ensure_project_fresh,
     )
     .map_err(CodeCommandError::Freshness)?;
-    let busy_warning = matches!(freshness, Some(FreshnessStatus::SkippedBusy)).then_some(
-        "warning: gcode index refresh already running; reading existing index".to_string(),
-    );
+    let busy_warning = freshness.as_ref().and_then(FreshnessStatus::busy_warning);
     let mut source = crate::support::config::hub_ai_config_source("gwiki code")?;
     let ai_context = AiContext::resolve(Some(project_id.clone()), &mut source);
     let profiles = direct_profiles(&ai);
@@ -367,10 +365,22 @@ mod tests {
         let status = check_freshness(true, Path::new("/repo"), true, |root, disabled| {
             assert_eq!(root, Path::new("/repo"));
             assert!(disabled);
-            Ok(FreshnessStatus::SkippedBusy)
+            Ok(FreshnessStatus::SkippedBusy(Some(
+                "holder: backend pid 4242".to_string(),
+            )))
         })
         .expect("generation freshness");
-        assert_eq!(status, Some(FreshnessStatus::SkippedBusy));
+        assert_eq!(
+            status
+                .as_ref()
+                .and_then(FreshnessStatus::busy_warning)
+                .as_deref(),
+            Some(
+                "warning: gcode index refresh already running; reading existing index \
+                 (holder: backend pid 4242)"
+            ),
+            "gwiki must surface the holder gcode identified, not a bare busy line"
+        );
     }
 
     fn command_options(scope: Vec<String>, complete_scope: bool) -> CodeCommandOptions {

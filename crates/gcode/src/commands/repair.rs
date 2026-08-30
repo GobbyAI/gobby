@@ -81,9 +81,12 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
         index_lock::with_project_lock(ctx, IndexLockPolicy::wait(), || run_locked(ctx, started))?;
     let output = match result {
         IndexLockResult::Acquired(output) => output,
-        IndexLockResult::Busy => anyhow::bail!(
-            "index lock is busy for project {}; wait policy did not acquire it",
-            ctx.project_id
+        IndexLockResult::Busy(holder) => anyhow::bail!(
+            "index lock is busy for project {}; wait policy did not acquire it{}",
+            ctx.project_id,
+            holder
+                .map(|holder| format!("; {holder}"))
+                .unwrap_or_default()
         ),
     };
     match format {

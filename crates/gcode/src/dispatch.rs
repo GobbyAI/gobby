@@ -129,9 +129,7 @@ fn freshness_warning(quiet: bool, status: &freshness::FreshnessStatus) -> Option
         return None;
     }
     match status {
-        freshness::FreshnessStatus::SkippedBusy => {
-            Some("warning: gcode index refresh already running; reading existing index".to_string())
-        }
+        freshness::FreshnessStatus::SkippedBusy(_) => status.busy_warning(),
         freshness::FreshnessStatus::Degraded(error) => Some(format!(
             "warning: index refresh failed ({error}); serving existing index \
              (pass --allow-stale to skip this check)"

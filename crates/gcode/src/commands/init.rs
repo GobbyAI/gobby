@@ -85,7 +85,9 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
             )
         })? {
             IndexLockResult::Acquired(outcome) => outcome,
-            IndexLockResult::Busy => unreachable!("wait policy always acquires the index lock"),
+            IndexLockResult::Busy(_) => {
+                unreachable!("wait policy always acquires the index lock")
+            }
         };
     if !quiet {
         eprintln!(
