@@ -18,8 +18,17 @@ from gobby.utils.uuid_validation import parse_uuid_reference
 logger = logging.getLogger(__name__)
 
 ORPHANED_PROJECT_ID = "00000000-0000-0000-0000-000000000000"
+MIGRATED_PROJECT_ID = "00000000-0000-0000-0000-000000000001"
 PERSONAL_PROJECT_ID = "00000000-0000-0000-0000-000000060887"
 GLOBAL_PROJECT_ID = "00000000-0000-0000-0000-000000000002"
+CHECKOUT_FREE_PROJECT_IDS = frozenset(
+    {
+        ORPHANED_PROJECT_ID,
+        MIGRATED_PROJECT_ID,
+        GLOBAL_PROJECT_ID,
+        PERSONAL_PROJECT_ID,
+    }
+)
 SYSTEM_PROJECT_NAMES = frozenset({"_orphaned", "_migrated", "_personal", "_global", "gobby"})
 
 
