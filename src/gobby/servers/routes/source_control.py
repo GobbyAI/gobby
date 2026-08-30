@@ -128,7 +128,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
     async def get_status(project_id: str | None = None) -> dict[str, Any]:
         """Get source control status overview."""
         repo_path, github_repo = await server.run_db(_resolve_project, server, project_id)
-        gh = _get_github(server)
+        gh = _get_github(server, project_id)
         github_available = gh.is_available() if gh else False
 
         current_branch = None
@@ -456,7 +456,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
     ) -> dict[str, Any]:
         """List pull requests from GitHub."""
         _, github_repo = await server.run_db(_resolve_project, server, project_id)
-        gh = _get_github(server)
+        gh = _get_github(server, project_id)
         if not gh or not gh.is_available():
             return {"prs": [], "github_available": False}
 
@@ -575,7 +575,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
     ) -> dict[str, Any]:
         """List GitHub issues."""
         _, github_repo = await server.run_db(_resolve_project, server, project_id)
-        gh = _get_github(server)
+        gh = _get_github(server, project_id)
         if not gh or not gh.is_available():
             return {"issues": [], "github_available": False}
 
@@ -666,7 +666,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
     ) -> dict[str, Any]:
         """List CI/CD workflow runs."""
         _, github_repo = await server.run_db(_resolve_project, server, project_id)
-        gh = _get_github(server)
+        gh = _get_github(server, project_id)
         if not gh or not gh.is_available():
             return {"runs": [], "github_available": False}
 

@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from gobby.integrations.github import GitHubIntegration
 from gobby.mcp_proxy.services.server_resolution import resolve_server
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -16,10 +17,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _get_github(server: HTTPServer) -> GitHubIntegration | None:
-    """Get GitHubIntegration if MCP manager is available."""
+def _get_github(server: HTTPServer, project_id: str | None) -> GitHubIntegration | None:
+    """Get a GitHubIntegration scoped to ``project_id`` (global when None)."""
     if server.services.mcp_manager:
-        return GitHubIntegration(server.services.mcp_manager)
+        return GitHubIntegration(
+            server.services.mcp_manager,
+            project_id=project_id or GLOBAL_PROJECT_ID,
+        )
     return None
 
 
@@ -34,13 +38,15 @@ async def _call_github_mcp(
     if not manager:
         raise HTTPException(503, "MCP manager not available")
 
-    from gobby.storage.projects import GLOBAL_PROJECT_ID
-
     scope = project_id or GLOBAL_PROJECT_ID
     config = resolve_server(manager, "github", project_id=scope)
-    dispatch_id = config.id if config is not None else "github"
+    if config is None:
+        raise HTTPException(
+            404,
+            {"success": False, "error": f"Server 'github' not found in project scope {scope}"},
+        )
     try:
-        session = await manager.get_client_session(dispatch_id)
+        session = await manager.get_client_session(config.id)
         result = await session.call_tool(tool_name, arguments)
         if hasattr(result, "content") and result.content:
             import json
