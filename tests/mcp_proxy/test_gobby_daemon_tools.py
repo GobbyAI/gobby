@@ -201,13 +201,19 @@ class TestGobbyDaemonToolsListMcpServers:
 
         config1 = MagicMock()
         config1.name = "server1"
+        config1.id = "server1"
+        config1.project_id = "test-project-id"
         config1.transport = "http"
         config1.enabled = True
+        config1.template = None
 
         config2 = MagicMock()
         config2.name = "server2"
+        config2.id = "server2"
+        config2.project_id = "test-project-id"
         config2.transport = "stdio"
         config2.enabled = True
+        config2.template = None
 
         health1 = MagicMock()
         health1.state.value = "connected"
@@ -215,6 +221,7 @@ class TestGobbyDaemonToolsListMcpServers:
         health2.state.value = "failed"
 
         mock_mcp_manager.server_configs = [config1, config2]
+        mock_mcp_manager._configs = {"server1": config1, "server2": config2}
         mock_mcp_manager.connections = {
             "server1": MagicMock(),
             "server2": MagicMock(),
@@ -236,7 +243,7 @@ class TestGobbyDaemonToolsListMcpServers:
         assert result["total"] == 2
         assert result["connected"] == 1
 
-        assert result["servers"] == ["server1", "server2"]
+        assert [row["name"] for row in result["servers"]] == ["server1", "server2"]
         assert result["issues"] == [{"name": "server2", "state": "failed", "transport": "stdio"}]
         assert mock_mcp_manager.is_connected.call_args_list == [call("server1"), call("server2")]
 
@@ -279,6 +286,7 @@ class TestGobbyDaemonToolsCallTool:
             None,
             wrapper_originated=True,
             intent=None,
+            project_id="test-project-id",
         )
         # MCP layer strips "success" from successful responses (server.py:140-142)
         assert "success" not in result
@@ -297,7 +305,7 @@ class TestGobbyDaemonToolsCallTool:
 
         result = await tools_handler.call_tool(
             server_name="gobby-sessions",
-            tool_name="get_handoff",
+            tool_name="wait_for_output",
             arguments={"timeout_seconds": 999_999},
             intent="find completion",
         )
@@ -420,6 +428,7 @@ class TestGobbyDaemonToolsCallTool:
             None,
             wrapper_originated=True,
             intent=None,
+            project_id="test-project-id",
         )
         assert tools_handler.tool_proxy.call_tool.call_count == 1
         assert tools_handler.tool_proxy.call_tool.call_args is not None
@@ -442,6 +451,7 @@ class TestGobbyDaemonToolsCallTool:
             None,
             wrapper_originated=True,
             intent=None,
+            project_id="test-project-id",
         )
         assert tools_handler.tool_proxy.call_tool.call_count == 1
         assert tools_handler.tool_proxy.call_tool.call_args is not None
@@ -467,6 +477,7 @@ class TestGobbyDaemonToolsCallTool:
             None,
             wrapper_originated=True,
             intent=None,
+            project_id="test-project-id",
         )
 
     @pytest.mark.asyncio
@@ -490,6 +501,7 @@ class TestGobbyDaemonToolsCallTool:
             None,
             wrapper_originated=True,
             intent=None,
+            project_id="test-project-id",
         )
 
     @pytest.mark.asyncio
@@ -512,7 +524,7 @@ class TestGobbyDaemonToolsCallTool:
             result = await asyncio.wait_for(
                 tools_handler.call_tool(
                     server_name="gobby-sessions",
-                    tool_name="get_handoff",
+                    tool_name="wait_for_output",
                     arguments={"session_id": "session-123", "timeout_seconds": 600},
                 ),
                 timeout=0.2,
@@ -524,7 +536,7 @@ class TestGobbyDaemonToolsCallTool:
             "effective_timeout_seconds": 0.02,
             "mcp_wrapper_timeout": True,
             "background_call_continues": True,
-            "tool_name": "get_handoff",
+            "tool_name": "wait_for_output",
             "_mcp_metadata": {
                 "requested_timeout_seconds": 600.0,
                 "effective_timeout_seconds": 0.02,
@@ -533,11 +545,12 @@ class TestGobbyDaemonToolsCallTool:
         }
         tools_handler.tool_proxy.call_tool.assert_awaited_once_with(
             "gobby-sessions",
-            "get_handoff",
+            "wait_for_output",
             {"session_id": "session-123", "timeout_seconds": 0.02},
             None,
             wrapper_originated=True,
             intent=None,
+            project_id="test-project-id",
         )
         release_call.set()
         await asyncio.wait_for(call_finished.wait(), timeout=0.2)
@@ -593,7 +606,9 @@ class TestGobbyDaemonToolsListTools:
 
         await tools_handler.list_tools(server_name="server1")
 
-        tools_handler.tool_proxy.list_tools.assert_called_once_with("server1", session_id=None)
+        tools_handler.tool_proxy.list_tools.assert_called_once_with(
+            "server1", session_id=None, project_id="test-project-id"
+        )
         assert tools_handler.tool_proxy.list_tools.call_count == 1
         assert tools_handler.tool_proxy.list_tools.call_args is not None
 
@@ -619,7 +634,7 @@ class TestGobbyDaemonToolsListTools:
         await tools_handler.list_tools(server_name="server1", session_id="session-123")
 
         tools_handler.tool_proxy.list_tools.assert_called_once_with(
-            "server1", session_id="session-123"
+            "server1", session_id="session-123", project_id="test-project-id"
         )
         assert tools_handler.tool_proxy.list_tools.call_count == 1
         assert tools_handler.tool_proxy.list_tools.call_args is not None
@@ -664,6 +679,7 @@ class TestGobbyDaemonToolsGetToolSchema:
         tools_handler.tool_proxy.get_tool_schema.assert_called_once_with(
             "my-server",
             "my-tool",
+            project_id="test-project-id",
         )
         assert tools_handler.tool_proxy.get_tool_schema.call_count == 1
         assert tools_handler.tool_proxy.get_tool_schema.call_args is not None
@@ -683,6 +699,7 @@ class TestGobbyDaemonToolsGetToolSchema:
         tools_handler.tool_proxy.get_tool_schema.assert_awaited_once_with(
             "my-server",
             "my-tool",
+            project_id="test-project-id",
         )
         assert not hasattr(tools_handler.tool_proxy, "emit_synthetic_proxy_after_tool")
 
@@ -715,7 +732,9 @@ class TestGobbyDaemonToolsServerManagement:
 
         result = await tools_handler.remove_mcp_server("old-server")
 
-        tools_handler.server_mgmt.remove_server.assert_called_once_with("old-server")
+        tools_handler.server_mgmt.remove_server.assert_called_once_with(
+            "old-server", scope="project", project_id="test-project-id"
+        )
         assert result["success"] is True
 
     @pytest.mark.asyncio
@@ -898,5 +917,7 @@ class TestGobbyDaemonToolsReadResource:
                 resource_uri="file:///path/to/resource",
             )
 
-        read_resource.assert_called_once_with("server1", "file:///path/to/resource")
+        read_resource.assert_called_once_with(
+            "server1", "file:///path/to/resource", project_id="test-project-id"
+        )
         assert result["content"] == "resource content"

@@ -29,21 +29,47 @@ pytestmark = pytest.mark.unit
 
 class FakeGitHubMCP:
     def __init__(self, responses: dict[str, Any] | None = None) -> None:
+        from gobby.mcp_proxy.models import MCPServerConfig
+        from gobby.storage.projects import GLOBAL_PROJECT_ID
+
         self.responses = responses or {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        config = MCPServerConfig(
+            name="github",
+            project_id=GLOBAL_PROJECT_ID,
+            url="https://github.example.test",
+            id="github",
+        )
+        self.server_configs = [config]
+        self._configs = {config.id: config}
+        self.project_id = None
+        self.health = {config.id: SimpleNamespace(state="connected")}
+        self.lazy_connect = True
+
+    def get_server_config(self, server_id: str) -> Any:
+        return self._configs.get(server_id)
+
+    def has_server(self, server_id: str) -> bool:
+        return server_id in self._configs
 
     async def call_tool(
         self,
+        server_id: str = "github",
+        tool_name: str | None = None,
+        arguments: dict[str, Any] | None = None,
         *,
-        server_name: str,
-        tool_name: str,
-        arguments: dict[str, Any],
+        server_name: str | None = None,
+        **kwargs: Any,
     ) -> Any:
-        assert server_name == "github"
-        self.calls.append((tool_name, arguments))
-        value = self.responses.get(tool_name, {})
+        name = server_name or server_id
+        assert name == "github"
+        tool = tool_name or kwargs.get("tool_name")
+        args = arguments if arguments is not None else kwargs.get("arguments") or {}
+        assert isinstance(tool, str)
+        self.calls.append((tool, args))
+        value = self.responses.get(tool, {})
         if callable(value):
-            return value(arguments)
+            return value(args)
         return value
 
     def called(self, tool_name: str) -> list[dict[str, Any]]:

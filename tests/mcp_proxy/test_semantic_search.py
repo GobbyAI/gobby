@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.mcp_proxy.semantic_search import (
     DEFAULT_EMBEDDING_DIM,
     DEFAULT_EMBEDDING_MODEL,
@@ -960,3 +961,177 @@ async def test_tool_embedding_holds_project_admission_from_embedding_through_ups
     assert await write_task is True
     await purge_task
     assert exclusive_entered.is_set()
+
+
+@pytest.mark.asyncio
+async def test_search_tools_filters_to_visible_servers(temp_db: HubDatabase) -> None:
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+    project_id = "11111111-1111-4111-8111-111111111111"
+    other_id = "22222222-2222-4222-8222-222222222222"
+    mock_vs = AsyncMock()
+    mock_vs.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
+    mock_vs.search_with_payload = AsyncMock(
+        return_value=[
+            (
+                "tool-project",
+                0.9,
+                {
+                    "server_id": "id-project",
+                    "server_name": "github",
+                    "project_id": project_id,
+                    "tool_name": "project_tool",
+                    "description": "project",
+                },
+            ),
+            (
+                "tool-global",
+                0.8,
+                {
+                    "server_id": "id-global",
+                    "server_name": "slack",
+                    "project_id": GLOBAL_PROJECT_ID,
+                    "tool_name": "global_tool",
+                    "description": "global",
+                },
+            ),
+            (
+                "tool-foreign",
+                0.95,
+                {
+                    "server_id": "id-foreign",
+                    "server_name": "github",
+                    "project_id": other_id,
+                    "tool_name": "foreign_tool",
+                    "description": "foreign",
+                },
+            ),
+            (
+                "tool-shadowed",
+                0.7,
+                {
+                    "server_id": "id-global-github",
+                    "server_name": "github",
+                    "project_id": GLOBAL_PROJECT_ID,
+                    "tool_name": "shadowed_tool",
+                    "description": "shadowed",
+                },
+            ),
+        ]
+    )
+    search = SemanticToolSearch(temp_db, vector_store=mock_vs)
+    cast(Any, search).embed_text = AsyncMock(return_value=[0.1] * DEFAULT_EMBEDDING_DIM)
+    manager = SimpleNamespace(
+        server_configs=[
+            SimpleNamespace(id="id-project", name="github", project_id=project_id),
+            SimpleNamespace(id="id-global", name="slack", project_id=GLOBAL_PROJECT_ID),
+            SimpleNamespace(id="id-global-github", name="github", project_id=GLOBAL_PROJECT_ID),
+            SimpleNamespace(id="id-foreign", name="github", project_id=other_id),
+        ]
+    )
+
+    results = await search.search_tools(
+        "github tools",
+        project_id=project_id,
+        mcp_manager=manager,
+    )
+    names = {item.tool_name for item in results}
+    assert names == {"project_tool", "global_tool"}
+    by_name = {item.tool_name: item for item in results}
+    assert by_name["project_tool"].server_name == "github"
+    assert by_name["project_tool"].description == "project"
+    assert by_name["global_tool"].server_name == "slack"
+    assert by_name["global_tool"].description == "global"
+    assert {item.similarity for item in results} == {0.9, 0.8}
+    mock_vs.search_with_payload.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scoped_payload_backfill_rewrites_legacy_points_once(
+    temp_db: HubDatabase,
+) -> None:
+    from gobby.runner_init.mcp_stack import maybe_backfill_scoped_tool_embeddings
+
+    project_id = "11111111-1111-4111-8111-111111111111"
+    stored: dict[str, dict[str, Any]] = {
+        "legacy-tool": {
+            "server_name": "github",
+            "project_id": project_id,
+            "tool_name": "legacy",
+            "description": "old",
+        }
+    }
+
+    class _Store:
+        def __init__(self) -> None:
+            self.values: dict[str, Any] = {}
+
+        def get(self, key: str, default: Any = None) -> Any:
+            return self.values.get(key, default)
+
+        def set(self, key: str, value: Any) -> None:
+            self.values[key] = value
+
+    mock_vs = AsyncMock()
+    mock_vs.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
+
+    async def _search_with_payload(**kwargs: Any) -> list[tuple[str, float, dict[str, Any]]]:
+        return [(key, 1.0, dict(payload)) for key, payload in stored.items()]
+
+    async def _upsert(
+        *, memory_id: str, embedding: Any, payload: dict[str, Any], **kwargs: Any
+    ) -> None:
+        stored[memory_id] = dict(payload)
+
+    async def _delete(memory_id: str, **kwargs: Any) -> None:
+        stored.pop(memory_id, None)
+
+    mock_vs.search_with_payload = AsyncMock(side_effect=_search_with_payload)
+    mock_vs.upsert = AsyncMock(side_effect=_upsert)
+    mock_vs.delete = AsyncMock(side_effect=_delete)
+    mock_vs.delete_many = AsyncMock(
+        side_effect=lambda ids, **kwargs: [stored.pop(item, None) for item in ids]
+    )
+    search = SemanticToolSearch(temp_db, vector_store=mock_vs)
+    cast(Any, search).embed_text = AsyncMock(return_value=[0.1] * DEFAULT_EMBEDDING_DIM)
+    config = MCPServerConfig(
+        name="github",
+        project_id=project_id,
+        url="https://github.example.test",
+        id="id-project",
+        tools=[{"name": "legacy", "description": "old"}],
+    )
+    manager = SimpleNamespace(
+        server_configs=[config],
+        mcp_db_manager=None,
+        get_cached_tools=lambda server_id: [
+            SimpleNamespace(
+                id="legacy-tool",
+                name="legacy",
+                description="old",
+                input_schema={},
+            )
+        ],
+    )
+    config_store = _Store()
+
+    first = await maybe_backfill_scoped_tool_embeddings(
+        search,
+        manager,
+        config_store=config_store,
+        vector_store=mock_vs,
+    )
+    assert first["rewritten"] is True
+    assert stored["legacy-tool"]["server_id"] == "id-project"
+    assert stored["legacy-tool"]["server_name"] == "github"
+    assert stored["legacy-tool"]["project_id"] == project_id
+    assert config_store.get("mcp.tool_embeddings.scoped_payload_version") == 1
+
+    second = await maybe_backfill_scoped_tool_embeddings(
+        search,
+        manager,
+        config_store=config_store,
+        vector_store=mock_vs,
+    )
+    assert second["rewritten"] is False
+    assert second.get("embedded", 0) == 0

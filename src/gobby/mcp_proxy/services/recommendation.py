@@ -118,6 +118,7 @@ class RecommendationService:
                 project_id=project_id,
                 top_k=top_k,
                 min_similarity=min_similarity,
+                mcp_manager=self._mcp_manager,
             )
 
             recommendations = [

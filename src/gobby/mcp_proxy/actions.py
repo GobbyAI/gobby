@@ -25,6 +25,8 @@ async def add_mcp_server(
     env: dict[str, str] | None = None,
     enabled: bool = True,
     description: str | None = None,
+    config: MCPServerConfig | None = None,
+    template_values: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Dynamically add a new MCP server connection.
@@ -46,34 +48,35 @@ async def add_mcp_server(
         Result dict with success status and server info
     """
     try:
-        # Normalize server name to lowercase
         name = name.lower()
+        if config is None:
+            config = MCPServerConfig(
+                name=name,
+                transport=transport,
+                url=url,
+                headers=headers,
+                command=command,
+                args=args,
+                env=env,
+                enabled=enabled,
+                description=description,
+                project_id=project_id,
+            )
+        else:
+            name = config.name
+            description = config.description if description is None else description
+            if template_values is not None:
+                config.template_values = template_values
 
-        # Create configuration
-        config = MCPServerConfig(
-            name=name,
-            transport=transport,
-            url=url,
-            headers=headers,
-            command=command,
-            args=args,
-            env=env,
-            enabled=enabled,
-            description=description,
-            project_id=project_id,
-        )
-
-        # Add server via manager (connects and caches tools)
         result = await mcp_manager.add_server(config)
 
         if not result.get("success"):
             return result
 
-        # Get full tool schemas from add_server result
         full_tool_schemas = result.get("full_tool_schemas", [])
+        skip_generated_description = bool(config.template and config.description)
 
-        # Generate server description using AI if not provided
-        if not description and full_tool_schemas:
+        if not description and full_tool_schemas and not skip_generated_description:
             try:
                 description = await generate_server_description(
                     server_name=name, tool_summaries=full_tool_schemas

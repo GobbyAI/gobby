@@ -7,7 +7,7 @@ Linear MCP server for all Linear operations.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -34,6 +34,8 @@ class LinearIntegration:
         mcp_manager: MCPClientManager,
         server_name: str = "linear",
         cache_ttl_seconds: float = 30.0,
+        *,
+        project_id: str | None = None,
     ) -> None:
         """Initialize LinearIntegration.
 
@@ -41,12 +43,23 @@ class LinearIntegration:
             mcp_manager: MCPClientManager instance for accessing MCP servers.
             server_name: Name of the Linear MCP server. Defaults to "linear".
             cache_ttl_seconds: How long to cache availability checks. Defaults to 30s.
+            project_id: Project scope used to resolve the linear instance.
         """
         self.mcp_manager = mcp_manager
         self.server_name = server_name
+        self.project_id = project_id
         self._cache_ttl_seconds = cache_ttl_seconds
         self._cached_available: bool | None = None
         self._cache_timestamp: float | None = None
+
+    def _resolved_config(self) -> Any:
+        from gobby.mcp_proxy.services.server_resolution import as_project_id, resolve_server
+
+        project_id = as_project_id(
+            self.project_id,
+            default=as_project_id(getattr(self.mcp_manager, "project_id", None)),
+        )
+        return resolve_server(self.mcp_manager, self.server_name, project_id=project_id)
 
     def is_available(self) -> bool:
         """Check if Linear MCP server is available.
@@ -78,17 +91,15 @@ class LinearIntegration:
     def _check_availability(self) -> bool:
         """Perform actual availability check without caching."""
         # Check if server is configured
-        if not self.mcp_manager.has_server(self.server_name):
+        config = self._resolved_config()
+        if config is None or not self.mcp_manager.has_server(config.id):
             return False
 
-        # Check if server is connected. Lazy CLI managers may not have opened
-        # the stdio connection yet; configured lazy servers are still usable
-        # because the first tool call connects on demand.
         health = self.mcp_manager.health
-        if self.server_name not in health:
+        if config.id not in health:
             return getattr(self.mcp_manager, "lazy_connect", False) is True
 
-        server_health = health[self.server_name]
+        server_health = health[config.id]
         # Handle both object with .state attribute and dict with 'state' key
         state = getattr(server_health, "state", None)
         if state is None and isinstance(server_health, dict):
@@ -113,21 +124,21 @@ class LinearIntegration:
             return None
 
         # Check if server is configured
-        if not self.mcp_manager.has_server(self.server_name):
+        config = self._resolved_config()
+        if config is None or not self.mcp_manager.has_server(config.id):
             return (
                 f"Linear MCP server '{self.server_name}' is not configured. "
                 "Add it to your gobby configuration or use `gobby mcp add linear`."
             )
 
-        # Server is configured but not connected
         health = self.mcp_manager.health
-        if self.server_name not in health:
+        if config.id not in health:
             return (
                 f"Linear MCP server '{self.server_name}' has no health status. "
                 "The server may not have been started yet."
             )
 
-        server_health = health[self.server_name]
+        server_health = health[config.id]
         state = getattr(server_health, "state", None)
         if state is None and isinstance(server_health, dict):
             state = server_health.get("state")

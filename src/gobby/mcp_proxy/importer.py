@@ -583,21 +583,21 @@ class MCPServerImporter:
         """
         try:
             if self.mcp_client_manager:
-                # Use the action which connects and saves
-                from gobby.mcp_proxy.actions import add_mcp_server
+                from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 
-                result: dict[str, Any] = await add_mcp_server(
-                    mcp_manager=self.mcp_client_manager,
-                    name=name,
-                    transport=transport,
-                    project_id=self.current_project_id,
+                service = ServerManagementService(self.mcp_client_manager, config_manager=self.db)
+                result: dict[str, Any] = await service.add_server(
+                    name,
+                    transport,
                     url=url,
-                    headers=headers,
                     command=command,
                     args=args,
                     env=env,
+                    headers=headers,
                     enabled=enabled,
+                    project_id=self.current_project_id,
                     description=description,
+                    scope="project",
                 )
                 return result
             else:

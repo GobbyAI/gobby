@@ -32,7 +32,21 @@ GitHubSyncFixture = tuple[
 @pytest.fixture
 def github_sync() -> GitHubSyncFixture:
     db = MagicMock()
+    from gobby.mcp_proxy.models import MCPServerConfig
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
     mcp_manager = MagicMock()
+    config = MCPServerConfig(
+        name="github",
+        project_id=GLOBAL_PROJECT_ID,
+        url="https://github.example.test",
+        id="github",
+    )
+    mcp_manager.server_configs = [config]
+    mcp_manager._configs = {config.id: config}
+    mcp_manager.project_id = "project-1"
+    mcp_manager.get_server_config.side_effect = lambda sid: mcp_manager._configs.get(sid)
+    mcp_manager.call_tool = AsyncMock(return_value={"ok": True})
     task_manager = MagicMock()
     project_manager = MagicMock()
     project = MagicMock()

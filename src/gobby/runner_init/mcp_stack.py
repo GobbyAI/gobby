@@ -22,15 +22,78 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+SCOPED_PAYLOAD_VERSION_KEY = "mcp.tool_embeddings.scoped_payload_version"
+SCOPED_PAYLOAD_VERSION = 1
+
 __all__ = [
     "LocalMCPManager",
     "MCPClientManager",
     "MetricsEventStore",
     "ToolMetricsManager",
+    "SCOPED_PAYLOAD_VERSION",
+    "SCOPED_PAYLOAD_VERSION_KEY",
     "init_mcp_db_manager",
     "init_mcp_stack",
+    "maybe_backfill_scoped_tool_embeddings",
     "resolved_log_path",
 ]
+
+
+def _store_get(config_store: Any, key: str) -> Any:
+    getter = getattr(config_store, "get", None)
+    if callable(getter):
+        try:
+            return getter(key)
+        except TypeError:
+            return getter(key, None)
+    reader = getattr(config_store, "read_snapshot", None)
+    if callable(reader):
+        snapshot = reader()
+        overrides = dict(getattr(snapshot, "overrides", {}) or {})
+        values = dict(getattr(snapshot, "values", {}) or {})
+        return overrides.get(key, values.get(key))
+    return None
+
+
+def _store_set(config_store: Any, key: str, value: Any) -> None:
+    setter = getattr(config_store, "set", None)
+    if callable(setter):
+        setter(key, value)
+        return
+    patch = getattr(config_store, "patch", None)
+    if callable(patch):
+        from gobby.storage.config_mutations import ConfigPatch
+
+        snapshot = config_store.read_snapshot()
+        patch(expected_revision=snapshot.revision, patch=ConfigPatch(values={key: value}))
+
+
+async def maybe_backfill_scoped_tool_embeddings(
+    search: Any,
+    mcp_manager: Any,
+    *,
+    config_store: Any,
+    vector_store: Any | None = None,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    """Rewrite legacy tool embeddings once after the scoped-payload change."""
+    raw = _store_get(config_store, SCOPED_PAYLOAD_VERSION_KEY)
+    try:
+        current = int(raw) if raw is not None else 0
+    except (TypeError, ValueError):
+        current = 0
+    if current >= SCOPED_PAYLOAD_VERSION:
+        return {"rewritten": False, "embedded": 0}
+    if vector_store is not None and getattr(search, "_vector_store", None) is None:
+        search._vector_store = vector_store
+    try:
+        stats = await search.embed_all_tools(project_id or GLOBAL_PROJECT_ID, mcp_manager)
+    except Exception:
+        logger.exception("Scoped tool embedding backfill failed; will retry on next start")
+        raise
+    _store_set(config_store, SCOPED_PAYLOAD_VERSION_KEY, SCOPED_PAYLOAD_VERSION)
+    embedded = int(stats.get("embedded", 0)) if isinstance(stats, dict) else 0
+    return {"rewritten": True, "embedded": embedded, **(stats if isinstance(stats, dict) else {})}
 
 
 def init_mcp_db_manager(runner: GobbyRunner) -> None:
@@ -68,6 +131,32 @@ def init_mcp_stack(runner: GobbyRunner) -> None:
             resolved_log_path(runner.startup_config.logging, RUNTIME_LOG_FILENAME)
         ),
     )
+    search = getattr(runner, "semantic_search", None)
+    config_store = getattr(runner, "config_store", None)
+    if search is not None and config_store is not None:
+        import asyncio
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            try:
+                asyncio.run(
+                    maybe_backfill_scoped_tool_embeddings(
+                        search,
+                        runner.mcp_proxy,
+                        config_store=config_store,
+                    )
+                )
+            except Exception:
+                logger.exception("Scoped tool embedding backfill failed")
+        else:
+            asyncio.create_task(
+                maybe_backfill_scoped_tool_embeddings(
+                    search,
+                    runner.mcp_proxy,
+                    config_store=config_store,
+                )
+            )
 
 
 def _expand_instance(

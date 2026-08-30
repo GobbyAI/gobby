@@ -12,8 +12,11 @@ from typing import Any, cast
 
 from gobby.hooks.tool_error_tracker import track_proxy_outcome
 from gobby.mcp_proxy.models import MCPError, ToolProxyErrorCode
+from gobby.mcp_proxy.services.server_resolution import (
+    caller_project_id,
+    resolve_server,
+)
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
-from gobby.utils.project_context import get_project_context
 from gobby.utils.session_refs import try_resolve_session_field
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -97,8 +100,16 @@ def _server_is_dispatchable(service: Any, server_name: str) -> bool:
     return bool(service._mcp_manager.has_server(server_name))
 
 
-def _unknown_server_result(service: Any, server_name: str, tool_name: str) -> dict[str, Any]:
+def _unknown_server_result(
+    service: Any,
+    server_name: str,
+    tool_name: str,
+    *,
+    project_id: str | None = None,
+) -> dict[str, Any]:
     error = f"Server '{server_name}' not found"
+    if project_id:
+        error += f" in project scope {project_id}"
     suggestion = service._get_server_suggestion(server_name)
     if suggestion:
         error += f". Did you mean '{suggestion}'?"
@@ -165,9 +176,13 @@ async def list_tools(
     service: Any,
     server_name: str,
     session_id: str | None = None,
+    *,
+    project_id: str | None = None,
+    scope: str | None = None,
 ) -> dict[str, Any]:
     """List tools for a specific server with progressive discovery format."""
     server_name = service._resolve_server_name(server_name)
+    project_id = caller_project_id(service, project_id=project_id, scope=scope)
     if service._is_proxy_namespace(server_name):
         logger.debug("list_tools called with server_name='gobby' — aggregating all internal tools")
         if service._internal_manager:
@@ -214,16 +229,17 @@ async def list_tools(
             "error": error_msg,
         }
 
-    if service._mcp_manager.has_server(server_name):
+    config = resolve_server(service, server_name, project_id=project_id)
+    if config is not None:
         try:
-            tools_map = await service._mcp_manager.list_tools(server_name)
+            tools_map = await service._mcp_manager.list_tools(config.id)
         except MCPError as exc:
             return {
                 "success": False,
                 "tools": [],
                 "error": str(exc),
             }
-        tools_list = tools_map.get(server_name, [])
+        tools_list = tools_map.get(config.name, tools_map.get(config.id, []))
         ext_brief_tools: list[dict[str, Any]] = []
         for tool in tools_list:
             if isinstance(tool, dict):
@@ -269,6 +285,8 @@ async def call_tool(
     timeout: float | None = None,
     wrapper_originated: bool = False,
     intent: str | None = None,
+    project_id: str | None = None,
+    scope: str | None = None,
 ) -> Any:
     """Execute a tool with optional pre-validation."""
     outcome = await _call_tool_impl(
@@ -282,6 +300,8 @@ async def call_tool(
         timeout,
         wrapper_originated,
         intent,
+        project_id=project_id,
+        scope=scope,
     )
     try:
         sv_mgr = _tracking_variable_manager(service)
@@ -316,8 +336,11 @@ async def _call_tool_impl(
     timeout: float | None = None,
     wrapper_originated: bool = False,
     intent: str | None = None,
+    project_id: str | None = None,
+    scope: str | None = None,
 ) -> _CallToolOutcome:
     """Execute one proxy route and return its structural outcome."""
+    requested_project_id = project_id
     server_name = service._resolve_server_name(server_name)
     prepared_arguments, error = service._prepare_arguments(arguments)
     if error is not None:
@@ -352,20 +375,17 @@ async def _call_tool_impl(
     session_manager = getattr(service, "session_manager", None)
     if session_manager is None:
         session_manager = getattr(hook_manager, "_session_manager", None) if hook_manager else None
-    project_ctx = get_project_context()
-    project_id = project_ctx.get("id") if project_ctx else None
-    project_id_from_context = isinstance(project_id, str)
-    if not project_id_from_context:
-        project_id = None
-    if project_id is None:
-        manager_project_id = getattr(getattr(service, "_mcp_manager", None), "project_id", None)
-        project_id = manager_project_id if isinstance(manager_project_id, str) else None
+    context_project_id = caller_project_id(
+        service,
+        project_id=requested_project_id,
+        scope=scope,
+    )
     await asyncio.to_thread(
         try_resolve_session_field,
         arguments,
         "session_id",
         session_manager=session_manager,
-        project_id=project_id,
+        project_id=context_project_id,
     )
 
     if service._is_proxy_namespace(server_name):
@@ -382,6 +402,8 @@ async def _call_tool_impl(
                 timeout=timeout,
                 wrapper_originated=wrapper_originated,
                 intent=intent,
+                project_id=requested_project_id,
+                scope=scope,
             )
         result = {
             "success": False,
@@ -403,9 +425,12 @@ async def _call_tool_impl(
             arguments,
         )
 
-    if not _server_is_dispatchable(service, server_name):
+    internal = bool(
+        service._internal_manager and service._internal_manager.is_internal(server_name)
+    )
+    if internal and not _server_is_dispatchable(service, server_name):
         return _CallToolOutcome(
-            _unknown_server_result(service, server_name, tool_name),
+            _unknown_server_result(service, server_name, tool_name, project_id=context_project_id),
             ProxyOutcomeClass.INVALID_CALL,
             None,
             server_name,
@@ -434,11 +459,32 @@ async def _call_tool_impl(
             arguments,
         )
 
+    session_project_id: str | None = None
     if effective_session_id and session_manager is not None:
         effective_session = await asyncio.to_thread(session_manager.get, effective_session_id)
-        session_project_id = getattr(effective_session, "project_id", None)
-        if isinstance(session_project_id, str) and session_project_id:
-            project_id = session_project_id
+        raw_session_project = getattr(effective_session, "project_id", None)
+        if isinstance(raw_session_project, str) and raw_session_project:
+            session_project_id = raw_session_project
+    project_id = caller_project_id(
+        service,
+        session_project_id=session_project_id,
+        project_id=requested_project_id,
+        scope=scope,
+    )
+    dispatch_id: str | None = None
+    if not internal:
+        config = resolve_server(service, server_name, project_id=project_id)
+        if config is None:
+            return _CallToolOutcome(
+                _unknown_server_result(service, server_name, tool_name, project_id=project_id),
+                ProxyOutcomeClass.INVALID_CALL,
+                effective_session_id,
+                server_name,
+                tool_name,
+                arguments,
+            )
+        dispatch_id = config.id
+        server_name = config.name
 
     if enforce_workflow:
         (
@@ -465,6 +511,34 @@ async def _call_tool_impl(
                 tool_name,
                 arguments,
             )
+
+    internal = bool(
+        service._internal_manager and service._internal_manager.is_internal(server_name)
+    )
+    if internal:
+        dispatch_id = None
+        if not _server_is_dispatchable(service, server_name):
+            return _CallToolOutcome(
+                _unknown_server_result(service, server_name, tool_name, project_id=project_id),
+                ProxyOutcomeClass.INVALID_CALL,
+                effective_session_id,
+                server_name,
+                tool_name,
+                arguments,
+            )
+    else:
+        config = resolve_server(service, server_name, project_id=project_id)
+        if config is None:
+            return _CallToolOutcome(
+                _unknown_server_result(service, server_name, tool_name, project_id=project_id),
+                ProxyOutcomeClass.INVALID_CALL,
+                effective_session_id,
+                server_name,
+                tool_name,
+                arguments,
+            )
+        dispatch_id = config.id
+        server_name = config.name
 
     if service._tool_filter and effective_session_id:
         allowed, reason = await asyncio.to_thread(
@@ -541,6 +615,7 @@ async def _call_tool_impl(
         tool_name=tool_name,
         arguments=arguments,
         effective_session_id=effective_session_id,
+        dispatch_id=dispatch_id,
         project_id=project_id,
         emit_after_workflow=enforce_workflow,
         timeout=timeout,
@@ -569,6 +644,7 @@ async def _execute_tool_dispatch(
     timeout: float | None,
     wrapper_originated: bool,
     intent: str | None,
+    dispatch_id: str | None = None,
 ) -> Any:
     result = await _execute_tool(
         service=service,
@@ -578,6 +654,7 @@ async def _execute_tool_dispatch(
         effective_session_id=effective_session_id,
         project_id=project_id,
         timeout=timeout,
+        dispatch_id=dispatch_id,
     )
     if emit_after_workflow:
         try:
@@ -647,6 +724,7 @@ async def _execute_tool(
     effective_session_id: str | None,
     project_id: str | None,
     timeout: float | None,
+    dispatch_id: str | None = None,
 ) -> Any:
     try:
         if service._internal_manager and service._internal_manager.is_internal(server_name):
@@ -685,8 +763,9 @@ async def _execute_tool(
         call_kwargs: dict[str, Any] = {"session_id": effective_session_id}
         if timeout is not None:
             call_kwargs["timeout"] = timeout
+        manager_id = dispatch_id or server_name
         result = await service._mcp_manager.call_tool(
-            server_name, tool_name, arguments, **call_kwargs
+            manager_id, tool_name=tool_name, arguments=arguments, **call_kwargs
         )
         return result
 
@@ -762,13 +841,22 @@ async def get_tool_schema(
     service: Any,
     server_name: str,
     tool_name: str,
+    *,
+    project_id: str | None = None,
+    scope: str | None = None,
 ) -> dict[str, Any]:
     """Get full schema for a specific tool."""
     server_name = service._resolve_server_name(server_name)
+    project_id = caller_project_id(service, project_id=project_id, scope=scope)
     if service._is_proxy_namespace(server_name):
         resolved = service._resolve_server_for_tool(tool_name)
         if resolved:
-            return cast("dict[str, Any]", await service.get_tool_schema(resolved, tool_name))
+            return cast(
+                "dict[str, Any]",
+                await service.get_tool_schema(
+                    resolved, tool_name, project_id=project_id, scope=scope
+                ),
+            )
         return {
             "success": False,
             "error": (
@@ -796,15 +884,16 @@ async def get_tool_schema(
             error_msg += f". Did you mean '{suggestion}'?"
         return {"success": False, "error": error_msg}
 
-    if not service._mcp_manager.has_server(server_name):
-        error_msg = f"Server '{server_name}' not found"
+    config = resolve_server(service, server_name, project_id=project_id)
+    if config is None:
+        error_msg = f"Server '{server_name}' not found in project scope {project_id}"
         suggestion = service._get_server_suggestion(server_name)
         if suggestion:
             error_msg += f". Did you mean '{suggestion}'?"
         return {"success": False, "error": error_msg}
 
     try:
-        result = await service._mcp_manager.get_tool_input_schema(server_name, tool_name)
+        result = await service._mcp_manager.get_tool_input_schema(config.id, tool_name)
         return {
             "success": True,
             "tool": {
@@ -821,9 +910,13 @@ async def call_tool_by_name(
     tool_name: str,
     arguments: dict[str, Any] | None = None,
     session_id: str | None = None,
+    *,
+    project_id: str | None = None,
+    scope: str | None = None,
 ) -> Any:
     """Call a tool by name, automatically resolving the server."""
-    server_name = service.find_tool_server(tool_name)
+    project_id = caller_project_id(service, project_id=project_id, scope=scope)
+    server_name = service.find_tool_server(tool_name, project_id=project_id)
 
     if server_name is None:
         logger.warning("Tool '%s' not found on any server", tool_name)
@@ -834,7 +927,14 @@ async def call_tool_by_name(
         }
 
     logger.debug("Routing tool '%s' to server '%s'", tool_name, server_name)
-    return await service.call_tool(server_name, tool_name, arguments, session_id)
+    return await service.call_tool(
+        server_name,
+        tool_name,
+        arguments,
+        session_id,
+        project_id=project_id,
+        scope=scope,
+    )
 
 
 __all__ = [

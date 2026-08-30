@@ -16,7 +16,19 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def mock_mcp_manager():
     """Create a mock MCPClientManager."""
+    from gobby.mcp_proxy.models import MCPServerConfig
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
     manager = MagicMock()
+    config = MCPServerConfig(
+        name="linear",
+        project_id=GLOBAL_PROJECT_ID,
+        url="https://linear.example.test",
+        id="linear",
+    )
+    manager.server_configs = [config]
+    manager._configs = {config.id: config}
+    manager.get_server_config.side_effect = lambda sid: manager._configs.get(sid)
     manager.has_server = MagicMock(return_value=True)
     manager.health = {
         "linear": MagicMock(state="connected"),
@@ -192,6 +204,20 @@ class TestLinearIntegrationServerName:
 
     def test_custom_server_name(self, mock_mcp_manager) -> None:
         """Server name can be customized."""
+        from gobby.mcp_proxy.models import MCPServerConfig
+        from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+        config = MCPServerConfig(
+            name="linear-custom",
+            project_id=GLOBAL_PROJECT_ID,
+            url="https://linear.example.test",
+            id="linear-custom",
+        )
+        mock_mcp_manager.server_configs = [config]
+        mock_mcp_manager._configs = {config.id: config}
+        mock_mcp_manager.get_server_config.side_effect = lambda sid: mock_mcp_manager._configs.get(
+            sid
+        )
         integration = LinearIntegration(mock_mcp_manager, server_name="linear-custom")
         assert integration.server_name == "linear-custom"
         mock_mcp_manager.has_server.assert_not_called()  # Not called until is_available()

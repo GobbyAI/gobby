@@ -59,6 +59,18 @@ class HandlerMixin:
 
         await websocket.send(json_dumps(error_msg))
 
+    async def _call_external_mcp(self, mcp_name: str, tool_name: str, args: Any) -> Any:
+        from gobby.mcp_proxy.services.server_resolution import as_project_id, resolved_server_id
+
+        project_id = as_project_id(
+            getattr(self, "project_id", None),
+            default=as_project_id(getattr(self.mcp_manager, "project_id", None)),
+        )
+        server_id = resolved_server_id(self.mcp_manager, mcp_name, project_id=str(project_id))
+        if server_id is None:
+            return await self.mcp_manager.call_tool(mcp_name, tool_name=tool_name, arguments=args)
+        return await self.mcp_manager.call_tool(server_id, tool_name=tool_name, arguments=args)
+
     async def _handle_tool_call(self, websocket: Any, data: dict[str, Any]) -> None:
         """
         Handle tool_call message and route to MCP server.
@@ -110,11 +122,11 @@ class HandlerMixin:
                         result = await registry.call(tool_name, args)
                     except ValueError as e:
                         logger.debug("Registry miss for %s, falling back to MCP: %s", tool_name, e)
-                        result = await self.mcp_manager.call_tool(mcp_name, tool_name, args)
+                        result = await self._call_external_mcp(mcp_name, tool_name, args)
                 else:
-                    result = await self.mcp_manager.call_tool(mcp_name, tool_name, args)
+                    result = await self._call_external_mcp(mcp_name, tool_name, args)
             else:
-                result = await self.mcp_manager.call_tool(mcp_name, tool_name, args)
+                result = await self._call_external_mcp(mcp_name, tool_name, args)
 
             # Send result back to client
             await websocket.send(

@@ -28,6 +28,28 @@ pytestmark = pytest.mark.unit
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
 
+def _attach_named_server(
+    manager: Any,
+    name: str,
+    *,
+    project_id: str = "test-project",
+    tools: list[Any] | None = None,
+) -> MCPServerConfig:
+    config = MCPServerConfig(
+        name=name,
+        project_id=project_id,
+        url="https://example.test",
+        id=name,
+        tools=tools,
+    )
+    manager.server_configs = [config]
+    manager._configs = {config.id: config}
+    manager.project_id = project_id
+    manager.get_server_config.side_effect = lambda sid: manager._configs.get(sid)
+    manager.has_server.side_effect = lambda sid: sid in manager._configs
+    return config
+
+
 @pytest.fixture(autouse=True)
 def _local_machine_identity() -> Iterator[None]:
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
@@ -190,10 +212,10 @@ class TestListServers:
             transport="http",
             url="http://localhost:8001",
         )
-        manager = MCPClientManager(server_configs=[config])
+        manager = MCPClientManager(server_configs=[config], project_id="test-project")
         failed_connection = MagicMock()
         failed_connection.is_connected = False
-        manager._connections[config.name] = failed_connection
+        manager._connections[config.id] = failed_connection
 
         result = await ToolProxyService(mcp_manager=manager).list_servers()
 
@@ -201,8 +223,10 @@ class TestListServers:
         assert result["servers"] == [
             {
                 "name": "failed-server",
-                "state": "unknown",
+                "state": "pending",
+                "enabled": True,
                 "transport": "http",
+                "scope": "project",
             }
         ]
 
@@ -216,7 +240,7 @@ class TestExternalSchemaCache:
             transport="http",
             url="http://localhost:8001",
         )
-        manager = MCPClientManager(server_configs=[config])
+        manager = MCPClientManager(server_configs=[config], project_id="test-project")
         manager._list_tools_for_server = AsyncMock(
             return_value=[
                 {
@@ -399,6 +423,7 @@ class TestListToolsExternalServer:
     @pytest.mark.asyncio
     async def test_list_tools_external_object_tools(self, mock_mcp_manager, mock_internal_manager):
         """Test listing tools when tools are objects not dicts."""
+        _attach_named_server(mock_mcp_manager, "ext-server")
         mock_mcp_manager.has_server.return_value = True
 
         # Create mock tool objects (not dicts)
@@ -429,6 +454,7 @@ class TestListToolsExternalServer:
     @pytest.mark.asyncio
     async def test_list_tools_external_with_filter(self, mock_mcp_manager, mock_internal_manager):
         """Test external tools with workflow phase filtering."""
+        _attach_named_server(mock_mcp_manager, "ext-server")
         mock_mcp_manager.has_server.return_value = True
         mock_mcp_manager.list_tools = AsyncMock(
             return_value={
@@ -567,6 +593,7 @@ class TestCallToolFallback:
     @pytest.mark.asyncio
     async def test_call_tool_exception_with_fallback(self, mock_mcp_manager, mock_internal_manager):
         """Test that fallback suggestions are included on error."""
+        _attach_named_server(mock_mcp_manager, "test-server")
         mock_mcp_manager.has_server.return_value = True
         mock_mcp_manager.call_tool = AsyncMock(side_effect=Exception("Tool failed"))
 
@@ -602,6 +629,9 @@ class TestCallToolFallback:
     async def test_call_tool_exception_no_project_id(self, mock_internal_manager):
         """Test fallback when project_id is not available."""
         mock_mcp_manager = MagicMock()
+        from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+        _attach_named_server(mock_mcp_manager, "test-server", project_id=GLOBAL_PROJECT_ID)
         mock_mcp_manager.project_id = None
         mock_mcp_manager.has_server.return_value = True
         mock_mcp_manager.call_tool = AsyncMock(side_effect=Exception("Tool failed"))
@@ -626,6 +656,7 @@ class TestCallToolFallback:
     @pytest.mark.asyncio
     async def test_call_tool_fallback_fails(self, mock_mcp_manager, mock_internal_manager):
         """Test when fallback resolver itself fails."""
+        _attach_named_server(mock_mcp_manager, "test-server")
         mock_mcp_manager.has_server.return_value = True
         mock_mcp_manager.call_tool = AsyncMock(side_effect=Exception("Tool failed"))
 
@@ -650,6 +681,7 @@ class TestCallToolFallback:
     @pytest.mark.asyncio
     async def test_call_tool_no_fallback_resolver(self, mock_mcp_manager, mock_internal_manager):
         """Test error response without fallback resolver."""
+        _attach_named_server(mock_mcp_manager, "test-server")
         mock_mcp_manager.has_server.return_value = True
         mock_mcp_manager.call_tool = AsyncMock(side_effect=Exception("Tool failed"))
 
@@ -672,6 +704,7 @@ class TestCallToolFallback:
         mock_internal_manager,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
+        _attach_named_server(mock_mcp_manager, "linear")
         mock_mcp_manager.has_server.return_value = True
         mock_mcp_manager.call_tool = AsyncMock(
             side_effect=Exception("Argument Validation Error - stateId must be a UUID.")
@@ -733,12 +766,14 @@ class TestFindToolServer:
         """Test finding tool in external server configs with dict tools."""
         mock_internal_manager.find_tool_server.return_value = None
 
-        mock_config = MagicMock()
-        mock_config.tools = [
-            {"name": "external_tool", "description": "External tool"},
-            {"name": "another_tool", "description": "Another tool"},
-        ]
-        mock_mcp_manager._configs = {"ext-server": mock_config}
+        _attach_named_server(
+            mock_mcp_manager,
+            "ext-server",
+            tools=[
+                {"name": "external_tool", "description": "External tool"},
+                {"name": "another_tool", "description": "Another tool"},
+            ],
+        )
 
         proxy = ToolProxyService(
             mcp_manager=mock_mcp_manager,
@@ -757,10 +792,7 @@ class TestFindToolServer:
 
         mock_tool = MagicMock()
         mock_tool.name = "object_tool"
-
-        mock_config = MagicMock()
-        mock_config.tools = [mock_tool]
-        mock_mcp_manager._configs = {"ext-server": mock_config}
+        _attach_named_server(mock_mcp_manager, "ext-server", tools=[mock_tool])
 
         proxy = ToolProxyService(
             mcp_manager=mock_mcp_manager,
@@ -775,9 +807,7 @@ class TestFindToolServer:
         """Test when tool is not found anywhere."""
         mock_internal_manager.find_tool_server.return_value = None
 
-        mock_config = MagicMock()
-        mock_config.tools = []
-        mock_mcp_manager._configs = {"ext-server": mock_config}
+        _attach_named_server(mock_mcp_manager, "ext-server", tools=[])
 
         proxy = ToolProxyService(
             mcp_manager=mock_mcp_manager,
@@ -790,9 +820,11 @@ class TestFindToolServer:
 
     def test_find_tool_server_no_internal_manager(self, mock_mcp_manager) -> None:
         """Test finding tool without internal manager."""
-        mock_config = MagicMock()
-        mock_config.tools = [{"name": "ext_tool", "description": "Ext"}]
-        mock_mcp_manager._configs = {"ext-server": mock_config}
+        _attach_named_server(
+            mock_mcp_manager,
+            "ext-server",
+            tools=[{"name": "ext_tool", "description": "Ext"}],
+        )
 
         proxy = ToolProxyService(
             mcp_manager=mock_mcp_manager,
@@ -930,7 +962,7 @@ class TestReadResource:
     async def test_read_resource_delegates_to_manager(self):
         """Test that read_resource delegates to MCP manager."""
         mock_mcp_manager = MagicMock()
-        mock_mcp_manager.project_id = "test-project"
+        _attach_named_server(mock_mcp_manager, "ext-server")
         mock_mcp_manager.read_resource = AsyncMock(return_value={"content": "resource data"})
 
         proxy = ToolProxyService(mcp_manager=mock_mcp_manager)
@@ -1051,6 +1083,7 @@ class TestGetToolSchema:
     ):
         """Test exception handling for external server schema request."""
         mock_internal_manager.is_internal.return_value = False
+        _attach_named_server(mock_mcp_manager, "ext-server")
         mock_mcp_manager.has_server.return_value = True
         mock_mcp_manager.get_tool_input_schema = AsyncMock(
             side_effect=Exception("Connection timeout")
@@ -1116,9 +1149,11 @@ class TestCallToolByName:
         mock_internal_manager.find_tool_server.return_value = None
         mock_internal_manager.is_internal.return_value = False
 
-        mock_config = MagicMock()
-        mock_config.tools = [{"name": "ext_tool", "description": "External"}]
-        mock_mcp_manager._configs = {"ext-server": mock_config}
+        _attach_named_server(
+            mock_mcp_manager,
+            "ext-server",
+            tools=[{"name": "ext_tool", "description": "External"}],
+        )
         mock_mcp_manager.has_server.return_value = True
         mock_mcp_manager.call_tool = AsyncMock(return_value={"result": "success"})
 
@@ -1132,7 +1167,10 @@ class TestCallToolByName:
 
         assert result["result"] == "success"
         mock_mcp_manager.call_tool.assert_called_once_with(
-            "ext-server", "ext_tool", {"arg": "value"}, session_id=None
+            "ext-server",
+            tool_name="ext_tool",
+            arguments={"arg": "value"},
+            session_id=None,
         )
 
     @pytest.mark.asyncio
@@ -1481,3 +1519,39 @@ class TestResolvePlatformSessionId:
 
         with pytest.raises(RuntimeError, match="DB unreachable"):
             proxy._resolve_platform_session_id("session-ref")
+
+
+@pytest.mark.asyncio
+async def test_call_tool_resolves_project_instance_before_global() -> None:
+    from tests.mcp_proxy.services.test_scope_resolution_matrix import (
+        FOREIGN_SERVER_ID,
+        GLOBAL_SERVER_ID,
+        PROJECT_ID,
+        PROJECT_SERVER_ID,
+        RecordingManager,
+        make_proxy,
+        scoped_github_configs,
+    )
+
+    manager = RecordingManager(scoped_github_configs(), project_id=PROJECT_ID)
+    proxy = make_proxy(manager)
+
+    called = await proxy.call_tool("github", "ping", {})
+    assert called["success"] is True
+    assert called["id"] == PROJECT_SERVER_ID
+    assert manager.method_ids("call_tool") == [PROJECT_SERVER_ID]
+    assert GLOBAL_SERVER_ID not in manager.method_ids("call_tool")
+    assert FOREIGN_SERVER_ID not in manager.method_ids("call_tool")
+
+    listed = await proxy.list_tools("github")
+    assert listed["success"] is True
+    assert listed["tools"][0]["brief"] == f"from {PROJECT_SERVER_ID}"
+    assert PROJECT_SERVER_ID in manager.method_ids("list_tools")
+
+    schema = await proxy.get_tool_schema("github", "ping")
+    assert schema["success"] is True
+    assert PROJECT_SERVER_ID in manager.method_ids("get_tool_input_schema")
+
+    resource = await proxy.read_resource("github", "res://issue/1")
+    assert resource["id"] == PROJECT_SERVER_ID
+    assert manager.method_ids("read_resource") == [PROJECT_SERVER_ID]

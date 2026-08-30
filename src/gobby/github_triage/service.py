@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-import inspect
 import json
 import logging
 import math
@@ -690,44 +689,34 @@ class GitHubIssueTriageService:
         arguments: dict[str, Any],
         *,
         required: bool = True,
+        project_id: str | None = None,
     ) -> Any:
+        from gobby.github_triage.mcp_call import github_call
+        from gobby.mcp_proxy.services.server_resolution import as_project_id, resolved_server_id
+
         if self.mcp_manager is None:
             if required:
                 raise RuntimeError("GitHub MCP manager is not configured")
             return None
-        for attempt in range(2):
-            try:
-                if hasattr(self.mcp_manager, "call_tool"):
-                    result = self.mcp_manager.call_tool(
-                        server_name="github",
-                        tool_name=tool_name,
-                        arguments=arguments,
-                    )
-                    if inspect.isawaitable(result):
-                        result = await result
-                else:
-                    session = await self.mcp_manager.get_client_session("github")
-                    result = await session.call_tool(tool_name, arguments)
-                return _parse_mcp_result(result, tool_name=tool_name)
-            except GitHubMCPError as exc:
-                if attempt or not exc.is_rate_limited:
-                    raise
-                delay = exc.retry_delay(
-                    now=self._time_func(),
-                    maximum=self._max_rate_limit_delay,
-                )
-                logger.warning(
-                    "GitHub MCP tool %s was rate limited; retrying once after %.3fs",
-                    tool_name,
-                    delay,
-                )
-                await self._sleep_func(delay)
-            except (TimeoutError, ConnectionError):
-                raise TransientDeliveryError("GitHub MCP transport failed") from None
-            except Exception:
-                raise GitHubMCPError(tool_name=tool_name) from None
-
-        raise AssertionError("GitHub MCP retry loop exhausted unexpectedly")
+        scope = as_project_id(
+            project_id,
+            default=as_project_id(getattr(self.mcp_manager, "project_id", None)),
+        )
+        server_id = resolved_server_id(self.mcp_manager, "github", project_id=scope)
+        if server_id is None:
+            if required:
+                raise RuntimeError(f"GitHub MCP server not found in project {scope}")
+            return None
+        return await github_call(
+            self.mcp_manager,
+            server_id,
+            tool_name,
+            arguments,
+            required=required,
+            time_func=self._time_func,
+            sleep_func=self._sleep_func,
+            max_rate_limit_delay=self._max_rate_limit_delay,
+        )
 
     def _validate_signature(
         self, secret_ref: str | None, headers: dict[str, str], raw_body: bytes

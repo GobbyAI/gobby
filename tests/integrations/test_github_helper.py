@@ -19,11 +19,23 @@ def _mcp_result(text: str | None, *, is_error: bool) -> CallToolResult:
 
 
 def _helper(result: object) -> GitHubMCPHelper:
+    from gobby.mcp_proxy.models import MCPServerConfig
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
     session = SimpleNamespace(call_tool=AsyncMock(return_value=result))
+    config = MCPServerConfig(
+        name="github",
+        project_id=GLOBAL_PROJECT_ID,
+        url="https://github.example.test",
+        id="github",
+    )
     manager = SimpleNamespace(
         get_client_session=AsyncMock(return_value=session),
         has_server=lambda _name: True,
         health={"github": {"state": "connected"}},
+        server_configs=[config],
+        get_server_config=lambda sid: config if sid == "github" else None,
+        project_id=None,
     )
     return GitHubMCPHelper(manager, "/tmp/repo", "owner/repo")
 

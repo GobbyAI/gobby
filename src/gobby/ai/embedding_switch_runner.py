@@ -478,6 +478,7 @@ class EmbeddingSwitchRunner:
             """
             SELECT tools.id AS id, tools.name AS name, tools.description AS description,
                    tools.input_schema AS input_schema,
+                   mcp_servers.id AS mcp_server_id,
                    mcp_servers.name AS server_name, mcp_servers.project_id AS project_id
               FROM tools
               JOIN mcp_servers ON mcp_servers.id = tools.mcp_server_id
@@ -514,6 +515,7 @@ class EmbeddingSwitchRunner:
                     input_schema=input_schema if isinstance(input_schema, dict) else None,
                     server_name=str(row["server_name"]),
                     project_id=project_id,
+                    server_id=str(row["mcp_server_id"]),
                 )
         except ProjectWriteRejected:
             logger.info(

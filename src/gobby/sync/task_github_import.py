@@ -112,7 +112,7 @@ class GitHubIssueImporter:
                     "error": "Could not determine project ID. Run from within a gobby project.",
                 }
 
-            issues = await self._fetch_github_issues_mcp(owner, repo, limit)
+            issues = await self._fetch_github_issues_mcp(owner, repo, limit, project_id=project_id)
             if issues is None:
                 issues = await asyncio.to_thread(
                     self._fetch_github_issues_cli, owner, repo, repo_url, limit
@@ -281,7 +281,7 @@ class GitHubIssueImporter:
         return imported, imported_count
 
     async def _fetch_github_issues_mcp(
-        self, owner: str, repo: str, limit: int
+        self, owner: str, repo: str, limit: int, project_id: str | None = None
     ) -> list[dict[str, Any]] | None:
         """Fetch issues using GitHub MCP server. Returns None if unavailable."""
         try:
@@ -291,10 +291,19 @@ class GitHubIssueImporter:
             ctx = get_app_context()
             if not ctx or not ctx.mcp_manager:
                 return None
-            gh = GitHubIntegration(ctx.mcp_manager)
+            from gobby.mcp_proxy.services.server_resolution import as_project_id, resolved_server_id
+
+            scope = as_project_id(
+                project_id,
+                default=as_project_id(getattr(ctx.mcp_manager, "project_id", None)),
+            )
+            gh = GitHubIntegration(ctx.mcp_manager, project_id=str(scope))
             if not gh.is_available():
                 return None
-            session = await ctx.mcp_manager.get_client_session("github")
+            server_id = resolved_server_id(ctx.mcp_manager, "github", project_id=str(scope))
+            if server_id is None:
+                return None
+            session = await ctx.mcp_manager.get_client_session(server_id)
             result = await session.call_tool(
                 "list_issues",
                 {

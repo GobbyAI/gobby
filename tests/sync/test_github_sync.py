@@ -34,6 +34,18 @@ def test_github_issue_seed_removes_only_exact_git_suffix(repo: str, expected_rep
 def mock_mcp_manager():
     """Create a mock MCPClientManager."""
     manager = MagicMock()
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+    config = MCPServerConfig(
+        name="github",
+        project_id=GLOBAL_PROJECT_ID,
+        url="https://github.example.test",
+        id="github",
+    )
+    manager.server_configs = [config]
+    manager._configs = {config.id: config}
+    manager.project_id = "test-project-id"
+    manager.get_server_config.side_effect = lambda sid: manager._configs.get(sid)
     manager.has_server = MagicMock(return_value=True)
     manager.health = {"github": MagicMock(state="connected")}
     manager.call_tool = AsyncMock()
@@ -138,16 +150,15 @@ class TestGitHubSyncServiceAvailability:
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_import_uses_lazy_real_manager_with_empty_health(self, mock_task_manager) -> None:
-        manager = MCPClientManager(
-            server_configs=[
-                MCPServerConfig(
-                    name="github",
-                    project_id="test-project",
-                    transport="stdio",
-                    command="unused",
-                )
-            ]
+        from gobby.mcp_proxy.models import ConnectionState
+
+        config = MCPServerConfig(
+            name="github",
+            project_id="test-project",
+            transport="stdio",
+            command="unused",
         )
+        manager = MCPClientManager(server_configs=[config])
         session = MagicMock()
         session.call_tool = AsyncMock(
             return_value=CallToolResult(
@@ -155,11 +166,11 @@ class TestGitHubSyncServiceAvailability:
                 is_error=False,
             )
         )
-        manager._connections["github"] = SimpleNamespace(is_connected=True, session=session)
+        manager._connections[config.id] = SimpleNamespace(is_connected=True, session=session)
 
         service = GitHubSyncService(manager, mock_task_manager, "test-project")
 
-        assert manager.health == {}
+        assert manager.health[config.id].state == ConnectionState.PENDING
         assert await service.import_github_issues("owner/repo") == []
         session.call_tool.assert_awaited_once_with(
             "list_issues",

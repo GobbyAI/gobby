@@ -22,6 +22,24 @@ _GITHUB_TOKEN_SECRET_NAMES = ("github_personal_access_token", "github_token", "g
 logger = logging.getLogger(__name__)
 
 
+def _github_server_id(ctx: Any, mcp_manager: Any) -> str:
+    from gobby.mcp_proxy.services.server_resolution import as_project_id, resolved_server_id
+
+    project_id = getattr(ctx, "project_id", None)
+    if not isinstance(project_id, str) and hasattr(ctx, "get_current_project_id"):
+        project_id = ctx.get_current_project_id()
+    server_id = resolved_server_id(
+        mcp_manager,
+        "github",
+        project_id=as_project_id(
+            project_id, default=as_project_id(getattr(mcp_manager, "project_id", None))
+        ),
+    )
+    if server_id is None:
+        raise RuntimeError("GitHub MCP server not found for the current project")
+    return server_id
+
+
 def _resolve_task(ctx: RegistryContext, task_id: str) -> str:
     return resolve_task_id_for_mcp(ctx.task_manager, task_id)
 
@@ -471,7 +489,7 @@ async def _open_or_reuse_github_pr(
     if mcp_manager is None:
         raise RuntimeError("GitHub MCP manager is required to create this pull request")
     created = await mcp_manager.call_tool(
-        server_name="github",
+        _github_server_id(ctx, mcp_manager),
         tool_name="create_pull_request",
         arguments={
             "owner": target_owner,
@@ -498,7 +516,7 @@ async def _find_existing_pr(
     if mcp_manager is None:
         return None
     result = await mcp_manager.call_tool(
-        server_name="github",
+        _github_server_id(ctx, mcp_manager),
         tool_name="list_pull_requests",
         arguments={
             "owner": owner,

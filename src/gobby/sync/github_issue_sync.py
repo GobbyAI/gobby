@@ -327,8 +327,14 @@ class GitHubIssueSyncService:
         return result
 
     async def _call(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+        from gobby.mcp_proxy.services.server_resolution import as_project_id, resolved_server_id
+
+        project_id = as_project_id(getattr(self.mcp_manager, "project_id", None))
+        server_id = resolved_server_id(self.mcp_manager, "github", project_id=str(project_id))
+        if server_id is None:
+            raise RuntimeError(f"GitHub MCP server not found in project {project_id}")
         result = await self.mcp_manager.call_tool(
-            server_name="github", tool_name=tool_name, arguments=arguments
+            server_id, tool_name=tool_name, arguments=arguments
         )
         return parse_github_mcp_result(result, tool_name)
 

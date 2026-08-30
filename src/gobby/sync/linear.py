@@ -64,7 +64,7 @@ class LinearSyncService(LinearTaskOpsMixin):
         self.project_id = project_id
         self.linear_team_id = linear_team_id
         self.linear_project_id = linear_project_id
-        self.linear = LinearIntegration(mcp_manager)
+        self.linear = LinearIntegration(mcp_manager, project_id=project_id)
         self._project_manager = project_manager
 
     def _graphql_availability(self) -> tuple[bool, str | None]:

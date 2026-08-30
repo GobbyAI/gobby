@@ -8,6 +8,7 @@ import pytest
 
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
+from tests.mcp_proxy.named_server_test_support import attach_named_servers
 
 pytestmark = pytest.mark.unit
 
@@ -16,7 +17,7 @@ pytestmark = pytest.mark.unit
 async def test_list_tools_returns_structured_error_for_manager_mcp_error() -> None:
     manager = MagicMock()
     manager.project_id = "test-project"
-    manager.has_server.return_value = True
+    attach_named_servers(manager, "external")
     manager.list_tools = AsyncMock(
         side_effect=MCPError("Failed to list tools for server 'external': reconnect retry failed")
     )

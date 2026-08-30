@@ -166,7 +166,21 @@ def _configure_graphql_pull_result(
 @pytest.fixture
 def mock_mcp_manager() -> MagicMock:
     """Create a mock MCPClientManager."""
+    from gobby.mcp_proxy.models import MCPServerConfig
+
     manager = MagicMock()
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+    config = MCPServerConfig(
+        name="linear",
+        project_id=GLOBAL_PROJECT_ID,
+        url="https://linear.example.test",
+        id="linear",
+    )
+    manager.server_configs = [config]
+    manager._configs = {config.id: config}
+    manager.project_id = "test-project-id"
+    manager.get_server_config.side_effect = lambda sid: manager._configs.get(sid)
     manager.has_server = MagicMock(return_value=True)
     manager.health = {"linear": MagicMock(state="connected")}
     manager.call_tool = AsyncMock()

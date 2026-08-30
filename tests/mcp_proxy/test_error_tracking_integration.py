@@ -16,6 +16,7 @@ from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.mcp_proxy.named_server_test_support import attach_named_servers
 
 pytestmark = pytest.mark.unit
 
@@ -35,9 +36,9 @@ def _proxy(
 ) -> tuple[ToolProxyService, MagicMock, MagicMock]:
     mcp_manager = MagicMock()
     mcp_manager.project_id = "project-1"
-    mcp_manager.has_server.return_value = True
     mcp_manager.call_tool = AsyncMock(return_value=result)
     mcp_manager.get_tool_schema = AsyncMock(return_value={"success": False})
+    attach_named_servers(mcp_manager, "server-a", "server-b")
 
     internal_manager = MagicMock()
     internal_manager.is_internal.return_value = False
@@ -90,8 +91,8 @@ def _persisting_proxy(
     mcp_manager = MagicMock()
     mcp_manager.project_id = project_id
     mcp_manager.session_manager = session_manager
-    mcp_manager.has_server.return_value = True
     mcp_manager.call_tool = AsyncMock(return_value=result)
+    attach_named_servers(mcp_manager, "server-a", "server-b", "gobby-tasks", project_id=project_id)
     internal_manager = MagicMock()
     internal_manager.is_internal.return_value = False
     hook_manager = MagicMock()
@@ -227,8 +228,8 @@ async def test_rule_rewrite_preserves_caller_and_final_dispatch_identities() -> 
     )
     mcp_manager.call_tool.assert_awaited_once_with(
         "server-b",
-        "fixed",
-        {"command": "echo fixed"},
+        tool_name="fixed",
+        arguments={"command": "echo fixed"},
         session_id="session-1",
     )
 
