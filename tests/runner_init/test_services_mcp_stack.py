@@ -203,15 +203,21 @@ async def test_stateful_init_backfill_skipped_without_memory_bundle() -> None:
         database=object(),
         definition_revision_listener=None,
     )
+    store = _MarkerStore()
     before = set(mcp_stack._BACKFILL_TASKS)
     with (
-        patch.object(services, "_init_stateful_dependencies"),
-        patch.object(services, "_register_stateful_services", new=AsyncMock()),
-        patch.object(services, "_apply_stateful_services"),
+        patch.object(services, "_init_stateful_dependencies") as deps,
+        patch.object(services, "_register_stateful_services", new=AsyncMock()) as register,
+        patch.object(services, "_apply_stateful_services") as apply_services,
         patch.object(services, "_init_project_context"),
+        patch.object(services, "ConfigStore", return_value=store),
     ):
         await services.init_stateful_services(runner)
+    deps.assert_called_once_with(runner)
+    register.assert_awaited_once_with(runner)
+    apply_services.assert_called_once_with(runner)
     assert set(mcp_stack._BACKFILL_TASKS) == before
+    assert store.values == {}
 
 
 def test_scoped_backfill_marker_roundtrip_real_config_store(temp_db: Any) -> None:
