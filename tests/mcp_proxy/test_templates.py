@@ -217,6 +217,7 @@ def test_expand_template_normalizes_secret_references() -> None:
 
     assert expanded.template_values == {"token": "$secret:api_token"}
     assert expanded.config.env == {"API_TOKEN": "$secret:api_token"}
+    assert expanded.config.template_values == {"token": "$secret:api_token"}
     assert "s3cret" not in str(expanded.template_values)
     assert expanded.missing_secrets == []
 
