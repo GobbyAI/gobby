@@ -183,11 +183,24 @@ class AgentCleanupHandler:
         )
 
         services = self._terminal_services
-        terminal = None if services is None else services.terminal_for(run)
-        if services is None or terminal is None:
+        if services is None:
             return False, None
-        runtime = services.runtime_for(terminal)
-        if not await backend_session_present(runtime, terminal):
+        try:
+            terminal = services.terminal_for(run)
+            if terminal is None:
+                return False, None
+            runtime = services.runtime_for(terminal)
+            present = await backend_session_present(runtime, terminal)
+        except Exception:
+            # Finalisation must not fail on a runtime or tmux probe error; the
+            # direct transition proceeds and the sweep reaps any leftover.
+            logger.warning(
+                "Capture-policy presence probe failed for run %s",
+                run.id,
+                exc_info=True,
+            )
+            return False, None
+        if not present:
             return False, None
 
         async def _terminalize(

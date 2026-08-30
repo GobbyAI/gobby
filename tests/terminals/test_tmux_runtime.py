@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -280,3 +281,26 @@ async def test_session_present_when_remain_on_exit_pane_is_dead() -> None:
     assert await runtime.is_live(terminal) is False
     assert await runtime.session_present(terminal) is True
     sessions.has_session.assert_awaited_once_with("gobby-orphan")
+
+
+@pytest.mark.asyncio
+async def test_terminate_kills_on_the_terminals_own_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """External rows probe their own socket, so the kill must target it too."""
+    sessions = _sessions()
+    runtime = TmuxTerminalRuntime(sessions)
+    terminal = replace(make_memory_terminal(session_name="ext-demo"), ownership="external")
+    killed_sockets: list[str | None] = []
+
+    async def fake_kill(
+        self: TmuxSessionManager, name: str, *, missing_ok: bool = False, timeout: float = 5.0
+    ) -> bool:
+        killed_sockets.append(self.config.socket_path)
+        return True
+
+    monkeypatch.setattr(TmuxSessionManager, "kill_session", fake_kill)
+    await runtime.terminate(terminal, grace_seconds=5.0)
+    locator = terminal.locator or {}
+    assert killed_sockets == [locator["socket_path"]]
+    assert killed_sockets != [sessions.config.socket_path]

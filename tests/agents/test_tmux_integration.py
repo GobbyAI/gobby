@@ -6,7 +6,7 @@ import asyncio
 import shlex
 import shutil
 import subprocess
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -71,6 +71,20 @@ async def _wait_for(
     deadline = loop.time() + timeout
     while loop.time() < deadline:
         if predicate():
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("condition was not met before timeout")
+
+
+async def _wait_for_async(
+    predicate: Callable[[], Awaitable[bool]],
+    *,
+    timeout: float = 5.0,
+) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if await predicate():
             return
         await asyncio.sleep(0.05)
     raise AssertionError("condition was not met before timeout")
@@ -272,6 +286,13 @@ async def test_finalise_kills_remain_on_exit_session_and_agrees_with_terminal_li
     fetched = arm.get(run.id)
     assert fetched is not None
     run = fetched
+
+    # Pin the regression: finalise only once the pane is remain-on-exit dead.
+    # A still-live pane would have been killed by the pre-fix is_live gate too.
+    async def _pane_dead() -> bool:
+        return not await runtime.is_live(dying)
+
+    await _wait_for_async(_pane_dead)
     assert await runtime.session_present(dying) is True
 
     registry = TerminalRuntimeRegistry()
@@ -321,3 +342,68 @@ async def test_finalise_kills_remain_on_exit_session_and_agrees_with_terminal_li
     assert page["type"] == "terminal_list"
     listed_ids = {item["terminal_id"] for item in page["items"]}
     assert listed_ids == {row.id for row in live_rows} == {survivor.id}
+
+
+async def test_sweep_kills_surviving_session_of_orphaned_row(
+    tmux_manager: TmuxSessionManager,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An orphaned row whose tmux session survived is killed and settled on sweep."""
+    _stub_runtime_cleanup(monkeypatch)
+
+    runtime = TmuxTerminalRuntime(tmux_manager)
+    terminals = TerminalManager(temp_db)
+    machine_id = require_machine_id()
+    session = session_manager.register(
+        external_id="orphan-sweep-session",
+        machine_id=machine_id,
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    arm = LocalAgentRunManager(temp_db)
+    run = arm.create(
+        parent_session_id=session.id,
+        provider="claude",
+        prompt="orphan sweep",
+        child_session_id=session.id,
+    )
+    arm.start(run.id)
+    orphan = await _spawn_gobby_terminal(
+        runtime=runtime,
+        manager=terminals,
+        project_id=sample_project["id"],
+        machine_id=machine_id,
+        command=["tail", "-f", "/dev/null"],
+        session_id=session.id,
+        agent_run_id=run.id,
+    )
+    temp_db.execute(
+        """
+        UPDATE agent_runs
+        SET terminal_id = %s, status = 'success', completed_at = now(), updated_at = now()
+        WHERE id = %s
+        """,
+        (orphan.id, run.id),
+    )
+    assert terminals.mark_orphaned(orphan.id) is not None
+    assert await runtime.session_present(orphan) is True
+
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
+    services = TerminalServices(manager=terminals, registry=registry)
+    handler = _handler(
+        temp_db,
+        agent_run_manager=arm,
+        session_manager=session_manager,
+        terminal_services=services,
+    )
+    assert await handler.cleanup_terminal_tmux_sessions() == 1
+
+    assert await runtime.session_present(orphan) is False
+    settled = terminals.get(orphan.id)
+    assert settled is not None and settled.state == "exited"
+    swept = arm.get(run.id)
+    assert swept is not None and swept.pid is None

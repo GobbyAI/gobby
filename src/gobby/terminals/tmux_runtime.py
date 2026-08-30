@@ -373,7 +373,10 @@ class TmuxTerminalRuntime:
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
         name = self._tmux_name(terminal)
         if name:
-            await self._sessions.kill_session(name, timeout=grace_seconds)
+            # Kill on the terminal's own socket: presence checks use
+            # _sessions_for, so killing on the default socket would no-op
+            # for external rows and report the session as still present.
+            await self._sessions_for(terminal).kill_session(name, timeout=grace_seconds)
 
     async def attach_locator(self, terminal: Terminal) -> AttachLocator:
         locator = terminal.locator or {}
