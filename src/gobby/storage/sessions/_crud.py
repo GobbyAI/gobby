@@ -83,6 +83,7 @@ class _SessionCRUDHost(Protocol):
         sandbox_enabled: bool | None = None,
         sandbox_policy_hash: str | None = None,
         title_source: str | None | UnsetType = UNSET,
+        workspace_path: str | None = None,
     ) -> Session: ...
 
 
@@ -106,6 +107,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
         sandbox_enabled: bool | None = None,
         sandbox_policy_hash: str | None = None,
         title_source: str | None | UnsetType = UNSET,
+        workspace_path: str | None = None,
     ) -> Session:
         """Register a session or return the existing (external_id, source, project) row."""
         machine_id = require_local_machine_id(
@@ -245,6 +247,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                     sandbox_enabled=sandbox_enabled,
                     sandbox_policy_hash=sandbox_policy_hash,
                     now=now,
+                    workspace_path=workspace_path if workspace_path else UNSET,
                 )
                 get_logger().debug(
                     "Reusing existing session %s for external_id=%s", existing.id, external_id
@@ -289,10 +292,11 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                             transcript_path, git_branch, parent_session_id,
                             agent_depth, spawned_by_agent_id, terminal_context,
                             workflow_name, session_type, is_local, sandbox_enabled, sandbox_policy_hash,
+                            workspace_path, workspace_generation,
                             status, seq_num,
                             had_edits, message_count, turn_count, tool_call_count, last_assistant_content
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, FALSE, 0, 0, 0, NULL)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, FALSE, 0, 0, 0, NULL)
                         """,
                         (
                             session_id,
@@ -313,6 +317,8 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                             bool(is_local),
                             None if sandbox_enabled is None else bool(sandbox_enabled),
                             sandbox_policy_hash,
+                            workspace_path,
+                            1 if workspace_path else 0,
                             next_seq_num,
                         ),
                     )
@@ -376,6 +382,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                         sandbox_enabled=sandbox_enabled,
                         sandbox_policy_hash=sandbox_policy_hash,
                         now=now,
+                        workspace_path=workspace_path if workspace_path else UNSET,
                     )
                     change_event = "session_updated"
                 else:

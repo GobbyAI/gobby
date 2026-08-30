@@ -261,8 +261,28 @@ def _tmux_sessions_from_request(request: SpawnRequest) -> TmuxSessionManager | N
     return sessions
 
 
+def _persist_spawn_workspace(request: SpawnRequest, session_id: str) -> None:
+    """Record the spawn cwd as the child session's canonical workspace identity."""
+    storage = getattr(request.session_manager, "_storage", None)
+    if storage is None or not request.cwd:
+        return
+    current = storage.get(session_id) if hasattr(storage, "get") else None
+    existing = getattr(current, "workspace_path", None) if current is not None else None
+    if existing == request.cwd:
+        return
+    generation = 0
+    if current is not None:
+        generation = int(getattr(current, "workspace_generation", 0) or 0)
+    storage.update(
+        session_id,
+        workspace_path=request.cwd,
+        workspace_generation=generation + 1,
+    )
+
+
 async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> SpawnResult:
     """Sole pending-row owner: wrap, create/retry, prepare_spawn, promote_to_live."""
+    _persist_spawn_workspace(request, plan.child_session_id)
     command = wrap_provider_command(plan.launch, plan.command)
     try:
         manager, _registry, runtime, backend = resolve_terminal_services(request)

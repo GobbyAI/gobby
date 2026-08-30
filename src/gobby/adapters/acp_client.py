@@ -242,6 +242,7 @@ class ACPClient:
         auto_session: bool = True,
         cwd: str | None = None,
         reasoning_effort: str | None = None,
+        after_process_spawned: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """Launch ``<cli> --acp``, perform initialize handshake, and create/resume session.
 
@@ -306,6 +307,8 @@ class ACPClient:
         logger.debug("%s ACP client started (pid=%s)", self.display_name, self._process.pid)
 
         try:
+            if after_process_spawned is not None:
+                await after_process_spawned()
             # Perform initialize handshake
             init_result = await self._send_request(
                 "initialize",
@@ -363,6 +366,9 @@ class ACPClient:
             else:
                 self._session_state.clear_session()
         except BaseException:
+            process = self._process
+            if process is not None and process.returncode is None:
+                process.terminate()
             await self.stop()
             raise
 

@@ -188,6 +188,7 @@ def prepare_terminal_spawn(
     resume_metadata_json: dict[str, Any] | None = None,
     worktree_id: str | None = None,
     clone_id: str | None = None,
+    workspace_path: str | None = None,
     credential_manager: ManagedCredentialManager | None = None,
 ) -> PreparedSpawn:
     """
@@ -246,6 +247,7 @@ def prepare_terminal_spawn(
         git_branch=git_branch,
         is_local=is_local,
         sandbox_enabled=sandbox_enabled,
+        workspace_path=workspace_path,
     )
 
     child_session_id: str | None = None

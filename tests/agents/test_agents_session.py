@@ -280,6 +280,27 @@ class TestChildSessionManagerCreate:
         call_kwargs = mock_storage.register.call_args.kwargs
         assert call_kwargs["git_branch"] == "feature/test"
 
+    def test_create_child_session_persists_workspace_path(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
+        mock_parent = MagicMock()
+        mock_parent.parent_session_id = None
+        mock_parent.agent_depth = 0
+        mock_storage.get.return_value = mock_parent
+
+        config = ChildSessionConfig(
+            parent_session_id="sess-parent",
+            project_id="proj-123",
+            machine_id="21000000-0000-4000-8000-000000000007",
+            source="claude",
+        )
+        config.workspace_path = "/resolved/worktree"
+
+        manager.create_child_session(config)
+
+        call_kwargs = mock_storage.register.call_args.kwargs
+        assert call_kwargs.get("workspace_path") == "/resolved/worktree"
+
     def test_create_child_session_depth_exceeded_raises(
         self, manager: ChildSessionManager, mock_storage: MagicMock
     ) -> None:

@@ -4,6 +4,7 @@ import threading
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -941,14 +942,18 @@ class TestLocalWorktreeManagerDelete:
         mock_db: MagicMock,
     ) -> None:
         """Delete returns True for existing worktree."""
-        mock_cursor = MagicMock()
-        mock_cursor.rowcount = 1
-        mock_db.execute.return_value = mock_cursor
+        conn = MagicMock()
+        delete_cursor = MagicMock()
+        delete_cursor.rowcount = 1
+        conn.execute.return_value = delete_cursor
+        mock_db.transaction.return_value.__enter__.return_value = conn
+        mock_db.transaction.return_value.__exit__.return_value = False
 
-        result = manager.delete("wt-123456")
+        with patch.object(manager, "get", return_value=None):
+            result = manager.delete("wt-123456")
 
         assert result is True
-        mock_db.execute.assert_called_once()
+        conn.execute.assert_called_once()
 
     def test_delete_not_found(
         self,
@@ -956,14 +961,40 @@ class TestLocalWorktreeManagerDelete:
         mock_db: MagicMock,
     ) -> None:
         """Delete returns False for non-existent worktree."""
-        mock_cursor = MagicMock()
-        mock_cursor.rowcount = 0
-        mock_db.execute.return_value = mock_cursor
+        conn = MagicMock()
+        delete_cursor = MagicMock()
+        delete_cursor.rowcount = 0
+        conn.execute.return_value = delete_cursor
+        mock_db.transaction.return_value.__enter__.return_value = conn
+        mock_db.transaction.return_value.__exit__.return_value = False
         mock_db.fetchone.return_value = None
 
-        result = manager.delete("wt-nonexistent")
+        with patch.object(manager, "get", return_value=None):
+            result = manager.delete("wt-nonexistent")
 
         assert result is False
+
+    def test_delete_tombstones_session_workspace_identity(
+        self,
+        manager: LocalWorktreeManager,
+        mock_db: MagicMock,
+    ) -> None:
+        current = SimpleNamespace(worktree_path="/tmp/worktrees/tombstone-workspace")
+        conn = MagicMock()
+        delete_cursor = MagicMock()
+        delete_cursor.rowcount = 1
+        conn.execute.side_effect = [MagicMock(), delete_cursor]
+        mock_db.transaction.return_value.__enter__.return_value = conn
+        mock_db.transaction.return_value.__exit__.return_value = False
+
+        with patch.object(manager, "get", return_value=current):
+            deleted = manager.delete("wt-123456")
+
+        tombstone_sql = str(conn.execute.call_args_list[0].args[0])
+        assert deleted is True
+        assert "workspace_path = NULL" in tombstone_sql
+        assert "workspace_generation = workspace_generation + 1" in tombstone_sql
+        assert conn.execute.call_args_list[0].args[1] == ("/tmp/worktrees/tombstone-workspace",)
 
 
 class TestLocalWorktreeManagerStatusTransitions:

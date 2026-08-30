@@ -217,9 +217,22 @@ class ACPSessionLifecycleService:
             sandbox_config=getattr(backend, "_sandbox_config", None),
             sandbox_run_id=str(session.id),
         )
+
+        async def _after_process_spawned() -> None:
+            current_after_spawn = self._session_manager.get(session.id)
+            if (
+                current_after_spawn is None
+                or int(getattr(current_after_spawn, "workspace_generation", 0) or 0) != generation
+            ):
+                raise ACPWorkspaceIdentityError("session workspace identity changed during launch")
+
         try:
             try:
-                await client.start(auto_session=False, cwd=path)
+                await client.start(
+                    auto_session=False,
+                    cwd=path,
+                    after_process_spawned=_after_process_spawned,
+                )
             except FileNotFoundError as exc:
                 raise ACPProviderUnavailableError(provider) from exc
             current = self._session_manager.get(session.id)

@@ -60,6 +60,9 @@ class ChildSessionConfig:
     is_local: bool = False
     """Whether the spawned runtime is expected to use a local model endpoint."""
 
+    workspace_path: str | None = None
+    """Canonical spawn-time workspace path persisted on the child session."""
+
 
 class ChildSessionManager:
     """
@@ -188,6 +191,7 @@ class ChildSessionManager:
             workflow_name=config.workflow_name,
             is_local=config.is_local,
             sandbox_enabled=config.sandbox_enabled,
+            workspace_path=config.workspace_path,
         )
 
         child_id = child.id

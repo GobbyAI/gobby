@@ -41,6 +41,7 @@ from gobby.servers.websocket.chat.backends.base import (
     ManagedChatSessionBase,
     ProviderBackendHealth,
     _extract_text,
+    launch_sandbox_config,
 )
 from gobby.servers.websocket.chat.backends.codex_turns import stream_codex_turn
 from gobby.servers.websocket.chat.permissions import ManagedWebChatPermissionsMixin
@@ -445,7 +446,9 @@ class CodexWebChatBackend:
                 cwd=session.project_path or ".",
                 model=session._model,
                 approval_policy=_CODEX_WEB_CHAT_APPROVAL_POLICY,
-                sandbox=self.native_sandbox_pin(self._sandbox_config),
+                sandbox=self.native_sandbox_pin(
+                    launch_sandbox_config(session, self._sandbox_config)
+                ),
                 terminal_context=terminal_context,
             )
 

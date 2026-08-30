@@ -39,6 +39,7 @@ from gobby.servers.websocket.chat.backends.base import (
     ProviderBackendHealth,
     _extract_text,
     _log_upstream_error_event,
+    launch_sandbox_config,
 )
 from gobby.servers.websocket.chat.backends.droid_permissions import DroidPermissionResolver
 from gobby.servers.websocket.chat.backends.droid_plan import (
@@ -529,7 +530,9 @@ class DroidWebChatBackend:
         env = os.environ.copy()
         env["GOBBY_HOOKS_DISABLED"] = "1"
         env["GOBBY_WEB_CHAT_CHILD"] = "1"
-        sandbox_config = self._sandbox_config or SandboxConfig(enabled=False)
+        sandbox_config = launch_sandbox_config(session, self._sandbox_config) or SandboxConfig(
+            enabled=False
+        )
         if sandbox_config.enabled:
             daemon_cfg = getattr(session, "_config", None)
             websocket = getattr(daemon_cfg, "websocket", None)

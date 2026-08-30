@@ -63,7 +63,9 @@ class TestRefreshReturnsImmutableSnapshot:
         assert isinstance(snapshot, SandboxPolicySnapshot)
         assert config == web_chat_sandbox_config(daemon)
         assert policy_hash == web_chat_sandbox_policy_hash(daemon)
-        assert snapshot.config is manager._sandbox_config or snapshot.config == manager._sandbox_config
+        assert (
+            snapshot.config is manager._sandbox_config or snapshot.config == manager._sandbox_config
+        )
 
 
 class TestStalePolicyHashRefusal:
@@ -228,3 +230,79 @@ class TestRuntimeManagerDoesNotWarmStart:
         assert manager._qwen_backend._client.is_started is False
         client = manager._codex_backend.client
         assert client is None or client.is_connected is False
+
+
+class TestInterleavedSessionCreatesKeepOwnPolicy:
+    @pytest.mark.asyncio
+    async def test_delayed_first_launch_uses_its_own_sandbox_snapshot(self, tmp_path: Path) -> None:
+        from gobby.servers.websocket.chat.backends.base import ProviderBackendHealth
+        from gobby.servers.websocket.chat.backends.droid import (
+            DroidManagedChatSession,
+            DroidWebChatBackend,
+        )
+
+        holder: dict[str, DaemonConfig] = {"config": DaemonConfig()}
+        manager = WebChatRuntimeManager(
+            daemon_config=holder["config"],
+            config_resolver=lambda: holder["config"],
+        )
+        session_a = await manager.create_session(provider="droid", conversation_id="conv-a")
+        snapshot_a = session_a.sandbox_config.model_copy(deep=True)
+        hash_a = session_a.sandbox_policy_hash
+
+        holder["config"] = DaemonConfig(
+            web_chat_sandbox={
+                "backend": "srt",
+                "allow_network": False,
+                "allowed_domains": ["x.test"],
+            }
+        )
+        session_b = await manager.create_session(provider="droid", conversation_id="conv-b")
+
+        assert session_b.sandbox_policy_hash != hash_a
+        assert session_a.sandbox_policy_hash == hash_a
+        assert session_a.sandbox_config.allowed_domains == snapshot_a.allowed_domains
+
+        captured: dict[str, Any] = {}
+
+        async def fake_prepare(**kwargs: Any) -> SandboxLaunch:
+            captured["config"] = kwargs["config"]
+            return _srt_launch(executable="/bin/droid")
+
+        process = MagicMock()
+        process.stdin = MagicMock()
+        process.stdout = MagicMock()
+        process.stderr = None
+        session_a.project_path = str(tmp_path)
+        session_a.db_session_id = "sess-a"
+        backend = manager._droid_backend
+        assert isinstance(backend, DroidWebChatBackend)
+
+        async def fake_init(_handle: Any, _session: Any, _cwd: str) -> SimpleNamespace:
+            return SimpleNamespace(data={"session_id": "droid-a"})
+
+        with (
+            patch(
+                "gobby.servers.websocket.chat.backends.droid.shutil.which",
+                return_value="/bin/droid",
+            ),
+            patch(
+                "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=process,
+            ),
+            patch(
+                "gobby.servers.websocket.chat.backends.droid.prepare_sandbox_launch",
+                new=fake_prepare,
+                create=True,
+            ),
+            patch.object(backend, "start", new_callable=AsyncMock),
+            patch.object(backend, "_initialize_session", new=fake_init),
+            patch.object(backend, "_log_process_stderr", new_callable=AsyncMock),
+        ):
+            backend._health = ProviderBackendHealth(provider="droid", available=True)
+            assert isinstance(session_a, DroidManagedChatSession)
+            await backend.attach_session(session_a, model="gpt-5.4")
+
+        assert captured["config"].allowed_domains == snapshot_a.allowed_domains
+        assert captured["config"].backend == snapshot_a.backend

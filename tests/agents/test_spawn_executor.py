@@ -596,6 +596,51 @@ class TestExecuteSpawn:
             assert result.child_session_id == "child-session-id"
 
     @pytest.mark.asyncio
+    async def test_execute_spawn_persists_workspace_identity(self) -> None:
+        class _Storage:
+            def __init__(self) -> None:
+                self.db = MagicMock()
+                self.row = SimpleNamespace(workspace_path=None, workspace_generation=0)
+
+            def get(self, session_id: str) -> SimpleNamespace:
+                assert session_id == "child-session-id"
+                return self.row
+
+            def update(self, session_id: str, **kwargs: object) -> SimpleNamespace:
+                assert session_id == "child-session-id"
+                for key, value in kwargs.items():
+                    setattr(self.row, key, value)
+                return self.row
+
+        storage = _Storage()
+        session_manager = MagicMock()
+        session_manager._storage = storage
+        context = MagicMock()
+        context.session_id = "child-session-id"
+        context.agent_run_id = "run-123"
+        context.env_vars = {"GOBBY_SESSION_ID": "child-session-id"}
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/resolved/worktree",
+            provider="claude",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=session_manager,
+            machine_id="21000000-0000-4000-8000-000000000002",
+            prepared_spawn=prepared_spawn(session_id="child-session-id"),
+            terminal_backend="tmux",
+        )
+        request.prepared_spawn = context
+
+        result = await execute_spawn(request)
+
+        assert result.success is True
+        assert storage.row.workspace_path == "/resolved/worktree"
+        assert storage.row.workspace_generation == 1
+
+    @pytest.mark.asyncio
     async def test_tmux_run_pid_is_pane_pid_not_server_pid(self) -> None:
         from tests.terminals.fakes import _FAKE_PANE_PID, _FAKE_SERVER_PID
 

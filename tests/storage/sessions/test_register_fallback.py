@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from unittest.mock import patch
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -116,7 +118,58 @@ def test_register_session_failure_returns_existing_canonical_session(
     assert session_mgr._session_metadata[canonical_id]["transcript_path"] == (
         "/tmp/resumed-codex.jsonl"
     )
-    assert session_mgr._session_metadata[canonical_id]["title"] == "Codex"
+    persisted = session_mgr.get(canonical_id)
+    assert persisted is not None
+    assert session_mgr._session_metadata[canonical_id]["title"] == (
+        f"(test-project-S#{persisted.seq_num}): Codex"
+    )
+
+
+def test_register_session_persists_project_path_as_workspace_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _register(self: SessionManager, **kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            id="sess-workspace",
+            external_id=kwargs["external_id"],
+            machine_id=kwargs["machine_id"],
+            source=kwargs["source"],
+            project_id=kwargs["project_id"],
+            session_type="terminal",
+            parent_session_id=None,
+            title="Claude",
+            git_branch=kwargs.get("git_branch"),
+            workspace_path=kwargs.get("workspace_path"),
+            workspace_generation=1 if kwargs.get("workspace_path") else 0,
+        )
+
+    monkeypatch.setattr(SessionManager, "register", _register)
+    monkeypatch.setattr(
+        "gobby.storage.sessions._manager.require_local_machine_id",
+        lambda machine_id, **_kwargs: machine_id,
+    )
+    monkeypatch.setattr(
+        "gobby.utils.git.get_git_branch",
+        lambda _working_dir: "main",
+    )
+    manager = SessionManager.__new__(SessionManager)
+    manager.logger = MagicMock()
+    cast(Any, manager)._cache_registered_session = MagicMock()
+
+    session_id = SessionManager.register_session(
+        manager,
+        external_id="workspace-identity-session",
+        machine_id="20000000-0000-4000-8000-000000000002",
+        source="claude",
+        project_id="proj-1",
+        project_path="/resolved/hook-workspace",
+    )
+
+    assert session_id == "sess-workspace"
+    assert captured.get("workspace_path") == "/resolved/hook-workspace"
 
 
 def test_register_session_happy_path_populates_caches(
@@ -160,7 +213,7 @@ def test_register_session_happy_path_caches_persisted_provisional_title(
     session = session_mgr.get(session_id)
 
     assert session is not None
-    assert session.title == "Codex"
+    assert session.title == f"(test-project-S#{session.seq_num}): Codex"
     assert session.title_source == "provisional"
     assert session_mgr._session_metadata[session_id]["title"] == session.title
 

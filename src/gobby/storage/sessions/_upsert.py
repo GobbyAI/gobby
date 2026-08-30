@@ -13,7 +13,7 @@ from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.terminal_context import parse_terminal_context_value
 
 from ._title_update import apply_title_mutation
-from ._update_sentinel import UnsetType, is_set
+from ._update_sentinel import UNSET, UnsetType, is_set
 
 
 class _SessionGetter(Protocol):
@@ -53,6 +53,7 @@ def update_existing_session(
     sandbox_enabled: bool | None,
     sandbox_policy_hash: str | None,
     now: datetime,
+    workspace_path: str | None | UnsetType = UNSET,
 ) -> Session:
     if existing.machine_id != machine_id:
         raise MachineOwnershipMismatchError(
@@ -91,6 +92,11 @@ def update_existing_session(
             END,
             sandbox_enabled = COALESCE(%s, sandbox_enabled),
             sandbox_policy_hash = COALESCE(%s, sandbox_policy_hash),
+            workspace_generation = CASE
+                WHEN %s AND workspace_path IS DISTINCT FROM %s THEN workspace_generation + 1
+                ELSE workspace_generation
+            END,
+            workspace_path = CASE WHEN %s THEN %s ELSE workspace_path END,
             transcript_processed = CASE
                 WHEN status = 'expired' AND session_type = 'terminal' THEN FALSE
                 ELSE transcript_processed
@@ -119,6 +125,10 @@ def update_existing_session(
             bool(is_local) if is_local is not None else False,
             sandbox_enabled,
             sandbox_policy_hash,
+            is_set(workspace_path),
+            workspace_path if is_set(workspace_path) else None,
+            is_set(workspace_path),
+            workspace_path if is_set(workspace_path) else None,
             now,
             now,
             existing.id,

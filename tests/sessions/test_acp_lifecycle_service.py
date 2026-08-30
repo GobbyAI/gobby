@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import psycopg
 import pytest
 
+from gobby.adapters.acp_client import ACPClient
 from gobby.sessions.acp_lifecycle import (
     ACPCapabilityUnsupportedError,
     ACPProviderUnavailableError,
@@ -255,3 +257,133 @@ async def test_delete_requires_advertised_capability() -> None:
         await _service(_FakeSessionManager(_FakeSession()), backend).delete("sess-1")
 
     assert backend.deleted == []
+
+
+class _GenerationBumpManager(_FakeSessionManager):
+    def __init__(self, session: _FakeSession, *, bump_on_get: int) -> None:
+        super().__init__(session)
+        self._bump_on_get = bump_on_get
+        self._gets = 0
+
+    def get(self, session_id: str) -> _FakeSession | None:
+        self._gets += 1
+        session = self.rows.get(session_id)
+        if session is not None and self._gets >= self._bump_on_get:
+            session.workspace_generation += 1
+        return session
+
+
+@pytest.mark.asyncio
+async def test_close_aborts_without_subprocess_when_generation_changes_before_start() -> None:
+    session = _FakeSession()
+    session_manager = _GenerationBumpManager(session, bump_on_get=2)
+    backend = _FakeBackend(capabilities={"close": True})
+
+    with pytest.raises(ACPWorkspaceIdentityError, match="before launch"):
+        await _service(session_manager, backend).close("sess-1")
+
+    assert backend.clients == []
+    assert backend.closed == []
+
+
+class _StubACPClient(ACPClient):
+    cli_name = "stub-acp"
+    display_name = "Stub ACP"
+    prompt_timeout_env = "GOBBY_STUB_ACP_PROMPT_TIMEOUT_SECONDS"
+
+
+class _RecordingStdin:
+    def __init__(self) -> None:
+        self.buffer = b""
+
+    def write(self, data: bytes) -> None:
+        self.buffer += data
+
+    async def drain(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+class _LineStdout:
+    def __init__(self, payloads: list[dict[str, Any]]) -> None:
+        self._lines = [(json.dumps(payload) + "\n").encode() for payload in payloads]
+
+    async def readline(self) -> bytes:
+        if self._lines:
+            return self._lines.pop(0)
+        return b""
+
+
+class _EmptyStderr:
+    async def read(self, _n: int = -1) -> bytes:
+        return b""
+
+
+class _FakeProcess:
+    pid = 321
+
+    def __init__(self, payloads: list[dict[str, Any]]) -> None:
+        self.stdin = _RecordingStdin()
+        self.stdout = _LineStdout(payloads)
+        self.stderr = _EmptyStderr()
+        self.returncode: int | None = None
+        self.terminated = False
+
+    async def wait(self) -> int:
+        self.returncode = 0
+        return 0
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = 0
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+
+def _written_methods(process: _FakeProcess) -> list[str]:
+    return [
+        json.loads(line)["method"]
+        for line in process.stdin.buffer.decode().splitlines()
+        if line.strip()
+    ]
+
+
+@pytest.mark.asyncio
+async def test_close_does_not_handshake_when_generation_changes_at_process_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _FakeSession()
+    session_manager = _FakeSessionManager(session)
+    process = _FakeProcess(
+        [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": 1,
+                    "agentCapabilities": {"sessionCapabilities": {"close": True}},
+                },
+            }
+        ]
+    )
+
+    async def fake_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> _FakeProcess:
+        session.workspace_generation += 1
+        return process
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    backend = _FakeBackend(capabilities={"close": True})
+
+    def _make_client(**kwargs: Any) -> _StubACPClient:
+        return _StubACPClient(cli_path="/usr/bin/stub-acp", **kwargs)
+
+    cast(Any, backend).acp_client_cls = _make_client
+
+    with pytest.raises(ACPWorkspaceIdentityError, match="during launch"):
+        await _service(session_manager, backend).close("sess-1")
+
+    assert _written_methods(process) == []
+    assert process.terminated is True

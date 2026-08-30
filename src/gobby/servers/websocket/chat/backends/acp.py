@@ -25,6 +25,7 @@ from gobby.config.ai import GenerationEndpointConfig
 from gobby.servers.websocket.chat.backends.base import (
     _BACKEND_START_TIMEOUT_SECONDS,
     ProviderBackendHealth,
+    launch_sandbox_config,
 )
 
 if TYPE_CHECKING:
@@ -182,7 +183,7 @@ class ACPWebChatBackend:
         else:
             client = self.acp_client_cls(
                 cwd=cwd,
-                sandbox_config=self._sandbox_config,
+                sandbox_config=launch_sandbox_config(session, self._sandbox_config),
                 sandbox_run_id=session.db_session_id or session.conversation_id,
             )
         session._acp_client = client

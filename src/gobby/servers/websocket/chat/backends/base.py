@@ -26,6 +26,14 @@ def _error_message(exc: BaseException) -> str:
     return message or exc.__class__.__name__
 
 
+def launch_sandbox_config(session: Any, backend_config: Any) -> Any:
+    """Prefer the per-session launch snapshot over shared backend policy."""
+    session_config = getattr(session, "sandbox_config", None)
+    if session_config is not None:
+        return session_config
+    return backend_config
+
+
 def _extract_text(content: str | list[dict[str, Any]]) -> str:
     """Extract a plain-text prompt from text blocks."""
     if isinstance(content, str):

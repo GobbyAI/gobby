@@ -278,6 +278,7 @@ class SessionManager(
                 agent_depth=agent_depth,
                 is_local=is_local,
                 sandbox_enabled=sandbox_enabled,
+                workspace_path=project_path,
             )
 
             session_id = session.id
