@@ -38,19 +38,38 @@ class AuthorizationFixture:
     session_id: UUID
     agent_run_id: UUID
     machine_id: UUID
+    other_session_id: UUID
+    other_agent_run_id: UUID
+    other_machine_id: UUID
     execution_id: UUID
+    other_execution_id: UUID
     role_name: str
+    other_role_name: str
     password: str
+    other_password: str
 
     @property
     def agent_url(self) -> str:
-        parsed = conninfo_to_dict(self.database_url)
-        parsed.update(
-            user=self.role_name,
-            password=self.password,
-            application_name=f"gobby-agent-{self.execution_id}",
+        return _agent_url(self.database_url, self.role_name, self.password, self.execution_id)
+
+    @property
+    def other_agent_url(self) -> str:
+        return _agent_url(
+            self.database_url,
+            self.other_role_name,
+            self.other_password,
+            self.other_execution_id,
         )
-        return make_conninfo("", **parsed)
+
+
+def _agent_url(database_url: str, role_name: str, password: str, execution_id: UUID) -> str:
+    parsed = conninfo_to_dict(database_url)
+    parsed.update(
+        user=role_name,
+        password=password,
+        application_name=f"gobby-agent-{execution_id}",
+    )
+    return make_conninfo("", **parsed)
 
 
 def _require_isolated_hub(database_url: str) -> None:
@@ -76,9 +95,12 @@ def _as_runtime(
         conn.execute("RESET ROLE")
 
 
-def _issue(
+def _issue_on(
     conn: psycopg.Connection[Any],
-    fixture: AuthorizationFixture,
+    *,
+    session_id: UUID,
+    agent_run_id: UUID,
+    machine_id: UUID,
     execution_id: UUID,
     password: str,
 ) -> tuple[str, int]:
@@ -89,15 +111,25 @@ def _issue(
             %s, 'agent_run', %s, %s, %s, NOW() + INTERVAL '30 minutes', %s
         )
         """,
-        (
-            execution_id,
-            fixture.session_id,
-            fixture.agent_run_id,
-            fixture.machine_id,
-            password,
-        ),
+        (execution_id, session_id, agent_run_id, machine_id, password),
     )
     return str(row[0]), int(row[1])
+
+
+def _issue(
+    conn: psycopg.Connection[Any],
+    fixture: AuthorizationFixture,
+    execution_id: UUID,
+    password: str,
+) -> tuple[str, int]:
+    return _issue_on(
+        conn,
+        session_id=fixture.session_id,
+        agent_run_id=fixture.agent_run_id,
+        machine_id=fixture.machine_id,
+        execution_id=execution_id,
+        password=password,
+    )
 
 
 def _seed(conn: psycopg.Connection[Any], fixture: AuthorizationFixture) -> None:
@@ -120,34 +152,49 @@ def _seed(conn: psycopg.Connection[Any], fixture: AuthorizationFixture) -> None:
         """,
         (TEST_USER_ID, TEST_USER_EMAIL, TEST_USER_NAME, TEST_USER_PASSWORD_HASH),
     )
-    conn.execute(
-        "INSERT INTO public.machines (id, hostname, owner_user_id) "
-        "VALUES (%s, 'agent-auth-test', %s)",
-        (fixture.machine_id, TEST_USER_ID),
-    )
-    conn.execute(
-        """
-        INSERT INTO public.sessions (id, external_id, machine_id, source, project_id)
-        VALUES (%s, %s, %s, 'codex', %s)
-        """,
-        (
-            fixture.session_id,
-            f"agent-auth-{fixture.session_id}",
-            fixture.machine_id,
-            fixture.project_id,
-        ),
-    )
-    conn.execute(
-        """
-        INSERT INTO public.agent_runs (id, parent_session_id, machine_id, provider, prompt)
-        VALUES (%s, %s, %s, 'codex', 'authorization fixture')
-        """,
+    for machine_id, hostname in (
+        (fixture.machine_id, "agent-auth-test"),
+        (fixture.other_machine_id, "agent-auth-test-other"),
+    ):
+        conn.execute(
+            "INSERT INTO public.machines (id, hostname, owner_user_id) VALUES (%s, %s, %s)",
+            (machine_id, hostname, TEST_USER_ID),
+        )
+    for session_id, machine_id in (
+        (fixture.session_id, fixture.machine_id),
+        (fixture.other_session_id, fixture.other_machine_id),
+    ):
+        conn.execute(
+            """
+            INSERT INTO public.sessions (id, external_id, machine_id, source, project_id)
+            VALUES (%s, %s, %s, 'codex', %s)
+            """,
+            (session_id, f"agent-auth-{session_id}", machine_id, fixture.project_id),
+        )
+    for agent_run_id, session_id, machine_id in (
         (fixture.agent_run_id, fixture.session_id, fixture.machine_id),
-    )
-    conn.execute(
-        "UPDATE public.sessions SET agent_run_id = %s WHERE id = %s",
-        (fixture.agent_run_id, fixture.session_id),
-    )
+        (fixture.other_agent_run_id, fixture.other_session_id, fixture.other_machine_id),
+    ):
+        conn.execute(
+            """
+            INSERT INTO public.agent_runs (id, parent_session_id, machine_id, provider, prompt)
+            VALUES (%s, %s, %s, 'codex', 'authorization fixture')
+            """,
+            (agent_run_id, session_id, machine_id),
+        )
+        conn.execute(
+            "UPDATE public.sessions SET agent_run_id = %s WHERE id = %s",
+            (agent_run_id, session_id),
+        )
+    for machine_id in (fixture.machine_id, fixture.other_machine_id):
+        conn.execute(
+            """
+            INSERT INTO public.project_checkouts
+                (machine_id, project_id, root_path)
+            VALUES (%s, %s, %s)
+            """,
+            (machine_id, fixture.project_id, f"/tmp/checkout-{machine_id}"),
+        )
     for project_id in (fixture.project_id, fixture.other_project_id):
         conn.execute(
             "INSERT INTO public.code_indexed_projects (id) VALUES (%s)",
@@ -201,8 +248,8 @@ def _seed(conn: psycopg.Connection[Any], fixture: AuthorizationFixture) -> None:
 def _cleanup(conn: psycopg.Connection[Any], fixture: AuthorizationFixture) -> None:
     execution_ids = conn.execute(
         f"SELECT DISTINCT managed_execution_id FROM {AUTH_SCHEMA}.principal_bindings "
-        "WHERE session_id = %s AND revoked_at IS NULL",
-        (fixture.session_id,),
+        "WHERE session_id IN (%s, %s) AND revoked_at IS NULL",
+        (fixture.session_id, fixture.other_session_id),
     ).fetchall()
     for (execution_id,) in execution_ids:
         _as_runtime(
@@ -228,12 +275,25 @@ def _cleanup(conn: psycopg.Connection[Any], fixture: AuthorizationFixture) -> No
         (fixture.project_id, fixture.other_project_id),
     )
     conn.execute(
-        "UPDATE public.sessions SET agent_run_id = NULL WHERE id = %s",
-        (fixture.session_id,),
+        "UPDATE public.sessions SET agent_run_id = NULL WHERE id IN (%s, %s)",
+        (fixture.session_id, fixture.other_session_id),
     )
-    conn.execute("DELETE FROM public.agent_runs WHERE id = %s", (fixture.agent_run_id,))
-    conn.execute("DELETE FROM public.sessions WHERE id = %s", (fixture.session_id,))
-    conn.execute("DELETE FROM public.machines WHERE id = %s", (fixture.machine_id,))
+    conn.execute(
+        "DELETE FROM public.project_checkouts WHERE machine_id IN (%s, %s)",
+        (fixture.machine_id, fixture.other_machine_id),
+    )
+    conn.execute(
+        "DELETE FROM public.agent_runs WHERE id IN (%s, %s)",
+        (fixture.agent_run_id, fixture.other_agent_run_id),
+    )
+    conn.execute(
+        "DELETE FROM public.sessions WHERE id IN (%s, %s)",
+        (fixture.session_id, fixture.other_session_id),
+    )
+    conn.execute(
+        "DELETE FROM public.machines WHERE id IN (%s, %s)",
+        (fixture.machine_id, fixture.other_machine_id),
+    )
     conn.execute(
         "DELETE FROM public.projects WHERE id IN (%s, %s)",
         (fixture.project_id, fixture.other_project_id),
@@ -260,9 +320,15 @@ def authorization_fixture(postgres_database_url: str) -> Iterator[AuthorizationF
             session_id=uuid4(),
             agent_run_id=uuid4(),
             machine_id=uuid4(),
+            other_session_id=uuid4(),
+            other_agent_run_id=uuid4(),
+            other_machine_id=uuid4(),
             execution_id=uuid4(),
+            other_execution_id=uuid4(),
             role_name="",
+            other_role_name="",
             password=f"agent-test-{uuid4()}",
+            other_password=f"agent-test-other-{uuid4()}",
         )
         with psycopg.connect(isolated_url, autocommit=True) as conn:
             try:
@@ -271,7 +337,16 @@ def authorization_fixture(postgres_database_url: str) -> Iterator[AuthorizationF
                     conn, fixture, fixture.execution_id, fixture.password
                 )
                 assert generation == 1
-                fixture = replace(fixture, role_name=role_name)
+                other_role_name, other_generation = _issue_on(
+                    conn,
+                    session_id=fixture.other_session_id,
+                    agent_run_id=fixture.other_agent_run_id,
+                    machine_id=fixture.other_machine_id,
+                    execution_id=fixture.other_execution_id,
+                    password=fixture.other_password,
+                )
+                assert other_generation == 1
+                fixture = replace(fixture, role_name=role_name, other_role_name=other_role_name)
                 yield fixture
             finally:
                 _cleanup(conn, fixture)
@@ -380,10 +455,11 @@ def test_roles_memberships_functions_and_rls_are_hardened(
                     "code_content_chunks",
                     "code_index_projection_cleanup_pending",
                     "code_index_prune_dirty_projects",
+                    "project_checkouts",
                 ],
             ),
         ).fetchall()
-        assert len(rls) == 9
+        assert len(rls) == 10
         assert all(row["relrowsecurity"] and row["relforcerowsecurity"] for row in rls)
 
 
@@ -426,6 +502,140 @@ def test_representative_search_symbol_index_freshness_graph_vector_and_status_sq
                 (fixture.other_project_id,),
             ).rowcount
             == 0
+        )
+
+
+def test_project_checkouts_are_machine_isolated_lock_only_and_daemon_writable(
+    authorization_fixture: AuthorizationFixture,
+) -> None:
+    fixture = authorization_fixture
+    checkout_select = (
+        "SELECT machine_id, project_id, root_path FROM project_checkouts ORDER BY machine_id"
+    )
+    checkout_lock = "SELECT machine_id, project_id, root_path FROM project_checkouts FOR SHARE"
+    with psycopg.connect(fixture.database_url, autocommit=True, row_factory=dict_row) as admin:
+        policies = {
+            row["polname"]: row
+            for row in admin.execute(
+                """
+                SELECT pol.polname, pol.polcmd::text AS polcmd
+                FROM pg_policy pol
+                JOIN pg_class rel ON rel.oid = pol.polrelid
+                WHERE rel.relname = 'project_checkouts'
+                """
+            ).fetchall()
+        }
+        assert "gobby_daemon_runtime_access" in policies
+        assert "gobby_migration_owner_access" in policies
+        assert policies["gobby_gcode_project_read"]["polcmd"] == "r"
+        assert policies["gobby_gcode_project_update"]["polcmd"] == "w"
+        assert "gobby_gcode_project_insert" not in policies
+        assert "gobby_gcode_project_delete" not in policies
+        grants = admin.execute(
+            """
+            SELECT
+                has_table_privilege(%s, 'project_checkouts', 'INSERT') AS daemon_insert,
+                has_table_privilege(%s, 'project_checkouts', 'UPDATE') AS daemon_update,
+                has_table_privilege(%s, 'project_checkouts', 'DELETE') AS daemon_delete,
+                has_column_privilege(%s, 'project_checkouts', 'root_path', 'SELECT')
+                    AS capability_select,
+                has_column_privilege(%s, 'project_checkouts', 'root_path', 'UPDATE')
+                    AS capability_update,
+                has_column_privilege(%s, 'projects', 'deleted_at', 'SELECT')
+                    AS deleted_at_select,
+                has_column_privilege(%s, 'projects', 'repo_path', 'SELECT')
+                    AS repo_path_select
+            """,
+            (
+                RUNTIME_ROLE,
+                RUNTIME_ROLE,
+                RUNTIME_ROLE,
+                CAPABILITY_ROLE,
+                CAPABILITY_ROLE,
+                CAPABILITY_ROLE,
+                CAPABILITY_ROLE,
+            ),
+        ).fetchone()
+        assert grants is not None
+        assert grants["daemon_insert"] is True
+        assert grants["daemon_update"] is True
+        assert grants["daemon_delete"] is True
+        assert grants["capability_select"] is True
+        assert grants["capability_update"] is True
+        assert grants["deleted_at_select"] is True
+        assert grants["repo_path_select"] is True
+
+    extra_root = f"/tmp/daemon-checkout-{uuid4()}"
+    with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+        inserted = _as_runtime(
+            admin,
+            """
+            INSERT INTO public.project_checkouts (machine_id, project_id, root_path)
+            VALUES (%s, %s, %s)
+            RETURNING root_path
+            """,
+            (fixture.machine_id, fixture.other_project_id, extra_root),
+        )
+        assert inserted == extra_root
+        updated_root = f"{extra_root}-rebound"
+        updated = _as_runtime(
+            admin,
+            """
+            UPDATE public.project_checkouts SET root_path = %s
+            WHERE machine_id = %s AND project_id = %s
+            RETURNING root_path
+            """,
+            (updated_root, fixture.machine_id, fixture.other_project_id),
+        )
+        assert updated == updated_root
+        deleted = _as_runtime(
+            admin,
+            """
+            DELETE FROM public.project_checkouts
+            WHERE machine_id = %s AND project_id = %s
+            RETURNING machine_id
+            """,
+            (fixture.machine_id, fixture.other_project_id),
+        )
+        assert deleted == fixture.machine_id
+
+    with psycopg.connect(fixture.agent_url, autocommit=True) as agent:
+        rows = agent.execute(checkout_select).fetchall()
+        assert rows == [
+            (fixture.machine_id, fixture.project_id, f"/tmp/checkout-{fixture.machine_id}")
+        ]
+        locked = agent.execute(checkout_lock).fetchall()
+        assert locked == rows
+        _denied(
+            agent,
+            "INSERT INTO project_checkouts (machine_id, project_id, root_path) "
+            f"VALUES ('{fixture.machine_id}', '{fixture.project_id}', '/tmp/denied')",
+        )
+        _denied(
+            agent,
+            "UPDATE project_checkouts SET root_path = '/tmp/mutated' "
+            f"WHERE machine_id = '{fixture.machine_id}'",
+        )
+        _denied(
+            agent,
+            f"DELETE FROM project_checkouts WHERE machine_id = '{fixture.machine_id}'",
+        )
+        live = agent.execute("SELECT id FROM projects WHERE deleted_at IS NULL").fetchall()
+        assert {row[0] for row in live} == {fixture.project_id}
+
+    with psycopg.connect(fixture.other_agent_url, autocommit=True) as other:
+        rows = other.execute(checkout_select).fetchall()
+        assert rows == [
+            (
+                fixture.other_machine_id,
+                fixture.project_id,
+                f"/tmp/checkout-{fixture.other_machine_id}",
+            )
+        ]
+        assert other.execute(checkout_lock).fetchall() == rows
+        _denied(
+            other,
+            "UPDATE project_checkouts SET root_path = '/tmp/other-mutated'",
         )
 
 

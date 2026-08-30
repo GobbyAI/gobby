@@ -56,6 +56,7 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
     relations = {entry["relation"]: entry for entry in manifest["relations"]}
     assert set(relations) == {
         "projects",
+        "project_checkouts",
         "config_state",
         "code_indexed_projects",
         "code_indexed_project_states",
@@ -70,6 +71,14 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
         "code_index_prune_dirty_projects",
     }
     assert relations["projects"]["operations"] == ["SELECT"]
+    assert relations["projects"]["columns"] == ["id", "name", "deleted_at", "repo_path"]
+    assert relations["project_checkouts"] == {
+        "relation": "project_checkouts",
+        "operations": ["SELECT", "UPDATE"],
+        "columns": ["machine_id", "project_id", "root_path"],
+        "scope_column": "project_id",
+        "machine_scope_column": "machine_id",
+    }
     assert relations["config_state"] == {
         "relation": "config_state",
         "operations": ["SELECT"],
