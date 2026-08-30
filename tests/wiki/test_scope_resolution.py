@@ -5,11 +5,24 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import CheckoutNotFoundError
+from gobby.storage.projects import (
+    CHECKOUT_FREE_PROJECT_IDS,
+    GLOBAL_PROJECT_ID,
+    PERSONAL_PROJECT_ID,
+    LocalProjectManager,
+)
 from gobby.wiki.scope_resolution import (
     WikiScopeResolutionError,
+    _resolve_project_root_sync,
     resolve_scope_identity,
     resolve_wiki_scope,
+)
+from tests.fixtures.isolated_checkout import (
+    insert_isolated_machine,
+    install_isolated_checkout_project,
+    patch_local_machine_id,
 )
 
 pytestmark = pytest.mark.unit
@@ -63,3 +76,52 @@ async def test_remote_owner_dispatch_runs_before_local_path_existence(
         assert should_proxy_owner_scope(project=None, topic="research") is True
         assert should_proxy_owner_scope(project=PERSONAL_PROJECT_ID, topic=None) is True
         assert should_proxy_owner_scope(project="checkout-id", topic=None) is False
+
+
+def test_wiki_resolve_project_root_uses_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+
+    root = _resolve_project_root_sync(temp_db, isolated.project.id)
+
+    assert root == Path(isolated.root_path).resolve()
+
+
+def test_wiki_resolve_project_root_fails_closed_without_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="wiki-no-checkout")
+
+    with pytest.raises(CheckoutNotFoundError):
+        _resolve_project_root_sync(temp_db, project.id)
+
+
+@pytest.mark.asyncio
+async def test_wiki_skips_require_root_for_checkout_free_sentinels(  # tdd-red window
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.project_checkouts import require_root
+
+    calls: list[str] = []
+    real = require_root
+
+    def spy(db: HubDatabase, project_id: str, machine_id: str | None) -> str:
+        calls.append(project_id)
+        return real(db, project_id, machine_id)
+
+    monkeypatch.setattr("gobby.storage.project_checkouts.require_root", spy)
+
+    resolved = await resolve_scope_identity(temp_db, GLOBAL_PROJECT_ID, require_project_root=False)
+
+    assert calls == []
+    assert resolved.project_id == GLOBAL_PROJECT_ID
+    assert GLOBAL_PROJECT_ID in CHECKOUT_FREE_PROJECT_IDS

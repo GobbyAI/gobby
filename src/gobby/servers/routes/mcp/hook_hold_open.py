@@ -69,13 +69,22 @@ async def _maybe_hold_open(
     project_path: str | None = None
     if getattr(db_session, "project_id", None):
         try:
-            from gobby.storage.projects import LocalProjectManager
+            from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
+            from gobby.storage.workspace_machine_scope import require_local_machine_id
 
-            project = await resolved_server.run_db(
-                LocalProjectManager(db).get, db_session.project_id
-            )
-            if project and project.repo_path:
-                project_path = project.repo_path
+            machine_id = getattr(db_session, "machine_id", None)
+            if machine_id:
+                try:
+                    resolved_machine = require_local_machine_id(
+                        machine_id,
+                        resource_kind="project_checkout",
+                        resource_id=db_session.project_id,
+                    )
+                    project_path = await resolved_server.run_db(
+                        require_root, db, db_session.project_id, resolved_machine
+                    )
+                except CheckoutNotFoundError:
+                    project_path = None
         except Exception:
             logger.debug("Failed to resolve project_path for approval check", exc_info=True)
 

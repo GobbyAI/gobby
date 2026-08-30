@@ -20,6 +20,12 @@ from gobby.storage.skills import (
     SkillMetadataValidationError,
     SkillScopeConflictError,
 )
+from tests.fixtures.isolated_checkout import (
+    IsolatedCheckoutProject,
+    insert_isolated_machine,
+    install_isolated_checkout_project,
+    patch_local_machine_id,
+)
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -78,10 +84,17 @@ def client(server: HTTPServer) -> TestClient:
 
 
 @pytest.fixture
-def skill_project(temp_db: HubDatabase, tmp_path: Path) -> Project:
-    repo_path = tmp_path / "repo"
-    repo_path.mkdir()
-    return LocalProjectManager(temp_db).create(name="skills-project", repo_path=str(repo_path))
+def skill_checkout(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> IsolatedCheckoutProject:
+    return install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", name="skills-project", monkeypatch=monkeypatch
+    )
+
+
+@pytest.fixture
+def skill_project(skill_checkout: IsolatedCheckoutProject) -> Project:
+    return skill_checkout.project
 
 
 @pytest.mark.parametrize(
@@ -430,9 +443,14 @@ class TestImportSkill:
 
     @patch("gobby.skills.loader.SkillLoader")
     def test_import_prefers_existing_project_relative_path_over_github(
-        self, MockLoader, client: TestClient, skill_manager, skill_project
+        self,
+        MockLoader,
+        client: TestClient,
+        skill_manager,
+        skill_project,
+        skill_checkout: IsolatedCheckoutProject,
     ) -> None:
-        local_skill = Path(skill_project.repo_path) / "foo" / "bar"
+        local_skill = Path(skill_checkout.root_path) / "foo" / "bar"
         local_skill.mkdir(parents=True)
         mock_loader = MockLoader.return_value
         parsed_mock = MagicMock()
@@ -1128,3 +1146,89 @@ def test_rest_writes_reject_malformed_runtime(
 
     assert response.status_code == 422
     assert "runtime.node" in response.json()["detail"]
+
+
+def test_skills_import_uses_machine_checkout(  # tdd-red window
+    client: TestClient,
+    skill_manager: MagicMock,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    (tmp_path / "repo" / "skill.md").write_text("ok\n", encoding="utf-8")
+    parsed = MagicMock()
+    parsed.name = "local-skill"
+    parsed.content = "Safe local skill content"
+    parsed.source_type = "agent"
+    parsed.description = "safe"
+    parsed.version = None
+    parsed.license = None
+    parsed.compatibility = None
+    parsed.allowed_tools = None
+    parsed.metadata = None
+    parsed.source_path = "."
+    parsed.source_ref = None
+    parsed.always_apply = False
+    parsed.injection_format = "summary"
+    parsed.loaded_files = []
+    skill = MagicMock()
+    skill.to_dict.return_value = {"name": "local-skill"}
+    skill_manager.create_skill_with_files.return_value = skill
+
+    with patch("gobby.skills.loader.SkillLoader") as loader_class:
+        loader_class.return_value.load_skill.return_value = [parsed]
+        response = client.post(
+            "/api/skills/import",
+            json={"source": ".", "project_id": isolated.project.id},
+        )
+
+    assert response.status_code == 200
+    loader_class.return_value.load_skill.assert_called_once()
+    loaded_path = Path(loader_class.return_value.load_skill.call_args.args[0])
+    assert loaded_path == (tmp_path / "repo").resolve()
+
+
+def test_skills_import_fails_closed_without_checkout(  # tdd-red window
+    client: TestClient,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="skills-no-checkout")
+
+    response = client.post(
+        "/api/skills/import",
+        json={"source": ".", "project_id": project.id},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "CheckoutNotFoundError"
+
+
+def test_skills_import_skips_require_root_for_sentinel(  # tdd-red window
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.project_checkouts import require_root
+    from gobby.storage.projects import PERSONAL_PROJECT_ID
+
+    calls: list[str] = []
+    real = require_root
+
+    def spy(db: HubDatabase, project_id: str, machine_id: str | None) -> str:
+        calls.append(project_id)
+        return real(db, project_id, machine_id)
+
+    monkeypatch.setattr("gobby.storage.project_checkouts.require_root", spy)
+
+    response = client.post(
+        "/api/skills/import",
+        json={"source": ".", "project_id": PERSONAL_PROJECT_ID},
+    )
+
+    assert calls == []
+    assert response.status_code == 400

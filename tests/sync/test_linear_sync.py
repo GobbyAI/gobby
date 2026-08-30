@@ -8,6 +8,7 @@ import logging
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -17,6 +18,7 @@ from mcp.types import CallToolResult, TextContent
 from gobby.integrations.linear_graphql import LinearGraphQLClient, LinearGraphQLError
 from gobby.mcp_proxy.models import MCPError
 from gobby.storage.cron_models import CronJob
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretDecryptionError
 from gobby.sync import linear as linear_module
 from gobby.sync.linear import LinearSyncError, LinearSyncService
@@ -206,14 +208,20 @@ def mock_task_manager() -> MagicMock:
 def sync_service(
     mock_mcp_manager: MagicMock,
     mock_task_manager: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> LinearSyncService:
     """Create a LinearSyncService with mock dependencies."""
     project = MagicMock()
+    project.id = "test-project-id"
     project.linear_project_id = "lin-proj"
     project.name = "gobby"
     project.repo_path = None
     project_manager = MagicMock()
     project_manager.get.return_value = project
+    monkeypatch.setattr(
+        "gobby.storage.project_checkouts.require_root",
+        lambda _db, _project_id, _machine_id: "/tmp/gobby",
+    )
     return LinearSyncService(
         mcp_manager=mock_mcp_manager,
         task_manager=mock_task_manager,
@@ -1611,7 +1619,10 @@ class TestLinearSyncServiceCreate:
 
     @pytest.mark.asyncio
     async def test_create_issue_creates_same_named_project_when_missing(
-        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+        self,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """create_issue_for_task creates and stores a same-named Linear project."""
         mock_task = MagicMock()
@@ -1625,11 +1636,16 @@ class TestLinearSyncServiceCreate:
         mock_mcp_manager.call_tool.return_value = {"id": "lin-456"}
 
         project = MagicMock()
+        project.id = "test-project"
         project.linear_project_id = None
         project.name = "gobby"
         project.repo_path = None
         project_manager = MagicMock()
         project_manager.get.return_value = project
+        monkeypatch.setattr(
+            "gobby.storage.project_checkouts.require_root",
+            lambda _db, _project_id, _machine_id: "/tmp/gobby",
+        )
 
         service = LinearSyncService(
             mcp_manager=mock_mcp_manager,
@@ -2181,3 +2197,67 @@ class TestLinearSyncErrorHandling:
 
         with pytest.raises(Exception, match="Network error"):
             await service.import_linear_issues()
+
+
+def test_linear_project_name_uses_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.sync.linear_project_ops import LinearProjectOpsMixin
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "checkout-dir-name", name="other-name", monkeypatch=monkeypatch
+    )
+    ops = LinearProjectOpsMixin.__new__(LinearProjectOpsMixin)
+    ops.project_id = isolated.project.id
+    ops._project_manager = LocalProjectManager(temp_db)
+
+    assert ops._linear_project_name() == "checkout-dir-name"
+
+
+@pytest.mark.asyncio
+async def test_linear_project_json_update_uses_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.sync.linear_project_ops import LinearProjectOpsMixin
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    calls: list[tuple[Path, dict[str, object]]] = []
+
+    def capture(root: Path, **fields: object) -> None:
+        calls.append((root, fields))
+
+    monkeypatch.setattr("gobby.sync.linear_project_ops.update_project_json_fields", capture)
+    ops = LinearProjectOpsMixin.__new__(LinearProjectOpsMixin)
+    ops.project_id = isolated.project.id
+    project_manager = LocalProjectManager(temp_db)
+    ops._project_manager = project_manager
+    ops.linear_project_id = None
+
+    async def fake_ensure(_team_id: str, _name: str) -> tuple[dict[str, str], bool]:
+        return {"id": "lin-1"}, True
+
+    monkeypatch.setattr(ops, "ensure_linear_project", fake_ensure)
+    monkeypatch.setattr(ops, "_get_linear_project_id", lambda: None)
+    monkeypatch.setattr(ops, "_linear_project_name", lambda: "gobby")
+
+    await ops.ensure_project_binding("TEAM-1")
+    assert calls == [
+        (
+            Path(isolated.root_path),
+            {"linear_team_id": "TEAM-1", "linear_project_id": "lin-1"},
+        )
+    ]
+    updated = project_manager.get(isolated.project.id)
+    assert updated is not None
+    assert updated.linear_team_id == "TEAM-1"
+    assert updated.linear_project_id == "lin-1"

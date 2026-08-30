@@ -7,7 +7,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
+from gobby.storage.project_checkouts import require_root
+from gobby.storage.projects import (
+    CHECKOUT_FREE_PROJECT_IDS,
+    PERSONAL_PROJECT_ID,
+    LocalProjectManager,
+)
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -152,8 +158,10 @@ async def resolve_scope_identity(
         )
 
     project_id = identity.removeprefix(PROJECT_SCOPE_PREFIX)
-    if _is_personal_sentinel(project_id):
-        return _personal_scope()
+    if _is_personal_sentinel(project_id) or project_id in CHECKOUT_FREE_PROJECT_IDS:
+        if _is_personal_sentinel(project_id):
+            return _personal_scope()
+        return ResolvedWikiScope(identity=identity, project_id=project_id)
     project_root = await resolve_project_root(db, project_id) if db is not None else None
     if require_project_root and project_root is None:
         raise WikiScopeResolutionError("project-scoped wiki calls require a database")
@@ -172,9 +180,14 @@ async def resolve_project_root(db: HubDatabase | None, project_id: str) -> Path:
 
 
 def _resolve_project_root_sync(db: HubDatabase, project_id: str) -> Path:
+    if project_id in CHECKOUT_FREE_PROJECT_IDS:
+        raise WikiScopeResolutionError(
+            f"checkout-free sentinel {project_id} cannot resolve a wiki project root"
+        )
     project = LocalProjectManager(db).get(project_id)
     if project is None:
         raise WikiScopeResolutionError(f"Unknown project id: {project_id}")
-    if not project.repo_path:
-        raise WikiScopeResolutionError(f"Project {project_id} does not have a repo path")
-    return Path(project.repo_path).expanduser().resolve()
+    machine_id = require_local_machine_id(
+        None, resource_kind="project_checkout", resource_id=project_id
+    )
+    return Path(require_root(db, project_id, machine_id)).expanduser().resolve()

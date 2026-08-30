@@ -484,12 +484,15 @@ class CronExecutor:
 
     def _pipeline_project_context(self, project_id: str) -> dict[str, Any]:
         """Resolve the project path used by cron-triggered pipeline agents."""
-        from gobby.storage.projects import LocalProjectManager
+
+        from gobby.storage.project_checkouts import require_root
+        from gobby.storage.workspace_machine_scope import require_local_machine_id
 
         project_ctx: dict[str, Any] = {"id": project_id}
-        project = LocalProjectManager(self.storage.db).get(project_id)
-        if project is not None and project.repo_path:
-            project_ctx["project_path"] = project.repo_path
+        machine_id = require_local_machine_id(
+            None, resource_kind="project_checkout", resource_id=project_id
+        )
+        project_ctx["project_path"] = require_root(self.storage.db, project_id, machine_id)
         return project_ctx
 
     async def _run_pipeline_background(

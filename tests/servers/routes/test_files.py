@@ -4,13 +4,21 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from gobby.servers.routes.files import (
     MAX_READ_SIZE,
     _get_git_tracked_files,
     create_files_router,
+)
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
+from tests.fixtures.isolated_checkout import (
+    insert_isolated_machine,
+    insert_overlay,
+    install_isolated_checkout_project,
+    patch_local_machine_id,
 )
 
 pytestmark = pytest.mark.unit
@@ -76,7 +84,7 @@ class TestFilesRoutes:
         return project
 
     @pytest.fixture
-    def mock_server(self, mock_project: MagicMock) -> MagicMock:
+    def mock_server(self, mock_project: MagicMock, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         server = MagicMock()
         db = MagicMock()
         server.session_manager = MagicMock()
@@ -117,6 +125,34 @@ class TestFilesRoutes:
             return func(*args, **kwargs)
 
         server.run_db = AsyncMock(side_effect=run_db)
+
+        def checkout_root(_server: MagicMock, project_id: str) -> str:
+            row = server.session_manager.db.fetchone("", (project_id,))
+            if not row:
+                raise HTTPException(404, f"Project not found: {project_id}")
+            return str(row["repo_path"])
+
+        monkeypatch.setattr(
+            "gobby.servers.routes.files._require_project_checkout_root",
+            checkout_root,
+        )
+
+        def project_to_response(
+            _server: MagicMock, project: Any, stats: Any | None = None
+        ) -> dict[str, Any]:
+            return {
+                "id": project.id,
+                "name": project.name,
+                "checkout": {
+                    "machine_id": "test-machine",
+                    "root_path": project.repo_path,
+                },
+            }
+
+        monkeypatch.setattr(
+            "gobby.servers.routes.files._project_to_response",
+            project_to_response,
+        )
         return server
 
     @pytest.fixture
@@ -132,10 +168,10 @@ class TestFilesRoutes:
         resp = client.get("/api/files/projects")
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data) == 2
-        assert data[0]["name"] == "Personal"
-        assert data[1]["name"] == "test-project"
-        assert data[1]["id"] == PROJECT_ID
+        row = next(project for project in data if project["id"] == PROJECT_ID)
+        assert row["name"] == "test-project"
+        assert "repo_path" not in row
+        assert row["checkout"]["root_path"]
 
     # -- /tree --
 
@@ -507,3 +543,118 @@ class TestFilesRoutes:
 
         resp = client.get("/api/files/projects")
         assert resp.status_code == 503
+
+
+def _files_client_for_db(db: HubDatabase) -> TestClient:
+    server = MagicMock()
+    server.session_manager = MagicMock()
+    server.session_manager.db = db
+
+    async def run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    server.run_db = AsyncMock(side_effect=run_db)
+    app = FastAPI()
+    app.include_router(create_files_router(server))
+    return TestClient(app)
+
+
+def test_list_directory_uses_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    (tmp_path / "repo" / "hello.txt").write_text("hi\n", encoding="utf-8")
+    client = _files_client_for_db(temp_db)
+
+    resp = client.get("/api/files/tree", params={"project_id": isolated.project.id, "path": ""})
+
+    assert resp.status_code == 200
+    assert "hello.txt" in [entry["name"] for entry in resp.json()]
+
+
+def test_list_directory_fails_closed_without_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="files-no-checkout")
+    client = _files_client_for_db(temp_db)
+
+    resp = client.get("/api/files/tree", params={"project_id": project.id, "path": ""})
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["error"] == "CheckoutNotFoundError"
+
+
+def test_list_directory_overlay_without_primary_is_not_a_file_root(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = tmp_path / "wt"
+    overlay.mkdir()
+    (overlay / "only-overlay.txt").write_text("x\n", encoding="utf-8")
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="files-overlay-only")
+    insert_overlay(
+        temp_db,
+        project_id=project.id,
+        machine_id=machine_id,
+        path=str(overlay),
+        kind="worktree",
+    )
+    client = _files_client_for_db(temp_db)
+
+    resp = client.get("/api/files/tree", params={"project_id": project.id, "path": ""})
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["error"] == "CheckoutNotFoundError"
+
+
+def test_list_projects_returns_checkout_shaped_json(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    monkeypatch.setattr(
+        "gobby.servers.routes.projects.get_machine_id",
+        lambda: isolated.machine_id,
+    )
+    client = _files_client_for_db(temp_db)
+
+    resp = client.get("/api/files/projects")
+
+    assert resp.status_code == 200
+    row = next(project for project in resp.json() if project["id"] == isolated.project.id)
+    assert "repo_path" not in row
+    assert row["checkout"] == {
+        "machine_id": isolated.machine_id,
+        "root_path": isolated.root_path,
+    }
+
+
+def test_list_projects_checkout_null_without_primary(  # tdd-red window
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    monkeypatch.setattr("gobby.servers.routes.projects.get_machine_id", lambda: machine_id)
+    project = LocalProjectManager(temp_db).create(name="files-list-no-checkout")
+    client = _files_client_for_db(temp_db)
+
+    resp = client.get("/api/files/projects")
+
+    assert resp.status_code == 200
+    row = next(item for item in resp.json() if item["id"] == project.id)
+    assert "repo_path" not in row
+    assert row["checkout"] is None

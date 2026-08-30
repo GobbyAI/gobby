@@ -165,9 +165,21 @@ def _plan_validation_project_context(
     if project_context is not None:
         return project_context
     project = self.project_manager.get(task.project_id)
-    if project is None or not project.repo_path:
+    if project is None:
         return None
-    return {"id": task.project_id, "project_path": project.repo_path}
+    from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
+    from gobby.storage.workspace_machine_scope import require_local_machine_id
+
+    try:
+        machine_id = require_local_machine_id(
+            None, resource_kind="project_checkout", resource_id=task.project_id
+        )
+        return {
+            "id": task.project_id,
+            "project_path": require_root(self.project_manager.db, task.project_id, machine_id),
+        }
+    except CheckoutNotFoundError:
+        return None
 
 
 async def compile_and_apply_run(
@@ -462,9 +474,17 @@ def _render_prompt(self: Any, path: str, context: dict[str, Any]) -> str:
 
 def _resolve_repo_path(self: Any, task: Task) -> Path | None:
     """Resolve the repository path for the task's project."""
-    project = self.project_manager.get(task.project_id)
-    if project and project.repo_path:
-        return Path(project.repo_path)
+    from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
+    from gobby.storage.workspace_machine_scope import require_local_machine_id
+
+    if task.project_id:
+        try:
+            machine_id = require_local_machine_id(
+                None, resource_kind="project_checkout", resource_id=task.project_id
+            )
+            return Path(require_root(self.project_manager.db, task.project_id, machine_id))
+        except CheckoutNotFoundError:
+            pass
     project_ctx = get_project_context()
     if project_ctx and project_ctx.get("project_path"):
         return Path(project_ctx["project_path"])

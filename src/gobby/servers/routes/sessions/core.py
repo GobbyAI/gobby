@@ -46,19 +46,29 @@ async def _get_commit_count(db: "HubDatabase", session: Any) -> int:
     Returns:
         Number of commits, or 0 if git is unavailable
     """
-    # Resolve cwd from project repo_path (transcript_path parent is not a git repo)
+    # Resolve cwd from the session-machine checkout (transcript_path parent is not a git repo)
     cwd = None
     if session.project_id:
+        machine_id = getattr(session, "machine_id", None)
+        if not machine_id:
+            return 0
         try:
-            row = await asyncio.to_thread(
-                db.fetchone,
-                "SELECT repo_path FROM projects WHERE id = %s",
-                (session.project_id,),
+            from gobby.storage.project_checkouts import (
+                CheckoutNotFoundError,
+                MissingMachineContextError,
+                require_root,
             )
-            if row and row["repo_path"]:
-                cwd = row["repo_path"]
+            from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+
+            cwd = await asyncio.to_thread(require_root, db, session.project_id, machine_id)
+        except (
+            CheckoutNotFoundError,
+            MissingMachineContextError,
+            MachineOwnershipMismatchError,
+        ) as e:
+            logger.debug("Failed to resolve checkout for session %s: %s", session.id, e)
         except Exception as e:
-            logger.debug("Failed to resolve repo_path for session %s: %s", session.id, e)
+            logger.debug("Failed to resolve checkout for session %s: %s", session.id, e)
 
     if not cwd:
         return 0

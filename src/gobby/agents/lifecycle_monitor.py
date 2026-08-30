@@ -909,9 +909,7 @@ class AgentLifecycleMonitor:
                 if session and session.project_id:
                     from gobby.agents.lifecycle_checkout import resolve_session_checkout_root
 
-                    root = await self._run_db(
-                        resolve_session_checkout_root, self._db, session
-                    )
+                    root = await self._run_db(resolve_session_checkout_root, self._db, session)
                     return str(root) if root else None
             except Exception:
                 logger.debug(

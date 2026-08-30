@@ -12,12 +12,18 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from gobby.cli.plans import _root_ref_from_file, plans
+from gobby.cli.plans import _normalized_evidence_plan_path, _root_ref_from_file, plans
 from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
+from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
+from tests.fixtures.isolated_checkout import (
+    insert_isolated_machine,
+    install_isolated_checkout_project,
+    patch_local_machine_id,
+)
 
 pytestmark = pytest.mark.unit
 plans_module = importlib.import_module("gobby.cli.plans")
@@ -187,14 +193,16 @@ def _write_binary_register_plan(root: Path) -> Path:
     return path
 
 
-def _create_project(temp_db: HubDatabase, root: Path) -> str:
-    return LocalProjectManager(temp_db).create(name=f"plans-{root.name}", repo_path=str(root)).id
+def _create_project(temp_db: HubDatabase, root: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    return install_isolated_checkout_project(
+        temp_db, root, name=f"plans-{root.name}", monkeypatch=monkeypatch
+    ).project.id
 
 
 def test_register_command_writes_plan_row(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    project_id = _create_project(temp_db, tmp_path)
+    project_id = _create_project(temp_db, tmp_path, monkeypatch)
     root_task = LocalTaskManager(temp_db).create_task(
         project_id=project_id,
         title="Plan root",
@@ -223,7 +231,7 @@ def test_register_command_writes_plan_row(
 def test_register_command_malformed_plan_raises_click_exception(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    project_id = _create_project(temp_db, tmp_path)
+    project_id = _create_project(temp_db, tmp_path, monkeypatch)
     plan = _write_malformed_register_plan(tmp_path)
     monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: project_id)
     monkeypatch.setattr(plans_module, "_open_db", lambda: _NonClosingDb(temp_db))
@@ -244,7 +252,7 @@ def test_register_command_malformed_plan_raises_click_exception(
 def test_register_command_binary_plan_raises_click_exception(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    project_id = _create_project(temp_db, tmp_path)
+    project_id = _create_project(temp_db, tmp_path, monkeypatch)
     plan = _write_binary_register_plan(tmp_path)
     monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: project_id)
     monkeypatch.setattr(plans_module, "_open_db", lambda: _NonClosingDb(temp_db))
@@ -481,3 +489,34 @@ def test_validate_helper_rejects_explicit_project_context_mismatch(
 
     assert result["valid"] is False
     assert result["symbol_validation"]["issues"][0]["code"] == "symbol_index_unavailable"
+
+
+def test_normalized_evidence_plan_path_uses_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    plan = tmp_path / "repo" / "plan.md"
+    plan.write_text("# Plan\n", encoding="utf-8")
+
+    result = _normalized_evidence_plan_path(temp_db, isolated.project.id, plan)
+
+    assert result == "plan.md"
+
+
+def test_normalized_evidence_plan_path_fails_closed_without_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="plans-no-checkout")
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n", encoding="utf-8")
+
+    with pytest.raises((click.ClickException, CheckoutNotFoundError)):
+        _normalized_evidence_plan_path(temp_db, project.id, plan)

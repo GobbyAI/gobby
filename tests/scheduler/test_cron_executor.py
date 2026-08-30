@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -1046,3 +1047,43 @@ async def test_agent_spawn_supplies_owning_completion_registry(
 
     assert result.status == "dispatched"
     assert mock_spawn.call_args.kwargs["completion_registry"] is registry
+
+
+def test_pipeline_project_context_uses_machine_checkout(  # tdd-red window
+    cron_storage: CronJobStorage,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pathlib import Path as PathType
+
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    executor = CronExecutor(storage=cron_storage)
+
+    ctx = executor._pipeline_project_context(isolated.project.id)
+
+    assert ctx["id"] == isolated.project.id
+    assert ctx["project_path"] == isolated.root_path
+    assert PathType(ctx["project_path"]).exists()
+
+
+def test_pipeline_project_context_fails_closed_without_checkout(  # tdd-red window
+    cron_storage: CronJobStorage,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.project_checkouts import CheckoutNotFoundError
+    from gobby.storage.projects import LocalProjectManager
+    from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="cron-no-checkout")
+    executor = CronExecutor(storage=cron_storage)
+
+    with pytest.raises(CheckoutNotFoundError):
+        executor._pipeline_project_context(project.id)

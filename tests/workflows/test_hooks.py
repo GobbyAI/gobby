@@ -16,6 +16,7 @@ import logging
 import threading
 from collections.abc import Coroutine
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, NoReturn
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -1846,14 +1847,18 @@ class TestProjectPathResolution:
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
     async def test_codex_after_tool_uses_project_repo_path_when_cwd_missing(
-        self, mock_get_dirty: Any, db: HubDatabase, caplog: pytest.LogCaptureFixture
+        self,
+        mock_get_dirty: Any,
+        db: HubDatabase,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Codex synthesized AFTER_TOOL events should derive project_path from project_id."""
-        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
-        project = LocalProjectManager(db).create(
-            name="repo-path-resolution",
-            repo_path="/tmp/codex-project",
+        isolated = install_isolated_checkout_project(
+            db, tmp_path / "codex-project", name="repo-path-resolution", monkeypatch=monkeypatch
         )
 
         rule_engine = MagicMock()
@@ -1872,7 +1877,7 @@ class TestProjectPathResolution:
             source=SessionSource.CODEX,
             timestamp=datetime.now(UTC),
             data={"tool_name": "mcp__gobby__call_tool"},
-            project_id=project.id,
+            project_id=isolated.project.id,
             metadata={"_platform_session_id": "platform-codex-session"},
         )
 
@@ -1881,11 +1886,173 @@ class TestProjectPathResolution:
 
         assert response.decision == "allow"
         mock_get_dirty.assert_called_once_with(
-            "/tmp/codex-project",
+            isolated.root_path,
             timeout=DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
         )
-        assert event.metadata["project_path"] == "/tmp/codex-project"
+        assert event.metadata["project_path"] == isolated.root_path
         assert "no project_path resolved" not in caplog.text
+
+    def test_resolve_project_path_uses_machine_checkout(  # tdd-red window
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+        isolated = install_isolated_checkout_project(db, tmp_path / "repo", monkeypatch=monkeypatch)
+        rule_engine = MagicMock()
+        rule_engine.db = db
+        handler = WorkflowHookHandler()
+        handler.rule_engine = rule_engine
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={},
+            project_id=isolated.project.id,
+            metadata={},
+        )
+
+        result = handler._resolve_project_path(event)
+
+        assert result == isolated.root_path
+        assert event.metadata["project_path"] == isolated.root_path
+
+    def test_resolve_project_path_inspects_registered_overlay_without_primary(
+        # tdd-red window
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import subprocess
+
+        from gobby.storage.project_checkouts import resolve_operation_root
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import (
+            insert_isolated_machine,
+            insert_overlay,
+            patch_local_machine_id,
+        )
+
+        overlay = tmp_path / "wt"
+        overlay.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=overlay, check=True)
+        machine_id = insert_isolated_machine(db)
+        patch_local_machine_id(monkeypatch, machine_id)
+        project = LocalProjectManager(db).create(name="hooks-overlay-only")
+        insert_overlay(
+            db,
+            project_id=project.id,
+            machine_id=machine_id,
+            path=str(overlay),
+            kind="worktree",
+        )
+        overlay_calls: list[str | None] = []
+        real = resolve_operation_root
+
+        def spy(
+            db_arg: HubDatabase,
+            project_id: str,
+            machine_id_arg: str | None,
+            *,
+            overlay_path: str | None = None,
+        ) -> str:
+            overlay_calls.append(overlay_path)
+            return real(db_arg, project_id, machine_id_arg, overlay_path=overlay_path)
+
+        monkeypatch.setattr("gobby.storage.project_checkouts.resolve_operation_root", spy)
+        rule_engine = MagicMock()
+        rule_engine.db = db
+        handler = WorkflowHookHandler()
+        handler.rule_engine = rule_engine
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={},
+            cwd=str(overlay),
+            project_id=project.id,
+            metadata={},
+        )
+
+        result = handler._resolve_project_path(event)
+
+        assert result == str(overlay)
+        assert overlay_calls == [str(overlay)]
+
+    def test_resolve_project_path_refuses_unregistered_overlay(  # tdd-red window
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import subprocess
+
+        from gobby.storage.project_checkouts import OverlayRegistrationRejectedError
+        from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+        isolated = install_isolated_checkout_project(db, tmp_path / "repo", monkeypatch=monkeypatch)
+        foreign = tmp_path / "foreign"
+        foreign.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=foreign, check=True)
+        rule_engine = MagicMock()
+        rule_engine.db = db
+        handler = WorkflowHookHandler()
+        handler.rule_engine = rule_engine
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={},
+            cwd=str(foreign),
+            project_id=isolated.project.id,
+            metadata={},
+        )
+
+        with pytest.raises(OverlayRegistrationRejectedError):
+            handler._resolve_project_path(event)
+
+    def test_resolve_project_path_uses_primary_when_candidate_absent(  # tdd-red window
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.storage.project_checkouts import require_root
+        from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+        isolated = install_isolated_checkout_project(db, tmp_path / "repo", monkeypatch=monkeypatch)
+        require_calls: list[str] = []
+        real = require_root
+
+        def spy(db_arg: HubDatabase, project_id: str, machine_id: str | None) -> str:
+            require_calls.append(project_id)
+            return real(db_arg, project_id, machine_id)
+
+        monkeypatch.setattr("gobby.storage.project_checkouts.require_root", spy)
+        rule_engine = MagicMock()
+        rule_engine.db = db
+        handler = WorkflowHookHandler()
+        handler.rule_engine = rule_engine
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={},
+            project_id=isolated.project.id,
+            metadata={},
+        )
+
+        result = handler._resolve_project_path(event)
+
+        assert result == isolated.root_path
+        assert require_calls == [isolated.project.id]
 
 
 class TestHookBlockingWorkOffload:

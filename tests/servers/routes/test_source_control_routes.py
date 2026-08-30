@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -25,8 +26,15 @@ from gobby.servers.routes.source_control import (
     _validate_git_ref,
     create_source_control_router,
 )
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.worktrees.executor import WorktreeDeleteExecutor
+from tests.fixtures.isolated_checkout import (
+    insert_isolated_machine,
+    install_isolated_checkout_project,
+    patch_local_machine_id,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -235,13 +243,24 @@ class TestParseGithubRepo:
 
 
 class TestResolveProject:
-    def test_resolve_with_project_id(self, mock_server) -> None:
+    def test_resolve_with_project_id(
+        self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         mock_project = MagicMock()
-        mock_project.repo_path = "/tmp/repo"
+        mock_project.id = "proj-123"
         mock_project.github_repo = "owner/repo"
 
         mock_pm = MagicMock()
         mock_pm.get.return_value = mock_project
+        mock_pm.db = MagicMock()
+        monkeypatch.setattr(
+            "gobby.servers.routes.source_control.require_local_machine_id",
+            lambda _provided, **_kwargs: "machine-1",
+        )
+        monkeypatch.setattr(
+            "gobby.servers.routes.source_control.require_root",
+            lambda _db, _project_id, _machine_id: "/tmp/repo",
+        )
 
         with patch("gobby.servers.routes.source_control.LocalProjectManager", return_value=mock_pm):
             from gobby.servers.routes.source_control import _resolve_project
@@ -251,14 +270,25 @@ class TestResolveProject:
         assert repo_path == "/tmp/repo"
         assert github_repo == "owner/repo"
 
-    def test_resolve_without_project_id_falls_back(self, mock_server) -> None:
+    def test_resolve_without_project_id_falls_back(
+        self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         mock_proj = MagicMock()
+        mock_proj.id = "proj-fallback"
         mock_proj.name = "my-project"
-        mock_proj.repo_path = "/tmp/fallback"
         mock_proj.github_repo = "org/fallback"
 
         mock_pm = MagicMock()
         mock_pm.list.return_value = [mock_proj]
+        mock_pm.db = MagicMock()
+        monkeypatch.setattr(
+            "gobby.servers.routes.source_control.require_local_machine_id",
+            lambda _provided, **_kwargs: "machine-1",
+        )
+        monkeypatch.setattr(
+            "gobby.servers.routes.source_control.require_root",
+            lambda _db, _project_id, _machine_id: "/tmp/fallback",
+        )
 
         with patch("gobby.servers.routes.source_control.LocalProjectManager", return_value=mock_pm):
             from gobby.servers.routes.source_control import _resolve_project
@@ -268,18 +298,31 @@ class TestResolveProject:
         assert repo_path == "/tmp/fallback"
         assert github_repo == "org/fallback"
 
-    def test_resolve_skips_hidden_projects(self, mock_server) -> None:
+    def test_resolve_skips_hidden_projects(
+        self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         orphaned = MagicMock()
+        orphaned.id = "orphaned"
         orphaned.name = "_orphaned"
-        orphaned.repo_path = "/tmp/orphaned"
 
         real = MagicMock()
+        real.id = "real"
         real.name = "real-project"
-        real.repo_path = "/tmp/real"
         real.github_repo = None
 
         mock_pm = MagicMock()
         mock_pm.list.return_value = [orphaned, real]
+        mock_pm.db = MagicMock()
+        monkeypatch.setattr(
+            "gobby.servers.routes.source_control.require_local_machine_id",
+            lambda _provided, **_kwargs: "machine-1",
+        )
+        monkeypatch.setattr(
+            "gobby.servers.routes.source_control.require_root",
+            lambda _db, project_id, _machine_id: "/tmp/real"
+            if project_id == "real"
+            else "/tmp/orphaned",
+        )
 
         with patch("gobby.servers.routes.source_control.LocalProjectManager", return_value=mock_pm):
             from gobby.servers.routes.source_control import _resolve_project
@@ -2114,3 +2157,38 @@ async def test_github_routes_resolve_project_instance(mock_server: MagicMock) ->
     session.call_tool.assert_awaited_once_with("list_issues", {"owner": "o", "repo": "r"})
     dispatched = [call.args[0] for call in manager.get_client_session.await_args_list]
     assert global_server_id not in dispatched
+
+
+def test_resolve_project_uses_machine_checkout(  # tdd-red window
+    mock_server: MagicMock,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    mock_server.session_manager.db = temp_db
+    from gobby.servers.routes.source_control import _resolve_project
+
+    repo_path, github_repo = _resolve_project(mock_server, isolated.project.id)
+
+    assert repo_path == isolated.root_path
+    assert github_repo == isolated.project.github_repo
+
+
+def test_source_control_missing_checkout_is_409(  # tdd-red window
+    client: TestClient,
+    mock_server: MagicMock,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="sc-no-checkout")
+    mock_server.session_manager.db = temp_db
+
+    response = client.get("/api/source-control/branches", params={"project_id": project.id})
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "CheckoutNotFoundError"

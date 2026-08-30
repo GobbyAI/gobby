@@ -15,8 +15,10 @@ from gobby.plans.coverage import evaluate
 from gobby.plans.coverage_manifest import coverage_manifest_path, write_manifest
 from gobby.plans.parser import PlanKind, parse_plan
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import require_root
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks._id import resolve_task_reference
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.utils.datetime import normalize_datetime_model
 
 PlanState = Literal["active", "archived"]
@@ -366,9 +368,12 @@ class LocalPlanManager:
 
     def _project_root(self, project_id: str) -> Path:
         project = LocalProjectManager(self.db).get(project_id)
-        if project is None or not project.repo_path:
+        if project is None:
             raise ValueError(f"project {project_id!r} has no repo_path")
-        return Path(project.repo_path)
+        machine_id = require_local_machine_id(
+            None, resource_kind="project_checkout", resource_id=project_id
+        )
+        return Path(require_root(self.db, project_id, machine_id))
 
     def _relative_plan_path(self, project_root: Path, plan_path: str | Path) -> Path:
         path = Path(plan_path)

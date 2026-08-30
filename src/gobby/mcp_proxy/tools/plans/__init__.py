@@ -285,13 +285,22 @@ def create_plan_registry(
         if isinstance(context_project_id, str) and (
             project_context is None or not project_context.get("project_path")
         ):
-            project = LocalProjectManager(db).get(context_project_id)
-            if project is not None and project.repo_path:
+            from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
+            from gobby.storage.workspace_machine_scope import require_local_machine_id
+
+            try:
+                machine_id = require_local_machine_id(
+                    None,
+                    resource_kind="project_checkout",
+                    resource_id=context_project_id,
+                )
                 project_context = {
                     "id": context_project_id,
-                    "project_path": project.repo_path,
+                    "project_path": require_root(db, context_project_id, machine_id),
                     **(project_context or {}),
                 }
+            except CheckoutNotFoundError:
+                pass
 
         plan_path = Path(plan_file)
         context_path = project_context.get("project_path") if project_context is not None else None

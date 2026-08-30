@@ -6,6 +6,7 @@ import threading
 from _thread import LockType
 from collections.abc import Callable
 from copy import deepcopy
+from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
@@ -254,6 +255,12 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
     def _resolve_project_path(self, event: HookEvent) -> str | None:
         """Resolve the best available filesystem path for workflow git checks."""
+        from gobby.storage.project_checkouts import (
+            CheckoutNotFoundError,
+            require_root,
+            resolve_operation_root,
+        )
+        from gobby.storage.workspace_machine_scope import require_local_machine_id
         from gobby.workflows.git_utils import resolve_git_worktree_root
 
         metadata = event.metadata if isinstance(event.metadata, dict) else {}
@@ -261,40 +268,45 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
             event.metadata = metadata
 
         candidates: list[str] = []
-        project_repo_path: str | None = None
         if event.cwd and event.cwd.strip():
             candidates.append(event.cwd)
         metadata_path = metadata.get("project_path")
         if isinstance(metadata_path, str) and metadata_path.strip():
             candidates.append(metadata_path)
 
-        if event.project_id and self.rule_engine is not None:
-            try:
-                from gobby.storage.projects import LocalProjectManager
-
-                project = LocalProjectManager(self.rule_engine.db).get(event.project_id)
-            except Exception as exc:
-                logger.debug(
-                    "Failed to resolve project_path from project_id=%s: %s",
-                    event.project_id,
-                    exc,
-                )
-                project = None
-
-            repo_path = project.repo_path if project is not None else None
-            if isinstance(repo_path, str) and repo_path.strip():
-                project_repo_path = repo_path
-                metadata.setdefault("project_path", project_repo_path)
-                candidates.append(project_repo_path)
-
         worktree_root = resolve_git_worktree_root(*candidates)
+        if not event.project_id or self.rule_engine is None:
+            if worktree_root:
+                metadata["project_path"] = worktree_root
+                return worktree_root
+            return None
+
+        machine_id = require_local_machine_id(
+            None, resource_kind="project_checkout", resource_id=event.project_id
+        )
+        db = self.rule_engine.db
+        primary: str | None = None
+        try:
+            primary = require_root(db, event.project_id, machine_id)
+        except CheckoutNotFoundError:
+            primary = None
+
         if worktree_root:
-            metadata["project_path"] = worktree_root
-            return worktree_root
-        if project_repo_path:
-            metadata["project_path"] = project_repo_path
-            return project_repo_path
-        return None
+            if primary is not None and Path(worktree_root).resolve() == Path(primary).resolve():
+                metadata["project_path"] = primary
+                return primary
+            resolved = resolve_operation_root(
+                db, event.project_id, machine_id, overlay_path=worktree_root
+            )
+            metadata["project_path"] = resolved
+            return resolved
+
+        if primary is None:
+            raise CheckoutNotFoundError(
+                f"no checkout for machine {machine_id} project {event.project_id}"
+            )
+        metadata["project_path"] = primary
+        return primary
 
     def _handle_cancelled(self, event: HookEvent) -> HookResponse:
         """Handle CancelledError by logging and returning appropriate response."""
