@@ -8,6 +8,8 @@ from typing import Any
 import pytest
 import yaml
 
+from tests.agents._yaml_helpers import flat
+
 pytestmark = pytest.mark.unit
 
 AGENT_PATH = (
@@ -48,7 +50,7 @@ def test_taskless_adversary_loads_plan_review_and_reports_structured_result() ->
         "gobby-skills:get_skill_file",
         "gobby-plans:get_plan_review_snapshot",
     ]
-    status = steps["load_skill"]["status_message"]
+    status = flat(steps["load_skill"]["status_message"])
     assert "plan-review" in status
     assert any(
         tool_name in status

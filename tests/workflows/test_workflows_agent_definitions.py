@@ -119,7 +119,7 @@ def test_restricted_skill_load_steps_use_gobby_proxy_guidance() -> None:
                 continue
 
             inspected += 1
-            status = step.get("status_message") or ""
+            status = " ".join((step.get("status_message") or "").split())
             label = f"{path.name}:{step.get('name')}"
             assert "mcp__gobby__call_tool" in status, label
             assert "list_tools" not in status, label

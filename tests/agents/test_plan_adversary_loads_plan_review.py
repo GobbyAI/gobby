@@ -25,7 +25,7 @@ import pytest
 import yaml
 
 from gobby.workflows.definitions import AgentDefinitionBody
-from tests.agents._yaml_helpers import _field, find_step
+from tests.agents._yaml_helpers import _field, find_step, flat
 
 pytestmark = pytest.mark.unit
 
@@ -60,9 +60,10 @@ class TestAdversarySkillLoading:
             in load_step.status_message
         )
         assert "mcp__gobby__call_tool" in load_step.status_message
-        assert "native Skill" in load_step.status_message
-        assert "GitHub/app connector" in load_step.status_message
-        assert "Computer Use tools" in load_step.status_message
+        status = flat(load_step.status_message)
+        assert "native Skill" in status
+        assert "GitHub/app connector" in status
+        assert "Computer Use tools" in status
 
     def test_load_skill_only_permits_get_skill_and_snapshot_read(
         self, agent: AgentDefinitionBody
@@ -181,7 +182,7 @@ class TestAdversarySkillLoading:
 
 class TestAdversaryInstructionsPreserveContracts:
     def test_instructions_reference_plan_review(self, agent: AgentDefinitionBody) -> None:
-        instructions = agent.prompts.agent or ""
+        instructions = flat(agent.prompts.agent)
         assert "plan-review" in instructions
         assert "get_skill" in instructions
         assert "native Skill" in instructions
