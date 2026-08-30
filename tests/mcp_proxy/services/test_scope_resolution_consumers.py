@@ -210,3 +210,14 @@ def test_delivery_github_server_id_requires_project_scope() -> None:
         _github_server_id(manager, "")
 
     assert _github_server_id(manager, PROJECT_ID) == PROJECT_SERVER_ID
+
+
+@pytest.mark.asyncio
+async def test_github_import_rejects_missing_project_scope() -> None:
+    importer = GitHubIssueImporter(db=MagicMock())
+    manager = RecordingManager(scoped_github_configs(), project_id=PROJECT_ID)
+    app_ctx = SimpleNamespace(mcp_manager=manager)
+    with patch("gobby.app_context.get_app_context", return_value=app_ctx):
+        with pytest.raises(ValueError, match="explicit project_id"):
+            await importer._fetch_github_issues_mcp("owner", "repo", 10, project_id="")
+    assert manager.method_ids("call_tool") == []

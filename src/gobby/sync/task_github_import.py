@@ -284,6 +284,10 @@ class GitHubIssueImporter:
         self, owner: str, repo: str, limit: int, *, project_id: str
     ) -> list[dict[str, Any]] | None:
         """Fetch issues using GitHub MCP server. Returns None if unavailable."""
+        # Guard before the availability try-block: a missing scope is a caller
+        # bug and must not degrade into the unavailable/CLI-fallback path.
+        if not (isinstance(project_id, str) and project_id.strip()):
+            raise ValueError("GitHub issue import requires an explicit project_id")
         try:
             from gobby.app_context import get_app_context
             from gobby.integrations.github import GitHubIntegration
