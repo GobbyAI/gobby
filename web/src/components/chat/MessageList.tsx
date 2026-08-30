@@ -38,6 +38,11 @@ export interface MessageListHandle {
   scrollToBottom: () => void;
 }
 
+// Virtuoso can keep reporting off-bottom / height growth while pinned. Chase
+// that for a bounded number of frames, then release so rest-idle cannot rAF
+// forever when at-bottom never settles.
+export const MESSAGE_LIST_PIN_CHASE_MAX_FRAMES = 40;
+
 // Memoized so a WebSocket-driven re-render of an ancestor (usage/activity
 // bursts) doesn't re-render the whole transcript when its own props are
 // unchanged.
@@ -64,6 +69,12 @@ export const MessageList = memo(
     // estimated-height region above, and the layout shift latches
     // userScrolledUpRef and suppresses every later auto-scroll.
     const pinToBottomRef = useRef(false);
+    const pinChaseFramesRef = useRef(0);
+
+    const beginPinnedBottom = useCallback(() => {
+      pinToBottomRef.current = true;
+      pinChaseFramesRef.current = 0;
+    }, []);
 
     const setScrollerRef = useCallback(
       (
@@ -108,6 +119,16 @@ export const MessageList = memo(
       });
     }, [scrollScrollerToBottom]);
 
+    const chasePinnedBottom = useCallback(() => {
+      if (!pinToBottomRef.current) return;
+      if (pinChaseFramesRef.current >= MESSAGE_LIST_PIN_CHASE_MAX_FRAMES) {
+        pinToBottomRef.current = false;
+        return;
+      }
+      pinChaseFramesRef.current += 1;
+      scheduleScrollScrollerToBottom();
+    }, [scheduleScrollScrollerToBottom]);
+
     useLayoutEffect(
       () => () => {
         if (pendingScrollFrameRef.current !== null) {
@@ -122,7 +143,7 @@ export const MessageList = memo(
       () => ({
         scrollToBottom() {
           userScrolledUpRef.current = false;
-          pinToBottomRef.current = true;
+          beginPinnedBottom();
           scrollScrollerToBottom();
           virtuosoRef.current?.scrollToIndex({
             index: "LAST",
@@ -132,20 +153,21 @@ export const MessageList = memo(
           scheduleScrollScrollerToBottom();
         },
       }),
-      [scrollScrollerToBottom, scheduleScrollScrollerToBottom],
+      [beginPinnedBottom, scrollScrollerToBottom, scheduleScrollScrollerToBottom],
     );
 
     const handleAtBottomStateChange = useCallback(
       (atBottom: boolean) => {
         if (atBottom) {
           pinToBottomRef.current = false;
+          pinChaseFramesRef.current = 0;
           userScrolledUpRef.current = false;
           return;
         }
         // While pinned, off-bottom reports are programmatic layout shifts
         // from progressive measurement, never user intent — re-bottom.
         if (pinToBottomRef.current) {
-          scheduleScrollScrollerToBottom();
+          chasePinnedBottom();
           return;
         }
         // Don't flip the flag during streaming — content growth can briefly
@@ -155,16 +177,16 @@ export const MessageList = memo(
           userScrolledUpRef.current = true;
         }
       },
-      [isStreaming, scheduleScrollScrollerToBottom],
+      [chasePinnedBottom, isStreaming],
     );
 
     // Progressive item measurement grows the list height after the initial
     // scroll; while pinned, chase the growth so the transcript stays bottomed.
     const handleTotalListHeightChanged = useCallback(() => {
       if (pinToBottomRef.current) {
-        scheduleScrollScrollerToBottom();
+        chasePinnedBottom();
       }
-    }, [scheduleScrollScrollerToBottom]);
+    }, [chasePinnedBottom]);
 
     // Reset scroll flag when streaming starts so stale scroll-up state
     // from before the agent began doesn't prevent auto-scroll.
@@ -180,7 +202,7 @@ export const MessageList = memo(
     // is appended in rapid chunks.
     useLayoutEffect(() => {
       if (!isStreaming && !userScrolledUpRef.current && messages.length > 0) {
-        pinToBottomRef.current = true;
+        beginPinnedBottom();
         scrollScrollerToBottom();
         virtuosoRef.current?.scrollToIndex({
           index: "LAST",
@@ -190,6 +212,7 @@ export const MessageList = memo(
         scheduleScrollScrollerToBottom();
       }
     }, [
+      beginPinnedBottom,
       messages.length,
       isStreaming,
       scheduleScrollScrollerToBottom,

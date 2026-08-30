@@ -8,11 +8,13 @@ type Handler = (data: Record<string, unknown>) => void;
 
 let ws: WebSocket | null = null;
 let reconnectTimer: number | null = null;
+let stableOpenTimer: number | null = null;
 let closed = false;
 let reconnectAttempts = 0;
 let connectionGeneration = 0;
 const BASE_DELAY = 1000;
 const MAX_DELAY = 30000;
+const STABLE_OPEN_MS = 1000;
 
 /** event-type → Set of handler callbacks */
 const handlers = new Map<string, Set<Handler>>();
@@ -81,9 +83,18 @@ function connect() {
 
   socket.onopen = () => {
     if (closed || generation !== connectionGeneration) return;
-    reconnectAttempts = 0;
     setConnected(true);
     sendSubscriptions();
+    // Accept-then-close (e.g. 4401 after accept) must not reset backoff;
+    // only a socket that stays open counts as a recovered connection.
+    if (stableOpenTimer !== null) {
+      window.clearTimeout(stableOpenTimer);
+    }
+    stableOpenTimer = window.setTimeout(() => {
+      stableOpenTimer = null;
+      if (closed || generation !== connectionGeneration) return;
+      reconnectAttempts = 0;
+    }, STABLE_OPEN_MS);
   };
 
   socket.onmessage = (event) => {
@@ -95,10 +106,17 @@ function connect() {
     if (closed || generation !== connectionGeneration) return;
     ws = null;
     setConnected(false);
+    if (stableOpenTimer !== null) {
+      window.clearTimeout(stableOpenTimer);
+      stableOpenTimer = null;
+    }
     const baseDelay = Math.min(BASE_DELAY * 2 ** reconnectAttempts, MAX_DELAY);
     const jitter = baseDelay * 0.2 * (Math.random() * 2 - 1);
     const delay = Math.max(0, baseDelay + jitter);
     reconnectAttempts++;
+    if (reconnectTimer !== null) {
+      window.clearTimeout(reconnectTimer);
+    }
     reconnectTimer = window.setTimeout(() => {
       reconnectTimer = null;
       ensureConnection();
@@ -176,6 +194,10 @@ export function useWebSocketEvent(eventType: string, handler: Handler): void {
         if (reconnectTimer) {
           window.clearTimeout(reconnectTimer);
           reconnectTimer = null;
+        }
+        if (stableOpenTimer !== null) {
+          window.clearTimeout(stableOpenTimer);
+          stableOpenTimer = null;
         }
         if (ws) {
           ws.close();

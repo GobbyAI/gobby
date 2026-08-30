@@ -209,6 +209,83 @@ describe("useTmuxSessions", () => {
     expect(mockWs.instances).toHaveLength(3);
   });
 
+  it("does not reconnect when the hook rerenders at rest", () => {
+    const { rerender } = renderHook(() => useTmuxSessions());
+    expect(mockWs.instances).toHaveLength(1);
+    rerender();
+    rerender();
+    expect(mockWs.instances).toHaveLength(1);
+  });
+
+  it("backs off reconnects when the socket never stays open", () => {
+    renderHook(() => useTmuxSessions());
+    act(() => mockWs.instances[0].simulateClose());
+    act(() => vi.advanceTimersByTime(1_999));
+    expect(mockWs.instances).toHaveLength(1);
+    act(() => vi.advanceTimersByTime(1));
+    expect(mockWs.instances).toHaveLength(2);
+
+    act(() => mockWs.instances[1].simulateClose());
+    act(() => vi.advanceTimersByTime(3_999));
+    expect(mockWs.instances).toHaveLength(2);
+    act(() => vi.advanceTimersByTime(1));
+    expect(mockWs.instances).toHaveLength(3);
+  });
+
+  it("does not tight-loop reconnects while the socket stays down", () => {
+    renderHook(() => useTmuxSessions());
+    const closeLatest = () => {
+      const socket = mockWs.instances[mockWs.instances.length - 1];
+      if (socket && socket.readyState !== WebSocket.CLOSED) {
+        socket.simulateClose();
+      }
+    };
+    act(() => closeLatest());
+    for (let second = 0; second < 60; second += 1) {
+      act(() => {
+        vi.advanceTimersByTime(1_000);
+        closeLatest();
+      });
+    }
+    expect(mockWs.instances.length).toBeLessThan(12);
+  });
+
+  it("does not re-request the same list cursor", () => {
+    const mount = renderHook(() => useTmuxSessions());
+    const ws = mockWs.instances[0];
+    open(ws);
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_list",
+        request_id: "init",
+        items: [{ terminal_id: "t-1" }],
+        next_cursor: "cursor-a",
+      });
+    });
+    const firstPage = sentMessages(ws, "terminal_list").filter(
+      (message) => message.cursor === "cursor-a",
+    );
+    expect(firstPage).toHaveLength(1);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_list",
+        request_id: firstPage[0]?.request_id,
+        items: [{ terminal_id: "t-2" }],
+        next_cursor: "cursor-a",
+      });
+    });
+    expect(
+      sentMessages(ws, "terminal_list").filter(
+        (message) => message.cursor === "cursor-a",
+      ),
+    ).toHaveLength(1);
+    expect(mount.result.current.sessions.map((s) => s.terminal_id)).toEqual([
+      "t-1",
+      "t-2",
+    ]);
+  });
+
   it("socket qualified identity", () => {
     const { result, unmount } = renderHook(() => useTmuxSessions());
     const ws = mockWs.instances[0];

@@ -3,7 +3,11 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatMessage } from "../../../types/chat";
-import { MessageList, type MessageListHandle } from "../MessageList";
+import {
+  MESSAGE_LIST_PIN_CHASE_MAX_FRAMES,
+  MessageList,
+  type MessageListHandle,
+} from "../MessageList";
 
 const { scrollToIndexMock, virtuosoProps } = vi.hoisted(() => ({
   scrollToIndexMock: vi.fn(),
@@ -253,6 +257,71 @@ describe("MessageList", () => {
       overflowAnchor: "none",
       overscrollBehavior: "contain",
     });
+  });
+
+  it("stops pin-chasing after a bounded number of frames when at-bottom never settles", () => {
+    const pending = new Map<number, FrameRequestCallback>();
+    let nextId = 1;
+    const originalRaf = window.requestAnimationFrame;
+    const originalCancel = window.cancelAnimationFrame;
+    window.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      const id = nextId++;
+      pending.set(id, cb);
+      return id;
+    }) as typeof window.requestAnimationFrame;
+    window.cancelAnimationFrame = ((id: number) => {
+      pending.delete(id);
+    }) as typeof window.cancelAnimationFrame;
+
+    try {
+      const ref = React.createRef<MessageListHandle>();
+      render(
+        <MessageList
+          ref={ref}
+          messages={[message("m1")]}
+          isStreaming={false}
+          isThinking={false}
+        />,
+      );
+
+      act(() => {
+        ref.current?.scrollToBottom();
+      });
+
+      const latestProps = () => virtuosoProps[virtuosoProps.length - 1];
+      const flushPending = () => {
+        const batch = [...pending.values()];
+        pending.clear();
+        for (const cb of batch) cb(0);
+      };
+
+      let pumps = 0;
+      act(() => {
+        flushPending();
+      });
+      for (let i = 0; i < MESSAGE_LIST_PIN_CHASE_MAX_FRAMES * 4; i += 1) {
+        const before = nextId;
+        act(() => {
+          latestProps()?.atBottomStateChange?.(false);
+          latestProps()?.totalListHeightChanged?.(2_000 + i);
+          flushPending();
+        });
+        pumps += 1;
+        if (nextId === before) break;
+      }
+
+      expect(pumps).toBeLessThanOrEqual(MESSAGE_LIST_PIN_CHASE_MAX_FRAMES + 2);
+      const rafAfterStop = nextId;
+      act(() => {
+        latestProps()?.atBottomStateChange?.(false);
+        latestProps()?.totalListHeightChanged?.(9_999);
+        flushPending();
+      });
+      expect(nextId).toBe(rafAfterStop);
+    } finally {
+      window.requestAnimationFrame = originalRaf;
+      window.cancelAnimationFrame = originalCancel;
+    }
   });
 
   it("keys virtualized messages by message id", () => {

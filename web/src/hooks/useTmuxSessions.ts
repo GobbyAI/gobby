@@ -9,6 +9,8 @@ export {
 import { createTerminalWsReducer } from "./terminalWsFragments";
 
 export const TMUX_REQUEST_TIMEOUT_MS = 10_000;
+export const TMUX_RECONNECT_BASE_MS = 2_000;
+export const TMUX_RECONNECT_MAX_MS = 30_000;
 
 function asSession(
   row: Partial<TmuxSession> & { terminal_id?: string },
@@ -143,6 +145,8 @@ export function useTmuxSessions(
     useState<CreatedTmuxSession | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const lastListCursorRef = useRef<string | null>(null);
   const outputCallbackRef = useRef<
     ((runId: string, data: string) => void) | null
   >(null);
@@ -340,6 +344,7 @@ export function useTmuxSessions(
           // A fresh listing replaces the table so terminals that vanished
           // drop out; only continuation pages merge.
           if (requestId === "init" || requestId.startsWith("refresh")) {
+            lastListCursorRef.current = null;
             setSessions(pageItems);
           } else {
             setSessions((current) => {
@@ -364,6 +369,8 @@ export function useTmuxSessions(
             setSessionEnded(true);
           }
           if (typeof data.next_cursor === "string" && data.next_cursor) {
+            if (data.next_cursor === lastListCursorRef.current) break;
+            lastListCursorRef.current = data.next_cursor;
             wsRef.current?.send(
               listRequest(`page-${generation}`, data.next_cursor),
             );
@@ -522,6 +529,15 @@ export function useTmuxSessions(
     ],
   );
 
+  const handleMessageRef = useRef(handleMessage);
+  const listRequestRef = useRef(listRequest);
+  const updateAttachmentRef = useRef(updateAttachment);
+  useEffect(() => {
+    handleMessageRef.current = handleMessage;
+    listRequestRef.current = listRequest;
+    updateAttachmentRef.current = updateAttachment;
+  }, [handleMessage, listRequest, updateAttachment]);
+
   const connect = useCallback(() => {
     if (
       wsRef.current?.readyState === WebSocket.OPEN ||
@@ -543,6 +559,7 @@ export function useTmuxSessions(
 
     ws.onopen = () => {
       if (!isCurrentConnection()) return;
+      reconnectAttemptsRef.current = 0;
       setConnected(true);
       ws.send(
         JSON.stringify({
@@ -551,7 +568,7 @@ export function useTmuxSessions(
         }),
       );
       // Fetch session list on connect
-      ws.send(listRequest("init"));
+      ws.send(listRequestRef.current("init"));
     };
 
     ws.onclose = () => {
@@ -560,7 +577,7 @@ export function useTmuxSessions(
       setSessionsLoaded(false);
       fragmentReducerRef.current.disconnect();
       fragmentReducerRef.current = createTerminalWsReducer();
-      updateAttachment(null, null);
+      updateAttachmentRef.current(null, null);
       if (pendingRequestTimeoutRef.current !== null) {
         clearTimeout(pendingRequestTimeoutRef.current);
         pendingRequestTimeoutRef.current = null;
@@ -570,11 +587,20 @@ export function useTmuxSessions(
       setIsLoading(false);
       setAttachError(null);
       setCreatedSession(null);
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      const attempt = reconnectAttemptsRef.current;
+      reconnectAttemptsRef.current = attempt + 1;
+      const delay = Math.min(
+        TMUX_RECONNECT_BASE_MS * 2 ** attempt,
+        TMUX_RECONNECT_MAX_MS,
+      );
       reconnectTimeoutRef.current = window.setTimeout(() => {
         if (!isCurrentConnection()) return;
         reconnectTimeoutRef.current = null;
         connectRef.current();
-      }, 2000);
+      }, delay);
     };
 
     ws.onerror = (error) => {
@@ -592,16 +618,16 @@ export function useTmuxSessions(
           const reducer = fragmentReducerRef.current;
           reducer.push(data);
           for (const applied of reducer.applied.splice(0)) {
-            handleMessage(applied);
+            handleMessageRef.current(applied);
           }
           return;
         }
-        handleMessage(data);
+        handleMessageRef.current(data);
       } catch (e) {
         console.error("Failed to parse tmux message:", e);
       }
     };
-  }, [handleMessage, listRequest, updateAttachment]);
+  }, []);
 
   useEffect(() => {
     connectRef.current = connect;
@@ -744,9 +770,10 @@ export function useTmuxSessions(
   );
 
   useEffect(() => {
-    connect();
+    connectRef.current();
     return () => {
       connectionGenerationRef.current += 1;
+      reconnectAttemptsRef.current = 0;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
@@ -760,7 +787,7 @@ export function useTmuxSessions(
       wsRef.current = null;
       ws?.close();
     };
-  }, [connect]);
+  }, []);
 
   // The project picker changed: list again under the new scope.
   useEffect(() => {
