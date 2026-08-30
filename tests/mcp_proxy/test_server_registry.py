@@ -171,6 +171,16 @@ async def test_update_server_finalizes_runtime_state_when_disconnect_fails() -> 
     manager._tool_schema_cache[server_id] = [{"name": "old-tool"}]
     manager._lazy_connector.register_server(server_id)
     db_manager = MagicMock()
+    persisted_row = MagicMock()
+    persisted_row.to_config.return_value = {
+        "name": "custom",
+        "project_id": "existing-project",
+        "transport": "stdio",
+        "command": "uvx",
+        "enabled": True,
+        "id": server_id,
+    }
+    db_manager.update_server.return_value = persisted_row
     manager.mcp_db_manager = db_manager
     replacement = MCPServerConfig(
         name="custom",
