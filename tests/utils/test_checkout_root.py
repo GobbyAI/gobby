@@ -63,6 +63,29 @@ def test_validate_checkout_root_rejects_unexpanded_tilde(
         )
 
 
+def test_validate_checkout_root_does_not_expand_existing_home_path(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    home = tmp_path / "home"
+    expanded = home / "Projects" / "gobby"
+    expanded.mkdir(parents=True)
+    write_project_marker(expanded, project_id=isolated.project.id, name="test-project")
+    monkeypatch.setenv("HOME", str(home))
+    tilde_path = "~/Projects/gobby"
+    assert os.path.expanduser(tilde_path) == str(expanded)
+    with pytest.raises(InvalidCheckoutRootError):
+        validate_checkout_root(
+            temp_db,
+            project_id=isolated.project.id,
+            machine_id=isolated.machine_id,
+            candidate_path=tilde_path,
+            expected_marker_id=isolated.project.id,
+        )
+
+
 def test_validate_checkout_root_rejects_nonexistent_path(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

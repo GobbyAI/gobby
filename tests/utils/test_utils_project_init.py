@@ -3,17 +3,29 @@
 import json
 import os
 import stat
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
-from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import patch
 
 import pytest
-from psycopg.errors import UniqueViolation
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.project_checkouts import (
+    CheckoutRootTakenError,
+    CheckoutSentinelRejectedError,
+    LocalProjectCheckoutManager,
+    OverlayRegistrationRejectedError,
+)
+from gobby.storage.projects import (
+    CHECKOUT_FREE_PROJECT_IDS,
+    PERSONAL_PROJECT_ID,
+    LocalProjectManager,
+)
+from gobby.utils.checkout_root import InvalidCheckoutRootError, MarkerMismatchError
 from gobby.utils.project_context import ensure_project_json_for_isolation, get_project_context
 from gobby.utils.project_init import (
     InitResult,
@@ -24,6 +36,12 @@ from gobby.utils.project_init import (
     detect_verification_commands,
     initialize_project,
     update_project_json_fields,
+)
+from tests.fixtures.isolated_checkout import (
+    insert_isolated_machine,
+    insert_overlay,
+    patch_local_machine_id,
+    write_project_marker,
 )
 
 pytestmark = pytest.mark.unit
@@ -805,34 +823,15 @@ class TestWriteProjectJson:
 
 
 class TestInitializeProject:
-    """Tests for initialize_project function."""
-
-    def test_already_initialized_returns_existing(self, tmp_path: Path) -> None:
-        """Test that already initialized project returns existing info."""
-        # Patch at the source modules where they are imported from
-        with (
-            patch("gobby.utils.project_context.get_project_context") as mock_ctx,
-            patch("gobby.storage.projects.LocalProjectManager") as manager_cls,
-        ):
-            mock_ctx.return_value = {
-                "id": "existing-id",
-                "name": "existing-name",
-                "project_path": str(tmp_path),
-                "created_at": "2024-01-01",
-            }
-
-            result = initialize_project(tmp_path, db=MagicMock())
-
-            assert result.project_id == "existing-id"
-            assert result.project_name == "existing-name"
-            assert result.already_existed is True
-            manager_cls.return_value.ensure_exists.assert_called_once_with(
-                "existing-id", "existing-name", str(tmp_path.resolve())
-            )
+    """Real initialize_project coverage complementary to the marker matrix."""
 
     def test_existing_project_file_registers_and_sanitizes_clone(
-        self, tmp_path: Path, hub_db: HubDatabase
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
         project_id = str(uuid.uuid4())
         project_file = tmp_path / ".gobby" / "project.json"
         project_file.parent.mkdir()
@@ -851,12 +850,13 @@ class TestInitializeProject:
             encoding="utf-8",
         )
 
-        result = initialize_project(tmp_path, db=hub_db)
+        result = initialize_project(tmp_path, db=temp_db)
 
-        project = LocalProjectManager(hub_db).get(project_id)
+        project = LocalProjectManager(temp_db).get(project_id)
         assert result.already_existed is True
         assert project is not None
-        assert project.repo_path == str(tmp_path.resolve())
+        assert project.repo_path in (None, "")
+        assert _checkout_root(temp_db, machine_id, project_id) == str(tmp_path)
         content = json.loads(project_file.read_text(encoding="utf-8"))
         assert set(content).isdisjoint(
             {
@@ -868,8 +868,12 @@ class TestInitializeProject:
         )
 
     def test_reinit_preserves_generated_isolation_parent_metadata(
-        self, tmp_path: Path, hub_db: HubDatabase
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        _pin_machine(temp_db, monkeypatch)
         parent_root = tmp_path / "parent"
         worktree_root = tmp_path / "worktree"
         parent_root.mkdir()
@@ -883,7 +887,7 @@ class TestInitializeProject:
         )
         ensure_project_json_for_isolation(parent_root, worktree_root)
 
-        result = initialize_project(worktree_root, db=hub_db)
+        result = initialize_project(worktree_root, db=temp_db)
 
         project_file = worktree_root / ".gobby" / "project.json"
         content = json.loads(project_file.read_text(encoding="utf-8"))
@@ -896,9 +900,12 @@ class TestInitializeProject:
         assert marker["parent_project_id"] == project_id
 
     def test_reinit_from_subdirectory_refreshes_project_root(
-        self, tmp_path: Path, hub_db: HubDatabase
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Re-init refreshes the discovered project root instead of the requested cwd."""
+        machine_id = _pin_machine(temp_db, monkeypatch)
         project_id = str(uuid.uuid4())
         project_file = tmp_path / ".gobby" / "project.json"
         project_file.parent.mkdir()
@@ -921,7 +928,7 @@ class TestInitializeProject:
         (subdir / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
         (subdir / "tests").mkdir()
 
-        result = initialize_project(subdir, db=hub_db)
+        result = initialize_project(subdir, db=temp_db)
 
         root_data = json.loads(project_file.read_text(encoding="utf-8"))
         assert result.project_id == project_id
@@ -934,34 +941,7 @@ class TestInitializeProject:
             **root_data,
             "project_path": str(tmp_path),
         }
-
-    def test_already_initialized_with_empty_id(self, tmp_path: Path) -> None:
-        """Test that project with empty id is treated as uninitialized."""
-        with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {
-                "id": "",  # Empty id
-                "name": "test",
-            }
-
-            with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                        mock_pm_instance = MagicMock()
-                        mock_pm_instance.get_by_name.return_value = None
-
-                        mock_project = MagicMock()
-                        mock_project.id = "new-proj-id"
-                        mock_project.name = tmp_path.name
-                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                        mock_pm_instance.create.return_value = mock_project
-
-                        mock_pm_cls.return_value = mock_pm_instance
-
-                        result = initialize_project(tmp_path)
-
-                        # Should create new project since id was empty
-                        assert result.already_existed is False
-                        assert result.project_id == "new-proj-id"
+        assert _checkout_root(temp_db, machine_id, project_id) == str(tmp_path)
 
     def test_new_project_creation(
         self,
@@ -969,445 +949,733 @@ class TestInitializeProject:
         temp_db: HubDatabase,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Fresh initialization creates the project in the isolated database."""
-        monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+        machine_id = _pin_machine(temp_db, monkeypatch)
         with patch(
-            "gobby.storage.hub.runtime.runtime_hub_database", return_value=nullcontext(temp_db)
+            "gobby.storage.hub.runtime.runtime_hub_database",
+            return_value=nullcontext(temp_db),
         ) as open_db:
             result = initialize_project(tmp_path)
 
         open_db.assert_called_once_with(apply_migrations=False)
-
         project = LocalProjectManager(temp_db).get(result.project_id)
         assert project is not None
         assert project.name == tmp_path.name
-        assert project.repo_path == str(tmp_path)
+        assert project.repo_path in (None, "")
         assert result.project_name == tmp_path.name
         assert result.already_existed is False
+        assert _checkout_root(temp_db, machine_id, result.project_id) == str(tmp_path)
 
-    def test_uses_provided_name(self, tmp_path: Path) -> None:
-        """Test that provided name overrides directory name."""
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                        mock_pm_instance = MagicMock()
-                        mock_pm_instance.get_by_name.return_value = None
-
-                        mock_project = MagicMock()
-                        mock_project.id = "id"
-                        mock_project.name = "custom-name"
-                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                        mock_pm_instance.create.return_value = mock_project
-
-                        mock_pm_cls.return_value = mock_pm_instance
-
-                        result = initialize_project(tmp_path, name="custom-name")
-
-                        call_kwargs = mock_pm_instance.create.call_args
-                        assert call_kwargs.kwargs["name"] == "custom-name"
-                        assert result.project_name == "custom-name"
-
-    def test_uses_provided_github_url(self, tmp_path: Path) -> None:
-        """Test that provided github_url is used."""
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            with patch("gobby.utils.git.get_github_url", return_value="https://auto-detected.com"):
-                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                        mock_pm_instance = MagicMock()
-                        mock_pm_instance.get_by_name.return_value = None
-
-                        mock_project = MagicMock()
-                        mock_project.id = "id"
-                        mock_project.name = "name"
-                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                        mock_pm_instance.create.return_value = mock_project
-
-                        mock_pm_cls.return_value = mock_pm_instance
-
-                        result = initialize_project(
-                            tmp_path, github_url="https://github.com/custom/repo"
-                        )
-
-                        call_kwargs = mock_pm_instance.create.call_args
-                        assert call_kwargs.kwargs["github_url"] == "https://github.com/custom/repo"
-                        assert result.project_id == "id"
-
-    def test_auto_detects_github_url(self, tmp_path: Path) -> None:
-        """Test that github URL is auto-detected from git remote."""
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            with patch(
-                "gobby.utils.git.get_github_url", return_value="https://github.com/detected/repo"
-            ):
-                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                        mock_pm_instance = MagicMock()
-                        mock_pm_instance.get_by_name.return_value = None
-
-                        mock_project = MagicMock()
-                        mock_project.id = "id"
-                        mock_project.name = "name"
-                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                        mock_pm_instance.create.return_value = mock_project
-
-                        mock_pm_cls.return_value = mock_pm_instance
-
-                        result = initialize_project(tmp_path)
-
-                        call_kwargs = mock_pm_instance.create.call_args
-                        assert (
-                            call_kwargs.kwargs["github_url"] == "https://github.com/detected/repo"
-                        )
-                        assert result.project_id == "id"
-
-    def test_existing_db_project_no_local_json(
+    def test_verification_commands_on_new_project(
         self,
         tmp_path: Path,
         temp_db: HubDatabase,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Initialization adopts a same-name database project and writes local state."""
-        manager = LocalProjectManager(temp_db)
-        existing = manager.create(name=tmp_path.name)
-        monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
-        monkeypatch.setattr(
-            "gobby.storage.hub.runtime.runtime_hub_database",
-            lambda *, apply_migrations: nullcontext(temp_db),
-        )
+        _pin_machine(temp_db, monkeypatch)
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src").mkdir()
+        result = initialize_project(tmp_path, db=temp_db)
+        assert result.verification is not None
+        assert result.verification.unit_tests is not None
+        assert result.verification.type_check is not None
+        assert result.verification.lint is not None
 
-        result = initialize_project(tmp_path)
-
-        adopted = manager.get(existing.id)
-        assert adopted is not None
-        assert adopted.repo_path == str(tmp_path)
-        assert result.project_id == existing.id
-        assert result.already_existed is True
-        project_data = json.loads(
-            (tmp_path / ".gobby" / "project.json").read_text(encoding="utf-8")
-        )
-        assert project_data["id"] == existing.id
-
-    def test_rejects_same_name_project_from_different_repo(
+    def test_no_verification_without_project_files(
         self,
         tmp_path: Path,
         temp_db: HubDatabase,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        other_repo = tmp_path.parent / "other" / tmp_path.name
-        other_repo.mkdir(parents=True)
-        manager = LocalProjectManager(temp_db)
-        existing = manager.create(name=tmp_path.name, repo_path=str(other_repo))
-        monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
-        monkeypatch.setattr(
-            "gobby.storage.hub.runtime.runtime_hub_database",
-            lambda *, apply_migrations: nullcontext(temp_db),
+        _pin_machine(temp_db, monkeypatch)
+        result = initialize_project(tmp_path, db=temp_db)
+        assert result.verification is None
+        assert result.already_existed is False
+
+    def test_github_url_is_stored(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _pin_machine(temp_db, monkeypatch)
+        result = initialize_project(
+            tmp_path, github_url="https://github.com/custom/repo", db=temp_db
         )
+        project = LocalProjectManager(temp_db).get(result.project_id)
+        assert project is not None
+        assert project.github_url == "https://github.com/custom/repo"
 
-        with pytest.raises(ValueError, match=r"different repository.*--name"):
-            initialize_project(tmp_path)
+    def test_uses_cwd_when_none(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        monkeypatch.chdir(tmp_path)
+        result = initialize_project(cwd=None, db=temp_db)
+        assert result.project_id
+        assert _checkout_root(temp_db, machine_id, result.project_id) == str(Path.cwd())
 
+
+def _pin_machine(db: HubDatabase, monkeypatch: pytest.MonkeyPatch) -> str:
+    machine_id = insert_isolated_machine(db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+    return machine_id
+
+
+def _read_marker(root: Path) -> dict[str, Any]:
+    loaded: object = json.loads((root / ".gobby" / "project.json").read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    return loaded
+
+
+def _checkout_root(db: HubDatabase, machine_id: str, project_id: str) -> str | None:
+    row = LocalProjectCheckoutManager(db).get(machine_id, project_id)
+    return None if row is None else row.root_path
+
+
+def _set_failpoint(monkeypatch: pytest.MonkeyPatch, name: str, hook: Any) -> None:
+    import gobby.utils.project_init as project_init
+
+    failpoints = project_init._INIT_FAILPOINTS
+    monkeypatch.setitem(failpoints, name, hook)
+
+
+def _clear_failpoints() -> None:
+    import gobby.utils.project_init as project_init
+
+    project_init._INIT_FAILPOINTS.clear()
+
+
+def _name_attach_error() -> type[Exception]:
+    from gobby.storage.projects import NameAttachRejectedError
+
+    return NameAttachRejectedError
+
+
+class TestMarkerAuthoritativeInit:
+    """§ 2.1 marker-authoritative initialize_project / get_or_create matrix."""
+
+    def test_no_marker_unused_name_registers_checkout(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        result = initialize_project(tmp_path, name="fresh-init", db=temp_db)
+        marker = _read_marker(tmp_path)
+        project = LocalProjectManager(temp_db).get(result.project_id)
+        assert project is not None
+        assert project.deleted_at is None
+        assert project.name == "fresh-init"
+        assert project.repo_path in (None, "")
+        assert marker["id"] == result.project_id
+        assert marker["name"] == "fresh-init"
+        assert _checkout_root(temp_db, machine_id, result.project_id) == str(tmp_path)
+        assert result.already_existed is False
+
+    def test_valid_marker_registers_existing_project(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        project = LocalProjectManager(temp_db).create(name="marked-existing")
+        write_project_marker(tmp_path, project_id=project.id, name="marked-existing")
+        result = initialize_project(tmp_path, db=temp_db)
+        assert result.project_id == project.id
+        assert _checkout_root(temp_db, machine_id, project.id) == str(tmp_path)
+        stored = LocalProjectManager(temp_db).get(project.id)
+        assert stored is not None
+        assert stored.repo_path in (None, "")
+
+    def test_reject_existing_name_without_marker(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _pin_machine(temp_db, monkeypatch)
+        LocalProjectManager(temp_db).create(name="taken-name")
+        with pytest.raises(_name_attach_error()):
+            initialize_project(tmp_path, name="taken-name", db=temp_db)
         assert not (tmp_path / ".gobby" / "project.json").exists()
-        unchanged = manager.get(existing.id)
-        assert unchanged is not None
-        assert unchanged.repo_path == str(other_repo)
 
-    def test_restores_soft_deleted_project(
+    def test_reject_soft_deleted_name_without_marker(
         self,
         tmp_path: Path,
         temp_db: HubDatabase,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        _pin_machine(temp_db, monkeypatch)
         manager = LocalProjectManager(temp_db)
-        deleted = manager.create(name=tmp_path.name, repo_path=str(tmp_path))
+        deleted = manager.create(name="deleted-name")
         assert manager.soft_delete(deleted.id)
-        monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
-        monkeypatch.setattr(
-            "gobby.storage.hub.runtime.runtime_hub_database",
-            lambda *, apply_migrations: nullcontext(temp_db),
+        with pytest.raises(_name_attach_error()):
+            initialize_project(tmp_path, name="deleted-name", db=temp_db)
+        leftover = manager.get(deleted.id)
+        assert leftover is not None
+        assert leftover.deleted_at is not None
+        assert not (tmp_path / ".gobby" / "project.json").exists()
+
+    def test_overlay_marker_refuses_registration(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        project = LocalProjectManager(temp_db).create(name="overlay-init")
+        overlay = tmp_path / "wt"
+        overlay.mkdir()
+        write_project_marker(overlay, project_id=project.id, name="overlay-init")
+        insert_overlay(
+            temp_db,
+            project_id=project.id,
+            machine_id=machine_id,
+            path=str(overlay),
+            kind="worktree",
         )
+        with pytest.raises(OverlayRegistrationRejectedError):
+            initialize_project(overlay, db=temp_db)
+        assert _checkout_root(temp_db, machine_id, project.id) is None
 
-        result = initialize_project(tmp_path)
+    def test_sentinel_marker_is_rejected(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        assert PERSONAL_PROJECT_ID in CHECKOUT_FREE_PROJECT_IDS
+        write_project_marker(tmp_path, project_id=PERSONAL_PROJECT_ID, name="_personal")
+        with pytest.raises(CheckoutSentinelRejectedError):
+            initialize_project(tmp_path, db=temp_db)
+        assert _checkout_root(temp_db, machine_id, PERSONAL_PROJECT_ID) is None
 
-        restored = manager.get(deleted.id)
+    def test_copied_marker_second_root_conflicts(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.storage.project_checkouts import CheckoutConflictError
+
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        first = tmp_path / "first"
+        second = tmp_path / "second"
+        first.mkdir()
+        second.mkdir()
+        result = initialize_project(first, name="copied-marker", db=temp_db)
+        write_project_marker(second, project_id=result.project_id, name="copied-marker")
+        with pytest.raises(CheckoutConflictError):
+            initialize_project(second, db=temp_db)
+        assert _checkout_root(temp_db, machine_id, result.project_id) == str(first)
+
+    def test_relative_path_does_not_persist(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _pin_machine(temp_db, monkeypatch)
+        rel = Path("relative-init-root")
+        monkeypatch.chdir(tmp_path)
+        rel.mkdir()
+        with pytest.raises(InvalidCheckoutRootError):
+            initialize_project(rel, name="relative-init", db=temp_db)
+        assert not (rel / ".gobby" / "project.json").exists()
+
+    def test_get_or_create_does_not_name_attach_repo_path(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        manager = LocalProjectManager(temp_db)
+        existing = manager.create(name="attach-me")
+        with pytest.raises(_name_attach_error()):
+            manager.get_or_create(name="attach-me", repo_path=str(tmp_path))
+        stored = manager.get(existing.id)
+        assert stored is not None
+        assert stored.repo_path in (None, "")
+        assert LocalProjectCheckoutManager(temp_db).get(machine_id, existing.id) is None
+        assert not (tmp_path / ".gobby" / "project.json").exists()
+
+    def test_marker_only_failpoint_retries_on_marker_id(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        hits = {"n": 0}
+
+        def boom() -> None:
+            hits["n"] += 1
+            if hits["n"] == 1:
+                raise RuntimeError("marker-only")
+
+        _set_failpoint(monkeypatch, "after_marker_only", boom)
+        with pytest.raises(RuntimeError, match="marker-only"):
+            initialize_project(tmp_path, name="crash-resume", db=temp_db)
+        marker = _read_marker(tmp_path)
+        result = initialize_project(tmp_path, name="crash-resume", db=temp_db)
+        assert result.project_id == marker["id"]
+        assert _checkout_root(temp_db, machine_id, result.project_id) == str(tmp_path)
+        rows = temp_db.fetchall(
+            "SELECT id FROM projects WHERE name = %s AND deleted_at IS NULL",
+            ("crash-resume",),
+        )
+        assert len(list(rows)) == 1
+
+    def test_concurrent_same_root_one_winner(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        barrier = threading.Barrier(2)
+
+        def worker() -> Any:
+            barrier.wait(timeout=10)
+            return initialize_project(tmp_path, name="same-root", db=temp_db)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first, second = list(pool.map(lambda _: worker(), range(2)))
+        assert first.project_id == second.project_id
+        marker = _read_marker(tmp_path)
+        assert marker["id"] == first.project_id
+        assert _checkout_root(temp_db, machine_id, first.project_id) == str(tmp_path)
+        missing = temp_db.fetchone(
+            "SELECT id FROM projects WHERE id = %s",
+            (marker["id"],),
+        )
+        assert missing is not None
+
+    def test_publication_failpoints_never_expose_partial_marker(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        names = (
+            "publish_before_temp_write",
+            "publish_after_file_fsync",
+            "publish_after_install",
+            "publish_after_directory_fsync",
+        )
+        for failpoint in names:
+            _clear_failpoints()
+            root = tmp_path / failpoint
+            root.mkdir()
+            hits = {"n": 0}
+
+            def boom(hits: dict[str, int] = hits, failpoint: str = failpoint) -> None:
+                hits["n"] += 1
+                if hits["n"] == 1:
+                    raise RuntimeError(failpoint)
+
+            _set_failpoint(monkeypatch, failpoint, boom)
+            with pytest.raises(RuntimeError, match=failpoint):
+                initialize_project(root, name=failpoint, db=temp_db)
+            marker_path = root / ".gobby" / "project.json"
+            if marker_path.exists():
+                payload = json.loads(marker_path.read_text(encoding="utf-8"))
+                assert payload.get("id")
+                assert payload.get("name") == failpoint
+            result = initialize_project(root, name=failpoint, db=temp_db)
+            assert _checkout_root(temp_db, machine_id, result.project_id) == str(root)
+            assert _read_marker(root)["id"] == result.project_id
+
+    def test_concurrent_distinct_roots_same_name_loser_unlinks(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        left = tmp_path / "left"
+        right = tmp_path / "right"
+        left.mkdir()
+        right.mkdir()
+        barrier = threading.Barrier(2)
+
+        def worker(root: Path) -> Any:
+            barrier.wait(timeout=10)
+            return initialize_project(root, name="shared-name", db=temp_db)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(worker, left), pool.submit(worker, right)]
+            outcomes: list[Any] = []
+            for future in futures:
+                try:
+                    outcomes.append(future.result())
+                except Exception as exc:
+                    outcomes.append(exc)
+        wins = [item for item in outcomes if not isinstance(item, Exception)]
+        losses = [item for item in outcomes if isinstance(item, Exception)]
+        assert len(wins) == 1
+        assert len(losses) == 1
+        assert isinstance(losses[0], _name_attach_error())
+        winner_root = left if (left / ".gobby" / "project.json").exists() else right
+        loser_root = right if winner_root is left else left
+        assert (winner_root / ".gobby" / "project.json").exists()
+        if (loser_root / ".gobby" / "project.json").exists():
+            assert _read_marker(loser_root)["id"] == wins[0].project_id
+        assert _checkout_root(temp_db, machine_id, wins[0].project_id) == str(winner_root)
+
+    def test_user_init_restores_soft_deleted_marker_rebind_preserves(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        manager = LocalProjectManager(temp_db)
+        project = manager.create(name="restore-me")
+        assert manager.soft_delete(project.id)
+        write_project_marker(tmp_path, project_id=project.id, name="restore-me")
+        result = initialize_project(tmp_path, db=temp_db)
+        restored = manager.get(project.id)
         assert restored is not None
         assert restored.deleted_at is None
-        assert result.project_id == deleted.id
-        assert result.already_existed is True
+        assert result.project_id == project.id
+        assert _checkout_root(temp_db, machine_id, project.id) == str(tmp_path)
 
-    def test_adopts_project_created_concurrently(self, tmp_path: Path) -> None:
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                        winner = MagicMock()
-                        winner.id = "winner-project-id"
-                        winner.name = tmp_path.name
-                        winner.repo_path = str(tmp_path)
-                        winner.created_at = datetime(2024, 6, 15, tzinfo=UTC)
+        other = tmp_path / "rebind-root"
+        other.mkdir()
+        write_project_marker(other, project_id=project.id, name="restore-me")
+        manager.soft_delete(project.id)
+        LocalProjectCheckoutManager(temp_db).rebind(machine_id, project.id, str(other))
+        still = manager.get(project.id)
+        assert still is not None
+        assert still.deleted_at is not None
 
-                        manager = mock_pm_cls.return_value
-                        manager.get_by_name.side_effect = [None, winner]
-                        manager.create.side_effect = UniqueViolation("duplicate project name")
-
-                        result = initialize_project(tmp_path)
-
-                        assert result.project_id == winner.id
-                        assert result.already_existed is True
-                        assert manager.get_by_name.call_count == 2
-
-    def test_uses_cwd_when_none(self, hub_db: HubDatabase) -> None:
-        """Test that current working directory is used when cwd is None."""
-        project_id = str(uuid.uuid4())
-        mock_project_context = {
-            "id": project_id,
-            "name": "name",
-            "project_path": "/test",
-            "created_at": "2024",
-        }
-
-        with patch(
-            "gobby.utils.project_context.get_project_context",
-            return_value=mock_project_context,
+    def test_name_uniqueness_failpoints_do_not_resurrect_orphan_marker(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        winner = tmp_path / "winner"
+        winner.mkdir()
+        initialize_project(winner, name="unique-fail", db=temp_db)
+        for failpoint in (
+            "name_reject_before_unlink",
+            "name_reject_after_unlink",
+            "name_reject_after_dir_fsync",
         ):
-            with patch("pathlib.Path.cwd") as mock_cwd:
-                mock_cwd.return_value = Path("/some/path")
+            _clear_failpoints()
+            loser = tmp_path / failpoint
+            loser.mkdir()
+            hits = {"n": 0}
 
-                result = initialize_project(cwd=None, db=hub_db)
+            def boom(hits: dict[str, int] = hits, failpoint: str = failpoint) -> None:
+                hits["n"] += 1
+                if hits["n"] == 1:
+                    raise RuntimeError(failpoint)
 
-                # Should use cwd
-                assert result.project_id == project_id
+            _set_failpoint(monkeypatch, failpoint, boom)
+            with pytest.raises(RuntimeError, match=failpoint):
+                initialize_project(loser, name="unique-fail", db=temp_db)
+            replacement_id = str(uuid.uuid4())
+            if failpoint == "name_reject_before_unlink":
+                write_project_marker(loser, project_id=replacement_id, name="replacement")
+                result = initialize_project(loser, db=temp_db)
+                assert _read_marker(loser)["id"] == replacement_id
+                assert result.project_id == replacement_id
+            else:
+                with pytest.raises(_name_attach_error()):
+                    initialize_project(loser, name="unique-fail", db=temp_db)
+                assert not (loser / ".gobby" / "project.json").exists()
+            winner_id = _read_marker(winner)["id"]
+            assert LocalProjectManager(temp_db).get(winner_id) is not None
+            assert _checkout_root(temp_db, machine_id, winner_id) == str(winner)
 
-    def test_project_context_none_id(self, tmp_path: Path) -> None:
-        """Test when project context exists but id is None."""
-        with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {
-                "id": None,  # None id
-                "name": "test",
-            }
+    def test_same_root_different_explicit_names_one_payload(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        barrier = threading.Barrier(2)
+        names = ["alpha-name", "beta-name"]
 
-            with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                        mock_pm_instance = MagicMock()
-                        mock_pm_instance.get_by_name.return_value = None
+        def worker(name: str) -> Any:
+            barrier.wait(timeout=10)
+            try:
+                return initialize_project(tmp_path, name=name, db=temp_db)
+            except Exception as exc:
+                return exc
 
-                        mock_project = MagicMock()
-                        mock_project.id = "new-proj-id"
-                        mock_project.name = tmp_path.name
-                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                        mock_pm_instance.create.return_value = mock_project
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(worker, names))
+        successes = [item for item in outcomes if not isinstance(item, Exception)]
+        assert successes
+        marker = _read_marker(tmp_path)
+        project = LocalProjectManager(temp_db).get(marker["id"])
+        assert project is not None
+        assert marker["name"] == project.name
+        assert marker["id"] == project.id
+        assert "created_at" in marker
+        for success in successes:
+            assert success.project_id == marker["id"]
+            assert success.project_name == marker["name"]
+        assert _checkout_root(temp_db, machine_id, marker["id"]) == str(tmp_path)
 
-                        mock_pm_cls.return_value = mock_pm_instance
+    def test_restore_blocked_when_name_active_on_other_uuid(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        manager = LocalProjectManager(temp_db)
+        original = manager.create(name="name-clash")
+        assert manager.soft_delete(original.id)
+        active = manager.create(name="name-clash")
+        write_project_marker(tmp_path, project_id=original.id, name="name-clash")
+        original_marker = _read_marker(tmp_path)
+        with pytest.raises(_name_attach_error()):
+            initialize_project(tmp_path, db=temp_db)
+        leftover = manager.get(original.id)
+        assert leftover is not None
+        assert leftover.deleted_at is not None
+        assert manager.get(active.id) is not None
+        assert _read_marker(tmp_path) == original_marker
+        assert _checkout_root(temp_db, machine_id, original.id) is None
 
-                        result = initialize_project(tmp_path)
+    def test_root_taken_unlinks_still_matching_marker(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        other = LocalProjectManager(temp_db).create(name="other-owner")
+        LocalProjectCheckoutManager(temp_db).register(machine_id, other.id, str(tmp_path))
+        with pytest.raises(CheckoutRootTakenError):
+            initialize_project(tmp_path, name="new-at-taken-root", db=temp_db)
+        assert not (tmp_path / ".gobby" / "project.json").exists() or (
+            _read_marker(tmp_path)["id"] == other.id
+        )
+        assert LocalProjectManager(temp_db).get_by_name("new-at-taken-root") is None
 
-                        # Should create new project since id was None
-                        assert result.already_existed is False
-                        assert result.project_id == "new-proj-id"
-
-    def test_new_project_with_verification_commands(self, tmp_path: Path) -> None:
-        """Test that new project creation includes verification commands."""
-        # Create pyproject.toml to trigger verification detection
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("[project]\nname = 'test'\n")
-
-        tests_dir = tmp_path / "tests"
-        tests_dir.mkdir()
-        src_dir = tmp_path / "src"
-        src_dir.mkdir()
-
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                        mock_pm_instance = MagicMock()
-                        mock_pm_instance.get_by_name.return_value = None
-
-                        mock_project = MagicMock()
-                        mock_project.id = "new-proj-id"
-                        mock_project.name = tmp_path.name
-                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                        mock_pm_instance.create.return_value = mock_project
-
-                        mock_pm_cls.return_value = mock_pm_instance
-
-                        result = initialize_project(tmp_path)
-
-                        assert result.verification is not None
-                        assert result.verification.unit_tests == "pytest tests/ -v"
-                        assert result.verification.type_check == "mypy src/"
-                        assert result.verification.lint == "ruff check src/"
-
-    def test_existing_db_project_includes_verification(self, tmp_path: Path) -> None:
-        """Test that existing DB project includes verification commands when synced."""
-        # Create pyproject.toml for verification detection
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("[project]\nname = 'test'\n")
-        src_dir = tmp_path / "src"
-        src_dir.mkdir()
-
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                        mock_existing = MagicMock()
-                        mock_existing.id = "db-proj-id"
-                        mock_existing.name = tmp_path.name
-                        mock_existing.repo_path = str(tmp_path)
-                        mock_existing.created_at = datetime(2023, 1, 1, tzinfo=UTC)
-                        mock_existing.deleted_at = None
-
-                        mock_pm_instance = MagicMock()
-                        mock_pm_instance.get_by_name.return_value = mock_existing
-
-                        mock_pm_cls.return_value = mock_pm_instance
-
-                        result = initialize_project(tmp_path)
-
-                        # Should include verification
-                        assert result.verification is not None
-                        assert result.verification.type_check == "mypy src/"
-
-    def test_new_project_without_verification_commands(self, tmp_path: Path) -> None:
-        """Test that new project without recognizable structure has no verification."""
-        # No pyproject.toml or package.json
-
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                        mock_pm_instance = MagicMock()
-                        mock_pm_instance.get_by_name.return_value = None
-
-                        mock_project = MagicMock()
-                        mock_project.id = "new-proj-id"
-                        mock_project.name = tmp_path.name
-                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                        mock_pm_instance.create.return_value = mock_project
-
-                        mock_pm_cls.return_value = mock_pm_instance
-
-                        result = initialize_project(tmp_path)
-
-                        # No verification since no recognizable project type
-                        assert result.verification is None
-                        assert result.project_id == "new-proj-id"
-
-    def test_path_resolution(self, tmp_path: Path) -> None:
-        """Test that path is properly resolved."""
-        # Create a subdirectory
-        subdir = tmp_path / "subdir" / "project"
-        subdir.mkdir(parents=True)
-
-        with (
-            patch("gobby.utils.project_context.get_project_context") as mock_ctx,
-            patch.object(LocalProjectManager, "ensure_exists"),
+    def test_root_taken_failpoints_and_retry(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        other = LocalProjectManager(temp_db).create(name="taken-owner")
+        for failpoint in (
+            "root_taken_before_unlink",
+            "root_taken_after_unlink",
+            "root_taken_after_dir_fsync",
         ):
-            mock_ctx.return_value = {
-                "id": "existing-id",
-                "name": "existing-name",
-                "project_path": str(subdir.resolve()),
-                "created_at": "2024-01-01",
-            }
+            _clear_failpoints()
+            root = tmp_path / failpoint
+            root.mkdir()
+            LocalProjectCheckoutManager(temp_db).rebind(machine_id, other.id, str(root))
+            hits = {"n": 0}
 
-            result = initialize_project(subdir, db=MagicMock())
+            def boom(hits: dict[str, int] = hits, failpoint: str = failpoint) -> None:
+                hits["n"] += 1
+                if hits["n"] == 1:
+                    raise RuntimeError(failpoint)
 
-            assert result.project_path == str(subdir.resolve())
+            _set_failpoint(monkeypatch, failpoint, boom)
+            with pytest.raises(RuntimeError, match=failpoint):
+                initialize_project(root, name=f"lost-{failpoint}", db=temp_db)
+            replacement_id = str(uuid.uuid4())
+            if failpoint == "root_taken_before_unlink":
+                write_project_marker(root, project_id=replacement_id, name="kept")
+            with pytest.raises(CheckoutRootTakenError):
+                initialize_project(root, name=f"lost-{failpoint}", db=temp_db)
+            if (root / ".gobby" / "project.json").exists():
+                assert _read_marker(root)["id"] in {replacement_id, other.id}
 
-    def test_directory_name_used_as_project_name(self, tmp_path: Path) -> None:
-        """Test that directory name is used when no name provided."""
-        project_dir = tmp_path / "my-awesome-project"
-        project_dir.mkdir()
+    def test_overlay_recheck_unlinks_published_marker(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        overlay_project = LocalProjectManager(temp_db).create(name="overlay-owner")
 
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                        mock_pm_instance = MagicMock()
-                        mock_pm_instance.get_by_name.return_value = None
+        def insert_after_validate() -> None:
+            insert_overlay(
+                temp_db,
+                project_id=overlay_project.id,
+                machine_id=machine_id,
+                path=str(tmp_path),
+                kind="clone",
+            )
 
-                        mock_project = MagicMock()
-                        mock_project.id = "id"
-                        mock_project.name = "my-awesome-project"
-                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                        mock_pm_instance.create.return_value = mock_project
+        _set_failpoint(monkeypatch, "after_validate_before_register", insert_after_validate)
+        with pytest.raises(OverlayRegistrationRejectedError):
+            initialize_project(tmp_path, name="overlay-race", db=temp_db)
+        assert not (tmp_path / ".gobby" / "project.json").exists()
+        assert LocalProjectManager(temp_db).get_by_name("overlay-race") is None
 
-                        mock_pm_cls.return_value = mock_pm_instance
-
-                        result = initialize_project(project_dir)
-
-                        call_kwargs = mock_pm_instance.create.call_args
-                        assert call_kwargs.kwargs["name"] == "my-awesome-project"
-                        assert result.project_name == "my-awesome-project"
-
-    def test_already_initialized_returns_correct_project_path(self, tmp_path: Path) -> None:
-        """Test that project_path from context is used when already initialized."""
-        with (
-            patch("gobby.utils.project_context.get_project_context") as mock_ctx,
-            patch.object(LocalProjectManager, "ensure_exists"),
+    def test_overlay_recheck_failpoints_do_not_leave_orphan_marker(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        overlay_project = LocalProjectManager(temp_db).create(name="overlay-fp-owner")
+        for failpoint in (
+            "overlay_recheck_before_unlink",
+            "overlay_recheck_after_unlink",
+            "overlay_recheck_after_dir_fsync",
         ):
-            mock_ctx.return_value = {
-                "id": "existing-id",
-                "name": "existing-name",
-                "project_path": "/original/path",
-                "created_at": "2024-01-01",
-            }
+            _clear_failpoints()
+            root = tmp_path / failpoint
+            root.mkdir()
 
-            result = initialize_project(tmp_path, db=MagicMock())
+            def insert_overlay_row(root: Path = root) -> None:
+                insert_overlay(
+                    temp_db,
+                    project_id=overlay_project.id,
+                    machine_id=machine_id,
+                    path=str(root),
+                    kind="clone",
+                )
 
-            # Should use project_path from context
-            assert result.project_path == "/original/path"
+            hits = {"n": 0}
 
-    def test_already_initialized_with_missing_project_path(self, tmp_path: Path) -> None:
-        """Test when project context exists but project_path is missing."""
-        with (
-            patch("gobby.utils.project_context.get_project_context") as mock_ctx,
-            patch.object(LocalProjectManager, "ensure_exists"),
-        ):
-            mock_ctx.return_value = {
-                "id": "existing-id",
-                "name": "existing-name",
-                # No project_path
-                "created_at": "2024-01-01",
-            }
+            def boom(hits: dict[str, int] = hits, failpoint: str = failpoint) -> None:
+                hits["n"] += 1
+                if hits["n"] == 1:
+                    raise RuntimeError(failpoint)
 
-            result = initialize_project(tmp_path, db=MagicMock())
+            _set_failpoint(monkeypatch, "after_validate_before_register", insert_overlay_row)
+            _set_failpoint(monkeypatch, failpoint, boom)
+            with pytest.raises(RuntimeError, match=failpoint):
+                initialize_project(root, name=f"ov-{failpoint}", db=temp_db)
+            with pytest.raises(OverlayRegistrationRejectedError):
+                initialize_project(root, name=f"ov-{failpoint}", db=temp_db)
+            assert not (root / ".gobby" / "project.json").exists() or (
+                _read_marker(root)["id"] != overlay_project.id
+            )
 
-            # Should fall back to cwd
-            assert result.project_path == str(tmp_path.resolve())
+    def test_overlay_validate_after_publish_unlinks(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        overlay_project = LocalProjectManager(temp_db).create(name="overlay-validate-owner")
 
-    def test_already_initialized_with_missing_created_at(self, tmp_path: Path) -> None:
-        """Test when project context exists but created_at is missing."""
-        with (
-            patch("gobby.utils.project_context.get_project_context") as mock_ctx,
-            patch.object(LocalProjectManager, "ensure_exists"),
-        ):
-            mock_ctx.return_value = {
-                "id": "existing-id",
-                "name": "existing-name",
-                "project_path": str(tmp_path),
-                # No created_at
-            }
+        def insert_after_publish() -> None:
+            insert_overlay(
+                temp_db,
+                project_id=overlay_project.id,
+                machine_id=machine_id,
+                path=str(tmp_path),
+                kind="worktree",
+            )
 
-            result = initialize_project(tmp_path, db=MagicMock())
+        _set_failpoint(monkeypatch, "after_marker_only", insert_after_publish)
+        with pytest.raises(OverlayRegistrationRejectedError):
+            initialize_project(tmp_path, name="overlay-validate-race", db=temp_db)
+        assert not (tmp_path / ".gobby" / "project.json").exists()
 
-            # Should use empty string as default
-            assert result.created_at == ""
+    def test_stale_marker_name_does_not_update_projects_name(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        manager = LocalProjectManager(temp_db)
+        project = manager.create(name="canonical-name")
+        write_project_marker(
+            tmp_path,
+            project_id=project.id,
+            name="stale-name",
+        )
+        marker_path = tmp_path / ".gobby" / "project.json"
+        payload = json.loads(marker_path.read_text(encoding="utf-8"))
+        payload["created_at"] = "2024-01-02T00:00:00Z"
+        payload["extra_field"] = "keep-me"
+        marker_path.write_text(json.dumps(payload), encoding="utf-8")
+        result = initialize_project(tmp_path, db=temp_db)
+        stored = manager.get(project.id)
+        assert stored is not None
+        assert stored.name == "canonical-name"
+        refreshed = _read_marker(tmp_path)
+        assert refreshed["name"] == "canonical-name"
+        assert refreshed["id"] == project.id
+        assert refreshed["created_at"] == "2024-01-02T00:00:00Z"
+        assert refreshed["extra_field"] == "keep-me"
+        assert result.project_name == "canonical-name"
+        assert _checkout_root(temp_db, machine_id, project.id) == str(tmp_path)
+        manager.ensure_exists(project.id, "stale-name", str(tmp_path))
+        after_ensure = manager.get(project.id)
+        assert after_ensure is not None
+        assert after_ensure.name == "canonical-name"
 
-    def test_already_initialized_with_missing_name(self, tmp_path: Path) -> None:
-        """Test when project context exists but name is missing."""
-        with (
-            patch("gobby.utils.project_context.get_project_context") as mock_ctx,
-            patch.object(LocalProjectManager, "ensure_exists"),
-        ):
-            mock_ctx.return_value = {
-                "id": "existing-id",
-                # No name
-                "project_path": str(tmp_path),
-                "created_at": "2024-01-01",
-            }
+    def test_expected_id_refresh_refuses_replacement(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.utils.project_init import refresh_marker_expected_id
 
-            result = initialize_project(tmp_path, db=MagicMock())
+        _pin_machine(temp_db, monkeypatch)
+        project = LocalProjectManager(temp_db).create(name="refresh-me")
+        write_project_marker(tmp_path, project_id=project.id, name="old")
+        marker_path = tmp_path / ".gobby" / "project.json"
+        payload = json.loads(marker_path.read_text(encoding="utf-8"))
+        payload["created_at"] = "2023-05-01T00:00:00Z"
+        payload["note"] = "payload"
+        marker_path.write_text(json.dumps(payload), encoding="utf-8")
+        replacement_id = str(uuid.uuid4())
 
-            # Should use empty string as default
-            assert result.project_name == ""
+        def replace_marker() -> None:
+            write_project_marker(tmp_path, project_id=replacement_id, name="replacement")
+
+        _set_failpoint(monkeypatch, "refresh_after_temp_fsync", replace_marker)
+        with pytest.raises(MarkerMismatchError):
+            refresh_marker_expected_id(tmp_path, project.id, "refresh-me")
+        assert _read_marker(tmp_path)["id"] == replacement_id
+        _set_failpoint(monkeypatch, "refresh_after_temp_fsync", lambda: None)
+        write_project_marker(tmp_path, project_id=project.id, name="old")
+        payload = _read_marker(tmp_path)
+        payload["created_at"] = "2023-05-01T00:00:00Z"
+        payload["note"] = "payload"
+        marker_path.write_text(json.dumps(payload), encoding="utf-8")
+        hits = {"n": 0}
+
+        def boom() -> None:
+            hits["n"] += 1
+            if hits["n"] == 1:
+                raise RuntimeError("refresh_after_install")
+
+        _set_failpoint(monkeypatch, "refresh_after_install", boom)
+        with pytest.raises(RuntimeError, match="refresh_after_install"):
+            refresh_marker_expected_id(tmp_path, project.id, "refresh-me")
+        refresh_marker_expected_id(tmp_path, project.id, "refresh-me")
+        refreshed = _read_marker(tmp_path)
+        assert refreshed["id"] == project.id
+        assert refreshed["name"] == "refresh-me"
+        assert refreshed["created_at"] == "2023-05-01T00:00:00Z"
+        assert refreshed["note"] == "payload"

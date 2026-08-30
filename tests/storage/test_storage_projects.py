@@ -141,13 +141,10 @@ class TestLocalProjectManager:
 
     def test_get_or_create_new(self, project_manager: LocalProjectManager) -> None:
         """Test get_or_create creates new project."""
-        result = project_manager.get_or_create(
-            name="new-project",
-            repo_path="/new/path",
-        )
+        result = project_manager.get_or_create(name="new-project")
 
         assert result.name == "new-project"
-        assert result.repo_path == "/new/path"
+        assert result.repo_path in (None, "")
 
     def test_get_or_create_is_atomic_for_concurrent_calls(
         self,
@@ -187,16 +184,14 @@ class TestLocalProjectManager:
         with pytest.raises(UniqueViolation):
             project_manager.ensure_exists(str(uuid.uuid4()), "synced-project")
 
-    def test_ensure_exists_updates_matching_project_id(
-        self, project_manager: LocalProjectManager
-    ) -> None:
+    def test_ensure_exists_keeps_database_name(self, project_manager: LocalProjectManager) -> None:
         project_id = str(uuid.uuid4())
         project_manager.ensure_exists(project_id, "old-name")
 
         ensured = project_manager.ensure_exists(project_id, "new-name")
 
         assert ensured.id == project_id
-        assert ensured.name == "new-name"
+        assert ensured.name == "old-name"
         assert ensured.repo_path is None
 
     def test_list_projects(self, project_manager: LocalProjectManager) -> None:
