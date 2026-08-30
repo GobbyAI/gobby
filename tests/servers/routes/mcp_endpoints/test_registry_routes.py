@@ -450,6 +450,8 @@ class TestMCPRegistryRoutes:
 
         ext_config = MagicMock()
         ext_config.name = "github-mcp"
+        ext_config.id = "ext-github-1"
+        ext_config.project_id = GLOBAL_PROJECT_ID
         ext_config.enabled = True
         ext_config.tools = []
         mock_server.mcp_manager = MagicMock()
@@ -493,7 +495,7 @@ class TestMCPRegistryRoutes:
         data = response.json()
         assert data["success"] is True
         assert data["stats"]["servers_processed"] == 1
-        assert "github-mcp" in data["stats"]["by_server"]
+        assert "ext-github-1" in data["stats"]["by_server"]
         mock_server.mcp_manager.refresh_server.assert_called()
         mock_server.mcp_manager.ensure_connected.assert_awaited()
 
@@ -503,7 +505,7 @@ class TestMCPRegistryRoutes:
         assert inventory_response.json()["tools"]["github-mcp"] == [
             {"name": "list_repos", "brief": "List GitHub repos"}
         ]
-        mock_server.mcp_manager.ensure_connected.assert_awaited_once_with("github-mcp")
+        mock_server.mcp_manager.ensure_connected.assert_awaited_once_with("ext-github-1")
 
     def test_refresh_server_id_filter_loads_row_absent_from_manager(
         self, client: TestClient, mock_server: MagicMock

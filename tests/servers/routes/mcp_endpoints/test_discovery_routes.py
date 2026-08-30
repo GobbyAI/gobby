@@ -8,15 +8,28 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from gobby.mcp_proxy.models import ConnectionState, HealthState, MCPConnectionHealth
 from gobby.servers.routes.dependencies import get_metrics_manager, get_server
 from gobby.servers.routes.mcp.endpoints import discovery
 from gobby.servers.routes.mcp.tools import create_mcp_router
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
+
+
+def _plain_request() -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/mcp/tools",
+            "query_string": b"",
+            "headers": [],
+        }
+    )
 
 
 class TestMCPDiscoveryRoutes:
@@ -96,8 +109,10 @@ class TestMCPDiscoveryRoutes:
         mock_server._internal_manager = MagicMock()
         mock_server._internal_manager.is_internal.return_value = False
         mock_server.mcp_manager = MagicMock()
-        mock_server.mcp_manager.has_server.return_value = True
         config = MagicMock()
+        config.name = "ext-server"
+        config.id = "ext-1"
+        config.project_id = GLOBAL_PROJECT_ID
         config.enabled = False
         mock_server.mcp_manager._configs = {"ext-server": config}
 
@@ -113,8 +128,10 @@ class TestMCPDiscoveryRoutes:
         mock_server._internal_manager = MagicMock()
         mock_server._internal_manager.is_internal.return_value = False
         mock_server.mcp_manager = MagicMock()
-        mock_server.mcp_manager.has_server.return_value = True
         config = MagicMock()
+        config.name = "ext-server"
+        config.id = "ext-1"
+        config.project_id = GLOBAL_PROJECT_ID
         config.enabled = True
         mock_server.mcp_manager._configs = {"ext-server": config}
 
@@ -135,6 +152,7 @@ class TestMCPDiscoveryRoutes:
         tools = data["tools"]["ext-server"]
         assert len(tools) == 1
         assert tools[0]["name"] == "ext_tool"
+        mock_server.mcp_manager.ensure_connected.assert_awaited_once_with("ext-1")
 
     def test_list_tools_with_server_filter_external_connection_error(
         self, client: TestClient, mock_server: MagicMock, caplog: pytest.LogCaptureFixture
@@ -143,8 +161,10 @@ class TestMCPDiscoveryRoutes:
         mock_server._internal_manager = MagicMock()
         mock_server._internal_manager.is_internal.return_value = False
         mock_server.mcp_manager = MagicMock()
-        mock_server.mcp_manager.has_server.return_value = True
         config = MagicMock()
+        config.name = "ext-server"
+        config.id = "ext-1"
+        config.project_id = GLOBAL_PROJECT_ID
         config.enabled = True
         mock_server.mcp_manager._configs = {"ext-server": config}
         mock_server.mcp_manager.ensure_connected = AsyncMock(
@@ -169,16 +189,18 @@ class TestMCPDiscoveryRoutes:
         mock_server._internal_manager = MagicMock()
         mock_server._internal_manager.is_internal.return_value = False
         mock_server.mcp_manager = MagicMock()
-        mock_server.mcp_manager.has_server.return_value = True
         config = MagicMock()
+        config.name = "slow-server"
+        config.id = "slow-1"
+        config.project_id = GLOBAL_PROJECT_ID
         config.enabled = True
         mock_server.mcp_manager._configs = {"slow-server": config}
         connection = MagicMock()
         connection.disconnect = AsyncMock()
-        mock_server.mcp_manager.connections = {"slow-server": connection}
+        mock_server.mcp_manager.connections = {"slow-1": connection}
 
-        async def slow_connect(server_name: str) -> MagicMock:
-            assert server_name == "slow-server"
+        async def slow_connect(server_id: str) -> MagicMock:
+            assert server_id == "slow-1"
             await asyncio.Event().wait()
             return MagicMock()
 
@@ -193,7 +215,7 @@ class TestMCPDiscoveryRoutes:
         assert data["tools"]["slow-server"] == []
         connection.disconnect.assert_awaited_once()
         assert mock_server.mcp_manager.connections == {}
-        assert "Timed out listing tools from MCP server slow-server" in caplog.text
+        assert "Timed out listing tools from MCP server slow-1" in caplog.text
 
     def test_list_tools_with_server_filter_external_unhealthy_discovers_live(
         self, client: TestClient, mock_server: MagicMock
@@ -202,8 +224,10 @@ class TestMCPDiscoveryRoutes:
         mock_server._internal_manager = MagicMock()
         mock_server._internal_manager.is_internal.return_value = False
         mock_server.mcp_manager = MagicMock()
-        mock_server.mcp_manager.has_server.return_value = True
         config = MagicMock()
+        config.name = "ext-server"
+        config.id = "ext-1"
+        config.project_id = GLOBAL_PROJECT_ID
         config.enabled = True
         config.tools = [{"name": "cached_tool", "description": "Cached tool description"}]
         mock_server.mcp_manager._configs = {"ext-server": config}
@@ -231,9 +255,9 @@ class TestMCPDiscoveryRoutes:
         assert data["tools"]["ext-server"] == [
             {"name": "live_tool", "brief": "Live tool description"},
         ]
-        mock_server.mcp_manager.ensure_connected.assert_awaited_once_with("ext-server")
+        mock_server.mcp_manager.ensure_connected.assert_awaited_once_with("ext-1")
         mock_server.mcp_manager.cache_discovered_tools.assert_called_once_with(
-            "ext-server",
+            "ext-1",
             [
                 {
                     "name": "live_tool",
@@ -252,8 +276,10 @@ class TestMCPDiscoveryRoutes:
         mock_server._internal_manager = MagicMock()
         mock_server._internal_manager.is_internal.return_value = False
         mock_server.mcp_manager = MagicMock()
-        mock_server.mcp_manager.has_server.return_value = True
         config = MagicMock()
+        config.name = "ext-server"
+        config.id = "ext-1"
+        config.project_id = GLOBAL_PROJECT_ID
         config.enabled = True
         config.tools = []
         mock_server.mcp_manager._configs = {"ext-server": config}
@@ -268,8 +294,8 @@ class TestMCPDiscoveryRoutes:
         data = response.json()
         assert data["success"] is True
         assert data["tools"]["ext-server"] == []
-        mock_server.mcp_manager.ensure_connected.assert_awaited_once_with("ext-server")
-        mock_server.mcp_manager.cache_discovered_tools.assert_called_once_with("ext-server", [])
+        mock_server.mcp_manager.ensure_connected.assert_awaited_once_with("ext-1")
+        mock_server.mcp_manager.cache_discovered_tools.assert_called_once_with("ext-1", [])
 
     def test_list_tools_with_server_filter_external_no_config(
         self, client: TestClient, mock_server: MagicMock
@@ -302,6 +328,7 @@ class TestMCPDiscoveryRoutes:
         # External
         ext_config = MagicMock()
         ext_config.name = "github-mcp"
+        ext_config.project_id = GLOBAL_PROJECT_ID
         ext_config.enabled = True
         ext_config.tools = [{"name": "list_repos", "brief": "List GitHub repos"}]
         mock_server.mcp_manager = MagicMock()
@@ -322,6 +349,7 @@ class TestMCPDiscoveryRoutes:
         """An empty cache returns no tools without launching the external server."""
         ext_config = MagicMock()
         ext_config.name = "broken-server"
+        ext_config.project_id = GLOBAL_PROJECT_ID
         ext_config.enabled = True
         ext_config.tools = []
         mock_server.mcp_manager = MagicMock()
@@ -346,14 +374,15 @@ class TestMCPDiscoveryRoutes:
         mock_server._internal_manager.is_internal.return_value = False
         ext_config = MagicMock()
         ext_config.name = "slow-server"
+        ext_config.id = "slow-1"
+        ext_config.project_id = GLOBAL_PROJECT_ID
         ext_config.enabled = True
         mock_server.mcp_manager = MagicMock()
-        mock_server.mcp_manager.has_server.return_value = True
         mock_server.mcp_manager._configs = {"slow-server": ext_config}
         mock_server.mcp_manager.server_configs = [ext_config]
         connection = MagicMock()
         connection.disconnect = AsyncMock()
-        mock_server.mcp_manager.connections = {"slow-server": connection}
+        mock_server.mcp_manager.connections = {"slow-1": connection}
 
         mock_session = AsyncMock()
 
@@ -373,7 +402,7 @@ class TestMCPDiscoveryRoutes:
         assert data["tools"]["slow-server"] == []
         connection.disconnect.assert_awaited_once()
         assert mock_server.mcp_manager.connections == {}
-        assert "Timed out listing tools from MCP server slow-server" in caplog.text
+        assert "Timed out listing tools from MCP server slow-1" in caplog.text
 
     def test_list_tools_external_timeout_budget_exhausted_before_list_tools(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -430,6 +459,7 @@ class TestMCPDiscoveryRoutes:
         """Passive inventory uses cached tools regardless of connection health."""
         ext_config = MagicMock()
         ext_config.name = "cached-server"
+        ext_config.project_id = GLOBAL_PROJECT_ID
         ext_config.enabled = True
         ext_config.tools = [
             {"name": "cached_tool", "brief": "Cached brief"},
@@ -457,6 +487,7 @@ class TestMCPDiscoveryRoutes:
         """Concurrent passive inventory requests only read the shared cache."""
         ext_config = MagicMock()
         ext_config.name = "cached-server"
+        ext_config.project_id = GLOBAL_PROJECT_ID
         ext_config.enabled = True
         ext_config.tools = [{"name": "cached_tool", "brief": "Cached brief"}]
         mock_server.mcp_manager = MagicMock()
@@ -466,7 +497,9 @@ class TestMCPDiscoveryRoutes:
         async def list_concurrently() -> list[dict[str, object]]:
             return await asyncio.gather(
                 *(
-                    discovery.list_all_mcp_tools(server=mock_server, metrics_manager=None)
+                    discovery.list_all_mcp_tools(
+                        _plain_request(), server=mock_server, metrics_manager=None
+                    )
                     for _ in range(5)
                 )
             )
@@ -494,12 +527,68 @@ class TestMCPDiscoveryRoutes:
         data = response.json()
         assert "disabled-server" not in data["tools"]
 
+    def test_list_tools_project_row_shadows_same_named_global(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        """A caller-project row wins the inventory key over a same-named global row."""
+        global_config = MagicMock()
+        global_config.name = "dup-server"
+        global_config.id = "global-1"
+        global_config.project_id = GLOBAL_PROJECT_ID
+        global_config.enabled = True
+        global_config.tools = [{"name": "global_tool", "brief": "Global brief"}]
+        project_config = MagicMock()
+        project_config.name = "dup-server"
+        project_config.id = "project-1"
+        project_config.project_id = "proj-x"
+        project_config.enabled = True
+        project_config.tools = [{"name": "project_tool", "brief": "Project brief"}]
+        mock_server.mcp_manager = MagicMock()
+        mock_server.mcp_manager.server_configs = [global_config, project_config]
+        mock_server.mcp_manager.ensure_connected = AsyncMock()
+
+        response = client.get("/api/mcp/tools", headers={"X-Gobby-Project-Id": "proj-x"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["tools"]["dup-server"] == [{"name": "project_tool", "brief": "Project brief"}]
+        mock_server.mcp_manager.ensure_connected.assert_not_awaited()
+
+    def test_list_tools_hides_foreign_project_rows(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        """Rows scoped to another project never appear in the caller's inventory."""
+        global_config = MagicMock()
+        global_config.name = "shared-server"
+        global_config.id = "global-1"
+        global_config.project_id = GLOBAL_PROJECT_ID
+        global_config.enabled = True
+        global_config.tools = [{"name": "shared_tool", "brief": "Shared brief"}]
+        foreign_config = MagicMock()
+        foreign_config.name = "foreign-server"
+        foreign_config.id = "foreign-1"
+        foreign_config.project_id = "proj-other"
+        foreign_config.enabled = True
+        foreign_config.tools = [{"name": "foreign_tool", "brief": "Foreign brief"}]
+        mock_server.mcp_manager = MagicMock()
+        mock_server.mcp_manager.server_configs = [global_config, foreign_config]
+        mock_server.mcp_manager.ensure_connected = AsyncMock()
+
+        response = client.get("/api/mcp/tools", headers={"X-Gobby-Project-Id": "proj-x"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["tools"]["shared-server"] == [{"name": "shared_tool", "brief": "Shared brief"}]
+        assert "foreign-server" not in data["tools"]
+        mock_server.mcp_manager.ensure_connected.assert_not_awaited()
+
     def test_list_tools_tool_without_description(
         self, client: TestClient, mock_server: MagicMock
     ) -> None:
         """External tool with no description uses empty string."""
         ext_config = MagicMock()
         ext_config.name = "server-a"
+        ext_config.project_id = GLOBAL_PROJECT_ID
         ext_config.enabled = True
         ext_config.tools = [{"name": "no_desc_tool", "description": None}]
         mock_server.mcp_manager = MagicMock()
@@ -526,6 +615,7 @@ class TestMCPDiscoveryRoutes:
         mock_server._internal_manager.get_all_registries.return_value = [registry]
         ext_config = MagicMock()
         ext_config.name = "cached-server"
+        ext_config.project_id = GLOBAL_PROJECT_ID
         ext_config.enabled = True
         ext_config.tools = [{"name": "cached_tool", "brief": "Cached tool"}]
         mock_server.mcp_manager = MagicMock()

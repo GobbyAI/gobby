@@ -211,6 +211,7 @@ async def _list_external_server_tools(
 
 
 async def list_all_mcp_tools(
+    request: Request,
     server_filter: str | None = None,
     include_metrics: bool = False,
     project_id: str | None = None,
@@ -233,6 +234,11 @@ async def list_all_mcp_tools(
     start_time = time.perf_counter()
 
     try:
+        from gobby.mcp_proxy.services.server_resolution import resolve_server
+        from gobby.servers.routes.mcp.endpoints.request_context import request_mcp_scope
+        from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+        scope = request_mcp_scope(request, server, {})
         tools_by_server: dict[str, list[dict[str, Any]]] = {}
 
         # Resolve project_id for metrics lookup
@@ -251,17 +257,17 @@ async def list_all_mcp_tools(
                 registry = server._internal_manager.get_registry(server_filter)
                 if registry:
                     tools_by_server[server_filter] = registry.list_tools()
-            elif server.mcp_manager and server.mcp_manager.has_server(server_filter):
-                # Check if server is enabled before attempting connection
-                server_config = _get_external_server_config(server.mcp_manager, server_filter)
-                if server_config and not server_config.enabled:
-                    tools_by_server[server_filter] = []
-                else:
-                    tools_by_server[server_filter] = await _list_external_server_tools(
-                        server.mcp_manager,
-                        server_filter,
-                        timeout=_mcp_call_timeout(server),
-                    )
+            elif server.mcp_manager:
+                resolved = resolve_server(server.mcp_manager, server_filter, project_id=scope)
+                if resolved is not None:
+                    if not resolved.enabled:
+                        tools_by_server[resolved.name] = []
+                    else:
+                        tools_by_server[resolved.name] = await _list_external_server_tools(
+                            server.mcp_manager,
+                            resolved.id,
+                            timeout=_mcp_call_timeout(server),
+                        )
         else:
             # Get tools from all servers
             # Internal servers
@@ -272,11 +278,15 @@ async def list_all_mcp_tools(
             # Passive external inventory is cache-only. Live discovery is reserved
             # for filtered requests and explicit refresh operations.
             if server.mcp_manager:
-                for config in server.mcp_manager.server_configs:
-                    if config.enabled:
-                        tools_by_server[config.name] = _response_tool_briefs(
-                            _cached_tool_briefs(config)
-                        )
+                enabled_configs = [c for c in server.mcp_manager.server_configs if c.enabled]
+                # Global rows first so a same-named project row shadows them.
+                for wanted_scope in (GLOBAL_PROJECT_ID, scope):
+                    for config in enabled_configs:
+                        config_scope = str(getattr(config, "project_id", None) or GLOBAL_PROJECT_ID)
+                        if config_scope == wanted_scope:
+                            tools_by_server[config.name] = _response_tool_briefs(
+                                _cached_tool_briefs(config)
+                            )
 
         # Enrich with metrics if requested
         if include_metrics and metrics_manager and resolved_project_id:
