@@ -41,6 +41,7 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
             self.auth_service = SimpleNamespace(
                 verify_ws_token=auth_callback,
                 bind_runtime=lambda **_kwargs: None,
+                local_token=lambda: "operator-token",
             )
             self._internal_manager = object()
             self.broadcaster = SimpleNamespace(websocket_server=None)
@@ -51,6 +52,9 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
     class FakeWebSocketServer:
         def __init__(self, **kwargs: object) -> None:
             websocket_init.update(kwargs)
+
+        def configure_terminals(self, *args: object, **kwargs: object) -> None:
+            pass
 
         async def broadcast_config_event(self, _event: object) -> None:
             pass
