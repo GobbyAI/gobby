@@ -4,6 +4,7 @@ Tests the start, stop, restart, and status commands with various
 argument combinations and error scenarios using Click's CliRunner.
 """
 
+import inspect
 import os
 import subprocess
 import sys
@@ -300,6 +301,21 @@ class TestStartupProgressPolling:
         mock_httpx_get.side_effect = side_effect
 
         assert _poll_startup_progress(60887, max_wait=5.0) is False
+
+
+def test_startup_readiness_budget_is_not_smaller_than_the_health_budget() -> None:
+    """Readiness waits for a superset of health, so it cannot have the smaller budget.
+
+    A 60s readiness budget sat under a 120s health budget, so a boot that was
+    starting normally exhausted it and `gobby start`/`restart` exited non-zero on a
+    daemon that was already serving. Measured time-to-ready reached 168s.
+    """
+    from gobby.cli.daemon import _poll_startup_progress, _wait_for_daemon_health
+
+    readiness_budget = inspect.signature(_poll_startup_progress).parameters["max_wait"].default
+    health_budget = inspect.signature(_wait_for_daemon_health).parameters["timeout"].default
+
+    assert readiness_budget >= health_budget
 
 
 def test_reconcile_ui_exposure_reports_url(
