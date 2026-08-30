@@ -937,6 +937,59 @@ class TestCreateChatSessionInner:
             )
 
     @pytest.mark.asyncio
+    async def test_create_chat_session_uses_machine_checkout(  # tdd-red window
+        self,
+        mixin: DummyMixin,
+        temp_db: Any,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from pathlib import Path
+
+        from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+        isolated = install_isolated_checkout_project(
+            temp_db, Path(tmp_path) / "repo", monkeypatch=monkeypatch
+        )
+        existing = MagicMock()
+        existing.id = "db-checkout"
+        existing.seq_num = 3
+        existing.session_type = "web_chat"
+        existing.source = "claude"
+        existing.project_id = isolated.project.id
+        existing.machine_id = isolated.machine_id
+        existing.external_id = "ext-checkout"
+        existing.usage_output_tokens = 0
+        existing.chat_mode = "normal"
+        existing.approved_tools_json = None
+        existing.status = "active"
+        existing.model = None
+        existing.sandbox_policy_hash = None
+
+        mock_session = AsyncMock()
+        mock_session.chat_mode = "code"
+        mock_session.db_session_id = None
+        mock_session.resume_session_id = None
+        mock_session.project_path = None
+        mock_session.project_id = None
+        mock_session.system_prompt_override = None
+        mixin.web_chat_runtime_manager = MagicMock()
+        mixin.web_chat_runtime_manager.create_session.return_value = mock_session
+        mixin.web_chat_runtime_manager.sandbox_policy_hash = "policy"
+        mixin.session_manager = MagicMock()
+        mixin.session_manager.db = temp_db
+        mixin.session_manager.get.return_value = existing
+        setattr(mixin, "_fire_lifecycle", AsyncMock())
+
+        session = await mixin._create_chat_session_inner(
+            "conv-checkout",
+            project_id=isolated.project.id,
+        )
+
+        assert session is mock_session
+        assert session.project_path == isolated.root_path
+
+    @pytest.mark.asyncio
     async def test_fire_session_end(self, mixin: DummyMixin) -> None:
         with patch.object(mixin, "_fire_lifecycle", new_callable=AsyncMock) as fire_lifecycle:
             await mixin._fire_session_end("conv-end")

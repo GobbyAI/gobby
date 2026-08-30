@@ -20,6 +20,7 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
     resolve_task_repo_path,
 )
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.tasks.diff_paging import (
     DEFAULT_GIT_TIMEOUT_SECONDS,
     MAX_COMMITS_LIMIT,
@@ -31,6 +32,7 @@ from gobby.tasks.diff_paging import (
     DiffPagingError,
 )
 from gobby.utils.project_context import get_project_context
+from gobby.utils.session_context import get_current_session_id
 
 if TYPE_CHECKING:
     from gobby.storage.projects import LocalProjectManager
@@ -43,6 +45,28 @@ def get_current_project_id() -> str | None:
     """Get the current project ID from context."""
     context = get_project_context()
     return context.get("id") if context else None
+
+
+def _session_machine_id(session_manager: Any | None, project_id: str | None) -> str | None:
+    if not project_id:
+        return None
+    session_ref = get_current_session_id()
+    if session_ref and session_manager is not None:
+        try:
+            resolved = session_manager.resolve_session_reference(session_ref, project_id)
+            session = session_manager.get(resolved)
+        except (ValueError, KeyError, LookupError):
+            session = None
+        if session is None or not session.machine_id:
+            from gobby.storage.project_checkouts import MissingMachineContextError
+
+            raise MissingMachineContextError(
+                f"session {session_ref} has no machine_id for project checkout"
+            )
+        return require_local_machine_id(
+            session.machine_id, resource_kind="project_checkout", resource_id=project_id
+        )
+    return require_local_machine_id(None, resource_kind="project_checkout", resource_id=project_id)
 
 
 def create_commit_registry(
@@ -93,8 +117,11 @@ def create_commit_registry(
                 project_manager=project_manager,
                 task=task,
                 project_path=project_path,
+                machine_id=_session_machine_id(session_manager, task.project_id),
             )
         except RepoPathValidationError as e:
+            return {"error": str(e)}
+        except ValueError as e:
             return {"error": str(e)}
         return task, repo_path
 
@@ -243,11 +270,16 @@ def create_commit_registry(
             task_project_id = task.project_id
         else:
             try:
+                current_project_id = get_current_project_id()
                 repo_path = resolve_project_repo_path(
                     project_manager=project_manager,
                     project_path=project_path,
+                    project_id=current_project_id,
+                    machine_id=_session_machine_id(session_manager, current_project_id),
                 )
             except RepoPathValidationError as e:
+                return {"error": str(e)}
+            except ValueError as e:
                 return {"error": str(e)}
 
         # Get project_id for resolving #N task references

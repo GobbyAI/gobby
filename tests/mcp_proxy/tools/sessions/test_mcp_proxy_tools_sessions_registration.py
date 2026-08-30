@@ -447,3 +447,57 @@ class TestRegisterSession:
         assert result["error_code"] == "ambient_session_not_found"
         session_manager.get.assert_not_called()
         session_manager.register.assert_not_called()
+
+
+def test_get_session_commits_uses_machine_checkout(  # tdd-red window
+    session_manager: SessionManager,
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+    from pathlib import Path
+
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    repo = Path(tmp_path) / "repo"
+    isolated = install_isolated_checkout_project(session_manager.db, repo, monkeypatch=monkeypatch)
+    monkeypatch.setattr(
+        "gobby.sessions.machine_scope.get_machine_id",
+        lambda: isolated.machine_id,
+    )
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    (repo / "note.txt").write_text("checkout", encoding="utf-8")
+    subprocess.run(["git", "add", "note.txt"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+            "-m",
+            "checkout-commit",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    session = session_manager.register(
+        external_id="commits-checkout",
+        machine_id=isolated.machine_id,
+        source="codex",
+        project_id=isolated.project.id,
+    )
+    registry = create_session_messages_registry(
+        session_manager=session_manager,
+        db=session_manager.db,
+    )
+    tool = registry.get_tool("get_session_commits")
+    assert tool is not None
+
+    result = tool(session_id=session.id)
+
+    assert result.get("success") is not False
+    messages = [commit.get("message") for commit in result.get("commits", [])]
+    assert "checkout-commit" in messages

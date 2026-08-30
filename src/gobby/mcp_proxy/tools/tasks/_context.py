@@ -9,11 +9,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from gobby.storage.project_checkouts import require_root
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.state_manager import SessionVariableManager
@@ -112,12 +114,36 @@ class RegistryContext:
         resolver = self.agent_registry_resolver
         return resolver() if resolver is not None else None
 
-    def get_project_repo_path(self, project_id: str | None) -> str | None:
-        """Get the repo_path for a project by ID."""
+    def get_project_repo_path(
+        self, project_id: str | None, machine_id: str | None = None
+    ) -> str | None:
+        """Resolve the machine checkout root for a project."""
         if not project_id:
             return None
-        project = self.project_manager.get(project_id)
-        return project.repo_path if project else None
+        resolved_machine = require_local_machine_id(
+            machine_id, resource_kind="project_checkout", resource_id=project_id
+        )
+        return require_root(self.task_manager.db, project_id, resolved_machine)
+
+    def checkout_machine_id(self, project_id: str, session_ref: str | None = None) -> str:
+        """Return the session machine when present, else the local daemon machine."""
+        if session_ref:
+            session_id = self.resolve_session_id(session_ref)
+            session = self.session_manager.get(session_id)
+            if session is None or not session.machine_id:
+                from gobby.storage.project_checkouts import MissingMachineContextError
+
+                raise MissingMachineContextError(
+                    f"session {session_ref} has no machine_id for project checkout"
+                )
+            return require_local_machine_id(
+                session.machine_id,
+                resource_kind="project_checkout",
+                resource_id=project_id,
+            )
+        return require_local_machine_id(
+            None, resource_kind="project_checkout", resource_id=project_id
+        )
 
     def get_current_project_id(self) -> str | None:
         """Get the current project ID from context, or None if not in a project."""

@@ -18,10 +18,21 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
     resolve_project_repo_path,
     resolve_task_repo_path,
 )
+from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import CheckoutNotFoundError, OverlayRegistrationRejectedError
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+from tests.fixtures.isolated_checkout import (
+    insert_isolated_machine,
+    insert_overlay,
+    install_isolated_checkout_project,
+    patch_local_machine_id,
+)
 
 if TYPE_CHECKING:
-    from gobby.storage.projects import LocalProjectManager
-    from gobby.storage.tasks import LocalTaskManager, Task
+    from gobby.storage.tasks import Task
 
 pytestmark = pytest.mark.unit
 
@@ -29,6 +40,8 @@ pytestmark = pytest.mark.unit
 class _ProjectManager:
     def __init__(self, repo_path: Path) -> None:
         self.project = SimpleNamespace(repo_path=str(repo_path))
+        self.db = object()
+        self.root_path = str(repo_path)
 
     def get(self, _project_id: str | None) -> SimpleNamespace:
         return self.project
@@ -51,8 +64,35 @@ class _IsolationManager:
         return self.records
 
 
-def _project_manager(repo_path: Path) -> _ProjectManager:
-    return _ProjectManager(repo_path)
+def _project_manager(repo_path: Path, monkeypatch: pytest.MonkeyPatch) -> _ProjectManager:
+    manager = _ProjectManager(repo_path)
+    root = str(repo_path)
+    monkeypatch.setattr(task_repo_paths, "require_root", lambda *_args, **_kwargs: root)
+    monkeypatch.setattr(
+        task_repo_paths,
+        "require_local_machine_id",
+        lambda provided, **_kwargs: provided or "machine-1",
+    )
+
+    def _resolve(
+        _db: object,
+        _project_id: str,
+        _machine_id: str,
+        overlay_path: str | None = None,
+    ) -> str:
+        if overlay_path in (None, root):
+            return root
+        raise OverlayRegistrationRejectedError(str(overlay_path))
+
+    monkeypatch.setattr(task_repo_paths, "resolve_operation_root", _resolve)
+    monkeypatch.setattr(
+        task_repo_paths,
+        "LocalProjectCheckoutManager",
+        lambda _db: SimpleNamespace(
+            list_for_machine=lambda _machine_id: [SimpleNamespace(root_path=root)]
+        ),
+    )
+    return manager
 
 
 def _task_manager(worktree_path: str | None = None) -> SimpleNamespace:
@@ -161,30 +201,34 @@ def test_close_root_needs_a_registration_and_a_linked_commit(
     )
 
 
-def test_resolve_project_repo_path_accepts_registered_descendant(tmp_path: Path) -> None:
+def test_resolve_project_repo_path_accepts_registered_descendant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo_path = tmp_path / "repo"
     nested = repo_path / "nested"
     nested.mkdir(parents=True)
 
     result = resolve_project_repo_path(
-        project_manager=_project_manager(repo_path),
+        project_manager=_project_manager(repo_path, monkeypatch),
         project_path=str(nested),
     )
 
     assert result == str(nested)
 
 
-def test_resolve_task_repo_path_names_project_record_for_missing_repo(tmp_path: Path) -> None:
+def test_resolve_task_repo_path_names_project_record_for_missing_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     missing_repo = tmp_path / "missing"
     task = SimpleNamespace(project_id="project-1", id="task-1", parent_task_id=None)
 
     with pytest.raises(
         RepoPathValidationError,
-        match=r"project record repo_path does not exist:",
+        match=r"project checkout root does not exist:",
     ):
         resolve_task_repo_path(
             task_manager=_task_manager(),
-            project_manager=_project_manager(missing_repo),
+            project_manager=_project_manager(missing_repo, monkeypatch),
             task=task,
             project_path=None,
         )
@@ -208,7 +252,7 @@ def test_resolve_task_repo_path_honors_explicit_path_when_project_record_is_stal
 
     result = resolve_task_repo_path(
         task_manager=_task_manager(),
-        project_manager=_project_manager(missing_repo),
+        project_manager=_project_manager(missing_repo, monkeypatch),
         task=task,
         project_path=str(explicit_path),
     )
@@ -218,6 +262,7 @@ def test_resolve_task_repo_path_honors_explicit_path_when_project_record_is_stal
 
 def test_resolve_project_repo_path_rejects_symlinked_final_component(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo_path = tmp_path / "repo"
     real_path = repo_path / "real"
@@ -227,13 +272,14 @@ def test_resolve_project_repo_path_rejects_symlinked_final_component(
 
     with pytest.raises(RepoPathValidationError, match="contains symlink component"):
         resolve_project_repo_path(
-            project_manager=_project_manager(repo_path),
+            project_manager=_project_manager(repo_path, monkeypatch),
             project_path=str(link_path),
         )
 
 
 def test_resolve_project_repo_path_rejects_symlinked_parent_component(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
@@ -245,7 +291,7 @@ def test_resolve_project_repo_path_rejects_symlinked_parent_component(
 
     with pytest.raises(RepoPathValidationError, match="contains symlink component"):
         resolve_project_repo_path(
-            project_manager=_project_manager(repo_path),
+            project_manager=_project_manager(repo_path, monkeypatch),
             project_path=str(linked_parent / "child"),
         )
 
@@ -276,7 +322,7 @@ def test_resolve_task_repo_path_accepts_active_external_project_worktree(
 
     result = resolve_task_repo_path(
         task_manager=_task_manager(),
-        project_manager=_project_manager(task_repo),
+        project_manager=_project_manager(task_repo, monkeypatch),
         task=task,
         project_path=str(external_worktree),
     )
@@ -302,7 +348,7 @@ def test_resolve_task_repo_path_accepts_active_external_project_clone(
 
     result = resolve_task_repo_path(
         task_manager=cast("LocalTaskManager", _task_manager()),
-        project_manager=cast("LocalProjectManager", _project_manager(task_repo)),
+        project_manager=cast("LocalProjectManager", _project_manager(task_repo, monkeypatch)),
         task=cast("Task", task),
         project_path=str(external_clone),
     )
@@ -331,10 +377,163 @@ def test_resolve_task_repo_path_rejects_unregistered_external_path(
     with pytest.raises(RepoPathValidationError, match="outside the task project repo"):
         resolve_task_repo_path(
             task_manager=cast("LocalTaskManager", _task_manager()),
-            project_manager=cast("LocalProjectManager", _project_manager(task_repo)),
+            project_manager=cast("LocalProjectManager", _project_manager(task_repo, monkeypatch)),
             task=cast("Task", task),
             project_path=str(arbitrary_repo),
         )
 
     assert worktree_manager.calls == [{"status": "active", "limit": 1000}]
     assert clone_manager.calls == [{"status": "active", "limit": 1000}]
+
+
+def _checkout_task(
+    temp_db: HubDatabase, project_id: str
+) -> tuple[LocalTaskManager, LocalProjectManager, SimpleNamespace]:
+    task_manager = LocalTaskManager(temp_db)
+    project_manager = LocalProjectManager(temp_db)
+    task = SimpleNamespace(
+        id="11111111-1111-4111-8111-111111110001",
+        project_id=project_id,
+        parent_task_id=None,
+    )
+    return task_manager, project_manager, task
+
+
+def test_resolve_task_repo_path_uses_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    task_manager, project_manager, task = _checkout_task(temp_db, isolated.project.id)
+
+    result = resolve_task_repo_path(
+        task_manager=task_manager,
+        project_manager=project_manager,
+        task=cast("Task", task),
+        project_path=None,
+    )
+
+    assert result == isolated.root_path
+
+
+def test_resolve_task_repo_path_fails_closed_without_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="no-checkout")
+    task_manager, project_manager, task = _checkout_task(temp_db, project.id)
+
+    with pytest.raises(CheckoutNotFoundError):
+        resolve_task_repo_path(
+            task_manager=task_manager,
+            project_manager=project_manager,
+            task=cast("Task", task),
+            project_path=None,
+        )
+
+
+def test_resolve_task_repo_path_prefers_registered_overlay(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = tmp_path / "wt"
+    overlay.mkdir()
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="overlay-only")
+    insert_overlay(
+        temp_db,
+        project_id=project.id,
+        machine_id=machine_id,
+        path=str(overlay),
+        kind="worktree",
+    )
+    task_manager, project_manager, task = _checkout_task(temp_db, project.id)
+
+    error: Exception | None = None
+    result: str | None = None
+    try:
+        result = resolve_task_repo_path(
+            task_manager=task_manager,
+            project_manager=project_manager,
+            task=cast("Task", task),
+            project_path=str(overlay),
+        )
+    except RepoPathValidationError as exc:
+        error = exc
+    assert error is None
+    assert result == str(overlay)
+
+
+def test_resolve_task_repo_path_refuses_foreign_session_machine(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    foreign = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, foreign)
+    task_manager, project_manager, task = _checkout_task(temp_db, isolated.project.id)
+
+    with pytest.raises((CheckoutNotFoundError, MachineOwnershipMismatchError)):
+        resolve_task_repo_path(
+            task_manager=task_manager,
+            project_manager=project_manager,
+            task=cast("Task", task),
+            project_path=None,
+        )
+
+
+def test_resolve_project_repo_path_uses_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+
+    result = resolve_project_repo_path(
+        project_manager=LocalProjectManager(temp_db),
+        project_path=None,
+        project_id=isolated.project.id,
+    )
+
+    assert result == isolated.root_path
+
+
+def test_get_project_repo_path_uses_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    ctx = RegistryContext(task_manager=LocalTaskManager(temp_db))
+
+    result = ctx.get_project_repo_path(isolated.project.id)
+
+    assert result == isolated.root_path
+
+
+def test_get_project_repo_path_fails_closed_without_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="ctx-no-checkout")
+    ctx = RegistryContext(task_manager=LocalTaskManager(temp_db))
+
+    with pytest.raises(CheckoutNotFoundError):
+        ctx.get_project_repo_path(project.id)

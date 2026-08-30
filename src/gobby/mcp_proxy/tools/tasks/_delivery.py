@@ -369,11 +369,30 @@ def _existing_delivery_unit(
 
 def _repo_path(ctx: RegistryContext, project_id: str, worktree: Any | None) -> str:
     if worktree is not None and getattr(worktree, "worktree_path", None):
-        return str(worktree.worktree_path)
-    project = ctx.project_manager.get(project_id)
-    if project is None or project.repo_path is None:
-        raise ValueError("delivery PR push requires a project repo_path or worktree_id")
-    return project.repo_path
+        from gobby.storage.project_checkouts import (
+            OverlayRegistrationRejectedError,
+            resolve_operation_root,
+        )
+        from gobby.utils.session_context import get_current_session_id
+
+        overlay = str(worktree.worktree_path)
+        try:
+            return resolve_operation_root(
+                ctx.task_manager.db,
+                project_id,
+                ctx.checkout_machine_id(project_id, get_current_session_id()),
+                overlay_path=overlay,
+            )
+        except OverlayRegistrationRejectedError:
+            return overlay
+    from gobby.utils.session_context import get_current_session_id
+
+    repo_path = ctx.get_project_repo_path(
+        project_id, ctx.checkout_machine_id(project_id, get_current_session_id())
+    )
+    if repo_path is None:
+        raise ValueError("delivery PR push requires a project checkout or worktree_id")
+    return repo_path
 
 
 def _resolve_source_branch(

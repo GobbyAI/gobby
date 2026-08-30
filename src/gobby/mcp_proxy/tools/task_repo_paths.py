@@ -12,7 +12,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
 from gobby.storage.clones import CloneStatus, LocalCloneManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import (
+    CheckoutNotFoundError,
+    LocalProjectCheckoutManager,
+    OverlayRegistrationRejectedError,
+    require_root,
+    resolve_operation_root,
+)
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 from gobby.utils.git import run_git_command
 from gobby.utils.project_context import get_project_context
@@ -32,19 +41,23 @@ def resolve_task_repo_path(
     project_manager: LocalProjectManager | None,
     task: Task,
     project_path: str | None,
+    machine_id: str | None = None,
 ) -> str | None:
     """Return a symlink-safe cwd validated for immediate task-scoped Git operations."""
+    db = _repo_db(task_manager, project_manager)
+    resolved_machine = _checkout_machine_id(task.project_id, machine_id)
     if project_path:
-        candidate = _resolve_existing_dir(project_path, label="project_path")
-        roots = list(_task_allowed_roots(task_manager, project_manager, task))
-        if _is_under_any_root(candidate, roots):
-            return str(candidate)
-        raise RepoPathValidationError(
-            "project_path is outside the task project repo and registered "
-            "task/ancestor worktree or clone paths"
+        return _validated_explicit_path(
+            db,
+            project_id=task.project_id,
+            machine_id=resolved_machine,
+            project_path=project_path,
+            extra_roots=_task_allowed_roots(
+                task_manager, project_manager, task, machine_id=resolved_machine
+            ),
         )
 
-    return _project_repo_path(project_manager, task.project_id)
+    return _project_repo_path(project_manager, task.project_id, machine_id=resolved_machine)
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,18 +122,34 @@ def resolve_project_repo_path(
     project_manager: LocalProjectManager | None,
     project_path: str | None,
     project_id: str | None = None,
+    machine_id: str | None = None,
 ) -> str | None:
     """Return a symlink-safe cwd validated for immediate project-scoped Git operations."""
-    default_repo = _project_repo_path(project_manager, project_id or _current_project_id())
+    resolved_project_id = project_id or _current_project_id()
     if not project_path:
-        return default_repo
-
-    candidate = _resolve_existing_dir(project_path, label="project_path")
-    roots = list(_registered_project_roots(project_manager))
+        return _project_repo_path(project_manager, resolved_project_id, machine_id=machine_id)
+    if project_manager is None:
+        raise RepoPathValidationError("project_path is not a registered project repository")
+    resolved_machine = require_local_machine_id(
+        machine_id,
+        resource_kind="project_checkout",
+        resource_id=resolved_project_id or "project_checkout",
+    )
+    extra_roots = list(_registered_project_roots(project_manager, resolved_machine))
     context_path = _current_project_path()
     if context_path:
-        roots.append(context_path)
-    if _is_under_any_root(candidate, roots):
+        extra_roots.append(context_path)
+    if resolved_project_id:
+        return _validated_explicit_path(
+            project_manager.db,
+            project_id=resolved_project_id,
+            machine_id=resolved_machine,
+            project_path=project_path,
+            extra_roots=extra_roots,
+            outside_message="project_path is not a registered project repository",
+        )
+    candidate = _resolve_existing_dir(project_path, label="project_path")
+    if _is_under_any_root(candidate, extra_roots):
         return str(candidate)
     raise RepoPathValidationError("project_path is not a registered project repository")
 
@@ -129,10 +158,14 @@ def _task_allowed_roots(
     task_manager: LocalTaskManager,
     project_manager: LocalProjectManager | None,
     task: Task,
+    *,
+    machine_id: str,
 ) -> Iterable[str]:
-    default_repo = _project_repo_path_value(project_manager, task.project_id)
-    if default_repo:
-        yield default_repo
+    if project_manager is not None:
+        try:
+            yield require_root(project_manager.db, task.project_id, machine_id)
+        except CheckoutNotFoundError:
+            pass
 
     tasks = list(_task_and_ancestors(task_manager, task))
     for ancestor in tasks:
@@ -177,36 +210,81 @@ def _registered_isolation_roots(
         yield clone.clone_path
 
 
-def _registered_project_roots(project_manager: LocalProjectManager | None) -> Iterable[str]:
+def _registered_project_roots(
+    project_manager: LocalProjectManager | None, machine_id: str
+) -> Iterable[str]:
     if project_manager is None:
         return
-    for project in project_manager.list():
-        repo_path = project.repo_path
-        if isinstance(repo_path, str) and repo_path:
-            yield repo_path
+    for checkout in LocalProjectCheckoutManager(project_manager.db).list_for_machine(machine_id):
+        yield checkout.root_path
 
 
 def _project_repo_path(
     project_manager: LocalProjectManager | None,
     project_id: str | None,
+    *,
+    machine_id: str | None = None,
 ) -> str | None:
-    repo_path = _project_repo_path_value(project_manager, project_id)
+    repo_path = _project_repo_path_value(project_manager, project_id, machine_id=machine_id)
     if repo_path is None:
         return None
-    return str(_resolve_existing_dir(repo_path, label="project record repo_path"))
+    return str(_resolve_existing_dir(repo_path, label="project checkout root"))
 
 
 def _project_repo_path_value(
     project_manager: LocalProjectManager | None,
     project_id: str | None,
+    *,
+    machine_id: str | None = None,
 ) -> str | None:
     if project_manager is None or not project_id:
         return None
-    project = project_manager.get(project_id)
-    repo_path = getattr(project, "repo_path", None) if project else None
-    if not isinstance(repo_path, str) or not repo_path:
-        return None
-    return repo_path
+    resolved_machine = _checkout_machine_id(project_id, machine_id)
+    return require_root(project_manager.db, project_id, resolved_machine)
+
+
+def _checkout_machine_id(project_id: str, machine_id: str | None) -> str:
+    return require_local_machine_id(
+        machine_id, resource_kind="project_checkout", resource_id=project_id
+    )
+
+
+def _repo_db(
+    task_manager: LocalTaskManager,
+    project_manager: LocalProjectManager | None,
+) -> HubDatabase:
+    if project_manager is not None:
+        return project_manager.db
+    return task_manager.db
+
+
+def _validated_explicit_path(
+    db: HubDatabase,
+    *,
+    project_id: str,
+    machine_id: str,
+    project_path: str,
+    extra_roots: Iterable[str],
+    outside_message: str = (
+        "project_path is outside the task project repo and registered "
+        "task/ancestor worktree or clone paths"
+    ),
+) -> str:
+    candidate = _resolve_existing_dir(project_path, label="project_path")
+    try:
+        primary = require_root(db, project_id, machine_id)
+    except CheckoutNotFoundError:
+        primary = None
+    if primary is not None and _is_under_any_root(candidate, [primary]):
+        return str(candidate)
+    try:
+        return resolve_operation_root(db, project_id, machine_id, overlay_path=project_path)
+    except OverlayRegistrationRejectedError:
+        roots = [primary] if primary is not None else []
+        roots.extend(extra_roots)
+        if _is_under_any_root(candidate, roots):
+            return str(candidate)
+        raise RepoPathValidationError(outside_message) from None
 
 
 def _current_project_id() -> str | None:

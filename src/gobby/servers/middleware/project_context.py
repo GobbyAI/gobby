@@ -33,6 +33,23 @@ from gobby.utils.project_context import (
 logger = logging.getLogger(__name__)
 
 
+def _project_context_payload(
+    project: Any, db: Any, machine_id: str | None
+) -> dict[str, str | None]:
+    from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
+    from gobby.storage.workspace_machine_scope import require_local_machine_id
+
+    payload: dict[str, str | None] = {"id": project.id, "name": project.name}
+    try:
+        resolved_machine = require_local_machine_id(
+            machine_id, resource_kind="project_checkout", resource_id=project.id
+        )
+        payload["project_path"] = require_root(db, project.id, resolved_machine)
+    except (CheckoutNotFoundError, ValueError, RuntimeError):
+        payload["project_path"] = None
+    return payload
+
+
 async def _run_db(request: Request, func: Callable[..., Any], *args: Any) -> Any:
     """Run a synchronous lookup without blocking the request event loop."""
     server = getattr(request.app.state, "server", None)
@@ -93,11 +110,11 @@ class ProjectContextMiddleware(BaseHTTPMiddleware):
                             project = None
                         if project:
                             return set_project_context(
-                                {
-                                    "id": project.id,
-                                    "name": project.name,
-                                    "project_path": project.repo_path,
-                                }
+                                _project_context_payload(
+                                    project,
+                                    session_manager.db,
+                                    getattr(session, "machine_id", None),
+                                )
                             )
                         return set_project_context({"id": session.project_id})
             except Exception as e:
@@ -115,11 +132,7 @@ class ProjectContextMiddleware(BaseHTTPMiddleware):
                     project = await _run_db(request, pm.get, project_id)
                     if project:
                         return set_project_context(
-                            {
-                                "id": project.id,
-                                "name": project.name,
-                                "project_path": project.repo_path,
-                            }
+                            _project_context_payload(project, session_manager.db, None)
                         )
             except Exception as e:
                 logger.debug("Failed to resolve project %s: %s", project_id, e)

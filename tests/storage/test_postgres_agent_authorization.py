@@ -901,3 +901,70 @@ def test_daemon_registry_and_principal_lifetime_bound_are_enforced(
             (execution_id,),
         ).fetchone()
         assert binding is None
+
+
+def _resolve_tool_session(conn: psycopg.Connection[Any], session_id: UUID) -> dict[str, Any] | None:
+    conn.execute(f"SET ROLE {RUNTIME_ROLE}")
+    try:
+        return conn.execute(
+            f"SELECT * FROM {AUTH_SCHEMA}.resolve_tool_session(%s)",
+            (session_id,),
+        ).fetchone()
+    finally:
+        conn.execute("RESET ROLE")
+
+
+def test_resolve_tool_session_returns_checkout_root_and_machine_id(  # tdd-red window
+    authorization_fixture: AuthorizationFixture,
+) -> None:
+    fixture = authorization_fixture
+    with psycopg.connect(fixture.database_url, autocommit=True, row_factory=dict_row) as conn:
+        row = _resolve_tool_session(conn, fixture.session_id)
+    assert row is not None
+    assert "repo_path" not in row
+    assert row["session_id"] == fixture.session_id
+    assert row["project_id"] == fixture.project_id
+    assert row["machine_id"] == fixture.machine_id
+    assert row["root_path"] == f"/tmp/checkout-{fixture.machine_id}"
+
+
+def test_resolve_tool_session_allows_null_root_path_without_primary_checkout(  # tdd-red window
+    authorization_fixture: AuthorizationFixture,
+) -> None:
+    fixture = authorization_fixture
+    with psycopg.connect(fixture.database_url, autocommit=True, row_factory=dict_row) as conn:
+        conn.execute(
+            "DELETE FROM public.project_checkouts WHERE machine_id = %s AND project_id = %s",
+            (fixture.machine_id, fixture.project_id),
+        )
+        row = _resolve_tool_session(conn, fixture.session_id)
+    assert row is not None
+    assert "root_path" in row
+    assert row["root_path"] is None
+    assert row["machine_id"] == fixture.machine_id
+
+
+def test_resolve_tool_session_returns_no_row_for_expired_session(  # tdd-red window
+    authorization_fixture: AuthorizationFixture,
+) -> None:
+    fixture = authorization_fixture
+    with psycopg.connect(fixture.database_url, autocommit=True, row_factory=dict_row) as conn:
+        conn.execute(
+            "UPDATE public.sessions SET status = 'expired' WHERE id = %s",
+            (fixture.session_id,),
+        )
+        row = _resolve_tool_session(conn, fixture.session_id)
+    assert row is None
+
+
+def test_resolve_tool_session_returns_no_row_for_deleted_session(  # tdd-red window
+    authorization_fixture: AuthorizationFixture,
+) -> None:
+    fixture = authorization_fixture
+    with psycopg.connect(fixture.database_url, autocommit=True, row_factory=dict_row) as conn:
+        conn.execute(
+            "UPDATE public.sessions SET status = 'deleted' WHERE id = %s",
+            (fixture.session_id,),
+        )
+        row = _resolve_tool_session(conn, fixture.session_id)
+    assert row is None

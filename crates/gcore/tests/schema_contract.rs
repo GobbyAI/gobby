@@ -13,7 +13,7 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(BASELINE_VERSION, 375);
     assert_eq!(
         BASELINE_CHECKSUM,
-        "84eb875cb839f6f61219f3f3fd54a5befc3abf38f01461d96780e956dc1864d8"
+        "4f338eca3757d7a254915c9e124e6bced647cd14c1124d7820c0091a67592dfa"
     );
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
@@ -43,6 +43,16 @@ fn latest_asset_is_provider_capacity_snapshots_hop() {
         identity.latest_asset.filename,
         "417_provider_capacity_snapshots.sql"
     );
+}
+
+#[test]
+fn baseline_resolve_tool_session_returns_checkout_columns() {
+    let sql = gobby_core::schema::BASELINE_SQL;
+    assert!(sql.contains(
+        "RETURNS TABLE(session_id UUID, project_id UUID, machine_id UUID, root_path TEXT)"
+    ));
+    assert!(sql.contains("LEFT JOIN public.project_checkouts AS checkout"));
+    assert!(!sql.contains("SELECT session.id, project.id, project.repo_path"));
 }
 
 #[test]

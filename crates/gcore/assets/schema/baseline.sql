@@ -5773,14 +5773,16 @@ GRANT EXECUTE ON FUNCTION gobby_agent_auth.managed_execution_is_login_capable(UU
 CREATE OR REPLACE FUNCTION gobby_agent_auth.resolve_tool_session(
     p_session_id UUID
 )
-RETURNS TABLE(session_id UUID, project_id UUID, repo_path TEXT)
+RETURNS TABLE(session_id UUID, project_id UUID, machine_id UUID, root_path TEXT)
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = pg_catalog
 AS $function$
-    SELECT session.id, project.id, project.repo_path
+    SELECT session.id, session.project_id, session.machine_id, checkout.root_path
     FROM public.sessions AS session
-    JOIN public.projects AS project ON project.id = session.project_id
+    LEFT JOIN public.project_checkouts AS checkout
+      ON checkout.machine_id = session.machine_id
+     AND checkout.project_id = session.project_id
     WHERE session.id = p_session_id
       AND COALESCE(session.status, 'active') NOT IN ('expired', 'deleted')
 $function$;

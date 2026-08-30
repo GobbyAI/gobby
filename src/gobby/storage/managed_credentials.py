@@ -318,10 +318,38 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         if resolved is None:
             raise CredentialAuthorizationError("authenticated session is unavailable")
         project_id = UUID(str(_row_value(resolved, "project_id")))
-        authoritative_path = Path(str(_row_value(resolved, "repo_path"))).resolve()
+        machine_id = UUID(str(_row_value(resolved, "machine_id")))
+        if machine_id != self._machine_id:
+            raise CredentialAuthorizationError("authenticated session machine mismatch")
+        from gobby.storage.project_checkouts import (
+            OverlayRegistrationRejectedError,
+            resolve_operation_root,
+        )
+        from gobby.storage.workspace_machine_scope import require_local_machine_id
+
+        require_local_machine_id(
+            str(machine_id),
+            resource_kind="project_checkout",
+            resource_id=str(project_id),
+        )
         requested_path = Path(requested_project_path).resolve()
-        if requested_path != authoritative_path:
-            raise CredentialAuthorizationError("authenticated session project path mismatch")
+        checkout_root = _row_value(resolved, "root_path")
+        overlay_path: str | None
+        if checkout_root is not None and Path(str(checkout_root)).resolve() == requested_path:
+            overlay_path = None
+        else:
+            overlay_path = requested_project_path
+        try:
+            authorized_path = resolve_operation_root(
+                cast("HubDatabase", self._database),
+                str(project_id),
+                str(machine_id),
+                overlay_path=overlay_path,
+            )
+        except (OverlayRegistrationRejectedError, ValueError) as exc:
+            raise CredentialAuthorizationError(
+                "authenticated session project path mismatch"
+            ) from exc
         credential = self.issue(
             managed_execution_id=uuid4(),
             owner_kind="tool_chat",
@@ -332,7 +360,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         return ManagedToolCredential(
             credential=credential,
             project_id=project_id,
-            project_path=str(authoritative_path),
+            project_path=str(Path(authorized_path).resolve()),
         )
 
     def rotate_due(self) -> list[ManagedCredential]:

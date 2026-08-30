@@ -907,15 +907,12 @@ class AgentLifecycleMonitor:
             try:
                 session = await self._run_db(self._session_manager.get, run.child_session_id)
                 if session and session.project_id:
-                    pm = self._project_manager
-                    if pm is None:
-                        from gobby.storage.projects import LocalProjectManager
+                    from gobby.agents.lifecycle_checkout import resolve_session_checkout_root
 
-                        pm = LocalProjectManager(self._db)
-                        self._project_manager = pm
-                    project = await self._run_db(pm.get, session.project_id)
-                    if project and project.repo_path:
-                        return str(project.repo_path)
+                    root = await self._run_db(
+                        resolve_session_checkout_root, self._db, session
+                    )
+                    return str(root) if root else None
             except Exception:
                 logger.debug(
                     "Failed to resolve project path for session %s",

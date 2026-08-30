@@ -387,10 +387,15 @@ def test_termination_timeout_writes_durable_secret_free_retry_record(
 def test_tool_request_uses_authoritative_session_project_and_rejects_path_spoof(
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fixture = authorization_fixture
+    monkeypatch.setattr(
+        "gobby.storage.workspace_machine_scope.require_machine_id",
+        lambda: str(fixture.machine_id),
+    )
     manager = _manager(fixture, tmp_path / "managed")
-    authoritative_path = str(Path(f"/tmp/{fixture.project_id}").resolve())
+    authoritative_path = str(Path(f"/tmp/checkout-{fixture.machine_id}").resolve())
     lease: ManagedToolCredential | None = None
     try:
         lease = manager.issue_tool_request(
@@ -1611,3 +1616,119 @@ def test_drain_reaps_hash_format_ix_orphan(
         manager.close()
         if planted is not None:
             _drop_role_if_exists(fixture.database_url, planted)
+
+
+def test_issue_tool_request_accepts_registered_overlay_without_primary(  # tdd-red window
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = authorization_fixture
+    overlay = tmp_path / "overlay-wt"
+    overlay.mkdir()
+    overlay_path = str(overlay.resolve())
+    monkeypatch.setattr(
+        "gobby.storage.workspace_machine_scope.require_machine_id",
+        lambda: str(fixture.machine_id),
+    )
+    with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+        admin.execute(
+            "DELETE FROM public.project_checkouts WHERE machine_id = %s AND project_id = %s",
+            (fixture.machine_id, fixture.project_id),
+        )
+        admin.execute(
+            """
+            INSERT INTO public.worktrees (
+                id, project_id, machine_id, branch_name, worktree_path
+            ) VALUES (%s, %s, %s, %s, %s)
+            """,
+            (uuid4(), fixture.project_id, fixture.machine_id, "overlay", overlay_path),
+        )
+    manager = _manager(fixture, tmp_path / "managed")
+    lease: ManagedToolCredential | None = None
+    error: CredentialAuthorizationError | None = None
+    try:
+        try:
+            lease = manager.issue_tool_request(
+                session_id=fixture.session_id,
+                requested_project_path=overlay_path,
+                expires_at=datetime.now(UTC) + timedelta(minutes=10),
+            )
+        except CredentialAuthorizationError as exc:
+            error = exc
+        assert error is None
+        assert lease is not None
+        assert lease.project_id == fixture.project_id
+        assert Path(lease.project_path).resolve() == overlay.resolve()
+    finally:
+        if lease is not None:
+            manager.revoke(
+                lease.credential.managed_execution_id,
+                reason="overlay-tool-request-finally",
+            )
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                "DELETE FROM public.worktrees WHERE project_id = %s",
+                (fixture.project_id,),
+            )
+        manager.close()
+
+
+def test_issue_tool_request_rejects_unregistered_overlay(  # tdd-red window
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = authorization_fixture
+    monkeypatch.setattr(
+        "gobby.storage.workspace_machine_scope.require_machine_id",
+        lambda: str(fixture.machine_id),
+    )
+    manager = _manager(fixture, tmp_path / "managed")
+    error: CredentialAuthorizationError | None = None
+    try:
+        try:
+            manager.issue_tool_request(
+                session_id=fixture.session_id,
+                requested_project_path=str((tmp_path / "unregistered").resolve()),
+                expires_at=datetime.now(UTC) + timedelta(minutes=10),
+            )
+        except CredentialAuthorizationError as exc:
+            error = exc
+        assert error is not None
+    finally:
+        manager.close()
+
+
+def test_issue_tool_request_rejects_foreign_session_machine(  # tdd-red window
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = authorization_fixture
+    monkeypatch.setattr(
+        "gobby.storage.workspace_machine_scope.require_machine_id",
+        lambda: str(fixture.machine_id),
+    )
+    manager = _manager(fixture, tmp_path / "managed")
+    authoritative_path = str(Path(f"/tmp/{fixture.project_id}").resolve())
+    error: CredentialAuthorizationError | None = None
+    lease: ManagedToolCredential | None = None
+    try:
+        try:
+            lease = manager.issue_tool_request(
+                session_id=fixture.other_session_id,
+                requested_project_path=authoritative_path,
+                expires_at=datetime.now(UTC) + timedelta(minutes=10),
+            )
+        except CredentialAuthorizationError as exc:
+            error = exc
+        assert error is not None
+        assert lease is None
+    finally:
+        if lease is not None:
+            manager.revoke(
+                lease.credential.managed_execution_id,
+                reason="foreign-machine-finally",
+            )
+        manager.close()

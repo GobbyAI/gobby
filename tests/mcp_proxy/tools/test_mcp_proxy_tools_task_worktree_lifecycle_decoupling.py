@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +16,18 @@ from gobby.utils.session_context import session_context_for_test
 pytestmark = pytest.mark.unit
 
 TEST_REPO_PATH = str(Path(__file__).resolve().parents[3])
+_CHECKOUT_MACHINE = "21000000-0000-4000-8000-000000000001"
+
+
+def _checkout_session_manager() -> MagicMock:
+    manager = MagicMock()
+    manager.get.return_value = SimpleNamespace(
+        id="test-session",
+        machine_id=_CHECKOUT_MACHINE,
+        project_id="11111111-1111-4111-8111-111111110001",
+    )
+    manager.resolve_session_reference.side_effect = lambda ref, _project_id=None: ref
+    return manager
 
 
 @pytest.fixture
@@ -32,7 +45,41 @@ def mock_task_manager() -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def _set_session_context() -> Iterator[None]:
-    with session_context_for_test("test-session"):
+    with (
+        session_context_for_test("test-session"),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._context.require_root",
+            return_value=TEST_REPO_PATH,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._context.require_local_machine_id",
+            return_value="21000000-0000-4000-8000-000000000001",
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.task_repo_paths.require_root",
+            return_value=TEST_REPO_PATH,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.task_repo_paths.require_local_machine_id",
+            return_value="21000000-0000-4000-8000-000000000001",
+        ),
+        patch(
+            "gobby.storage.project_checkouts.require_local_machine_id",
+            return_value="21000000-0000-4000-8000-000000000001",
+        ),
+        patch(
+            "gobby.storage.project_checkouts.require_root",
+            return_value=TEST_REPO_PATH,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._context.SessionManager",
+            return_value=_checkout_session_manager(),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.check_linked_committed_bundled_manifest",
+            return_value=None,
+        ),
+    ):
         yield
 
 

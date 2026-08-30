@@ -352,3 +352,25 @@ def test_github_token_logs_missing_and_lookup_failure(
     assert token is None
     assert "No GitHub token found in environment; checking stored secrets" in caplog.text
     assert "GitHub token lookup from secret store failed" in caplog.text
+
+
+def test_delivery_repo_path_uses_machine_checkout(  # tdd-red window
+    temp_db: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    ctx = RegistryContext(task_manager=LocalTaskManager(temp_db))
+    error: Exception | None = None
+    path: str | None = None
+    try:
+        path = delivery_tools._repo_path(ctx, isolated.project.id, None)
+    except ValueError as exc:
+        error = exc
+    assert error is None
+    assert path == isolated.root_path

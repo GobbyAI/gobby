@@ -155,7 +155,9 @@ def _parent_session_project_context(
         return None
 
     try:
+        from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
         from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.workspace_machine_scope import require_local_machine_id
 
         project = LocalProjectManager(lookup_db).get(project_id)
     except _PROJECT_CONTEXT_ERRORS:
@@ -165,7 +167,15 @@ def _parent_session_project_context(
     if project is None:
         return _unresolved_parent_project_context(project_id)
 
-    repo_path = _non_empty_string(project.repo_path)
+    try:
+        machine_id = require_local_machine_id(
+            getattr(session, "machine_id", None),
+            resource_kind="project_checkout",
+            resource_id=project_id,
+        )
+        repo_path = require_root(lookup_db, project_id, machine_id)
+    except (CheckoutNotFoundError, ValueError, RuntimeError):
+        return _unresolved_parent_project_context(project_id)
     context = {
         "id": project.id,
         "name": project.name,
