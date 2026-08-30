@@ -373,14 +373,11 @@ def _run_standard_cli_install(
     click.echo(display_name)
     click.echo("-" * 40)
 
-    if cli_name == "agy":
-        result = installer(project_path, mode="global")
-    else:
-        result = installer(
-            project_path,
-            mode="global",
-            hook_timeout_seconds=hook_timeout_seconds,
-        )
+    result = installer(
+        project_path,
+        mode="global",
+        hook_timeout_seconds=hook_timeout_seconds,
+    )
     results[cli_name] = result
 
     if result["success"]:

@@ -82,6 +82,21 @@ class TestFormatStatusMessage:
         assert "localhost:60887" in result
         assert "localhost:60888" in result
 
+    def test_agy_status_omits_machine_transport_disclaimer(self) -> None:
+        result = format_status_message(
+            running=True,
+            deps_info={
+                "coding_clis": {
+                    "agy": "1.1.18",
+                    "hooks": {"agy": True},
+                }
+            },
+        )
+
+        agy_line = _status_line(result, "AGY CLI")
+        assert "unavailable: no machine transport" not in agy_line
+        assert "hooks installed" in agy_line
+
     def test_format_status_message_renders_fingerprinted_embedding_providers(self) -> None:
         deps_info: dict[str, dict[str, object]] = {
             "integrations": {

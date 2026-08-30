@@ -68,7 +68,7 @@ def test_agy_template_tool_events_use_matcher_groups(repo_root: Path, hook_type:
 
 
 def test_agy_template_timeouts_are_seconds(repo_root: Path) -> None:
-    """AGY documents `timeout` in seconds; 30000 would be 8.3 hours."""
+    """Template default is seconds, overwritten at install by hook_timeout_seconds."""
     gobby_hook = _template(repo_root)[AGY_GOBBY_HOOK_NAME]
 
     timeouts = []

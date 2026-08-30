@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -41,6 +43,7 @@ def agy_env(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
         ),
         patch("gobby.cli.installers.agy.install_shared_content", return_value={"plugins": []}),
         patch("gobby.cli.installers.agy.install_cli_content", return_value={"commands": []}),
+        patch("gobby.cli.installers.agy.shutil.which", return_value=None),
     ):
         yield temp_dir
 
@@ -49,6 +52,77 @@ def _load_json(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text())
     assert isinstance(payload, dict)
     return payload
+
+
+def _handler_timeouts(settings: dict[str, Any]) -> list[int]:
+    gobby_hook = settings[AGY_GOBBY_HOOK_NAME]
+    timeouts: list[int] = []
+    for hook_type in AGY_FLAT_HOOK_NAMES:
+        timeout = gobby_hook[hook_type][0]["timeout"]
+        assert isinstance(timeout, int)
+        timeouts.append(timeout)
+    for hook_type in AGY_GROUPED_HOOK_NAMES:
+        timeout = gobby_hook[hook_type][0]["hooks"][0]["timeout"]
+        assert isinstance(timeout, int)
+        timeouts.append(timeout)
+    return timeouts
+
+
+def _agy_hooks_listing(*, error: str | None = None, include_gobby: bool = True) -> dict[str, Any]:
+    if error is not None:
+        return {
+            "conversation_id": "",
+            "status": "ERROR",
+            "response": "",
+            "error": error,
+            "command": {"name": "hooks", "data": {"hooks": []}},
+        }
+    hooks: list[dict[str, Any]] = []
+    if include_gobby:
+        hooks.append(
+            {
+                "name": AGY_GOBBY_HOOK_NAME,
+                "enabled": True,
+                "source": "~/.gemini/config/hooks.json",
+                "actions": [
+                    {
+                        "event": hook_type,
+                        "type": "command",
+                        "command": f"ghook --gobby-owned --cli=agy --type={hook_type}",
+                    }
+                    for hook_type in AGY_HOOK_NAMES
+                ],
+            }
+        )
+    return {
+        "conversation_id": "",
+        "status": "SUCCESS",
+        "response": "",
+        "command": {"name": "hooks", "data": {"hooks": hooks}},
+    }
+
+
+def _fake_agy_hooks_run(
+    payload: dict[str, Any], *, returncode: int = 0
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=["/usr/bin/agy", "-p", "/hooks", "--output-format", "json"],
+        returncode=returncode,
+        stdout=json.dumps(payload),
+        stderr="",
+    )
+
+
+@contextmanager
+def _agy_probe(*, which: str | None, run: Any = None) -> Iterator[Any]:
+    with ExitStack() as stack:
+        stack.enter_context(patch("gobby.cli.installers.agy.shutil.which", return_value=which))
+        mocked_run = None
+        if run is not None:
+            mocked_run = stack.enter_context(
+                patch("gobby.cli.installers.agy.subprocess.run", return_value=run)
+            )
+        yield mocked_run
 
 
 def test_install_agy_global_writes_vendor_hooks_and_mcp(
@@ -249,3 +323,90 @@ def test_uninstall_agy_removes_only_gobby_entries(
     assert AGY_GOBBY_HOOK_NAME not in settings
     assert settings["lint-checker"] == lint_checker
     assert set(_load_json(mcp_file)["mcpServers"]) == {"other"}
+
+
+def test_install_agy_applies_hook_timeout_seconds_to_both_layouts(
+    project_path: Path,
+    agy_env: Path,
+) -> None:
+    result = install_agy(project_path, mode="global", hook_timeout_seconds=150)
+
+    assert result["success"] is True
+    timeouts = _handler_timeouts(_load_json(agy_env / ".gemini" / "config" / "hooks.json"))
+    assert timeouts == [150] * len(AGY_HOOK_NAMES)
+
+
+def test_install_agy_rejects_non_positive_hook_timeout(
+    project_path: Path,
+    agy_env: Path,
+) -> None:
+    result = install_agy(project_path, mode="global", hook_timeout_seconds=0)
+
+    assert result["success"] is False
+    assert result["error"] == "hook_timeout_seconds must be positive"
+    assert not (agy_env / ".gemini" / "config" / "hooks.json").exists()
+
+
+def test_install_agy_skips_verification_when_agy_missing(
+    project_path: Path,
+    agy_env: Path,
+) -> None:
+    with _agy_probe(which=None):
+        result = install_agy(project_path, mode="global")
+
+    assert result["success"] is True
+    assert result.get("verification") == "skipped"
+    assert "verified" not in result
+
+
+def test_install_agy_verifies_registration_when_agy_lists_gobby(
+    project_path: Path,
+    agy_env: Path,
+) -> None:
+    completed = _fake_agy_hooks_run(_agy_hooks_listing())
+    with _agy_probe(which="/usr/bin/agy", run=completed):
+        result = install_agy(project_path, mode="global")
+
+    assert result["success"] is True
+    assert result.get("verified") is True
+    assert result.get("verified_hooks") == list(AGY_HOOK_NAMES)
+
+
+def test_install_agy_reports_unverified_when_agy_rejects_hooks(
+    project_path: Path,
+    agy_env: Path,
+) -> None:
+    error = "invalid hook \"hooks\": command hook must specify 'command'"
+    completed = _fake_agy_hooks_run(_agy_hooks_listing(error=error), returncode=1)
+    with _agy_probe(which="/usr/bin/agy", run=completed):
+        result = install_agy(project_path, mode="global")
+
+    assert result["success"] is True
+    assert result.get("verified") is False
+    assert result.get("verification_error") == error
+
+
+def test_install_agy_is_idempotent_and_still_verifies(
+    project_path: Path,
+    agy_env: Path,
+) -> None:
+    hooks_file = agy_env / ".gemini" / "config" / "hooks.json"
+    completed = _fake_agy_hooks_run(_agy_hooks_listing())
+    with _agy_probe(which="/usr/bin/agy", run=completed) as run_hooks:
+        first = install_agy(project_path, mode="global")
+        written = hooks_file.read_text()
+        second = install_agy(project_path, mode="global")
+
+    assert first["success"] is True
+    assert second["success"] is True
+    assert first.get("verified") is True
+    assert second.get("verified") is True
+    assert hooks_file.read_text() == written
+    assert run_hooks.call_count == 2
+    assert run_hooks.call_args.args[0] == [
+        "/usr/bin/agy",
+        "-p",
+        "/hooks",
+        "--output-format",
+        "json",
+    ]

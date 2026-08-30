@@ -201,8 +201,8 @@ def get_coding_cli_hooks_status() -> dict[str, bool]:
     grok_hooks = Path.home() / ".grok" / "hooks" / "gobby.json"
     result["grok"] = _check_hooks_in_file(grok_hooks)
 
-    # AGY: no supported hook transport
-    result["agy"] = False
+    # AGY: ~/.gemini/config/hooks.json
+    result["agy"] = _check_hooks_in_file(_agy_hooks_file())
 
     # Codex: ~/.codex/hooks.json
     codex_hooks = Path.home() / ".codex" / "hooks.json"
@@ -217,6 +217,13 @@ def get_coding_cli_hooks_status() -> dict[str, bool]:
     result["droid"] = _check_hooks_in_file(droid_hooks)
 
     return result
+
+
+def _agy_hooks_file() -> Path:
+    """Return the AGY hooks path used by status and test overrides."""
+    if override := os.environ.get("GOBBY_AGY_HOOKS_FILE"):
+        return Path(override).expanduser()
+    return Path.home() / ".gemini" / "config" / "hooks.json"
 
 
 def _droid_hooks_file() -> Path:

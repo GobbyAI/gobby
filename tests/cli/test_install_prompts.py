@@ -75,7 +75,7 @@ def test_standard_cli_install_forwards_provider_hook_timeout(tmp_path: Path) -> 
     assert results == {"claude": {"success": False, "error": "expected"}}
 
 
-def test_standard_cli_install_keeps_agy_signature_unchanged(tmp_path: Path) -> None:
+def test_standard_cli_install_forwards_agy_hook_timeout(tmp_path: Path) -> None:
     installer = MagicMock(return_value={"success": False, "error": "expected"})
     results: dict[str, dict[str, Any]] = {}
 
@@ -87,7 +87,11 @@ def test_standard_cli_install_keeps_agy_signature_unchanged(tmp_path: Path) -> N
         hook_timeout_seconds=150,
     )
 
-    installer.assert_called_once_with(tmp_path, mode="global")
+    installer.assert_called_once_with(
+        tmp_path,
+        mode="global",
+        hook_timeout_seconds=150,
+    )
     assert results == {"agy": {"success": False, "error": "expected"}}
 
 

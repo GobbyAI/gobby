@@ -267,26 +267,33 @@ def test_get_droid_cli_version() -> None:
 
 def test_coding_cli_hooks_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GOBBY_DROID_HOOKS_FILE", raising=False)
+    monkeypatch.delenv("GOBBY_AGY_HOOKS_FILE", raising=False)
     monkeypatch.delenv("GOBBY_HOOKS_DIR", raising=False)
 
     with patch.object(Path, "home", return_value=tmp_path):
         claude = tmp_path / ".claude" / "settings.json"
         qwen = tmp_path / ".qwen" / "settings.json"
         droid = tmp_path / ".factory" / "hooks.json"
+        agy = tmp_path / ".gemini" / "config" / "hooks.json"
 
         claude.parent.mkdir()
         qwen.parent.mkdir()
         droid.parent.mkdir(parents=True)
+        agy.parent.mkdir(parents=True)
 
         claude.write_text("ghook --gobby-owned --cli=claude")
         qwen.write_text("ghook --gobby-owned --cli=qwen")
         droid.write_text("ghook --gobby-owned --cli=droid")
+        agy.write_text(
+            '{"gobby": {"PreInvocation": [{"command": "ghook --gobby-owned --cli=agy"}]}}'
+        )
 
         result = deps.get_coding_cli_hooks_status()
         assert result["claude"] is True
         assert result["codex"] is False
         assert result["qwen"] is True
         assert result["droid"] is True
+        assert result["agy"] is True
 
 
 def test_check_hooks_in_file(tmp_path: Path) -> None:

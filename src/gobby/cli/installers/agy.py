@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import time
 from copy import deepcopy
@@ -16,7 +18,11 @@ from gobby.adapters.agy_contract import AGY_GOBBY_HOOK_NAME, AGY_HOOK_NAMES
 from gobby.agents.trust import seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
 
-from .hook_commands import config_contains_gobby_hook, rewrite_hook_template_commands
+from .hook_commands import (
+    config_contains_gobby_hook,
+    rewrite_hook_template_commands,
+    set_gobby_hook_timeouts,
+)
 from .mcp_config import configure_mcp_server_json, remove_mcp_server_json
 from .shared import install_cli_content, install_global_hooks, install_shared_content
 
@@ -74,7 +80,7 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> str | None:
     return str(backup_path) if backup_path else None
 
 
-def _load_agy_hooks_template(hooks_dir: Path) -> dict[str, Any]:
+def _load_agy_hooks_template(hooks_dir: Path, *, hook_timeout_seconds: int) -> dict[str, Any]:
     template_path = get_install_dir() / "agy" / "hooks-template.json"
     if not template_path.exists():
         raise FileNotFoundError(f"Missing hooks template: {template_path}")
@@ -88,8 +94,77 @@ def _load_agy_hooks_template(hooks_dir: Path) -> dict[str, Any]:
     # The shared rewriter keys off a top-level "hooks" event map. AGY nests its
     # events one level deeper, under the hook name, so hand it the inner map
     # (rewriting happens in place).
-    rewrite_hook_template_commands({"hooks": events}, cli_name="agy", hooks_dir=hooks_dir)
+    wrapped = {"hooks": events}
+    rewrite_hook_template_commands(wrapped, cli_name="agy", hooks_dir=hooks_dir)
+    set_gobby_hook_timeouts(wrapped, timeout=hook_timeout_seconds)
     return template
+
+
+def _agy_hooks_from_payload(payload: dict[str, Any]) -> list[Any]:
+    command = payload.get("command")
+    if not isinstance(command, dict):
+        return []
+    data = command.get("data")
+    if not isinstance(data, dict):
+        return []
+    hooks = data.get("hooks")
+    return hooks if isinstance(hooks, list) else []
+
+
+def _verify_agy_hook_registration() -> dict[str, Any]:
+    agy_bin = shutil.which("agy")
+    if agy_bin is None:
+        return {"verification": "skipped"}
+    try:
+        completed = subprocess.run(  # nosec B603 # resolved agy binary, fixed argv
+            [agy_bin, "-p", "/hooks", "--output-format", "json"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except FileNotFoundError:
+        return {"verification": "skipped"}
+    except subprocess.TimeoutExpired:
+        return {"verified": False, "verification_error": "agy /hooks timed out"}
+    except OSError as exc:
+        return {"verified": False, "verification_error": str(exc)}
+
+    stderr = completed.stderr.strip()
+    try:
+        payload: object = json.loads(completed.stdout) if completed.stdout.strip() else {}
+    except json.JSONDecodeError:
+        return {
+            "verified": False,
+            "verification_error": stderr or completed.stdout.strip() or "invalid /hooks output",
+        }
+    if not isinstance(payload, dict):
+        return {"verified": False, "verification_error": stderr or "invalid /hooks output"}
+    if payload.get("status") != "SUCCESS":
+        error = payload.get("error")
+        reason = error if isinstance(error, str) and error else stderr or str(payload.get("status"))
+        return {"verified": False, "verification_error": reason}
+
+    gobby = next(
+        (
+            hook
+            for hook in _agy_hooks_from_payload(payload)
+            if isinstance(hook, dict) and hook.get("name") == AGY_GOBBY_HOOK_NAME
+        ),
+        None,
+    )
+    if gobby is None:
+        return {"verified": False, "verification_error": "gobby hook not registered"}
+    actions = gobby.get("actions")
+    names: list[str] = []
+    if isinstance(actions, list):
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            event = action.get("event")
+            if isinstance(event, str):
+                names.append(event)
+    return {"verified": True, "verified_hooks": names}
 
 
 def _merge_gobby_hooks(
@@ -131,7 +206,12 @@ def _remove_gobby_hooks(settings: dict[str, Any]) -> tuple[dict[str, Any], list[
     return updated, removed
 
 
-def install_agy(project_path: Path, mode: str = "global") -> dict[str, Any]:
+def install_agy(
+    project_path: Path,
+    mode: str = "global",
+    *,
+    hook_timeout_seconds: int = 120,
+) -> dict[str, Any]:
     """Install Gobby integration for AGY hooks and MCP registration."""
     hooks_installed: list[str] = []
     result: dict[str, Any] = {
@@ -147,6 +227,9 @@ def install_agy(project_path: Path, mode: str = "global") -> dict[str, Any]:
         "trust": None,
         "error": None,
     }
+    if hook_timeout_seconds <= 0:
+        result["error"] = "hook_timeout_seconds must be positive"
+        return result
     if mode != "global":
         result["error"] = "AGY integration only supports global install mode"
         return result
@@ -158,7 +241,9 @@ def install_agy(project_path: Path, mode: str = "global") -> dict[str, Any]:
 
     try:
         install_global_hooks()
-        gobby_settings = _load_agy_hooks_template(hooks_dir)
+        gobby_settings = _load_agy_hooks_template(
+            hooks_dir, hook_timeout_seconds=hook_timeout_seconds
+        )
         existing_settings = _load_json_file(hooks_file)
         updated_settings = _merge_gobby_hooks(existing_settings, gobby_settings)
     except (FileNotFoundError, ValueError, json.JSONDecodeError, OSError) as exc:
@@ -177,6 +262,8 @@ def install_agy(project_path: Path, mode: str = "global") -> dict[str, Any]:
             return result
     else:
         result["already_configured"] = True
+
+    result.update(_verify_agy_hook_registration())
 
     try:
         shared = install_shared_content(project_path / ".gemini", project_path)

@@ -203,8 +203,6 @@ def _format_coding_cli_details(hooks: dict[str, Any], provider_models: Any, name
     parts = []
     if hooks.get(name):
         parts.append("hooks installed")
-    if name == "agy":
-        parts.append("unavailable: no machine transport")
 
     model_count = _provider_model_count(provider_models, name)
     if model_count is not None:
