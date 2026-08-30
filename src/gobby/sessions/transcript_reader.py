@@ -425,6 +425,7 @@ class TranscriptReader:
             external_id or "",
             owner_machine_id=session.machine_id,
             local_machine_id=local_machine_id,
+            caller_context="recovery",
         )
         if not derived:
             return None

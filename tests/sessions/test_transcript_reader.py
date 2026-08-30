@@ -223,6 +223,71 @@ def test_codex_transcript_scan_ignores_sidecars_and_non_rollout_jsonl(
     ) == str(rollout)
 
 
+def test_agy_disk_fallback_uses_transcript_full_not_truncated(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    target = (
+        tmp_path
+        / ".gemini"
+        / "antigravity-cli"
+        / "brain"
+        / "conv-1"
+        / ".system_generated"
+        / "logs"
+        / "transcript_full.jsonl"
+    )
+    target.parent.mkdir(parents=True)
+    target.write_text("{}\n", encoding="utf-8")
+    (target.parent / "transcript.jsonl").write_text("{}\n", encoding="utf-8")
+
+    hook_path = find_transcript_on_disk(
+        "agy",
+        "conv-1",
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+        caller_context="hook",
+    )
+    recovery_path = find_transcript_on_disk(
+        "agy",
+        "conv-1",
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+        caller_context="recovery",
+    )
+    assert hook_path == str(target)
+    assert recovery_path == str(target)
+
+
+def test_hook_context_does_not_traverse_claude_projects(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    target = tmp_path / ".claude" / "projects" / "project" / "ext-1.jsonl"
+    target.parent.mkdir(parents=True)
+    target.write_text("{}\n", encoding="utf-8")
+
+    assert (
+        find_transcript_on_disk(
+            "claude",
+            "ext-1",
+            owner_machine_id=LOCAL_MACHINE_ID,
+            local_machine_id=LOCAL_MACHINE_ID,
+            caller_context="hook",
+        )
+        is None
+    )
+    assert find_transcript_on_disk(
+        "claude",
+        "ext-1",
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+        caller_context="recovery",
+    ) == str(target)
+
+
 def test_is_recent_file_rejects_non_positive_max_days(tmp_path: Path) -> None:
     target = tmp_path / "session.jsonl"
     target.write_text("{}\n", encoding="utf-8")
@@ -866,6 +931,7 @@ class TestTranscriptReaderRendered:
             "ext-thread",
             owner_machine_id=LOCAL_MACHINE_ID,
             local_machine_id=LOCAL_MACHINE_ID,
+            caller_context="recovery",
         )
         assert to_thread.await_args_list[0].args == (
             find_transcript,

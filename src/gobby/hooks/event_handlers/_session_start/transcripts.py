@@ -4,12 +4,29 @@ from __future__ import annotations
 
 import hashlib
 from typing import Any, cast
-from urllib.parse import quote
 
+from gobby.hooks.events import HookEventType
 from gobby.sessions.machine_scope import (
     RemoteSessionOwnershipError,
     is_local_machine_owner,
     require_local_session_ownership,
+)
+from gobby.sessions.transcript_paths import (
+    MISSING_TRANSCRIPT_PATH,
+    TranscriptPathStatus,
+    classify_transcript_path,
+    find_transcript_on_disk,
+    usable_transcript_path,
+)
+
+MAX_PENDING_TRANSCRIPT_RECHECKS = 8
+PENDING_TRANSCRIPT_RECHECK_EVENTS = frozenset(
+    {
+        HookEventType.BEFORE_TOOL,
+        HookEventType.AFTER_TOOL,
+        HookEventType.AFTER_AGENT,
+        HookEventType.STOP,
+    }
 )
 
 
@@ -49,15 +66,29 @@ def derive_transcript_path(
     *,
     owner_machine_id: str | None,
     local_machine_id: str | None,
+    stored_path: str | None = None,
 ) -> str | None:
-    """Derive transcript path for CLIs that do not provide one natively."""
+    """Resolve a persistable transcript path: hook-first, then bounded disk fallback."""
+    del handler
     if not is_local_machine_owner(owner_machine_id, local_machine_id):
         return None
-    if cli_source == "qwen":
-        return cast(str | None, handler._find_qwen_transcript(input_data, external_id))
-    if cli_source == "grok":
-        return find_grok_transcript(handler, input_data, external_id)
-    return None
+    status, reported = classify_transcript_path(input_data.get("transcript_path"))
+    if status is TranscriptPathStatus.USABLE:
+        return reported
+    stored = usable_transcript_path(stored_path)
+    if stored is not None:
+        return stored
+    session_id = input_data.get("sessionId") or input_data.get("session_id") or external_id
+    cwd = input_data.get("cwd")
+    return find_transcript_on_disk(
+        cli_source,
+        external_id,
+        owner_machine_id=owner_machine_id,
+        local_machine_id=local_machine_id,
+        caller_context="hook",
+        cwd=str(cwd) if cwd else None,
+        session_id=str(session_id) if session_id else None,
+    )
 
 
 def find_qwen_transcript(
@@ -122,34 +153,6 @@ def ensure_qwen_transcript_tracking(
     return transcript_path
 
 
-def find_grok_transcript(
-    handler: Any,
-    input_data: dict[str, Any],
-    external_id: str,
-) -> str | None:
-    """Derive Grok ``updates.jsonl`` path for the hook event."""
-    cwd = input_data.get("cwd")
-    if not cwd:
-        handler.logger.debug("Cannot derive Grok transcript: no cwd")
-        return None
-
-    session_id = input_data.get("sessionId") or input_data.get("session_id") or external_id
-    if not session_id:
-        handler.logger.debug("Cannot derive Grok transcript: no session id")
-        return None
-
-    encoded_cwd = quote(str(cwd), safe="")
-    path = (
-        _compat_module().Path.home()
-        / ".grok"
-        / "sessions"
-        / encoded_cwd
-        / str(session_id)
-        / "updates.jsonl"
-    )
-    return str(path)
-
-
 def find_json_session_transcript(
     handler: Any,
     cli_name: str,
@@ -185,3 +188,45 @@ def find_json_session_transcript(
         chats_dir,
     )
     return None
+
+
+def recheck_pending_transcript_path(
+    event: Any,
+    *,
+    session_manager: Any,
+    budgets: dict[str, int],
+    local_machine_id: str | None,
+) -> None:
+    """Persist a usable transcript path on later hook events without blocking start."""
+    if event.event_type not in PENDING_TRANSCRIPT_RECHECK_EVENTS:
+        return
+    if session_manager is None:
+        return
+    platform_session_id = event.metadata.get("_platform_session_id")
+    if not isinstance(platform_session_id, str) or not platform_session_id:
+        return
+    session = session_manager.get(platform_session_id)
+    if session is None:
+        return
+    stored = getattr(session, "transcript_path", None)
+    if stored and stored != MISSING_TRANSCRIPT_PATH:
+        return
+    attempts = budgets.get(platform_session_id, 0)
+    if attempts >= MAX_PENDING_TRANSCRIPT_RECHECKS:
+        return
+    budgets[platform_session_id] = attempts + 1
+    source = event.source.value if hasattr(event.source, "value") else str(event.source)
+    external_id = str(event.session_id or getattr(session, "external_id", "") or "").strip()
+    path = derive_transcript_path(
+        None,
+        source,
+        event.data if isinstance(event.data, dict) else {},
+        external_id,
+        owner_machine_id=getattr(session, "machine_id", None),
+        local_machine_id=local_machine_id,
+        stored_path=stored,
+    )
+    if not path:
+        return
+    session_manager.update(platform_session_id, transcript_path=path)
+    budgets.pop(platform_session_id, None)

@@ -39,8 +39,9 @@ class SessionStartMixin(EventHandlersBase):
         *,
         owner_machine_id: str | None,
         local_machine_id: str | None,
+        stored_path: str | None = None,
     ) -> str | None:
-        """Derive transcript path for CLIs that do not provide one natively."""
+        """Resolve a persistable transcript path (hook-first, disk fallback)."""
         from .transcripts import derive_transcript_path
 
         return derive_transcript_path(
@@ -50,6 +51,7 @@ class SessionStartMixin(EventHandlersBase):
             external_id,
             owner_machine_id=owner_machine_id,
             local_machine_id=local_machine_id,
+            stored_path=stored_path,
         )
 
     def _find_qwen_transcript(

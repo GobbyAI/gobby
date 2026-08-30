@@ -335,14 +335,14 @@ def rebind_resumed_session_start(
     transcript_path: str | None,
 ) -> tuple[Any, str | None]:
     """Bind an explicit resume to its persisted row and fresh runtime context."""
-    if not transcript_path:
-        transcript_path = handler._derive_transcript_path(
-            cli_source,
-            input_data,
-            session.external_id,
-            owner_machine_id=machine_id,
-            local_machine_id=machine_id,
-        )
+    transcript_path = handler._derive_transcript_path(
+        cli_source,
+        input_data,
+        session.external_id,
+        owner_machine_id=machine_id,
+        local_machine_id=machine_id,
+        stored_path=transcript_path or getattr(session, "transcript_path", None),
+    )
 
     raw_depth = input_data.get("agent_depth")
     try:

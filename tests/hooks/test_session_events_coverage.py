@@ -12,6 +12,7 @@ import pytest
 
 from gobby.hooks.event_handlers._session import SessionEventHandlerMixin
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 
 from ._event_handler_helpers import empty_database_mock
@@ -190,17 +191,18 @@ class _TestHandler(SessionEventHandlerMixin):
 class TestDeriveTranscriptPath:
     """Tests for _derive_transcript_path."""
 
-    def test_qwen_source(self) -> None:
+    def test_qwen_source(self, tmp_path: Path) -> None:
         handler = _TestHandler()
-        with patch.object(handler, "_find_qwen_transcript", return_value="/tmp/q.json"):
-            result = handler._derive_transcript_path(
-                "qwen",
-                {},
-                "ext-1",
-                owner_machine_id="local-machine",
-                local_machine_id="local-machine",
-            )
-        assert result == "/tmp/q.json"
+        transcript = tmp_path / "q.json"
+        transcript.write_text("{}\n", encoding="utf-8")
+        result = handler._derive_transcript_path(
+            "qwen",
+            {"transcript_path": str(transcript)},
+            "ext-1",
+            owner_machine_id="local-machine",
+            local_machine_id="local-machine",
+        )
+        assert result == str(transcript)
 
     def test_unknown_source(self) -> None:
         handler = _TestHandler()
@@ -592,7 +594,7 @@ class TestSessionStartAndHelpers:
             )
 
             handler._session_manager.update.assert_called_with(
-                session_id="sess-1", transcript_path="/tmp/t.json", status="active"
+                session_id="sess-1", transcript_path=UNSET, status="active"
             )
             handler._session_manager.cache_session_mapping.assert_called_once()
             handler._session_coordinator.start_agent_run.assert_called_with("run-1")

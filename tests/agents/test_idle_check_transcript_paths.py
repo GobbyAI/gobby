@@ -117,6 +117,7 @@ async def test_resolve_transcript_path_rediscovers_after_stat_race(tmp_path: Pat
         "external-1",
         owner_machine_id=LOCAL_MACHINE_ID,
         local_machine_id=LOCAL_MACHINE_ID,
+        caller_context="recovery",
     )
 
 
@@ -153,6 +154,7 @@ async def test_resolve_transcript_path_discovers_for_invalid_stored_path(
         "external-1",
         owner_machine_id=LOCAL_MACHINE_ID,
         local_machine_id=LOCAL_MACHINE_ID,
+        caller_context="recovery",
     )
 
 
@@ -200,6 +202,7 @@ async def test_resolve_transcript_path_rediscovers_when_cache_predates_session_u
         "external-1",
         owner_machine_id=LOCAL_MACHINE_ID,
         local_machine_id=LOCAL_MACHINE_ID,
+        caller_context="recovery",
     )
 
 

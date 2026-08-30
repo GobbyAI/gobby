@@ -21,6 +21,7 @@ from gobby.tasks.transcript_evidence import (
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
     TranscriptValidationSegment,
+    _resolve_transcript_path,
     derive_transcript_evidence,
     merge_transcript_evidence,
     select_window_raw_lines,
@@ -968,6 +969,30 @@ async def test_missing_transcript_reports_attempted_paths(
     assert error.retry_after == 5
     assert str(missing) in error.attempted_paths
     assert str(tmp_path / "archive" / f"{session.external_id}.jsonl.gz") in error.attempted_paths
+
+
+def test_agy_session_resolves_transcript_through_provider_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    external_id = "transcript-evidence-agy-1"
+    target = (
+        tmp_path
+        / ".gemini"
+        / "antigravity-cli"
+        / "brain"
+        / external_id
+        / ".system_generated"
+        / "logs"
+        / "transcript_full.jsonl"
+    )
+    target.parent.mkdir(parents=True)
+    target.write_text("{}\n", encoding="utf-8")
+    session = _session("agy", None)
+    path, attempted = _resolve_transcript_path(session, None)
+    assert path == str(target)
+    assert str(target) in attempted
 
 
 @pytest.mark.asyncio

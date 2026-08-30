@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.event_handlers import EventHandlers
-from gobby.hooks.events import HookEventType, HookResponse
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.session_materialize import activate_deferred_session
 
 from ._event_handler_helpers import make_event
@@ -275,3 +279,136 @@ class TestApplyDebugEcho:
 
         assert hasattr(EventHandlersBase, "_apply_debug_echo")
         assert callable(EventHandlersBase._apply_debug_echo)
+
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+def _agy_transcript(tmp_path: Path) -> Path:
+    return (
+        tmp_path
+        / ".gemini"
+        / "antigravity-cli"
+        / "brain"
+        / "conv-1"
+        / ".system_generated"
+        / "logs"
+        / "transcript_full.jsonl"
+    )
+
+
+def _pending_recheck_manager(
+    manager: HookManager,
+    *,
+    session: SimpleNamespace,
+) -> HookManager:
+    mocks = cast(Any, manager)
+    mocks._session_manager.get.return_value = session
+    mocks._record_machine_ingress = MagicMock()
+    mocks._record_session_activity_pulse = MagicMock()
+    mocks._evaluate_workflow_rules = MagicMock(return_value=(None, None))
+    mocks._evaluate_blocking_webhooks = MagicMock(return_value=None)
+    mocks._event_handlers.get_handler.return_value = lambda _event: HookResponse(decision="allow")
+
+    def resolve(event: HookEvent, *, apply_session_mutations: bool = True) -> str:
+        del apply_session_mutations
+        event.metadata["_platform_session_id"] = session.id
+        return str(session.id)
+
+    mocks._session_lookup.resolve.side_effect = resolve
+    return manager
+
+
+class TestPendingTranscriptRecheck:
+    """Shared hook-seam pending transcript association."""
+
+    def test_preinvocation_pending_then_stop_associates(
+        self,
+        manager_with_mocks: HookManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(
+            manager_with_mocks,
+            "get_machine_id",
+            lambda: LOCAL_MACHINE_ID,
+        )
+        target = _agy_transcript(tmp_path)
+        session = SimpleNamespace(
+            id="platform-1",
+            transcript_path=None,
+            source="agy",
+            external_id="conv-1",
+            machine_id=LOCAL_MACHINE_ID,
+        )
+        manager = _pending_recheck_manager(manager_with_mocks, session=session)
+        pending_event = HookEvent(
+            event_type=HookEventType.AFTER_AGENT,
+            session_id="conv-1",
+            source=SessionSource.AGY,
+            timestamp=datetime.now(UTC),
+            data={"transcript_path": str(target)},
+            project_id="proj-1",
+            machine_id=LOCAL_MACHINE_ID,
+        )
+        with patch("gobby.hooks.hook_manager.reconcile_session_activation"):
+            first = manager._handle_after_daemon_ready(pending_event)
+        assert first.decision == "allow"
+        cast(Any, manager._session_manager).update.assert_not_called()
+
+        target.parent.mkdir(parents=True)
+        target.write_text("{}\n", encoding="utf-8")
+        stop_event = HookEvent(
+            event_type=HookEventType.STOP,
+            session_id="conv-1",
+            source=SessionSource.AGY,
+            timestamp=datetime.now(UTC),
+            data={"transcript_path": str(target)},
+            project_id="proj-1",
+            machine_id=LOCAL_MACHINE_ID,
+        )
+        with patch("gobby.hooks.hook_manager.reconcile_session_activation"):
+            second = manager._handle_after_daemon_ready(stop_event)
+        assert second.decision == "allow"
+        cast(Any, manager._session_manager).update.assert_called_once_with(
+            "platform-1",
+            transcript_path=str(target),
+        )
+
+    def test_already_persisted_path_skips_recheck(
+        self,
+        manager_with_mocks: HookManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            manager_with_mocks,
+            "get_machine_id",
+            lambda: LOCAL_MACHINE_ID,
+        )
+        target = tmp_path / "already.jsonl"
+        target.write_text("{}\n", encoding="utf-8")
+        session = SimpleNamespace(
+            id="platform-1",
+            transcript_path=str(target),
+            source="agy",
+            external_id="conv-1",
+            machine_id=LOCAL_MACHINE_ID,
+        )
+        manager = _pending_recheck_manager(manager_with_mocks, session=session)
+        event = HookEvent(
+            event_type=HookEventType.STOP,
+            session_id="conv-1",
+            source=SessionSource.AGY,
+            timestamp=datetime.now(UTC),
+            data={"transcript_path": str(tmp_path / "other.jsonl")},
+            project_id="proj-1",
+            machine_id=LOCAL_MACHINE_ID,
+        )
+        with patch("gobby.hooks.hook_manager.reconcile_session_activation"):
+            response = manager._handle_after_daemon_ready(event)
+        assert response.decision == "allow"
+        assert session.transcript_path == str(target)
+        assert manager._pending_transcript_rechecks == {}
+        cast(Any, manager._session_manager).update.assert_not_called()

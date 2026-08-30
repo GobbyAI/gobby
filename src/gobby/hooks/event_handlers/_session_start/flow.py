@@ -111,7 +111,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         )
         return HookResponse(decision="allow")
 
-    transcript_path = input_data.get("transcript_path")
+    transcript_path: str | None = None
     cwd = hook_cwd(input_data, event.cwd)
 
     session_source = input_data.get("source", "startup")
@@ -340,12 +340,13 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         event.session_id = external_id
         if observed_external_id != external_id:
             event.metadata["_observed_external_id"] = observed_external_id
-        transcript_path = canonical_session.transcript_path or handler._derive_transcript_path(
+        transcript_path = handler._derive_transcript_path(
             cli_source,
             input_data,
             external_id,
             owner_machine_id=canonical_session.machine_id,
             local_machine_id=machine_id,
+            stored_path=canonical_session.transcript_path,
         )
         input_data["transcript_path"] = transcript_path
         session_id = canonical_session.id
@@ -375,14 +376,13 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         external_id = resumed.external_id
         event.session_id = external_id
     elif handler._session_manager:
-        if not transcript_path:
-            transcript_path = handler._derive_transcript_path(
-                cli_source,
-                input_data,
-                external_id,
-                owner_machine_id=machine_id,
-                local_machine_id=machine_id,
-            )
+        transcript_path = handler._derive_transcript_path(
+            cli_source,
+            input_data,
+            external_id,
+            owner_machine_id=machine_id,
+            local_machine_id=machine_id,
+        )
         session_id = handler._session_manager.register_session(
             external_id=external_id,
             machine_id=machine_id,
@@ -525,22 +525,24 @@ def handle_pre_created_session(
     """Handle session start for a pre-created session."""
     handler.logger.info("Found pre-created session %s, updating instead of creating", external_id)
 
-    if not transcript_path:
-        input_data = event.data if event else {}
-        local_machine_id = event.machine_id or handler._get_machine_id()
-        transcript_path = handler._derive_transcript_path(
-            cli_source,
-            input_data,
-            external_id,
-            owner_machine_id=existing_session.machine_id,
-            local_machine_id=local_machine_id,
-        )
+    input_data = event.data if event else {}
+    if transcript_path and "transcript_path" not in input_data:
+        input_data = {**input_data, "transcript_path": transcript_path}
+    local_machine_id = event.machine_id or handler._get_machine_id()
+    transcript_path = handler._derive_transcript_path(
+        cli_source,
+        input_data,
+        external_id,
+        owner_machine_id=existing_session.machine_id,
+        local_machine_id=local_machine_id,
+        stored_path=getattr(existing_session, "transcript_path", None),
+    )
 
     session_obj = existing_session
     if handler._session_manager:
         updated = handler._session_manager.update(
             session_id=existing_session.id,
-            transcript_path=transcript_path,
+            transcript_path=transcript_path if transcript_path else UNSET,
             status="active",
         )
         if updated is not None:

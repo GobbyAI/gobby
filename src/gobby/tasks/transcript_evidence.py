@@ -613,6 +613,7 @@ def _resolve_transcript_path(
         session.external_id,
         owner_machine_id=session.machine_id,
         local_machine_id=local_machine_id,
+        caller_context="recovery",
     )
     if discovered:
         attempted.append(discovered)

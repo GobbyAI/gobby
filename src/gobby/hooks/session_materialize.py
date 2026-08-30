@@ -65,28 +65,22 @@ def activate_deferred_session(
     handlers = manager._event_handlers
     session = manager._session_manager.get(session_id)
     project_id = event.project_id or getattr(session, "project_id", None)
-    transcript_path = event.data.get("transcript_path") or getattr(
-        session,
-        "transcript_path",
-        None,
-    )
     machine_id = event.machine_id or manager.get_machine_id()
-    if not transcript_path:
-        # Grok hooks carry no transcript field; SessionStart used to derive it.
-        transcript_path = handlers._derive_transcript_path(
-            event.source.value,
-            event.data,
-            str(event.session_id or ""),
-            owner_machine_id=machine_id,
-            local_machine_id=machine_id,
+    transcript_path = handlers._derive_transcript_path(
+        event.source.value,
+        event.data,
+        str(event.session_id or ""),
+        owner_machine_id=machine_id,
+        local_machine_id=machine_id,
+        stored_path=getattr(session, "transcript_path", None),
+    )
+    if transcript_path and transcript_path != getattr(session, "transcript_path", None):
+        updated = manager._session_manager.update(
+            session_id=session_id,
+            transcript_path=transcript_path,
         )
-        if transcript_path:
-            updated = manager._session_manager.update(
-                session_id=session_id,
-                transcript_path=transcript_path,
-            )
-            if updated is not None:
-                session = updated
+        if updated is not None:
+            session = updated
     raw_terminal_context = event.data.get("terminal_context")
     terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
     terminal_context = enrich_terminal_context_with_cwd(

@@ -67,6 +67,7 @@ class WatchdogTranscriptResolver:
             external_id,
             owner_machine_id=session.machine_id,
             local_machine_id=local_machine_id,
+            caller_context="recovery",
         )
         if not discovered_path:
             return None

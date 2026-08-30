@@ -723,6 +723,7 @@ async def test_stale_session_discovers_transcript_without_updating_session_row(
         f"child-{run_id}",
         owner_machine_id=LOCAL_MACHINE_ID,
         local_machine_id=LOCAL_MACHINE_ID,
+        caller_context="recovery",
     )
 
 

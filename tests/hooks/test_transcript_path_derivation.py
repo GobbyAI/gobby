@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
-from gobby.hooks.events import HookEventType
+from gobby.hooks.events import HookEventType, HookResponse
 
-from ._event_handler_helpers import make_event
+from ._event_handler_helpers import empty_database_mock, make_event
 
 pytestmark = pytest.mark.unit
 
@@ -215,6 +217,16 @@ class TestTranscriptPathDerivation:
         import gobby.hooks.event_handlers._session_start as session_mod
 
         monkeypatch.setattr(session_mod.Path, "home", staticmethod(lambda: tmp_path))
+        target = (
+            tmp_path
+            / ".grok"
+            / "sessions"
+            / "%2Frepo%2Fmy%20project"
+            / "grok-session"
+            / "updates.jsonl"
+        )
+        target.parent.mkdir(parents=True)
+        target.write_text("{}\n", encoding="utf-8")
 
         result = event_handlers._derive_transcript_path(
             "grok",
@@ -224,14 +236,7 @@ class TestTranscriptPathDerivation:
             local_machine_id=LOCAL_MACHINE_ID,
         )
 
-        assert result == str(
-            tmp_path
-            / ".grok"
-            / "sessions"
-            / "%2Frepo%2Fmy%20project"
-            / "grok-session"
-            / "updates.jsonl"
-        )
+        assert result == str(target)
 
     @pytest.mark.usefixtures("mock_empty_session_variable_manager")
     def test_session_start_derives_qwen_transcript(
@@ -250,3 +255,189 @@ class TestTranscriptPathDerivation:
 
         response = handlers.handle_session_start(event)
         assert response.decision == "allow"
+
+    def test_derive_classifies_hook_path_usable_pending_invalid(
+        self, event_handlers: EventHandlers, tmp_path: Path
+    ) -> None:
+        usable = tmp_path / "usable.jsonl"
+        usable.write_text("{}\n", encoding="utf-8")
+        pending = tmp_path / "pending.jsonl"
+        unreadable_dir = tmp_path / "not-a-file"
+        unreadable_dir.mkdir()
+
+        assert event_handlers._derive_transcript_path(
+            "claude",
+            {"transcript_path": str(usable)},
+            "ext-1",
+            owner_machine_id=LOCAL_MACHINE_ID,
+            local_machine_id=LOCAL_MACHINE_ID,
+        ) == str(usable)
+        assert (
+            event_handlers._derive_transcript_path(
+                "claude",
+                {"transcript_path": str(pending)},
+                "ext-1",
+                owner_machine_id=LOCAL_MACHINE_ID,
+                local_machine_id=LOCAL_MACHINE_ID,
+            )
+            is None
+        )
+        assert (
+            event_handlers._derive_transcript_path(
+                "claude",
+                {"transcript_path": str(unreadable_dir)},
+                "ext-1",
+                owner_machine_id=LOCAL_MACHINE_ID,
+                local_machine_id=LOCAL_MACHINE_ID,
+            )
+            is None
+        )
+
+    @pytest.mark.usefixtures("mock_empty_session_variable_manager")
+    def test_session_start_does_not_persist_pending_agy_path(
+        self,
+        mock_dependencies: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        from types import SimpleNamespace
+
+        from gobby.storage.sessions._update_sentinel import UNSET
+
+        pending = (
+            tmp_path
+            / ".gemini"
+            / "antigravity-cli"
+            / "brain"
+            / "conv-1"
+            / ".system_generated"
+            / "logs"
+            / "transcript_full.jsonl"
+        )
+        handlers = EventHandlers(**mock_dependencies, get_machine_id=lambda: LOCAL_MACHINE_ID)
+        existing = SimpleNamespace(
+            id="sess-1",
+            machine_id=LOCAL_MACHINE_ID,
+            transcript_path=None,
+            project_id="proj-1",
+            agent_run_id=None,
+            session_type="terminal",
+            parent_session_id=None,
+            workflow_name=None,
+            terminal_context=None,
+        )
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="conv-1",
+            source="agy",
+            data={
+                "cwd": str(tmp_path),
+                "source": "startup",
+                "transcript_path": str(pending),
+            },
+        )
+        event.machine_id = LOCAL_MACHINE_ID
+        mock_dependencies["session_manager"].update.return_value = existing
+        mock_dependencies["session_manager"].db = empty_database_mock()
+
+        with (
+            patch.object(handlers, "_activate_default_agent", return_value=None),
+            patch.object(
+                handlers,
+                "_compose_session_response",
+                return_value=HookResponse(decision="allow"),
+            ),
+        ):
+            response = handlers._handle_pre_created_session(
+                existing_session=cast(Any, existing),
+                external_id="conv-1",
+                transcript_path=str(pending),
+                cli_source="agy",
+                event=event,
+                cwd=str(tmp_path),
+            )
+
+        assert response.decision == "allow"
+        mock_dependencies["session_manager"].update.assert_called_with(
+            session_id="sess-1",
+            transcript_path=UNSET,
+            status="active",
+        )
+
+    @pytest.mark.usefixtures("mock_empty_session_variable_manager")
+    def test_handle_session_start_does_not_persist_pending_hook_path(
+        self,
+        mock_dependencies: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        from gobby.hooks.event_handlers._session_start.handoff import SessionStartResolution
+        from gobby.hooks.project_context import HookProjectResolution
+
+        pending = tmp_path / "pending.jsonl"
+        handlers = EventHandlers(**mock_dependencies, get_machine_id=lambda: LOCAL_MACHINE_ID)
+        session_manager = cast(MagicMock, handlers._session_manager)
+        session_manager.get.return_value = None
+        session_manager.find_by_external_id.return_value = None
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-pending",
+            source="claude",
+            data={
+                "cwd": str(tmp_path),
+                "source": "startup",
+                "transcript_path": str(pending),
+            },
+        )
+        event.machine_id = LOCAL_MACHINE_ID
+
+        with (
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.resolve_hook_project_context",
+                return_value=HookProjectResolution("proj-1"),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.resolve_session_start_identity",
+                return_value=SessionStartResolution(session=None, session_source="startup"),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.session_start_should_defer",
+                return_value=False,
+            ),
+            patch.object(handlers, "_activate_materialized_session", return_value=[]),
+            patch.object(
+                handlers,
+                "_compose_session_response",
+                return_value=HookResponse(decision="allow"),
+            ),
+        ):
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        session_manager.register_session.assert_called()
+        assert session_manager.register_session.call_args.kwargs["transcript_path"] is None
+
+    def test_derive_agy_disk_fallback_uses_transcript_full(
+        self, event_handlers: EventHandlers, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        target = (
+            tmp_path
+            / ".gemini"
+            / "antigravity-cli"
+            / "brain"
+            / "conv-1"
+            / ".system_generated"
+            / "logs"
+            / "transcript_full.jsonl"
+        )
+        target.parent.mkdir(parents=True)
+        target.write_text("{}\n", encoding="utf-8")
+        (target.parent / "transcript.jsonl").write_text("{}\n", encoding="utf-8")
+
+        result = event_handlers._derive_transcript_path(
+            "agy",
+            {},
+            "conv-1",
+            owner_machine_id=LOCAL_MACHINE_ID,
+            local_machine_id=LOCAL_MACHINE_ID,
+        )
+        assert result == str(target)

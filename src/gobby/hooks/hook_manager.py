@@ -111,6 +111,7 @@ class HookManager(HookManagerDispatchMixin):
         # Track sessions that have received full metadata injection
         # Key: "{platform_session_id}:{source}" - cleared on daemon restart
         self._injected_sessions: set[str] = set()
+        self._pending_transcript_rechecks: dict[str, int] = {}
 
         # Create all subsystems via factory
         components = HookManagerFactory.create(
@@ -444,6 +445,7 @@ class HookManager(HookManagerDispatchMixin):
         # The hook has project context; the MCP server doesn't. Resolve here so
         # downstream tools get unambiguous UUIDs.
         self._resolve_session_refs_in_tool_input(event)
+        self._recheck_pending_transcript(event)
 
         # Get handler for this event type
         handler = self._get_event_handler(event.event_type)
@@ -606,6 +608,26 @@ class HookManager(HookManagerDispatchMixin):
     def _get_event_handler(self, event_type: HookEventType) -> Any | None:
         """Get the handler method for a HookEventType."""
         return self._event_handlers.get_handler(event_type)
+
+    def _recheck_pending_transcript(self, event: HookEvent) -> None:
+        """Complete a pending transcript association after canonical session resolve."""
+        if event.event_type not in {
+            HookEventType.BEFORE_TOOL,
+            HookEventType.AFTER_TOOL,
+            HookEventType.AFTER_AGENT,
+            HookEventType.STOP,
+        }:
+            return
+        from gobby.hooks.event_handlers._session_start.transcripts import (
+            recheck_pending_transcript_path,
+        )
+
+        recheck_pending_transcript_path(
+            event,
+            session_manager=self._session_manager,
+            budgets=self._pending_transcript_rechecks,
+            local_machine_id=self.get_machine_id(),
+        )
 
     @staticmethod
     def _record_session_activity_pulse(event: HookEvent) -> None:

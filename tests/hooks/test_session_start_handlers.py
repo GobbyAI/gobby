@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Barrier
 from types import SimpleNamespace
 from typing import Any
@@ -647,15 +648,22 @@ class TestSessionStartPreCreatedSession:
         assert response.decision == "allow"
 
     def test_pre_created_session_registers_with_message_processor(
-        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
+        self,
+        mock_dependencies: dict[str, Any],
+        mock_empty_session_variable_manager: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """Test pre-created session registers with message processor."""
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text("{}\n", encoding="utf-8")
         mock_session = MagicMock()
         mock_session.id = "sess-123"
         mock_session.project_id = "proj-123"
         mock_session.parent_session_id = None
         mock_session.agent_depth = 0
         mock_session.agent_run_id = None
+        mock_session.transcript_path = None
+        mock_session.machine_id = "unknown-machine"
 
         mock_dependencies["session_storage"].get.return_value = mock_session
 
@@ -663,13 +671,13 @@ class TestSessionStartPreCreatedSession:
         event = make_event(
             HookEventType.SESSION_START,
             session_id="sess-123",
-            data={"transcript_path": "/path/to/transcript.jsonl"},
+            data={"transcript_path": str(transcript)},
         )
 
         handlers.handle_session_start(event)
 
         mock_dependencies["message_processor_resolver"]().register_session.assert_called_once_with(
-            "sess-123", "/path/to/transcript.jsonl", source="claude"
+            "sess-123", str(transcript), source="claude"
         )
         assert (
             handlers._session_message_processors["sess-123"]
@@ -709,9 +717,14 @@ class TestSessionStartPreCreatedSession:
         assert response.decision == "allow"
 
     def test_existing_web_chat_session_found_by_external_id(
-        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
+        self,
+        mock_dependencies: dict[str, Any],
+        mock_empty_session_variable_manager: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """Codex thread-start events should reuse the durable web-chat row."""
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text("{}\n", encoding="utf-8")
         mock_session = MagicMock()
         mock_session.id = "sess-web-123"
         mock_session.project_id = "proj-123"
@@ -721,6 +734,8 @@ class TestSessionStartPreCreatedSession:
         mock_session.workflow_name = None
         mock_session.session_type = "web_chat"
         mock_session.terminal_context = {}
+        mock_session.transcript_path = None
+        mock_session.machine_id = "unknown-machine"
 
         mock_dependencies["session_storage"].get.return_value = None
         mock_dependencies["session_manager"].find_by_external_id.return_value = mock_session
@@ -734,7 +749,7 @@ class TestSessionStartPreCreatedSession:
         event = make_event(
             HookEventType.SESSION_START,
             session_id="codex-thread-123",
-            data={"transcript_path": "/path/to/transcript.jsonl", "cwd": "/some/dir"},
+            data={"transcript_path": str(transcript), "cwd": "/some/dir"},
         )
 
         response = handlers.handle_session_start(event)
@@ -745,7 +760,7 @@ class TestSessionStartPreCreatedSession:
         mock_dependencies["session_manager"].register_session.assert_not_called()
         mock_dependencies["message_processor_resolver"]().register_session.assert_called_once_with(
             "sess-web-123",
-            "/path/to/transcript.jsonl",
+            str(transcript),
             source="claude",
         )
 
@@ -990,6 +1005,7 @@ class TestSessionStartNewSession:
         self,
         mock_dependencies: dict[str, Any],
         mock_empty_session_variable_manager: MagicMock,
+        tmp_path: Path,
     ) -> None:
         fresh_context = {
             "tmux_pane": "%88",
@@ -1027,6 +1043,8 @@ class TestSessionStartNewSession:
             resumed if session_id == persisted.id else None
         )
 
+        resumed_transcript = tmp_path / "resumed.jsonl"
+        resumed_transcript.write_text("{}\n", encoding="utf-8")
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.SESSION_START,
@@ -1035,7 +1053,7 @@ class TestSessionStartNewSession:
             data={
                 "source": "resume",
                 "cwd": "/work/gobby",
-                "transcript_path": "/tmp/resumed.jsonl",
+                "transcript_path": str(resumed_transcript),
                 "terminal_context": fresh_context,
             },
             metadata={},
@@ -1072,7 +1090,7 @@ class TestSessionStartNewSession:
             machine_id=persisted.machine_id,
             project_id="proj-123",
             source="codex",
-            transcript_path="/tmp/resumed.jsonl",
+            transcript_path=str(resumed_transcript),
             terminal_context={**fresh_context, "cwd": "/work/gobby"},
             workflow_name=None,
             agent_depth=0,

@@ -73,6 +73,7 @@ def test_deferred_grok_session_derives_and_persists_transcript_path() -> None:
         "grok-external",
         owner_machine_id="machine-1",
         local_machine_id="machine-1",
+        stored_path=None,
     )
     manager._session_manager.update.assert_called_once_with(
         session_id="platform-session",
@@ -83,7 +84,8 @@ def test_deferred_grok_session_derives_and_persists_transcript_path() -> None:
     assert activate["session_obj"] is updated
 
 
-def test_native_transcript_path_skips_derivation() -> None:
+def test_native_transcript_path_is_classified_before_use() -> None:
+    native = "/repo/t.jsonl"
     session = SimpleNamespace(
         id="platform-session",
         project_id="project-1",
@@ -91,14 +93,25 @@ def test_native_transcript_path_skips_derivation() -> None:
         transcript_path=None,
     )
     manager = _manager(session, None)
-    event = _event({"prompt": "hello", "cwd": "/repo", "transcript_path": "/repo/t.jsonl"})
+    manager._event_handlers._derive_transcript_path.return_value = native
+    event = _event({"prompt": "hello", "cwd": "/repo", "transcript_path": native})
 
     assert activate_deferred_session(manager, event, BlockingEffectDeadline(123.0)) is None
 
-    manager._event_handlers._derive_transcript_path.assert_not_called()
-    manager._session_manager.update.assert_not_called()
+    manager._event_handlers._derive_transcript_path.assert_called_once_with(
+        "grok",
+        event.data,
+        "grok-external",
+        owner_machine_id="machine-1",
+        local_machine_id="machine-1",
+        stored_path=None,
+    )
+    manager._session_manager.update.assert_called_once_with(
+        session_id="platform-session",
+        transcript_path=native,
+    )
     activate = manager._event_handlers._activate_materialized_session.call_args.kwargs
-    assert activate["transcript_path"] == "/repo/t.jsonl"
+    assert activate["transcript_path"] == native
     assert activate["resolution"] is None
 
 

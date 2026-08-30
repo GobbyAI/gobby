@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -15,27 +14,9 @@ logger = logging.getLogger(__name__)
 
 def _detect_source_from_path(path: str | None) -> str | None:
     """Infer transcript source from a known path shape."""
-    if not path:
-        return None
+    from gobby.sessions.transcript_paths import detect_source_from_path
 
-    normalized = str(Path(path).expanduser())
-    lowered = normalized.lower()
-    parts = Path(normalized).parts
-
-    if ".codex" in parts and "sessions" in parts:
-        return "codex"
-    if Path(normalized).name.startswith("rollout-") and lowered.endswith(".jsonl"):
-        return "codex"
-    if ".qwen" in parts:
-        return "qwen"
-    if ".grok" in parts and "sessions" in parts:
-        return "grok"
-    if ".factory" in parts and "sessions" in parts:
-        return "droid"
-    if ".claude" in parts and "projects" in parts:
-        return "claude"
-
-    return None
+    return detect_source_from_path(path)
 
 
 def _load_json_object(raw: str) -> dict[str, Any] | None:
