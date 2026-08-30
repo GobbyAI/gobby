@@ -161,10 +161,18 @@ def test_claim_startup_context_accepts_jsonb_dict_payload() -> None:
     fake_db = _DictVariablesDB({"_startup_context_injected": False})
     mgr = SessionVariableManager(fake_db)  # type: ignore[arg-type]
 
-    result = mgr.claim_startup_context(S1)
+    result = mgr.claim_startup_context(S1, owner_token="owner-1")
 
-    assert result == "full"
-    assert fake_db.connection.written_variables == {"_startup_context_injected": True}
+    assert result.mode == "full"
+    assert result.generation == 1
+    assert result.state == "claimed"
+    assert fake_db.connection.written_variables == {
+        "_startup_context_claim": {
+            "generation": 1,
+            "owner": "owner-1",
+            "state": "claimed",
+        }
+    }
 
 
 def test_set_variable(db: Any) -> None:
@@ -1023,12 +1031,18 @@ def test_claim_startup_context_persists_installed_defaults(db: Any) -> None:
     _install_variable_default(db, "listed_servers", ["gobby-tasks"])
     mgr = SessionVariableManager(db)
 
-    assert mgr.claim_startup_context(S1) == "full"
+    claim = mgr.claim_startup_context(S1, owner_token="owner-1")
+    assert claim.mode == "full"
+    assert claim.generation == 1
 
-    assert _stored_variables(db, S1) == {
-        "_startup_context_injected": True,
-        "listed_servers": ["gobby-tasks"],
+    stored = _stored_variables(db, S1)
+    assert stored["listed_servers"] == ["gobby-tasks"]
+    assert stored["_startup_context_claim"] == {
+        "generation": 1,
+        "owner": "owner-1",
+        "state": "claimed",
     }
+    assert "_startup_context_injected" not in stored
 
 
 def test_record_edited_file_without_claim_has_no_task_scoped_entry(db: Any) -> None:
@@ -1125,3 +1139,51 @@ def test_upsert_bounded_list_variable_replaces_identity_and_updates_companion(
         },
     ]
     assert variables["audit_ready"] is True
+
+
+class TestStartupContextClaimGeneration:
+    def test_owner_adopts_live_claim_and_strangers_see_live(self, db: Any) -> None:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        mgr = SessionVariableManager(db)
+        first = mgr.claim_startup_context(S1, owner_token="owner-a")
+        adopted = mgr.claim_startup_context(S1, owner_token="owner-a")
+        other = mgr.claim_startup_context(S1, owner_token="owner-b")
+
+        assert first.mode == "full"
+        assert adopted.mode == "full"
+        assert adopted.generation == first.generation
+        assert other.mode == "live"
+        assert other.generation == first.generation
+
+    def test_commit_is_once_and_rollback_allows_redelivery(self, db: Any) -> None:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        mgr = SessionVariableManager(db)
+        claim = mgr.claim_startup_context(S1, owner_token="owner-a")
+        assert mgr.commit_startup_context(S1, claim.generation, "owner-a") is True
+        assert mgr.commit_startup_context(S1, claim.generation, "owner-a") is False
+        committed = mgr.claim_startup_context(S1, owner_token="owner-a")
+        assert committed.mode == "live"
+        assert committed.state == "committed"
+
+        other = mgr.claim_startup_context(S1, owner_token="owner-b")
+        assert mgr.rollback_startup_context(S1, other.generation, "owner-b") is False
+
+        retry = mgr.claim_startup_context(S2, owner_token="owner-c")
+        assert mgr.rollback_startup_context(S2, retry.generation, "owner-c") is True
+        assert mgr.commit_startup_context(S2, retry.generation, "owner-c") is False
+        again = mgr.claim_startup_context(S2, owner_token="owner-d")
+        assert again.mode == "full"
+        assert again.generation == retry.generation + 1
+
+    def test_invalidate_blocks_late_commit(self, db: Any) -> None:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        mgr = SessionVariableManager(db)
+        claim = mgr.claim_startup_context(S1, owner_token="owner-a")
+        assert mgr.invalidate_startup_context(S1, claim.generation, "owner-a") is True
+        assert mgr.commit_startup_context(S1, claim.generation, "owner-a") is False
+        later = mgr.claim_startup_context(S1, owner_token="owner-b")
+        assert later.mode == "full"
+        assert later.generation == claim.generation + 1

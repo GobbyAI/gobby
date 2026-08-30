@@ -104,6 +104,9 @@ class Session:
     sandbox_policy_hash: str | None = None
     workspace_path: str | None = None
     workspace_generation: int = 0
+    startup_claim_generation: int = 0
+    startup_claim_owner: str | None = None
+    startup_claim_state: str = "idle"
     # Task-ref enrichment populated post-load by callers that join the tasks
     # table. Default empty so unenriched Session instances serialize cleanly.
     claimed_task_refs: list[int] = field(default_factory=list)
@@ -198,6 +201,15 @@ class Session:
             workspace_generation=int(row["workspace_generation"] or 0)
             if "workspace_generation" in row.keys()
             else 0,
+            startup_claim_generation=int(row["startup_claim_generation"] or 0)
+            if "startup_claim_generation" in row.keys()
+            else 0,
+            startup_claim_owner=cls._get_optional(row, "startup_claim_owner"),
+            startup_claim_state=(
+                str(row["startup_claim_state"])
+                if "startup_claim_state" in row.keys() and row["startup_claim_state"]
+                else "idle"
+            ),
         )
 
     @classmethod
@@ -317,6 +329,9 @@ class Session:
             "sandbox_policy_hash": self.sandbox_policy_hash,
             "workspace_path": self.workspace_path,
             "workspace_generation": self.workspace_generation,
+            "startup_claim_generation": self.startup_claim_generation,
+            "startup_claim_owner": self.startup_claim_owner,
+            "startup_claim_state": self.startup_claim_state,
             "can_proxy_attach": self.can_proxy_attach,
             "created_at": self.created_at,
             "updated_at": self.updated_at,

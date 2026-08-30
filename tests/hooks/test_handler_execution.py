@@ -60,7 +60,7 @@ class TestReturnValues:
         manager = MagicMock()
         manager.get_variables.return_value = {}
         manager.merge_variables.return_value = True
-        manager.claim_startup_context.return_value = "full"
+        manager.claim_startup_context.return_value = SimpleNamespace(mode="full")
         monkeypatch.setattr(
             "gobby.workflows.state_manager.SessionVariableManager",
             MagicMock(return_value=manager),

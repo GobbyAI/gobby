@@ -91,9 +91,7 @@ def _graceful_error_response(
 
     from gobby.hooks.events import HookResponse
 
-    if context_channel is ContextChannel.ADDITIONAL_CONTEXT:
-        hook_response = HookResponse(decision="allow", context=message)
-    elif context_channel is ContextChannel.SYSTEM_MESSAGE:
+    if context_channel is not ContextChannel.NONE:
         hook_response = HookResponse(decision="allow", context=message)
     else:
         hook_response = HookResponse(decision="allow", system_message=message)

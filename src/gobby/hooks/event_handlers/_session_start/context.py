@@ -58,8 +58,7 @@ def _claim_startup_context_atomically(handler: Any, session_id: str | None) -> C
         from gobby.workflows.state_manager import SessionVariableManager
 
         sv_mgr = SessionVariableManager(handler._session_manager.db)
-        claimed_mode = sv_mgr.claim_startup_context(session_id)
-        return claimed_mode
+        return sv_mgr.claim_startup_context(session_id).mode
     except Exception as e:
         handler.logger.debug("Failed to claim startup context for %s: %s", session_id, e)
         return "full"
@@ -108,6 +107,9 @@ def _has_explicit_context_loss(
 
 
 def _has_prior_context_evidence(session: Any | None, variables: dict[str, Any]) -> bool:
+    claim = variables.get("_startup_context_claim")
+    if isinstance(claim, dict) and claim.get("state") == "committed":
+        return True
     if variables.get("_startup_context_injected") is True:
         return True
     if variables.get("_agent_context_injected") is True:

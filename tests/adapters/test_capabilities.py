@@ -140,12 +140,26 @@ def test_claude_2_1_226_hook_capabilities_are_declared() -> None:
 def test_agy_hook_capabilities_have_no_live_transport_claims() -> None:
     """AGY supports hook install parity only; live runtime transport stays unavailable."""
     capabilities = get_provider_capabilities("agy")
+    inject_steps = getattr(ContextChannel, "INJECT_STEPS", None)
 
     assert capabilities.transport_capabilities == {}
     assert capabilities.supports_permissions is True
     assert capabilities.get_hook("pre_tool_use") is capabilities.get_hook("PreToolUse")
     assert capabilities.get_hook("Stop") is not None
     assert capabilities.get_hook("Stop").decision_style is ProviderDecisionStyle.HARD_STOP
+    assert inject_steps is not None
+    pre_invocation = capabilities.get_hook("PreInvocation")
+    post_invocation = capabilities.get_hook("PostInvocation")
+    assert pre_invocation is not None
+    assert post_invocation is not None
+    assert pre_invocation.context_channel is inject_steps
+    assert post_invocation.context_channel is inject_steps
+    pre_tool = capabilities.get_hook("PreToolUse")
+    post_tool = capabilities.get_hook("PostToolUse")
+    stop = capabilities.get_hook("Stop")
+    assert pre_tool is not None and pre_tool.context_channel is ContextChannel.NONE
+    assert post_tool is not None and post_tool.context_channel is ContextChannel.NONE
+    assert stop is not None and stop.context_channel is ContextChannel.NONE
 
 
 def test_grok_1_0_hook_capabilities_are_declared() -> None:

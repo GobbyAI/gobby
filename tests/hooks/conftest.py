@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -59,7 +60,7 @@ def mock_empty_session_variable_manager(monkeypatch: pytest.MonkeyPatch) -> Magi
     manager = MagicMock()
     manager.get_variables.return_value = {}
     manager.merge_variables.return_value = True
-    manager.claim_startup_context.return_value = "full"
+    manager.claim_startup_context.return_value = SimpleNamespace(mode="full")
 
     manager_cls = MagicMock(return_value=manager)
     monkeypatch.setattr("gobby.workflows.state_manager.SessionVariableManager", manager_cls)

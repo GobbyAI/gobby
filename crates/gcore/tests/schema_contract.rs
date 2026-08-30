@@ -17,14 +17,14 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 412);
+    assert_eq!(identity.latest_asset.version, 414);
     assert_eq!(
         identity.latest_asset.filename,
-        "412_sessions_workspace_path.sql"
+        "414_hook_receipt_effects.sql"
     );
     assert_eq!(
         identity.latest_asset.checksum,
-        "db1bbb0381f3a0f1e2effdec66475e5a22b59e3930ba37d8145ba7c5ccedba58"
+        "9f275218cf1172d001df7b4e42d33512cdb9fd64054ae406ef9024ddc529f610"
     );
     assert_eq!(
         identity.root_hash,

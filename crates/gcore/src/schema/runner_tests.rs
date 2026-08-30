@@ -1729,7 +1729,7 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
     );
-    assert_eq!(MIGRATIONS.len(), 36);
+    assert_eq!(MIGRATIONS.len(), 39);
     assert_eq!(MIGRATIONS[0].version, 376);
     assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
     assert_eq!(MIGRATIONS[1].version, 377);
@@ -2404,7 +2404,11 @@ fn migration_412_on_a_411_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
         return Ok(());
     };
 
-    let through_411 = &MIGRATIONS[..MIGRATIONS.len() - 1];
+    let through_411_end = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 411)
+        .expect("migration 411 is registered");
+    let through_411 = &MIGRATIONS[..=through_411_end];
     assert_eq!(
         through_411.last().map(|migration| migration.version),
         Some(411)
@@ -2425,7 +2429,7 @@ fn migration_412_on_a_411_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
 
     let upgraded = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(!upgraded.baseline_applied);
-    assert_eq!(upgraded.migrations_applied, 1);
+    assert_eq!(upgraded.migrations_applied, 3);
     let repeat = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert_eq!(repeat.migrations_applied, 0);
     let present_workspace: i64 = client
@@ -2437,6 +2441,23 @@ fn migration_412_on_a_411_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
         )?
         .get(0);
     assert_eq!(present_workspace, 1);
+    let present_claim: i64 = client
+        .query_one(
+            "SELECT COUNT(*) FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'sessions'
+           AND column_name = 'startup_claim_generation'",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(present_claim, 1);
+    let present_receipts: i64 = client
+        .query_one(
+            "SELECT COUNT(*) FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_name = 'hook_receipt_effects'",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(present_receipts, 1);
 
     let fresh = SchemaRunner::new(&mut client, "fresh_412")?.apply()?;
     assert!(fresh.baseline_applied);

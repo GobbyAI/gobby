@@ -263,6 +263,20 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "db1bbb0381f3a0f1e2effdec66475e5a22b59e3930ba37d8145ba7c5ccedba58",
         sql: include_str!("../../assets/schema/migrations/412_sessions_workspace_path.sql"),
     },
+    EmbeddedMigration {
+        version: 413,
+        filename: "413_sessions_startup_claim_generation.sql",
+        checksum: "f5e3623d0907ecc5dba6ccc79be0f3ad6e9ff96dbee406f747bf79e48958a8fa",
+        sql: include_str!(
+            "../../assets/schema/migrations/413_sessions_startup_claim_generation.sql"
+        ),
+    },
+    EmbeddedMigration {
+        version: 414,
+        filename: "414_hook_receipt_effects.sql",
+        checksum: "9f275218cf1172d001df7b4e42d33512cdb9fd64054ae406ef9024ddc529f610",
+        sql: include_str!("../../assets/schema/migrations/414_hook_receipt_effects.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

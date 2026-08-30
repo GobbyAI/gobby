@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from typing import Any
 
 from gobby.hooks.events import HookEventType
 
@@ -40,6 +42,24 @@ AGY_FLAT_HOOK_NAMES: tuple[str, ...] = tuple(
 
 # AGY documents `timeout` in seconds.
 AGY_HOOK_TIMEOUT_SECONDS = 45
+
+# Consecutive PostInvocation deny→force_continue emissions per execution.
+# AGY honors force_continue without a native bound; Gobby owns the cap.
+AGY_FORCE_CONTINUE_LIMIT = 10
+
+AGY_PAYLOAD_ALIASES: dict[str, str] = {
+    "conversationId": "session_id",
+    "transcriptPath": "transcript_path",
+    "workspacePaths": "workspace_paths",
+    "artifactDirectoryPath": "artifact_directory_path",
+    "modelName": "model",
+    "stepIdx": "step_idx",
+    "invocationNum": "invocation_num",
+    "initialNumSteps": "initial_num_steps",
+    "executionNum": "execution_num",
+    "terminationReason": "termination_reason",
+    "fullyIdle": "fully_idle",
+}
 
 
 AGY_HOOK_CONTRACTS: dict[str, AgyHookContract] = {
@@ -89,3 +109,36 @@ def get_agy_contract(hook_type: str | None) -> AgyHookContract | None:
     return AGY_HOOK_CONTRACTS.get(hook_type) or AGY_HOOK_CONTRACTS.get(
         AGY_HOOK_ALIASES.get(hook_type, "")
     )
+
+
+def decode_agy_tool_args(value: Any) -> Any:
+    """Decode AGY tool args, keeping a raw fallback for JSON-string forms."""
+
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
+
+
+def apply_agy_payload_aliases(payload: dict[str, Any]) -> dict[str, Any]:
+    """Copy an AGY payload with camelCase keys aliased to Gobby names."""
+
+    data = dict(payload)
+    for native_name, canonical_name in AGY_PAYLOAD_ALIASES.items():
+        if native_name in data and canonical_name not in data:
+            data[canonical_name] = data[native_name]
+
+    tool_call = data.get("toolCall")
+    if isinstance(tool_call, dict):
+        if "tool_name" not in data and "name" in tool_call:
+            data["tool_name"] = tool_call["name"]
+        if "tool_input" not in data and "args" in tool_call:
+            data["tool_input"] = tool_call["args"]
+
+    if not data.get("cwd"):
+        paths = data.get("workspace_paths")
+        if isinstance(paths, list) and paths and isinstance(paths[0], str):
+            data["cwd"] = paths[0]
+    return data

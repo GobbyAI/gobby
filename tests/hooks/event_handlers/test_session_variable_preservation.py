@@ -623,7 +623,7 @@ def test_full_session_start_marks_startup_context_injected(
     activate.assert_not_called()
     variables = SessionVariableManager(temp_db).get_variables(session_id)
     session = SessionManager(temp_db).get(session_id)
-    assert variables["_startup_context_injected"] is True
+    assert variables["_startup_context_claim"]["state"] == "claimed"
     assert session is not None
     assert session.context_injected is True
 

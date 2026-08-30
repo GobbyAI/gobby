@@ -349,7 +349,7 @@ class TestSessionStartContextClaim:
         assert first.mode == "full"
         assert second.mode == "live"
         variables = SessionVariableManager(temp_db).get_variables(session_id)
-        assert variables["_startup_context_injected"] is True
+        assert variables["_startup_context_claim"]["state"] == "claimed"
 
     def test_concurrent_duplicate_session_start_claims_full_context_once(
         self, temp_db: Any
@@ -377,7 +377,7 @@ class TestSessionStartContextClaim:
         assert modes.count("full") == 1
         assert modes.count("live") == 7
         variables = SessionVariableManager(temp_db).get_variables(session_id)
-        assert variables["_startup_context_injected"] is True
+        assert variables["_startup_context_claim"]["state"] == "claimed"
 
     def test_explicit_context_loss_bypasses_existing_startup_claim(self, temp_db: Any) -> None:
         handler = _session_variable_handler(temp_db)
@@ -878,7 +878,7 @@ class TestSessionStartPreCreatedSession:
 
         mock_svm = MagicMock()
         mock_svm.get_variables.return_value = {}
-        mock_svm.claim_startup_context.return_value = "full"
+        mock_svm.claim_startup_context.return_value = SimpleNamespace(mode="full")
         mock_svm_cls.return_value = mock_svm
         mock_dependencies["session_storage"].get.return_value = mock_session
         mock_dependencies["session_manager"].update.return_value = mock_session

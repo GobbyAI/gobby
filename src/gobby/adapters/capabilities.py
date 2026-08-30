@@ -19,6 +19,7 @@ class ContextChannel(StrEnum):
 
     ADDITIONAL_CONTEXT = "additionalContext"
     SYSTEM_MESSAGE = "systemMessage"
+    INJECT_STEPS = "injectSteps"
     NONE = "none"
 
 
@@ -455,18 +456,24 @@ def _agy_capabilities() -> ProviderCapabilities:
     for hook_name, contract in AGY_HOOK_CONTRACTS.items():
         decision_style = ProviderDecisionStyle.TOP_LEVEL_BLOCK
         extra_fields: list[str] = []
+        context_channel = ContextChannel.NONE
         if contract.blocks_tool_call:
             decision_style = ProviderDecisionStyle.PRE_TOOL_USE
             extra_fields.extend(["permission_decision", "auto_approve", "modified_input"])
         elif hook_name == "Stop":
             decision_style = ProviderDecisionStyle.HARD_STOP
+        elif hook_name in {"PreInvocation", "PostInvocation"}:
+            context_channel = ContextChannel.INJECT_STEPS
 
         events[hook_name] = HookCapability(
             hook_name=hook_name,
             event_type=contract.event_type,
             decision_style=decision_style,
-            context_channel=ContextChannel.NONE,
-            supported_response_fields=_response_fields(*extra_fields),
+            context_channel=context_channel,
+            supported_response_fields=_response_fields(
+                *extra_fields,
+                context_channel=context_channel,
+            ),
         )
 
     return ProviderCapabilities(
