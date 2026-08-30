@@ -66,12 +66,7 @@ def _row_tags(row: Any) -> set[str]:
     return {str(tag).lower() for tag in tags}
 
 
-def _definition_has_override_label(row: Any) -> bool:
-    tags = _row_tags(row)
-    if "override" in tags or "override:true" in tags:
-        return True
-
-    payload = getattr(row, "definition_json", None)
+def _payload_has_override(payload: Any) -> bool:
     if isinstance(payload, dict):
         return payload.get("override") is True
     if isinstance(payload, str):
@@ -83,11 +78,23 @@ def _definition_has_override_label(row: Any) -> bool:
     return False
 
 
+def _definition_has_override_label(row: Any) -> bool:
+    if getattr(row, "override", False) is True:
+        return True
+    tags = _row_tags(row)
+    if "override" in tags or "override:true" in tags:
+        return True
+    return _payload_has_override(getattr(row, "definition_json", None)) or _payload_has_override(
+        getattr(row, "definition", None)
+    )
+
+
 def is_bundled_template(row: Any) -> bool:
     """Return whether a definition row is a bundled Gobby template."""
     tags = _row_tags(row)
     source = str(getattr(row, "source", "")).lower()
-    return "gobby" in tags or source in {"gobby", "template"}
+    owner = str(getattr(row, "owner", "")).lower()
+    return "gobby" in tags or source in {"gobby", "template"} or owner == "gobby"
 
 
 # Alias used by the rules router (previously imported from loader.py).

@@ -163,6 +163,7 @@ class MCPTemplateStorageMixin:
                         definition_hash = %s,
                         source_path = %s,
                         enabled = %s,
+                        owner = %s,
                         updated_at = now()
                     WHERE id = %s
                     """,
@@ -171,6 +172,7 @@ class MCPTemplateStorageMixin:
                         next_hash,
                         next_source,
                         next_enabled,
+                        owner,
                         current.id,
                     ),
                 )

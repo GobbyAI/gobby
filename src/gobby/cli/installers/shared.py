@@ -303,12 +303,19 @@ def _sync_user_templates_to_db(db: "HubDatabase") -> int:
     Returns:
         Total number of items synced or updated.
     """
+    from gobby.mcp_proxy.sync_servers import sync_mcp_server_files
+    from gobby.mcp_proxy.sync_templates import sync_bundled_mcp_templates
     from gobby.paths import (
+        get_global_mcp_servers_dir,
+        get_global_mcp_templates_dir,
         get_global_rules_dir,
         get_global_variables_dir,
+        get_project_mcp_servers_dir,
+        get_project_mcp_templates_dir,
         get_project_rules_dir,
         get_project_variables_dir,
     )
+    from gobby.storage.secrets import SecretStore
 
     total = 0
     project_path = Path.cwd()
@@ -359,8 +366,48 @@ def _sync_user_templates_to_db(db: "HubDatabase") -> int:
         except Exception as e:
             logger.warning("Failed to sync user %s from %s: %s", content_type, paths, e)
 
-    # User templates are now created as installed rows directly by the
-    # sync functions above — no separate install step needed.
+    template_roots = [
+        get_project_mcp_templates_dir(project_path),
+        get_global_mcp_templates_dir(),
+    ]
+    if any(path.exists() for path in template_roots):
+        try:
+            sync_result = sync_bundled_mcp_templates(
+                db,
+                template_roots,
+                tag="user",
+                project_id=project_id,
+                project_root=template_roots[0],
+            )
+            synced = sync_result.get("synced", 0) + sync_result.get("updated", 0)
+            total += synced
+            if synced > 0:
+                logger.info("Synced %s user mcp_templates from %s", synced, template_roots)
+            if sync_result.get("orphaned_global"):
+                bundled = sync_bundled_mcp_templates(db)
+                total += bundled.get("synced", 0) + bundled.get("updated", 0)
+        except Exception as e:
+            logger.warning("Failed to sync user mcp_templates from %s: %s", template_roots, e)
+
+    server_roots = [
+        get_project_mcp_servers_dir(project_path),
+        get_global_mcp_servers_dir(),
+    ]
+    if any(path.exists() for path in server_roots):
+        try:
+            sync_result = sync_mcp_server_files(
+                db,
+                server_roots,
+                project_id=project_id,
+                project_root=server_roots[0],
+                secret_store=SecretStore(db),
+            )
+            synced = sync_result.get("synced", 0) + sync_result.get("updated", 0)
+            total += synced
+            if synced > 0:
+                logger.info("Synced %s user mcp_servers from %s", synced, server_roots)
+        except Exception as e:
+            logger.warning("Failed to sync user mcp_servers from %s: %s", server_roots, e)
 
     return total
 

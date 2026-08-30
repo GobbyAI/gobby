@@ -431,6 +431,16 @@ def get_global_variables_dir() -> Path:
     return get_global_workflows_dir() / "variables"
 
 
+def get_global_mcp_templates_dir() -> Path:
+    """Get the global user MCP templates directory: ~/.gobby/mcp/templates/."""
+    return get_gobby_home() / "mcp" / "templates"
+
+
+def get_global_mcp_servers_dir() -> Path:
+    """Get the global user MCP server instance directory: ~/.gobby/mcp/servers/."""
+    return get_gobby_home() / "mcp" / "servers"
+
+
 # ---------------------------------------------------------------------------
 # Project-scoped template directories (.gobby/workflows/<type>/)
 # ---------------------------------------------------------------------------
@@ -459,3 +469,13 @@ def get_project_agents_dir(project_path: Path) -> Path:
 def get_project_variables_dir(project_path: Path) -> Path:
     """Get project variables directory: <project>/.gobby/workflows/variables/."""
     return get_project_workflows_dir(project_path) / "variables"
+
+
+def get_project_mcp_templates_dir(project_path: Path) -> Path:
+    """Get project MCP templates directory: <project>/.gobby/mcp/templates/."""
+    return project_path / ".gobby" / "mcp" / "templates"
+
+
+def get_project_mcp_servers_dir(project_path: Path) -> Path:
+    """Get project MCP server instance directory: <project>/.gobby/mcp/servers/."""
+    return project_path / ".gobby" / "mcp" / "servers"

@@ -33,7 +33,6 @@ from gobby.storage.embedding_generation_state import (
     EmbeddingGenerationState,
     managed_projection_targets,
 )
-from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.sync.memories import MemoryBackupManager
 from gobby.tasks.validation import TaskValidator
@@ -127,21 +126,11 @@ def _init_stateful_dependencies(runner: GobbyRunner) -> None:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.mcp_proxy.metrics_events import MetricsEventStore
     from gobby.projects.write_fence import ProjectWriteFence
+    from gobby.runner_init.mcp_stack import init_mcp_db_manager
     from gobby.storage.projects import LocalProjectManager
 
     runner.project_write_fence = ProjectWriteFence(LocalProjectManager(runner.database).get)
-    runner.mcp_db_manager = LocalMCPManager(runner.database)
-    try:
-        bundled = runner.mcp_db_manager.normalize_bundled_servers()
-    except Exception:
-        logger.exception("error normalizing bundled MCP servers")
-        bundled = {"normalized": 0, "duplicates_removed": 0, "tools_migrated": 0}
-    if bundled["normalized"] or bundled["duplicates_removed"]:
-        logger.info(
-            "Normalized bundled MCP servers: %s normalized, %s duplicates removed",
-            bundled["normalized"],
-            bundled["duplicates_removed"],
-        )
+    init_mcp_db_manager(runner)
     runner.metrics_event_store = MetricsEventStore(runner.database)
     runner.metrics_manager = ToolMetricsManager(
         runner.database,
@@ -741,34 +730,9 @@ def _init_code_indexer(runner: GobbyRunner) -> None:
 
 
 def _init_mcp_stack(runner: GobbyRunner) -> None:
-    runner.mcp_db_manager = LocalMCPManager(runner.database)
-    try:
-        bundled_mcp_stats = runner.mcp_db_manager.normalize_bundled_servers()
-    except Exception:
-        logger.exception("error normalizing bundled MCP servers")
-        bundled_mcp_stats = {"normalized": 0, "duplicates_removed": 0, "tools_migrated": 0}
-    if bundled_mcp_stats["normalized"] or bundled_mcp_stats["duplicates_removed"]:
-        logger.info(
-            "Normalized bundled MCP servers: %s normalized, %s duplicates removed",
-            bundled_mcp_stats["normalized"],
-            bundled_mcp_stats["duplicates_removed"],
-        )
+    from gobby.runner_init.mcp_stack import init_mcp_stack
 
-    from gobby.mcp_proxy.metrics import ToolMetricsManager
-    from gobby.mcp_proxy.metrics_events import MetricsEventStore
-
-    runner.metrics_event_store = MetricsEventStore(runner.database)
-    runner.metrics_manager = ToolMetricsManager(
-        runner.database, event_store=runner.metrics_event_store
-    )
-
-    runner.mcp_proxy = MCPClientManager(
-        mcp_db_manager=runner.mcp_db_manager,
-        metrics_manager=runner.metrics_manager,
-        stdio_errlog_path=str(
-            resolved_log_path(runner.startup_config.logging, RUNTIME_LOG_FILENAME)
-        ),
-    )
+    init_mcp_stack(runner)
 
 
 def _init_memory_backup(runner: GobbyRunner) -> None:

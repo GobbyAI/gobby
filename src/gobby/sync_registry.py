@@ -30,6 +30,11 @@ SYNC_TARGETS: tuple[tuple[str, str, str], ...] = (
         "gobby.agents.detection.registry",
         "sync_bundled_detection_manifests",
     ),
+    (
+        "mcp_templates",
+        "gobby.mcp_proxy.sync_templates",
+        "sync_bundled_mcp_templates",
+    ),
 )
 
 

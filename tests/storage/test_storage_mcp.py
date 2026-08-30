@@ -91,7 +91,12 @@ class TestMCPServer:
         assert config["args"] == ["-y", "@test/server"]
         assert config["env"] == server.env
         assert server.env is not None
-        assert SecretStore(mcp_manager.db).resolve(server.env["API_KEY"]) == "secret"
+        assert (
+            SecretStore(mcp_manager.db).resolve(
+                server.env["API_KEY"], project_id=sample_project["id"]
+            )
+            == "secret"
+        )
         assert config["requires_oauth"] is False
         assert config["connect_timeout"] == 30.0
 
@@ -239,7 +244,10 @@ class TestLocalMCPManager:
         assert server.url == "http://localhost:8080/mcp"
         assert server.headers is not None
         assert (
-            SecretStore(mcp_manager.db).resolve(server.headers["Authorization"]) == "Bearer token"
+            SecretStore(mcp_manager.db).resolve(
+                server.headers["Authorization"], project_id=sample_project["id"]
+            )
+            == "Bearer token"
         )
 
     def test_upsert_stdio_server(
@@ -1437,7 +1445,7 @@ class TestLocalMCPManager:
         assert winner.env is not None
         api_ref = winner.env["API_KEY"]
         store = SecretStore(mcp_manager.db)
-        assert store.resolve(api_ref) == "credential-A-value"
+        assert store.resolve(api_ref, project_id=sample_project["id"]) == "credential-A-value"
 
         loser = mcp_manager.insert_server(
             name="secure-create",
@@ -1452,8 +1460,8 @@ class TestLocalMCPManager:
         assert persisted is not None
         assert persisted.id == winner.id
         assert persisted.env == winner.env
-        assert store.resolve(api_ref) == "credential-A-value"
-        assert len(store.list()) == 1
+        assert store.resolve(api_ref, project_id=sample_project["id"]) == "credential-A-value"
+        assert len(store.list(project_id=sample_project["id"])) == 1
 
     def test_cache_tools_keys_by_server_id(
         self,
@@ -1502,8 +1510,13 @@ class TestMCPServerFromRow:
         assert server.env is not None
         assert server.headers is not None
         secret_store = SecretStore(mcp_manager.db)
-        assert secret_store.resolve(server.env["API_KEY"]) == "secret"
-        assert secret_store.resolve(server.headers["X-Auth"]) == "token"
+        assert (
+            secret_store.resolve(server.env["API_KEY"], project_id=sample_project["id"]) == "secret"
+        )
+        assert (
+            secret_store.resolve(server.headers["X-Auth"], project_id=sample_project["id"])
+            == "token"
+        )
         assert server.description == "Full server"
         assert server.enabled is True
 
@@ -1749,8 +1762,14 @@ class TestMCPServerSecretPersistence:
         assert "database-api-plaintext" not in str(row["env"])
         assert plaintext not in str(row["headers"])
         store = SecretStore(mcp_manager.db)
-        assert store.resolve(server.env["API_KEY"]) == "database-api-plaintext"
-        assert store.resolve(server.headers["Authorization"]) == plaintext
+        assert (
+            store.resolve(server.env["API_KEY"], project_id=sample_project["id"])
+            == "database-api-plaintext"
+        )
+        assert (
+            store.resolve(server.headers["Authorization"], project_id=sample_project["id"])
+            == plaintext
+        )
 
     def test_update_reuses_slot_ref_and_cleans_removed_managed_secret(
         self,
@@ -1781,7 +1800,7 @@ class TestMCPServerSecretPersistence:
         assert updated.env == {"API_KEY": api_ref, "MODE": "safe"}
         assert updated.headers == {}
         store = SecretStore(mcp_manager.db)
-        assert store.resolve(api_ref) == "second-value"
+        assert store.resolve(api_ref, project_id=sample_project["id"]) == "second-value"
         assert store.get(removed_ref.removeprefix("$secret:")) is None
 
     def test_explicit_reference_is_preserved_without_reowning_secret(
@@ -1864,7 +1883,10 @@ class TestMCPServerSecretPersistence:
         )
         assert persisted is not None
         assert persisted.env == {"API_KEY": ref}
-        assert SecretStore(mcp_manager.db).resolve(ref) == "original-secret-value"
+        assert (
+            SecretStore(mcp_manager.db).resolve(ref, project_id=sample_project["id"])
+            == "original-secret-value"
+        )
 
     def test_remove_deletes_owned_secret(
         self,
