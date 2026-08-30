@@ -234,3 +234,18 @@ async def _probe_and_maybe_publish() -> AgySupportRecord | None:
     )
     _publish(record)
     return record
+
+
+__all__ = [
+    "AGY_REQUIRED_VERSION",
+    "AGY_REVALIDATING_REASON",
+    "AGY_UNPUBLISHED_REASON",
+    "AgySupportRecord",
+    "ExecutableIdentity",
+    "agy_support_is_published",
+    "assert_agy_support_published",
+    "ensure_agy_support",
+    "peek_agy_support",
+    "probe_and_publish_agy_support",
+    "reset_agy_support_for_tests",
+]
