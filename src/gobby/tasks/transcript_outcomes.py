@@ -58,10 +58,12 @@ def extract_outcome(
     aggregate_status_is_trustworthy: bool = True,
 ) -> tuple[EvidenceOutcome, int | None, str | None]:
     """Classify one shell result as a validation pass, failure, or unknown."""
-    if not aggregate_status_is_trustworthy and _runner_reported_failures(output):
-        return "failure", _find_exit_code(result), None
-
     exit_code = _find_exit_code(result)
+    if _runner_reported_failures(output) and (
+        not aggregate_status_is_trustworthy or exit_code is None
+    ):
+        return "failure", exit_code, None
+
     if exit_code is not None:
         return ("success" if exit_code == 0 else "failure"), exit_code, None
 
