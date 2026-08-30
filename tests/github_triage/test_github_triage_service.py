@@ -21,7 +21,7 @@ from gobby.github_triage.service import (
 )
 from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore, TriageVerdict
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -724,7 +724,7 @@ async def test_github_mcp_error_preserves_only_safe_rate_limit_metadata(
     service = GitHubIssueTriageService(db=temp_db, mcp_manager=github)
 
     with pytest.raises(service_module.GitHubMCPError) as exc_info:
-        await service._github_call("list_issues", {})
+        await service._github_call("list_issues", {}, project_id=GLOBAL_PROJECT_ID)
 
     error = exc_info.value
     assert error.rate_limit_metadata == {
@@ -761,11 +761,20 @@ async def test_github_call_retries_once_with_bounded_rate_limit_delay(
         max_rate_limit_delay=5.0,
     )
 
-    result = await service._github_call("list_issues", {})
+    result = await service._github_call("list_issues", {}, project_id=GLOBAL_PROJECT_ID)
 
     assert result == {"issues": []}
     sleep.assert_awaited_once_with(expected_delay)
     assert len(github.called("list_issues")) == 2
+
+
+async def test_github_call_rejects_missing_project_scope(temp_db: HubDatabase) -> None:
+    github = FakeGitHubMCP()
+    service = GitHubIssueTriageService(db=temp_db, mcp_manager=github)
+
+    with pytest.raises(ValueError, match="explicit project_id"):
+        await service._github_call("list_issues", {}, project_id="")
+    assert github.calls == []
 
 
 async def test_webhook_without_judge_escalates_and_never_builds(

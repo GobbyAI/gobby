@@ -55,11 +55,10 @@ class LinearIntegration:
     def _resolved_config(self) -> Any:
         from gobby.mcp_proxy.services.server_resolution import as_project_id, resolve_server
 
-        project_id = as_project_id(
-            self.project_id,
-            default=as_project_id(getattr(self.mcp_manager, "project_id", None)),
+        # An integration constructed without a project is explicitly global.
+        return resolve_server(
+            self.mcp_manager, self.server_name, project_id=as_project_id(self.project_id)
         )
-        return resolve_server(self.mcp_manager, self.server_name, project_id=project_id)
 
     def is_available(self) -> bool:
         """Check if Linear MCP server is available.

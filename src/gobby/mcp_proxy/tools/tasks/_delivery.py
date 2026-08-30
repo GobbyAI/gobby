@@ -22,21 +22,14 @@ _GITHUB_TOKEN_SECRET_NAMES = ("github_personal_access_token", "github_token", "g
 logger = logging.getLogger(__name__)
 
 
-def _github_server_id(ctx: Any, mcp_manager: Any) -> str:
-    from gobby.mcp_proxy.services.server_resolution import as_project_id, resolved_server_id
+def _github_server_id(mcp_manager: Any, project_id: str) -> str:
+    from gobby.mcp_proxy.services.server_resolution import resolved_server_id
 
-    project_id = getattr(ctx, "project_id", None)
-    if not isinstance(project_id, str) and hasattr(ctx, "get_current_project_id"):
-        project_id = ctx.get_current_project_id()
-    server_id = resolved_server_id(
-        mcp_manager,
-        "github",
-        project_id=as_project_id(
-            project_id, default=as_project_id(getattr(mcp_manager, "project_id", None))
-        ),
-    )
+    if not (isinstance(project_id, str) and project_id.strip()):
+        raise RuntimeError("Task delivery could not resolve the task's project scope")
+    server_id = resolved_server_id(mcp_manager, "github", project_id=project_id)
     if server_id is None:
-        raise RuntimeError("GitHub MCP server not found for the current project")
+        raise RuntimeError(f"GitHub MCP server not found in project {project_id}")
     return server_id
 
 
@@ -250,6 +243,7 @@ def create_delivery_registry(ctx: RegistryContext) -> InternalToolRegistry:
             pr_payload, created_via, reused = await _open_or_reuse_github_pr(
                 ctx=ctx,
                 db=ctx.task_manager.db,
+                project_id=project_id,
                 source_repo=effective_source_repo,
                 target_repo=effective_target_repo,
                 source_branch=effective_source_branch,
@@ -450,6 +444,7 @@ async def _open_or_reuse_github_pr(
     *,
     ctx: RegistryContext,
     db: Any,
+    project_id: str,
     source_repo: str,
     target_repo: str,
     source_branch: str,
@@ -463,7 +458,9 @@ async def _open_or_reuse_github_pr(
     source_owner, source_name = _split_repo(source_repo)
     head = source_branch if source_repo == target_repo else f"{source_owner}:{source_branch}"
 
-    existing = await _find_existing_pr(ctx, target_owner, target_name, head, target_branch)
+    existing = await _find_existing_pr(
+        ctx, target_owner, target_name, head, target_branch, project_id=project_id
+    )
     if existing is not None:
         return existing, "github_mcp", True
 
@@ -489,7 +486,7 @@ async def _open_or_reuse_github_pr(
     if mcp_manager is None:
         raise RuntimeError("GitHub MCP manager is required to create this pull request")
     created = await mcp_manager.call_tool(
-        _github_server_id(ctx, mcp_manager),
+        _github_server_id(mcp_manager, project_id),
         tool_name="create_pull_request",
         arguments={
             "owner": target_owner,
@@ -511,12 +508,14 @@ async def _find_existing_pr(
     repo: str,
     head: str,
     base: str,
+    *,
+    project_id: str,
 ) -> dict[str, Any] | None:
     mcp_manager = getattr(ctx, "mcp_manager", None)
     if mcp_manager is None:
         return None
     result = await mcp_manager.call_tool(
-        _github_server_id(ctx, mcp_manager),
+        _github_server_id(mcp_manager, project_id),
         tool_name="list_pull_requests",
         arguments={
             "owner": owner,

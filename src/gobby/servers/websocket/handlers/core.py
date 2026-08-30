@@ -62,11 +62,10 @@ class HandlerMixin:
     async def _call_external_mcp(self, mcp_name: str, tool_name: str, args: Any) -> Any:
         from gobby.mcp_proxy.services.server_resolution import as_project_id, resolved_server_id
 
-        project_id = as_project_id(
-            getattr(self, "project_id", None),
-            default=as_project_id(getattr(self.mcp_manager, "project_id", None)),
-        )
-        server_id = resolved_server_id(self.mcp_manager, mcp_name, project_id=str(project_id))
+        # Session-bound calls carry the session's effective project; the
+        # sessionless path is explicitly GLOBAL (as_project_id's default).
+        project_id = as_project_id(getattr(self, "project_id", None))
+        server_id = resolved_server_id(self.mcp_manager, mcp_name, project_id=project_id)
         if server_id is None:
             return {
                 "success": False,

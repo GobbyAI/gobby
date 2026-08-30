@@ -654,16 +654,28 @@ async def test_close_linked_github_issue_tool_comments_labels_and_closes(
 ) -> None:
     class FakeGitHub:
         def __init__(self) -> None:
+            from gobby.mcp_proxy.models import MCPServerConfig
+            from gobby.storage.projects import GLOBAL_PROJECT_ID
+
             self.calls: list[tuple[str, dict[str, object]]] = []
+            self.server_configs = [
+                MCPServerConfig(
+                    name="github",
+                    project_id=GLOBAL_PROJECT_ID,
+                    url="https://github-mcp.example.test",
+                    id="github-global",
+                    enabled=True,
+                )
+            ]
 
         async def call_tool(
             self,
+            server_id: str,
             *,
-            server_name: str,
             tool_name: str,
             arguments: dict[str, Any],
         ) -> dict[str, Any]:
-            assert server_name == "github"
+            assert server_id == "github-global"
             self.calls.append((tool_name, arguments))
             return {}
 

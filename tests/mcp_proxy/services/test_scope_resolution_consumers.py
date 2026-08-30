@@ -22,6 +22,7 @@ from gobby.sync.github_issue_sync import GitHubIssueSyncService
 from gobby.sync.linear import LinearSyncService
 from gobby.sync.task_github_import import GitHubIssueImporter
 from tests.mcp_proxy.services.test_scope_resolution_matrix import (
+    GLOBAL_SERVER_ID,
     OTHER_PROJECT_ID,
     PROJECT_ID,
     PROJECT_SERVER_ID,
@@ -122,7 +123,7 @@ async def test_consumers_resolve_project_instance_by_id() -> None:
         def __init__(self, manager: RecordingManager) -> None:
             self.mcp_manager = as_mcp(manager)
             self.internal_manager = None
-            self.project_id = PROJECT_ID
+            self.project_id: str | None = PROJECT_ID
 
         async def broadcast_autonomous_event(
             self, event: str, session_id: str, **kwargs: Any
@@ -149,9 +150,17 @@ async def test_consumers_resolve_project_instance_by_id() -> None:
     assert unknown["error_code"] == "SERVER_NOT_FOUND"
     assert github_manager.method_ids("call_tool") == []
 
+    sessionless = _Handler(github_manager)
+    sessionless.project_id = None
+    github_manager.calls.clear()
+    await sessionless._call_external_mcp("github", "list_issues", {})
+    _assert_only_id(github_manager, GLOBAL_SERVER_ID, "call_tool")
+
     ctx = SimpleNamespace(mcp_manager=github_manager, project_id=PROJECT_ID)
     github_manager.calls.clear()
-    await _find_existing_pr(cast(RegistryContext, ctx), "owner", "repo", "head", "main")
+    await _find_existing_pr(
+        cast(RegistryContext, ctx), "owner", "repo", "head", "main", project_id=PROJECT_ID
+    )
     _assert_only_id(github_manager, PROJECT_SERVER_ID, "call_tool")
 
     importer = GitHubIssueImporter(db=MagicMock())
@@ -177,3 +186,27 @@ async def test_consumers_resolve_project_instance_by_id() -> None:
     ):
         await linear_svc.list_teams()
     _assert_only_id(linear_manager, LINEAR_PROJECT_ID, "call_tool", "has_server")
+
+
+@pytest.mark.asyncio
+async def test_resolved_server_id_rejects_missing_scope() -> None:
+    from gobby.mcp_proxy.services.server_resolution import (
+        ProjectScopeUnresolvedError,
+        resolved_server_id,
+    )
+
+    manager = RecordingManager(scoped_github_configs(), project_id=PROJECT_ID)
+    for scope in ("", "   "):
+        with pytest.raises(ProjectScopeUnresolvedError):
+            resolved_server_id(manager, "github", project_id=scope)
+    assert manager.method_ids("call_tool") == []
+
+
+def test_delivery_github_server_id_requires_project_scope() -> None:
+    from gobby.mcp_proxy.tools.tasks._delivery import _github_server_id
+
+    manager = RecordingManager(scoped_github_configs(), project_id=PROJECT_ID)
+    with pytest.raises(RuntimeError, match="project scope"):
+        _github_server_id(manager, "")
+
+    assert _github_server_id(manager, PROJECT_ID) == PROJECT_SERVER_ID

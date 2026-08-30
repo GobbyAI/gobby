@@ -698,23 +698,21 @@ class GitHubIssueTriageService:
         arguments: dict[str, Any],
         *,
         required: bool = True,
-        project_id: str | None = None,
+        project_id: str,
     ) -> Any:
         from gobby.github_triage.mcp_call import github_call
-        from gobby.mcp_proxy.services.server_resolution import as_project_id, resolved_server_id
+        from gobby.mcp_proxy.services.server_resolution import resolved_server_id
 
+        if not (isinstance(project_id, str) and project_id.strip()):
+            raise ValueError("GitHub triage requires an explicit project_id for MCP calls")
         if self.mcp_manager is None:
             if required:
                 raise RuntimeError("GitHub MCP manager is not configured")
             return None
-        scope = as_project_id(
-            project_id,
-            default=as_project_id(getattr(self.mcp_manager, "project_id", None)),
-        )
-        server_id = resolved_server_id(self.mcp_manager, "github", project_id=scope)
+        server_id = resolved_server_id(self.mcp_manager, "github", project_id=project_id)
         if server_id is None:
             if required:
-                raise RuntimeError(f"GitHub MCP server not found in project {scope}")
+                raise RuntimeError(f"GitHub MCP server not found in project {project_id}")
             return None
         return await github_call(
             self.mcp_manager,

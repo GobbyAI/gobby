@@ -281,7 +281,7 @@ class GitHubIssueImporter:
         return imported, imported_count
 
     async def _fetch_github_issues_mcp(
-        self, owner: str, repo: str, limit: int, project_id: str | None = None
+        self, owner: str, repo: str, limit: int, *, project_id: str
     ) -> list[dict[str, Any]] | None:
         """Fetch issues using GitHub MCP server. Returns None if unavailable."""
         try:
@@ -291,16 +291,12 @@ class GitHubIssueImporter:
             ctx = get_app_context()
             if not ctx or not ctx.mcp_manager:
                 return None
-            from gobby.mcp_proxy.services.server_resolution import as_project_id, resolved_server_id
+            from gobby.mcp_proxy.services.server_resolution import resolved_server_id
 
-            scope = as_project_id(
-                project_id,
-                default=as_project_id(getattr(ctx.mcp_manager, "project_id", None)),
-            )
-            gh = GitHubIntegration(ctx.mcp_manager, project_id=str(scope))
+            gh = GitHubIntegration(ctx.mcp_manager, project_id=project_id)
             if not gh.is_available():
                 return None
-            server_id = resolved_server_id(ctx.mcp_manager, "github", project_id=str(scope))
+            server_id = resolved_server_id(ctx.mcp_manager, "github", project_id=project_id)
             if server_id is None:
                 return None
             session = await ctx.mcp_manager.get_client_session(server_id)

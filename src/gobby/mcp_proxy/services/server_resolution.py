@@ -191,10 +191,15 @@ def caller_project_id(
     )
 
 
-def resolved_server_id(manager: Any, name: str, *, project_id: str | None) -> str | None:
-    """Resolve ``name`` in ``project_id`` to a manager config id."""
-    scope = as_project_id(project_id, default=as_project_id(getattr(manager, "project_id", None)))
-    config = resolve_server(manager, name, project_id=scope)
+def resolved_server_id(manager: Any, name: str, *, project_id: str) -> str | None:
+    """Resolve ``name`` in ``project_id`` to a manager config id.
+
+    ``project_id`` is the caller's resolved scope. A missing scope is a caller
+    bug and raises instead of silently resolving another project's row.
+    """
+    if not (isinstance(project_id, str) and project_id.strip()):
+        raise ProjectScopeUnresolvedError()
+    config = resolve_server(manager, name, project_id=project_id.strip())
     return None if config is None else config.id
 
 

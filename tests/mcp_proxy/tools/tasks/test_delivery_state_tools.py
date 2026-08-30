@@ -24,17 +24,29 @@ def _registry(temp_db: Any) -> InternalToolRegistry:
 
 class FakeGitHub:
     def __init__(self, list_result: Any | None = None) -> None:
+        from gobby.mcp_proxy.models import MCPServerConfig
+        from gobby.storage.projects import GLOBAL_PROJECT_ID
+
         self.list_result = [] if list_result is None else list_result
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.server_configs = [
+            MCPServerConfig(
+                name="github",
+                project_id=GLOBAL_PROJECT_ID,
+                url="https://github-mcp.example.test",
+                id="github-global",
+                enabled=True,
+            )
+        ]
 
     async def call_tool(
         self,
+        server_id: str,
         *,
-        server_name: str,
         tool_name: str,
         arguments: dict[str, Any],
     ) -> Any:
-        assert server_name == "github"
+        assert server_id == "github-global"
         self.calls.append((tool_name, arguments))
         if tool_name == "list_pull_requests":
             return self.list_result
