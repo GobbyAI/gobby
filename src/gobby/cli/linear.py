@@ -7,6 +7,7 @@ Provides commands for syncing gobby tasks with Linear issues.
 import asyncio
 import logging
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -111,7 +112,7 @@ def _persist_linear_binding(
     *,
     enabled: bool | None = None,
 ) -> None:
-    fields: dict[str, object] = {
+    fields: dict[str, Any] = {
         "linear_team_id": team_id,
         "linear_project_id": linear_project_id,
     }
