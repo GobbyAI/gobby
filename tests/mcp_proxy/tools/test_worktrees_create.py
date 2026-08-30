@@ -1,5 +1,6 @@
 import json
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -12,7 +13,7 @@ from gobby.storage.worktrees import Worktree
 from gobby.utils.project_context import get_project_context
 from gobby.worktrees.git import WorktreeGitManager
 
-STORED_AT = "2026-01-01T00:00:00+00:00"
+STORED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 
 pytestmark = pytest.mark.unit
 
