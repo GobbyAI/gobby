@@ -738,7 +738,11 @@ class TerminalWsMixin:
             frame = await opener(locator)
         except Exception:
             return _log_proxy_attach_failure(row.id, "host_unavailable", exc_info=True)
-        if frame is None:
+        if frame is None or not callable(getattr(frame, "read_message", None)):
+            # The relay pump requires read_message; anything else dies after
+            # the client was already told the attach succeeded.
+            if frame is not None:
+                await _close_frame_quietly(frame)
             return _log_proxy_attach_failure(row.id, "frame_invalid")
         try:
             await self._proxy().start_proxy(

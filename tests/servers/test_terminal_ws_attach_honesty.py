@@ -23,6 +23,7 @@ _Kind = Literal[
     "locator_invalid",
     "opener_raises",
     "frame_none",
+    "frame_unusable",
     "start_proxy_raises",
 ]
 
@@ -59,11 +60,24 @@ async def _none_opener(_locator: AttachLocator) -> object | None:
     return None
 
 
+class _UnusableFrame:
+    """Frame without read_message: the relay pump can never run it."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def close(self) -> None:
+        self.closed = True
+
+
 class _ExplodingFrame:
     """Frame whose handshake blows up inside ProxyHub.start_proxy."""
 
     def __init__(self) -> None:
         self.closed = False
+
+    async def read_message(self) -> dict[str, Any]:
+        raise AssertionError("pump should never start")
 
     async def handshake(self, locator: AttachLocator, *, encoding: str) -> None:
         del locator, encoding
@@ -73,7 +87,9 @@ class _ExplodingFrame:
         self.closed = True
 
 
-def _configure(server: Any, temp_db: HubDatabase, kind: _Kind) -> _ExplodingFrame | None:
+def _configure(
+    server: Any, temp_db: HubDatabase, kind: _Kind
+) -> _ExplodingFrame | _UnusableFrame | None:
     registry = TerminalRuntimeRegistry()
     if kind != "no_runtime":
         if kind == "locator_raises":
@@ -88,10 +104,12 @@ def _configure(server: Any, temp_db: HubDatabase, kind: _Kind) -> _ExplodingFram
         server.open_proxy_frame = _raising_opener
     elif kind == "frame_none":
         server.open_proxy_frame = _none_opener
-    elif kind == "start_proxy_raises":
-        frame = _ExplodingFrame()
+    elif kind in {"frame_unusable", "start_proxy_raises"}:
+        frame: _ExplodingFrame | _UnusableFrame = (
+            _UnusableFrame() if kind == "frame_unusable" else _ExplodingFrame()
+        )
 
-        async def _frame_opener(_locator: AttachLocator) -> _ExplodingFrame:
+        async def _frame_opener(_locator: AttachLocator) -> _ExplodingFrame | _UnusableFrame:
             return frame
 
         server.open_proxy_frame = _frame_opener
@@ -115,6 +133,7 @@ def _configure(server: Any, temp_db: HubDatabase, kind: _Kind) -> _ExplodingFram
         ),
         ("opener_raises", "host_unavailable", "opening the proxy frame connection failed"),
         ("frame_none", "frame_invalid", "proxy frame opener returned an unusable frame"),
+        ("frame_unusable", "frame_invalid", "proxy frame opener returned an unusable frame"),
         (
             "start_proxy_raises",
             "proxy_start_failed",
