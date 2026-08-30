@@ -40,6 +40,9 @@ EMBEDDING_INTERNAL_LIFECYCLE_KEYS = frozenset(
     {EMBEDDING_SWITCH_JOURNAL_KEY, EMBEDDING_SWITCH_COMPLETED_KEY}
 )
 
+# One-shot daemon marker: tool embeddings rewritten to scoped payloads (#21273).
+MCP_SCOPED_PAYLOAD_VERSION_KEY = "mcp.tool_embeddings.scoped_payload_version"
+
 AI_EMBEDDING_CONFIG_KEYS = (
     AI_EMBEDDING_API_BASE_KEY,
     AI_EMBEDDING_MODEL_KEY,

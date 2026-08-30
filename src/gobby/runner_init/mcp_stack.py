@@ -6,6 +6,7 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.embedding_keys import MCP_SCOPED_PAYLOAD_VERSION_KEY
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.metrics import ToolMetricsManager
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCOPED_PAYLOAD_VERSION_KEY = "mcp.tool_embeddings.scoped_payload_version"
+SCOPED_PAYLOAD_VERSION_KEY = MCP_SCOPED_PAYLOAD_VERSION_KEY
 SCOPED_PAYLOAD_VERSION = 1
 
 __all__ = [
@@ -36,6 +37,7 @@ __all__ = [
     "init_mcp_stack",
     "maybe_backfill_scoped_tool_embeddings",
     "resolved_log_path",
+    "schedule_scoped_embedding_backfill",
 ]
 
 
@@ -60,12 +62,18 @@ def _store_set(config_store: Any, key: str, value: Any) -> None:
     if callable(setter):
         setter(key, value)
         return
-    patch = getattr(config_store, "patch", None)
-    if callable(patch):
+    # The marker key is registry-RESTRICTED, so the public patch surface
+    # rejects it; daemon-owned writes go through patch_internal.
+    patch_internal = getattr(getattr(config_store, "mutations", None), "patch_internal", None)
+    if callable(patch_internal):
         from gobby.storage.config_mutations import ConfigPatch
 
         snapshot = config_store.read_snapshot()
-        patch(expected_revision=snapshot.revision, patch=ConfigPatch(values={key: value}))
+        patch_internal(
+            expected_revision=snapshot.revision,
+            patch=ConfigPatch(values={key: value}),
+            source="daemon",
+        )
 
 
 async def maybe_backfill_scoped_tool_embeddings(
@@ -131,32 +139,55 @@ def init_mcp_stack(runner: GobbyRunner) -> None:
             resolved_log_path(runner.startup_config.logging, RUNTIME_LOG_FILENAME)
         ),
     )
-    search = getattr(runner, "semantic_search", None)
-    config_store = getattr(runner, "config_store", None)
-    if search is not None and config_store is not None:
-        import asyncio
+    schedule_scoped_embedding_backfill(
+        getattr(runner, "semantic_search", None),
+        runner.mcp_proxy,
+        config_store=getattr(runner, "config_store", None),
+    )
 
+
+_BACKFILL_TASKS: set[Any] = set()
+
+
+def schedule_scoped_embedding_backfill(
+    search: Any,
+    mcp_manager: Any,
+    *,
+    config_store: Any,
+) -> None:
+    """Run the one-shot scoped-payload backfill, inline or as a loop task."""
+    if search is None or config_store is None:
+        return
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
         try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            try:
-                asyncio.run(
-                    maybe_backfill_scoped_tool_embeddings(
-                        search,
-                        runner.mcp_proxy,
-                        config_store=config_store,
-                    )
-                )
-            except Exception:
-                logger.exception("Scoped tool embedding backfill failed")
-        else:
-            asyncio.create_task(
+            asyncio.run(
                 maybe_backfill_scoped_tool_embeddings(
                     search,
-                    runner.mcp_proxy,
+                    mcp_manager,
                     config_store=config_store,
                 )
             )
+        except Exception:
+            logger.exception("Scoped tool embedding backfill failed")
+    else:
+
+        async def _run() -> None:
+            try:
+                await maybe_backfill_scoped_tool_embeddings(
+                    search,
+                    mcp_manager,
+                    config_store=config_store,
+                )
+            except Exception:
+                logger.exception("Scoped tool embedding backfill failed")
+
+        task = asyncio.create_task(_run())
+        _BACKFILL_TASKS.add(task)
+        task.add_done_callback(_BACKFILL_TASKS.discard)
 
 
 def _expand_instance(

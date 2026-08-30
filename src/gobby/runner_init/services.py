@@ -68,6 +68,7 @@ async def init_stateful_services(runner: GobbyRunner) -> None:
     _init_stateful_dependencies(runner)
     await _register_stateful_services(runner)
     _apply_stateful_services(runner)
+    _schedule_scoped_tool_backfill(runner)
     _init_project_context(runner)
     listener = getattr(runner, "definition_revision_listener", None)
     start = getattr(listener, "start", None)
@@ -120,6 +121,21 @@ class MemoryServiceBundle:
             self._memory_manager.start_projection_scope_repair()
             self._repair_started = True
         return self._memory_manager
+
+
+def _schedule_scoped_tool_backfill(runner: GobbyRunner) -> None:
+    """Kick the one-shot scoped-payload embedding backfill on the daemon path."""
+    from gobby.runner_init.mcp_stack import schedule_scoped_embedding_backfill
+
+    memory = runner.config_runtime.capture().services.get("memory_services")
+    search = memory.semantic_search if isinstance(memory, MemoryServiceBundle) else None
+    if search is None:
+        return
+    schedule_scoped_embedding_backfill(
+        search,
+        runner.mcp_proxy,
+        config_store=ConfigStore(runner.database),
+    )
 
 
 def _init_stateful_dependencies(runner: GobbyRunner) -> None:
