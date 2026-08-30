@@ -148,6 +148,26 @@ def _proxy_effect(**kwargs: Any) -> RuleEffect:
     return RuleEffect(type="proxy_hook", handler="rtk", **kwargs)
 
 
+def _record_rtk_outcomes(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    """Capture every _run_rtk_proxy return value so skip behavior stays assertable."""
+    outcomes: list[bool] = []
+    original = proxy_hooks.ProxyHooksMixin._run_rtk_proxy
+
+    async def _record(
+        mixin: proxy_hooks.ProxyHooksMixin,
+        invocation: proxy_hooks.ProxyHookInvocation,
+        event: HookEvent,
+        *,
+        blocking_deadline: BlockingEffectDeadline | None,
+    ) -> bool:
+        outcome = await original(mixin, invocation, event, blocking_deadline=blocking_deadline)
+        outcomes.append(outcome)
+        return outcome
+
+    monkeypatch.setattr(proxy_hooks.ProxyHooksMixin, "_run_rtk_proxy", _record)
+    return outcomes
+
+
 def _parse_exhaustion_warning(
     caplog: pytest.LogCaptureFixture,
     *,
@@ -598,9 +618,11 @@ async def test_rtk_timeout_passes_through(
 async def test_exhausted_shared_deadline_skips_rtk(
     db: HubDatabase,
     manager: RuleDefinitionManager,
+    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     _create_rule(manager, "proxy-deadline", [_proxy_effect()], priority=10)
+    outcomes = _record_rtk_outcomes(monkeypatch)
 
     with caplog.at_level(logging.WARNING, logger=proxy_hooks.logger.name):
         response = await RuleEngine(db).evaluate(
@@ -610,6 +632,7 @@ async def test_exhausted_shared_deadline_skips_rtk(
             blocking_deadline=BlockingEffectDeadline(time.monotonic() - 1.0),
         )
 
+    assert outcomes == [False]
     assert response.modified_input is None
     spent = _parse_exhaustion_warning(
         caplog,
@@ -643,6 +666,7 @@ async def test_deadline_exhausted_after_the_probe_names_that_site(
         return probe
 
     monkeypatch.setattr(proxy_hooks, "resolve_rtk", _resolve_then_exhaust)
+    outcomes = _record_rtk_outcomes(monkeypatch)
 
     with caplog.at_level(logging.WARNING, logger=proxy_hooks.logger.name):
         response = await RuleEngine(db).evaluate(
@@ -652,6 +676,7 @@ async def test_deadline_exhausted_after_the_probe_names_that_site(
             blocking_deadline=deadline,
         )
 
+    assert outcomes == [False]
     assert response.modified_input is None
     spent = _parse_exhaustion_warning(
         caplog,
