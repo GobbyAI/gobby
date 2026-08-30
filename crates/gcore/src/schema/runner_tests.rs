@@ -1729,7 +1729,7 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
     );
-    assert_eq!(MIGRATIONS.len(), 37);
+    assert_eq!(MIGRATIONS.len(), 38);
     assert_eq!(MIGRATIONS[0].version, 376);
     assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
     assert_eq!(MIGRATIONS[1].version, 377);
@@ -1842,6 +1842,8 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         MIGRATIONS[36].filename,
         "412_mcp_templates_project_secrets.sql"
     );
+    assert_eq!(MIGRATIONS[37].version, 413);
+    assert_eq!(MIGRATIONS[37].filename, "413_session_feedback_review.sql");
     assert!(MIGRATIONS[5].sql.contains("-- gobby:destructive"));
     for migration in MIGRATIONS {
         assert_eq!(
@@ -2466,19 +2468,16 @@ fn migration_412_on_a_411_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    assert_eq!(
-        MIGRATIONS.last().map(|migration| migration.version),
-        Some(412)
-    );
-    assert_eq!(
-        MIGRATIONS.last().map(|migration| migration.filename),
-        Some("412_mcp_templates_project_secrets.sql")
-    );
     let Some((_database, mut client)) = test_database()? else {
         return Ok(());
     };
 
     let through_411 = migrations_through(411);
+    let through_412 = migrations_through(412);
+    assert_eq!(
+        through_412.last().map(|migration| migration.filename),
+        Some("412_mcp_templates_project_secrets.sql")
+    );
     assert_eq!(
         through_411.last().map(|migration| migration.version),
         Some(411)
@@ -2519,10 +2518,12 @@ fn migration_412_on_a_411_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
         .get(0);
     assert!(!secrets_project_before);
 
-    let upgraded = SchemaRunner::new(&mut client, "public")?.apply()?;
+    let upgraded =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", through_412)?.apply()?;
     assert!(!upgraded.baseline_applied);
     assert_eq!(upgraded.migrations_applied, 1);
-    let repeat = SchemaRunner::new(&mut client, "public")?.apply()?;
+    let repeat =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", through_412)?.apply()?;
     assert_eq!(repeat.migrations_applied, 0);
 
     let templates_after: bool = client
@@ -2579,12 +2580,181 @@ fn migration_412_on_a_411_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
         .get(0);
     assert!(secrets_name_project);
 
-    let fresh = SchemaRunner::new(&mut client, "fresh_412")?.apply()?;
+    let fresh =
+        SchemaRunner::with_migrations_for_test(&mut client, "fresh_412", through_412)?.apply()?;
+    assert!(fresh.baseline_applied);
+    assert_eq!(fresh.migrations_applied, through_412.len());
+    assert_eq!(
+        catalog_manifest(&mut client, "public")?,
+        catalog_manifest(&mut client, "fresh_412")?
+    );
+    Ok(())
+}
+
+#[test]
+fn migration_413_on_a_412_hub_remaps_feedback_and_matches_a_fresh_apply() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert_eq!(
+        MIGRATIONS.last().map(|migration| migration.version),
+        Some(413)
+    );
+    assert_eq!(
+        MIGRATIONS.last().map(|migration| migration.filename),
+        Some("413_session_feedback_review.sql")
+    );
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    let through_412 = migrations_through(412);
+    assert_eq!(
+        through_412.last().map(|migration| migration.version),
+        Some(412)
+    );
+    let hub =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", through_412)?.apply()?;
+    assert!(hub.baseline_applied);
+    assert_eq!(hub.migrations_applied, through_412.len());
+
+    let other_label_before: bool = client
+        .query_one(
+            "SELECT EXISTS (
+                 SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'session_feedback'
+                   AND column_name IN ('kind_other_label', 'review_run_id')
+             )",
+            &[],
+        )?
+        .get(0);
+    assert!(!other_label_before);
+    let runs_before: bool = client
+        .query_one(
+            "SELECT to_regclass('public.feedback_review_runs') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    assert!(!runs_before);
+
+    let owner_user_id = Uuid::new_v4();
+    let machine_id = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO users(id, email, name, password_hash) \
+         VALUES ($1, 'feedback-413@example.invalid', 'Feedback Hop', 'test-only')",
+        &[&owner_user_id],
+    )?;
+    client.execute(
+        "INSERT INTO machines(id, hostname, owner_user_id) VALUES ($1, 'feedback-413', $2)",
+        &[&machine_id, &owner_user_id],
+    )?;
+    client.execute(
+        "INSERT INTO projects(id, name, repo_path) VALUES ($1, 'feedback-413', '/tmp/feedback-413')",
+        &[&project_id],
+    )?;
+    client.execute(
+        "INSERT INTO sessions(id, external_id, machine_id, source, project_id) \
+         VALUES ($1, 'feedback-413', $2, 'test', $3)",
+        &[&session_id, &machine_id, &project_id],
+    )?;
+    // One legacy row per remap class, mirroring live free-text values.
+    for (kind, frequency, disposition) in [
+        (
+            "tool-defect",
+            "every-time",
+            Some("fixed in #21247 (f4d4654c3e)"),
+        ),
+        ("useful-behavior", "once this session", None),
+        (
+            "close-gate-latency",
+            "three times on one task",
+            Some("worked around by rerunning"),
+        ),
+        (
+            "weird-kind",
+            "twice this session",
+            Some("Reported for triage only."),
+        ),
+        ("friction", "repeatable", Some("filed-as-#21242")),
+    ] {
+        client.execute(
+            "INSERT INTO session_feedback \
+                 (id, session_id, source, kind, evidence, impact, frequency, disposition) \
+             VALUES ($1, $2, 'close_task', $3, 'evidence', 'impact', $4, $5)",
+            &[
+                &Uuid::new_v4(),
+                &session_id,
+                &kind,
+                &frequency,
+                &disposition,
+            ],
+        )?;
+    }
+
+    let upgraded = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(!upgraded.baseline_applied);
+    assert_eq!(upgraded.migrations_applied, 1);
+    let repeat = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert_eq!(repeat.migrations_applied, 0);
+
+    let remapped: Vec<(String, Option<String>, String, Option<String>)> = client
+        .query(
+            "SELECT kind, kind_other_label, frequency, disposition \
+             FROM session_feedback ORDER BY created_at, kind",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+        .collect();
+    let rows: Vec<(&str, Option<&str>, &str, Option<&str>)> = remapped
+        .iter()
+        .map(|(kind, label, frequency, disposition)| {
+            (
+                kind.as_str(),
+                label.as_deref(),
+                frequency.as_str(),
+                disposition.as_deref(),
+            )
+        })
+        .collect();
+    let mut sorted = rows.clone();
+    sorted.sort_unstable();
+    let mut expected = vec![
+        ("bug", None, "always", Some("fixed")),
+        ("friction", None, "repeated", Some("worked-around")),
+        ("friction", None, "repeated", Some("filed-task")),
+        ("other", Some("weird-kind"), "repeated", Some("noted")),
+        ("useful", None, "once", None),
+    ];
+    expected.sort_unstable();
+    assert_eq!(sorted, expected);
+
+    let runs_after: bool = client
+        .query_one(
+            "SELECT to_regclass('public.feedback_review_runs') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    assert!(runs_after);
+    let review_run_fk: bool = client
+        .query_one(
+            "SELECT EXISTS (
+                 SELECT 1 FROM pg_constraint
+                 WHERE conname = 'session_feedback_review_run_id_fkey'
+             )",
+            &[],
+        )?
+        .get(0);
+    assert!(review_run_fk);
+
+    let fresh = SchemaRunner::new(&mut client, "fresh_413")?.apply()?;
     assert!(fresh.baseline_applied);
     assert_eq!(fresh.migrations_applied, MIGRATIONS.len());
     assert_eq!(
         catalog_manifest(&mut client, "public")?,
-        catalog_manifest(&mut client, "fresh_412")?
+        catalog_manifest(&mut client, "fresh_413")?
     );
     SchemaRunner::new(&mut client, "public")?.verify()?;
     Ok(())

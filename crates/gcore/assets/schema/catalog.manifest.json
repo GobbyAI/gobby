@@ -1889,6 +1889,54 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
+      "name": "feedback_review_runs.actions",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
+      "name": "feedback_review_runs.completed_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "feedback_review_runs.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "feedback_review_runs.digest_md",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "feedback_review_runs.dry_run",
+      "definition": "boolean|bool|NO|false|NEVER"
+    },
+    {
+      "name": "feedback_review_runs.error",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "feedback_review_runs.findings",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
+      "name": "feedback_review_runs.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "feedback_review_runs.rows_considered",
+      "definition": "integer|int4|NO|0|NEVER"
+    },
+    {
+      "name": "feedback_review_runs.status",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "feedback_review_runs.window_end",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "feedback_review_runs.window_start",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
       "name": "gh_issues_triaged.content_hash",
       "definition": "text|text|NO||NEVER"
     },
@@ -3935,6 +3983,14 @@
     {
       "name": "session_feedback.kind",
       "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_feedback.kind_other_label",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "session_feedback.review_run_id",
+      "definition": "uuid|uuid|YES||NEVER"
     },
     {
       "name": "session_feedback.reviewed",
@@ -6639,6 +6695,14 @@
       "definition": "CHECK (state = ANY (ARRAY['disabled'::text, 'pending'::text, 'running'::text, 'healthy'::text, 'degraded'::text, 'rate_limited'::text, 'unready'::text]))"
     },
     {
+      "name": "feedback_review_runs.feedback_review_runs_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "feedback_review_runs.feedback_review_runs_status_vocab",
+      "definition": "CHECK (status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text, 'interrupted'::text]))"
+    },
+    {
       "name": "gh_issues_triaged.gh_issues_triaged_pkey",
       "definition": "PRIMARY KEY (id)"
     },
@@ -7163,12 +7227,20 @@
       "definition": "CHECK (disposition IS NULL OR btrim(disposition) <> ''::text)"
     },
     {
+      "name": "session_feedback.session_feedback_disposition_vocab",
+      "definition": "CHECK (disposition IS NULL OR (disposition = ANY (ARRAY['worked-around'::text, 'filed-task'::text, 'fixed'::text, 'escalated'::text, 'noted'::text])))"
+    },
+    {
       "name": "session_feedback.session_feedback_evidence_nonblank",
       "definition": "CHECK (btrim(evidence) <> ''::text)"
     },
     {
       "name": "session_feedback.session_feedback_frequency_nonblank",
       "definition": "CHECK (btrim(frequency) <> ''::text)"
+    },
+    {
+      "name": "session_feedback.session_feedback_frequency_vocab",
+      "definition": "CHECK (frequency = ANY (ARRAY['once'::text, 'repeated'::text, 'always'::text]))"
     },
     {
       "name": "session_feedback.session_feedback_impact_nonblank",
@@ -7179,8 +7251,24 @@
       "definition": "CHECK (btrim(kind) <> ''::text)"
     },
     {
+      "name": "session_feedback.session_feedback_kind_other_label_nonblank",
+      "definition": "CHECK (kind_other_label IS NULL OR btrim(kind_other_label) <> ''::text)"
+    },
+    {
+      "name": "session_feedback.session_feedback_kind_other_label_pairing",
+      "definition": "CHECK ((kind = 'other'::text) = (kind_other_label IS NOT NULL))"
+    },
+    {
+      "name": "session_feedback.session_feedback_kind_vocab",
+      "definition": "CHECK (kind = ANY (ARRAY['friction'::text, 'bug'::text, 'noise'::text, 'surprise'::text, 'missing-affordance'::text, 'useful'::text, 'other'::text]))"
+    },
+    {
       "name": "session_feedback.session_feedback_pkey",
       "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "session_feedback.session_feedback_review_run_id_fkey",
+      "definition": "FOREIGN KEY (review_run_id) REFERENCES feedback_review_runs(id) ON DELETE SET NULL"
     },
     {
       "name": "session_feedback.session_feedback_session_id_fkey",
@@ -8103,6 +8191,10 @@
       "definition": "CREATE UNIQUE INDEX external_issue_sync_status_pkey ON $schema.external_issue_sync_status USING btree (project_id, provider)"
     },
     {
+      "name": "feedback_review_runs_pkey",
+      "definition": "CREATE UNIQUE INDEX feedback_review_runs_pkey ON $schema.feedback_review_runs USING btree (id)"
+    },
+    {
       "name": "gh_issues_triaged_pkey",
       "definition": "CREATE UNIQUE INDEX gh_issues_triaged_pkey ON $schema.gh_issues_triaged USING btree (id)"
     },
@@ -8519,6 +8611,10 @@
       "definition": "CREATE INDEX idx_external_issue_sync_status_state ON $schema.external_issue_sync_status USING btree (provider, state, updated_at)"
     },
     {
+      "name": "idx_feedback_review_runs_created",
+      "definition": "CREATE INDEX idx_feedback_review_runs_created ON $schema.feedback_review_runs USING btree (created_at DESC)"
+    },
+    {
       "name": "idx_gh_issues_triaged_project_hash",
       "definition": "CREATE INDEX idx_gh_issues_triaged_project_hash ON $schema.gh_issues_triaged USING btree (project_id, content_hash)"
     },
@@ -8857,6 +8953,10 @@
     {
       "name": "idx_secrets_name_project",
       "definition": "CREATE UNIQUE INDEX idx_secrets_name_project ON $schema.secrets USING btree (name, project_id)"
+    },
+    {
+      "name": "idx_session_feedback_review_run",
+      "definition": "CREATE INDEX idx_session_feedback_review_run ON $schema.session_feedback USING btree (review_run_id) WHERE (review_run_id IS NOT NULL)"
     },
     {
       "name": "idx_session_feedback_session_created",
