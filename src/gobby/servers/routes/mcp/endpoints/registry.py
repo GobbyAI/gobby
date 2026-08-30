@@ -247,6 +247,53 @@ async def refresh_mcp_tools(
                     continue
                 work.append((name, config))
 
+        filtered = server_filter is not None or bool(server_id_filter)
+        if server.mcp_manager and filtered and not any(config is not None for _, config in work):
+            # A filtered refresh may target a row synced after startup that the
+            # manager has not loaded yet; refresh_server self-heals from the DB.
+            from gobby.mcp_proxy.client_manager.server_registry import config_from_server
+
+            mcp_db = server._mcp_db_manager
+            row = None
+            if mcp_db is not None:
+                if server_id_filter:
+                    row = mcp_db.get_server_by_id(str(server_id_filter))
+                    if row is not None and str(row.project_id) not in (
+                        project_id,
+                        GLOBAL_PROJECT_ID,
+                    ):
+                        row = None
+                elif server_filter is not None:
+                    # Project row shadows global, mirroring resolve_server.
+                    row = mcp_db.get_server(server_filter, project_id=project_id)
+                    if row is None and project_id != GLOBAL_PROJECT_ID:
+                        row = mcp_db.get_server(server_filter, project_id=GLOBAL_PROJECT_ID)
+            if row is not None:
+                if getattr(row, "enabled", True):
+                    work.append((row.name, config_from_server(row)))
+                else:
+                    stats["by_server"][str(row.id)] = {
+                        "error": "server_disabled",
+                        "name": row.name,
+                        "scope": (
+                            "global" if str(row.project_id) == GLOBAL_PROJECT_ID else "project"
+                        ),
+                    }
+
+        if filtered and not work and not stats["by_server"]:
+            wanted = server_filter or str(server_id_filter)
+            searched = (
+                "global scope"
+                if project_id == GLOBAL_PROJECT_ID
+                else f"project {project_id} and global scope"
+            )
+            return {
+                "success": False,
+                "error": f"Unknown MCP server: '{wanted}' (searched {searched})",
+                "error_code": "unknown_server",
+                "response_time_ms": (time.perf_counter() - start_time) * 1000,
+            }
+
         for server_name, instance in work:
             try:
                 tools: list[dict[str, Any]] = []

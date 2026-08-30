@@ -62,6 +62,17 @@ def resolve_cli_mcp_project(*, global_scope: bool) -> tuple[str | None, str]:
     return project_id, "project"
 
 
+def _cwd_project_id() -> str | None:
+    """Best-effort registered-project id for the current directory."""
+    from gobby.cli.installers.shared import registered_project_id
+    from gobby.cli.runtime import require_cli_database
+
+    try:
+        return registered_project_id(require_cli_database(), Path.cwd())
+    except Exception:
+        return None
+
+
 def _stdin_is_tty() -> bool:
     isatty = getattr(sys.stdin, "isatty", None)
     return bool(isatty()) if callable(isatty) else False
@@ -127,7 +138,11 @@ def list_servers(ctx: click.Context, json_format: bool) -> None:
     if not check_daemon_running(client):
         sys.exit(1)
 
-    result = call_mcp_api(client, "/api/mcp/servers", method="GET")
+    endpoint = "/api/mcp/servers"
+    project_id = _cwd_project_id()
+    if project_id:
+        endpoint = f"{endpoint}?project_id={project_id}"
+    result = call_mcp_api(client, endpoint, method="GET")
     if result is None:
         sys.exit(1)
 
@@ -714,15 +729,19 @@ def refresh_tools(ctx: click.Context, force: bool, server: str | None, json_form
     if not check_daemon_running(client):
         sys.exit(1)
 
+    json_data: dict[str, Any] = {
+        "cwd": os.getcwd(),
+        "force": force,
+        "server": server,
+    }
+    project_id = _cwd_project_id()
+    if project_id:
+        json_data["project_id"] = project_id
     result = call_mcp_api(
         client,
         "/api/mcp/refresh",
         method="POST",
-        json_data={
-            "cwd": os.getcwd(),
-            "force": force,
-            "server": server,
-        },
+        json_data=json_data,
         timeout=300.0,  # Embedding generation can be slow
     )
     if result is None:

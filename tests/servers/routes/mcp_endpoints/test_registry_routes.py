@@ -505,6 +505,145 @@ class TestMCPRegistryRoutes:
         ]
         mock_server.mcp_manager.ensure_connected.assert_awaited_once_with("github-mcp")
 
+    def test_refresh_server_id_filter_loads_row_absent_from_manager(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        """A server_id refresh reaches a DB row the manager has not loaded yet."""
+        from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+        row = MagicMock()
+        row.id = "row-1"
+        row.name = "lightspeed"
+        row.enabled = True
+        row.project_id = GLOBAL_PROJECT_ID
+        row.to_config.return_value = {
+            "id": "row-1",
+            "name": "lightspeed",
+            "transport": "stdio",
+            "command": "uvx",
+            "args": [],
+            "env": {},
+            "enabled": True,
+            "project_id": GLOBAL_PROJECT_ID,
+        }
+        mock_server._mcp_db_manager = MagicMock()
+        mock_server._mcp_db_manager.get_server_by_id.return_value = row
+        mock_server.mcp_manager = MagicMock()
+        mock_server.mcp_manager.server_configs = []
+        mock_server.mcp_manager.refresh_server = AsyncMock()
+        mock_server.mcp_manager.get_server_config.return_value = None
+
+        mock_tool = MagicMock()
+        mock_tool.name = "listPets"
+        mock_tool.description = "List pets"
+        mock_tool.input_schema = {"type": "object"}
+        mock_session = AsyncMock()
+        tools_result = MagicMock()
+        tools_result.tools = [mock_tool]
+        mock_session.list_tools.return_value = tools_result
+        mock_server.mcp_manager.ensure_connected = AsyncMock(return_value=mock_session)
+
+        with (
+            patch("gobby.mcp_proxy.schema_hash.SchemaHashManager") as MockSHM,
+            patch("gobby.mcp_proxy.schema_hash.compute_schema_hash", return_value="h"),
+        ):
+            shm = MockSHM.return_value
+            shm.check_tools_for_changes.return_value = {
+                "new": ["listPets"],
+                "changed": [],
+                "unchanged": [],
+            }
+            shm.cleanup_stale_hashes.return_value = 0
+
+            response = client.post("/api/mcp/refresh", json={"server_id": "row-1"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["stats"]["servers_processed"] == 1
+        mock_server._mcp_db_manager.get_server_by_id.assert_called_once_with("row-1")
+        mock_server.mcp_manager.refresh_server.assert_awaited_once_with("row-1")
+
+    def test_refresh_name_filter_loads_row_absent_from_manager(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        """A --server refresh finds a scoped DB row the manager has not loaded."""
+        from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+        row = MagicMock()
+        row.id = "row-2"
+        row.name = "lightspeed"
+        row.enabled = True
+        row.project_id = GLOBAL_PROJECT_ID
+        row.to_config.return_value = {
+            "id": "row-2",
+            "name": "lightspeed",
+            "transport": "stdio",
+            "command": "uvx",
+            "args": [],
+            "env": {},
+            "enabled": True,
+            "project_id": GLOBAL_PROJECT_ID,
+        }
+        mock_server._mcp_db_manager = MagicMock()
+        mock_server._mcp_db_manager.get_server.return_value = row
+        mock_server.mcp_manager = MagicMock()
+        mock_server.mcp_manager.server_configs = []
+        mock_server.mcp_manager.refresh_server = AsyncMock()
+        mock_server.mcp_manager.get_server_config.return_value = None
+
+        mock_tool = MagicMock()
+        mock_tool.name = "listPets"
+        mock_tool.description = "List pets"
+        mock_tool.input_schema = {"type": "object"}
+        mock_session = AsyncMock()
+        tools_result = MagicMock()
+        tools_result.tools = [mock_tool]
+        mock_session.list_tools.return_value = tools_result
+        mock_server.mcp_manager.ensure_connected = AsyncMock(return_value=mock_session)
+
+        with (
+            patch("gobby.mcp_proxy.schema_hash.SchemaHashManager") as MockSHM,
+            patch("gobby.mcp_proxy.schema_hash.compute_schema_hash", return_value="h"),
+        ):
+            shm = MockSHM.return_value
+            shm.check_tools_for_changes.return_value = {
+                "new": ["listPets"],
+                "changed": [],
+                "unchanged": [],
+            }
+            shm.cleanup_stale_hashes.return_value = 0
+
+            response = client.post("/api/mcp/refresh", json={"server": "lightspeed"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["stats"]["servers_processed"] == 1
+        mock_server._mcp_db_manager.get_server.assert_called_once_with(
+            "lightspeed", project_id=GLOBAL_PROJECT_ID
+        )
+        mock_server.mcp_manager.refresh_server.assert_awaited_once_with("row-2")
+
+    def test_refresh_unknown_filter_returns_unknown_server_error(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        """An explicit filter matching nothing anywhere is an error, not a silent zero."""
+        mock_server._mcp_db_manager = MagicMock()
+        mock_server._mcp_db_manager.get_server.return_value = None
+        mock_server._mcp_db_manager.get_server_by_id.return_value = None
+        mock_server.mcp_manager = MagicMock()
+        mock_server.mcp_manager.server_configs = []
+
+        response = client.post("/api/mcp/refresh", json={"server": "ghost"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["error_code"] == "unknown_server"
+        assert "ghost" in data["error"]
+        assert "global scope" in data["error"]
+
     def test_refresh_external_server_connection_error(
         self, client: TestClient, mock_server: MagicMock
     ) -> None:
