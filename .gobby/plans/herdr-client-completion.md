@@ -24,8 +24,9 @@ remotely without Stage 3 (`docs/architecture/evolution.md`). The client never ca
 VT engine: the host emulates, `FrameData::to_ratatui_buffer`
 (`crates/gterminal/src/protocol/wire_types.rs`) ships Zig-free, and every backend —
 native and tmux — renders through the host's frame stream. Before the client pins the
-wire byte-for-byte, the WS defects found after landing on that same contract (#21191,
-#21207, #21209) are fixed and the golden corpus moves to its canonical path.
+wire byte-for-byte, the WS defects found after landing on that same contract are fixed
+— #21207 and #21209 landed with the epic #21211 merge (`39813d693d`), #21191 remains —
+and the golden corpus moves to its canonical path.
 
 ## Constraints
 `kind: framing`
@@ -41,8 +42,14 @@ wire byte-for-byte, the WS defects found after landing on that same contract (#2
    consumes (P1). Native-runtime hardening (QA 2.3–2.9, 4.1, 4.2, 4.6, P8, P3, P5, the
    flip) is D1; hub-wide roster/attach routing and capability tokens are D2 (#20202,
    blocked by #19600 and #19647); plugins are D3 (#20201).
-3. Hangers: #21191, #21207, #21209 fold in as P1. #21204, #21198, #21125, #21208,
-   #21206 stay under #21120 / #21211.
+3. Hangers: #21191 folds in as P1 (still open, no commits). #21207 and #21209 are
+   closed — their fixes landed on `0.5.0` with the epic #21211 merge (`39813d693d`,
+   plus the #21258/#21259 review fixes on that branch) — so 1.2 carries only the
+   residual delta. #21204, #21206, and #21208 closed with the same epic; #21198 and
+   #21125 stay under #21120. The merge review's follow-ups #21264–#21270 are filed as
+   ordinary tasks outside this plan; #21266 (bridge-creation mapping cache) and
+   #21268 (history-path `|| terminal_id` fallback) touch 1.2-adjacent code, and a
+   leaf landing near them re-verifies instead of folding them in.
 4. Parity: port herdr's keep-set `TestBackend` render tests (4.1); no live-herdr screen
    diff — gclient-only screen goldens (4.2).
 5. Keymap: herdr v0.8.0 defaults ported with the chrome; plugin-menu bindings reserved
@@ -70,11 +77,16 @@ wire byte-for-byte, the WS defects found after landing on that same contract (#2
    aliased.
 
 **Wire facts the plan builds on (verified on `0.5.0` at `001e243887`; re-verified at
-`a446bf15cc` — the only intervening changes under the audited paths are #21214/#21215's
-`TerminalRuntimeRegistry` work in `src/gobby/terminals/`, which moves no fact below).**
+`a446bf15cc`, where the only intervening changes under the audited paths were
+#21214/#21215's `TerminalRuntimeRegistry` work in `src/gobby/terminals/`; re-verified
+again at `b1de6f9c0c` after the epic #21211 merge `39813d693d`, whose deltas are folded
+into the bullets below).**
 
-- `terminal_attach_result` today carries `type`, `request_id`, `attachment_id`, `rows`,
-  `cols`, `backend`, `frame_delivery`, `lease_generation`, `success` and no `direct` block
+- `terminal_attach_result` today carries `type`, `request_id`, `terminal_id`,
+  `attachment_id`, `rows`, `cols`, `backend`, `frame_delivery`, `lease_generation`,
+  `success` and no `direct` block; since the #21211 merge a failed proxy attach answers
+  `success: false` with `code` and `reason` from `PROXY_ATTACH_FAILURE_REASONS`, and
+  the failure frame still carries the finalized lease's `attachment_id`
   (`src/gobby/servers/websocket/terminal_ws.py::TerminalWsMixin._handle_terminal_attach`).
 - `ProxyHub.start_proxy` hardcodes `handshake(locator, encoding="terminal_ansi")`; the
   host's default `RenderEncoding::SemanticFrame` maps to empty `terminal_output`
@@ -84,11 +96,17 @@ wire byte-for-byte, the WS defects found after landing on that same contract (#2
   publishes no `snapshot`; `terminal_event` carries no `seq`; there is no
   `daemon_epoch`. `TerminalLeaseRegistry` (`src/gobby/terminals/leases.py`) already
   owns `next_message_seq` and is process-wide.
-- `terminal_output` is emitted from `BroadcastMixin.broadcast_terminal_output` (tmux PTY
-  bridge; `attachment_id` defaults to `None`) and from `proxy_relay._map_host_frame`
-  (correct ids). `_handle_terminal_input` is defined twice
-  (`terminal_ws.py:484`, `handlers/core.py:285`); `server.py:361` binds the name
-  unqualified.
+- `terminal_output` is emitted from `BroadcastMixin.broadcast_terminal_output`
+  (`attachment_id` still defaults to `None`) and from `proxy_relay._map_host_frame`
+  (correct ids). Since #21209 the PTY/tmux callback routes through
+  `runner_broadcasting._emit_pty_terminal_output`, which resolves the live bridge so
+  tmux web-attach frames carry the row id in `terminal_id` and the attachment id in
+  `attachment_id`, while agent/FIFO streams keep `terminal_id=run_id` with
+  `attachment_id: null` (#21266 tracks caching that per-chunk lookup). The web hook
+  routes `terminal_output` by `attachment_id` alone; only its `terminal_attach_history`
+  path retains a `|| terminal_id` fallback (#21268). `_handle_terminal_input` is
+  defined twice (`terminal_ws.py:532`, `handlers/core.py:285`); `server.py:361` binds
+  the name unqualified.
 - The golden corpus is 31 files at `tests/servers/fixtures/terminal_ws_golden/` with no
   `manifest.json`; `test_python_matches_terminal_ws_golden_corpus` proves only
   `encode(decode(raw)) == raw`. `crates/gclient/tests/ws_golden.rs` and
@@ -284,67 +302,59 @@ handler and keeps its test.
 - 1.1.6 - Over the real WebSocket path, with the connection still usable, a chunked `terminal_input` whose middle invocation fails deterministically returns `terminal_write_outcome` with `outcome="indeterminate"` and `reason="indeterminate_partial_delivered:<n>"`, and a backend timeout mid-chunk returns `outcome="indeterminate"` with `reason="indeterminate_backend"`; no new outcome value appears on the wire. test: `tests/servers/test_terminal_ws_input.py::test_partial_write_reports_indeterminate_on_the_wire`.
 - 1.1.7 - Every `write_input` failure, backend timeout, and handler-task cancellation completes the `client_write_seq` in the lease ledger: after each of those outcomes a replay of the same seq with a different payload fingerprint is refused with `write_seq_conflict`, a same-fingerprint replay is served the completed entry's recorded outcome rather than joining a dead in-flight entry, and the next seq is admitted and delivered, so no attachment is left permanently unwritable. The cancellation branch is asserted separately — the ledger entry closes, `CancelledError` propagates out of the handler, and no `terminal_write_outcome` is written to the socket. test: `tests/servers/test_terminal_ws_input.py::test_failed_write_completes_ledger_and_admits_next_seq`, `tests/servers/test_terminal_ws_input.py::test_disconnect_cancellation_closes_ledger_without_replying`.
 
-### 1.2 Make `terminal_attach` honest and put the right ids on `terminal_output` [category: code] (depends: 1.1)
+### 1.2 Close out attach honesty: drive the `attach_terminal` unwind branch and port the stale e2e mocks [category: test] (depends: 1.1)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/servers/websocket/terminal_ws.py::TerminalWsMixin._start_proxy_attach`
-- `src/gobby/servers/websocket/terminal_ws.py::TerminalWsMixin._handle_terminal_attach`
-- `src/gobby/servers/websocket/broadcast.py::BroadcastMixin.broadcast_terminal_output`
-- `src/gobby/runner_broadcasting.py::broadcast_terminal_output`
-- `src/gobby/agents/tmux/pty_bridge.py::*` — scope-reason: the tmux output emitter passes both the row id and the attachment id
-- `web/src/hooks/useTmuxSessions.ts::*` — scope-reason: output is routed by `attachment_id` alone; the `|| terminal_id` fallback is deleted
-- `tests/servers/test_terminal_ws_attach_honesty.py`
-- `src/gobby/servers/websocket/proxy_relay.py::ProxyHub.start_proxy`
-- `tests/servers/websocket/test_broadcast.py::*` — scope-reason: `broadcast_terminal_output` assertions carry both ids
-- `web/src/hooks/__tests__/useTmuxSessions.test.ts::*` — scope-reason: routing assertions for the fixed `terminal_output` shape
-- `src/gobby/servers/websocket/tmux.py::TmuxMixin.broadcast_terminal_output`
-- `web/tests/style-surfaces.spec.ts::*` — scope-reason: migrate its terminal attach/output WebSocket mock to attachment_id routing
-- `web/tests/terminal-colors.spec.ts::*` — scope-reason: migrate its terminal attach/output WebSocket mock to attachment_id routing
+- `tests/servers/test_terminal_ws_attach_honesty.py::*` — scope-reason: a new `attach_raises` parametrize row plus the frame fake it drives (handshake succeeds, `attach_terminal` raises)
+- `web/tests/style-surfaces.spec.ts::*` — scope-reason: its WebSocket terminal mock still speaks the pre-#20272 wire (`terminal_attach_result` with `streaming_id` and no `attachment_id`; `terminal_output` keyed by `run_id`), which the merged attachment-routed hook no longer delivers
+- `web/tests/terminal-colors.spec.ts::*` — scope-reason: same stale pre-#20272 mock shape as `style-surfaces.spec.ts`
 
-Tasks #21207 and #21209. `_start_proxy_attach` has four early returns covering five
-failure conditions (no runtime for the backend, no `open_proxy_frame`,
-`open_proxy_frame` itself raising, `attach_locator` raising, a non-`AttachLocator`
-result); two log nothing and `_handle_terminal_attach` replies `success: true`
-regardless, so a proxy client waits forever for frames. Make `_start_proxy_attach`
-return `str | None` — a typed code on failure (`runtime_unavailable`,
-`proxy_unavailable`, `locator_failed`, `locator_invalid`, and `host_unavailable` when
-the frame handshake itself fails) — log each at warning level with the terminal id and
-reason, and have `_handle_terminal_attach` answer `{"success": false, "code": <code>,
-"reason": <text>}` and finalize the just-registered attachment (`registry.finalize`)
-instead of leaving a ghost record. Lease loss never finalizes an attachment; attach
-failure always does.
+What this section originally demanded landed on `0.5.0` with the epic #21211 merge
+(`39813d693d`), verified at `b1de6f9c0c`:
 
-**Failing the attach is not enough — the attempt has to unwind.** `_start_proxy_attach`
-opens the frame connection itself (`open_proxy_frame`) and only then calls
-`ProxyHub.start_proxy`, which performs `handshake` and `attach_terminal` *before* it
-registers the record in `attachments`/`by_socket` and starts the pump. Every failure
-between those two points — and `host_unavailable` is exactly that failure — leaves an
-open host connection and a reserved observer that no map references, so
-`registry.finalize` cannot reach it: it removes the lease record and nothing else, and
-the socket survives for the life of the process. Make proxy startup transactional
-instead. Once `open_proxy_frame` returns, that connection is owned by the attempt: a
-handshake failure, an `attach_terminal` failure, or a failure while installing the
-record closes the frame and removes whatever partial map entry or pump task was already
-installed, in reverse order, before the typed code is returned. `start_proxy` unwinds
-its own partial registration and `_start_proxy_attach` closes the frame it opened. Both
-paths are idempotent, and a close that itself raises is logged without masking the
-original attach code.
+- `_start_proxy_attach` returns `str | None` with seven typed codes —
+  `runtime_unavailable`, `proxy_unavailable`, `locator_failed`, `locator_invalid`,
+  `host_unavailable` (the frame connection failing to open), plus `frame_invalid` and
+  `proxy_start_failed` from the #21258 review fixes — each logged at warning with the
+  terminal id and reason (`PROXY_ATTACH_FAILURE_REASONS`), and
+  `_handle_terminal_attach` answers `success: false` with `code` and `reason` and
+  finalizes the just-registered attachment (#21207, `c1f335c528`).
+- The unwind holds without a transactional `start_proxy`: `ProxyHub.start_proxy` runs
+  `handshake` and `attach_terminal` *before* it installs the
+  `attachments`/`by_socket` record and starts the pump, so no partial registration
+  can exist when either raises; `_start_proxy_attach` owns the frame it opened and
+  closes it on `frame_invalid` and `proxy_start_failed` (`_close_frame_quietly` logs
+  a raising close at debug without masking the attach code).
+- `terminal_output` carries both ids: `runner_broadcasting._emit_pty_terminal_output`
+  remaps the PTY/tmux stream via the live bridge (#21209, `ca05558a4b`); the web hook
+  routes output by `attachment_id` alone and treats an attach result as success only
+  on `success === true`, surfacing `reason`/`message`/`code` (#21259, `c7822d3ecf`).
+- Coverage already on `0.5.0`:
+  `test_proxy_attach_failures_are_typed_and_finalized` parametrizes all seven codes
+  and asserts the failure reply, the closed frame, no lease record, no
+  `attachments`/`by_socket` entry, the warning log, and `stale_attachment` on a
+  follow-up take-control; `tests/servers/test_pty_terminal_output_ids.py` and
+  `tests/servers/websocket/test_broadcast.py::test_broadcast_terminal_output_includes_attachment_id`
+  pin the ids; `web/src/hooks/__tests__/useTmuxSessions.test.ts` pins the client
+  routing and attach honesty.
 
-`broadcast_terminal_output` today defaults `attachment_id=None` and the tmux bridge
-passes the attachment id as `terminal_id`; `TmuxMixin.broadcast_terminal_output` is a
-`TYPE_CHECKING` stub declaration with no body, so its signature only tracks the new
-required parameter. Make `attachment_id: str` required, pass the
-terminals-row id as `terminal_id`, and update the two callers
-(`runner_broadcasting.broadcast_terminal_output` — its `run_id` parameter becomes
-`terminal_id` and the caller resolves the row — and the PTY bridge's reader). The web
-hook keys output on `attachment_id` only.
+Two gaps remain, and they are this leaf. First, the honesty test never drives a frame
+whose `handshake` succeeds and whose `attach_terminal` raises — the one fallible
+acquisition boundary inside `start_proxy` not yet exercised (record install is plain
+dict insertion plus `asyncio.create_task` and needs no injected failure). Second, the
+two Playwright specs above still mock the pre-#20272 wire, so their seeded terminal
+output can no longer reach the view they assert on; migrate the mocks to the merged
+shape — `terminal_attach_result` with `success: true` and `attachment_id`,
+`terminal_output` carrying both `terminal_id` and `attachment_id`. Out of scope,
+filed by the merge review: #21266 (cache the attachment→terminal mapping at bridge
+creation), #21267 (fragmented-output e2e vitest), #21268 (tighten the
+`terminal_attach_history` `|| terminal_id` fallback).
 
 **Acceptance:**
 
-- 1.2.1 - Each early-return branch of `_start_proxy_attach` produces a `terminal_attach_result` with `success: false`, a distinct `code`, a `reason`, a warning-level log line, and no live attachment record. With a failure injected at each boundary after the frame opens in turn — during `handshake`, during `attach_terminal`, and while installing the attachment record — the reply carries the same typed code and the attempt leaves no lease record, no entry in `attachments` or `by_socket`, no pump task, and no open frame connection; the fake host observes the connection closed. test: `tests/servers/test_terminal_ws_attach_honesty.py::test_proxy_attach_failures_are_typed_and_finalized`, `tests/servers/test_terminal_ws_attach_honesty.py::test_proxy_attach_unwinds_every_acquisition_on_failure`.
-- 1.2.2 - `terminal_output` frames from the tmux bridge and the proxy relay both carry the terminals-row id in `terminal_id` and the attachment id in `attachment_id`, matching `terminal_attach_history` on the same stream. test: `tests/servers/websocket/test_broadcast.py::test_terminal_output_carries_both_ids`.
-- 1.2.3 - The web hook routes output by `attachment_id` and a frame carrying only a terminal-row id is not delivered to any view. test: `web/src/hooks/__tests__/useTmuxSessions.test.ts`.
+- 1.2.1 - A proxy frame whose `handshake` succeeds and whose `attach_terminal` raises yields `success: false, code: "proxy_start_failed"`, a closed frame, no lease record, and no `attachments`/`by_socket` entry. test: `tests/servers/test_terminal_ws_attach_honesty.py::test_proxy_attach_failures_are_typed_and_finalized` (new parametrize row `attach_raises`).
+- 1.2.2 - Both Playwright specs' WebSocket mocks emit the merged wire shape and their terminal-surface assertions pass against the attachment-routed hook. test: `cd web && npx playwright test tests/style-surfaces.spec.ts tests/terminal-colors.spec.ts`.
 
 ### 1.3 Negotiate the frame encoding on `terminal_attach`, add the `direct` block, and relay cell frames [category: code] (depends: 1.2)
 `kind: deliverable`
@@ -389,8 +399,8 @@ Two additions to the attach handshake, both consumed by P2:
    `AttachLocator.direct_block()` method — `pane` is populated for tmux rows (the host
    observer's `PaneLocator`) and `null` for native rows. The handler calls
    `runtime.attach_locator(row)` for direct attachments too (today only the proxy path
-   does) and answers `success: false, code: "locator_failed"` on failure, reusing 1.2's
-   path.
+   does) and answers `success: false, code: "locator_failed"` on failure, reusing the
+   landed `PROXY_ATTACH_FAILURE_REASONS` reply path (#21207/#21258).
 
 **Acceptance:**
 
@@ -565,8 +575,9 @@ name, and add the shapes P1 introduced:
 runtime that refuses), `list_snapshot` (first page with `snapshot`), `kill_result` and `detach_result`
 (`terminal_kill_result` / `terminal_detach_result` — both replies 2.1 correlates on,
 neither pinned by any fixture today), and the existing
-`attach_result_error` regenerated with 1.2's `reason`. `terminal_output`, `event`,
-`lease_lost`, and `attachment_finalized` are regenerated with 1.2's ids and 1.4's
+`attach_result_error` regenerated with the landed `code`/`reason` reply (#21207).
+`terminal_output`, `event`, `lease_lost`, and `attachment_finalized` are regenerated
+with the landed both-ids shape (#21209) and 1.4's
 `seq`/`daemon_epoch` (the epoch value is the literal `"00000000-0000-4000-8000-000000000000"`
 in fixtures, injected through the registry's constructor).
 
