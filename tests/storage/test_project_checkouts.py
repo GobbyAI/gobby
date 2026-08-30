@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -16,6 +17,7 @@ from gobby.storage.project_checkouts import (
     CheckoutSentinelRejectedError,
     LocalProjectCheckoutManager,
     OverlayRegistrationRejectedError,
+    ProjectCheckout,
 )
 from gobby.storage.projects import (
     CHECKOUT_FREE_PROJECT_IDS,
@@ -30,6 +32,7 @@ pytestmark = pytest.mark.integration
 
 
 def test_checkout_free_project_ids_pin_the_four_sentinels() -> None:
+    """CHECKOUT_FREE_PROJECT_IDS pins the four checkout-free sentinel UUIDs."""
     assert MIGRATED_PROJECT_ID == "00000000-0000-0000-0000-000000000001"
     assert CHECKOUT_FREE_PROJECT_IDS == frozenset(
         {
@@ -39,6 +42,16 @@ def test_checkout_free_project_ids_pin_the_four_sentinels() -> None:
             PERSONAL_PROJECT_ID,
         }
     )
+    pinned = ProjectCheckout.from_row(
+        {
+            "machine_id": "m",
+            "project_id": MIGRATED_PROJECT_ID,
+            "root_path": "/pinned",
+            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+            "updated_at": datetime(2026, 1, 1, tzinfo=UTC),
+        }
+    )
+    assert pinned.root_path == "/pinned"
 
 
 def _insert_machine(db: HubDatabase, machine_id: str) -> None:
@@ -67,6 +80,7 @@ def test_get_and_list_are_empty_until_register(
 def test_register_is_idempotent_for_the_same_root(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
+    """Idempotent register returns created=False without bumping updated_at."""
     machine_id = str(uuid.uuid4())
     _insert_machine(temp_db, machine_id)
     manager = _manager(temp_db)
@@ -90,6 +104,7 @@ def test_register_is_idempotent_for_the_same_root(
 def test_register_keeps_windows_root_strings_opaque(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
+    """Windows-style root_path round-trips without separator rewriting."""
     machine_id = str(uuid.uuid4())
     _insert_machine(temp_db, machine_id)
     manager = _manager(temp_db)
@@ -106,6 +121,7 @@ def test_register_keeps_windows_root_strings_opaque(
 def test_register_raises_conflict_for_a_different_root(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
+    """Same machine+project and a different root is CheckoutConflictError."""
     machine_id = str(uuid.uuid4())
     _insert_machine(temp_db, machine_id)
     manager = _manager(temp_db)
@@ -137,6 +153,7 @@ def test_register_raises_when_another_project_owns_the_root(
 def test_register_and_rebind_refuse_checkout_free_sentinels(
     temp_db: HubDatabase, sentinel_id: str
 ) -> None:
+    """Checkout-free sentinel ids cannot register or rebind a root."""
     machine_id = str(uuid.uuid4())
     _insert_machine(temp_db, machine_id)
     manager = _manager(temp_db)
@@ -144,11 +161,23 @@ def test_register_and_rebind_refuse_checkout_free_sentinels(
         manager.register(machine_id, sentinel_id, "/sentinel/root")
     with pytest.raises(CheckoutSentinelRejectedError):
         manager.rebind(machine_id, sentinel_id, "/sentinel/root")
+    assert manager.get(machine_id, sentinel_id) is None
+    mapped = ProjectCheckout.from_row(
+        {
+            "machine_id": machine_id,
+            "project_id": sentinel_id,
+            "root_path": "/sentinel/root",
+            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+            "updated_at": datetime(2026, 1, 1, tzinfo=UTC),
+        }
+    )
+    assert mapped.root_path == "/sentinel/root"
 
 
 def test_rebind_inserts_noops_and_updates_roots(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
+    """rebind inserts, no-ops the same root, then moves to a different root."""
     machine_id = str(uuid.uuid4())
     _insert_machine(temp_db, machine_id)
     manager = _manager(temp_db)
@@ -186,6 +215,7 @@ def test_rebind_raises_when_another_project_owns_the_root(
 def test_register_and_rebind_reject_machine_overlays(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
+    """A worktree or clone path on the same machine is OverlayRegistrationRejectedError."""
     machine_id = str(uuid.uuid4())
     _insert_machine(temp_db, machine_id)
     manager = _manager(temp_db)
@@ -213,11 +243,15 @@ def test_register_and_rebind_reject_machine_overlays(
         manager.register(machine_id, project_id, worktree_path)
     with pytest.raises(OverlayRegistrationRejectedError):
         manager.rebind(machine_id, project_id, clone_path)
+    ordinary, created = manager.register(machine_id, project_id, "/ordinary/root")
+    assert created is True
+    assert ordinary.root_path == "/ordinary/root"
 
 
 def test_rebind_insert_leaves_index_state_for_later_cleanup(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
+    """Mismatched index root_path is left for § 4.2 cleanup."""
     machine_id = str(uuid.uuid4())
     _insert_machine(temp_db, machine_id)
     project_id = sample_project["id"]
@@ -234,7 +268,8 @@ def test_rebind_insert_leaves_index_state_for_later_cleanup(
         (machine_id, project_id, "/old/index-root", 3, 9),
     )
     manager = _manager(temp_db)
-    manager.rebind(machine_id, project_id, "/new/checkout-root")
+    checkout = manager.rebind(machine_id, project_id, "/new/checkout-root")
+    assert checkout.root_path == "/new/checkout-root"
     state = temp_db.fetchone(
         """
         SELECT root_path FROM code_indexed_project_states
@@ -249,6 +284,7 @@ def test_rebind_insert_leaves_index_state_for_later_cleanup(
 def test_concurrent_absent_rebind_same_root_inserts_once(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
+    """Concurrent absent-row rebind with equal roots inserts once."""
     machine_id = str(uuid.uuid4())
     _insert_machine(temp_db, machine_id)
     project_id = sample_project["id"]
@@ -287,6 +323,7 @@ def test_concurrent_absent_rebind_same_root_inserts_once(
 def test_concurrent_absent_rebind_different_roots_serializes(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
+    """Concurrent absent-row rebind with different roots serializes to one row."""
     machine_id = str(uuid.uuid4())
     _insert_machine(temp_db, machine_id)
     project_id = sample_project["id"]
