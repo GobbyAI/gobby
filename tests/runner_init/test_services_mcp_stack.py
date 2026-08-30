@@ -44,6 +44,7 @@ def test_init_mcp_stack_refreshes_template_instances() -> None:
         init_mcp_stack(runner)
 
     manager.refresh_template_instances.assert_called_once()
+    assert manager.refresh_template_instances.call_args.args[0] is not None
     assert manager.normalize_bundled_servers.call_count == 0
     mock_client.assert_called_once()
     assert runner.mcp_db_manager is manager

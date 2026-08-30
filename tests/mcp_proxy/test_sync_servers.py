@@ -122,6 +122,7 @@ def test_removed_instance_file_does_not_delete_row(temp_db: Any, tmp_path: Path)
         project_root=tmp_path / "no-project",
         secret_store=SecretStore(temp_db),
     )
+    assert first["errors"] == []
     (servers / "keep.yaml").unlink()
     second = sync_mcp_server_files(
         temp_db,
