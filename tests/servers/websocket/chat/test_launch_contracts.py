@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -14,6 +15,11 @@ from gobby.agents.sandbox import (
     web_chat_policy_mismatch_message,
     web_chat_sandbox_config,
     web_chat_sandbox_policy_hash,
+)
+from gobby.agents.sandbox_policy import (
+    allowed_domains,
+    provider_read_exceptions,
+    provider_write_exceptions,
 )
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.app import DaemonConfig
@@ -306,3 +312,116 @@ class TestInterleavedSessionCreatesKeepOwnPolicy:
 
         assert captured["config"].allowed_domains == snapshot_a.allowed_domains
         assert captured["config"].backend == snapshot_a.backend
+
+
+class TestAgySrtWrap:
+    def test_agy_stale_hash_refuses_resume(self) -> None:
+        manager = WebChatRuntimeManager(daemon_config=DaemonConfig())
+        session = SimpleNamespace(
+            session_type="web_chat",
+            source="agy",
+            sandbox_policy_hash="stale-hash",
+        )
+
+        reason = manager.policy_mismatch_reason(session)
+
+        assert reason == web_chat_policy_mismatch_message()
+
+    @pytest.mark.asyncio
+    async def test_agy_attach_wraps_argv_once_and_merges_identity_env(self, tmp_path: Path) -> None:
+        spec = importlib.util.find_spec("gobby.servers.websocket.chat.backends.agy")
+        assert spec is not None
+        from gobby.servers.websocket.chat.backends.agy import (
+            AgyManagedChatSession,
+            AgyWebChatBackend,
+        )
+
+        launch = _srt_launch(executable="/bin/agy")
+        process = MagicMock()
+        process.stdin = MagicMock()
+        process.stdout = MagicMock()
+        process.stderr = None
+        captured: dict[str, Any] = {}
+
+        async def fake_prepare(**kwargs: Any) -> SandboxLaunch:
+            captured["env"] = dict(kwargs["env"])
+            captured["workspace_path"] = kwargs["workspace_path"]
+            captured["config"] = kwargs["config"]
+            captured["provider"] = kwargs["provider"]
+            return launch
+
+        backend = AgyWebChatBackend(
+            sandbox_config=SandboxConfig(
+                enabled=True,
+                backend="srt",
+                allow_network=False,
+                allow_git_network=True,
+                allow_package_registries=True,
+            )
+        )
+        session = AgyManagedChatSession(conversation_id="conv-agy", _backend=backend)
+        session.project_path = str(tmp_path)
+        session.db_session_id = "sess-agy"
+        session.project_id = "proj-agy"
+
+        with (
+            patch(
+                "gobby.servers.websocket.chat.backends.agy.shutil.which",
+                return_value="/bin/agy",
+            ),
+            patch(
+                "gobby.servers.websocket.chat.backends.agy.asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=process,
+            ) as create_process,
+            patch(
+                "gobby.servers.websocket.chat.backends.agy.prepare_sandbox_launch",
+                new=fake_prepare,
+                create=True,
+            ),
+            patch.object(backend, "start", new_callable=AsyncMock),
+            patch.object(backend, "_log_process_stderr", new_callable=AsyncMock),
+        ):
+            from gobby.servers.websocket.chat.backends.base import ProviderBackendHealth
+
+            backend._health = ProviderBackendHealth(provider="agy", available=True)
+            await backend.attach_session(session, model="gemini-3-flash")
+
+        create_process.assert_called_once()
+        argv = list(create_process.call_args.args)
+        inner = [
+            "/bin/agy",
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "--disable-slash-commands",
+            "--dangerously-skip-permissions",
+            "--add-dir",
+            str(tmp_path),
+            "--print-timeout",
+            "2562047h",
+            "--sandbox=false",
+            "--model",
+            "gemini-3-flash",
+        ]
+        expected = launch.wrap(inner)
+        assert argv[: len(expected)] == expected
+        assert argv.count("/usr/bin/node") == 1
+        assert "--sandbox=false" in argv
+        env = create_process.call_args.kwargs["env"]
+        assert env["TMPDIR"] == "/tmp/srt-run"
+        assert env["GOBBY_WEB_CHAT_CHILD"] == "1"
+        assert env["GOBBY_SESSION_ID"] == "sess-agy"
+        assert env["GOBBY_PROJECT_ID"] == "proj-agy"
+        assert "GOBBY_HOOKS_DISABLED" not in env
+        assert captured["env"]["GOBBY_SESSION_ID"] == "sess-agy"
+        assert captured["provider"] == "agy"
+        assert captured["config"].backend == "srt"
+        assert captured["config"].allow_network is False
+        reads = provider_read_exceptions("agy", captured["env"])
+        writes = provider_write_exceptions("agy")
+        domains = allowed_domains(captured["config"], "agy", None)
+        assert any("antigravity-cli" in path for path in writes)
+        assert any("keychain" in path.lower() or "Keychains" in path for path in reads)
+        assert "daily-cloudcode-pa.googleapis.com" in domains
