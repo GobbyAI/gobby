@@ -42,7 +42,6 @@ from gobby.agents.spawn_cache_policy import (
 )
 from gobby.config.app import DaemonConfig
 from gobby.integrations.rtk import platform_paths
-from gobby.providers import AGY_UNAVAILABLE_REASON
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 
 pytestmark = pytest.mark.unit
@@ -1684,8 +1683,9 @@ class TestAgySandboxResolver:
             return_value=SimpleNamespace(supported=True, reason="supported"),
         )
         with patch("gobby.providers.version_gate.ensure_agy_support", ensure):
-            with pytest.raises(RuntimeError, match="machine transport") as exc:
-                await srt.create_session(provider="agy", conversation_id="agy-srt")
+            session = await srt.create_session(provider="agy", conversation_id="agy-srt")
         ensure.assert_awaited()
-        assert str(exc.value) == AGY_UNAVAILABLE_REASON
-        assert "sensitive-root" not in str(exc.value)
+        from gobby.servers.websocket.chat.backends.agy import AgyManagedChatSession
+
+        assert isinstance(session, AgyManagedChatSession)
+        assert session.conversation_id == "agy-srt"

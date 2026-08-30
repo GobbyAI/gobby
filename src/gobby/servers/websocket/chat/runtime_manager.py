@@ -27,10 +27,11 @@ from gobby.ai.codex_endpoint import (
 from gobby.ai.endpoints import parse_endpoint_model_selector, parse_endpoint_selector
 from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
-from gobby.providers import AGY_UNAVAILABLE_REASON
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat.backends import (
+    AgyManagedChatSession,
+    AgyWebChatBackend,
     ClaudeWebChatBackend,
     CodexManagedChatSession,
     CodexWebChatBackend,
@@ -137,6 +138,9 @@ class WebChatRuntimeManager:
         self._droid_backend = DroidWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True)
         )
+        self._agy_backend = AgyWebChatBackend(
+            sandbox_config=self._sandbox_config.model_copy(deep=True)
+        )
         # Discovered ACP SessionInfo payloads keyed by (provider, sessionId).
         # The ACP lifecycle service (discovery) populates this; readers use it to
         # reconcile agent-side sessions against canonical rows.
@@ -180,6 +184,7 @@ class WebChatRuntimeManager:
             for backend in self._codex_endpoint_backends.values():
                 await backend.start(background=True)
             await self._droid_backend.start(background=True)
+            await self._agy_backend.start(background=True)
             return
 
         await self._codex_backend.start()
@@ -188,9 +193,11 @@ class WebChatRuntimeManager:
         await self._grok_backend.start()
         await self._qwen_backend.start()
         await self._droid_backend.start()
+        await self._agy_backend.start()
 
     async def stop(self) -> None:
         """Stop daemon-owned provider backends."""
+        await self._agy_backend.stop()
         await self._droid_backend.stop()
         await self._qwen_backend.stop()
         await self._grok_backend.stop()
@@ -210,11 +217,13 @@ class WebChatRuntimeManager:
             from gobby.providers.version_gate import peek_agy_support
 
             record = peek_agy_support()
-            return ProviderBackendHealth(
-                provider=provider,
-                available=False,
-                startup_error=(record.reason if not record.supported else AGY_UNAVAILABLE_REASON),
-            )
+            if not record.supported:
+                return ProviderBackendHealth(
+                    provider=provider,
+                    available=False,
+                    startup_error=record.reason,
+                )
+            return self._agy_backend.health()
         if provider == "droid":
             return self._droid_backend.health()
         if provider == "claude":
@@ -307,7 +316,8 @@ class WebChatRuntimeManager:
             from gobby.providers.version_gate import ensure_agy_support
 
             record = await ensure_agy_support()
-            raise RuntimeError(record.reason if not record.supported else AGY_UNAVAILABLE_REASON)
+            if not record.supported:
+                raise RuntimeError(record.reason)
         session: ChatSessionProtocol
         if provider == "qwen":
             session = QwenManagedChatSession(
@@ -338,6 +348,13 @@ class WebChatRuntimeManager:
             session = DroidManagedChatSession(
                 conversation_id=conversation_id,
                 _backend=self._droid_backend,
+                _model=model,
+                reasoning_effort=reasoning_effort,
+            )
+        elif provider == "agy":
+            session = AgyManagedChatSession(
+                conversation_id=conversation_id,
+                _backend=self._agy_backend,
                 _model=model,
                 reasoning_effort=reasoning_effort,
             )
@@ -382,6 +399,7 @@ class WebChatRuntimeManager:
         self._grok_backend.set_sandbox_config(self._sandbox_config)
         self._qwen_backend.set_sandbox_config(self._sandbox_config)
         self._droid_backend.set_sandbox_config(self._sandbox_config)
+        self._agy_backend.set_sandbox_config(self._sandbox_config)
         return snapshot
 
     def _codex_backend_for_model(self, model: str | None) -> tuple[CodexWebChatBackend, str | None]:

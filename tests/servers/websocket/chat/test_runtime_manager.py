@@ -31,6 +31,7 @@ from gobby.servers.websocket.chat.backends import (
     QwenManagedChatSession,
     QwenWebChatBackend,
 )
+from gobby.servers.websocket.chat.backends.agy import AgyManagedChatSession
 from gobby.servers.websocket.chat.backends.base import ProviderBackendHealth
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 from gobby.sessions.transcripts.base import ParsedMessage
@@ -82,12 +83,14 @@ class TestWebChatRuntimeManager:
             daemon_config=current[0],
             config_resolver=lambda: current[0],
         )
+        assert hasattr(manager, "_agy_backend")
         backends = (
             manager._claude_backend,
             manager._codex_backend,
             manager._grok_backend,
             manager._qwen_backend,
             manager._droid_backend,
+            manager._agy_backend,
         )
         setters = [
             patch.object(backend, "set_sandbox_config", wraps=backend.set_sandbox_config)
@@ -109,15 +112,32 @@ class TestWebChatRuntimeManager:
             daemon_config=DaemonConfig(web_chat_sandbox={"enabled": False}),
         )
 
-        claude_session = await manager.create_session(provider="claude", conversation_id="conv-1")
-        grok_session = await manager.create_session(provider="grok", conversation_id="conv-2")
-        qwen_session = await manager.create_session(provider="qwen", conversation_id="conv-3")
-        codex_session = await manager.create_session(provider="codex", conversation_id="conv-4")
+        record = SimpleNamespace(supported=True, reason="AGY 1.1.18 meets required version 1.1.18.")
+        with patch(
+            "gobby.providers.version_gate.ensure_agy_support",
+            AsyncMock(return_value=record),
+        ):
+            claude_session = await manager.create_session(
+                provider="claude", conversation_id="conv-1"
+            )
+            grok_session = await manager.create_session(provider="grok", conversation_id="conv-2")
+            qwen_session = await manager.create_session(provider="qwen", conversation_id="conv-3")
+            codex_session = await manager.create_session(provider="codex", conversation_id="conv-4")
+            agy_error: Exception | None = None
+            try:
+                agy_session = await manager.create_session(
+                    provider="agy", conversation_id="conv-agy"
+                )
+            except Exception as exc:
+                agy_error = exc
+                agy_session = None
 
         assert isinstance(claude_session, ChatSession)
         assert isinstance(grok_session, GrokManagedChatSession)
         assert isinstance(qwen_session, QwenManagedChatSession)
         assert isinstance(codex_session, CodexManagedChatSession)
+        assert agy_error is None
+        assert isinstance(agy_session, AgyManagedChatSession)
 
     async def test_create_session_rejects_unsupported_provider(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
@@ -194,23 +214,63 @@ class TestWebChatRuntimeManager:
         assert health.available is False
         assert health.startup_error == AGY_UNPUBLISHED_REASON
 
-    async def test_create_session_uses_shared_agy_unavailable_reason(self) -> None:
+    def test_health_agy_supported_uses_backend_without_reprobe(self) -> None:
+        manager = WebChatRuntimeManager(codex_client=None)
+        record = SimpleNamespace(
+            supported=True,
+            reason="AGY 1.1.18 meets required version 1.1.18.",
+        )
+        assert hasattr(manager, "_agy_backend")
+        manager._agy_backend._health = ProviderBackendHealth(provider="agy", available=True)
+        probe = MagicMock()
+
+        with (
+            patch("gobby.providers.version_gate.peek_agy_support", return_value=record),
+            patch("gobby.providers.version_gate.probe_and_publish_agy_support", probe),
+            patch("gobby.providers.version_gate.ensure_agy_support", probe),
+        ):
+            health = manager.health("agy")
+
+        assert health.available is True
+        assert health.provider == "agy"
+        probe.assert_not_called()
+
+    async def test_create_session_returns_agy_session_when_supported(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
         record = SimpleNamespace(
             supported=True,
             reason="AGY 1.1.18 meets required version 1.1.18.",
         )
 
+        error: Exception | None = None
+        session = None
+        with patch(
+            "gobby.providers.version_gate.ensure_agy_support",
+            AsyncMock(return_value=record),
+        ):
+            try:
+                session = await manager.create_session(provider="agy", conversation_id="conv-agy")
+            except Exception as exc:
+                error = exc
+
+        assert error is None
+        assert isinstance(session, AgyManagedChatSession)
+        assert session.provider == "agy"
+        assert session.conversation_id == "conv-agy"
+        assert session._backend is manager._agy_backend
+
+    async def test_create_session_rejects_unsupported_agy_record(self) -> None:
+        manager = WebChatRuntimeManager(codex_client=None)
+        record = SimpleNamespace(supported=False, reason="agy CLI not found")
+
         with (
             patch(
                 "gobby.providers.version_gate.ensure_agy_support",
                 AsyncMock(return_value=record),
             ),
-            pytest.raises(RuntimeError, match="or agent spawning") as exc,
+            pytest.raises(RuntimeError, match="agy CLI not found"),
         ):
             await manager.create_session(provider="agy", conversation_id="conv-agy")
-
-        assert "machine transport" in str(exc.value)
 
     async def test_create_session_routes_codex_local_selector_to_oss_backend(self) -> None:
         config = DaemonConfig(
@@ -379,6 +439,8 @@ class TestWebChatRuntimeManager:
         manager._grok_backend.start = AsyncMock()
         manager._qwen_backend.start = AsyncMock()
         manager._droid_backend.start = AsyncMock()
+        assert hasattr(manager, "_agy_backend")
+        manager._agy_backend.start = AsyncMock()
 
         result = await manager.start(background=True)
 
@@ -386,8 +448,18 @@ class TestWebChatRuntimeManager:
         assert manager.sandbox_config.enabled is True
         manager._codex_backend.start.assert_awaited_once_with(background=True)
         manager._droid_backend.start.assert_awaited_once_with(background=True)
+        manager._agy_backend.start.assert_awaited_once_with(background=True)
         manager._grok_backend.start.assert_not_awaited()
         manager._qwen_backend.start.assert_not_awaited()
+
+    def test_start_and_stop_include_agy_backend(self) -> None:
+        import inspect
+
+        start_src = inspect.getsource(WebChatRuntimeManager.start)
+        stop_src = inspect.getsource(WebChatRuntimeManager.stop)
+        assert "self._agy_backend.start" in start_src
+        assert "self._agy_backend.start(background=True)" in start_src
+        assert "self._agy_backend.stop" in stop_src
 
 
 class TestGrokBackend:
@@ -2081,8 +2153,8 @@ class TestCodexBackend:
         session._connected = True
         session._thread_id = "thread-1"
         session._on_post_tool = AsyncMock()
-        session._get_transcript_offset = AsyncMock(return_value=0)
-        session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
+        setattr(session, "_get_transcript_offset", AsyncMock(return_value=0))
+        setattr(session, "_get_transcript_assistant_text_since", AsyncMock(return_value=None))
 
         events = [event async for event in backend.send_message(session, "close the task")]
 

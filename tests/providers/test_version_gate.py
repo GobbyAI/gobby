@@ -490,12 +490,13 @@ async def test_web_chat_create_session_awaits_ensure_before_agy_launch() -> None
         )
     )
     manager = WebChatRuntimeManager(codex_client=None)
-    with (
-        patch("gobby.providers.version_gate.ensure_agy_support", ensure),
-        pytest.raises(RuntimeError, match="or agent spawning"),
-    ):
-        await manager.create_session(provider="agy", conversation_id="conv-agy")
+    with patch("gobby.providers.version_gate.ensure_agy_support", ensure):
+        session = await manager.create_session(provider="agy", conversation_id="conv-agy")
     ensure.assert_awaited_once()
+    from gobby.servers.websocket.chat.backends.agy import AgyManagedChatSession
+
+    assert isinstance(session, AgyManagedChatSession)
+    assert session.conversation_id == "conv-agy"
 
 
 @pytest.mark.asyncio

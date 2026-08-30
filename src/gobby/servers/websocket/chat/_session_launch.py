@@ -263,10 +263,11 @@ async def start_hydrated_session(
         if exc:
             logger.warning("SESSION_START lifecycle hook failed: %s", exc)
 
-    t = asyncio.create_task(
-        owner._fire_lifecycle(session_key, HookEventType.SESSION_START, start_data)
-    )
-    t.add_done_callback(_log_session_start_error)
+    if provider_name != "agy":
+        t = asyncio.create_task(
+            owner._fire_lifecycle(session_key, HookEventType.SESSION_START, start_data)
+        )
+        t.add_done_callback(_log_session_start_error)
 
     if not pending_mode:
         mode_msg = json_dumps(

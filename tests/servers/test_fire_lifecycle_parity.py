@@ -8,12 +8,23 @@ Covers:
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from collections import Counter
+from types import SimpleNamespace
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.adapters.agy import AgyAdapter
+from gobby.adapters.agy_contract import AGY_HOOK_NAMES, get_agy_contract
+from gobby.hooks.hook_manager import HookManager
+from gobby.hooks.events import (
+    EVENT_TYPE_CLI_SUPPORT,
+    HookEvent,
+    HookEventType,
+    HookResponse,
+    SessionSource,
+)
 from gobby.servers.websocket.chat import ChatMixin
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
@@ -69,11 +80,13 @@ def rules_db(hub_db: HubDatabase) -> HubDatabase:
 # session_variables.session_id targets the native-uuid sessions.id column, so
 # session ids that reach the real DB must be valid UUID strings.
 SESSION_ID = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1"
+PROJECT_ID = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1"
+MANAGED_FIRE_LIFECYCLE_PROVIDERS = ("claude", "codex", "droid", "grok", "qwen")
 
 
 def _seed_session_row(db: HubDatabase, session_id: str = SESSION_ID) -> None:
     """Insert the project + session rows session_variables' FK requires."""
-    project_id = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1"
+    project_id = PROJECT_ID
     machine_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1"
     db.execute(
         "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, NOW()) "
@@ -102,12 +115,12 @@ def _make_session(db_session_id: str = SESSION_ID, seq_num: int = 42) -> MagicMo
     session.db_session_id = db_session_id
     session.seq_num = seq_num
     session.project_path = "/tmp/project"
-    session.project_id = "project-123"
+    session.project_id = PROJECT_ID
     session.provider = "claude"
     return session
 
 
-@pytest.mark.parametrize("provider", ["claude", "codex", "droid", "grok", "qwen"])
+@pytest.mark.parametrize("provider", MANAGED_FIRE_LIFECYCLE_PROVIDERS)
 @pytest.mark.asyncio
 async def test_managed_provider_lifecycle_includes_runtime_chat_mode(
     host: ChatMixinHost, provider: str
@@ -835,3 +848,251 @@ class TestFireLifecycleNonBlockingWebhooks:
         dispatcher._matches_event.assert_not_called()
         broadcaster.broadcast_event.assert_not_awaited()
         mgr.get_undelivered_messages.assert_not_called()
+
+
+class _RecordingAgyHookManager:
+    """Count each HookManager.handle side-effect once per native event."""
+
+    def __init__(self) -> None:
+        self.events: list[HookEvent] = []
+        self.rule_effects: list[str] = []
+        self.mcp_dispatches: list[str] = []
+        self.handler_contexts: list[str] = []
+        self.pending_deliveries: list[str] = []
+        self.webhooks: list[str] = []
+        self.broadcasts: list[str] = []
+
+    def handle(self, event: HookEvent) -> HookResponse:
+        self.events.append(event)
+        key = event.event_type.value
+        self.rule_effects.append(key)
+        self.mcp_dispatches.append(key)
+        self.handler_contexts.append(key)
+        self.pending_deliveries.append(key)
+        self.webhooks.append(key)
+        self.broadcasts.append(key)
+        if event.event_type is HookEventType.BEFORE_TOOL:
+            return HookResponse(
+                decision="block",
+                reason="blocked-once",
+                context="injected-once",
+                modified_input={"command": "echo once"},
+            )
+        if event.event_type is HookEventType.SESSION_START:
+            return HookResponse(decision="allow", context="startup-context", system_message="hi")
+        if event.event_type is HookEventType.BEFORE_AGENT:
+            return HookResponse(decision="allow", context="before-agent-context")
+        return HookResponse(decision="allow", context=f"ctx-{key}")
+
+
+def _agy_native_event(hook_type: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    input_data: dict[str, Any] = {
+        "hookEventName": hook_type,
+        "conversationId": "agy-conv-1",
+        "transcriptPath": "/tmp/agy.jsonl",
+        "workspacePaths": ["/repo"],
+    }
+    if extra:
+        input_data.update(extra)
+    return {"source": "agy", "hook_type": hook_type, "input_data": input_data}
+
+
+def _launch_owner() -> SimpleNamespace:
+    return SimpleNamespace(
+        _chat_sessions={},
+        clients={},
+        web_chat_session_registry=None,
+        _fire_lifecycle=AsyncMock(return_value=None),
+    )
+
+
+def _launch_session() -> MagicMock:
+    session = MagicMock()
+    session.start = AsyncMock()
+    session.resume_session_id = None
+    session.db_session_id = None
+    session.model = None
+    session.chat_mode = "plan"
+    session.sandbox_metadata = {}
+    return session
+
+
+class TestAgyNativeLifecycleParity:
+    def test_agy_is_outside_managed_fire_lifecycle_registry(self) -> None:
+        assert "agy" not in MANAGED_FIRE_LIFECYCLE_PROVIDERS
+        assert MANAGED_FIRE_LIFECYCLE_PROVIDERS == (
+            "claude",
+            "codex",
+            "droid",
+            "grok",
+            "qwen",
+        )
+
+    def test_pre_compact_unsupported_for_agy(self) -> None:
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.PRE_COMPACT]["agy"] is None
+        assert "PreCompact" not in AGY_HOOK_NAMES
+        assert get_agy_contract("PreCompact") is None
+        assert get_agy_contract("PRE_COMPACT") is None
+
+    @pytest.mark.asyncio
+    async def test_compaction_context_uses_parsed_provider(self, host: ChatMixinHost) -> None:
+        session = _make_session()
+        session.provider = "codex"
+        host._chat_sessions["conv-1"] = session
+        host.workflow_handler = _make_workflow_handler()
+
+        result = await host._fire_lifecycle("conv-1", HookEventType.PRE_COMPACT, {})
+
+        assert result is not None
+        assert "Source: codex" in (result.get("context") or "")
+        assert "Source: claude" not in (result.get("context") or "")
+
+    @pytest.mark.asyncio
+    async def test_session_start_prefire_suppressed_for_agy(self) -> None:
+        from gobby.agents.sandbox import SandboxConfig
+        from gobby.servers.websocket.chat._session_launch import (
+            SessionLaunchContext,
+            start_hydrated_session,
+        )
+        from gobby.servers.websocket.chat.runtime_manager import SandboxPolicySnapshot
+        from tests._timing import drain_asyncio_tasks
+
+        owner = _launch_owner()
+        session = _launch_session()
+        context = SessionLaunchContext(
+            sandbox=SandboxPolicySnapshot(
+                config=SandboxConfig(enabled=False),
+                policy_hash="hash",
+            ),
+            workspace_path="/tmp/ws",
+        )
+
+        await start_hydrated_session(
+            owner,
+            session,
+            context,
+            session_key="conv-agy",
+            effective_model=None,
+            persona_selected=False,
+            pending_agent=None,
+            pending_mode="plan",
+            agent_name="agy",
+            provider_name="agy",
+            session_manager=None,
+            existing_db_session=None,
+            project_context_changed=False,
+            effective_pid="proj",
+        )
+        await drain_asyncio_tasks()
+
+        assert owner._chat_sessions["conv-agy"] is session
+        session.start.assert_awaited_once()
+        assert session.project_path == "/tmp/ws"
+        owner._fire_lifecycle.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_session_start_prefire_still_fires_for_incumbent(self) -> None:
+        from gobby.agents.sandbox import SandboxConfig
+        from gobby.servers.websocket.chat._session_launch import (
+            SessionLaunchContext,
+            start_hydrated_session,
+        )
+        from gobby.servers.websocket.chat.runtime_manager import SandboxPolicySnapshot
+        from tests._timing import drain_asyncio_tasks
+
+        owner = _launch_owner()
+        session = _launch_session()
+        context = SessionLaunchContext(
+            sandbox=SandboxPolicySnapshot(
+                config=SandboxConfig(enabled=False),
+                policy_hash="hash",
+            ),
+            workspace_path="/tmp/ws",
+        )
+
+        await start_hydrated_session(
+            owner,
+            session,
+            context,
+            session_key="conv-claude",
+            effective_model=None,
+            persona_selected=False,
+            pending_agent=None,
+            pending_mode="plan",
+            agent_name="claude",
+            provider_name="claude",
+            session_manager=None,
+            existing_db_session=None,
+            project_context_changed=False,
+            effective_pid="proj",
+        )
+        await drain_asyncio_tasks()
+
+        assert owner._chat_sessions["conv-claude"] is session
+        session.start.assert_awaited_once()
+        owner._fire_lifecycle.assert_awaited_once_with(
+            "conv-claude",
+            HookEventType.SESSION_START,
+            {},
+        )
+
+    def test_first_preinvocation_is_single_native_authority(self) -> None:
+        manager = _RecordingAgyHookManager()
+
+        result = AgyAdapter().handle_native(
+            _agy_native_event("PreInvocation", {"invocationNum": 0}),
+            cast(HookManager, manager),
+        )
+
+        types = [event.event_type for event in manager.events]
+        assert types == [HookEventType.SESSION_START, HookEventType.BEFORE_AGENT]
+        assert Counter(types) == Counter(
+            {HookEventType.SESSION_START: 1, HookEventType.BEFORE_AGENT: 1}
+        )
+        assert all(event.source is SessionSource.AGY for event in manager.events)
+        assert "startup-context" in str(result)
+        assert "before-agent-context" in str(result)
+
+    def test_native_route_side_effects_fire_once_per_event(self) -> None:
+        manager = _RecordingAgyHookManager()
+        adapter = AgyAdapter()
+
+        hooked = cast(HookManager, manager)
+        pre_tool = adapter.handle_native(
+            _agy_native_event(
+                "PreToolUse",
+                {"toolCall": {"name": "run_shell_command", "args": {"command": "pwd"}}},
+            ),
+            hooked,
+        )
+        adapter.handle_native(_agy_native_event("PostToolUse"), hooked)
+        adapter.handle_native(_agy_native_event("Stop"), hooked)
+
+        types = [event.event_type for event in manager.events]
+        assert HookEventType.PRE_COMPACT not in types
+        assert Counter(types) == Counter(
+            {
+                HookEventType.BEFORE_TOOL: 1,
+                HookEventType.AFTER_TOOL: 1,
+                HookEventType.STOP: 1,
+            }
+        )
+        assert all(event.source is SessionSource.AGY for event in manager.events)
+        for bucket in (
+            manager.rule_effects,
+            manager.mcp_dispatches,
+            manager.handler_contexts,
+            manager.pending_deliveries,
+            manager.webhooks,
+            manager.broadcasts,
+        ):
+            assert Counter(bucket) == Counter(
+                {
+                    HookEventType.BEFORE_TOOL.value: 1,
+                    HookEventType.AFTER_TOOL.value: 1,
+                    HookEventType.STOP.value: 1,
+                }
+            )
+        assert pre_tool.get("decision") == "deny"
+        before_tool = manager.events[0]
+        assert before_tool.event_type is HookEventType.BEFORE_TOOL

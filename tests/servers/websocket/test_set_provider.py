@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -95,6 +95,16 @@ class TestSetProviderNoExistingSession:
         assert server._pending_providers["conv-1"] == "droid"
         server._send_error.assert_not_awaited()
 
+    async def test_accepts_agy_provider(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+
+        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": "agy"})
+
+        assert "conv-1" in server._pending_providers
+        assert server._pending_providers["conv-1"] == "agy"
+        server._send_error.assert_not_awaited()
+
     async def test_sends_confirmation(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
@@ -110,50 +120,56 @@ class TestSetProviderNoExistingSession:
 
 
 class TestSetProviderWithExistingSession:
-    async def test_tears_down_existing_session(self) -> None:
+    @pytest.mark.parametrize("provider", ["grok", "codex", "agy"])
+    async def test_tears_down_existing_session(self, provider: str) -> None:
         server = ConcreteSessionControl()
         session = _make_session(provider="claude")
         server._chat_sessions["conv-1"] = session
         ws = _make_ws()
 
-        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": "grok"})
+        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": provider})
 
-        server._cancel_active_chat.assert_awaited_once_with("conv-1")
+        cast(AsyncMock, server._cancel_active_chat).assert_awaited_once_with("conv-1")
         session.stop.assert_awaited_once()
         assert "conv-1" not in server._chat_sessions
 
-    async def test_updates_db_session_status(self) -> None:
+    @pytest.mark.parametrize("provider", ["grok", "agy"])
+    async def test_updates_db_session_status(self, provider: str) -> None:
         server = ConcreteSessionControl()
         session = _make_session(provider="claude", db_session_id="db-456")
         server._chat_sessions["conv-1"] = session
         ws = _make_ws()
 
-        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": "grok"})
+        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": provider})
 
         server.session_manager.update.assert_called_once_with(
-            "db-456", source="grok", status="paused"
+            "db-456", source=provider, status="paused"
         )
         assert server.session_manager.update.call_count == 1
         assert server.session_manager.update.call_args is not None
 
-    async def test_stores_pending_provider_after_teardown(self) -> None:
+    @pytest.mark.parametrize("provider", ["codex", "agy"])
+    async def test_stores_pending_provider_after_teardown(self, provider: str) -> None:
         server = ConcreteSessionControl()
         session = _make_session(provider="claude")
         server._chat_sessions["conv-1"] = session
         ws = _make_ws()
 
-        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": "codex"})
+        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": provider})
 
-        assert server._pending_providers["conv-1"] == "codex"
+        assert "conv-1" in server._pending_providers
+        assert server._pending_providers["conv-1"] == provider
 
-    async def test_sends_old_provider_in_confirmation(self) -> None:
+    @pytest.mark.parametrize("provider", ["grok", "agy"])
+    async def test_sends_old_provider_in_confirmation(self, provider: str) -> None:
         server = ConcreteSessionControl()
         session = _make_session(provider="claude")
         server._chat_sessions["conv-1"] = session
         ws = _make_ws()
 
-        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": "grok"})
+        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": provider})
 
+        assert ws.send.call_args is not None
         msg = json.loads(ws.send.call_args[0][0])
         assert msg["old_provider"] == "claude"
-        assert msg["provider"] == "grok"
+        assert msg["provider"] == provider

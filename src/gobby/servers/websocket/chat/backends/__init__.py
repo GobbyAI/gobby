@@ -23,6 +23,10 @@ from gobby.servers.websocket.chat.backends.qwen import (
 )
 
 if TYPE_CHECKING:
+    from gobby.servers.websocket.chat.backends.agy import (
+        AgyManagedChatSession,
+        AgyWebChatBackend,
+    )
     from gobby.servers.websocket.chat.backends.droid import (
         DroidManagedChatSession,
         DroidWebChatBackend,
@@ -30,7 +34,7 @@ if TYPE_CHECKING:
 
 
 def __getattr__(name: str) -> object:
-    """Lazily expose Droid classes without re-entering the Droid module at import time."""
+    """Lazily expose Droid/AGY classes without re-entering those modules at import time."""
     if name == "DroidManagedChatSession":
         from gobby.servers.websocket.chat.backends.droid import DroidManagedChatSession
 
@@ -41,10 +45,22 @@ def __getattr__(name: str) -> object:
 
         globals()[name] = DroidWebChatBackend
         return DroidWebChatBackend
+    if name == "AgyManagedChatSession":
+        from gobby.servers.websocket.chat.backends.agy import AgyManagedChatSession
+
+        globals()[name] = AgyManagedChatSession
+        return AgyManagedChatSession
+    if name == "AgyWebChatBackend":
+        from gobby.servers.websocket.chat.backends.agy import AgyWebChatBackend
+
+        globals()[name] = AgyWebChatBackend
+        return AgyWebChatBackend
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
+    "AgyManagedChatSession",
+    "AgyWebChatBackend",
     "ClaudeWebChatBackend",
     "CodexManagedChatSession",
     "CodexWebChatBackend",

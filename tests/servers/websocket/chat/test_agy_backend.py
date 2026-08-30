@@ -818,6 +818,10 @@ async def test_child_env_and_native_pretooluse_deny_without_mode_flag() -> None:
     backend, session = _session(process)
     session.chat_mode = "plan"
     session._on_pre_tool = AsyncMock(return_value={"decision": "deny"})
+    session._on_before_agent = AsyncMock(return_value=None)
+    session._on_post_tool = AsyncMock(return_value=None)
+    session._on_stop = AsyncMock(return_value=None)
+    session._on_pre_compact = AsyncMock(return_value=None)
     which, create = _spawn_patches(process)
     with which, create as create_process:
         await backend.attach_session(session)
@@ -829,6 +833,10 @@ async def test_child_env_and_native_pretooluse_deny_without_mode_flag() -> None:
     assert env["GOBBY_WEB_CHAT_CHILD"] == "1"
     assert "--mode" not in argv
     session._on_pre_tool.assert_not_awaited()
+    session._on_before_agent.assert_not_awaited()
+    session._on_post_tool.assert_not_awaited()
+    session._on_stop.assert_not_awaited()
+    session._on_pre_compact.assert_not_awaited()
     assert any(isinstance(event, ToolCallEvent) for event in events)
     denied = AgyAdapter().translate_from_hook_response(
         HookResponse(decision="deny", reason="plan mode write blocked"),

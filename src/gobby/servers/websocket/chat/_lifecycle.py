@@ -310,7 +310,7 @@ class ChatLifecycleMixin:
                         session_ref=session_ref,
                         project_id=getattr(session, "project_id", None),
                         cwd=project_path,
-                        source="claude",
+                        source=source.value,
                     )
                 else:
                     enrichment = f"Gobby Session ID: {session_ref}"
