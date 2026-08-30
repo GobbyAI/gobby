@@ -49,6 +49,7 @@ def test_validate_checkout_root_rejects_relative_path(
 def test_validate_checkout_root_rejects_unexpanded_tilde(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """`~` is a path-shape error even when HOME would expand."""
     isolated = install_isolated_checkout_project(
         temp_db, tmp_path / "repo", monkeypatch=monkeypatch
     )
@@ -66,6 +67,7 @@ def test_validate_checkout_root_rejects_unexpanded_tilde(
 def test_validate_checkout_root_does_not_expand_existing_home_path(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """An existing HOME expansion is still rejected as a tilde-shaped path."""
     isolated = install_isolated_checkout_project(
         temp_db, tmp_path / "repo", monkeypatch=monkeypatch
     )

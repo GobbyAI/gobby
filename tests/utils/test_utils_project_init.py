@@ -1057,7 +1057,10 @@ def _name_attach_error() -> type[Exception]:
 
 
 class TestMarkerAuthoritativeInit:
-    """§ 2.1 marker-authoritative initialize_project / get_or_create matrix."""
+    """§ 2.1 marker-authoritative initialize_project / get_or_create matrix.
+
+    Marker id is the only attach key; names do not attach.
+    """
 
     def test_no_marker_unused_name_registers_checkout(
         self,
