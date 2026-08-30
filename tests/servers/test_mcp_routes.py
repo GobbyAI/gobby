@@ -574,6 +574,34 @@ class TestListMCPTools:
         assert data["tool_count"] == 1
         assert data["tools"][0]["name"] == "external-tool"
 
+    def test_list_tools_external_server_resolves_name_to_id_keyed_manager(
+        self, session_storage: SessionManager
+    ) -> None:
+        """A name lookup must resolve to the id-keyed manager entry (#21292)."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mcp_manager = FakeMCPManager()
+        config = FakeServerConfig(name="external-server")
+        config.id = "srv-uuid-1"
+        mcp_manager._configs["srv-uuid-1"] = config
+        mcp_manager.server_configs.append(config)
+        mcp_manager._sessions["srv-uuid-1"] = FakeMCPSession(
+            [FakeTool(name="external-tool", description="External tool")]
+        )
+        server.mcp_manager = mcp_manager
+
+        with TestClient(server.app) as client:
+            response = client.get("/api/mcp/external-server/tools")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["tool_count"] == 1
+        assert data["tools"][0]["name"] == "external-tool"
+
     def test_list_tools_external_server_connection_failure(
         self, session_storage: SessionManager
     ) -> None:
@@ -876,10 +904,13 @@ class TestListAllMCPTools:
             test_mode=True,
             session_manager=session_storage,
         )
-        server._internal_manager = FakeInternalManager(
-            [
-                FakeInternalRegistry(name="gobby-tasks"),
-            ]
+        server._internal_manager = cast(
+            Any,
+            FakeInternalManager(
+                [
+                    FakeInternalRegistry(name="gobby-tasks"),
+                ]
+            ),
         )
 
         # Mock metrics manager
@@ -977,10 +1008,13 @@ class TestGetToolSchema:
             test_mode=True,
             session_manager=session_storage,
         )
-        server._internal_manager = FakeInternalManager(
-            [
-                FakeInternalRegistry(name="gobby-tasks"),
-            ]
+        server._internal_manager = cast(
+            Any,
+            FakeInternalManager(
+                [
+                    FakeInternalRegistry(name="gobby-tasks"),
+                ]
+            ),
         )
 
         with TestClient(server.app) as client:
@@ -1038,10 +1072,13 @@ class TestGetToolSchema:
             test_mode=True,
             session_manager=session_storage,
         )
-        server._internal_manager = FakeInternalManager(
-            [
-                FakeInternalRegistry(name="gobby-tasks"),
-            ]
+        server._internal_manager = cast(
+            Any,
+            FakeInternalManager(
+                [
+                    FakeInternalRegistry(name="gobby-tasks"),
+                ]
+            ),
         )
         server._tools_handler = MagicMock(tool_proxy=MagicMock())
         server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool = AsyncMock()
@@ -1184,10 +1221,13 @@ class TestGetToolSchema:
             test_mode=True,
             session_manager=session_storage,
         )
-        server._internal_manager = FakeInternalManager(
-            [
-                FakeInternalRegistry(name="gobby-tasks"),
-            ]
+        server._internal_manager = cast(
+            Any,
+            FakeInternalManager(
+                [
+                    FakeInternalRegistry(name="gobby-tasks"),
+                ]
+            ),
         )
         server._tools_handler = MagicMock(tool_proxy=MagicMock())
 
@@ -2599,10 +2639,13 @@ class TestGetMCPStatus:
             test_mode=True,
             session_manager=session_storage,
         )
-        server._internal_manager = FakeInternalManager(
-            [
-                FakeInternalRegistry(name="gobby-tasks"),
-            ]
+        server._internal_manager = cast(
+            Any,
+            FakeInternalManager(
+                [
+                    FakeInternalRegistry(name="gobby-tasks"),
+                ]
+            ),
         )
 
         with TestClient(server.app) as client:
@@ -3005,10 +3048,13 @@ class TestRefreshMCPTools:
             test_mode=True,
             session_manager=session_storage,
         )
-        server._internal_manager = FakeInternalManager(
-            [
-                FakeInternalRegistry(name="gobby-tasks"),
-            ]
+        server._internal_manager = cast(
+            Any,
+            FakeInternalManager(
+                [
+                    FakeInternalRegistry(name="gobby-tasks"),
+                ]
+            ),
         )
 
         # Mock MCP DB manager

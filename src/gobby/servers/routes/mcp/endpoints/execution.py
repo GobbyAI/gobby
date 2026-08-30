@@ -281,16 +281,20 @@ async def list_mcp_tools(
             }
             return result
 
-        # Check if server is configured
-        if not mcp_manager.has_server(server_name):
+        # Resolve the caller-visible (name, scope) to a config; the manager is
+        # id-keyed and never sees names (services/server_resolution.py).
+        scope_project = _http_request_scope(request, server, ctx_token, {})
+        resolved = resolve_server(mcp_manager, server_name, project_id=scope_project)
+        if resolved is None:
             raise HTTPException(
                 status_code=404,
                 detail={"success": False, "error": f"Unknown MCP server: '{server_name}'"},
             )
+        server_name = resolved.name
 
         # Use ensure_connected for lazy loading - connects on-demand if not connected
         try:
-            session = await mcp_manager.ensure_connected(server_name)
+            session = await mcp_manager.ensure_connected(resolved.id)
         except KeyError as e:
             response_time_ms = (time.perf_counter() - start_time) * 1000
             result = {"success": False, "error": str(e), "response_time_ms": response_time_ms}
