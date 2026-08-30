@@ -25,9 +25,8 @@ class _ImportManager(Protocol):
 
     def cache_tools(
         self,
-        server_name: str,
+        server_id: str,
         tools: list[dict[str, Any]],
-        project_id: str,
     ) -> int: ...
 
 
@@ -184,7 +183,7 @@ class MCPImportStorageMixin:
 
             # Cache tools to database
             if tools:
-                count = manager.cache_tools(server_name, tools, project_id=project_id)
+                count = manager.cache_tools(server.id, tools)
                 total_imported += count
                 logger.info("Imported %s tools for server %s", count, server_name)
 

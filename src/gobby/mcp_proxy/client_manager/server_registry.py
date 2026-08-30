@@ -15,7 +15,7 @@ LOGGER = logging.getLogger("gobby.mcp.manager")
 
 
 class _CachedToolsManager(Protocol):
-    def get_cached_tools(self, server_name: str, *, project_id: str) -> list[Any]: ...
+    def get_cached_tools(self, server_id: str) -> list[Any]: ...
 
 
 def truncate_tool_brief(text: str | None, *, max_chars: int = 100) -> str:
@@ -32,13 +32,12 @@ def truncate_tool_brief(text: str | None, *, max_chars: int = 100) -> str:
 
 def load_tools_from_db(
     mcp_db_manager: _CachedToolsManager,
-    server_name: str,
-    project_id: str,
+    server_id: str,
     logger: logging.Logger,
 ) -> list[dict[str, str]] | None:
     """Load cached lightweight tool metadata for an MCP server."""
     try:
-        tools = mcp_db_manager.get_cached_tools(server_name, project_id=project_id)
+        tools = mcp_db_manager.get_cached_tools(server_id)
         if not tools:
             return None
         return [
@@ -49,7 +48,7 @@ def load_tools_from_db(
             for tool in tools
         ]
     except Exception as exc:
-        logger.warning("Failed to load cached tools for '%s': %s", server_name, exc)
+        logger.warning("Failed to load cached tools for '%s': %s", server_id, exc)
         return None
 
 
@@ -89,10 +88,14 @@ def load_initial_configs(
                 oauth_provider=getattr(server, "oauth_provider", None),
                 connect_timeout=connect_timeout,
                 project_id=server.project_id,
+                id=str(server.id),
+                template_id=getattr(server, "template_id", None),
+                template=getattr(server, "template", None),
+                runtime_hook=getattr(server, "runtime_hook", None),
+                template_values=getattr(server, "template_values", None),
                 tools=manager.load_tools_from_db(
                     manager.mcp_db_manager,
-                    server.name,
-                    server.project_id,
+                    str(server.id),
                 ),
             )
             manager._configs[config.name] = config

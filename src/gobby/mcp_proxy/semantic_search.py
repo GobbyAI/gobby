@@ -528,7 +528,7 @@ class SemanticToolSearch:
         for server in servers:
             server_stats = {"embedded": 0, "skipped": 0, "failed": 0}
 
-            tools = mcp_manager.get_cached_tools(server.name, project_id=project_id)
+            tools = mcp_manager.get_cached_tools(server.id)
 
             for tool in tools:
                 try:

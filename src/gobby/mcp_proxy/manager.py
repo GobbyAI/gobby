@@ -91,23 +91,20 @@ class MCPClientManager:
     @staticmethod
     def load_tools_from_db(
         mcp_db_manager: Any,
-        server_name: str,
-        project_id: str,
+        server_id: str,
     ) -> list[dict[str, str]] | None:
         return server_registry.load_tools_from_db(
             mcp_db_manager,
-            server_name,
-            project_id,
+            server_id,
             logger,
         )
 
     @staticmethod
     def _load_tools_from_db(
         mcp_db_manager: Any,
-        server_name: str,
-        project_id: str,
+        server_id: str,
     ) -> list[dict[str, str]] | None:
-        return MCPClientManager.load_tools_from_db(mcp_db_manager, server_name, project_id)
+        return MCPClientManager.load_tools_from_db(mcp_db_manager, server_id)
 
     @property
     def connections(self) -> dict[str, BaseTransportConnection]:

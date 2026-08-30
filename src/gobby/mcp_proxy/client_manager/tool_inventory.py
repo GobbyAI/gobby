@@ -162,7 +162,12 @@ def cache_discovered_tools(
             for tool in tools
         ]
         if manager.mcp_db_manager and config.project_id:
-            manager.mcp_db_manager.cache_tools(server_name, tools, project_id=config.project_id)
+            stored = manager.mcp_db_manager.get_server(
+                server_name,
+                project_id=config.project_id,
+            )
+            if stored is not None:
+                manager.mcp_db_manager.cache_tools(stored.id, tools)
         manager._tool_cache_dirty.discard(server_name)
     except Exception as exc:
         manager._tool_cache_dirty.add(server_name)

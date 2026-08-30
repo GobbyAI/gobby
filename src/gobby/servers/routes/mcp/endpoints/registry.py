@@ -334,8 +334,9 @@ async def refresh_mcp_tools(
                 # Generate embeddings for new/changed tools
                 if semantic_search and tools_to_embed:
                     # Look up DB-assigned tool IDs if available, else use synthetic IDs
-                    cached_tools = server._mcp_db_manager.get_cached_tools(
-                        server_name, project_id=project_id
+                    stored = server._mcp_db_manager.get_server(server_name, project_id=project_id)
+                    cached_tools = (
+                        server._mcp_db_manager.get_cached_tools(stored.id) if stored else []
                     )
                     tool_id_map = {t.name: t.id for t in cached_tools}
 

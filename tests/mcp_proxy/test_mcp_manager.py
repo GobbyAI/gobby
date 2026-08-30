@@ -1,6 +1,7 @@
 """Tests for the MCP Client Manager."""
 
 from datetime import datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -167,6 +168,37 @@ class TestMCPServerConfig:
         with pytest.raises(ValueError, match="connect_timeout must be a positive number"):
             config.validate()
 
+    def test_validate_rejects_empty_id(self) -> None:
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project-uuid",
+            transport="http",
+            url="http://localhost:8080/mcp",
+            id="",
+        )
+
+        with pytest.raises(ValueError, match="id must be a non-empty string"):
+            config.validate()
+
+        config.id = "   "
+        with pytest.raises(ValueError, match="id must be a non-empty string"):
+            config.validate()
+
+    def test_new_config_has_id_and_template_defaults(self) -> None:
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project-uuid",
+            transport="http",
+            url="http://localhost:8080/mcp",
+        )
+
+        assert config.id
+        assert config.template_id is None
+        assert config.template is None
+        assert config.runtime_hook is None
+        assert config.template_values is None
+        config.validate()
+
 
 class TestMCPConnectionHealth:
     """Tests for MCPConnectionHealth tracking."""
@@ -302,6 +334,7 @@ class TestCreateTransportConnection:
         transport: str,
     ) -> None:
         """Every transport accepted by config validation has a factory implementation."""
+        options: dict[str, Any]
         if transport == "stdio":
             options = {"command": "server"}
         elif transport == "websocket":

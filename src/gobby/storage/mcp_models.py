@@ -10,7 +10,7 @@ from gobby.utils.datetime import normalize_datetime_model
 
 
 def _loads_server_json_field(row: Mapping[str, Any], field: str) -> Any:
-    raw = row[field]
+    raw = row.get(field)
     if raw is None:
         return None
     if isinstance(raw, str):
@@ -87,11 +87,17 @@ class MCPServer:
     created_at: datetime
     updated_at: datetime
     project_id: str  # Required - all servers must belong to a project
+    template_id: str | None = None
+    template_values: dict[str, Any] | None = None
+    runtime_hook: str | None = None
+    template: str | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "MCPServer":
         """Create MCPServer from database row."""
         connect_timeout = row.get("connect_timeout")
+        template_id = row.get("template_id")
+        template = row.get("template")
         return cls(
             id=row["id"],
             name=row["name"],
@@ -109,6 +115,10 @@ class MCPServer:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             project_id=row["project_id"],
+            template_id=str(template_id) if template_id is not None else None,
+            template_values=_loads_server_json_field(row, "template_values"),
+            runtime_hook=row.get("runtime_hook"),
+            template=str(template) if template is not None else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -130,6 +140,10 @@ class MCPServer:
             "connect_timeout": self.connect_timeout,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "template_id": self.template_id,
+            "template_values": self.template_values,
+            "runtime_hook": self.runtime_hook,
+            "template": self.template,
         }
 
     def to_config(self) -> dict[str, Any]:
@@ -156,6 +170,11 @@ class MCPServer:
         if self.oauth_provider:
             config["oauth_provider"] = self.oauth_provider
         config["connect_timeout"] = self.connect_timeout
+        config["id"] = self.id
+        config["template_id"] = self.template_id
+        config["template"] = self.template
+        config["runtime_hook"] = self.runtime_hook
+        config["template_values"] = self.template_values
         return config
 
 

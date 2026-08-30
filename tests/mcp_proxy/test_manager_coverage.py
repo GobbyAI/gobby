@@ -227,6 +227,7 @@ class MockDBServer:
         enabled: bool = True,
         description: str | None = None,
         project_id: str = "test-project",
+        id: str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01",
     ):
         self.name = name
         self.transport = transport
@@ -238,6 +239,7 @@ class MockDBServer:
         self.enabled = enabled
         self.description = description
         self.project_id = project_id
+        self.id = id
 
 
 class MockCachedTool:
@@ -340,7 +342,7 @@ class TestLoadToolsFromDB:
         mock_db = MagicMock()
         mock_db.get_cached_tools.return_value = []
 
-        result = MCPClientManager._load_tools_from_db(mock_db, "test-server", "test-project")
+        result = MCPClientManager._load_tools_from_db(mock_db, "test-server-id")
 
         assert result is None
 
@@ -349,7 +351,7 @@ class TestLoadToolsFromDB:
         mock_db = MagicMock()
         mock_db.get_cached_tools.side_effect = Exception("Database error")
 
-        result = MCPClientManager._load_tools_from_db(mock_db, "test-server", "test-project")
+        result = MCPClientManager._load_tools_from_db(mock_db, "test-server-id")
 
         assert result is None
 
@@ -360,7 +362,7 @@ class TestLoadToolsFromDB:
             MockCachedTool("tool1", None),
         ]
 
-        result = MCPClientManager._load_tools_from_db(mock_db, "test-server", "test-project")
+        result = MCPClientManager._load_tools_from_db(mock_db, "test-server-id")
 
         assert result is not None
         assert result[0]["brief"] == ""
@@ -1642,6 +1644,9 @@ class TestMCPClientManagerGetToolInputSchema:
             url="http://localhost:8001",
         )
         mock_db = MagicMock()
+        stored = MagicMock()
+        stored.id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10"
+        mock_db.get_server.return_value = stored
         manager = MCPClientManager(server_configs=[config], mcp_db_manager=mock_db)
         tools = [
             {
@@ -1654,11 +1659,7 @@ class TestMCPClientManagerGetToolInputSchema:
         manager.cache_discovered_tools("test-server", tools)
         manager.cache_discovered_tools("test-server", [dict(tools[0])])
 
-        mock_db.cache_tools.assert_called_once_with(
-            "test-server",
-            tools,
-            project_id="test-project",
-        )
+        mock_db.cache_tools.assert_called_once_with(stored.id, tools)
 
         changed_tools = [*tools, {"name": "other-tool", "inputSchema": {}}]
         manager.cache_discovered_tools("test-server", changed_tools)

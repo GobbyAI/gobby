@@ -2,9 +2,11 @@
 MCP Proxy data models and configuration classes.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
+from typing import Any
+from uuid import uuid4
 
 from gobby.config.url_validation import (
     HTTP_URL_SCHEMES,
@@ -148,8 +150,16 @@ class MCPServerConfig:
     # Connection timeout (seconds) for establishing connections
     connect_timeout: float = 30.0
 
+    id: str = field(default_factory=lambda: str(uuid4()))
+    template_id: str | None = None
+    template: str | None = None
+    runtime_hook: str | None = None
+    template_values: dict[str, Any] | None = None
+
     def validate(self) -> None:
         """Validate configuration based on transport type."""
+        if not str(self.id).strip():
+            raise ValueError("id must be a non-empty string")
         if self.transport not in SUPPORTED_TRANSPORTS:
             raise ValueError(
                 f"Unsupported transport: {self.transport}. Supported: {list(SUPPORTED_TRANSPORTS)}"

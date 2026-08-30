@@ -48,14 +48,14 @@ def sample_tool(
     sample_project: dict[str, Any],
 ) -> SampleTool:
     """Create a sample tool for testing."""
-    mcp_manager.upsert(
+    server = mcp_manager.upsert(
         name="test-server",
         transport="http",
         url="http://localhost:8080",
         project_id=sample_project["id"],
     )
     mcp_manager.cache_tools(
-        "test-server",
+        server.id,
         [
             {
                 "name": "test_tool",
@@ -69,9 +69,8 @@ def sample_tool(
                 },
             }
         ],
-        project_id=sample_project["id"],
     )
-    tools = mcp_manager.get_cached_tools("test-server", project_id=sample_project["id"])
+    tools = mcp_manager.get_cached_tools(server.id)
     return {
         "id": tools[0].id,
         "name": tools[0].name,
@@ -447,19 +446,18 @@ class TestEmbeddingGeneration:
     ) -> None:
         """Test embedding all tools for a project."""
         # Create server with multiple tools
-        mcp_manager.upsert(
+        server = mcp_manager.upsert(
             name="embed-server",
             transport="http",
             url="http://localhost:8080",
             project_id=sample_project["id"],
         )
         mcp_manager.cache_tools(
-            "embed-server",
+            server.id,
             [
                 {"name": "tool_a", "description": "Tool A"},
                 {"name": "tool_b", "description": "Tool B"},
             ],
-            project_id=sample_project["id"],
         )
 
         mock_embedding = [0.1] * DEFAULT_EMBEDDING_DIM
@@ -524,16 +522,15 @@ class TestEmbeddingGeneration:
         sample_project: dict[str, Any],
     ) -> None:
         """Test that embed_all_tools handles errors gracefully."""
-        mcp_manager.upsert(
+        server = mcp_manager.upsert(
             name="error-server",
             transport="http",
             url="http://localhost:8080",
             project_id=sample_project["id"],
         )
         mcp_manager.cache_tools(
-            "error-server",
+            server.id,
             [{"name": "failing_tool", "description": "Will fail"}],
-            project_id=sample_project["id"],
         )
 
         with patch.object(

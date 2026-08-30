@@ -539,7 +539,7 @@ class SecretStore:
                    id, name, encrypted_value, category, description
                )
                VALUES (%s, %s, %s, %s, %s)
-               ON CONFLICT (name) DO UPDATE SET
+               ON CONFLICT (name, project_id) DO UPDATE SET
                    encrypted_value = EXCLUDED.encrypted_value,
                    category = EXCLUDED.category,
                    description = EXCLUDED.description,
