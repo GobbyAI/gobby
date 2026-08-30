@@ -526,6 +526,16 @@ async def prepare_agy_spawn(request: SpawnRequest) -> ProviderSpawnPlan | SpawnR
         sandbox_launch=launch,
     )
     pre_approve_directory("agy", request.cwd)
+    if request.initial_variables and request.session_manager is not None:
+        storage = getattr(request.session_manager, "_storage", None)
+        db = getattr(storage, "db", None)
+        if db is not None:
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            SessionVariableManager(db).merge_variables(
+                gobby_session_id,
+                dict(request.initial_variables),
+            )
     return ProviderSpawnPlan(
         command=cmd,
         env=env,
