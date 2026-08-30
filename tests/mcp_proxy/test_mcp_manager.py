@@ -1158,6 +1158,37 @@ async def test_optional_secret_reexpands_on_all_connection_paths() -> None:
         assert "OPTIONAL" not in (manager._configs[row.id].env or {})
         assert manager.get_server_health()[row.id]["state"] != "needs_configuration"
 
+        row_lazy = _row(
+            name="search-lazy",
+            project_id=project_id,
+            template_id=template_id,
+            template="brave-search",
+            env={"KEY": "plain"},
+        )
+        db_lazy = FakeMCPDb([row_lazy])
+        optional_present["on"] = False
+        lazy = MCPClientManager(
+            mcp_db_manager=db_lazy,
+            lazy_connect=True,
+            template_expand=expand,
+        )
+        optional_present["on"] = True
+        await lazy.ensure_connected(row_lazy.id)
+        assert lazy._configs[row_lazy.id].env == {
+            "KEY": "plain",
+            "OPTIONAL": "$secret:optional_token",
+        }
+        gained = lazy._connections[row_lazy.id].config.env
+        assert gained is not None
+        assert gained["OPTIONAL"] == "opt-value"
+        await lazy.disconnect_server(row_lazy.id)
+        optional_present["on"] = False
+        await lazy.ensure_connected(row_lazy.id)
+        assert "OPTIONAL" not in (lazy._configs[row_lazy.id].env or {})
+        removed = lazy._connections[row_lazy.id].config.env or {}
+        assert "OPTIONAL" not in removed
+        assert lazy.get_server_health()[row_lazy.id]["state"] != "needs_configuration"
+
 
 @pytest.mark.asyncio
 async def test_registry_config_keeps_secret_references_after_refresh() -> None:
@@ -1180,6 +1211,18 @@ async def test_registry_config_keeps_secret_references_after_refresh() -> None:
         await manager.refresh_server(row.id)
         assert manager._configs[row.id].env == {"TOKEN": "$secret:github_token"}
         assert manager._connections[row.id].config.env == {"TOKEN": "live"}
+
+        lazy_row = _row(
+            name="github-lazy",
+            project_id=project_id,
+            env={"TOKEN": "$secret:github_token"},
+        )
+        lazy_db = FakeMCPDb([lazy_row])
+        lazy = MCPClientManager(mcp_db_manager=lazy_db, lazy_connect=True)
+        assert lazy._configs[lazy_row.id].env == {"TOKEN": "$secret:github_token"}
+        await lazy.ensure_connected(lazy_row.id)
+        assert lazy._configs[lazy_row.id].env == {"TOKEN": "$secret:github_token"}
+        assert lazy._connections[lazy_row.id].config.env == {"TOKEN": "live"}
 
 
 @pytest.mark.asyncio
