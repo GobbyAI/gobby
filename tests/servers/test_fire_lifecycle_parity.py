@@ -17,7 +17,6 @@ import pytest
 
 from gobby.adapters.agy import AgyAdapter
 from gobby.adapters.agy_contract import AGY_HOOK_NAMES, get_agy_contract
-from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.events import (
     EVENT_TYPE_CLI_SUPPORT,
     HookEvent,
@@ -25,6 +24,7 @@ from gobby.hooks.events import (
     HookResponse,
     SessionSource,
 )
+from gobby.hooks.hook_manager import HookManager
 from gobby.servers.websocket.chat import ChatMixin
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
@@ -1094,5 +1094,6 @@ class TestAgyNativeLifecycleParity:
                 }
             )
         assert pre_tool.get("decision") == "deny"
+        assert pre_tool.get("overwrite") == {"command": "echo once"}
         before_tool = manager.events[0]
         assert before_tool.event_type is HookEventType.BEFORE_TOOL

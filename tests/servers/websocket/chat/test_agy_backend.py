@@ -910,3 +910,65 @@ def test_agy_tool_name_adapter_is_wired() -> None:
     )
     adapter = session._tool_name_adapter()
     assert adapter("write_to_file") == "Write"
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_agy_session_streams_tools_resumes_and_interrupts(
+    tmp_path: Path,
+) -> None:
+    from gobby.config.app import DaemonConfig
+    from gobby.servers.websocket.chat.backends.agy import AgyManagedChatSession
+    from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
+
+    first = _FakeProcess([_init(), _text("hello"), _tool_active(), _result(usage=_usage())])
+    second = _FakeProcess([_init(), *_turn_lines("resumed")])
+    record = SimpleNamespace(
+        supported=True,
+        reason="AGY 1.1.18 meets required version 1.1.18.",
+    )
+    manager = WebChatRuntimeManager(
+        codex_client=None,
+        daemon_config=DaemonConfig(web_chat_sandbox={"enabled": False}),
+    )
+    killpg = MagicMock()
+    create = patch(
+        f"{_AGY_MOD}.asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+        side_effect=[first, second],
+    )
+    with (
+        patch(
+            "gobby.providers.version_gate.ensure_agy_support",
+            AsyncMock(return_value=record),
+        ),
+        patch(f"{_AGY_MOD}.shutil.which", return_value="/bin/agy"),
+        create as create_process,
+        patch(f"{_AGY_MOD}.os.killpg", killpg),
+    ):
+        created = await manager.create_session(provider="agy", conversation_id=GOBBY_CONV)
+        session = cast(AgyManagedChatSession, created)
+        session.project_path = str(tmp_path)
+        session._on_before_agent = AsyncMock()
+        session._on_pre_tool = AsyncMock()
+        session._on_post_tool = AsyncMock()
+        session._on_stop = AsyncMock()
+        session._on_pre_compact = AsyncMock()
+        first_events = [event async for event in session.send_message("hi")]
+        confirmed = session.sdk_session_id
+        await session.interrupt()
+        second_events = [event async for event in session.send_message("again")]
+
+    assert isinstance(session, AgyManagedChatSession)
+    assert [event.content for event in first_events if isinstance(event, TextChunk)] == ["hello"]
+    assert any(isinstance(event, ToolCallEvent) for event in first_events)
+    assert killpg.call_count >= 1
+    assert killpg.call_args_list[0].args[0] == first.pid
+    assert confirmed == CONV
+    assert [event.content for event in second_events if isinstance(event, TextChunk)] == ["resumed"]
+    reattach = list(create_process.call_args_list[1].args)
+    assert reattach[reattach.index("--conversation") + 1] == CONV
+    session._on_before_agent.assert_not_awaited()
+    session._on_pre_tool.assert_not_awaited()
+    session._on_post_tool.assert_not_awaited()
+    session._on_stop.assert_not_awaited()
+    session._on_pre_compact.assert_not_awaited()
