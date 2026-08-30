@@ -1429,3 +1429,61 @@ async def test_concurrent_patches_and_delete_serialize_under_per_id_lock(
             assert _detail(patch_task).get("success") is False
         assert storage.get_server("demo-instance", project_id) is None
         assert storage.get_server_by_id(server_id) is None
+
+
+def test_listing_masks_template_values_and_ignores_name_keyed_health(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    from gobby.mcp_proxy.models import ConnectionState, MCPConnectionHealth
+
+    storage = LocalMCPManager(temp_db)
+    template = storage.upsert_template(
+        name="demo",
+        project_id=GLOBAL_PROJECT_ID,
+        owner="gobby",
+        definition={
+            "transport": "http",
+            "url": "https://demo.example.test/mcp",
+            "enabled": True,
+            "params": [
+                {"name": "api_name", "env": "API_NAME", "required": True},
+                {
+                    "name": "token",
+                    "env": "DEMO_TOKEN",
+                    "required": True,
+                    "secret": True,
+                    "default_secret": "demo_token",
+                },
+            ],
+        },
+    )
+    storage.upsert(
+        name="demo",
+        transport="http",
+        url="https://demo.example.test/mcp",
+        env={"API_NAME": "pets", "DEMO_TOKEN": "$secret:demo_token"},
+        project_id=GLOBAL_PROJECT_ID,
+        template_id=template.id,
+        template_values={"api_name": "pets", "token": "$secret:demo_token"},
+    )
+    manager = MCPClientManager(
+        project_id=sample_project["id"],
+        mcp_db_manager=storage,
+        lazy_connect=True,
+    )
+    config = next(c for c in manager.server_configs if c.name == "demo")
+    manager.health.pop(config.id, None)
+    manager.health[config.name] = MCPConnectionHealth(
+        name="demo",
+        state=ConnectionState.CONNECTED,
+        project_id=GLOBAL_PROJECT_ID,
+    )
+    server = _http_server_for(manager)
+    client = TestClient(_mcp_app(server))
+
+    listed = client.get("/api/mcp/servers")
+    entry = next(row for row in listed.json()["servers"] if row["name"] == "demo")
+    assert entry["template_values"] == {"token": "$secret:demo_token"}
+    assert entry["state"] == "unknown"
+    assert entry["connected"] is False

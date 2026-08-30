@@ -194,7 +194,7 @@ async def list_mcp_servers(
             else:
                 configs = list(getattr(manager, "server_configs", []) or [])
             for config in configs:
-                health = manager.health.get(config.id) or manager.health.get(config.name)
+                health = manager.health.get(config.id)
                 state = health.state.value if health else "unknown"
                 is_connected = _mcp_manager_is_connected(manager, config.id)
                 if is_connected:
@@ -212,7 +212,7 @@ async def list_mcp_servers(
                     "project_id": config.project_id,
                     "scope": _scope_label(config.project_id),
                     "template": config.template,
-                    "template_values": config.template_values,
+                    "template_values": _public_secret_refs(config.template_values),
                     "missing_secrets": missing,
                     "description": config.description,
                     "url": config.url,
