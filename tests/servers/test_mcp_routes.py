@@ -602,6 +602,38 @@ class TestListMCPTools:
         assert data["tool_count"] == 1
         assert data["tools"][0]["name"] == "external-tool"
 
+    def test_list_tools_global_server_visible_from_project_scope(
+        self, session_storage: SessionManager
+    ) -> None:
+        """A project-scoped request resolves a global instance; unknown names 404."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mcp_manager = FakeMCPManager()
+        config = FakeServerConfig(name="global-server")
+        config.id = "srv-uuid-global"
+        config.project_id = GLOBAL_PROJECT_ID
+        mcp_manager._configs["srv-uuid-global"] = config
+        mcp_manager.server_configs.append(config)
+        mcp_manager._sessions["srv-uuid-global"] = FakeMCPSession(
+            [FakeTool(name="global-tool", description="Global tool")]
+        )
+        server.mcp_manager = mcp_manager
+        project_headers = {"X-Gobby-Project-Id": "11111111-2222-3333-4444-555555555555"}
+
+        with TestClient(server.app) as client:
+            response = client.get("/api/mcp/global-server/tools", headers=project_headers)
+            missing = client.get("/api/mcp/no-such-server/tools", headers=project_headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["tools"][0]["name"] == "global-tool"
+        assert missing.status_code == 404
+        assert "Unknown MCP server" in missing.json()["detail"]["error"]
+
     def test_list_tools_external_server_connection_failure(
         self, session_storage: SessionManager
     ) -> None:
