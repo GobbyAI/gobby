@@ -45,13 +45,13 @@ from gobby.sessions.gzip_seek_index import (
 )
 from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.transcript_normalization import normalize_transcript_records
-from gobby.sessions.transcript_parsing import _get_parser
 from gobby.sessions.transcript_renderer import (
     RenderedMessage,
     RenderedToolCall,
     RenderState,
     render_incremental,
 )
+from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage, RawLine
 
 if TYPE_CHECKING:
@@ -340,7 +340,7 @@ def render_window(
     resume_boundary = index.boundaries[resume_group]
     window_start_parsed_index = index.boundaries[g_start].parsed_index_start
 
-    parser = _get_parser(source, session_id=session_id, transcript_path=path)
+    parser = get_parser(source, session_id=session_id, transcript_path=path)
     parser.hydrate_state(index.parser_state)
     state = RenderState()
     tracker = observation_tracker or ObservationTracker()

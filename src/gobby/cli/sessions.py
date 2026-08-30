@@ -459,6 +459,7 @@ def summarize_session(
 
     from gobby.sessions.analyzer import TranscriptAnalyzer
     from gobby.sessions.formatting import format_handoff_as_markdown
+    from gobby.sessions.transcripts import get_parser
 
     operator_notes = notes_option if notes_option is not None else notes_arg
 
@@ -519,8 +520,13 @@ def summarize_session(
         click.echo("Transcript is empty.", err=True)
         return
 
-    # Analyze transcript
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(
+        get_parser(
+            session.source,
+            session_id=session.id,
+            transcript_path=path,
+        )
+    )
     handoff_ctx = analyzer.extract_handoff_context(turns)
 
     # Determine the git working directory - prefer project repo_path, fall back to transcript parent

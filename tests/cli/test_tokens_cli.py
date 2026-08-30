@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import importlib
-from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, NoReturn
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import Mock, patch
 
 import click
 import pytest
@@ -66,15 +65,23 @@ def test_load_session_messages_wraps_parse_errors(
     transcript.write_text("{}", encoding="utf-8")
     session = SimpleNamespace(transcript_path=str(transcript), source="claude")
 
-    def _raise_parse_error(self: object, lines: Sequence[str], start_index: int = 0) -> NoReturn:
-        raise ValueError("boom")
-
-    monkeypatch.setattr(tokens_module.ClaudeTranscriptParser, "parse_lines", _raise_parse_error)
+    mock_parser = Mock()
+    mock_parser.parse_lines.side_effect = ValueError("boom")
+    monkeypatch.setattr(tokens_module, "get_parser", lambda *_args, **_kwargs: mock_parser)
 
     with (
         patch("pathlib.Path.home", return_value=tmp_path),
         pytest.raises(click.ClickException, match="Failed to parse transcript"),
     ):
+        tokens_module._load_session_messages("sess-1", session)
+
+
+def test_load_session_messages_rejects_unknown_source(tmp_path: Path) -> None:
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("{}\n", encoding="utf-8")
+    session = SimpleNamespace(transcript_path=str(transcript), source="unknown-cli")
+
+    with pytest.raises(click.ClickException, match="Unsupported transcript source"):
         tokens_module._load_session_messages("sess-1", session)
 
 

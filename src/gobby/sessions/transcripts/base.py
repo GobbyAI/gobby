@@ -280,7 +280,11 @@ class TranscriptParser(Protocol):
 
     error_log: TranscriptParserErrorLog
 
-    def __init__(self, session_id: str | None = None) -> None: ...
+    def __init__(
+        self,
+        session_id: str | None = None,
+        transcript_path: str | Path | None = None,
+    ) -> None: ...
 
     def parse_line(self, line: str, index: int) -> ParsedMessage | ParsedToolEvent | None:
         """
@@ -433,11 +437,13 @@ class BaseTranscriptParser:
         cli_name: str,
         session_id: str | None = None,
         logger_instance: logging.Logger | None = None,
+        transcript_path: Path | str | None = None,
     ):
         self.cli_name = cli_name
         self.session_id = session_id
         self.error_log = TranscriptParserErrorLog(cli_name)
         self.logger = logger_instance or logging.getLogger(f"gobby.sessions.transcripts.{cli_name}")
+        self._transcript_path: Path | None = Path(transcript_path) if transcript_path else None
 
     def iter_parse_events(
         self, raw_lines: Iterable[RawLine], start_index: int = 0

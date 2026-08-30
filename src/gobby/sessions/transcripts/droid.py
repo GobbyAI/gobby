@@ -113,8 +113,12 @@ class DroidTranscriptParser(BaseTranscriptParser):
         transcript_path: Path | str | None = None,
         logger_instance: logging.Logger | None = None,
     ) -> None:
-        super().__init__(cli_name="droid", session_id=session_id, logger_instance=logger_instance)
-        self._transcript_path: Path | None = Path(transcript_path) if transcript_path else None
+        super().__init__(
+            cli_name="droid",
+            session_id=session_id,
+            logger_instance=logger_instance,
+            transcript_path=transcript_path,
+        )
         self._sidecar_usage: TokenUsage | None = None
         self._sidecar_model: str | None = None
         self._last_emitted_usage: TokenUsage | None = None

@@ -1,53 +1,13 @@
-"""Transcript parser dispatch and conversion helpers."""
+"""Transcript conversion helpers routed through the shared parser registry."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from gobby.sessions.transcript_normalization import normalize_transcript_records
+from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import NON_MESSAGE_CONTENT_TYPES, ParsedMessage
-
-if TYPE_CHECKING:
-    from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
-    from gobby.sessions.transcripts.codex import CodexTranscriptParser
-    from gobby.sessions.transcripts.droid import DroidTranscriptParser
-    from gobby.sessions.transcripts.grok import GrokTranscriptParser
-    from gobby.sessions.transcripts.qwen import QwenTranscriptParser
-
-    TranscriptParser = (
-        ClaudeTranscriptParser
-        | GrokTranscriptParser
-        | QwenTranscriptParser
-        | CodexTranscriptParser
-        | DroidTranscriptParser
-    )
-
-
-def _get_parser(
-    source: str,
-    session_id: str | None = None,
-    transcript_path: str | Path | None = None,
-) -> TranscriptParser:
-    """Get the appropriate transcript parser for a source."""
-    from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
-    from gobby.sessions.transcripts.codex import CodexTranscriptParser
-    from gobby.sessions.transcripts.droid import DroidTranscriptParser
-    from gobby.sessions.transcripts.grok import GrokTranscriptParser
-    from gobby.sessions.transcripts.qwen import QwenTranscriptParser
-
-    if source == "grok":
-        return GrokTranscriptParser(session_id=session_id)
-    if source == "qwen":
-        return QwenTranscriptParser(session_id=session_id)
-    if source == "codex":
-        return CodexTranscriptParser(session_id=session_id)
-    if source == "droid":
-        return DroidTranscriptParser(session_id=session_id, transcript_path=transcript_path)
-    if source == "claude":
-        return ClaudeTranscriptParser(session_id=session_id)
-    source_label = repr(source) if source else "<empty>"
-    raise ValueError(f"Unsupported transcript source: {source_label}")
 
 
 def _parse_lines(
@@ -57,7 +17,7 @@ def _parse_lines(
     transcript_path: str | Path | None = None,
 ) -> list[ParsedMessage]:
     """Parse lines into ParsedMessage objects."""
-    parser = _get_parser(source, session_id=session_id, transcript_path=transcript_path)
+    parser = get_parser(source, session_id=session_id, transcript_path=transcript_path)
     parsed = parser.parse_lines(lines, start_index=0)
     normalized = normalize_transcript_records(parsed, source)
     return [r for r in normalized if isinstance(r, ParsedMessage)]

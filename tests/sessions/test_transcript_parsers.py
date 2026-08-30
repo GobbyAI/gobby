@@ -12,7 +12,6 @@ import pytest
 
 from gobby.sessions.message_stats import compute_message_stats
 from gobby.sessions.transcript_normalization import normalize_transcript_records
-from gobby.sessions.transcript_parsing import _get_parser
 from gobby.sessions.transcript_renderer import render_transcript
 from gobby.sessions.transcripts import PARSER_REGISTRY, get_parser
 from gobby.sessions.transcripts.base import (
@@ -2351,7 +2350,6 @@ class TestParserRegistry:
         assert isinstance(get_parser("qwen"), QwenTranscriptParser)
         assert isinstance(get_parser("codex"), CodexTranscriptParser)
         assert isinstance(get_parser("droid"), DroidTranscriptParser)
-        assert isinstance(_get_parser("claude"), ClaudeTranscriptParser)
 
     def test_get_parser_threads_transcript_path_to_droid(self) -> None:
         """Droid parser construction keeps the transcript path for sidecar lookup."""
@@ -2367,11 +2365,6 @@ class TestParserRegistry:
     def test_get_parser_rejects_unknown_or_empty_source(self, source: str | None) -> None:
         with pytest.raises(ValueError, match="Unsupported transcript source"):
             get_parser(source)
-
-    @pytest.mark.parametrize("source", ["", "   ", "unknown-cli"])
-    def test_legacy_get_parser_rejects_unknown_or_empty_source(self, source: str) -> None:
-        with pytest.raises(ValueError, match="Unsupported transcript source"):
-            _get_parser(source)
 
 
 _TRANSCRIPT_FIXTURE_ROOT = Path(__file__).parent / "transcripts" / "fixtures"

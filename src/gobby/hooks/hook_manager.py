@@ -5,7 +5,6 @@ to :mod:`gobby.hooks.event_handlers`.  See :class:`HookManager` for details.
 """
 
 import asyncio
-import concurrent.futures
 import copy
 import logging
 import threading
@@ -22,11 +21,11 @@ from gobby.hooks.agent_run_ingress import (
 )
 from gobby.hooks.broadcaster import schedule_hook_broadcast
 from gobby.hooks.dispatchers import mcp as mcp_dispatcher
-from gobby.hooks.dispatchers import webhook as webhook_dispatcher
 from gobby.hooks.effect_deadline import BlockingEffectDeadline, new_blocking_effect_deadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.factory import HookManagerFactory
 from gobby.hooks.health_gate import ensure_daemon_ready, ensure_daemon_ready_async
+from gobby.hooks.hook_manager_dispatch import HookManagerDispatchMixin
 from gobby.hooks.project_context import ProjectIdResolver, resolve_hook_project_context
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.hooks.session_activation import reconcile_session_activation
@@ -60,7 +59,7 @@ def _hook_text_field(data: dict[str, Any], *keys: str) -> str | None:
     return None
 
 
-class HookManager:
+class HookManager(HookManagerDispatchMixin):
     """Session-scoped coordinator for hook events."""
 
     def __init__(
@@ -683,67 +682,6 @@ class HookManager:
             blocking_deadline=blocking_deadline,
         )
 
-    def _evaluate_blocking_webhooks(
-        self,
-        event: HookEvent,
-        blocking_deadline: BlockingEffectDeadline | None = None,
-    ) -> HookResponse | None:
-        """Evaluate blocking webhooks before handler execution."""
-        return webhook_dispatcher.evaluate_blocking_webhooks(
-            event,
-            self._webhook_dispatcher,
-            self.logger,
-            self._loop,
-            deadline=blocking_deadline,
-        )
-
-    def _dispatch_webhooks_sync(self, event: HookEvent, blocking_only: bool = False) -> list[Any]:
-        """Dispatch webhooks synchronously (for blocking webhooks)."""
-        return webhook_dispatcher.dispatch_webhooks_sync(
-            event, self._webhook_dispatcher, self.logger, blocking_only
-        )
-
-    def _dispatch_webhooks_async(
-        self, event: HookEvent, response: HookResponse | None = None
-    ) -> None:
-        """Dispatch non-blocking webhooks asynchronously (fire-and-forget)."""
-        webhook_dispatcher.dispatch_webhooks_async(
-            event, self._webhook_dispatcher, self.logger, self._loop, response
-        )
-
-    def _dispatch_mcp_calls(
-        self,
-        mcp_calls: list[dict[str, Any]],
-        event: HookEvent,
-        *,
-        deadline: BlockingEffectDeadline | None = None,
-    ) -> list[dict[str, Any]]:
-        """Dispatch mcp_call effects from rule engine evaluation."""
-        return mcp_dispatcher.dispatch_mcp_calls(
-            mcp_calls,
-            event,
-            self.tool_proxy_getter,
-            self._loop,
-            self.logger,
-            deadline=deadline,
-        )
-
-    def _run_coro_blocking(
-        self,
-        coro: Any,
-        *,
-        label: str | None = None,
-        timeout_seconds: float = 30,
-    ) -> Any:
-        """Run a coroutine blocking, using the best available event loop strategy."""
-        return mcp_dispatcher.run_coro_blocking(
-            coro,
-            self._loop,
-            self.logger,
-            label=label,
-            timeout_seconds=timeout_seconds,
-        )
-
     async def _proxy_self_call(self, proxy: Any, tool: str, args: dict[str, Any]) -> dict[str, Any]:
         """Route _proxy/* tool calls to ToolProxyService methods directly."""
         return await mcp_dispatcher.proxy_self_call(proxy, tool, args)
@@ -846,47 +784,6 @@ class HookManager:
 
         self._shutdown_complete = True
         self.logger.debug("HookManager shutdown complete")
-
-    async def _close_webhook_dispatcher_async(self) -> None:
-        try:
-            await self._webhook_dispatcher.close()
-        except Exception as exc:
-            self._log_webhook_dispatcher_close_failure(exc)
-
-    def _close_webhook_dispatcher_sync(self) -> None:
-        try:
-            running_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            running_loop = None
-
-        if running_loop is not None:
-            running_loop.create_task(self._close_webhook_dispatcher_async())
-            self.logger.debug("Scheduled webhook dispatcher close on current event loop")
-            return
-
-        try:
-            if self._loop and self._loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    self._close_webhook_dispatcher_async(), self._loop
-                ).result(timeout=5.0)
-            else:
-                asyncio.run(self._close_webhook_dispatcher_async())
-        except concurrent.futures.TimeoutError:
-            self.logger.warning(
-                "Timed out closing webhook dispatcher after 5.0s",
-                exc_info=True,
-            )
-        except Exception as exc:
-            self._log_webhook_dispatcher_close_failure(exc)
-
-    def _log_webhook_dispatcher_close_failure(self, exc: Exception) -> None:
-        message = str(exc) or "<no message>"
-        self.logger.warning(
-            "Failed to close webhook dispatcher (%s): %s",
-            type(exc).__name__,
-            message,
-            exc_info=True,
-        )
 
     # ==================== HELPER METHODS ====================
 

@@ -10,6 +10,7 @@ import json
 import logging
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, ClassVar
 
 from gobby.sessions.transcripts.base import (
@@ -111,6 +112,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         self,
         session_id: str | None = None,
         logger_instance: logging.Logger | None = None,
+        transcript_path: Path | str | None = None,
     ):
         """
         Initialize ClaudeTranscriptParser.
@@ -119,8 +121,14 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             session_id: Optional session identifier.
             logger_instance: Optional logger instance to use. If not provided,
                            uses the module-level logger.
+            transcript_path: Accepted so registry construction shares one signature.
         """
-        super().__init__(cli_name="claude", session_id=session_id, logger_instance=logger_instance)
+        super().__init__(
+            cli_name="claude",
+            session_id=session_id,
+            logger_instance=logger_instance,
+            transcript_path=transcript_path,
+        )
 
     @staticmethod
     def _hook_blocking_attachment(turn: dict[str, Any]) -> dict[str, Any] | None:

@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from gobby.sessions.transcripts.base import (
@@ -49,8 +50,14 @@ class GrokTranscriptParser(BaseTranscriptParser):
         self,
         session_id: str | None = None,
         logger_instance: logging.Logger | None = None,
+        transcript_path: Path | str | None = None,
     ) -> None:
-        super().__init__(cli_name="grok", session_id=session_id, logger_instance=logger_instance)
+        super().__init__(
+            cli_name="grok",
+            session_id=session_id,
+            logger_instance=logger_instance,
+            transcript_path=transcript_path,
+        )
 
     def parse_line(self, line: str, index: int) -> ParsedMessage | ParsedToolEvent | None:
         if not line.strip():

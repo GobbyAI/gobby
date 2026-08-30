@@ -41,10 +41,7 @@ from gobby.sessions.transcript_io import (
 )
 from gobby.sessions.transcript_limits import FLAT_ROW_LIMIT_MAX, RENDERED_LIMIT_MAX
 from gobby.sessions.transcript_normalization import normalize_transcript_records
-from gobby.sessions.transcript_parsing import (
-    _get_parser,
-    _parsed_to_dicts,
-)
+from gobby.sessions.transcript_parsing import _parsed_to_dicts
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH, find_transcript_on_disk
 from gobby.sessions.transcript_source import _resolve_effective_source
 from gobby.sessions.transcript_status import get_transcript_status_for_session
@@ -53,6 +50,7 @@ from gobby.sessions.transcript_window import (
     WindowResult,
     render_window,
 )
+from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import (
     ParsedMessage,
     RawLine,
@@ -465,7 +463,7 @@ def _collect_flat_from_file(
     path: str, source: str, session_id: str, cap: int, role: str | None
 ) -> list[dict[str, Any]]:
     """Stream a live JSONL file into flat rows, stopping at ``cap`` matches."""
-    parser = _get_parser(source, session_id=session_id, transcript_path=path)
+    parser = get_parser(source, session_id=session_id, transcript_path=path)
     raws = (
         RawLine(byte_offset=None, raw_line_no=i, text=text)
         for i, text in enumerate(_iter_jsonl_lines(path))
@@ -509,7 +507,7 @@ def _collect_flat_from_file_windowed(
         cap = offset + limit
         return _collect_flat_from_file(path, source, session_id, cap, role)[offset : offset + limit]
 
-    parser = _get_parser(source, session_id=session_id, transcript_path=path)
+    parser = get_parser(source, session_id=session_id, transcript_path=path)
     parser.hydrate_state(index.parser_state)
     raws = _iter_jsonl_raw_lines_from(
         path, boundary.byte_start, boundary.raw_line_start, index.size
@@ -543,7 +541,7 @@ def _collect_flat_from_archive(
     path: str, source: str, session_id: str, cap: int, role: str | None
 ) -> list[dict[str, Any]]:
     """Stream a gzip archive into flat rows, stopping at ``cap`` matches."""
-    parser = _get_parser(source, session_id=session_id, transcript_path=path)
+    parser = get_parser(source, session_id=session_id, transcript_path=path)
     raws = (
         RawLine(byte_offset=None, raw_line_no=i, text=text)
         for i, text in enumerate(_iter_archive_lines(path))

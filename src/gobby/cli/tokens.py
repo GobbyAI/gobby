@@ -12,9 +12,7 @@ import click
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.sessions.model_family import normalize_model
-from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
-from gobby.sessions.transcripts.codex import CodexTranscriptParser
-from gobby.sessions.transcripts.qwen import QwenTranscriptParser
+from gobby.sessions.transcripts import get_parser
 from gobby.storage.sessions import SessionManager
 from gobby.storage.token_events import TokenEvent, TokenEventStore
 
@@ -36,13 +34,8 @@ def _load_session_messages(session_id: str, session: Any) -> list[Any]:
     raw = path.read_text(encoding="utf-8")
     source = getattr(session, "source", None)
 
-    parser: Any = ClaudeTranscriptParser(session_id=session_id)
-    if source == "qwen":
-        parser = QwenTranscriptParser(session_id=session_id)
-    elif source == "codex":
-        parser = CodexTranscriptParser(session_id=session_id)
-
     try:
+        parser = get_parser(source, session_id=session_id, transcript_path=path)
         if path.suffix == ".json" and hasattr(parser, "parse_session_json"):
             data = json.loads(raw)
             return cast(list[Any], parser.parse_session_json(data))
@@ -54,6 +47,8 @@ def _load_session_messages(session_id: str, session: Any) -> list[Any]:
 
         parsed = parser.parse_lines(raw.splitlines(keepends=True), start_index=0)
         return [r for r in parsed if isinstance(r, ParsedMessage)]
+    except click.ClickException:
+        raise
     except Exception as exc:
         raise click.ClickException(
             f"Failed to parse transcript {transcript_path} for session {session_id}: {exc}"

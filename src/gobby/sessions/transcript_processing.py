@@ -29,12 +29,8 @@ from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
 from gobby.sessions.transcript_index import rebuild_and_persist_index
 from gobby.sessions.transcript_normalization import normalize_transcript_records
+from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage
-from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
-from gobby.sessions.transcripts.codex import CodexTranscriptParser
-from gobby.sessions.transcripts.droid import DroidTranscriptParser
-from gobby.sessions.transcripts.grok import GrokTranscriptParser
-from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -304,22 +300,11 @@ class TranscriptProcessingMixin:
         if not session:
             return
 
-        # Choose parser based on source
-        # Default to Claude for backward compatibility or safety
-        # But we should rely on session.source if possible
-        parser: Any = ClaudeTranscriptParser(session_id=session_id)
-        if session.source == "grok":
-            parser = GrokTranscriptParser(session_id=session_id)
-        elif session.source == "qwen":
-            parser = QwenTranscriptParser(session_id=session_id)
-        elif session.source == "codex":
-            parser = CodexTranscriptParser(session_id=session_id)
-        elif session.source == "droid":
-            parser = DroidTranscriptParser(
-                session_id=session_id,
-                transcript_path=session.transcript_path,
-            )
-        # Default (claude or unknown) uses Claude transcript format
+        parser = get_parser(
+            session.source,
+            session_id=session_id,
+            transcript_path=getattr(session, "transcript_path", None),
+        )
 
         # parse_lines may yield a mix of ParsedMessage and ParsedToolEvent
         # records; this token-event path only consumes ParsedMessage fields

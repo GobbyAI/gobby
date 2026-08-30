@@ -337,7 +337,7 @@ class TestSessionLifecycleManager:
         msg.content_type = "text"
         loop_thread = threading.get_ident()
 
-        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as parser:
+        with patch("gobby.sessions.transcript_processing.get_parser") as parser:
             parser.return_value.parse_lines.return_value = [msg]
             await manager._process_session_transcript("s1", str(transcript_path))
 
@@ -404,7 +404,7 @@ class TestSessionLifecycleManager:
             msg.content_type = "text"
             messages.append(msg)
 
-        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as parser:
+        with patch("gobby.sessions.transcript_processing.get_parser") as parser:
             parser.return_value.parse_lines.return_value = messages
             await manager._process_session_transcript("s1", str(transcript_path))
 
@@ -492,7 +492,7 @@ class TestSessionLifecycleManager:
         manager.session_manager.update_stats.side_effect = update_stats
 
         with (
-            patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as mock_parser,
+            patch("gobby.sessions.transcript_processing.get_parser") as mock_parser,
             patch.object(
                 manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
             ) as mock_generate,
@@ -589,7 +589,7 @@ class TestSessionLifecycleManager:
         message_mock = MagicMock()
         message_mock.index = 5
 
-        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.get_parser") as MockParser:
             parser_instance = MockParser.return_value
             parser_instance.parse_lines.return_value = [message_mock]
 
@@ -634,7 +634,7 @@ class TestSessionLifecycleManager:
             _mk("assistant", "text", "Done"),
         ]
 
-        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.get_parser") as MockParser:
             MockParser.return_value.parse_lines.return_value = messages
             await manager._process_session_transcript("s1", str(transcript_path))
 
@@ -695,7 +695,7 @@ class TestSessionLifecycleManager:
         with open(transcript_path, "w") as f:
             f.write('{"type": "unknown"}\n')
 
-        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.get_parser") as MockParser:
             MockParser.return_value.parse_lines.return_value = []
 
             await manager._process_session_transcript("s1", str(transcript_path))
@@ -1514,7 +1514,7 @@ class TestProcessSessionTranscriptParsers:
         session.source = "qwen"
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.transcript_processing.QwenTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.get_parser") as MockParser:
             MockParser.return_value.parse_lines.return_value = []
             await manager._process_session_transcript("s1", str(transcript_path))
             MockParser.assert_called_once()
@@ -1532,7 +1532,7 @@ class TestProcessSessionTranscriptParsers:
         session.source = "codex"
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.transcript_processing.CodexTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.get_parser") as MockParser:
             MockParser.return_value.parse_lines.return_value = []
             await manager._process_session_transcript("s1", str(transcript_path))
             MockParser.assert_called_once()
@@ -1551,14 +1551,30 @@ class TestProcessSessionTranscriptParsers:
         session.transcript_path = str(transcript_path)
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.transcript_processing.DroidTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.get_parser") as MockParser:
             MockParser.return_value.parse_lines.return_value = []
             await manager._process_session_transcript("s1", str(transcript_path))
             MockParser.assert_called_once_with(
+                "droid",
                 session_id="s1",
                 transcript_path=str(transcript_path),
             )
             assert manager.session_manager.update_usage.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_unknown_source_raises(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text('{"type": "message"}\n')
+
+        session = MagicMock()
+        session.source = "unknown-cli"
+        session.transcript_path = str(transcript_path)
+        manager.session_manager.get.return_value = session
+
+        with pytest.raises(ValueError, match="Unsupported transcript source"):
+            await manager._process_session_transcript("s1", str(transcript_path))
 
     @pytest.mark.asyncio
     async def test_droid_backfill_records_sidecar_token_usage(
@@ -1770,7 +1786,7 @@ class TestProcessSessionTranscriptLineParsing:
         session.source = "qwen"
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.transcript_processing.QwenTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.get_parser") as MockParser:
             MockParser.return_value.parse_lines.return_value = []
             await manager._process_session_transcript("s1", str(transcript_path))
             MockParser.return_value.parse_lines.assert_called_once()
@@ -1813,7 +1829,7 @@ class TestProcessSessionTranscriptTokenPreservation:
         # First get() returns session for parser selection, second for preservation check
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.get_parser") as MockParser:
             # Parser returns messages with no usage
             msg = MagicMock()
             msg.model = None
@@ -1842,7 +1858,7 @@ class TestProcessSessionTranscriptTokenPreservation:
 
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.get_parser") as MockParser:
             # spec=ParsedMessage so the lifecycle path's ParsedToolEvent filter
             # doesn't drop the mock.
             msg = MagicMock(spec=ParsedMessage)
@@ -1877,7 +1893,7 @@ class TestProcessSessionTranscriptTokenPreservation:
         msg.model = "claude-sonnet-4-6"
         msg.usage = TokenUsage(input_tokens=8000, output_tokens=3000)
 
-        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.get_parser") as MockParser:
             MockParser.return_value.parse_lines.return_value = [msg]
             await manager._process_session_transcript("s1", str(transcript_path))
 
@@ -1925,7 +1941,7 @@ class TestProcessSessionTranscriptTokenPreservation:
         message.raw_json = {}
         message.usage = TokenUsage(input_tokens=125_071, output_tokens=1)
 
-        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as parser:
+        with patch("gobby.sessions.transcript_processing.get_parser") as parser:
             parser.return_value.parse_lines.return_value = [message]
             await manager._process_session_transcript("s1", str(transcript_path))
 

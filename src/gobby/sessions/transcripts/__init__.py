@@ -46,10 +46,8 @@ def get_parser(
     Returns:
         TranscriptParser instance
     """
-    if source == "droid":
-        return DroidTranscriptParser(session_id=session_id, transcript_path=transcript_path)
     parser_cls = PARSER_REGISTRY.get(source or "")
     if parser_cls is None:
         source_label = repr(source) if source else "<empty>"
         raise ValueError(f"Unsupported transcript source: {source_label}")
-    return parser_cls(session_id=session_id)
+    return parser_cls(session_id=session_id, transcript_path=transcript_path)

@@ -13,7 +13,6 @@ from typing import Any
 
 from gobby.hooks.normalization import is_shell_tool
 from gobby.sessions.transcripts.base import TranscriptParser
-from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.tool_activity import canonical_tool_name, commit_outcome
 
 logger = logging.getLogger(__name__)
@@ -41,21 +40,16 @@ class HandoffContext:
 
 
 class TranscriptAnalyzer:
-    """
-    Transcript analysis for handoff context.
+    """Transcript analysis for handoff context via a registry-resolved parser."""
 
-    Primary: Claude Code
-    Extensible: Other CLIs via TranscriptParser protocol
-    """
-
-    def __init__(self, parser: TranscriptParser | None = None):
+    def __init__(self, parser: TranscriptParser):
         """
         Initialize TranscriptAnalyzer.
 
         Args:
-            parser: Optional specific parser. Defaults to ClaudeTranscriptParser.
+            parser: Registry-resolved transcript parser for the session source.
         """
-        self.parser = parser or ClaudeTranscriptParser()
+        self.parser = parser
 
     # ------------------------------------------------------------------
     # Format-agnostic helpers

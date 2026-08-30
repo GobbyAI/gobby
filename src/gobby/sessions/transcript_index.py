@@ -65,12 +65,12 @@ from gobby.sessions.transcript_index_sidecar import (
     _encode_adjustment_value as _encode_adjustment_value,
 )
 from gobby.sessions.transcript_normalization import normalize_transcript_records
-from gobby.sessions.transcript_parsing import _get_parser
 from gobby.sessions.transcript_renderer import RenderState, render_incremental
 from gobby.sessions.transcript_source import (
     _detect_source_from_jsonl_lines,
     _detect_source_from_path,
 )
+from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import (
     NON_MESSAGE_CONTENT_TYPES,
     ParsedMessage,
@@ -334,8 +334,9 @@ class TranscriptIndexAppender:
         parser: BaseTranscriptParser | None = None,
         observation_tracker: ObservationTracker | None = None,
     ) -> None:
-        self._parser = parser or _get_parser(
-            source, session_id=session_id, transcript_path=transcript_path
+        self._parser = parser or cast(
+            "BaseTranscriptParser",
+            get_parser(source, session_id=session_id, transcript_path=transcript_path),
         )
         self._session_id = session_id
         self._state = RenderState()
@@ -657,7 +658,10 @@ def build_index_from_file(
     size: int,
 ) -> TranscriptIndex:
     """Build a byte-seekable index by streaming a live JSONL transcript file."""
-    parser = _get_parser(source, session_id=session_id, transcript_path=path)
+    parser = cast(
+        "BaseTranscriptParser",
+        get_parser(source, session_id=session_id, transcript_path=path),
+    )
     return _build_index_core(
         _iter_file_raw_lines(path, size),
         parser,
@@ -683,7 +687,10 @@ def build_index_from_lines(
     Archives can't be byte-seeked cheaply, so boundaries carry only
     ``raw_line_start`` (``seek_mode="line"``) and the window stream-skips to them.
     """
-    parser = _get_parser(source, session_id=session_id, transcript_path=transcript_path)
+    parser = cast(
+        "BaseTranscriptParser",
+        get_parser(source, session_id=session_id, transcript_path=transcript_path),
+    )
     return _build_index_core(
         _iter_text_raw_lines(lines),
         parser,
@@ -708,7 +715,10 @@ def build_index_from_raw_lines(
 ) -> TranscriptIndex:
     """Build an index from a caller-owned positioned raw-line stream."""
     _require_gzip_logical_size(seek_mode, logical_size)
-    parser = _get_parser(source, session_id=session_id, transcript_path=transcript_path)
+    parser = cast(
+        "BaseTranscriptParser",
+        get_parser(source, session_id=session_id, transcript_path=transcript_path),
+    )
     return _build_index_core(
         raw_lines,
         parser,

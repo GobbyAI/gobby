@@ -85,7 +85,7 @@ async def test_non_claude_transcript_events_keep_source_and_session_model_attrib
 
     # This intentionally exercises the private processor directly so the
     # attribution behavior stays isolated from lifecycle scheduling.
-    with patch("gobby.sessions.transcript_processing.CodexTranscriptParser") as parser_cls:
+    with patch("gobby.sessions.transcript_processing.get_parser") as parser_cls:
         parser_cls.return_value.parse_lines.return_value = [
             _message(message_id="codex-msg", input_tokens=123, output_tokens=45)
         ]
@@ -111,7 +111,7 @@ async def test_non_claude_transcript_events_keep_source_and_session_model_attrib
 
     # Keep this direct call paired with the Codex case above for stable
     # source/model attribution coverage.
-    with patch("gobby.sessions.transcript_processing.QwenTranscriptParser") as parser_cls:
+    with patch("gobby.sessions.transcript_processing.get_parser") as parser_cls:
         parser_cls.return_value.parse_lines.return_value = [
             _message(message_id="qwen-msg", input_tokens=200, output_tokens=50)
         ]

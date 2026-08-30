@@ -120,40 +120,15 @@ async def _build_summary_prompt_context(
         _format_structured_context,
         format_turns_for_llm,
     )
+    from gobby.sessions.transcripts import get_parser
     from gobby.workflows.git_utils import get_file_changes, get_git_diff_summary
 
-    source = getattr(session, "source", None) or "claude"
-    if source == "unknown" and any(
-        isinstance(turn.get("content"), (str, list))
-        and isinstance(turn.get("type"), str)
-        and "message" not in turn
-        for turn in turns
-    ):
-        source = "qwen"
-    parser: Any
-    if source == "qwen":
-        from gobby.sessions.transcripts.qwen import QwenTranscriptParser
-
-        parser = QwenTranscriptParser(session_id=getattr(session, "id", None))
-    elif source == "grok":
-        from gobby.sessions.transcripts.grok import GrokTranscriptParser
-
-        parser = GrokTranscriptParser()
-    elif source == "codex":
-        from gobby.sessions.transcripts.codex import CodexTranscriptParser
-
-        parser = CodexTranscriptParser()
-    elif source == "droid":
-        from gobby.sessions.transcripts.droid import DroidTranscriptParser
-
-        parser = DroidTranscriptParser(
-            session_id=getattr(session, "id", None),
-            transcript_path=getattr(session, "transcript_path", None),
-        )
-    else:
-        from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
-
-        parser = ClaudeTranscriptParser()
+    source = getattr(session, "source", None)
+    parser = get_parser(
+        source,
+        session_id=getattr(session, "id", None),
+        transcript_path=getattr(session, "transcript_path", None),
+    )
 
     last_turns = _strip_injected_context_from_value(parser.extract_turns_since_clear(turns))
     transcript_summary = _format_transcript_fallback_summary(

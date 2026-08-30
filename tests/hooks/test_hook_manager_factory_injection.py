@@ -185,7 +185,11 @@ def test_factory_create_reuses_injected_session_manager(
     assert cast(object, components.event_handlers._session_manager) is session_manager
     assert components.session_task_manager.db is temp_db
     assert components.task_manager.db is temp_db
-    assert create_workflow_engine.call_args.args[10] is config_runtime
+    bound_args = inspect.signature(HookManagerFactory._create_workflow_engine).bind(
+        *create_workflow_engine.call_args.args,
+        **create_workflow_engine.call_args.kwargs,
+    )
+    assert bound_args.arguments["config_runtime"] is config_runtime
 
 
 def _patched_subsystems() -> tuple[SimpleNamespace, SimpleNamespace]:
@@ -292,7 +296,11 @@ def test_factory_create_memory_fallback_threads_llm_service(
         kwargs["llm_service_resolver"],
     )
     create_workflow_engine.assert_called_once()
-    assert create_workflow_engine.call_args.args[5] is fallback_manager
+    bound_args = inspect.signature(HookManagerFactory._create_workflow_engine).bind(
+        *create_workflow_engine.call_args.args,
+        **create_workflow_engine.call_args.kwargs,
+    )
+    assert bound_args.arguments["memory_manager"] is fallback_manager
     assert components.memory_manager is fallback_manager
 
 
@@ -324,3 +332,16 @@ def test_hook_manager_forwards_injected_memory_manager() -> None:
     assert create.call_args.kwargs["memory_manager"] is memory_manager
     assert create.call_args.kwargs["database"] is database
     assert create.call_args.kwargs["session_manager"] is session_manager
+
+
+def test_factory_create_supplies_registry_and_does_not_build_claude_parser() -> None:
+    from gobby.sessions.transcripts import get_parser
+    from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
+    from gobby.sessions.transcripts.droid import DroidTranscriptParser
+
+    source = inspect.getsource(HookManagerFactory.create)
+    assert "ClaudeTranscriptParser(" not in source
+    assert "get_parser" in source
+    parser = get_parser("droid")
+    assert isinstance(parser, DroidTranscriptParser)
+    assert not isinstance(parser, ClaudeTranscriptParser)

@@ -27,6 +27,7 @@ from collections import deque
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal
 
 from gobby.adapters.codex_impl.execution_chain import (
@@ -252,8 +253,14 @@ class CodexTranscriptParser(BaseTranscriptParser):
         self,
         session_id: str | None = None,
         logger_instance: logging.Logger | None = None,
+        transcript_path: Path | str | None = None,
     ):
-        super().__init__(cli_name="codex", session_id=session_id, logger_instance=logger_instance)
+        super().__init__(
+            cli_name="codex",
+            session_id=session_id,
+            logger_instance=logger_instance,
+            transcript_path=transcript_path,
+        )
         self._pending_tool_search_use_ids: deque[str] = deque()
         self._execution_chain = ExecutionChainCorrelator()
 

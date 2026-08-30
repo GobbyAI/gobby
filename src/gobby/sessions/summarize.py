@@ -171,27 +171,29 @@ async def build_summary_source_context(
     path = Path(transcript_path) if transcript_path else None
     if path is None or not path.exists():
         return None
-    source = getattr(session, "source", None) or "claude"
+    source = getattr(session, "source", None)
     window = await _read_transcript_window(
         path,
-        source=source,
+        source=source or "",
         max_records=SUMMARY_ANALYZER_MAX_RECORDS,
     )
     parser_source = _summary_parser_source(source, window.turns)
+    parser = get_parser(
+        parser_source,
+        session_id=getattr(session, "id", None),
+        transcript_path=path,
+    )
     initial_goal = (
         await _read_first_user_goal(path, source=parser_source) if window.truncated else None
     )
     if parser_source == "claude":
         turns = window.turns
     else:
-        parser = get_parser(
-            parser_source,
-            session_id=getattr(session, "id", None),
-            transcript_path=path,
-        )
         turns = analyzer_turns_from_transcript(parser, window.turns)
 
-    handoff_ctx = TranscriptAnalyzer().extract_handoff_context(turns, initial_goal=initial_goal)
+    handoff_ctx = TranscriptAnalyzer(parser).extract_handoff_context(
+        turns, initial_goal=initial_goal
+    )
     cwd = resolve_session_workspace(session, transcript_path)
     await _enrich_git_context(handoff_ctx, cwd)
     db_runner = _resolve_run_db(run_db, db=db, session_manager=session_manager)
@@ -231,17 +233,17 @@ async def build_summary_source_context(
     )
 
 
-def _summary_parser_source(source: str, turns: list[dict[str, Any]]) -> str:
-    if source != "unknown":
-        return source
-    if any(
+def _summary_parser_source(source: str | None, turns: list[dict[str, Any]]) -> str:
+    if source == "unknown" and any(
         isinstance(turn.get("content"), (str, list))
         and isinstance(turn.get("type"), str)
         and "message" not in turn
         for turn in turns
     ):
         return "qwen"
-    return "claude"
+    if not source:
+        raise ValueError("Unsupported transcript source: '<empty>'")
+    return source
 
 
 async def _generate_session_summary_core(

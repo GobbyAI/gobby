@@ -26,7 +26,7 @@ from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.skill_manager import HookSkillManager
 from gobby.hooks.webhooks import WebhookDispatcher
 from gobby.memory.manager import MemoryManager
-from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
+from gobby.sessions.transcripts import get_parser
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 
     from gobby.config.values import ConfigRuntimeReader
     from gobby.llm.service import LLMService
+    from gobby.sessions.transcripts.base import TranscriptParser
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.workflows.templates import TemplateEngine
 
@@ -89,7 +90,7 @@ class HookManagerComponents:
     config: Any  # DaemonConfig | None
     database: HubDatabase
     daemon_client: DaemonClient
-    transcript_processor: ClaudeTranscriptParser
+    transcript_processor: Callable[..., TranscriptParser]
     session_task_manager: SessionTaskManager
     memory_storage: LocalMemoryManager
     task_manager: LocalTaskManager
@@ -193,7 +194,7 @@ class HookManagerFactory:
             timeout=5.0,
             logger=hook_logger,
         )
-        transcript_processor = ClaudeTranscriptParser(logger_instance=hook_logger)
+        transcript_processor = get_parser
 
         # Create storage layer
         storage = cls._create_storage(
@@ -221,7 +222,6 @@ class HookManagerFactory:
             config,
             llm_service,
             llm_service_resolver,
-            transcript_processor,
             mem_manager,
             storage,
             autonomous,
@@ -584,7 +584,6 @@ class HookManagerFactory:
         config: Any | None,
         llm_service: LLMService | None,
         llm_service_resolver: Callable[[], LLMService | None],
-        transcript_processor: Any,
         memory_manager: MemoryManager,
         storage: _Storage,
         autonomous: _Autonomous,

@@ -7,6 +7,7 @@ import logging
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
 from typing import Any
 
 from gobby.sessions.token_usage import typed_json_token_usage
@@ -48,8 +49,14 @@ class QwenTranscriptParser(BaseTranscriptParser):
         self,
         session_id: str | None = None,
         logger_instance: logging.Logger | None = None,
+        transcript_path: Path | str | None = None,
     ) -> None:
-        super().__init__(cli_name="qwen", session_id=session_id, logger_instance=logger_instance)
+        super().__init__(
+            cli_name="qwen",
+            session_id=session_id,
+            logger_instance=logger_instance,
+            transcript_path=transcript_path,
+        )
         self._last_tool_use_id: str | None = None
 
     def _extract_usage(self, data: dict[str, Any]) -> TokenUsage | None:

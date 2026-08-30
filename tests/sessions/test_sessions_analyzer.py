@@ -2,14 +2,16 @@
 Tests for TranscriptAnalyzer in gobby.sessions.analyzer.
 """
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
 
 from gobby.sessions.analyzer import HandoffContext, TranscriptAnalyzer
+from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import TranscriptParser
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
+from gobby.sessions.transcripts.droid import DroidTranscriptParser
 
 pytestmark = pytest.mark.unit
 
@@ -60,7 +62,7 @@ def sample_turns() -> list[dict[str, Any]]:
 
 
 def test_extract_handoff_context_basic(sample_turns: list[dict[str, Any]]) -> None:
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(sample_turns)
 
     assert ctx.initial_goal == "Fix the bug in the login page"
@@ -72,7 +74,7 @@ def test_extract_handoff_context_basic(sample_turns: list[dict[str, Any]]) -> No
 
 
 def test_extract_handoff_context_empty() -> None:
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context([])
     assert ctx.initial_goal == ""
     assert not ctx.active_gobby_task
@@ -90,7 +92,7 @@ def test_initial_goal_skips_claude_meta_and_compaction_entries() -> None:
         {"type": "user", "message": {"content": "actual user goal"}},
     ]
 
-    ctx = TranscriptAnalyzer().extract_handoff_context(turns)
+    ctx = TranscriptAnalyzer(get_parser("claude")).extract_handoff_context(turns)
 
     assert ctx.initial_goal == "actual user goal"
 
@@ -114,14 +116,14 @@ def test_extract_handoff_context_no_task() -> None:
         },
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
     assert ctx.active_gobby_task is None
     assert "/path/to/login.py" in ctx.files_modified
 
 
 def test_extract_handoff_context_recent_activity(sample_turns: list[dict[str, Any]]) -> None:
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(sample_turns)
     # Check that recent tools are captured with detailed descriptions
     # The fixture has mcp_call_tool, Write, Bash (reverse order: Bash, Write, mcp_call_tool)
@@ -163,7 +165,7 @@ def test_extract_handoff_context_processes_all_turns() -> None:
             }
         )
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
 
     # Even with max_turns=50 passed, all turns should be processed
     ctx = analyzer.extract_handoff_context(turns, max_turns=50)
@@ -191,7 +193,7 @@ def test_malformed_tool_blocks_not_dict() -> None:
         },
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     # Should still extract the valid Write call
@@ -215,7 +217,7 @@ def test_malformed_tool_blocks_missing_keys() -> None:
         },
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     # Should only extract the one with valid file_path
@@ -250,7 +252,7 @@ def test_multiple_edit_write_calls() -> None:
         },
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     # Should have 3 unique files, sorted
@@ -275,7 +277,7 @@ def test_git_status_not_extracted_from_transcript() -> None:
         },
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     # git_status should remain empty - it's enriched by the caller, not extracted
@@ -312,7 +314,7 @@ def test_multiple_git_commits() -> None:
         },
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     assert len(ctx.git_commits) == 2
@@ -366,7 +368,7 @@ def test_large_transcript_max_turns_limits_scanning() -> None:
             }
         )
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns, max_turns=50)
 
     # Should still get the initial goal from beginning
@@ -386,7 +388,7 @@ def test_content_as_string_not_list() -> None:
         {"type": "assistant", "message": {"content": "plain string assistant message"}},
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     # Should handle gracefully without errors
@@ -409,7 +411,7 @@ def test_recent_activity_limited_to_10() -> None:
             }
         )
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     assert len(ctx.recent_activity) == 10
@@ -441,7 +443,7 @@ def test_mcp_call_tool_gobby_tasks_extracts_task() -> None:
         },
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     assert ctx.active_gobby_task is not None
@@ -470,7 +472,7 @@ def test_codex_gobby_call_tool_extracts_task() -> None:
         }
     ]
 
-    ctx = TranscriptAnalyzer().extract_handoff_context(turns)
+    ctx = TranscriptAnalyzer(get_parser("claude")).extract_handoff_context(turns)
 
     assert ctx.active_gobby_task == {
         "id": "#16587",
@@ -501,7 +503,7 @@ def test_gobby_tasks_without_task_id() -> None:
         },
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     # Should not set active task since no task_id was provided
@@ -530,7 +532,7 @@ def test_gobby_tasks_uses_id_field() -> None:
         },
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     assert ctx.active_gobby_task is not None
@@ -577,7 +579,7 @@ def test_gobby_tasks_only_first_task_captured() -> None:
         },
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     # Should get the latest task (gt-latest) since we iterate in reverse
@@ -607,7 +609,7 @@ def test_gobby_tasks_with_title() -> None:
         },
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     assert ctx.active_gobby_task is not None
@@ -636,7 +638,7 @@ def test_non_gobby_tasks_mcp_calls() -> None:
         },
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     # Should not set active task
@@ -666,7 +668,7 @@ def test_alternative_file_path_keys() -> None:
         },
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     assert "/a.py" in ctx.files_modified
@@ -679,7 +681,7 @@ class TestFormatToolDescription:
 
     def test_mcp_call_tool(self) -> None:
         """Test gobby-tasks create_task shows enhanced format with title."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "mcp__gobby__call_tool",
             "input": {
@@ -692,7 +694,7 @@ class TestFormatToolDescription:
 
     def test_mcp_call_tool_create_task_with_parent(self) -> None:
         """Test gobby-tasks create_task shows parent when provided."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "mcp__gobby__call_tool",
             "input": {
@@ -705,7 +707,7 @@ class TestFormatToolDescription:
 
     def test_mcp_call_tool_create_task_no_title(self) -> None:
         """Test gobby-tasks create_task defaults to 'Untitled' when no title."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "mcp__gobby__call_tool",
             "input": {"server_name": "gobby-tasks", "tool_name": "create_task"},
@@ -714,7 +716,7 @@ class TestFormatToolDescription:
 
     def test_mcp_call_tool_update_task(self) -> None:
         """Test gobby-tasks update_task shows a task update."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "mcp__gobby__call_tool",
             "input": {
@@ -727,7 +729,7 @@ class TestFormatToolDescription:
 
     def test_mcp_call_tool_close_task(self) -> None:
         """Test gobby-tasks close_task shows reason."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "mcp__gobby__call_tool",
             "input": {
@@ -741,7 +743,7 @@ class TestFormatToolDescription:
         )
 
     def test_mcp_call_tool_close_task_preview_is_described_as_conditional_close(self) -> None:
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "mcp__gobby__call_tool",
             "input": {
@@ -755,7 +757,7 @@ class TestFormatToolDescription:
 
     def test_mcp_call_tool_claim_task(self) -> None:
         """Test gobby-tasks claim_task shows task ID."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "mcp__gobby__call_tool",
             "input": {
@@ -768,7 +770,7 @@ class TestFormatToolDescription:
 
     def test_mcp_call_tool_alternative_name(self) -> None:
         """Test alternative MCP tool name format for non-gobby-tasks servers."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "mcp_call_tool",
             "input": {"server_name": "context7", "tool_name": "get_docs"},
@@ -777,7 +779,7 @@ class TestFormatToolDescription:
 
     def test_mcp_call_tool_generic_with_query(self) -> None:
         """Test generic MCP calls extract query argument."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "mcp__gobby__call_tool",
             "input": {
@@ -793,7 +795,7 @@ class TestFormatToolDescription:
 
     def test_mcp_call_tool_generic_with_title(self) -> None:
         """Test generic MCP calls extract title argument."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "mcp__gobby__call_tool",
             "input": {
@@ -809,7 +811,7 @@ class TestFormatToolDescription:
 
     def test_mcp_call_tool_generic_with_path(self) -> None:
         """Test generic MCP calls extract path argument."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "mcp__gobby__call_tool",
             "input": {
@@ -822,7 +824,7 @@ class TestFormatToolDescription:
 
     def test_mcp_call_tool_generic_truncates_long_values(self) -> None:
         """Test generic MCP calls truncate long argument values."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         long_query = "a" * 120  # 120 chars, should be truncated to 100
         block = {
             "name": "mcp__gobby__call_tool",
@@ -839,7 +841,7 @@ class TestFormatToolDescription:
 
     def test_mcp_call_tool_generic_priority_order(self) -> None:
         """Test generic MCP calls use priority order (query > title > path)."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "mcp__gobby__call_tool",
             "input": {
@@ -856,7 +858,7 @@ class TestFormatToolDescription:
 
     def test_mcp_call_tool_generic_ignores_session_id(self) -> None:
         """Test generic MCP calls ignore session_id in fallback."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "mcp__gobby__call_tool",
             "input": {
@@ -870,19 +872,19 @@ class TestFormatToolDescription:
 
     def test_bash_command(self) -> None:
         """Test Bash commands show the actual command."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "Bash", "input": {"command": "git status"}}
         assert analyzer._format_tool_description(block) == "Ran: git status"
 
     def test_exec_command_shell_alias(self) -> None:
         """Shell aliases should render like Bash commands."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "exec_command", "input": {"command": "git status"}}
         assert analyzer._format_tool_description(block) == "Ran: git status"
 
     def test_bash_long_command_truncated(self) -> None:
         """Test long Bash commands are truncated."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         long_cmd = "git log --oneline --graph --all --decorate | head -50 && git status"
         block = {"name": "Bash", "input": {"command": long_cmd}}
         result = analyzer._format_tool_description(block)
@@ -892,37 +894,37 @@ class TestFormatToolDescription:
 
     def test_edit_with_path(self) -> None:
         """Test Edit shows file path."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "Edit", "input": {"file_path": "/src/main.py"}}
         assert analyzer._format_tool_description(block) == "Edit: /src/main.py"
 
     def test_write_with_path(self) -> None:
         """Test Write shows file path."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "Write", "input": {"file_path": "/new_file.py"}}
         assert analyzer._format_tool_description(block) == "Write: /new_file.py"
 
     def test_read_with_path(self) -> None:
         """Test Read shows file path."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "Read", "input": {"file_path": "/config.yaml"}}
         assert analyzer._format_tool_description(block) == "Read: /config.yaml"
 
     def test_glob_with_pattern(self) -> None:
         """Test Glob shows pattern."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "Glob", "input": {"pattern": "**/*.py"}}
         assert analyzer._format_tool_description(block) == "Glob: **/*.py"
 
     def test_grep_with_pattern(self) -> None:
         """Test Grep shows pattern."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "Grep", "input": {"pattern": "def test_"}}
         assert analyzer._format_tool_description(block) == "Grep: def test_"
 
     def test_grep_long_pattern_truncated(self) -> None:
         """Test long Grep patterns are truncated."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         long_pattern = "some_very_long_pattern_that_exceeds_the_limit_for_display"
         block = {"name": "Grep", "input": {"pattern": long_pattern}}
         result = analyzer._format_tool_description(block)
@@ -932,7 +934,7 @@ class TestFormatToolDescription:
 
     def test_task_with_subagent(self) -> None:
         """Test Task shows subagent type and description."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "Task",
             "input": {"subagent_type": "Explore", "description": "Find auth code"},
@@ -941,26 +943,26 @@ class TestFormatToolDescription:
 
     def test_task_subagent_only(self) -> None:
         """Test Task with only subagent type."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "Task", "input": {"subagent_type": "Plan"}}
         assert analyzer._format_tool_description(block) == "Task (Plan)"
 
     def test_unknown_tool_fallback(self) -> None:
         """Test unknown tools fall back to 'Called <name>'."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "SomeUnknownTool", "input": {}}
         assert analyzer._format_tool_description(block) == "Called SomeUnknownTool"
 
     def test_missing_input_graceful(self) -> None:
         """Test graceful handling when input is missing."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "Bash"}  # No input key
         result = analyzer._format_tool_description(block)
         assert result == "Ran: "  # Empty command
 
     def test_extract_handoff_context_tracks_exec_command_git_commit(self) -> None:
         """Git commits from shell aliases should be captured in handoff context."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         turns = [
             {
                 "type": "assistant",
@@ -985,56 +987,56 @@ class TestFormatToolDescription:
 
     def test_missing_name_graceful(self) -> None:
         """Test graceful handling when name is missing."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"input": {"command": "ls"}}  # No name key
         result = analyzer._format_tool_description(block)
         assert result == "Called unknown"
 
     def test_read_without_path(self) -> None:
         """Test Read tool without file_path falls back to generic message."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "Read", "input": {}}  # No file_path
         result = analyzer._format_tool_description(block)
         assert result == "Called Read"
 
     def test_glob_without_pattern(self) -> None:
         """Test Glob tool without pattern falls back to generic message."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "Glob", "input": {}}  # No pattern
         result = analyzer._format_tool_description(block)
         assert result == "Called Glob"
 
     def test_grep_without_pattern(self) -> None:
         """Test Grep tool without pattern falls back to generic message."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "Grep", "input": {}}  # No pattern
         result = analyzer._format_tool_description(block)
         assert result == "Called Grep"
 
     def test_task_with_description_no_subagent(self) -> None:
         """Test Task with description but no subagent type."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "Task", "input": {"description": "Find auth code"}}
         result = analyzer._format_tool_description(block)
         assert result == "Task: Find auth code"
 
     def test_task_without_description_or_subagent(self) -> None:
         """Test Task without description or subagent type."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "Task", "input": {}}
         result = analyzer._format_tool_description(block)
         assert result == "Called Task"
 
     def test_edit_without_path(self) -> None:
         """Test Edit tool without file_path falls back to generic message."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "Edit", "input": {}}  # No file_path
         result = analyzer._format_tool_description(block)
         assert result == "Called Edit"
 
     def test_write_without_path(self) -> None:
         """Test Write tool without file_path falls back to generic message."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {"name": "Write", "input": {}}  # No file_path
         result = analyzer._format_tool_description(block)
         assert result == "Called Write"
@@ -1113,7 +1115,7 @@ class TestTaskProgress:
             },
         ]
 
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         ctx = analyzer.extract_handoff_context(turns)
 
         assert len(ctx.task_progress) == 4
@@ -1141,7 +1143,7 @@ class TestTaskProgress:
             },
         ]
 
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         ctx = analyzer.extract_handoff_context(turns)
 
         assert ctx.task_progress == []
@@ -1200,7 +1202,7 @@ class TestTaskProgress:
             },
         ]
 
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         ctx = analyzer.extract_handoff_context(turns)
 
         # Must be chronological: A, B, C
@@ -1248,10 +1250,15 @@ class TestHandoffContext:
 class TestTranscriptAnalyzerInit:
     """Tests for TranscriptAnalyzer initialization."""
 
-    def test_default_parser(self) -> None:
-        """Test that TranscriptAnalyzer uses ClaudeTranscriptParser by default."""
-        analyzer = TranscriptAnalyzer()
-        assert isinstance(analyzer.parser, ClaudeTranscriptParser)
+    def test_requires_registry_parser_per_source(self) -> None:
+        claude = TranscriptAnalyzer(get_parser("claude"))
+        droid = TranscriptAnalyzer(get_parser("droid"))
+        assert isinstance(claude.parser, ClaudeTranscriptParser)
+        assert isinstance(droid.parser, DroidTranscriptParser)
+        with pytest.raises(TypeError):
+            cast(Any, TranscriptAnalyzer)()
+        with pytest.raises(ValueError, match="Unsupported transcript source"):
+            TranscriptAnalyzer(get_parser("unknown-cli"))
 
     def test_custom_parser(self) -> None:
         """Test that TranscriptAnalyzer accepts a custom parser."""
@@ -1284,7 +1291,7 @@ class TestAnalyzerEdgeCases:
             },
         ]
 
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         ctx = analyzer.extract_handoff_context(turns)
 
         # Should not crash, active_gobby_task should be None
@@ -1292,7 +1299,7 @@ class TestAnalyzerEdgeCases:
 
     def test_mcp_call_tool_missing_tool_name(self) -> None:
         """Test MCP format description with missing tool_name."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "mcp_call_tool",
             "input": {"server_name": "gobby-tasks"},  # Missing tool_name
@@ -1302,7 +1309,7 @@ class TestAnalyzerEdgeCases:
 
     def test_mcp_call_tool_missing_server_name_format(self) -> None:
         """Test MCP format description with missing server_name."""
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         block = {
             "name": "mcp_call_tool",
             "input": {"tool_name": "some_tool"},  # Missing server_name
@@ -1328,7 +1335,7 @@ class TestAnalyzerEdgeCases:
             },
         ]
 
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         ctx = analyzer.extract_handoff_context(turns)
 
         assert "/replaced.py" in ctx.files_modified
@@ -1341,7 +1348,7 @@ class TestAnalyzerEdgeCases:
             {"type": "user", "message": {"content": "later goal"}},
         ]
 
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         ctx = analyzer.extract_handoff_context(turns)
 
         # First user message is captured even if it has no content
@@ -1356,7 +1363,7 @@ class TestAnalyzerEdgeCases:
             {"type": "user", "message": {"content": "Follow-up question"}},
         ]
 
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         ctx = analyzer.extract_handoff_context(turns)
 
         # Should get the first user message, not the second
@@ -1368,7 +1375,7 @@ class TestAnalyzerEdgeCases:
             {"type": "user", "message": {"content": {"key": "value"}}},
         ]
 
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         ctx = analyzer.extract_handoff_context(turns)
 
         # str() of a dict
@@ -1391,7 +1398,7 @@ class TestAnalyzerEdgeCases:
             },
         ]
 
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         ctx = analyzer.extract_handoff_context(turns)
 
         assert ctx.git_commits == []
@@ -1418,7 +1425,7 @@ class TestAnalyzerEdgeCases:
             },
         ]
 
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         ctx = analyzer.extract_handoff_context(turns)
 
         # Should handle gracefully
@@ -1454,7 +1461,7 @@ class TestAnalyzerEdgeCases:
             },
         ]
 
-        analyzer = TranscriptAnalyzer()
+        analyzer = TranscriptAnalyzer(get_parser("claude"))
         ctx = analyzer.extract_handoff_context(turns)
 
         # Read doesn't modify files
@@ -1498,7 +1505,7 @@ def test_extract_key_decisions() -> None:
         },
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     assert ctx.key_decisions is not None
@@ -1525,7 +1532,7 @@ def test_extract_key_decisions_caps_at_10() -> None:
             }
         )
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     assert ctx.key_decisions is not None
@@ -1549,7 +1556,7 @@ def test_initial_goal_handles_list_content() -> None:
         },
     ]
 
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(turns)
 
     assert ctx.initial_goal == "Please fix the login bug"
@@ -1618,21 +1625,21 @@ def qwen_turns() -> list[dict[str, Any]]:
 
 def test_qwen_initial_goal(qwen_turns: list[dict[str, Any]]) -> None:
     """Qwen format: initial goal extracted from first user message."""
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(qwen_turns)
     assert ctx.initial_goal == "Fix the auth bug"
 
 
 def test_qwen_tool_calls_detected(qwen_turns: list[dict[str, Any]]) -> None:
     """Qwen format: tool calls from functionCall parts are detected."""
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(qwen_turns)
     assert len(ctx.recent_activity) > 0
 
 
 def test_qwen_key_decisions(qwen_turns: list[dict[str, Any]]) -> None:
     """Qwen format: key decisions from assistant text content are extracted."""
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context(qwen_turns)
     assert ctx.key_decisions is not None
     assert any("decided" in d.lower() or "because" in d.lower() for d in ctx.key_decisions)
@@ -1640,7 +1647,7 @@ def test_qwen_key_decisions(qwen_turns: list[dict[str, Any]]) -> None:
 
 def test_qwen_empty_turns() -> None:
     """Qwen format: empty turns produce empty context."""
-    analyzer = TranscriptAnalyzer()
+    analyzer = TranscriptAnalyzer(get_parser("claude"))
     ctx = analyzer.extract_handoff_context([])
     assert ctx.initial_goal == ""
     assert not ctx.active_gobby_task
@@ -1686,10 +1693,10 @@ def test_analyzer_turns_from_grok_and_codex_transcripts() -> None:
     codex_adapted = analyzer_turns_from_transcript(CodexTranscriptParser(), codex_turns)
 
     assert isinstance(grok_adapted, list)
-    assert TranscriptAnalyzer().extract_handoff_context(grok_adapted).files_modified == [
-        "src/grok.py"
-    ]
-    codex_context = TranscriptAnalyzer().extract_handoff_context(codex_adapted)
+    assert TranscriptAnalyzer(get_parser("claude")).extract_handoff_context(
+        grok_adapted
+    ).files_modified == ["src/grok.py"]
+    codex_context = TranscriptAnalyzer(get_parser("claude")).extract_handoff_context(codex_adapted)
     assert codex_context.task_progress == [
         {"id": "#20730", "action": "claim_task", "title": "Task #20730"}
     ]
@@ -1755,7 +1762,7 @@ def test_git_commits_carry_hashes_from_results_and_task_tools() -> None:
         },
     ]
 
-    commits = TranscriptAnalyzer().extract_handoff_context(turns).git_commits
+    commits = TranscriptAnalyzer(get_parser("claude")).extract_handoff_context(turns).git_commits
 
     assert {commit["hash"] for commit in commits} == {"", "abc1234", "def5678", "987fedc"}
     assert next(commit for commit in commits if commit["hash"] == "abc1234")["message"] == (
@@ -1823,7 +1830,7 @@ def test_adapter_consumes_every_block_of_multi_part_records() -> None:
 
     assert [block["type"] for block in qwen_blocks] == ["text", "tool_use", "tool_result"]
     assert [block["type"] for block in droid_blocks] == ["text", "tool_use"]
-    assert TranscriptAnalyzer().extract_handoff_context(
+    assert TranscriptAnalyzer(get_parser("claude")).extract_handoff_context(
         analyzer_turns_from_transcript(DroidTranscriptParser(), droid_turns)
     ).files_modified == ["droid.py"]
 
@@ -1860,7 +1867,7 @@ def test_recent_activity_uses_canonical_tool_names() -> None:
         }
     ]
 
-    recent = TranscriptAnalyzer().extract_handoff_context(turns).recent_activity
+    recent = TranscriptAnalyzer(get_parser("claude")).extract_handoff_context(turns).recent_activity
 
     assert any("gobby-tasks:close_task" in description for description in recent)
     assert any("gobby-tasks:claim_task" in description for description in recent)
@@ -2104,8 +2111,8 @@ def test_adapter_output_survives_multi_pass_analyzer() -> None:
     ]
 
     adapted = analyzer_turns_from_transcript(DroidTranscriptParser(), native)
-    first = TranscriptAnalyzer().extract_handoff_context(adapted)
-    second = TranscriptAnalyzer().extract_handoff_context(adapted)
+    first = TranscriptAnalyzer(get_parser("claude")).extract_handoff_context(adapted)
+    second = TranscriptAnalyzer(get_parser("claude")).extract_handoff_context(adapted)
 
     assert isinstance(adapted, list)
     assert first.initial_goal == second.initial_goal == "Goal"
@@ -2220,7 +2227,7 @@ def test_codex_nested_exec_outcomes_reach_analyzer() -> None:
     ]
 
     adapted = analyzer_turns_from_transcript(CodexTranscriptParser(), native)
-    context = TranscriptAnalyzer().extract_handoff_context(adapted)
+    context = TranscriptAnalyzer(get_parser("claude")).extract_handoff_context(adapted)
 
     assert "src/item.py" in context.files_modified
     assert all(progress["id"] != "#failed" for progress in context.task_progress)

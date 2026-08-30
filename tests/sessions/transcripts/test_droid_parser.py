@@ -11,12 +11,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.sessions.processor import SessionMessageProcessor
-from gobby.sessions.transcript_parsing import _get_parser, _parse_lines
+from gobby.sessions.transcript_parsing import _parse_lines
 from gobby.sessions.transcript_renderer import render_transcript
 from gobby.sessions.transcript_source import (
     _detect_source_from_jsonl_lines,
     _detect_source_from_path,
 )
+from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.transcripts.droid import DroidTranscriptParser
 
@@ -301,7 +302,7 @@ def test_droid_has_no_clear_boundary() -> None:
 
 def test_transcript_reader_detects_and_parses_droid_with_transcript_path() -> None:
     lines = _fixture_lines()
-    parser = _get_parser(
+    parser = get_parser(
         "droid",
         session_id="gobby-session-id",
         transcript_path=FIXTURE_JSONL,
