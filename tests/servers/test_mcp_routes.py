@@ -51,7 +51,10 @@ from gobby.hooks.envelope_dedupe import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.inbox import drain_hook_inbox_barrier
-from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
+from gobby.hooks.runtime_compat import (
+    SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
+    SUPPORTED_HOOK_RESPONSE_CAPABILITY,
+)
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.schema_hash import SchemaHashManager, compute_schema_hash
@@ -103,10 +106,17 @@ def _hook_envelope(**payload: Any) -> dict[str, Any]:
         "schema_version": SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
+        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "input_data": {},
     }
     envelope.update(payload)
     return envelope
+
+
+def test_hook_envelope_carries_supported_response_capability() -> None:
+    envelope = _hook_envelope(hook_type="session-start", source="claude")
+    assert "response_capability" in envelope
+    assert envelope["response_capability"] == SUPPORTED_HOOK_RESPONSE_CAPABILITY
 
 
 @pytest.fixture
@@ -3540,7 +3550,7 @@ class TestHooksEndpoints:
         self,
         session_storage: SessionManager,
     ) -> None:
-        """A non-critical adapter timeout returns a graceful response."""
+        """A capable non-critical adapter timeout is a retryable 503."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -3568,10 +3578,11 @@ class TestHooksEndpoints:
             run_adapter_hook.assert_awaited_once()
             assert run_adapter_hook.await_args.kwargs["timeout_seconds"] == 91
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["continue"] is True
-        assert "timed out after 91s" in data["systemMessage"]
+        assert response.status_code == 503
+        assert response.json() == {
+            "status": "retry",
+            "retry_kind": "adapter_timeout",
+        }
 
     def test_stalled_workflow_dependencies_do_not_starve_control_plane(
         self,
@@ -3660,8 +3671,11 @@ class TestHooksEndpoints:
             assert health_response.status_code == 200
             assert mcp_response.status_code == 200
             assert control_elapsed < 0.5
-            assert all(response.status_code == 200 for response in hook_responses)
-            assert all(response.json()["continue"] is True for response in hook_responses)
+            assert all(response.status_code == 503 for response in hook_responses)
+            assert all(
+                response.json() == {"status": "retry", "retry_kind": "adapter_timeout"}
+                for response in hook_responses
+            )
         finally:
             release.set()
             handler.shutdown()
@@ -3729,7 +3743,7 @@ class TestHooksEndpoints:
         critical: bool,
         adapter_patch: str,
     ) -> None:
-        """Stop and CLI-critical hook timeouts return provider-native blocks."""
+        """Capable Stop and CLI-critical timeouts are retryable adapter_timeout."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -3769,25 +3783,17 @@ class TestHooksEndpoints:
                 ),
             )
 
-        assert response.status_code == 200
+        assert response.status_code == 503
         assert response.json() == {
-            "continue": False,
-            "decision": "block",
-            "reason": "timed out",
+            "status": "retry",
+            "retry_kind": "adapter_timeout",
         }
         assert timeout_mock.await_args.kwargs["timeout_seconds"] == 105
-        mock_adapter.translate_from_hook_response.assert_called_once()
-        hook_response = mock_adapter.translate_from_hook_response.call_args.args[0]
-        assert hook_response.decision == "block"
-        assert hook_response.reason == (
-            "Gobby hook evaluation timed out after 105s; blocking this critical hook for safety. "
-            "Try again after the daemon recovers."
-        )
-        assert hook_response.system_message is None
+        mock_adapter.translate_from_hook_response.assert_not_called()
         timeout_log = next(
             call
-            for call in mock_logger.error.call_args_list
-            if call.args and call.args[0] == "Critical hook timed out: %s"
+            for call in mock_logger.warning.call_args_list
+            if call.args and call.args[0] == "Retrying hook after adapter timeout"
         )
         assert timeout_log.kwargs["extra"]["exception_type"] == "WorkflowEvaluationTimeout"
         expected_timeout_fields = {
@@ -3797,6 +3803,7 @@ class TestHooksEndpoints:
             "evaluation_timeout_seconds": 15,
             "adapter_queue_duration_seconds": 0.125,
             "adapter_execution_duration_seconds": 15.0,
+            "retry_kind": "adapter_timeout",
         }
         assert {
             key: timeout_log.kwargs["extra"][key] for key in expected_timeout_fields
@@ -4417,6 +4424,7 @@ class TestHooksEndpoints:
                 "enqueued_at": "2026-04-16T12:00:00Z",
                 "hook_type": "post-tool-use",
                 "source": "claude",
+                "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
                 "input_data": {"tool_name": "Bash"},
             }
             responses = []
