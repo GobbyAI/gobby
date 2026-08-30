@@ -212,6 +212,56 @@ async def test_periodic_start_schedules_hook_quarantine_retention_loop() -> None
 
 
 @pytest.mark.asyncio
+async def test_periodic_start_schedules_hook_receipt_retention_loop() -> None:
+    calls: list[tuple[object, Callable[[], bool]]] = []
+
+    async def complete_loop(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    async def capture_receipt(
+        db: object,
+        is_shutdown: Callable[[], bool],
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> None:
+        calls.append((db, is_shutdown))
+
+    loops = dict.fromkeys(_default_loops(), complete_loop)
+    assert "hook_receipt_retention_loop" in loops
+    loops["hook_receipt_retention_loop"] = capture_receipt
+    database = object()
+    runner = cast(
+        "GobbyRunner",
+        SimpleNamespace(
+            config_runtime=SimpleNamespace(
+                capture=lambda: SimpleNamespace(
+                    snapshot=SimpleNamespace(active=DaemonConfig(database_url="postgresql://test"))
+                )
+            ),
+            metrics_manager=object(),
+            metrics_event_store=object(),
+            database=database,
+            db_executor=None,
+            memory_manager=None,
+            http_server=SimpleNamespace(app=object()),
+            pipeline_execution_manager=None,
+            session_manager=None,
+            _shutdown_requested=False,
+        ),
+    )
+
+    start_periodic_tasks(runner, tracker=None, **loops)
+    await asyncio.gather(
+        *(task for task in vars(runner).values() if isinstance(task, asyncio.Task))
+    )
+
+    assert getattr(runner, "_hook_receipt_retention_task", None) is not None
+    assert len(calls) == 1
+    assert calls[0][0] is database
+    assert calls[0][1]() is False
+
+
+@pytest.mark.asyncio
 async def test_metrics_archive_runs_before_24_hours_then_waits_for_normal_interval() -> None:
     sleep = CancelAtInterval()
     work_times: list[float] = []

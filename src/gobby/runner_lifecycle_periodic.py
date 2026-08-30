@@ -49,6 +49,7 @@ def _default_loops() -> dict[str, Any]:
         drain_hook_inbox_loop,
         expire_approval_timeouts_loop,
         hook_quarantine_retention_loop,
+        hook_receipt_retention_loop,
         loop_progress_cleanup_loop,
         memory_reconcile_loop,
         metric_snapshot_loop,
@@ -85,6 +86,7 @@ def _default_loops() -> dict[str, Any]:
         "bin_freshness_loop": bin_freshness_loop,
         "drain_hook_inbox_loop": drain_hook_inbox_loop,
         "hook_quarantine_retention_loop": hook_quarantine_retention_loop,
+        "hook_receipt_retention_loop": hook_receipt_retention_loop,
         "expire_approval_timeouts_loop": expire_approval_timeouts_loop,
         "loop_progress_cleanup_loop": loop_progress_cleanup_loop,
         "tmux_window_name_repair_loop": tmux_window_name_repair_loop,
@@ -381,6 +383,14 @@ def start_periodic_tasks(
         loops["hook_quarantine_retention_loop"](lambda: runner._shutdown_requested),
         name="hook-quarantine-retention",
     )
+    runner._hook_receipt_retention_task = asyncio.create_task(
+        loops["hook_receipt_retention_loop"](
+            runner.database,
+            lambda: runner._shutdown_requested,
+            run_db=getattr(db_executor, "run", None),
+        ),
+        name="hook-receipt-retention",
+    )
     runner._bin_freshness_task = asyncio.create_task(
         loops["bin_freshness_loop"](
             runner.database,
@@ -489,6 +499,7 @@ def start_periodic_tasks(
             runner._resource_monitor_task,
             runner._hook_inbox_task,
             runner._hook_quarantine_retention_task,
+            runner._hook_receipt_retention_task,
             runner._bin_freshness_task,
             runner._approval_timeout_task,
             runner._tmux_window_repair_task,

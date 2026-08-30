@@ -138,6 +138,44 @@ def _quarantine_or_warn(path: Path, *, reason: str, detail: str) -> None:
         )
 
 
+def _consume_inbox_delivery_receipt(
+    app: Any,
+    envelope: dict[str, Any],
+    path: Path,
+    envelope_id: str | None,
+    *,
+    processed_dir: Path,
+) -> None:
+    """CAS the receipt without re-executing the original hook, then drop the file."""
+
+    from gobby.storage.hook_receipts import acknowledge_receipt
+
+    receipt_id = envelope.get("receipt_id")
+    generation = envelope.get("delivery_generation")
+    state = getattr(app, "state", None)
+    db = getattr(state, "database", None)
+    if db is None:
+        hook_manager = getattr(state, "hook_manager", None)
+        db = getattr(hook_manager, "db", None)
+    if db is not None and isinstance(receipt_id, str) and isinstance(generation, int):
+        try:
+            acknowledge_receipt(
+                db,
+                receipt_id=receipt_id,
+                delivery_generation=generation,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to consume delivery receipt %s generation %s: %s",
+                receipt_id,
+                generation,
+                exc,
+            )
+    if envelope_id:
+        mark_envelope_processed(envelope_id, processed_dir=processed_dir)
+    path.unlink(missing_ok=True)
+
+
 def _terminalize_below_floor_receipts(app: Any, envelope_id: str) -> None:
     """Best-effort: any prepared receipt for this envelope becomes undelivered."""
     from gobby.storage.hook_receipts import terminalize_receipts_for_envelope
@@ -183,6 +221,25 @@ def _load_envelope(path: Path) -> dict[str, Any] | None:
             ),
         )
         return None
+
+    if raw.get("kind") == "delivery-receipt":
+        receipt_id = raw.get("receipt_id")
+        generation = raw.get("delivery_generation")
+        if not isinstance(receipt_id, str) or not receipt_id:
+            _quarantine_or_warn(
+                path,
+                reason="invalid_envelope",
+                detail="Delivery receipt must include receipt_id",
+            )
+            return None
+        if not isinstance(generation, int) or generation < 1:
+            _quarantine_or_warn(
+                path,
+                reason="invalid_envelope",
+                detail="Delivery receipt must include a positive delivery_generation",
+            )
+            return None
+        return raw
 
     if not raw.get("hook_type") or not raw.get("source"):
         _quarantine_or_warn(
@@ -285,6 +342,17 @@ async def _drain_hook_inbox_once_locked(
         envelope_id = envelope_id_from_inbox_path(path)
         envelope = _load_envelope(path)
         if envelope is None:
+            continue
+
+        if envelope.get("kind") == "delivery-receipt":
+            _consume_inbox_delivery_receipt(
+                app,
+                envelope,
+                path,
+                envelope_id,
+                processed_dir=processed_dir,
+            )
+            replayed += 1
             continue
 
         if not envelope_has_hook_response_capability(envelope.get("response_capability")):

@@ -1,6 +1,6 @@
 use crate::action::{
-    HookAction, action_from_failure, action_from_success_response, continue_action, emit_action,
-    emit_empty_json,
+    DeliveryReceiptAck, HookAction, action_from_failure, action_from_success_response,
+    continue_action, emit_action, emit_empty_json, extract_delivery_receipt,
 };
 use crate::args::Args;
 use crate::cli_config::CliConfig;
@@ -122,7 +122,10 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
             let report = transport::post_and_cleanup(&env, &missing_enqueued_path, &daemon_url);
             match report.outcome {
                 transport::DeliveryOutcome::Delivered => {
-                    delivered_action(&cfg, hook_type, &env, &report, None, &daemon_url)
+                    match delivered_action(&cfg, hook_type, &env, &report, None, &daemon_url) {
+                        Ok((action, _)) => Ok(action),
+                        Err(exit_code) => Err(exit_code),
+                    }
                 }
                 transport::DeliveryOutcome::Enqueued => {
                     let direct_detail = report
@@ -185,6 +188,7 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
     // provider action has been written and stdout has flushed.
     let daemon_url = gobby_core::daemon_url::daemon_url();
     let report = transport::post_and_cleanup(&env, &enqueued_path, &daemon_url);
+    let mut receipt = None;
     let action = match report.outcome {
         transport::DeliveryOutcome::Delivered => {
             match delivered_action(
@@ -195,7 +199,10 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
                 Some(&enqueued_path),
                 &daemon_url,
             ) {
-                Ok(action) => action,
+                Ok((action, ack)) => {
+                    receipt = ack;
+                    action
+                }
                 Err(exit_code) => return exit_code,
             }
         }
@@ -251,10 +258,35 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
     };
 
     let emitted = emit_action(action);
-    if matches!(report.outcome, transport::DeliveryOutcome::Delivered) && emitted.stdout_succeeded {
-        let _ = fs::remove_file(&enqueued_path);
+    if matches!(report.outcome, transport::DeliveryOutcome::Delivered) {
+        settle_delivered_inbox(&enqueued_path, emitted.stdout_succeeded, receipt.as_ref());
     }
     emitted.exit_code
+}
+
+fn settle_delivered_inbox(
+    enqueued_path: &Path,
+    stdout_succeeded: bool,
+    receipt: Option<&DeliveryReceiptAck>,
+) {
+    if !stdout_succeeded || enqueued_path.as_os_str().is_empty() {
+        return;
+    }
+    if let Some(receipt) = receipt {
+        let ack = crate::envelope::DeliveryReceipt::new(
+            receipt.receipt_id.clone(),
+            receipt.original_envelope_id.clone(),
+            receipt.delivery_generation,
+        );
+        if let Ok(bytes) = serde_json::to_vec_pretty(&ack)
+            && transport::atomic_write(enqueued_path, &bytes).is_ok()
+        {
+            return;
+        }
+        // Ack-write failure leaves the original envelope for replay.
+        return;
+    }
+    let _ = fs::remove_file(enqueued_path);
 }
 
 fn hooks_disabled_by_env() -> bool {
@@ -398,10 +430,11 @@ fn delivered_action(
     report: &transport::DeliveryReport,
     enqueued_path: Option<&Path>,
     daemon_url: &str,
-) -> Result<HookAction, ExitCode> {
+) -> Result<(HookAction, Option<DeliveryReceiptAck>), ExitCode> {
     let body = report.response_body.as_deref().unwrap_or_default();
-    match action_from_success_response(cfg.source, hook_type, body) {
-        Ok(action) => Ok(action),
+    let (stripped, receipt) = extract_delivery_receipt(body);
+    match action_from_success_response(cfg.source, hook_type, &stripped) {
+        Ok(action) => Ok((action, receipt)),
         Err(error) => {
             let _ = record_delivery_failure(
                 envelope,
@@ -687,5 +720,54 @@ mod tests {
         unsafe {
             std::env::remove_var("GOBBY_HOOKS_DISABLED");
         }
+    }
+
+    #[test]
+    fn settle_delivered_inbox_replaces_original_with_delivery_receipt() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("n-0000000000001-abcd.json");
+        std::fs::write(&path, r#"{"hook_type":"PreInvocation"}"#).unwrap();
+        let receipt = DeliveryReceiptAck {
+            receipt_id: "r1".into(),
+            original_envelope_id: "n-0000000000001-abcd".into(),
+            delivery_generation: 1,
+        };
+
+        settle_delivered_inbox(&path, true, Some(&receipt));
+
+        let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(written["kind"], "delivery-receipt");
+        assert_eq!(written["receipt_id"], "r1");
+        assert_eq!(written["original_envelope_id"], "n-0000000000001-abcd");
+        assert_eq!(written["delivery_generation"], 1);
+        assert_eq!(written["schema_version"], 1);
+    }
+
+    #[test]
+    fn settle_delivered_inbox_deletes_original_when_no_receipt() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("n-0000000000001-abcd.json");
+        std::fs::write(&path, r#"{"hook_type":"PreInvocation"}"#).unwrap();
+
+        settle_delivered_inbox(&path, true, None);
+
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn settle_delivered_inbox_keeps_original_when_stdout_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("n-0000000000001-abcd.json");
+        std::fs::write(&path, r#"{"hook_type":"PreInvocation"}"#).unwrap();
+        let receipt = DeliveryReceiptAck {
+            receipt_id: "r1".into(),
+            original_envelope_id: "n-0000000000001-abcd".into(),
+            delivery_generation: 1,
+        };
+
+        settle_delivered_inbox(&path, false, Some(&receipt));
+
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(written, r#"{"hook_type":"PreInvocation"}"#);
     }
 }

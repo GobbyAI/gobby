@@ -34,6 +34,36 @@ pub struct Envelope {
     pub headers: BTreeMap<String, String>,
 }
 
+pub const DELIVERY_RECEIPT_KIND: &str = "delivery-receipt";
+
+/// Versioned delivery-receipt ghook enqueues after emission-plus-flush.
+#[derive(Debug, Serialize)]
+pub struct DeliveryReceipt {
+    pub schema_version: u32,
+    pub kind: String,
+    pub enqueued_at: String,
+    pub receipt_id: String,
+    pub original_envelope_id: String,
+    pub delivery_generation: u64,
+}
+
+impl DeliveryReceipt {
+    pub fn new(
+        receipt_id: impl Into<String>,
+        original_envelope_id: impl Into<String>,
+        delivery_generation: u64,
+    ) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            kind: DELIVERY_RECEIPT_KIND.to_string(),
+            enqueued_at: chrono::Utc::now().to_rfc3339(),
+            receipt_id: receipt_id.into(),
+            original_envelope_id: original_envelope_id.into(),
+            delivery_generation,
+        }
+    }
+}
+
 impl Envelope {
     pub fn new(
         critical: bool,
@@ -171,6 +201,33 @@ mod tests {
             let errs: Vec<_> = errors.map(|e| format!("{e}")).collect();
             panic!("envelope failed schema validation: {errs:?}");
         }
+    }
+
+    #[test]
+    fn delivery_receipt_schema_mirrors_are_byte_identical() {
+        let crate_schema = include_bytes!("../schemas/delivery-receipt.v1.schema.json");
+        let public_schema = include_bytes!("../../../schemas/delivery-receipt.v1.schema.json");
+        assert_eq!(crate_schema.as_slice(), public_schema.as_slice());
+    }
+
+    #[test]
+    fn delivery_receipt_validates_against_v1_schema() {
+        let schema_bytes = include_bytes!("../schemas/delivery-receipt.v1.schema.json");
+        let schema: Value = serde_json::from_slice(schema_bytes).unwrap();
+        let compiled = jsonschema::JSONSchema::options()
+            .with_draft(jsonschema::Draft::Draft7)
+            .compile(&schema)
+            .expect("schema compiles");
+        let receipt = DeliveryReceipt::new("r1", "env-1", 1);
+        let instance = serde_json::to_value(&receipt).unwrap();
+        if let Err(errors) = compiled.validate(&instance) {
+            let errs: Vec<_> = errors.map(|e| format!("{e}")).collect();
+            panic!("delivery receipt failed schema validation: {errs:?}");
+        }
+        assert_eq!(instance["kind"], "delivery-receipt");
+        assert_eq!(instance["receipt_id"], "r1");
+        assert_eq!(instance["original_envelope_id"], "env-1");
+        assert_eq!(instance["delivery_generation"], 1);
     }
 
     #[test]

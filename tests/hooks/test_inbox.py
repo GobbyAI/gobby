@@ -888,6 +888,45 @@ def test_quarantine_prune_recovers_orphan_payload_and_sidecar(tmp_path: Path) ->
     assert not sidecar.exists()
 
 
+def _delivery_receipt_envelope() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "kind": "delivery-receipt",
+        "enqueued_at": "2026-04-16T12:00:00Z",
+        "receipt_id": "11111111-1111-1111-1111-111111111111",
+        "original_envelope_id": "n-0000000000001-abcd",
+        "delivery_generation": 1,
+    }
+
+
+def test_load_envelope_accepts_delivery_receipt_without_hook_type(tmp_path: Path) -> None:
+    path = tmp_path / "ack.json"
+    path.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
+    loaded = _load_envelope(path)
+    assert loaded is not None
+    assert loaded["kind"] == "delivery-receipt"
+    assert "hook_type" not in loaded
+
+
+@pytest.mark.asyncio
+async def test_drain_consumes_delivery_receipt_without_posting(tmp_path: Path) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    envelope_path = inbox_dir / "n-0000000000001-abcd.json"
+    envelope_path.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
+    app = FastAPI()
+
+    with patch("gobby.hooks.inbox._post_envelope", new_callable=AsyncMock) as post:
+        post.return_value.status_code = 200
+        replayed = await drain_hook_inbox_once(app, inbox_dir=inbox_dir, include_fresh=True)
+
+    assert replayed == 1
+    assert not envelope_path.exists()
+    quarantine = inbox_dir / "quarantine"
+    assert not (quarantine / envelope_path.name).exists()
+    post.assert_not_awaited()
+
+
 def test_quarantine_prune_is_bounded(tmp_path: Path) -> None:
     import gobby.hooks.inbox as inbox
 

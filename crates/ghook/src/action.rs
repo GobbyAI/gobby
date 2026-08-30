@@ -3,7 +3,59 @@ use crate::json_value::is_python_truthy;
 use crate::planned_shutdown::is_stop_hook;
 use crate::{output, transport};
 use serde_json::Value;
+use std::borrow::Cow;
 use std::process::ExitCode;
+
+pub(crate) const DELIVERY_RECEIPT_FIELD: &str = "_gobby_delivery_receipt";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeliveryReceiptAck {
+    pub receipt_id: String,
+    pub original_envelope_id: String,
+    pub delivery_generation: u64,
+}
+
+pub(crate) fn extract_delivery_receipt(body: &str) -> (Cow<'_, str>, Option<DeliveryReceiptAck>) {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return (Cow::Borrowed(body), None);
+    }
+    let Ok(mut value) = serde_json::from_str::<Value>(trimmed) else {
+        return (Cow::Borrowed(body), None);
+    };
+    let Some(obj) = value.as_object_mut() else {
+        return (Cow::Borrowed(body), None);
+    };
+    let Some(receipt_value) = obj.remove(DELIVERY_RECEIPT_FIELD) else {
+        return (Cow::Borrowed(body), None);
+    };
+    let receipt = parse_delivery_receipt_ack(&receipt_value);
+    match serde_json::to_string(&value) {
+        Ok(stripped) => (Cow::Owned(stripped), receipt),
+        Err(_) => (Cow::Borrowed(body), None),
+    }
+}
+
+fn parse_delivery_receipt_ack(value: &Value) -> Option<DeliveryReceiptAck> {
+    let obj = value.as_object()?;
+    let receipt_id = obj
+        .get("receipt_id")?
+        .as_str()
+        .filter(|id| !id.is_empty())?;
+    let original_envelope_id = obj
+        .get("original_envelope_id")?
+        .as_str()
+        .filter(|id| !id.is_empty())?;
+    let delivery_generation = obj
+        .get("delivery_generation")?
+        .as_u64()
+        .filter(|n| *n >= 1)?;
+    Some(DeliveryReceiptAck {
+        receipt_id: receipt_id.to_string(),
+        original_envelope_id: original_envelope_id.to_string(),
+        delivery_generation,
+    })
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct HookAction {
@@ -79,7 +131,8 @@ pub(crate) fn action_from_success_response(
     hook_type: &str,
     response_body: &str,
 ) -> Result<HookAction, String> {
-    let trimmed = response_body.trim();
+    let (stripped, _) = extract_delivery_receipt(response_body);
+    let trimmed = stripped.trim();
     if trimmed.is_empty() {
         if is_claude_worktree_create(canonical_source, hook_type) {
             return Ok(worktree_create_failure(
@@ -630,6 +683,31 @@ mod tests {
         assert_eq!(
             action.stderr_message.as_deref(),
             Some("Create a task first")
+        );
+    }
+
+    #[test]
+    fn action_from_success_strips_delivery_receipt_before_provider_mapping() {
+        let body = concat!(
+            r#"{"continue":true,"hookSpecificOutput":{"hookEventName":"UserPromptSubmit"},"#,
+            r#""_gobby_delivery_receipt":{"receipt_id":"r1","original_envelope_id":"env-1","delivery_generation":1}}"#
+        );
+        let action = action_from_success_response("claude", "UserPromptSubmit", body).unwrap();
+        assert_eq!(action.exit_code, 0);
+        let stdout_json = action.stdout_json.expect("stdout json");
+        let parsed: Value = serde_json::from_str(&stdout_json).unwrap();
+        assert!(
+            parsed.get("_gobby_delivery_receipt").is_none(),
+            "{stdout_json}"
+        );
+        assert!(
+            !stdout_json.contains("_gobby_delivery_receipt"),
+            "{stdout_json}"
+        );
+        assert_eq!(parsed["continue"], true);
+        assert_eq!(
+            parsed["hookSpecificOutput"]["hookEventName"],
+            "UserPromptSubmit"
         );
     }
 

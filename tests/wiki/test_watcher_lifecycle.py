@@ -54,6 +54,7 @@ def _loops() -> dict[str, Any]:
         "metric_snapshot_loop": _idle_loop,
         "drain_hook_inbox_loop": _idle_loop,
         "hook_quarantine_retention_loop": _idle_loop,
+        "hook_receipt_retention_loop": _idle_loop,
         "bin_freshness_loop": _idle_loop,
         "expire_approval_timeouts_loop": _idle_loop,
         "tmux_window_name_repair_loop": _idle_loop,

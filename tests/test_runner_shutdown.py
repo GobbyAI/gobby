@@ -1431,3 +1431,37 @@ async def test_cancel_periodic_tasks_cancels_hook_quarantine_retention_once() ->
                 await task
             except asyncio.CancelledError:
                 pass
+
+
+@pytest.mark.asyncio
+async def test_cancel_periodic_tasks_cancels_hook_receipt_retention_once() -> None:
+    entered = asyncio.Event()
+    cancels = 0
+
+    async def blocked() -> None:
+        nonlocal cancels
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancels += 1
+            raise
+
+    task = asyncio.create_task(blocked())
+    runner = cast(
+        GobbyRunner,
+        SimpleNamespace(_hook_receipt_retention_task=task, _wiki_watcher=None),
+    )
+    try:
+        await entered.wait()
+        await runner_lifecycle_shutdown._cancel_periodic_tasks(runner)
+        await runner_lifecycle_shutdown._cancel_periodic_tasks(runner)
+        assert task.cancelled()
+        assert cancels == 1
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass

@@ -43,6 +43,44 @@ async def hook_quarantine_retention_loop(
     )
 
 
+async def hook_receipt_retention_loop(
+    db: Any,
+    is_shutdown_requested: Callable[[], bool],
+    interval_seconds: int = 3600,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
+) -> None:
+    """Prune expired receipt-effects rows on the maintenance loop."""
+    from gobby.storage.hook_receipts import prune_hook_receipts
+
+    try:
+        await _run_db(run_db, prune_hook_receipts, db)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.error("Initial hook receipt prune failed: %s", exc)
+
+    while not is_shutdown_requested():
+        try:
+            await asyncio.sleep(interval_seconds)
+            result = await _run_db(run_db, prune_hook_receipts, db)
+            deleted = getattr(result, "deleted", 0)
+            if deleted:
+                logger.info(
+                    "Pruned %s expired hook receipt(s)",
+                    deleted,
+                    extra={
+                        "event": "hook_receipt_pruned",
+                        "examined": getattr(result, "examined", deleted),
+                        "deleted": deleted,
+                        "backlog_remaining": getattr(result, "truncated", False),
+                    },
+                )
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.error("Hook receipt prune loop failed: %s", exc)
+
+
 async def cleanup_zombie_messages_loop(
     db: Any,
     is_shutdown_requested: Callable[[], bool],

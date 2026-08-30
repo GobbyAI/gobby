@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -13,8 +13,19 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import utc_now
 
 HOOK_RECEIPT_IDEMPOTENCY_WINDOW = timedelta(hours=24)
+HOOK_RECEIPT_PRUNE_MAX_ENTRIES = 100_000
 
 ReceiptState = Literal["prepared", "acknowledged", "released", "terminal-undelivered"]
+
+
+@dataclass(frozen=True)
+class ReceiptPruneResult:
+    """One bounded prune pass over terminal receipt-effects rows."""
+
+    examined: int
+    deleted: int
+    truncated: bool = False
+
 
 _RECEIPT_COLUMNS = (
     "receipt_id, original_envelope_id, current_envelope_id, session_id, "
@@ -185,6 +196,43 @@ def increment_force_continue(
         ).fetchone()
     assert row is not None
     return int(row["count"])
+
+
+def prune_hook_receipts(
+    db: HubDatabase,
+    *,
+    now: datetime | None = None,
+    max_entries: int | None = None,
+) -> ReceiptPruneResult:
+    """Delete acknowledged and terminal-undelivered rows strictly after the window.
+
+    Prepared and released rows are never pruned. Eligibility is
+    ``transition_at < now - HOOK_RECEIPT_IDEMPOTENCY_WINDOW``: a row exactly at
+    the boundary is retained. Batches are bounded so a backlog drains across
+    successive passes.
+    """
+
+    cutoff = (now if now is not None else utc_now()) - HOOK_RECEIPT_IDEMPOTENCY_WINDOW
+    limit = HOOK_RECEIPT_PRUNE_MAX_ENTRIES if max_entries is None else max(0, max_entries)
+    if limit == 0:
+        return ReceiptPruneResult(examined=0, deleted=0, truncated=False)
+    with db.transaction() as conn:
+        rows = conn.execute(
+            "DELETE FROM hook_receipt_effects WHERE receipt_id IN ("
+            "SELECT receipt_id FROM hook_receipt_effects "
+            "WHERE state IN ('acknowledged', 'terminal-undelivered') "
+            "AND transition_at < %s "
+            "ORDER BY transition_at ASC "
+            "LIMIT %s"
+            ") RETURNING receipt_id",
+            (cutoff, limit),
+        ).fetchall()
+    deleted = len(rows)
+    return ReceiptPruneResult(
+        examined=deleted,
+        deleted=deleted,
+        truncated=deleted == limit,
+    )
 
 
 def _get_receipt(db: HubDatabase, receipt_id: str) -> HookReceipt | None:

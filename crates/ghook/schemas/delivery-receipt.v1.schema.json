@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://gobby.ai/schemas/ghook/delivery-receipt.v1.schema.json",
+  "title": "Gobby ghook delivery receipt",
+  "description": "Acknowledgment ghook enqueues after a successful emission-plus-flush. The daemon drain consumes this without re-executing the original hook.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "enqueued_at",
+    "receipt_id",
+    "original_envelope_id",
+    "delivery_generation"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Delivery-receipt schema version; consumers must reject unknown versions."
+    },
+    "kind": {
+      "type": "string",
+      "const": "delivery-receipt",
+      "description": "Discriminator so drain can route receipts away from hook execution."
+    },
+    "enqueued_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp when ghook enqueued this acknowledgment."
+    },
+    "receipt_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Durable receipt-effects row identity echoed from the daemon response."
+    },
+    "original_envelope_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Immutable envelope id of the first carrying envelope for this receipt."
+    },
+    "delivery_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic delivery generation the acknowledgment commits."
+    }
+  }
+}

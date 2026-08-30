@@ -49,6 +49,9 @@ from gobby.runner_maintenance.messaging import drain_hook_inbox_loop as drain_ho
 from gobby.runner_maintenance.messaging import (
     hook_quarantine_retention_loop as hook_quarantine_retention_loop,
 )
+from gobby.runner_maintenance.messaging import (
+    hook_receipt_retention_loop as hook_receipt_retention_loop,
+)
 from gobby.runner_maintenance.storage_hygiene import (
     _APPROVAL_EXPIRY_BATCH_LIMIT as _APPROVAL_EXPIRY_BATCH_LIMIT,
 )
