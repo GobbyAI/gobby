@@ -190,7 +190,7 @@ def delete_secret(
 ) -> None:
     """Delete a secret by NAME."""
     with _SecretStoreContext() as store:
-        project_id, _scope_label = _resolve_cli_secret_scope(
+        project_id, scope_label = _resolve_cli_secret_scope(
             store.db,
             global_scope=global_scope,
             project_ref=project_ref,
@@ -204,7 +204,21 @@ def delete_secret(
 
         from gobby.storage.config_store import ConfigStore
 
-        ConfigStore(store.db).delete_named_secret(store, name, project_id=project_id)
+        deleted = ConfigStore(store.db).delete_named_secret(store, name, project_id=project_id)
+        if not deleted:
+            from gobby.storage.secret_names import normalize_secret_name
+
+            referenced = normalize_secret_name(name) in store.find_persisted_secret_references(
+                project_id=project_id
+            )
+            if referenced:
+                click.echo(
+                    f"Secret '{name}' is still referenced by stored configuration; not deleted.",
+                    err=True,
+                )
+            else:
+                click.echo(f"Secret '{name}' not found in {scope_label} scope.", err=True)
+            raise SystemExit(1)
     click.echo(f"Deleted secret '{name}'.")
 
 

@@ -199,3 +199,59 @@ def test_get_and_delete_accept_project_flag(monkeypatch: pytest.MonkeyPatch) -> 
         "proj-uuid"
     )
     assert config_store.delete_named_secret.call_args.kwargs.get("project_id") == "proj-uuid"
+
+
+def test_delete_exact_scope_miss_reports_not_found_and_exits_nonzero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = MagicMock()
+    store.db = MagicMock()
+    store.exists.return_value = True
+    store.find_persisted_secret_references.return_value = set()
+    monkeypatch.setattr(secrets_module, "_SecretStoreContext", lambda: _StoreContext(store))
+    project = _project("game-goblins", "proj-uuid")
+    config_store = MagicMock()
+    config_store.delete_named_secret.return_value = False
+
+    with (
+        patch("gobby.storage.projects.LocalProjectManager") as manager_cls,
+        patch("gobby.storage.config_store.ConfigStore", return_value=config_store),
+    ):
+        manager_cls.return_value.resolve_ref.return_value = project
+        result = CliRunner().invoke(
+            secrets_module.secrets,
+            ["delete", "API_KEY", "--project", "proj-uuid", "--yes"],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 1
+    assert "not found in project game-goblins scope" in result.output
+    assert "Deleted" not in result.output
+
+
+def test_delete_referenced_secret_is_refused_with_reference_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = MagicMock()
+    store.db = MagicMock()
+    store.exists.return_value = True
+    store.find_persisted_secret_references.return_value = {"api_key"}
+    monkeypatch.setattr(secrets_module, "_SecretStoreContext", lambda: _StoreContext(store))
+    project = _project("game-goblins", "proj-uuid")
+    config_store = MagicMock()
+    config_store.delete_named_secret.return_value = False
+
+    with (
+        patch("gobby.storage.projects.LocalProjectManager") as manager_cls,
+        patch("gobby.storage.config_store.ConfigStore", return_value=config_store),
+    ):
+        manager_cls.return_value.resolve_ref.return_value = project
+        result = CliRunner().invoke(
+            secrets_module.secrets,
+            ["delete", "API_KEY", "--project", "proj-uuid", "--yes"],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 1
+    assert "still referenced by stored configuration" in result.output
+    assert "Deleted" not in result.output
