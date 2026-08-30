@@ -18,6 +18,7 @@ from qdrant_client import AsyncQdrantClient
 
 from gobby.paths import get_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.secrets import SECRET_KEY_ID, SecretStore
 
 CONNECT_TIMEOUT_SECONDS = 3
@@ -235,8 +236,8 @@ async def _read_remote_config(
         connection,
         "FalkorDB",
         "secret read",
-        "SELECT encrypted_value FROM secrets WHERE name = %s",
-        (secret_name,),
+        "SELECT encrypted_value FROM secrets WHERE name = %s AND project_id = %s",
+        (secret_name, GLOBAL_PROJECT_ID),
     )
     if key_material is None or secret is None:
         raise RemotePreflightError(

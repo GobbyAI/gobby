@@ -25,6 +25,7 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from gobby.paths import get_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.secret_names import (
     SECRET_REF_PATTERN,
     normalize_and_validate_secret_name,
@@ -80,7 +81,15 @@ def _safe_secret_identifier(normalized_name: str) -> str:
 class SecretInfo:
     """Non-sensitive metadata about a stored secret."""
 
-    __slots__ = ("id", "name", "category", "description", "created_at", "updated_at")
+    __slots__ = (
+        "id",
+        "name",
+        "category",
+        "description",
+        "created_at",
+        "updated_at",
+        "project_id",
+    )
 
     def __init__(
         self,
@@ -90,6 +99,7 @@ class SecretInfo:
         description: str | None,
         created_at: datetime | str,
         updated_at: datetime | str,
+        project_id: str = GLOBAL_PROJECT_ID,
     ):
         self.id = id
         self.name = name
@@ -97,6 +107,11 @@ class SecretInfo:
         self.description = description
         self.created_at = require_stored_datetime(created_at, "created_at")
         self.updated_at = require_stored_datetime(updated_at, "updated_at")
+        self.project_id = project_id
+
+    @property
+    def scope(self) -> str:
+        return "global" if self.project_id == GLOBAL_PROJECT_ID else "project"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -106,7 +121,25 @@ class SecretInfo:
             "description": self.description,
             "created_at": datetime_to_required_iso(self.created_at),
             "updated_at": datetime_to_required_iso(self.updated_at),
+            "project_id": self.project_id,
+            "scope": self.scope,
         }
+
+
+def _write_project_id(project_id: str | None) -> str:
+    return project_id or GLOBAL_PROJECT_ID
+
+
+def _secret_info_from_row(row: Mapping[str, Any]) -> SecretInfo:
+    return SecretInfo(
+        id=row["id"],
+        name=row["name"],
+        category=row["category"],
+        description=row["description"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        project_id=str(row["project_id"]),
+    )
 
 
 def _write_all(fd: int, data: bytes) -> None:
@@ -283,10 +316,18 @@ class SecretStore:
     def find_persisted_secret_references(
         self,
         additional_values: Iterable[Any] = (),
+        *,
+        project_id: str | None = None,
     ) -> set[str]:
         """Return normalized references held by config and MCP server rows."""
         config_rows = self.db.fetchall("SELECT value FROM config_store")
-        mcp_rows = self.db.fetchall("SELECT env, headers FROM mcp_servers")
+        if project_id is None:
+            mcp_rows = self.db.fetchall("SELECT env, headers FROM mcp_servers")
+        else:
+            mcp_rows = self.db.fetchall(
+                "SELECT env, headers FROM mcp_servers WHERE project_id = %s",
+                (project_id,),
+            )
         values = [*additional_values]
         values.extend(row["value"] for row in config_rows)
         for row in mcp_rows:
@@ -526,42 +567,66 @@ class SecretStore:
         plaintext_value: str,
         category: str = "general",
         description: str | None = None,
+        *,
+        project_id: str | None = None,
     ) -> SecretInfo:
         """Encrypt and store a secret (upsert)."""
         if category not in VALID_CATEGORIES:
             raise ValueError(f"Invalid category '{category}'. Must be one of: {VALID_CATEGORIES}")
 
         name = normalize_and_validate_secret_name(name)
+        scope_id = _write_project_id(project_id)
         fernet = self._get_fernet()
         encrypted = fernet.encrypt(plaintext_value.encode("utf-8")).decode("utf-8")
         row = self.db.fetchone(
             """INSERT INTO secrets (
-                   id, name, encrypted_value, category, description
+                   id, name, encrypted_value, category, description, project_id
                )
-               VALUES (%s, %s, %s, %s, %s)
+               VALUES (%s, %s, %s, %s, %s, %s)
                ON CONFLICT (name, project_id) DO UPDATE SET
                    encrypted_value = EXCLUDED.encrypted_value,
                    category = EXCLUDED.category,
                    description = EXCLUDED.description,
                    updated_at = EXCLUDED.updated_at
-               RETURNING id, name, category, description, created_at, updated_at""",
-            (str(uuid.uuid4()), name, encrypted, category, description),
+               RETURNING id, name, category, description, created_at, updated_at, project_id""",
+            (str(uuid.uuid4()), name, encrypted, category, description, scope_id),
         )
         if row is None:
             raise RuntimeError("Secret upsert did not return a row")
-        return SecretInfo(
-            id=row["id"],
-            name=row["name"],
-            category=row["category"],
-            description=row["description"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
+        return _secret_info_from_row(row)
+
+    def _lookup_secret_row(
+        self,
+        name: str,
+        *,
+        project_id: str | None,
+        encrypted: bool,
+    ) -> Any | None:
+        name = self._normalize_name(name)
+        query = (
+            "SELECT encrypted_value FROM secrets WHERE name = %s AND project_id = %s"
+            if encrypted
+            else "SELECT 1 FROM secrets WHERE name = %s AND project_id = %s"
         )
 
-    def get(self, name: str) -> str | None:
+        def fetch(scope_id: str) -> Any | None:
+            return self.db.fetchone(query, (name, scope_id))
+
+        if project_id is None:
+            return fetch(GLOBAL_PROJECT_ID)
+        row = fetch(project_id)
+        if row is not None or project_id == GLOBAL_PROJECT_ID:
+            return row
+        return fetch(GLOBAL_PROJECT_ID)
+
+    def get(self, name: str, *, project_id: str | None = None) -> str | None:
         """Decrypt and return a secret value (daemon-internal only)."""
-        name = self._normalize_name(name)
-        row = self.db.fetchone("SELECT encrypted_value FROM secrets WHERE name = %s", (name,))
+        normalized = self._normalize_name(name)
+        row = self._lookup_secret_row(
+            normalized,
+            project_id=project_id,
+            encrypted=True,
+        )
         if not row:
             return None
 
@@ -570,47 +635,62 @@ class SecretStore:
             decrypted: str = fernet.decrypt(row["encrypted_value"].encode("utf-8")).decode("utf-8")
             return decrypted
         except InvalidToken:
-            raise SecretDecryptionError(_safe_secret_identifier(name)) from None
+            raise SecretDecryptionError(_safe_secret_identifier(normalized)) from None
 
-    def delete(self, name: str) -> bool:
-        """Delete a secret."""
+    def delete(self, name: str, *, project_id: str | None = None) -> bool:
+        """Delete a secret in exactly the given scope."""
         name = self._normalize_name(name)
-        row = self.db.fetchone("SELECT id FROM secrets WHERE name = %s", (name,))
+        scope_id = _write_project_id(project_id)
+        row = self.db.fetchone(
+            "SELECT id FROM secrets WHERE name = %s AND project_id = %s",
+            (name, scope_id),
+        )
         if not row:
             return False
-        self.db.execute("DELETE FROM secrets WHERE name = %s", (name,))
+        self.db.execute(
+            "DELETE FROM secrets WHERE name = %s AND project_id = %s",
+            (name, scope_id),
+        )
         return True
 
-    def list(self) -> list[SecretInfo]:
-        """List all secrets (metadata only, never values)."""
-        rows = self.db.fetchall(
-            "SELECT id, name, category, description, created_at, updated_at FROM secrets ORDER BY name"
-        )
-        return [
-            SecretInfo(
-                id=row["id"],
-                name=row["name"],
-                category=row["category"],
-                description=row["description"],
-                created_at=row["created_at"],
-                updated_at=row["updated_at"],
+    def list(self, *, project_id: str | None = None) -> list[SecretInfo]:
+        """List secrets (metadata only, never values)."""
+        if project_id is None:
+            rows = self.db.fetchall(
+                """SELECT id, name, category, description, created_at, updated_at, project_id
+                   FROM secrets
+                   WHERE project_id = %s
+                   ORDER BY name""",
+                (GLOBAL_PROJECT_ID,),
             )
-            for row in rows
-        ]
+        else:
+            rows = self.db.fetchall(
+                """SELECT id, name, category, description, created_at, updated_at, project_id
+                   FROM secrets
+                   WHERE project_id = %s
+                      OR (
+                          project_id = %s
+                          AND name NOT IN (
+                              SELECT name FROM secrets WHERE project_id = %s
+                          )
+                      )
+                   ORDER BY name""",
+                (project_id, GLOBAL_PROJECT_ID, project_id),
+            )
+        return [_secret_info_from_row(row) for row in rows]
 
-    def exists(self, name: str) -> bool:
-        """Check if a secret exists."""
-        name = self._normalize_name(name)
-        row = self.db.fetchone("SELECT 1 FROM secrets WHERE name = %s", (name,))
+    def exists(self, name: str, *, project_id: str | None = None) -> bool:
+        """Check if a secret exists in the given read scope."""
+        row = self._lookup_secret_row(name, project_id=project_id, encrypted=False)
         return row is not None
 
-    def resolve(self, text: str) -> str:
+    def resolve(self, text: str, *, project_id: str | None = None) -> str:
         """Replace $secret:NAME references with decrypted values."""
 
         def _replace(match: re.Match[str]) -> str:
             name = match.group(1)
             try:
-                value = self.get(name)
+                value = self.get(name, project_id=project_id)
             except SecretDecryptionError as exc:
                 logger.error(
                     "Configured secret reference could not be decrypted: %s",
@@ -628,9 +708,14 @@ class SecretStore:
 
         return SECRET_REF_PATTERN.sub(_replace, text)
 
-    def resolve_dict(self, d: dict[str, str]) -> dict[str, str]:
+    def resolve_dict(
+        self,
+        d: dict[str, str],
+        *,
+        project_id: str | None = None,
+    ) -> dict[str, str]:
         """Resolve $secret:NAME references in all values of a dict."""
-        return {k: self.resolve(v) for k, v in d.items()}
+        return {k: self.resolve(v, project_id=project_id) for k, v in d.items()}
 
     def seal(self, plaintext: bytes, *, aad: bytes) -> str:
         """Encrypt ``plaintext`` under the daemon envelope with AAD binding."""

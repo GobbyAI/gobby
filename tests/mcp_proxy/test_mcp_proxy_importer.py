@@ -355,6 +355,17 @@ class TestFindMissingSecrets:
         assert "<YOUR_API_KEY>" in result
         assert "<YOUR_SECRET>" in result
 
+    def test_find_missing_secrets_checks_importing_project_scope(
+        self, importer: MCPServerImporter
+    ) -> None:
+        config = {"env": {"TOKEN": "$secret:github_token"}}
+        store = MagicMock()
+        store.exists.return_value = False
+        with patch("gobby.storage.secrets.SecretStore", return_value=store):
+            result = importer._find_missing_secrets(config)
+        store.exists.assert_called_with("github_token", project_id="test-project-id")
+        assert any("github_token" in item for item in result)
+
 
 class TestImportFromProject:
     """Tests for import_from_project method."""

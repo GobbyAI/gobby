@@ -1,10 +1,12 @@
 """CLI commands for managing encrypted secrets."""
 
 import os
+from pathlib import Path
 
 import click
 
 from gobby.cli.runtime import require_cli_database
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import (
     POSTURE_KEY_FILE,
     POSTURE_SCRYPT_PASSPHRASE,
@@ -32,6 +34,36 @@ class _SecretStoreContext:
 
 def _display_posture(posture: str | None) -> str:
     return (posture or POSTURE_KEY_FILE).replace("_", "-")
+
+
+def _resolve_cli_secret_scope(
+    db: HubDatabase,
+    *,
+    global_scope: bool,
+    project_ref: str | None,
+) -> tuple[str | None, str]:
+    if global_scope and project_ref:
+        click.echo("Choose either --project or --global.", err=True)
+        raise SystemExit(1)
+    if global_scope:
+        return None, "global"
+    if project_ref:
+        from gobby.storage.projects import LocalProjectManager
+
+        project = LocalProjectManager(db).resolve_ref(project_ref)
+        if project is None:
+            click.echo(f"Project not found: {project_ref}", err=True)
+            raise SystemExit(1)
+        return project.id, f"project {project.name}"
+    from gobby.cli.installers.shared import registered_project_id
+    from gobby.storage.projects import LocalProjectManager
+
+    project_id = registered_project_id(db, Path.cwd())
+    if project_id is None:
+        return None, "global"
+    project = LocalProjectManager(db).get(project_id)
+    label = project.name if project is not None else project_id
+    return project_id, f"project {label}"
 
 
 def _prompt_kek_passphrase() -> str:
@@ -68,7 +100,18 @@ def secrets() -> None:
     default=False,
     help="Read value from stdin (non-interactive, for scripting).",
 )
-def set_secret(name: str, category: str, description: str | None, from_stdin: bool) -> None:
+@click.option(
+    "--global", "global_scope", is_flag=True, default=False, help="Store in global scope."
+)
+@click.option("--project", "project_ref", default=None, help="Project UUID or name.")
+def set_secret(
+    name: str,
+    category: str,
+    description: str | None,
+    from_stdin: bool,
+    global_scope: bool,
+    project_ref: str | None,
+) -> None:
     """Store a secret. Value is prompted interactively (never passed as an argument).
 
     NAME is the secret identifier (e.g. anthropic_api_key). Reference it
@@ -88,42 +131,71 @@ def set_secret(name: str, category: str, description: str | None, from_stdin: bo
     with _SecretStoreContext() as store:
         from gobby.storage.config_store import ConfigStore
 
+        project_id, scope_label = _resolve_cli_secret_scope(
+            store.db,
+            global_scope=global_scope,
+            project_ref=project_ref,
+        )
         info = ConfigStore(store.db).set_named_secret(
             store,
             name,
             value,
             category=category,
             description=description,
+            project_id=project_id,
         )
-    click.echo(f"Stored secret '{info.name}' (category={info.category}).")
+    click.echo(f"Stored secret '{info.name}' (scope: {scope_label}).")
 
 
 @secrets.command("list")
-def list_secrets() -> None:
+@click.option("--global", "global_scope", is_flag=True, default=False, help="List global secrets.")
+@click.option("--project", "project_ref", default=None, help="Project UUID or name.")
+def list_secrets(global_scope: bool, project_ref: str | None) -> None:
     """List stored secrets (metadata only, never values)."""
     with _SecretStoreContext() as store:
-        items = store.list()
+        project_id, _scope_label = _resolve_cli_secret_scope(
+            store.db,
+            global_scope=global_scope,
+            project_ref=project_ref,
+        )
+        items = store.list(project_id=project_id)
     if not items:
         click.echo("No secrets stored.")
         return
 
-    # Simple table output
     name_width = max(len(s.name) for s in items)
     cat_width = max(len(s.category) for s in items)
-    click.echo(f"{'NAME':<{name_width}}  {'CATEGORY':<{cat_width}}  DESCRIPTION")
-    click.echo(f"{'-' * name_width}  {'-' * cat_width}  {'-' * 11}")
+    scope_width = max(5, max(len(s.scope) for s in items))
+    click.echo(
+        f"{'NAME':<{name_width}}  {'CATEGORY':<{cat_width}}  {'SCOPE':<{scope_width}}  DESCRIPTION"
+    )
+    click.echo(f"{'-' * name_width}  {'-' * cat_width}  {'-' * scope_width}  {'-' * 11}")
     for s in items:
         desc = s.description or ""
-        click.echo(f"{s.name:<{name_width}}  {s.category:<{cat_width}}  {desc}")
+        click.echo(
+            f"{s.name:<{name_width}}  {s.category:<{cat_width}}  {s.scope:<{scope_width}}  {desc}"
+        )
 
 
 @secrets.command("delete")
 @click.argument("name")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
-def delete_secret(name: str, yes: bool) -> None:
+@click.option("--global", "global_scope", is_flag=True, default=False, help="Delete global secret.")
+@click.option("--project", "project_ref", default=None, help="Project UUID or name.")
+def delete_secret(
+    name: str,
+    yes: bool,
+    global_scope: bool,
+    project_ref: str | None,
+) -> None:
     """Delete a secret by NAME."""
     with _SecretStoreContext() as store:
-        if not store.exists(name):
+        project_id, _scope_label = _resolve_cli_secret_scope(
+            store.db,
+            global_scope=global_scope,
+            project_ref=project_ref,
+        )
+        if not store.exists(name, project_id=project_id):
             click.echo(f"Secret '{name}' not found.", err=True)
             raise SystemExit(1)
 
@@ -132,16 +204,25 @@ def delete_secret(name: str, yes: bool) -> None:
 
         from gobby.storage.config_store import ConfigStore
 
-        ConfigStore(store.db).delete_named_secret(store, name)
+        ConfigStore(store.db).delete_named_secret(store, name, project_id=project_id)
     click.echo(f"Deleted secret '{name}'.")
 
 
 @secrets.command("get")
 @click.argument("name")
-def get_secret(name: str) -> None:
+@click.option(
+    "--global", "global_scope", is_flag=True, default=False, help="Look up global secret."
+)
+@click.option("--project", "project_ref", default=None, help="Project UUID or name.")
+def get_secret(name: str, global_scope: bool, project_ref: str | None) -> None:
     """Check if a secret exists (does NOT reveal the value)."""
     with _SecretStoreContext() as store:
-        exists = store.exists(name)
+        project_id, _scope_label = _resolve_cli_secret_scope(
+            store.db,
+            global_scope=global_scope,
+            project_ref=project_ref,
+        )
+        exists = store.exists(name, project_id=project_id)
     if exists:
         click.echo(f"Secret '{name}' exists.")
     else:

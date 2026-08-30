@@ -15,6 +15,7 @@ from gobby.prompts import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.secret_names import SECRET_REF_PATTERN
 from gobby.utils.http_retry import parse_retry_after
 from gobby.utils.json_helpers import extract_json_object
 
@@ -718,13 +719,16 @@ class MCPServerImporter:
         Returns:
             List of placeholder secret names
         """
-        missing = []
+        missing: list[str] = []
+        secret_names: list[str] = []
 
         def check_value(value: Any, path: str = "") -> None:
             if isinstance(value, str):
                 match = SECRET_PLACEHOLDER_PATTERN.search(value)
                 if match:
                     missing.append(match.group(0))
+                for ref in SECRET_REF_PATTERN.finditer(value):
+                    secret_names.append(ref.group(1).lower())
             elif isinstance(value, dict):
                 for k, v in value.items():
                     check_value(v, f"{path}.{k}" if path else k)
@@ -733,4 +737,11 @@ class MCPServerImporter:
                     check_value(v, f"{path}[{i}]")
 
         check_value(config)
+        if secret_names:
+            from gobby.storage.secrets import SecretStore
+
+            store = SecretStore(self.db)
+            for name in dict.fromkeys(secret_names):
+                if not store.exists(name, project_id=self.current_project_id):
+                    missing.append(f"$secret:{name}")
         return missing

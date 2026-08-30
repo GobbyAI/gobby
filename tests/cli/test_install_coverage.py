@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -1667,3 +1667,93 @@ class TestInstallFilesHomeLifecycle:
             assert "gobby stop" in result.output
         finally:
             first.release()
+
+
+class _FakeCursor:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self._rows = rows
+
+    async def fetchall(self) -> list[dict[str, Any]]:
+        return self._rows
+
+    async def fetchone(self) -> dict[str, Any] | None:
+        return self._rows[0] if self._rows else None
+
+
+class _FakeRemoteConnection:
+    def __init__(self, *, global_secret: dict[str, Any], project_secret: dict[str, Any]) -> None:
+        self.global_secret = global_secret
+        self.project_secret = project_secret
+        self.secret_query = ""
+        self.secret_params: tuple[Any, ...] = ()
+
+    async def execute(self, query: str, params: object = ()) -> _FakeCursor:
+        param_tuple = tuple(params) if isinstance(params, (list, tuple)) else ()
+        if "FROM config_store" in query:
+            return _FakeCursor(
+                [
+                    {"key": "databases.qdrant.url", "value": '"http://qdrant.test:6333"'},
+                    {"key": "databases.falkordb.host", "value": '"falkor.test"'},
+                    {"key": "databases.falkordb.port", "value": "6379"},
+                    {
+                        "key": "databases.falkordb.password",
+                        "value": '"$secret:falkordb_password"',
+                    },
+                ]
+            )
+        if "FROM secret_key_material" in query:
+            return _FakeCursor(
+                [
+                    {
+                        "id": "default",
+                        "wrapped_dek": "wrapped",
+                        "kek_posture": "key_file",
+                        "kek_salt": None,
+                        "kek_kdf_n": None,
+                        "kek_kdf_r": None,
+                        "kek_kdf_p": None,
+                    }
+                ]
+            )
+        if "FROM secrets" in query:
+            self.secret_query = query
+            self.secret_params = param_tuple
+            from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+            if "project_id" in query and GLOBAL_PROJECT_ID in param_tuple:
+                return _FakeCursor([self.global_secret])
+            return _FakeCursor([self.project_secret])
+        raise AssertionError(f"unexpected query: {query}")
+
+    async def close(self) -> None:
+        return None
+
+
+class TestRemotePreflightSecretScope:
+    @pytest.mark.asyncio
+    async def test_read_remote_config_ignores_same_named_secret_in_other_project(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.cli.installers.remote_preflight import _AsyncPostgres, _read_remote_config
+        from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+        connection = _FakeRemoteConnection(
+            global_secret={"encrypted_value": "global-cipher"},
+            project_secret={"encrypted_value": "project-cipher"},
+        )
+
+        class _FakeStore:
+            def __init__(self, database: Any, gobby_home: Path | None = None) -> None:
+                self._secret = database._secret
+
+            def get(self, name: str, *, project_id: str | None = None) -> str:
+                del name, project_id
+                if self._secret["encrypted_value"] == "global-cipher":
+                    return "global-password"
+                return "project-password"
+
+        monkeypatch.setattr("gobby.cli.installers.remote_preflight.SecretStore", _FakeStore)
+        config = await _read_remote_config(cast(_AsyncPostgres, connection), tmp_path)
+        assert config.falkordb_password == "global-password"
+        assert "project_id" in connection.secret_query
+        assert GLOBAL_PROJECT_ID in connection.secret_params

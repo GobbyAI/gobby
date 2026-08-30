@@ -14,7 +14,7 @@ import logging
 import threading
 from datetime import datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -71,8 +71,8 @@ def test_resolve_secrets_in_config_resolves_args() -> None:
         project_id="proj-1",
     )
     store = MagicMock()
-    store.resolve.side_effect = lambda value: (
-        "resolved-token" if value == "$secret:context7_api_key" else value
+    store.get.side_effect = lambda name, project_id=None: (
+        "resolved-token" if name == "context7_api_key" else None
     )
 
     with patch("gobby.storage.secrets.SecretStore", return_value=store):
@@ -82,10 +82,7 @@ def test_resolve_secrets_in_config_resolves_args() -> None:
     assert config.args == ["--api-key", "$secret:context7_api_key"]
     assert resolved is not config
     assert resolved.command == "npx"
-    assert store.resolve.call_args_list == [
-        call("--api-key"),
-        call("$secret:context7_api_key"),
-    ]
+    store.get.assert_called_with("context7_api_key", project_id="proj-1")
 
 
 def test_resolve_secrets_in_config_does_not_warn_when_no_arg_stripped(
@@ -101,8 +98,8 @@ def test_resolve_secrets_in_config_does_not_warn_when_no_arg_stripped(
         project_id="proj-1",
     )
     store = MagicMock()
-    store.resolve.side_effect = lambda value: (
-        "resolved-token" if value == "$secret:context7_api_key" else value
+    store.get.side_effect = lambda name, project_id=None: (
+        "resolved-token" if name == "context7_api_key" else None
     )
 
     with (
@@ -115,30 +112,57 @@ def test_resolve_secrets_in_config_does_not_warn_when_no_arg_stripped(
     assert "Stripping unresolved secret ref" not in caplog.text
 
 
-def test_resolve_secrets_in_config_strips_unresolved_args(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_resolve_secrets_uses_config_project_scope() -> None:
+    manager = MagicMock()
+    manager.mcp_db_manager = MagicMock(db=object())
+    config = MCPServerConfig(
+        name="github",
+        transport="stdio",
+        command="npx",
+        env={"GITHUB_TOKEN": "$secret:github_token"},
+        project_id="proj-1",
+    )
+    store = MagicMock()
+    store.get.side_effect = lambda name, project_id=None: (
+        "project-token" if name == "github_token" and project_id == "proj-1" else None
+    )
+
+    with patch("gobby.storage.secrets.SecretStore", return_value=store):
+        resolved = resolve_secrets_in_config(manager, config, logging.getLogger("test"))
+
+    assert resolved.env == {"GITHUB_TOKEN": "project-token"}
+    assert config.env == {"GITHUB_TOKEN": "$secret:github_token"}
+    store.get.assert_called_with("github_token", project_id="proj-1")
+
+
+def test_resolve_secrets_in_config_fails_closed_naming_secret_names() -> None:
     manager = MagicMock()
     manager.mcp_db_manager = MagicMock(db=object())
     config = MCPServerConfig(
         name="context7",
         transport="stdio",
         command="npx",
-        args=["--api-key", "$secret:missing_key", "--token=$secret:missing_key", "serve"],
+        args=["--api-key", "$secret:missing_key"],
+        env={"TOKEN": "$secret:missing_key"},
         project_id="proj-1",
     )
     store = MagicMock()
-    store.resolve.side_effect = lambda value: value
+    store.get.return_value = None
 
     with (
-        caplog.at_level("WARNING", logger="test"),
         patch("gobby.storage.secrets.SecretStore", return_value=store),
+        pytest.raises(
+            MCPError,
+            match=r"Server 'context7' needs configuration: missing secret\(s\)",
+        ) as raised,
     ):
-        resolved = resolve_secrets_in_config(manager, config, logging.getLogger("test"))
+        resolve_secrets_in_config(manager, config, logging.getLogger("test"))
 
-    assert resolved.args == ["serve"]
-    assert "Stripping unresolved secret ref from context7 args" in caplog.text
-    assert "missing_key" not in caplog.text
+    message = str(raised.value)
+    assert "missing_key" in message
+    assert "TOKEN" not in message
+    assert "--api-key" not in message
+    assert "$secret:" not in message
 
 
 def test_resolve_secrets_in_config_failure_logs_only_safe_context(
@@ -157,7 +181,7 @@ def test_resolve_secrets_in_config_failure_logs_only_safe_context(
     )
     store = MagicMock()
     failure = RuntimeError(f"provider exposed {secret_ref}={sentinel_secret}")
-    store.resolve.side_effect = failure
+    store.get.side_effect = failure
 
     with (
         caplog.at_level("WARNING", logger="test"),
