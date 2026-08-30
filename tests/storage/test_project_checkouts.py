@@ -351,9 +351,10 @@ def test_concurrent_absent_rebind_different_roots_serializes(
         for thread in threads:
             thread.join(timeout=20)
         assert errors == []
-        assert set(results) <= set(roots)
+        assert set(results) == set(roots)
         listed = _manager(temp_db).list_for_machine(machine_id)
         assert len(listed) == 1
         assert listed[0].root_path in roots
+        assert listed[0].root_path in results
     finally:
         second.close()
