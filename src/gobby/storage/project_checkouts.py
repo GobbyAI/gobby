@@ -241,7 +241,11 @@ def _is_registered_operation_overlay(
 
 
 def require_root(db: HubDatabase, project_id: str, machine_id: str | None) -> str:
-    """Return the primary checkout root for `(project_id, machine_id)`."""
+    """Return the primary checkout root for `(project_id, machine_id)`.
+
+    Missing or empty `machine_id` is `MissingMachineContextError` with no daemon
+    fallback. There is no `projects.repo_path` fallback.
+    """
     local_machine_id = _session_machine_id(project_id, machine_id)
     _reject_checkout_sentinel(project_id)
     checkout = LocalProjectCheckoutManager(db).get(local_machine_id, project_id)
