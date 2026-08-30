@@ -7,7 +7,7 @@ for every live-turn record (the live-record set is derived from the README outco
 table's ``Modes`` column), keeps every pane capture's body real, correlates every
 evidence file's command with its README record and every cited helper with a committed,
 parseable ``probe/`` script, keeps every free-text prompt inside the README's enumerated
-probe-prompt list, and is scrubbed.
+probe-prompt list, and is scrubbed. Record 1.1.25 is the Gate 0 addendum (#20783).
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ AGY_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "provider_contract
 README = AGY_ROOT / "README.md"
 PANES = AGY_ROOT / "pane-captures"
 EVIDENCE = AGY_ROOT / "evidence"
-RECORDS = [f"1.1.{n}" for n in range(1, 25)]
+RECORDS = [f"1.1.{n}" for n in range(1, 26)]
 EVENTS = {"PreInvocation", "PreToolUse", "PostToolUse", "PostInvocation", "Stop"}
 MODES = {"print", "interactive"}
 MODE_CELLS = {"both", "print", "command"}
@@ -244,7 +244,7 @@ def test_fixture_set_is_complete() -> None:
     assert PANES.is_dir() and EVIDENCE.is_dir()
 
 
-def test_outcome_table_covers_all_24_records_with_a_verdict_and_a_mode() -> None:
+def test_outcome_table_covers_all_25_records_with_a_verdict_and_a_mode() -> None:
     rows = _outcome_table_rows()
     assert sorted(rows, key=_record_order) == RECORDS
     for record, (modes, outcome, summary) in rows.items():
@@ -256,11 +256,47 @@ def test_outcome_table_covers_all_24_records_with_a_verdict_and_a_mode() -> None
     assert {"1.1.5", "1.1.8", "1.1.17", "1.1.24"} <= live
 
 
-def test_record_evidence_sections_cover_all_24_records() -> None:
+def test_record_1_1_25_is_negative_confinement() -> None:
+    """1.1.25: shipped fixtures record that per-process MCP isolation cannot stay authenticated."""
+    modes, outcome, summary = _outcome_table_rows()["1.1.25"]
+    assert modes == "command"
+    assert "**negative**" in outcome
+    assert "cannot be confined" in summary
+    section = _record_sections()["1.1.25"]
+    evidence = (EVIDENCE / "1.1.25-command-confine.txt").read_text(encoding="utf-8")
+    combined = f"{section}\n{evidence}"
+    assert "--mcp-config" not in _command_help_flags(evidence)
+    assert "--scope" not in _command_help_flags(evidence)
+    assert "No MCP servers configured." in combined
+    assert "authentication failed or timed out" in combined
+    assert "gobby  stdio  enabled" in combined
+    assert combined.count("gobby  stdio  enabled") >= 2
+    assert "1.1.22" in combined
+
+
+def _command_help_flags(evidence: str) -> str:
+    """Return help-flag text only, so a later prose mention of `--mcp-config` cannot spoof absence."""
+    chunks: list[str] = []
+    take = False
+    for line in evidence.splitlines():
+        if line.startswith("$ ") and line.rstrip().endswith("--help"):
+            take = True
+            chunks.append(line)
+            continue
+        if take:
+            if line.startswith("$ "):
+                take = False
+            else:
+                chunks.append(line)
+    return "\n".join(chunks)
+
+
+def test_record_evidence_sections_cover_all_25_records() -> None:
     sections = _record_sections()
     assert set(sections) == set(RECORDS)
     text = _readme()
     assert "1.1.18" in text and "1.1.16" in text  # version history stated
+    assert "1.1.22" in text  # 1.1.25 addendum binary
 
 
 @pytest.mark.parametrize("record", RECORDS)

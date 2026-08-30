@@ -14,7 +14,8 @@ captures at 03:17–03:18 local) and AGY's auto-updater replaced `~/.local/bin/a
 **1.1.18** at 03:18:34, before the first live turn. Every live record below was
 observed on **1.1.18** (`agy --version` → `1.1.18`; the interactive banner reads
 `Antigravity CLI 1.1.18`, `pane-captures/1.1.7-interactive-startup.txt`). There is no
-pin or downgrade path, so the probed floor is 1.1.18.
+pin or downgrade path, so the probed floor is 1.1.18. Record **1.1.25** is a Gate 0
+addendum observed on installed AGY **1.1.22** (`evidence/1.1.25-command-confine.txt`).
 
 **Probe environment.** The agent session ran under an SRT sandbox whose proxy forbids
 Google domains, so every AGY invocation was executed in an outside tmux pane
@@ -192,6 +193,7 @@ command(s) and observed output are in "Record evidence" below and in the cited
 | 1.1.22 transcript layout | both | **confirmed** | Parser input `transcript_full.jsonl`; `transcript.jsonl` truncated twin; `chunks/` byte-identical copies in both modes; interactive adds `SYSTEM_SDK/*` and `SYSTEM/ERROR_MESSAGE` records. |
 | 1.1.23 `--mode` | both | **confirmed** | Headless `plan` writes `brain/<id>/<name>.md`, no approval record; `accept-edits` writes without prompting; `bogus` → warning; terminal menu as 1.1.14. |
 | 1.1.24 response fields | both | **confirmed with negatives** | Both modes: honored `deny`, `deny_unless_prior_grant`, `overwrite`, `terminationBehavior`, `injectSteps.userMessage`/`ephemeralMessage`, `Stop continue` ×10 then forced end. Not honored: `permissionOverrides` (headless auto-deny / interactive prompt still shown), `injectSteps.toolCall` (fatal). PreToolUse exit 1/2 blocks the tool; Stop exit 2 ignored. |
+| 1.1.25 tool-runtime confinement | command | **negative** | On 1.1.22: no `--mcp-config`, `agy mcp add` has no per-process scope, empty `HOME` hides `gobby` but every auth-preserving composition still OAuth-fails, and sharing `~/.gemini` keeps the global `gobby` server. A request-correlated MCP server cannot be confined to one authenticated process. |
 
 ## Record evidence
 
@@ -632,7 +634,7 @@ print(len(rows))
 for l in rows:
     print(" | ".join(c.strip() for c in l.split("|")[1:4]))
 EOF
-24
+25
 1.1.1 resume | both | **re-confirmed unchanged** (+1 delta)
 1.1.2 transcriptPath | both | **re-confirmed, layout disproven**
 1.1.3 cwd remedy | both | **confirmed, remedy named**
@@ -657,6 +659,7 @@ EOF
 1.1.22 transcript layout | both | **confirmed**
 1.1.23 `--mode` | both | **confirmed**
 1.1.24 response fields | both | **confirmed with negatives**
+1.1.25 tool-runtime confinement | command | **negative**
 ```
 
 Revisions applied to plan §2.2, §2.3, §2.5, §4.1, §4.2, §5.1, §5.2, §5.3, §6.1,
@@ -1314,6 +1317,73 @@ still went through), and a long-running shell command may be backgrounded by the
 (`Tool is running as a background task with task id: <CONVERSATION_ID>/task-86`),
 in which case the turn ends before the command does.
 
+### 1.1.25 — request-scoped controlled-tool confinement
+
+Print/command (`evidence/1.1.25-command-confine.txt`) on installed AGY **1.1.22**.
+No live agent turn: every `HOME` composition that hid the global MCP table failed
+authentication before a turn could start. Keychain was not written; the real
+`~/.gemini/config/mcp_config.json` and `hooks.json` were not written.
+
+```
+$ ~/.local/bin/agy --version
+1.1.22
+$ ~/.local/bin/agy --help
+Usage of agy:
+  --add-dir                       Add a directory to the workspace (repeatable) (default [])
+  --dangerously-skip-permissions  Auto-approve all tool permission requests without prompting
+  --output-format                 Output format for print mode (text, json, stream-json) (default text)
+  -p                              Short alias for --print
+  --print                         Run a single prompt non-interactively and print the response
+  --print-timeout                 Timeout for print mode wait (default 5m0s)
+  --sandbox                       Run in a sandbox with terminal restrictions enabled
+Available subcommands:
+  mcp             Manage MCP servers (add, remove, list, enable, disable)
+$ ~/.local/bin/agy mcp add --help
+Flags:
+  -H        Short alias for --header (default [])
+  -e        Short alias for --env (default [])
+  --env     Environment variable KEY=value (repeatable) (default [])
+  --header  HTTP header Key: Value (repeatable) (default [])
+  -t        Short alias for --type (default stdio)
+  --type    Server type: 'stdio' or 'http' (default stdio)
+$ ~/.local/bin/agy mcp list
+NAME   TYPE   STATUS   COMMAND/URL
+gobby  stdio  enabled  ~/Projects/gobby/.venv/bin/gobby mcp-server
+$ env HOME=<PROBE_SCRATCH>/empty ~/.local/bin/agy mcp list
+No MCP servers configured.
+$ env HOME=<PROBE_SCRATCH>/empty ~/.local/bin/agy -p '/usage' --output-format json --print-timeout 30s
+{"conversation_id":"","status":"ERROR","response":"","error":"authentication failed or timed out","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}
+--- stderr ---
+Authentication required. Please visit the URL to log in:
+  https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=<REDACTED>&code_challenge=<REDACTED>&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fexperimentsandconfigs+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Faicode+openid&state=<REDACTED>
+Error: authentication timed out.
+--- exit 1 ---
+$ env HOME=<PROBE_SCRATCH>/full-gemini ~/.local/bin/agy -p '/usage' --output-format json --print-timeout 20s
+{"conversation_id":"","status":"ERROR","response":"","error":"authentication failed or timed out","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}
+--- exit 1 ---
+$ env HOME=<PROBE_SCRATCH>/full-gemini ~/.local/bin/agy mcp list
+NAME   TYPE   STATUS   COMMAND/URL
+gobby  stdio  enabled  ~/Projects/gobby/.venv/bin/gobby mcp-server
+$ env HOME=<PROBE_SCRATCH>/appdata ~/.local/bin/agy -p '/usage' --output-format json --print-timeout 20s
+{"conversation_id":"","status":"ERROR","response":"","error":"authentication failed or timed out","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}
+--- exit 1 ---
+$ ~/.local/bin/agy mcp list
+NAME   TYPE   STATUS   COMMAND/URL
+gobby  stdio  enabled  ~/Projects/gobby/.venv/bin/gobby mcp-server
+```
+
+`agy --help` has no `--mcp-config`. `agy mcp add --help` has no `--scope` /
+`--project` / `--local`. Empty `HOME` relocates MCP config (global `gobby` is
+absent) and fails auth. Symlinking `~/.gemini/google_accounts.json`, the rest of
+`~/.gemini`, and the sibling `~/.antigravity` / `~/.antigravity-ide` /
+`~/Library/Application Support/{Antigravity IDE,com.google.GeminiMacOS*}` /
+`~/Library/Preferences/com.google.{antigravity-ide,GeminiMacOS*}.plist` trees
+into a throwaway `HOME` still OAuth-fails. Symlinking the entire real
+`~/.gemini` into that `HOME` authenticates no better and still lists `gobby`
+because the MCP table is the shared file. The real `mcp list` after the probe
+is unchanged. Inherited stdio environment cannot hide that global table.
+Ephemeral `agy mcp add`/`remove` would mutate the same global file.
+
 ## Negative contracts consumers must honor
 
 - `PostToolUse` never fires for a `TOOL_ERROR` step (hook-denied, permission-denied,
@@ -1333,3 +1403,6 @@ in which case the turn ends before the command does.
   `GOBBY_SESSION_ID` / `GOBBY_AGENT_RUN_ID`, a `.gobby/project.json` under a
   `workspacePaths` entry, or `project_id` in the payload); an unmanaged AGY launch
   gets the skip JSON and no daemon receipt.
+- Request-scoped MCP confinement is impossible on 1.1.22: there is no per-process
+  MCP config, and relocating `HOME` to hide the global `gobby` server always fails
+  authentication (1.1.25).

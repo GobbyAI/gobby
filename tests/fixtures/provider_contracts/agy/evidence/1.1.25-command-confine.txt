@@ -1,0 +1,126 @@
+$ ~/.local/bin/agy --version
+--- stdout ---
+1.1.22
+--- stderr ---
+--- exit 0 ---
+
+$ ~/.local/bin/agy --help
+--- stderr ---
+Usage of agy:
+  --add-dir                       Add a directory to the workspace (repeatable) (default [])
+  --agent                         Agent for the current CLI session
+  -c                              Short alias for --continue
+  --continue                      Continue the most recent conversation
+  --conversation                  Resume a previous conversation by ID
+  --dangerously-skip-permissions  Auto-approve all tool permission requests without prompting
+  --disable-slash-commands        Disable slash command and skill expansion in print mode
+  --effort                        Reasoning effort for the current CLI session (low|medium|high)
+  -i                              Short alias for --prompt-interactive
+  --input-format                  Input format for print mode (text, stream-json)
+  --json-schema                   Optional JSON schema string or path to a schema file
+  --log-file                      Override CLI log file path
+  --mode                          Set the agent execution mode for this session (accept-edits, plan)
+  --model                         Model for the current CLI session
+  --new-project                   Create a new project for this session
+  --output-format                 Output format for print mode (text, json, stream-json) (default text)
+  -p                              Short alias for --print
+  --print                         Run a single prompt non-interactively and print the response
+  --print-timeout                 Timeout for print mode wait (default 5m0s)
+  --project                       Project ID or project name for the current CLI session
+  --prompt                        Alias for --print
+  --prompt-interactive            Run an initial prompt interactively and continue the session
+  --sandbox                       Run in a sandbox with terminal restrictions enabled
+
+Available subcommands:
+  agent           List available agents
+  changelog       Show changelog and release notes
+  help            Show help for subcommands
+  install         Configure environment paths and shell settings
+  mcp             Manage MCP servers (add, remove, list, enable, disable)
+  models          List available models
+  plugin          Manage plugins (install, uninstall, list, enable, disable)
+  update          Update CLI
+--- exit 0 ---
+
+$ ~/.local/bin/agy mcp add --help
+--- stderr ---
+Usage: agy mcp add [flags] <name> <commandOrUrl> [args...]
+
+Add or update an MCP server configuration
+
+Flags:
+  -H        Short alias for --header (default [])
+  -e        Short alias for --env (default [])
+  --env     Environment variable KEY=value (repeatable) (default [])
+  -h        Show help
+  --header  HTTP header Key: Value (repeatable) (default [])
+  --help    Show help
+  -t        Short alias for --type (default stdio)
+  --type    Server type: 'stdio' or 'http' (default stdio)
+--- exit 0 ---
+
+$ ~/.local/bin/agy mcp list
+--- stdout ---
+NAME   TYPE   STATUS   COMMAND/URL
+gobby  stdio  enabled  ~/Projects/gobby/.venv/bin/gobby mcp-server
+--- stderr ---
+--- exit 0 ---
+
+$ env HOME=<PROBE_SCRATCH>/empty ~/.local/bin/agy mcp list
+--- stdout ---
+No MCP servers configured.
+--- stderr ---
+--- exit 0 ---
+
+$ env HOME=<PROBE_SCRATCH>/empty ~/.local/bin/agy -p '/usage' --output-format json --print-timeout 30s
+--- stdout ---
+{"conversation_id":"","status":"ERROR","response":"","error":"authentication failed or timed out","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}
+--- stderr ---
+Authentication required. Please visit the URL to log in:
+  https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=<REDACTED>&code_challenge=<REDACTED>&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fexperimentsandconfigs+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Faicode+openid&state=<REDACTED>
+
+Waiting for authentication (timeout 60s)...
+Or, paste the authorization code here and press Enter:
+Error: authentication timed out.
+--- exit 1 ---
+
+$ env HOME=<PROBE_SCRATCH>/accounts ~/.local/bin/agy -p '/usage' --output-format json --print-timeout 30s
+--- stdout ---
+{"conversation_id":"","status":"ERROR","response":"","error":"authentication failed or timed out","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}
+--- stderr ---
+Authentication required. Please visit the URL to log in:
+  https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=<REDACTED>&code_challenge=<REDACTED>&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fexperimentsandconfigs+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Faicode+openid&state=<REDACTED>
+Error: authentication timed out.
+--- exit 1 ---
+
+$ env HOME=<PROBE_SCRATCH>/full-gemini ~/.local/bin/agy -p '/usage' --output-format json --print-timeout 20s
+--- stdout ---
+{"conversation_id":"","status":"ERROR","response":"","error":"authentication failed or timed out","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}
+--- stderr ---
+Authentication required. Please visit the URL to log in:
+  https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=<REDACTED>&code_challenge=<REDACTED>&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fexperimentsandconfigs+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Faicode+openid&state=<REDACTED>
+Error: authentication timed out.
+--- exit 1 ---
+
+$ env HOME=<PROBE_SCRATCH>/full-gemini ~/.local/bin/agy mcp list
+--- stdout ---
+NAME   TYPE   STATUS   COMMAND/URL
+gobby  stdio  enabled  ~/Projects/gobby/.venv/bin/gobby mcp-server
+--- stderr ---
+--- exit 0 ---
+
+$ env HOME=<PROBE_SCRATCH>/appdata ~/.local/bin/agy -p '/usage' --output-format json --print-timeout 20s
+--- stdout ---
+{"conversation_id":"","status":"ERROR","response":"","error":"authentication failed or timed out","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}
+--- stderr ---
+Authentication required. Please visit the URL to log in:
+  https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=<REDACTED>&code_challenge=<REDACTED>&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fexperimentsandconfigs+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Faicode+openid&state=<REDACTED>
+Error: authentication timed out.
+--- exit 1 ---
+
+$ ~/.local/bin/agy mcp list
+--- stdout ---
+NAME   TYPE   STATUS   COMMAND/URL
+gobby  stdio  enabled  ~/Projects/gobby/.venv/bin/gobby mcp-server
+--- stderr ---
+--- exit 0 ---

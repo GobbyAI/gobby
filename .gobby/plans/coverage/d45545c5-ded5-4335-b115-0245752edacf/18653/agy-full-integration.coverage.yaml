@@ -1,11 +1,11 @@
 header:
   plan_id: agy-full-integration
-  plan_hash: c2ec61e30c8a0549652b3d8a86424f7073ed0a4b207bbcb941eff0d848eb54d9
+  plan_hash: 6dbd99653930ca117f465875f16708b53add3ab7752d7f6f3d10175fb7cea833
   root_task_ref: '18653'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-08-23T14:05:23Z'
+  generated_at: '2026-08-30T02:20:31Z'
   task_tree_source: db
-  task_tree_source_hash: 85ebdb198b926913271104c32411cce36fb1108f52d7bf2c590ad71cea1892b9
+  task_tree_source_hash: f32c7fddf137feacd25c62e4edf33e4925701f03c98d364d66ff8f73a95740e5
   evidence_summary: []
   evidence: []
 rows:
@@ -2042,13 +2042,13 @@ rows:
   deferral_target: null
 - section_id: '6.2'
   item_id: 6.2.1
-  plan_node_hash: 9bc29685d2e52d80c7936679269696036028540211a139fe31f43b06ea296293
+  plan_node_hash: a1d008b3213032424af9c53db17472533a44097959ab04decfdcdd0626d0ccad
   status: covered
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
-      controlled-tool execution runs thro...'
+      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
+      `_agy_unavailable_bindings` keeps `...'
     matched_artifact_ref: _agy_unavailable_bindings
   deferral_target: null
 - section_id: '6.2'
@@ -2058,8 +2058,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
-      controlled-tool execution runs thro...'
+      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
+      `_agy_unavailable_bindings` keeps `...'
     matched_artifact_ref: ProviderMetadata
   deferral_target: null
 - section_id: '6.2'
@@ -2069,8 +2069,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
-      controlled-tool execution runs thro...'
+      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
+      `_agy_unavailable_bindings` keeps `...'
     matched_artifact_ref: src/gobby/providers/registry.py
   deferral_target: null
 - section_id: '6.2'
@@ -2080,41 +2080,41 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
-      controlled-tool execution runs thro...'
+      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
+      `_agy_unavailable_bindings` keeps `...'
     matched_artifact_ref: _agy_unavailable_bindings
   deferral_target: null
 - section_id: '6.2'
   item_id: 6.2.5
-  plan_node_hash: d5550450e67f116f8a936eeee3608b9543a880b0807b92c2a82fbf869be6c639
+  plan_node_hash: 27c5b7a9cddd358382df2eb0e659ea2ca0a53d5773a5976d1c634ac2707dabb2
   status: covered
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
-      controlled-tool execution runs thro...'
-    matched_artifact_ref: tests/ai/test_agy_tool_chat_contract.py
+      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
+      `_agy_unavailable_bindings` keeps `...'
+    matched_artifact_ref: _agy_unavailable_bindings
   deferral_target: null
 - section_id: '6.2'
   item_id: 6.2.6
-  plan_node_hash: 1f2ee684affda9673f7675fab5a3f383a94e93eb02a3cc1147082c3c46f8b072
+  plan_node_hash: e61dc29ede861f344d955266eefb1f9c9461fbc905ba9ecb49a2619f4b14c5b8
   status: covered
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
-      controlled-tool execution runs thro...'
+      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
+      `_agy_unavailable_bindings` keeps `...'
     matched_artifact_ref: _daemon_tool_chat_adapter_factories
   deferral_target: null
 - section_id: '6.2'
   item_id: 6.2.7
-  plan_node_hash: f2d3af141899a47a6efc851d5ed9a7d1f698939ddae4294fd47527bb01e2dc8e
+  plan_node_hash: 89bb7c2839f394904605e8b89a852fce9937a3bd11ec1838b209855f4206c95c
   status: covered
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
-      controlled-tool execution runs thro...'
+      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
+      `_agy_unavailable_bindings` keeps `...'
     matched_artifact_ref: ToolChatService
   deferral_target: null
 - section_id: '6.2'
@@ -2124,8 +2124,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
-      controlled-tool execution runs thro...'
+      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
+      `_agy_unavailable_bindings` keeps `...'
     matched_artifact_ref: web/src/lib/__tests__/providerModels.test.ts
   deferral_target: null
 - section_id: '6.2'
@@ -2135,8 +2135,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
-      controlled-tool execution runs thro...'
+      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
+      `_agy_unavailable_bindings` keeps `...'
     matched_artifact_ref: _validate_agy_stdout
   deferral_target: null
 - section_id: '6.2'
@@ -2146,20 +2146,20 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
-      controlled-tool execution runs thro...'
+      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
+      `_agy_unavailable_bindings` keeps `...'
     matched_artifact_ref: tests/servers/routes/test_servers_routes_providers.py
   deferral_target: null
 - section_id: '6.2'
   item_id: 6.2.11
-  plan_node_hash: 78e3f649c58d5cc7294f5ba8559cc52bd8ab467b0ba7e6469d9b53c2815f14f8
+  plan_node_hash: d2cb79f155a6d4b9ee02c738464bc6f74c6aef1288d137d4f280737e2585fc29
   status: covered
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
-      controlled-tool execution runs thro...'
-    matched_artifact_ref: tests/ai/test_agy_tool_chat_contract.py
+      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
+      `_agy_unavailable_bindings` keeps `...'
+    matched_artifact_ref: tests/servers/routes/test_servers_routes_providers.py
   deferral_target: null
 - section_id: '6.2'
   item_id: 6.2.12
@@ -2168,8 +2168,8 @@ rows:
   leaves:
   - leaf_task_ref: '#20756'
     validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
-      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
-      controlled-tool execution runs thro...'
+      and agent spawn, and does not advertise tool chat (record 1.1.25 negative);
+      `_agy_unavailable_bindings` keeps `...'
     matched_artifact_ref: _agy_unavailable_bindings
   deferral_target: null
 - section_id: '6.3'

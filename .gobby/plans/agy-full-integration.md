@@ -518,7 +518,7 @@ identifiers are replaced. No record may reference a path under
 - 1.1.22 - **[confirmed on 1.1.18: parser input is `transcript_full.jsonl`]** The transcript layout is recorded — `transcript.jsonl` vs `transcript_full.jsonl` vs `chunks/` — naming the one append-only complete file the parser consumes and the file `transcriptPath` points at. file: `tests/fixtures/provider_contracts/agy/transcript-manifest.json`.
 - 1.1.23 - **[confirmed on 1.1.18]** `--mode plan|accept-edits` behavior is recorded in headless and terminal modes, including how plan approval is expressed and the terminal menu keystrokes — extending 1.1.14 with the recorded flag. file: `tests/fixtures/provider_contracts/agy/README.md`.
 - 1.1.24 - **[confirmed on 1.1.18 with negatives: `permissionOverrides` and `injectSteps.toolCall` not honored; hook exit 1/2 blocks the tool fail-closed; `Stop` exit ignored; `continue` honored 10 times]** Live acceptance is recorded per response field — `deny_unless_prior_grant`, `permissionOverrides`, `terminationBehavior`, `injectSteps.toolCall`, `Stop` `decision:"continue"` and its forced-end count — and for hook exit codes 1 and 2 with legal stdout; §4.1 embeds only honored fields. file: `tests/fixtures/provider_contracts/agy/hook-payloads.jsonl`.
-- 1.1.25 - **[open: probed before approval]** Request-scoped controlled-tool confinement is recorded: whether one AGY process can reach an MCP server correlated to a single in-flight request — through inherited environment, a per-process configuration, or an ephemeral single-conversation registration — while the globally registered servers and AGY's built-in tools stay unreachable to it, or the evidence that it cannot — the record §6.2's `TOOL_CHAT` branch consumes. file: `tests/fixtures/provider_contracts/agy/README.md`.
+- 1.1.25 - **[negative on 1.1.22: no per-process MCP config; HOME isolation hides global servers and fails auth]** Request-scoped controlled-tool confinement is recorded: whether one AGY process can reach an MCP server correlated to a single in-flight request — through inherited environment, a per-process configuration, or an ephemeral single-conversation registration — while the globally registered servers and AGY's built-in tools stay unreachable to it, or the evidence that it cannot — the record §6.2's `TOOL_CHAT` branch consumes. file: `tests/fixtures/provider_contracts/agy/README.md`.
 
 ### 1.2 Gate 0 execution record
 `kind: framing`
@@ -581,7 +581,7 @@ table is its projection.
 | 1.1.22 transcript layout | **confirmed** | Parser input `transcript_full.jsonl`; `transcript.jsonl` is the truncated twin; `chunks/` byte-identical copies. |
 | 1.1.23 `--mode` | **confirmed** | Headless `plan` writes `brain/<id>/<name>.md`, no approval record; `accept-edits` writes without prompting; `bogus` → warning. |
 | 1.1.24 response fields | **confirmed with negatives** | Honored: `deny`, `deny_unless_prior_grant`, `overwrite`, `terminationBehavior`, `injectSteps.userMessage`/`ephemeralMessage`, `Stop continue` ×10. Not honored: `permissionOverrides` (headless), `injectSteps.toolCall` (fatal). PreToolUse exit 1/2 blocks the tool; Stop exit 2 ignored. |
-| 1.1.25 tool-runtime confinement | **open** | Not probed on 1.1.18; §6.2's `TOOL_CHAT` branch is gated on it, `WEB_CHAT` and `AGENT_SPAWN` are not. |
+| 1.1.25 tool-runtime confinement | **negative** | Probed on 1.1.22: no `--mcp-config`, `agy mcp add` has no per-process scope, empty `HOME` hides `gobby` but fails auth, and sharing `~/.gemini` keeps the global server. A request-correlated MCP server cannot be confined to one authenticated process. §6.2 keeps 6.2.12 and drops `AgyToolChatAdapter` / provider-aware factory / provider-keyed cache. |
 
 Disproven contracts repaired in the plan: §5.1's nested record shape and `step_type`
 vocabulary (Run 1); §5.2/1.1.13's timeout contract (Run 1); and from Run 2 the
@@ -629,11 +629,11 @@ implemented" table):
 **Pre-approval conditions.** All five must hold before this plan is submitted for
 the planning approval that applies its implementation manifest:
 
-1. **Satisfied (2026-08-22).** Gate 0 is complete in **both** print mode and
-   interactive/tmux mode: every record 1.1.1–1.1.24 reads confirmed,
-   re-confirmed, negative, or disproven (§1.2 Run 2). Record 1.1.25, added in
-   Round 21, is the one open probe: it is answered in the same prerequisite
-   task before this condition holds.
+1. **Satisfied (2026-08-22; 1.1.25 addendum 2026-08-29).** Gate 0 is complete in
+   **both** print mode and interactive/tmux mode: every record 1.1.1–1.1.24
+   reads confirmed, re-confirmed, negative, or disproven (§1.2 Run 2). Record
+   1.1.25, added in Round 21, is **negative** on installed AGY 1.1.22
+   (`tests/fixtures/provider_contracts/agy/evidence/1.1.25-command-confine.txt`).
 2. **Satisfied to the extent the current code allows.** The live route is proven
    to the daemon, not only the capture hook: turns for an MCP tool, a built-in
    tool, and a shell command reached the daemon through the real hook binary
@@ -3202,12 +3202,11 @@ Targets:
 - `src/gobby/ai/registry_builder.py::_tool_chat_binding`
 - `src/gobby/ai/_tool_chat_builder.py::_daemon_tool_chat_adapter_factories`
 - `src/gobby/ai/_tool_chat_service.py::ToolChatService`
-- `src/gobby/ai/_tool_chat_agy.py`
 - `src/gobby/providers/registry.py::*` — scope-reason: the module-level provider table entry for AGY and the AGY_UNAVAILABLE_REASON constant are module data rather than indexed symbols
-- `tests/ai/test_tool_chat_service.py::*` — scope-reason: service fixtures and factories migrate from style-keyed to provider-aware identity
-- `tests/ai/test_agy_tool_chat_contract.py`
+- `tests/ai/test_tool_chat_service.py::*` — scope-reason: the service suite keeps style-keyed identity; no provider-aware cache migration
 - `web/src/lib/providerModels.ts::isHiddenProvider`
 - `web/src/lib/providerModels.ts::fetchProviderModelCatalog`
+- `web/src/components/app/useReasoningPreferences.ts::*` — scope-reason: consumer of `fetchProviderModelCatalog`; re-anchored when AGY un-hide changes the catalog
 - `web/src/components/activity/useSessionProviderOptions.ts::*` — scope-reason: sessions-filter provider list drops the agy exclusion
 - `web/src/components/chat/useChatPageProviderState.ts::*` — scope-reason: availableProviders filter relies on server availability
 - `web/src/components/chat/ProviderPicker.tsx::*` — scope-reason: picker keeps the shared helper but agy is no longer a hidden value
@@ -3228,15 +3227,13 @@ Targets:
 
 Flip `ProviderMetadata("agy")` to `supports_web_chat=True`, `supports_agent_spawn=True`,
 `live_model_discovery=True` and drop `AGY_UNAVAILABLE_REASON` from it. Replace
-`_agy_unavailable_bindings` with real `WEB_CHAT` and `AGENT_SPAWN` bindings, and add a
-`TOOL_CHAT` binding — but **not** through the current factory map.
-`_daemon_tool_chat_adapter_factories` resolves `AIAdapterStyle.CLI` globally to
-`DroidSpawnToolChatAdapter` (`_tool_chat_builder.py:70`), so binding AGY as bare CLI style
-would hand AGY prompts to Droid's command and JSON-RPC protocol. Make the CLI-style factory
-provider-aware and add a dedicated `AgyToolChatAdapter` in the new module
-`src/gobby/ai/_tool_chat_agy.py`, speaking the 5.1/5.2 stream-json transport and
-implementing the full ToolRuntime contract: controlled tools, `ToolLoopLimits`, timeouts,
-cancellation, and normalized results.
+`_agy_unavailable_bindings` with real `WEB_CHAT` and `AGENT_SPAWN` bindings. Record 1.1.25
+is **negative** on 1.1.22, so do **not** add a `TOOL_CHAT` binding, `AgyToolChatAdapter`,
+a provider-aware CLI factory, or a provider-keyed adapter cache.
+`_daemon_tool_chat_adapter_factories` stays `AIAdapterStyle.CLI` →
+`DroidSpawnToolChatAdapter` (`_tool_chat_builder.py:70`). Binding AGY as bare CLI style
+would hand AGY prompts to Droid; the negative record folds that work away instead of
+splitting the factory.
 
 The controlled-tool contract has an enforcement boundary, and on 1.1.18 the global MCP
 registration is not it. Gobby's MCP server is registered with AGY once, in the single
@@ -3245,39 +3242,31 @@ writes (`agy mcp add` has no per-project or per-process scope and no `--mcp-conf
 exists), so that registration exposes one tool set to every AGY process and carries no
 request identity. The `PreToolUse` deny hook cannot substitute for it: a hook that times
 out against the daemon fails open (§2.3), and no per-request call budget can be counted
-from a stateless deny. The boundary is the incumbent one — the request-scoped
-`ToolRuntimeMCPServer` plus `ToolLoopController` (`src/gobby/ai/_tool_chat_mcp_server.py`),
-which `DroidSpawnToolChatAdapter` already starts per request on an authenticated loopback
-socket and hands to its child through init parameters — so `AgyToolChatAdapter` must reach
-that server, and only that server, from the AGY process it owns. Droid's confinement is
-not transferable: it isolates through a temporary `HOME`, and record 1.1.15 proved a
-foreign `HOME` breaks AGY authentication outright.
+from a stateless deny. Droid's confinement is not transferable: it isolates through a
+temporary `HOME`, and record 1.1.15 proved a foreign `HOME` breaks AGY authentication
+outright. The request-scoped `ToolRuntimeMCPServer` plus `ToolLoopController`
+(`src/gobby/ai/_tool_chat_mcp_server.py`) remains Droid's boundary and is not reachable
+from an AGY process without per-process MCP configuration, which record 1.1.25 disproved.
 
-Whether that confinement is reachable is the one open question, and record 1.1.25 answers
-it: can one AGY process be given a request-correlated MCP server — through environment the
-stdio child inherits, a per-process configuration, or an ephemeral registration bound to a
-single conversation — while the globally registered servers and AGY's own built-in tools
-stay unreachable to that process? A positive record makes `TOOL_CHAT` available on that
-boundary, with the recorded 1.1.12 `PreToolUse` deny transport suppressing built-ins as the
-second gate. A negative record makes `TOOL_CHAT` unavailable with the reason "AGY
-configures MCP servers only globally; a per-request controlled-tool set cannot be confined
-to one process", and the dedicated `AgyToolChatAdapter`, the provider-aware CLI factory,
-and the provider-keyed adapter cache fold away with it — exactly as §6.1 converts on a
-negative interactive-dispatch record. `WEB_CHAT` and `AGENT_SPAWN` are unaffected either
-way. The recorded 1.1.12 transport is the
+Record 1.1.25 answers the confinement question **negatively** on installed AGY 1.1.22
+(`evidence/1.1.25-command-confine.txt`): `agy --help` exposes no `--mcp-config`,
+`agy mcp add` has no `--scope`/`--project`/`--local`, empty `HOME` hides the global
+`gobby` server and fails authentication, and every attempted auth-preserving `HOME`
+composition (symlinked `google_accounts.json`, the rest of `~/.gemini`, sibling
+`~/.antigravity*` and Gemini/Antigravity `Library` app-data) still OAuth-fails. Sharing
+the real `~/.gemini` tree keeps the global MCP table. Inherited stdio environment cannot
+hide that table; ephemeral `agy mcp add`/`remove` would mutate it. Therefore `TOOL_CHAT`
+stays unavailable with the reason "AGY configures MCP servers only globally; a per-request
+controlled-tool set cannot be confined to one process", and the dedicated
+`AgyToolChatAdapter`, the provider-aware CLI factory, and the provider-keyed adapter cache
+fold away with it — exactly as §6.1 converts on a negative interactive-dispatch record.
+`WEB_CHAT` and `AGENT_SPAWN` are unaffected. The recorded 1.1.12 transport remains the
 `PreToolUse` hook answering `{"decision":"deny","reason":…}` — the denied call becomes a
 `tool` step in `ERROR` state with `tool_info.error {type: TOOL_ERROR, message: "tool call
 denied by pre-tool hook: <reason>"}`, no `PostToolUse` fires, the model sees the reason
 and continues, and the turn's `result` carries `status: ERROR` with that message while
-the process exits 0. Every MCP call surfaces as the single built-in
-`call_mcp_tool{ServerName, ToolName, Arguments}`, so the controlled-tool set is bounded by
-matching `toolCall.name == "call_mcp_tool"` plus `args.ServerName`/`args.ToolName` in the
-hook payload — never by a tool name alone. `AgyToolChatAdapter` implements exactly that
-with the full ToolRuntime contract; the process must carry `--dangerously-skip-permissions`
-(record 1.1.7: otherwise every tool call auto-denies headless and no hook `allow` can
-override it) and `--add-dir` (1.1.3). A denied controlled tool is observed by the adapter
-from the stream (`ERROR` step + `result.error`), never from `PostToolUse`, which is
-absent for failed tools.
+the process exits 0 — but that deny is not a per-request MCP confinement boundary, so it
+does not unlock `TOOL_CHAT`.
 
 The web UI hides AGY independently of the registry. Commit ca1ea53474 (#20049) added
 `HIDDEN_PROVIDERS = {"agy"}` / `isHiddenProvider` in `web/src/lib/providerModels.ts` and
@@ -3300,26 +3289,18 @@ opt-in. `tests/servers/routes/test_servers_routes_providers.py` asserts
 `providers["agy"]["available"] is False` and `supports_web_chat is False` — those cases
 flip to the support-record outcome here.
 
-The factory map is not the whole seam. `ToolChatService._adapter_for_style` caches
-constructed adapters keyed solely by `AIAdapterStyle` from zero-argument factories
-(`_tool_chat_service.py:240-252`), so a provider-aware factory alone still cross-routes on
-first use: whichever CLI-style adapter is constructed first — Droid's or AGY's — is
-returned for the other provider from then on. Adapter selection and the cache become
-provider-aware: the resolved `CapabilityBinding` flows into selection and the cache is
-keyed by `(adapter_style, provider)` — with both first-use orders proven in one service
-instance. That identity change lands in the incumbent unit-test seam, not only the new
-contract test: `tests/ai/test_tool_chat_service.py` builds every adapter map and factory
-keyed solely by `AIAdapterStyle`, so its fixtures migrate to the provider-aware identity,
-its non-CLI cases keep passing unchanged, and both same-instance cache-order regressions
-— Droid then AGY, and AGY then Droid — live in that suite.
+The factory map and `ToolChatService` cache stay style-keyed. A provider-aware factory
+and `(adapter_style, provider)` cache were only required for an AGY `TOOL_CHAT` adapter
+that record 1.1.25 folded away; `tests/ai/test_tool_chat_service.py` keeps its
+`AIAdapterStyle` fixtures.
 
 Gate all of it on the immutable support record from 2.5. AGY is the **first version-gated
 provider CLI**, so this establishes the pattern: below the floor, capabilities stay
 unavailable with the record's upgrade message naming the installed and required versions.
 The gate is a resolution-time read rather than a build-time freeze, because §2.5's record
-follows the executable and the registry is built once at startup. AGY's `WEB_CHAT`,
-`AGENT_SPAWN`, and `TOOL_CHAT` bindings are therefore registered structurally at registry
-build; synchronous capability availability resolves through §2.5's no-I/O peek and every
+follows the executable and the registry is built once at startup. AGY's `WEB_CHAT` and
+`AGENT_SPAWN` bindings are therefore registered structurally at registry
+build (`TOOL_CHAT` stays in `_agy_unavailable_bindings`); synchronous capability availability resolves through §2.5's no-I/O peek and every
 adapter execution awaits §2.5's async accessor, on each access. An in-place AGY replacement then takes effect
 in the running daemon — an upgrade across the floor becomes available, a downgrade below it
 becomes unavailable — matching what `/api/providers` already reports per request, with no
@@ -3334,25 +3315,23 @@ unavailable with the narrow reason "AGY accepts no image input; vision requires 
 to open a file path itself" — not the current blanket "no documented machine transport"
 text.
 
-Advertisement alone is unverifiable, so one executable contract test proves the wiring:
-resolve the `TOOL_CHAT` binding for a supported version and drive a scrubbed fake AGY
-subprocess through init, text delta, tool lifecycle and result records, asserting prompt,
-model and effort argv propagation, normalized output, non-zero-exit handling, and that
-versions below 1.1.18 never advertise the binding.
+Advertisement of `WEB_CHAT` and `AGENT_SPAWN` is verified through the registry and
+`/api/providers` tests below. There is no AGY `TOOL_CHAT` contract test: versions at or
+above 1.1.18 still do not advertise that binding.
 
 **Acceptance:**
 
-- 6.2.1 - Installed AGY 1.1.18 advertises web chat and agent spawn, and advertises tool chat only on a positive record 1.1.25; controlled-tool execution runs through the request-scoped `ToolRuntimeMCPServer` and `ToolLoopController`, with the record-1.1.12 `PreToolUse` deny transport (matched by `ServerName`/`ToolName` on `call_mcp_tool`, denial observed from the stream) suppressing built-ins — never Droid-routed. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+- 6.2.1 - Installed AGY 1.1.18 advertises web chat and agent spawn, and does not advertise tool chat (record 1.1.25 negative); `_agy_unavailable_bindings` keeps `TOOL_CHAT` unavailable with the 6.2.12 reason — never Droid-routed. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
 - 6.2.2 - AGY below 1.1.18 stays unavailable with a message naming installed and required versions. symbol: `ProviderMetadata`. file: `src/gobby/providers/registry.py`.
 - 6.2.3 - `AGY_UNAVAILABLE_REASON` no longer gates a capable installation. file: `src/gobby/providers/registry.py`.
 - 6.2.4 - `VISION_EXTRACT` stays unavailable per the negative 1.1.4 finding, with the narrow no-image-input reason. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
-- 6.2.5 - A registry-to-transport contract test drives the `TOOL_CHAT` binding end-to-end against a fake AGY subprocess, and sub-1.1.18 never advertises it. test: `tests/ai/test_agy_tool_chat_contract.py`.
-- 6.2.6 - The AGY `TOOL_CHAT` binding resolves to `AgyToolChatAdapter` — never `DroidSpawnToolChatAdapter` — with controlled tools, `ToolLoopLimits`, timeouts and cancellation enforced. symbol: `_daemon_tool_chat_adapter_factories`. file: `src/gobby/ai/_tool_chat_builder.py`.
-- 6.2.7 - Adapter selection and caching are provider-aware: the cache is keyed by adapter style plus provider, both first-use orders — Droid then AGY, and AGY then Droid — resolve the correct adapter in one service instance, and the incumbent service suite migrates to provider-aware fixtures with its non-CLI cases preserved. symbol: `ToolChatService`. file: `src/gobby/ai/_tool_chat_service.py`.
+- 6.2.5 - No AGY `TOOL_CHAT` registry-to-transport contract test is added; sub-1.1.18 and floor-and-above installs both leave `TOOL_CHAT` unbound. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+- 6.2.6 - No `AgyToolChatAdapter` module is added; `_daemon_tool_chat_adapter_factories` keeps `AIAdapterStyle.CLI` → `DroidSpawnToolChatAdapter`. symbol: `_daemon_tool_chat_adapter_factories`. file: `src/gobby/ai/_tool_chat_builder.py`.
+- 6.2.7 - Adapter selection and caching stay style-keyed: `ToolChatService` is not rekeyed by provider, and `tests/ai/test_tool_chat_service.py` keeps its `AIAdapterStyle` fixtures. symbol: `ToolChatService`. file: `src/gobby/ai/_tool_chat_service.py`.
 - 6.2.8 - `HIDDEN_PROVIDERS` no longer contains `agy`; `isHiddenProvider("agy")` is false; the spawn form, chat model picker, reasoning preferences, Settings providers, sessions filter, and `ProviderPicker` offer AGY when `/api/providers` reports `available: true`, and do not when it reports `available: false`. test: `web/src/lib/__tests__/providerModels.test.ts`.
 - 6.2.9 - `AgyCLITextGenerateAdapter` failure is decided by nonzero exit plus stderr per record 1.1.13; an `Error:`-prefixed stdout with exit 0 is returned as text, empty stdout still raises, and the renamed test pins the nonzero-exit path. symbol: `_validate_agy_stdout`. file: `src/gobby/ai/_text_generation_adapters.py`.
 - 6.2.10 - `/api/providers` and `/api/providers/models` report agy `available`/`supports_web_chat`/`supports_agent_spawn` from the 2.5 support record, with the sub-floor case naming installed and required versions. test: `tests/servers/routes/test_servers_routes_providers.py`.
-- 6.2.11 - Replacing the AGY binary in one running daemon flips capability state without a restart: a sub-floor-to-supported replacement makes the `TOOL_CHAT` binding resolvable and executable, a supported-to-sub-floor replacement makes it unavailable, and `/api/providers` reports the same state as the registry in that same daemon. test: `tests/ai/test_agy_tool_chat_contract.py`.
+- 6.2.11 - Replacing the AGY binary in one running daemon flips capability state without a restart: a sub-floor-to-supported replacement makes `WEB_CHAT` and `AGENT_SPAWN` resolvable, a supported-to-sub-floor replacement makes them unavailable, `TOOL_CHAT` stays unavailable either side of the floor, and `/api/providers` reports the same state as the registry in that same daemon. test: `tests/servers/routes/test_servers_routes_providers.py`.
 - 6.2.12 - On a negative record 1.1.25, `TOOL_CHAT` stays unavailable with the reason naming AGY's global-only MCP configuration, no `AgyToolChatAdapter` module is added, and the CLI-style factory and adapter cache keep their current identity while `WEB_CHAT` and `AGENT_SPAWN` remain available. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
 
 ### 6.3 Move the AGY model catalog to live discovery [category: code] (depends: 6.2)
