@@ -52,7 +52,7 @@ def _async_stream(*items: Any):
 
 
 class TestWebChatRuntimeManager:
-    def test_sandbox_policy_reads_live_config_for_new_sessions(self) -> None:
+    async def test_sandbox_policy_reads_live_config_for_new_sessions(self) -> None:
         current = [DaemonConfig(web_chat_sandbox={"enabled": False})]
         manager = WebChatRuntimeManager(
             codex_client=None,
@@ -64,7 +64,7 @@ class TestWebChatRuntimeManager:
         current[0] = DaemonConfig(
             web_chat_sandbox={"enabled": True, "extra_read_paths": ["/tmp/live"]}
         )
-        session = manager.create_session(provider="claude", conversation_id="live-config")
+        session = await manager.create_session(provider="claude", conversation_id="live-config")
 
         assert manager.sandbox_config.enabled is True
         assert manager.sandbox_config.extra_read_paths == ["/tmp/live"]
@@ -103,29 +103,29 @@ class TestWebChatRuntimeManager:
 
         assert all(mock.call_count == 1 for mock in mocks)
 
-    def test_create_session_routes_by_provider(self) -> None:
+    async def test_create_session_routes_by_provider(self) -> None:
         manager = WebChatRuntimeManager(
             codex_client=None,
             daemon_config=DaemonConfig(web_chat_sandbox={"enabled": False}),
         )
 
-        claude_session = manager.create_session(provider="claude", conversation_id="conv-1")
-        grok_session = manager.create_session(provider="grok", conversation_id="conv-2")
-        qwen_session = manager.create_session(provider="qwen", conversation_id="conv-3")
-        codex_session = manager.create_session(provider="codex", conversation_id="conv-4")
+        claude_session = await manager.create_session(provider="claude", conversation_id="conv-1")
+        grok_session = await manager.create_session(provider="grok", conversation_id="conv-2")
+        qwen_session = await manager.create_session(provider="qwen", conversation_id="conv-3")
+        codex_session = await manager.create_session(provider="codex", conversation_id="conv-4")
 
         assert isinstance(claude_session, ChatSession)
         assert isinstance(grok_session, GrokManagedChatSession)
         assert isinstance(qwen_session, QwenManagedChatSession)
         assert isinstance(codex_session, CodexManagedChatSession)
 
-    def test_create_session_rejects_unsupported_provider(self) -> None:
+    async def test_create_session_rejects_unsupported_provider(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
 
         with pytest.raises(RuntimeError, match="Unsupported web chat provider: unknown"):
-            manager.create_session(provider="unknown", conversation_id="conv-unknown")
+            await manager.create_session(provider="unknown", conversation_id="conv-unknown")
         with pytest.raises(RuntimeError, match="Unsupported web chat provider: unsupported"):
-            manager.create_session(provider="unsupported", conversation_id="conv-unsupported")
+            await manager.create_session(provider="unsupported", conversation_id="conv-unsupported")
 
     def test_health_snapshot_contains_droid(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
@@ -178,10 +178,10 @@ class TestWebChatRuntimeManager:
         assert manager.get_acp_session_info("grok", "s1") == {"sessionId": "s1", "cwd": "/repo"}
         assert manager.acp_session_infos() == {("grok", "s1"): {"sessionId": "s1", "cwd": "/repo"}}
 
-    def test_create_session_uses_srt_for_droid(self) -> None:
+    async def test_create_session_uses_srt_for_droid(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
 
-        session = manager.create_session(provider="droid", conversation_id="conv-droid")
+        session = await manager.create_session(provider="droid", conversation_id="conv-droid")
 
         assert isinstance(session, DroidManagedChatSession)
         assert manager.sandbox_config.backend == "srt"
@@ -194,15 +194,25 @@ class TestWebChatRuntimeManager:
         assert health.available is False
         assert health.startup_error == AGY_UNPUBLISHED_REASON
 
-    def test_create_session_uses_shared_agy_unavailable_reason(self) -> None:
+    async def test_create_session_uses_shared_agy_unavailable_reason(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
+        record = SimpleNamespace(
+            supported=True,
+            reason="AGY 1.1.18 meets required version 1.1.18.",
+        )
 
-        with pytest.raises(RuntimeError, match="version probe has not run") as exc:
-            manager.create_session(provider="agy", conversation_id="conv-agy")
+        with (
+            patch(
+                "gobby.providers.version_gate.ensure_agy_support",
+                AsyncMock(return_value=record),
+            ),
+            pytest.raises(RuntimeError, match="or agent spawning") as exc,
+        ):
+            await manager.create_session(provider="agy", conversation_id="conv-agy")
 
-        assert str(exc.value) == AGY_UNPUBLISHED_REASON
+        assert "machine transport" in str(exc.value)
 
-    def test_create_session_routes_codex_local_selector_to_oss_backend(self) -> None:
+    async def test_create_session_routes_codex_local_selector_to_oss_backend(self) -> None:
         config = DaemonConfig(
             web_chat_sandbox={"enabled": False},
             ai={
@@ -219,7 +229,7 @@ class TestWebChatRuntimeManager:
         )
         manager = WebChatRuntimeManager(codex_client=MagicMock(), daemon_config=config)
 
-        session = manager.create_session(
+        session = await manager.create_session(
             provider="codex",
             conversation_id="conv-codex-local",
             model="endpoint:ollama/ollama/qwen3-coder",
@@ -284,7 +294,7 @@ class TestWebChatRuntimeManager:
         )
         manager = WebChatRuntimeManager(codex_client=MagicMock(), daemon_config=config)
         selector = "endpoint:openrouter/moonshotai/kimi-k3"
-        session = manager.create_session(
+        session = await manager.create_session(
             provider="codex",
             conversation_id="conv-codex-responses",
             model=selector,
@@ -307,7 +317,7 @@ class TestWebChatRuntimeManager:
         assert client.start_thread.await_args is not None
         assert client.start_thread.await_args.kwargs["model"] == "moonshotai/kimi-k3"
 
-    def test_create_session_applies_codex_transcript_retry_config(self) -> None:
+    async def test_create_session_applies_codex_transcript_retry_config(self) -> None:
         manager = WebChatRuntimeManager(
             codex_client=None,
             codex_transcript_retry_attempts=2,
@@ -315,7 +325,7 @@ class TestWebChatRuntimeManager:
             daemon_config=DaemonConfig(web_chat_sandbox={"enabled": False}),
         )
 
-        codex_session = manager.create_session(provider="codex", conversation_id="conv-3")
+        codex_session = await manager.create_session(provider="codex", conversation_id="conv-3")
 
         assert isinstance(codex_session, CodexManagedChatSession)
         assert codex_session._transcript_retry_attempts == 2

@@ -247,7 +247,7 @@ def test_failed_tool_probe_hides_routable_groups_from_web_chat() -> None:
     assert catalog["ollama"]["unavailable_reason"] is None
 
 
-def test_routable_transport_strategies(
+async def test_routable_transport_strategies(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -364,7 +364,7 @@ def test_routable_transport_strategies(
     assert health.provider == "endpoint:metal"
     assert health.startup_error != "unknown"
 
-    session = manager.create_session(
+    session = await manager.create_session(
         provider="codex",
         conversation_id="conv-vllm",
         model="endpoint:metal/Qwen/Qwen2.5-7B-Instruct",

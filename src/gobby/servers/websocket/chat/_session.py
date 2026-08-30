@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 from datetime import datetime
@@ -409,12 +410,13 @@ class ChatSessionMixin:
         )
         session: ChatSessionProtocol
         if runtime_manager is not None:
-            session = runtime_manager.create_session(
+            created = runtime_manager.create_session(
                 provider=provider_name,
                 conversation_id=conversation_id,
                 model=effective_model,
                 reasoning_effort=effective_reasoning_effort,
             )
+            session = await created if inspect.isawaitable(created) else created
         else:
             if provider_name != "claude":
                 raise RuntimeError(

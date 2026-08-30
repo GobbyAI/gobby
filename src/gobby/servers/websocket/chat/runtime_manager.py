@@ -263,7 +263,7 @@ class WebChatRuntimeManager:
         """Return a copy of the discovered ACP ``SessionInfo`` cache."""
         return {key: dict(value) for key, value in self._acp_session_infos.items()}
 
-    def create_session(
+    async def create_session(
         self,
         *,
         provider: str,
@@ -276,9 +276,9 @@ class WebChatRuntimeManager:
         if provider not in {"claude", "codex", "droid", "grok", "qwen", "agy"}:
             raise RuntimeError(f"Unsupported web chat provider: {provider}")
         if provider == "agy":
-            from gobby.providers.version_gate import peek_agy_support
+            from gobby.providers.version_gate import ensure_agy_support
 
-            record = peek_agy_support()
+            record = await ensure_agy_support()
             raise RuntimeError(record.reason if not record.supported else AGY_UNAVAILABLE_REASON)
         if provider == "qwen":
             return QwenManagedChatSession(

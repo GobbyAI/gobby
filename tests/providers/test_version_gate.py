@@ -477,6 +477,28 @@ async def test_execute_spawn_awaits_ensure_before_agy_result() -> None:
 
 
 @pytest.mark.asyncio
+async def test_web_chat_create_session_awaits_ensure_before_agy_launch() -> None:
+    from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
+
+    ensure = AsyncMock(
+        return_value=AgySupportRecord(
+            installed_version="1.1.18",
+            required_version=AGY_REQUIRED_VERSION,
+            supported=True,
+            reason="AGY 1.1.18 meets required version 1.1.18.",
+            identity=None,
+        )
+    )
+    manager = WebChatRuntimeManager(codex_client=None)
+    with (
+        patch("gobby.providers.version_gate.ensure_agy_support", ensure),
+        pytest.raises(RuntimeError, match="or agent spawning"),
+    ):
+        await manager.create_session(provider="agy", conversation_id="conv-agy")
+    ensure.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_capability_refresh_awaits_ensure_for_agy() -> None:
     from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 
@@ -527,4 +549,4 @@ def test_side_effect_owners_use_peek_or_ensure() -> None:
     assert "ensure_agy_support" in inspect.getsource(execute_spawn)
     assert "ensure_agy_support" in inspect.getsource(CapabilityRefreshCoordinator._refresh_provider)
     assert "peek_agy_support" in inspect.getsource(WebChatRuntimeManager.health)
-    assert "peek_agy_support" in inspect.getsource(WebChatRuntimeManager.create_session)
+    assert "ensure_agy_support" in inspect.getsource(WebChatRuntimeManager.create_session)
