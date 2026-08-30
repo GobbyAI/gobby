@@ -156,26 +156,33 @@ class MCPTemplateStorageMixin:
                 else:
                     next_definition = definition_map
                     next_hash = digest
-                conn.execute(
-                    """
-                    UPDATE mcp_server_templates
-                    SET definition = %s,
-                        definition_hash = %s,
-                        source_path = %s,
-                        enabled = %s,
-                        owner = %s,
-                        updated_at = now()
-                    WHERE id = %s
-                    """,
-                    (
-                        json.dumps(next_definition),
-                        next_hash,
-                        next_source,
-                        next_enabled,
-                        owner,
-                        current.id,
-                    ),
+                unchanged = (
+                    next_hash == current.definition_hash
+                    and next_source == current.source_path
+                    and next_enabled == current.enabled
+                    and owner == current.owner
                 )
+                if not unchanged:
+                    conn.execute(
+                        """
+                        UPDATE mcp_server_templates
+                        SET definition = %s,
+                            definition_hash = %s,
+                            source_path = %s,
+                            enabled = %s,
+                            owner = %s,
+                            updated_at = now()
+                        WHERE id = %s
+                        """,
+                        (
+                            json.dumps(next_definition),
+                            next_hash,
+                            next_source,
+                            next_enabled,
+                            owner,
+                            current.id,
+                        ),
+                    )
         row = self.get_template(name, project_id=project_id)
         if row is None or row.project_id != project_id:
             raise RuntimeError(f"Failed to retrieve template '{name}' after upsert")

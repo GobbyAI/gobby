@@ -49,6 +49,39 @@ class TestMCPTemplateStorageMixin:
         assert loaded.id == row.id
         assert loaded.enabled is False
 
+    def test_identical_reupsert_skips_rewrite_and_updated_at_churn(
+        self,
+        mcp_manager: LocalMCPManager,
+    ) -> None:
+        first = mcp_manager.upsert_template(
+            name="openapi",
+            project_id=GLOBAL_PROJECT_ID,
+            owner="user",
+            definition=_definition(),
+            source_path="~/.gobby/mcp/templates/openapi.yaml",
+        )
+        second = mcp_manager.upsert_template(
+            name="openapi",
+            project_id=GLOBAL_PROJECT_ID,
+            owner="user",
+            definition=_definition(),
+            source_path="~/.gobby/mcp/templates/openapi.yaml",
+        )
+        assert second.id == first.id
+        assert second.definition_hash == first.definition_hash
+        assert second.updated_at == first.updated_at
+
+        changed = mcp_manager.upsert_template(
+            name="openapi",
+            project_id=GLOBAL_PROJECT_ID,
+            owner="user",
+            definition=_definition(command="npx"),
+            source_path="~/.gobby/mcp/templates/openapi.yaml",
+        )
+        assert changed.id == first.id
+        assert changed.definition["command"] == "npx"
+        assert changed.updated_at > first.updated_at
+
     def test_gobby_drift_refresh_preserves_stored_enabled(
         self,
         mcp_manager: LocalMCPManager,

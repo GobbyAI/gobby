@@ -376,3 +376,21 @@ def test_shared_agents_documents_mcp_override_roots() -> None:
     assert ".gobby/mcp/templates/" in text
     assert ".gobby/mcp/servers/" in text
     assert "override: true" in text
+
+
+def test_choices_error_for_secret_param_does_not_echo_value() -> None:
+    template = _template(
+        params=(
+            _param(name="mode", env="MODE", choices=("a", "b")),
+            _param(name="token", env="TOKEN", secret=True, choices=("a", "b")),
+        ),
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        _expand(template, {"mode": "nope", "token": "$secret:super_secret"})
+
+    message = str(excinfo.value)
+    assert "'mode' must be one of" in message
+    assert "nope" in message
+    assert "'token' must be one of" in message
+    assert "super_secret" not in message

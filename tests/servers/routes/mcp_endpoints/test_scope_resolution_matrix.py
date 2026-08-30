@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -55,7 +56,32 @@ def test_http_scope_resolution_matrix() -> None:
     server._tools_handler = None
     server._mcp_db_manager = MagicMock()
     server._mcp_db_manager.db = MagicMock()
-    server._mcp_db_manager.db.fetchone.return_value = {"id": 1}
+
+    hash_row_time = datetime.now(UTC)
+    hash_row = {
+        "id": 1,
+        "server_name": "github",
+        "tool_name": "ping",
+        "project_id": PROJECT_ID,
+        "schema_hash": "abc",
+        "last_verified_at": hash_row_time,
+        "created_at": hash_row_time,
+        "updated_at": hash_row_time,
+    }
+
+    def _fetchone(query: str, *args: Any, **kwargs: Any) -> dict[str, Any] | None:
+        if "tool_schema_hashes" in query:
+            return hash_row
+        return {"id": 1}
+
+    server._mcp_db_manager.db.fetchone.side_effect = _fetchone
+    server._mcp_db_manager.db.fetchall.return_value = []
+    server._mcp_db_manager.db.execute.return_value.rowcount = 0
+    cached_tool = MagicMock()
+    cached_tool.name = "ping"
+    cached_tool.description = "ping tool"
+    cached_tool.input_schema = {"type": "object"}
+    server._mcp_db_manager.get_cached_tools.return_value = [cached_tool]
     server.session_manager = None
     server.services = MagicMock()
     server.services.database = None
@@ -144,7 +170,11 @@ def test_http_scope_resolution_matrix() -> None:
     assert GLOBAL_SERVER_ID not in refreshed_ids
     assert FOREIGN_SERVER_ID not in refreshed_ids
     stats = body["stats"]["by_server"]
-    assert PROJECT_SERVER_ID in stats or "github" in stats
-    per_instance = next(iter(stats.values()))
-    assert "name" in per_instance or PROJECT_SERVER_ID in stats
+    assert set(stats) == {PROJECT_SERVER_ID}
+    per_instance = stats[PROJECT_SERVER_ID]
+    assert per_instance["name"] == "github"
+    assert per_instance["scope"] == "project"
+    assert "error" not in per_instance
+    assert per_instance["new"] == 1
+    assert per_instance["removed"] == 0
     _ = cast(MCPClientManager, manager)

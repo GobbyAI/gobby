@@ -216,10 +216,10 @@ def expand_template(
         if param.required and param.name not in resolved:
             errors.append(f"Missing required parameter '{param.name}'")
         if param.choices and param.name in resolved and resolved[param.name] not in param.choices:
-            errors.append(
-                f"Parameter '{param.name}' must be one of: {', '.join(param.choices)} "
-                f"(got {resolved[param.name]!r})"
-            )
+            message = f"Parameter '{param.name}' must be one of: {', '.join(param.choices)}"
+            if not param.secret:
+                message += f" (got {resolved[param.name]!r})"
+            errors.append(message)
 
     for group in template.require_one_of:
         if not any(item in resolved for item in group):
