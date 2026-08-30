@@ -1,9 +1,9 @@
 header:
   plan_id: agy-full-integration
-  plan_hash: 6dbd99653930ca117f465875f16708b53add3ab7752d7f6f3d10175fb7cea833
+  plan_hash: f76c6f9e70b63358cc4740f99f315bd676fbd9e208c2126b0774d16bc9c233c8
   root_task_ref: '18653'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-08-30T02:20:31Z'
+  generated_at: '2026-08-30T02:26:31Z'
   task_tree_source: db
   task_tree_source_hash: f32c7fddf137feacd25c62e4edf33e4925701f03c98d364d66ff8f73a95740e5
   evidence_summary: []

@@ -678,7 +678,6 @@ Targets:
 - `src/gobby/sessions/summarize.py::*` — scope-reason: constructs a default `TranscriptAnalyzer()` and must pass the session-source parser
 - `src/gobby/sessions/summary_generation.py::*` — scope-reason: constructs a default `TranscriptAnalyzer()` and calls `transcript_processor.extract_turns_since_clear` on the factory-supplied parser
 - `src/gobby/cli/sessions.py::*` — scope-reason: constructs a default `TranscriptAnalyzer()`
-- `src/gobby/mcp_proxy/tools/sessions/_summary_metadata.py::*` — scope-reason: constructs a default `TranscriptAnalyzer()`
 - `tests/sessions/test_sessions_analyzer.py::*` — scope-reason: the analyzer default-parser case flips from asserting the Claude parser to asserting a registry-resolved parser per source
 - `src/gobby/sessions/transcript_index.py::*` — scope-reason: four direct _get_parser call sites migrate to the shared registry
 - `src/gobby/sessions/transcript_reader.py::*` — scope-reason: three direct _get_parser call sites migrate to the shared registry
@@ -687,14 +686,14 @@ Targets:
 - `tests/sessions/transcripts/test_droid_parser.py::*` — scope-reason: droid parser tests import _get_parser and migrate to the registry entry point
 - `tests/sessions/test_sessions_lifecycle.py::*` — scope-reason: transcript-processing lifecycle cases patch the module-local ClaudeTranscriptParser constructor and migrate to the shared registry seam
 - `tests/cli/test_tokens_cli.py::*` — scope-reason: the tokens CLI parse-error case patches the module-local ClaudeTranscriptParser and migrates to the registry seam
-- `tests/sessions/test_summarize.py::*` — scope-reason: summary-path cases patch the Droid, Qwen, and Claude parser constructors and migrate to the registry seam
+- `tests/sessions/test_archival_summary.py::*` — scope-reason: summary-path cases migrate parser construction to the shared registry seam
 - `tests/sessions/test_token_tracker_attribution.py::*` — scope-reason: token-attribution cases patch the transcript_processing Codex and Qwen parser aliases and migrate to the registry seam
-- `src/gobby/memory/digest.py::*` — scope-reason: consumer of `get_parser`; re-anchored when that contract changes
+- `src/gobby/sessions/summary_transcripts.py::*` — scope-reason: consumer of `get_parser`; re-anchored when that contract changes
 - `src/gobby/servers/routes/sessions/analytics.py::*` — scope-reason: consumer of `get_parser`; re-anchored when that contract changes
 - `tests/hooks/test_hook_manager_factory_injection.py::*` — scope-reason: consumer of `create`; re-anchored when that contract changes
 - `tests/hooks/test_inline_mcp_dispatcher.py::*` — scope-reason: consumer of `create`; re-anchored when that contract changes
 - `tests/servers/conftest.py::*` — scope-reason: consumer of `create`; re-anchored when that contract changes
-- `tests/sessions/test_summary_context.py::*` — scope-reason: consumer of `_build_summary_prompt_context`; re-anchored when that contract changes
+- `tests/sessions/test_summary_formatting.py::*` — scope-reason: consumer of `_build_summary_prompt_context`; re-anchored when that contract changes
 
 Seven independent source-to-parser sites exist: `PARSER_REGISTRY` plus `get_parser` in
 `transcripts/__init__.py`; a duplicate if/elif `_get_parser` in `transcript_parsing.py`; and
@@ -1150,6 +1149,7 @@ Targets:
 - `src/gobby/cli/installers/qwen.py::*` — scope-reason: consumer of `set_gobby_hook_timeouts`; re-anchored when that contract changes
 - `tests/cli/installers/test_hook_commands.py::*` — scope-reason: consumer of `set_gobby_hook_timeouts`; re-anchored when that contract changes
 - `tests/cli/test_install_prompts.py::*` — scope-reason: consumer of `_run_standard_cli_install`; re-anchored when that contract changes
+- `src/gobby/cli/install_components.py::*` — scope-reason: consumer of `_run_standard_cli_install`; re-anchored when that contract changes
 
 Three surfaces still tell the user AGY hooks cannot work. `install_agy` is the only
 standard installer not given `hook_timeout_seconds` — `_run_standard_cli_install`
@@ -1231,7 +1231,6 @@ Targets:
 - `src/gobby/storage/worktrees.py::*` — scope-reason: worktree deletion tombstones the persisted workspace rows and bumps the identity generation in the same transaction
 - `tests/servers/websocket/test_set_worktree.py::*` — scope-reason: project-switch and worktree-switch cases assert workspace-identity update or invalidation before teardown
 - `tests/storage/test_schema_contract.py::*` — scope-reason: the identity-pin and no-Python-DDL contracts cover the new migration
-- `tests/storage/sessions/test_metadata.py::*` — scope-reason: the workspace-identity column round-trips through session persistence
 - `tests/storage/sessions/test_storage_sessions_models.py::*` — scope-reason: Session serialization gains the workspace-identity field
 - `tests/servers/websocket/chat/test_provider_backends.py::*` — scope-reason: provider-backend regressions re-anchor from the warm shared ACP backend to operation-owned client acquisition
 - `tests/servers/routes/test_sessions_acp_routes.py::*` — scope-reason: ACP close/delete route cases adopt the operation-owned client contract for inactive and post-restart sessions
@@ -1663,7 +1662,6 @@ Targets:
 - `tests/hooks/test_handler_execution.py::*` — scope-reason: handler-execution assertions of the eager marker migrate to claim/commit/rollback boundaries
 - `tests/hooks/test_session_start_handlers.py::*` — scope-reason: session-start handler assertions of context_injected transitions migrate to the claim-generation boundaries
 - `tests/hooks/event_handlers/test_session_variable_preservation.py::*` — scope-reason: the direct handler case asserting eager context_injected inside handle_session_start re-anchors to the two-phase claim boundaries
-- `tests/storage/sessions/test_metadata.py::*` — scope-reason: the context_injected persistence cases gain the claim-generation column round-trip
 - `tests/storage/sessions/test_storage_sessions_models.py::*` — scope-reason: Session model serialization assertions gain the claim-generation field
 - `tests/storage/test_sessions_import.py::*` — scope-reason: the pinned update_terminal_pickup_metadata signature follows the claim-generation contract
 - `tests/servers/test_mcp_routes.py::*` — scope-reason: envelope-lease route cases force a worker past the replay grace period and pin reclaim and losing-owner finalization
@@ -1675,7 +1673,7 @@ Targets:
 - `tests/hooks/test_hook_manager_extra.py::*` — scope-reason: TestDedupMemoryResults and TestDedupSkillResults directly assert the eager claim_set_variable_values dedupe contract and migrate to receipt-staged boundaries
 - `src/gobby/workflows/definitions.py::*` — scope-reason: `RuleEffect` gains an explicit delivery disposition defaulting to eager
 - `src/gobby/install/shared/workflows/rules/memory-lifecycle/guard-plan-memory-writes.yaml::*` — scope-reason: the acknowledge_variable guard declares the on_receipt delivery disposition
-- `src/gobby/install/shared/workflows/rules/memory-lifecycle/memory-capture-nudge.yaml::*` — scope-reason: the inject_context plus one-shot set_variable guards declare the on_receipt disposition
+- `src/gobby/install/shared/workflows/rules/memory-lifecycle/layered-memory-guidance.yaml::*` — scope-reason: the inject_context plus one-shot set_variable guards declare the on_receipt disposition
 - `src/gobby/install/shared/workflows/rules/plan-mode/handle-plan-mode-entry.yaml::*` — scope-reason: both rules' one-shot guards declare the on_receipt disposition
 - `src/gobby/install/shared/workflows/rules/skill-discovery/discover-skill-hubs-on-turn-start.yaml::*` — scope-reason: the inject_result plus success_variable mcp_call declares the on_receipt disposition
 - `src/gobby/workflows/sync_rules.py::*` — scope-reason: the sync path gains the typed disposition data-migration/validation owner for user- and project-owned one-shot rule definitions that template refresh deliberately never touches
@@ -1730,6 +1728,11 @@ Targets:
 - `tests/test_runner_model_metadata_refresh.py::*` — scope-reason: consumer of `_cancel_periodic_tasks`; re-anchored when that contract changes
 - `tests/wiki/test_watcher_lifecycle.py::*` — scope-reason: consumer of `_cancel_periodic_tasks`; re-anchored when that contract changes
 - `tests/workflows/test_hook_evaluation_timeout.py::*` — scope-reason: consumer of `_run_adapter_hook`; re-anchored when that contract changes
+- `tests/adapters/test_permission_neutral_rewrites.py::*` — scope-reason: consumer of `AgyAdapter`; re-anchored when that contract changes
+- `tests/hooks/test_hooks_manager.py::*` — scope-reason: consumer of `AgyAdapter`; re-anchored when that contract changes
+- `src/gobby/hooks/session_materialize.py::*` — scope-reason: consumer of `mark_startup_context_injected`; re-anchored when that contract changes
+- `src/gobby/hooks/event_handlers/_session_start/materialize.py::*` — scope-reason: consumer of `classify_session_start_context`; re-anchored when that contract changes
+- `tests/e2e/test_grok_session_deferral.py::*` — scope-reason: consumer of `sync_bundled_content_to_db`; re-anchored when that contract changes
 
 Two defects. First, AGY sends **camelCase protojson** payloads — `conversationId`,
 `transcriptPath`, `workspacePaths`, `stepIdx`, `toolCall` — but the adapter
@@ -2462,7 +2465,7 @@ Targets:
 - `tests/sessions/test_transcript_parsers.py::*` — scope-reason: the frozen registry assertion TestParserRegistry.test_registry_has_correct_parsers gains the agy entry
 - `tests/sessions/test_agy_transcript_parser.py`
 - `tests/tasks/test_agy_validation_evidence.py`
-- `src/gobby/memory/digest.py::*` — scope-reason: consumer of `get_parser`; re-anchored when that contract changes
+- `src/gobby/sessions/summary_transcripts.py::*` — scope-reason: consumer of `get_parser`; re-anchored when that contract changes
 - `src/gobby/servers/routes/sessions/analytics.py::*` — scope-reason: consumer of `get_parser`; re-anchored when that contract changes
 - `src/gobby/sessions/processor_types.py::*` — scope-reason: consumer of `_hydrate_registration_from_sidecar`; re-anchored when that contract changes
 
@@ -3509,6 +3512,8 @@ Targets:
 - `tests/mcp_proxy/tools/test_mcp_proxy_tools_wiki.py::*` — scope-reason: consumer of `setup_internal_registries`; re-anchored when that contract changes
 - `tests/mcp_proxy/tools/test_review_learning.py::*` — scope-reason: consumer of `setup_internal_registries`; re-anchored when that contract changes
 - `tests/runner_init/test_config_runtime_startup.py::*` — scope-reason: consumer of `init_servers`; re-anchored when that contract changes
+- `src/gobby/servers/_app_routes.py::*` — scope-reason: consumer of `create_providers_router`; re-anchored when that contract changes
+- `tests/mcp_proxy/tools/sessions/test_mcp_proxy_tools_sessions_registration.py::*` — scope-reason: consumer of `setup_internal_registries`; re-anchored when that contract changes
 
 Folds task #19364. No per-provider usage/capacity surface exists today — only
 Gobby-internal token accounting (`GET /api/sessions/usage` →
