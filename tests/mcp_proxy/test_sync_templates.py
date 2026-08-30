@@ -180,6 +180,7 @@ def test_sync_adopts_only_exact_legacy_bundled_rows(temp_db: Any, tmp_path: Path
     assert adopted.template_id is not None
     assert adopted.template_values is not None
     assert adopted.template_values["token"] == "$secret:demo_token"
+    assert "demo" not in result["adoption_skipped"]
     assert adopted.args == ["-y", "demo-pkg"]
     assert adopted.env == {"DEMO_TOKEN": "$secret:demo_token"}
 
