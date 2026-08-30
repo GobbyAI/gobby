@@ -170,3 +170,52 @@ def test_apply_acknowledged_receipt_duplicate_append_is_a_noop() -> None:
     assert variable_manager.variables[SESSION_ID]["suggested_skill_names"] == ["new-skill"]
     assert len(variable_manager.appended) == 2
     assert variable_manager.appended[0] == (SESSION_ID, "suggested_skill_names", ["new-skill"])
+
+
+class _StartupStore(_VariableStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.commits: list[tuple[str, int, str]] = []
+
+    def commit_startup_context(
+        self,
+        session_id: str,
+        generation: int,
+        owner_token: str,
+    ) -> bool:
+        self.commits.append((session_id, generation, owner_token))
+        return True
+
+
+def test_apply_acknowledged_receipt_commits_startup_context() -> None:
+    variable_manager = _StartupStore()
+    receipt = SimpleNamespace(
+        receipt_id="receipt-startup",
+        session_id=SESSION_ID,
+        staged_payload={
+            "session_id": SESSION_ID,
+            "startup_context": {
+                "generation": 7,
+                "owner_token": "owner-1",
+                "session_id": SESSION_ID,
+            },
+        },
+    )
+
+    apply_acknowledged_receipt(receipt, variable_manager=variable_manager)
+
+    assert variable_manager.commits == [(SESSION_ID, 7, "owner-1")]
+
+
+def test_apply_acknowledged_receipt_skips_startup_commit_without_payload() -> None:
+    variable_manager = _StartupStore()
+    receipt = SimpleNamespace(
+        receipt_id="receipt-no-startup",
+        session_id=SESSION_ID,
+        staged_payload={"session_id": SESSION_ID, "session_variables": {"k": True}},
+    )
+
+    apply_acknowledged_receipt(receipt, variable_manager=variable_manager)
+
+    assert variable_manager.commits == []
+    assert variable_manager.variables[SESSION_ID]["k"] is True

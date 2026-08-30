@@ -47,6 +47,35 @@ AGY_HOOK_TIMEOUT_SECONDS = 45
 # AGY honors force_continue without a native bound; Gobby owns the cap.
 AGY_FORCE_CONTINUE_LIMIT = 10
 
+
+def agy_execution_num(payload: dict[str, Any]) -> int | None:
+    """Return AGY ``executionNum`` from a hook payload, if present."""
+
+    raw: Any = None
+    input_data = payload.get("input_data")
+    if isinstance(input_data, dict):
+        raw = input_data.get("execution_num", input_data.get("executionNum"))
+    if raw is None:
+        raw = payload.get("execution_num", payload.get("executionNum"))
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and raw.strip().lstrip("-").isdigit():
+        return int(raw)
+    return None
+
+
+def strip_unbudgeted_force_continue(response: dict[str, Any]) -> dict[str, Any]:
+    """Drop force_continue when no durable budget slot backs the emission."""
+
+    if response.get("terminationBehavior") != "force_continue":
+        return response
+    visible = dict(response)
+    visible.pop("terminationBehavior", None)
+    return visible
+
+
 AGY_PAYLOAD_ALIASES: dict[str, str] = {
     "conversationId": "session_id",
     "transcriptPath": "transcript_path",

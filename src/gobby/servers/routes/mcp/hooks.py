@@ -12,6 +12,11 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from fastapi import APIRouter, HTTPException, Request
 from starlette.requests import ClientDisconnect
 
+from gobby.adapters.agy_contract import (
+    AGY_FORCE_CONTINUE_LIMIT,
+    agy_execution_num,
+    strip_unbudgeted_force_continue,
+)
 from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
 from gobby.adapters.claude_contract import get_claude_contract
 from gobby.adapters.degradation import AdapterDegradationKind, record_adapter_degradation
@@ -369,9 +374,10 @@ def _attach_delivery_receipt(
     envelope_id: str,
     session_id: str,
     staged_payload: dict[str, Any] | None = None,
+    force_continue_execution_num: int | None = None,
 ) -> dict[str, Any]:
     if db is None:
-        return response
+        return strip_unbudgeted_force_continue(response)
     try:
         from gobby.storage.hook_receipts import prepare_receipt
 
@@ -380,6 +386,7 @@ def _attach_delivery_receipt(
             session_id=session_id,
             envelope_id=envelope_id,
             staged_payload=staged_payload,
+            force_continue_execution_num=force_continue_execution_num,
         )
     except Exception:
         logger.warning(
@@ -387,8 +394,11 @@ def _attach_delivery_receipt(
             envelope_id,
             exc_info=True,
         )
-        return response
+        return strip_unbudgeted_force_continue(response)
     attached = dict(response)
+    count = getattr(receipt, "force_continue_count", None)
+    if isinstance(count, int) and count > AGY_FORCE_CONTINUE_LIMIT:
+        attached.pop("terminationBehavior", None)
     attached["_gobby_delivery_receipt"] = {
         "receipt_id": receipt.receipt_id,
         "original_envelope_id": receipt.original_envelope_id,
@@ -447,7 +457,18 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         def mark_processed_and_return(response: dict[str, Any]) -> dict[str, Any]:
             staged_payload = response.get(STAGED_EFFECTS_FIELD)
             response = strip_private_startup_claim_fields(response)
+            if claim_lease is not None:
+                staged = dict(staged_payload) if isinstance(staged_payload, dict) else {}
+                staged["startup_context"] = {
+                    "generation": claim_lease.generation,
+                    "owner_token": claim_lease.owner_token,
+                    "session_id": claim_lease.session_id,
+                }
+                staged_payload = staged
             if envelope_id:
+                execution_num = None
+                if response.get("terminationBehavior") == "force_continue":
+                    execution_num = agy_execution_num(payload)
                 response = _attach_delivery_receipt(
                     response,
                     db=getattr(getattr(server, "services", None), "database", None),
@@ -459,7 +480,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         envelope_id=envelope_id,
                     ),
                     staged_payload=(staged_payload if isinstance(staged_payload, dict) else None),
+                    force_continue_execution_num=execution_num,
                 )
+            else:
+                response = strip_unbudgeted_force_continue(response)
             if envelope_id and owner_token:
                 try:
                     finalize_envelope_processed(

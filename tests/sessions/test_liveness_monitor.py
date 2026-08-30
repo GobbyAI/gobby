@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from gobby.agents.tmux.session_manager import TmuxReleaseOutcome
+from gobby.sessions import liveness_monitor as liveness_mod
 from gobby.sessions.liveness_monitor import (
     SessionLivenessMonitor,
     _TerminalLivenessRecord,
@@ -530,6 +531,20 @@ class TestConditionalExpiry:
         dispatch.assert_called_once_with("session", False, None)
         assert processor.unregistered == ["session"]
         assert stale_processor.unregistered == []
+
+    @pytest.mark.asyncio
+    async def test_success_retires_session_hook_effects(self) -> None:
+        storage = _Storage(expire_result=SimpleNamespace(status="expired"))
+        monitor = SessionLivenessMonitor(session_storage=cast(Any, storage))
+
+        assert callable(getattr(liveness_mod, "retire_session_hook_effects", None))
+        with patch.object(liveness_mod, "retire_session_hook_effects") as retire:
+            result = await monitor._expire_session("session")
+
+        assert result is True
+        retire.assert_called_once()
+        assert retire.call_args.kwargs["session_id"] == "session"
+        assert retire.call_args.args[0] is storage.db
 
     @pytest.mark.asyncio
     async def test_resolver_failure_is_best_effort_after_expiry(self) -> None:

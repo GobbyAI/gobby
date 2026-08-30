@@ -28,6 +28,7 @@ from gobby.sessions.tmux_context import (
     get_tmux_socket_name,
     get_tmux_window_id,
 )
+from gobby.storage.hook_receipts import retire_session_hook_effects
 from gobby.storage.hub.postgres_pool import is_pool_unavailable
 from gobby.terminal_ownership import (
     TERMINAL_OWNER_STATUSES,
@@ -581,6 +582,15 @@ class SessionLivenessMonitor:
             return False
         if expired_session is None:
             return False
+
+        try:
+            retire_session_hook_effects(self._session_manager.db, session_id=session_id)
+        except Exception:
+            logger.warning(
+                "SessionLivenessMonitor: failed to retire hook effects for session %s",
+                session_id,
+                exc_info=True,
+            )
 
         manager = self.terminal_manager
         if manager is not None:

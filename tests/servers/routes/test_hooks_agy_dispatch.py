@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.adapters.agy_contract import AGY_FORCE_CONTINUE_LIMIT
 from gobby.config.app import DaemonConfig
 from gobby.hooks.agent_run_ingress import AgentRunIngressRetryableError
 from gobby.hooks.envelope_dedupe import (
@@ -83,6 +84,44 @@ def _agy_pre_invocation_envelope(*, conversation_id: str = "agy-conv-1") -> dict
             "cwd": "/tmp/agy-ws",
         },
     }
+
+
+def _agy_post_invocation_envelope(
+    *,
+    conversation_id: str = "agy-conv-1",
+    execution_num: int = 1,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "enqueued_at": "2026-06-24T12:00:00Z",
+        "critical": False,
+        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
+        "hook_type": "PostInvocation",
+        "source": "agy",
+        "input_data": {
+            "hookEventName": "PostInvocation",
+            "conversationId": conversation_id,
+            "executionNum": execution_num,
+            "workspacePaths": ["/tmp/agy-ws"],
+            "cwd": "/tmp/agy-ws",
+        },
+    }
+
+
+def _force_continue_body() -> dict[str, Any]:
+    return {
+        "terminationBehavior": "force_continue",
+        "injectSteps": [{"ephemeralMessage": "stay in the turn"}],
+    }
+
+
+def _budget_receipt(*, envelope_id: str, count: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        receipt_id=f"receipt-{envelope_id}",
+        original_envelope_id=envelope_id,
+        delivery_generation=1,
+        force_continue_count=count,
+    )
 
 
 @pytest.fixture
@@ -241,6 +280,86 @@ class TestAgyStartupClaimPreflight:
         assert "_gobby_startup_claim" not in body
         assert "owner_token" not in body
         assert "startup_claim_generation" not in body
+
+    def test_durable_preinvocation_stages_startup_claim_without_committing(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        matching = SimpleNamespace(
+            id="sess-preflight-2",
+            project_id="proj-agy",
+            source="agy",
+            machine_id="machine-agy",
+            session_type="interactive",
+            status="active",
+            workspace_path="/tmp/agy-ws",
+            tombstoned=False,
+        )
+        mock_sessions = MagicMock()
+        mock_sessions.get.return_value = matching
+        mock_sessions.db = session_storage.db
+        mock_hook_manager = MagicMock()
+        mock_hook_manager.shutdown_async = AsyncMock()
+        mock_hook_manager.session_manager = mock_sessions
+        mock_hook_manager._session_manager = mock_sessions
+        server.app.state.hook_manager = mock_hook_manager
+        receipt = SimpleNamespace(
+            receipt_id="receipt-startup-1",
+            original_envelope_id="env-startup-1",
+            delivery_generation=1,
+        )
+
+        def claim(
+            _self: object,
+            session_id: str,
+            owner_token: str | None = None,
+        ) -> StartupContextClaim:
+            return StartupContextClaim("full", 9, owner_token or "owner-9", "claimed")
+
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.agy.AgyAdapter") as mock_adapter_cls,
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.claim_startup_context",
+                claim,
+            ),
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.commit_startup_context",
+            ) as commit,
+            patch(
+                "gobby.storage.hook_receipts.prepare_receipt",
+                return_value=receipt,
+            ) as prepare_receipt,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.return_value = {"decision": "allow"}
+            mock_adapter_cls.return_value = mock_adapter
+            response = client.post(
+                "/api/hooks/execute",
+                json=_agy_pre_invocation_envelope(),
+                headers={
+                    "X-Gobby-Session-Id": "sess-preflight-2",
+                    ENVELOPE_ID_HEADER: "env-startup-1",
+                },
+            )
+
+        assert response.status_code == 200
+        commit.assert_not_called()
+        prepare_receipt.assert_called_once()
+        staged = prepare_receipt.call_args.kwargs.get("staged_payload") or {}
+        context = staged.get("startup_context") if isinstance(staged, dict) else None
+        assert isinstance(context, dict)
+        assert context.get("generation") == 9
+        assert context.get("session_id") == "sess-preflight-2"
+        assert context.get("owner_token")
 
     def test_mismatching_session_hint_is_rejected_without_claim_or_mutation(
         self,
@@ -1124,3 +1243,227 @@ class TestExecuteHookDeliveryReceipt:
         assert response.status_code == 200
         assert response.json() == {"decision": "allow"}
         prepare_receipt.assert_called_once()
+
+
+class TestAgyForceContinueBudget:
+    def test_identity_less_post_invocation_strips_force_continue(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value=_force_continue_body(),
+            ),
+            patch("gobby.storage.hook_receipts.prepare_receipt") as prepare_receipt,
+            patch("gobby.storage.hook_receipts.increment_force_continue") as increment,
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                json=_agy_post_invocation_envelope(execution_num=3),
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "terminationBehavior" not in body
+        assert body["injectSteps"] == [{"ephemeralMessage": "stay in the turn"}]
+        prepare_receipt.assert_not_called()
+        increment.assert_not_called()
+
+    def test_durable_post_invocation_prepares_with_execution_num(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+        envelope_id = "env-fc-durable"
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value=_force_continue_body(),
+            ),
+            patch(
+                "gobby.storage.hook_receipts.prepare_receipt",
+                return_value=_budget_receipt(envelope_id=envelope_id, count=1),
+            ) as prepare_receipt,
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=_agy_post_invocation_envelope(execution_num=3),
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["terminationBehavior"] == "force_continue"
+        assert prepare_receipt.call_args.kwargs.get("force_continue_execution_num") == 3
+
+    def test_limit_th_emission_is_still_force_continue(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+        envelope_id = "env-fc-limit"
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value=_force_continue_body(),
+            ),
+            patch(
+                "gobby.storage.hook_receipts.prepare_receipt",
+                return_value=_budget_receipt(
+                    envelope_id=envelope_id,
+                    count=AGY_FORCE_CONTINUE_LIMIT,
+                ),
+            ),
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=_agy_post_invocation_envelope(),
+            )
+
+        assert response.status_code == 200
+        assert response.json()["terminationBehavior"] == "force_continue"
+
+    def test_over_limit_deny_is_ephemeral_message_only(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+        envelope_id = "env-fc-over"
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value=_force_continue_body(),
+            ),
+            patch(
+                "gobby.storage.hook_receipts.prepare_receipt",
+                return_value=_budget_receipt(
+                    envelope_id=envelope_id,
+                    count=AGY_FORCE_CONTINUE_LIMIT + 1,
+                ),
+            ),
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=_agy_post_invocation_envelope(),
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "terminationBehavior" not in body
+        assert body["injectSteps"] == [{"ephemeralMessage": "stay in the turn"}]
+
+    def test_concurrent_posts_serialize_and_downgrade_the_loser(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+        counter = {"n": AGY_FORCE_CONTINUE_LIMIT - 1}
+        lock = threading.Lock()
+
+        def prepare_receipt(*_args: object, **kwargs: object) -> SimpleNamespace:
+            envelope_id = str(kwargs["envelope_id"])
+            with lock:
+                counter["n"] += 1
+                count = counter["n"]
+            return _budget_receipt(envelope_id=envelope_id, count=count)
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value=_force_continue_body(),
+            ),
+            patch(
+                "gobby.storage.hook_receipts.prepare_receipt",
+                side_effect=prepare_receipt,
+            ),
+        ):
+            results: list[dict[str, Any]] = []
+
+            def _post(envelope_id: str) -> None:
+                response = client.post(
+                    "/api/hooks/execute",
+                    headers={ENVELOPE_ID_HEADER: envelope_id},
+                    json=_agy_post_invocation_envelope(),
+                )
+                assert response.status_code == 200
+                results.append(response.json())
+
+            workers = [
+                threading.Thread(target=_post, args=(f"env-fc-race-{index}",)) for index in range(2)
+            ]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join()
+
+        behaviors = [body.get("terminationBehavior") for body in results]
+        assert behaviors.count("force_continue") == 1
+        assert behaviors.count(None) == 1
+        assert all(
+            body["injectSteps"] == [{"ephemeralMessage": "stay in the turn"}] for body in results
+        )
+
+    def test_prepare_failure_does_not_emit_force_continue(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value=_force_continue_body(),
+            ),
+            patch(
+                "gobby.storage.hook_receipts.prepare_receipt",
+                side_effect=RuntimeError("receipt store down"),
+            ),
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: "env-fc-fail"},
+                json=_agy_post_invocation_envelope(),
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "terminationBehavior" not in body
+        assert body["injectSteps"] == [{"ephemeralMessage": "stay in the turn"}]

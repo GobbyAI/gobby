@@ -16,6 +16,7 @@ from gobby.config.features import KnowledgeGraphQueueConfig
 from gobby.config.persistence import MemoryDreamConfig
 from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.sessions import SessionLifecycleConfig
+from gobby.sessions import lifecycle as lifecycle_mod
 from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.sessions.transcript_index import load_index_sidecar
 from gobby.storage.session_models import Session
@@ -191,6 +192,25 @@ class TestSessionLifecycleManager:
         )
         manager.session_manager.expire_empty_sessions.assert_called_once_with(timeout_hours=2)
         manager.session_manager.prune_empty_sessions.assert_called_once_with(min_age_hours=1)
+
+    @pytest.mark.asyncio
+    async def test_expire_stale_sessions_retires_hook_effects(
+        self, manager: SessionLifecycleManager
+    ) -> None:
+        manager.session_manager.pause_inactive_active_sessions.return_value = 0
+        manager.session_manager.expire_orphaned_handoff_sessions.return_value = 0
+        manager.session_manager.expire_stale_sessions.return_value = 1
+        manager.session_manager.expire_empty_sessions.return_value = 0
+        manager.session_manager.prune_empty_sessions.return_value = 0
+        manager.session_manager.prune_stale_compact_workflow_instances.return_value = 0
+        manager.session_manager.cleanup_expired_session_state.return_value = None
+
+        assert callable(getattr(lifecycle_mod, "retire_expired_session_hook_effects", None))
+        with patch.object(lifecycle_mod, "retire_expired_session_hook_effects") as retire:
+            await manager._expire_stale_sessions(manager._capture_active().session_lifecycle)
+
+        retire.assert_called_once()
+        assert retire.call_args.args[0] is manager.session_manager.db
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1580,6 +1600,8 @@ class TestProcessSessionTranscriptParsers:
         ) as claude_cls:
             await manager._process_session_transcript("s1", str(transcript_path))
 
+        assert session.source == "droid"
+        assert transcript_path.read_text(encoding="utf-8") == '{"type": "message"}\n'
         claude_cls.assert_not_called()
 
     @pytest.mark.asyncio

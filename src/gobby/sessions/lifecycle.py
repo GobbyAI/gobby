@@ -22,6 +22,7 @@ from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.llm.textgen_cwd import purge_textgen_project_dirs
 from gobby.sessions.transcript_processing import TranscriptProcessingMixin
+from gobby.storage.hook_receipts import retire_expired_session_hook_effects
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS
@@ -313,6 +314,13 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
         expired = self.session_manager.expire_stale_sessions(
             timeout_hours=config.stale_session_timeout_hours
         )
+        try:
+            retire_expired_session_hook_effects(self.session_manager.db)
+        except Exception:
+            logger.warning(
+                "Failed to retire hook effects for expired sessions",
+                exc_info=True,
+            )
 
         # Zero-message sessions created by spurious SESSION_START events can be
         # cleaned up much faster than the normal 24h stale-session sweep.

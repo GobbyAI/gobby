@@ -11,6 +11,7 @@ from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.session_types import has_prior_session_activity
 from gobby.skills.formatting import skill_fetch_directive
+from gobby.storage.hook_receipts import retire_session_hook_effects
 
 logger = logging.getLogger(__name__)
 
@@ -544,6 +545,16 @@ class AgentEventHandlerMixin(EventHandlersBase):
                         )
                     except Exception as e:
                         self.logger.warning("Failed to update session status: %s", e)
+                db = getattr(self._session_manager, "db", None)
+                if db is not None:
+                    try:
+                        retire_session_hook_effects(db, session_id=session_id)
+                    except Exception as e:
+                        self.logger.warning(
+                            "Failed to retire hook effects on STOP for session %s: %s",
+                            session_id,
+                            e,
+                        )
         else:
             self.logger.debug("STOP")
 

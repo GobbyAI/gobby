@@ -134,6 +134,27 @@ def apply_acknowledged_receipt(
     session_id = payload.get("session_id") or getattr(receipt, "session_id", None)
     if variable_manager is None or not isinstance(session_id, str) or not session_id:
         return
+    startup = payload.get("startup_context")
+    commit = getattr(variable_manager, "commit_startup_context", None)
+    if callable(commit) and isinstance(startup, dict):
+        generation = startup.get("generation")
+        owner_token = startup.get("owner_token")
+        startup_session = startup.get("session_id") or session_id
+        if (
+            isinstance(generation, int)
+            and isinstance(owner_token, str)
+            and owner_token
+            and isinstance(startup_session, str)
+            and startup_session
+        ):
+            try:
+                commit(startup_session, generation, owner_token)
+            except Exception:
+                logger.warning(
+                    "Failed to commit startup context after receipt %s",
+                    getattr(receipt, "receipt_id", None),
+                    exc_info=True,
+                )
     appends = payload.get("append_set_variables")
     if isinstance(appends, dict) and appends:
         for name, raw_values in appends.items():

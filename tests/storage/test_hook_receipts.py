@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import inspect
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+from psycopg.errors import UniqueViolation
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import utc_now
@@ -133,6 +137,44 @@ class TestHookReceiptLifecycle:
         )
 
 
+def _prepare_budget(
+    receipts: Any,
+    db: HubDatabase,
+    *,
+    session_id: str,
+    envelope_id: str,
+    execution_num: int | None = None,
+    staged_payload: dict[str, Any] | None = None,
+) -> Any:
+    kwargs: dict[str, Any] = {
+        "session_id": session_id,
+        "envelope_id": envelope_id,
+    }
+    if staged_payload is not None:
+        kwargs["staged_payload"] = staged_payload
+    if execution_num is None:
+        return receipts.prepare_receipt(db, **kwargs)
+    kwargs["force_continue_execution_num"] = execution_num
+    try:
+        return receipts.prepare_receipt(db, **kwargs)
+    except TypeError:
+        kwargs.pop("force_continue_execution_num")
+        receipts.prepare_receipt(db, **kwargs)
+        return None
+
+
+def _budget_count(db: HubDatabase, session_id: str, execution_num: int) -> int | None:
+    with db.transaction() as conn:
+        row = conn.execute(
+            "SELECT count FROM hook_force_continue_budgets "
+            "WHERE session_id = %s AND execution_num = %s",
+            (session_id, execution_num),
+        ).fetchone()
+    if row is None:
+        return None
+    return int(row["count"])
+
+
 class TestForceContinueBudget:
     def test_increment_serializes_and_does_not_refund(self, receipts_db: HubDatabase) -> None:
         receipts = _receipts()
@@ -145,6 +187,160 @@ class TestForceContinueBudget:
         assert other_exec == 1
         limit = getattr(receipts, "AGY_FORCE_CONTINUE_LIMIT", None)
         assert limit is None or isinstance(limit, int)
+
+    def test_prepare_increments_budget_in_the_same_transaction(
+        self, receipts_db: HubDatabase
+    ) -> None:
+        receipts = _receipts()
+        params = inspect.signature(receipts.prepare_receipt).parameters
+        assert "force_continue_execution_num" in params
+        session_id = str(uuid4())
+        receipt = _prepare_budget(
+            receipts,
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-fc-prepare",
+            staged_payload={"context": "deny"},
+            execution_num=4,
+        )
+        assert getattr(receipt, "force_continue_count", None) == 1
+        assert _budget_count(receipts_db, session_id, 4) == 1
+
+    def test_prepare_without_execution_num_does_not_increment(
+        self, receipts_db: HubDatabase
+    ) -> None:
+        receipts = _receipts()
+        session_id = str(uuid4())
+        receipts.prepare_receipt(
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-fc-plain",
+        )
+        assert _budget_count(receipts_db, session_id, 1) is None
+
+    def test_replay_of_prepared_envelope_does_not_increment_again(
+        self, receipts_db: HubDatabase
+    ) -> None:
+        receipts = _receipts()
+        session_id = str(uuid4())
+        first = _prepare_budget(
+            receipts,
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-fc-replay",
+            execution_num=1,
+        )
+        second = _prepare_budget(
+            receipts,
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-fc-replay",
+            execution_num=1,
+        )
+        assert first is not None
+        assert second is not None
+        assert first.receipt_id == second.receipt_id
+        assert _budget_count(receipts_db, session_id, 1) == 1
+
+    def test_duplicate_ack_does_not_increment(self, receipts_db: HubDatabase) -> None:
+        receipts = _receipts()
+        session_id = str(uuid4())
+        receipt = _prepare_budget(
+            receipts,
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-fc-ack",
+            execution_num=1,
+        )
+        assert receipt is not None
+        first = receipts.acknowledge_receipt(
+            receipts_db,
+            receipt_id=receipt.receipt_id,
+            delivery_generation=receipt.delivery_generation,
+        )
+        second = receipts.acknowledge_receipt(
+            receipts_db,
+            receipt_id=receipt.receipt_id,
+            delivery_generation=receipt.delivery_generation,
+        )
+        assert first is not None
+        assert second is None
+        assert _budget_count(receipts_db, session_id, 1) == 1
+
+    def test_failed_receipt_insert_rolls_back_the_increment(self, receipts_db: HubDatabase) -> None:
+        receipts = _receipts()
+        session_id = str(uuid4())
+        fixed_id = uuid4()
+        with patch("gobby.storage.hook_receipts.uuid4", return_value=fixed_id):
+            first = _prepare_budget(
+                receipts,
+                receipts_db,
+                session_id=session_id,
+                envelope_id="env-fc-first",
+                execution_num=1,
+            )
+            assert first is not None
+            with pytest.raises(UniqueViolation):
+                _prepare_budget(
+                    receipts,
+                    receipts_db,
+                    session_id=session_id,
+                    envelope_id="env-fc-dup-id",
+                    execution_num=1,
+                )
+        assert _budget_count(receipts_db, session_id, 1) == 1
+
+    def test_concurrent_prepares_serialize_on_the_budget_row(
+        self, receipts_db: HubDatabase
+    ) -> None:
+        receipts = _receipts()
+        session_id = str(uuid4())
+
+        def _prepare(index: int) -> int:
+            receipt = _prepare_budget(
+                receipts,
+                receipts_db,
+                session_id=session_id,
+                envelope_id=f"env-fc-conc-{index}",
+                execution_num=8,
+            )
+            count = getattr(receipt, "force_continue_count", None)
+            assert isinstance(count, int)
+            return count
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            counts = list(pool.map(_prepare, range(8)))
+        assert sorted(counts) == list(range(1, 9))
+        assert _budget_count(receipts_db, session_id, 8) == 8
+
+    def test_retire_deletes_budget_and_terminalizes_receipts(
+        self, receipts_db: HubDatabase
+    ) -> None:
+        receipts = _receipts()
+        retire = getattr(receipts, "retire_session_hook_effects", None)
+        assert callable(retire)
+        session_id = str(uuid4())
+        other = str(uuid4())
+        prepared = _prepare_budget(
+            receipts,
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-fc-retire",
+            execution_num=1,
+        )
+        assert prepared is not None
+        receipts.increment_force_continue(receipts_db, other, execution_num=1)
+        deleted = retire(receipts_db, session_id=session_id)
+        assert deleted >= 1
+        assert _budget_count(receipts_db, session_id, 1) is None
+        assert _budget_count(receipts_db, other, 1) == 1
+        with receipts_db.transaction() as conn:
+            row = conn.execute(
+                "SELECT state FROM hook_receipt_effects WHERE receipt_id = %s",
+                (prepared.receipt_id,),
+            ).fetchone()
+        assert row is not None
+        assert row["state"] == "terminal-undelivered"
 
 
 def _set_transition(

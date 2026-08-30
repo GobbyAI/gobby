@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
+from gobby.hooks.event_handlers import _agent as agent_mod
 from gobby.hooks.event_handlers._agent import (
     _GOBBY_CMD_PATTERN,
     AgentEventHandlerMixin,
@@ -1044,6 +1045,21 @@ class TestHandleStop:
             "paused",
             activity_confirmed=True,
         )
+
+    def test_stop_retires_session_hook_effects(self) -> None:
+        assert callable(getattr(agent_mod, "retire_session_hook_effects", None))
+        handler = _TestHandler()
+        event = _make_event(
+            event_type=HookEventType.STOP,
+            metadata={"_platform_session_id": "sess-1"},
+        )
+
+        with patch.object(agent_mod, "retire_session_hook_effects") as retire:
+            result = handler.handle_stop(event)
+
+        assert result.decision == "allow"
+        retire.assert_called_once()
+        assert retire.call_args.kwargs["session_id"] == "sess-1"
 
     def test_without_session(self) -> None:
         handler = _TestHandler()
