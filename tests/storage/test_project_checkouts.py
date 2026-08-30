@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -13,11 +14,15 @@ from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import (
     CheckoutConflictError,
+    CheckoutNotFoundError,
     CheckoutRootTakenError,
     CheckoutSentinelRejectedError,
     LocalProjectCheckoutManager,
+    MissingMachineContextError,
     OverlayRegistrationRejectedError,
     ProjectCheckout,
+    require_root,
+    resolve_operation_root,
 )
 from gobby.storage.projects import (
     CHECKOUT_FREE_PROJECT_IDS,
@@ -372,3 +377,322 @@ def test_concurrent_absent_rebind_different_roots_serializes(
         assert listed[0].root_path in results
     finally:
         second.close()
+
+
+def test_require_root_returns_checkout_root(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    assert require_root(temp_db, isolated.project.id, isolated.machine_id) == isolated.root_path
+
+
+def test_require_root_raises_when_checkout_missing(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.fixtures.isolated_checkout import (
+        insert_isolated_machine,
+        patch_local_machine_id,
+    )
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project_id = sample_project_id(temp_db)
+    with pytest.raises(CheckoutNotFoundError):
+        require_root(temp_db, project_id, machine_id)
+
+
+def sample_project_id(db: HubDatabase) -> str:
+    from gobby.storage.projects import LocalProjectManager
+
+    return LocalProjectManager(db).create(name=f"no-checkout-{uuid.uuid4().hex[:8]}").id
+
+
+def test_require_root_does_not_fall_back_to_projects_repo_path(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    temp_db.execute(
+        "UPDATE projects SET repo_path = %s WHERE id = %s",
+        ("/legacy/column", isolated.project.id),
+    )
+    temp_db.execute(
+        "DELETE FROM project_checkouts WHERE machine_id = %s AND project_id = %s",
+        (isolated.machine_id, isolated.project.id),
+    )
+    with pytest.raises(CheckoutNotFoundError):
+        require_root(temp_db, isolated.project.id, isolated.machine_id)
+
+
+def test_require_root_refuses_missing_machine_id(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    with pytest.raises(MissingMachineContextError):
+        require_root(temp_db, sample_project["id"], "")
+    with pytest.raises(MissingMachineContextError):
+        require_root(temp_db, sample_project["id"], None)
+
+
+def test_require_root_refuses_foreign_machine_before_lookup(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    lookups: list[tuple[str, str]] = []
+    original_get = LocalProjectCheckoutManager.get
+
+    def _get(self: LocalProjectCheckoutManager, machine_id: str, project_id: str) -> Any:
+        lookups.append((machine_id, project_id))
+        return original_get(self, machine_id, project_id)
+
+    monkeypatch.setattr(LocalProjectCheckoutManager, "get", _get)
+    with pytest.raises(MachineOwnershipMismatchError):
+        require_root(temp_db, isolated.project.id, str(uuid.uuid4()))
+    assert lookups == []
+
+
+@pytest.mark.parametrize("sentinel_id", sorted(CHECKOUT_FREE_PROJECT_IDS))
+def test_require_root_refuses_checkout_free_sentinels(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sentinel_id: str
+) -> None:
+    from tests.fixtures.isolated_checkout import (
+        insert_isolated_machine,
+        patch_local_machine_id,
+    )
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    with pytest.raises(CheckoutSentinelRejectedError):
+        require_root(temp_db, sentinel_id, machine_id)
+
+
+def test_resolve_operation_root_none_overlay_uses_primary(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    assert (
+        resolve_operation_root(temp_db, isolated.project.id, isolated.machine_id)
+        == isolated.root_path
+    )
+    assert (
+        resolve_operation_root(temp_db, isolated.project.id, isolated.machine_id, overlay_path=None)
+        == isolated.root_path
+    )
+
+
+def test_resolve_operation_root_none_overlay_missing_raises(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.fixtures.isolated_checkout import (
+        insert_isolated_machine,
+        patch_local_machine_id,
+    )
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project_id = sample_project_id(temp_db)
+    with pytest.raises(CheckoutNotFoundError):
+        resolve_operation_root(temp_db, project_id, machine_id, overlay_path=None)
+
+
+def test_resolve_operation_root_registered_worktree_wins_without_primary(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.fixtures.isolated_checkout import (
+        insert_isolated_machine,
+        insert_overlay,
+        patch_local_machine_id,
+    )
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project_id = sample_project_id(temp_db)
+    overlay = str(tmp_path / "wt")
+    insert_overlay(
+        temp_db, project_id=project_id, machine_id=machine_id, path=overlay, kind="worktree"
+    )
+    assert resolve_operation_root(temp_db, project_id, machine_id, overlay_path=overlay) == overlay
+
+
+def test_resolve_operation_root_registered_clone_wins_without_primary(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.fixtures.isolated_checkout import (
+        insert_isolated_machine,
+        insert_overlay,
+        patch_local_machine_id,
+    )
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project_id = sample_project_id(temp_db)
+    overlay = str(tmp_path / "clone")
+    insert_overlay(
+        temp_db, project_id=project_id, machine_id=machine_id, path=overlay, kind="clone"
+    )
+    assert resolve_operation_root(temp_db, project_id, machine_id, overlay_path=overlay) == overlay
+
+
+def test_resolve_operation_root_refuses_unregistered_overlay(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    with pytest.raises(OverlayRegistrationRejectedError):
+        resolve_operation_root(
+            temp_db,
+            isolated.project.id,
+            isolated.machine_id,
+            overlay_path=str(tmp_path / "unregistered"),
+        )
+
+
+def test_resolve_operation_root_refuses_wrong_project_overlay(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.fixtures.isolated_checkout import (
+        insert_overlay,
+        install_isolated_checkout_project,
+    )
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    other_id = sample_project_id(temp_db)
+    overlay = str(tmp_path / "other-wt")
+    insert_overlay(
+        temp_db,
+        project_id=other_id,
+        machine_id=isolated.machine_id,
+        path=overlay,
+        kind="worktree",
+    )
+    with pytest.raises(OverlayRegistrationRejectedError):
+        resolve_operation_root(
+            temp_db, isolated.project.id, isolated.machine_id, overlay_path=overlay
+        )
+
+
+def test_resolve_operation_root_refuses_foreign_machine_overlay(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.fixtures.isolated_checkout import (
+        insert_isolated_machine,
+        insert_overlay,
+        install_isolated_checkout_project,
+    )
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    foreign = insert_isolated_machine(temp_db)
+    overlay = str(tmp_path / "foreign-wt")
+    insert_overlay(
+        temp_db,
+        project_id=isolated.project.id,
+        machine_id=foreign,
+        path=overlay,
+        kind="worktree",
+    )
+    with pytest.raises(OverlayRegistrationRejectedError):
+        resolve_operation_root(
+            temp_db, isolated.project.id, isolated.machine_id, overlay_path=overlay
+        )
+
+
+def test_resolve_operation_root_refuses_missing_machine_id(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    with pytest.raises(MissingMachineContextError):
+        resolve_operation_root(temp_db, sample_project["id"], "")
+
+
+def test_resolve_operation_root_refuses_sentinels(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.fixtures.isolated_checkout import (
+        insert_isolated_machine,
+        patch_local_machine_id,
+    )
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    with pytest.raises(CheckoutSentinelRejectedError):
+        resolve_operation_root(temp_db, PERSONAL_PROJECT_ID, machine_id)
+
+
+def test_resolve_operation_root_refuses_foreign_machine_before_overlay_lookup(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+    from tests.fixtures.isolated_checkout import (
+        insert_overlay,
+        install_isolated_checkout_project,
+    )
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    overlay = str(tmp_path / "wt")
+    insert_overlay(
+        temp_db,
+        project_id=isolated.project.id,
+        machine_id=isolated.machine_id,
+        path=overlay,
+        kind="worktree",
+    )
+    queries: list[str] = []
+    original_fetchone = temp_db.fetchone
+
+    def _fetchone(sql: str, params: Any = None) -> Any:
+        queries.append(sql)
+        return original_fetchone(sql, params)
+
+    monkeypatch.setattr(temp_db, "fetchone", _fetchone)
+    with pytest.raises(MachineOwnershipMismatchError):
+        resolve_operation_root(
+            temp_db, isolated.project.id, str(uuid.uuid4()), overlay_path=overlay
+        )
+    assert queries == []
+
+
+def test_get_and_list_remain_opaque_without_local_machine_check(
+    temp_db: HubDatabase, sample_project: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    machine_id = str(uuid.uuid4())
+    _insert_machine(temp_db, machine_id)
+    called: list[object] = []
+
+    def _track(*args: object, **kwargs: object) -> str:
+        called.append((args, kwargs))
+        return machine_id
+
+    monkeypatch.setattr(
+        "gobby.storage.workspace_machine_scope.require_local_machine_id",
+        _track,
+    )
+    manager = _manager(temp_db)
+    created, inserted = manager.register(machine_id, sample_project["id"], "/opaque/root")
+    assert inserted is True
+    loaded = manager.get(machine_id, sample_project["id"])
+    assert loaded == created
+    assert [row.root_path for row in manager.list_for_machine(machine_id)] == ["/opaque/root"]
+    assert called == []

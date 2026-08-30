@@ -11,6 +11,7 @@ from psycopg.errors import UniqueViolation
 
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.utils.datetime import normalize_datetime_model
 
 
@@ -22,12 +23,20 @@ class CheckoutRootTakenError(Exception):
     """Raised when another project on the machine already owns the root."""
 
 
-class OverlayRegistrationRejectedError(Exception):
+class OverlayRegistrationRejectedError(ValueError):
     """Raised when the root is a registered worktree or clone on the machine."""
 
 
-class CheckoutSentinelRejectedError(Exception):
+class CheckoutSentinelRejectedError(ValueError):
     """Raised when a checkout-free sentinel project id is used."""
+
+
+class MissingMachineContextError(ValueError):
+    """Raised when a resolver is called without a machine id."""
+
+
+class CheckoutNotFoundError(ValueError):
+    """Raised when the primary checkout row is missing."""
 
 
 @normalize_datetime_model(required=("created_at", "updated_at"))
@@ -197,3 +206,72 @@ class LocalProjectCheckoutManager:
         raise CheckoutRootTakenError(
             f"root {root_path} is already owned on machine {machine_id}"
         ) from exc
+
+
+def _session_machine_id(project_id: str, machine_id: str | None) -> str:
+    if machine_id is None or machine_id == "":
+        raise MissingMachineContextError("machine_id is required to resolve a checkout")
+    return require_local_machine_id(
+        machine_id, resource_kind="project_checkout", resource_id=project_id
+    )
+
+
+def _reject_checkout_sentinel(project_id: str) -> None:
+    if project_id in CHECKOUT_FREE_PROJECT_IDS:
+        raise CheckoutSentinelRejectedError(
+            f"checkout-free sentinel project {project_id} cannot own a checkout"
+        )
+
+
+def _is_registered_operation_overlay(
+    db: HubDatabase, machine_id: str, project_id: str, overlay_path: str
+) -> bool:
+    row = db.fetchone(
+        """
+        SELECT 1 FROM worktrees
+        WHERE machine_id = %s AND project_id = %s AND worktree_path = %s
+        UNION ALL
+        SELECT 1 FROM clones
+        WHERE machine_id = %s AND project_id = %s AND clone_path = %s
+        LIMIT 1
+        """,
+        (machine_id, project_id, overlay_path, machine_id, project_id, overlay_path),
+    )
+    return row is not None
+
+
+def require_root(db: HubDatabase, project_id: str, machine_id: str | None) -> str:
+    """Return the primary checkout root for `(project_id, machine_id)`."""
+    local_machine_id = _session_machine_id(project_id, machine_id)
+    _reject_checkout_sentinel(project_id)
+    checkout = LocalProjectCheckoutManager(db).get(local_machine_id, project_id)
+    if checkout is None:
+        raise CheckoutNotFoundError(
+            f"no checkout for machine {local_machine_id} project {project_id}"
+        )
+    return checkout.root_path
+
+
+def resolve_operation_root(
+    db: HubDatabase,
+    project_id: str,
+    machine_id: str | None,
+    *,
+    overlay_path: str | None = None,
+) -> str:
+    """Return an overlay path when registered locally, otherwise the primary checkout."""
+    local_machine_id = _session_machine_id(project_id, machine_id)
+    _reject_checkout_sentinel(project_id)
+    if overlay_path is None:
+        checkout = LocalProjectCheckoutManager(db).get(local_machine_id, project_id)
+        if checkout is None:
+            raise CheckoutNotFoundError(
+                f"no checkout for machine {local_machine_id} project {project_id}"
+            )
+        return checkout.root_path
+    if _is_registered_operation_overlay(db, local_machine_id, project_id, overlay_path):
+        return overlay_path
+    raise OverlayRegistrationRejectedError(
+        f"overlay {overlay_path} is not a registered worktree or clone "
+        f"for machine {local_machine_id} project {project_id}"
+    )

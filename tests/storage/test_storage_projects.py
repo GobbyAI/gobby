@@ -3,11 +3,24 @@
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any
 
 import pytest
 from psycopg.errors import UniqueViolation
 
-from gobby.storage.projects import LocalProjectManager, Project
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import (
+    LocalProjectCheckoutManager,
+    OverlayRegistrationRejectedError,
+)
+from gobby.storage.projects import IsolatedAgentProjectPathError, LocalProjectManager, Project
+from tests.fixtures.isolated_checkout import (
+    insert_isolated_machine,
+    insert_overlay,
+    patch_local_machine_id,
+    write_project_marker,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -37,14 +50,13 @@ class TestProject:
         """Test converting Project to dictionary."""
         project = project_manager.create(
             name="test-project",
-            repo_path="/tmp/repo",
             github_url="https://github.com/test/repo",
         )
 
         d = project.to_dict()
         assert d["id"] == project.id
         assert d["name"] == "test-project"
-        assert d["repo_path"] == "/tmp/repo"
+        assert "repo_path" not in d
         assert d["github_url"] == "https://github.com/test/repo"
         assert d["linear_project_id"] is None
         assert "created_at" in d
@@ -58,13 +70,12 @@ class TestLocalProjectManager:
         """Test creating a new project."""
         project = project_manager.create(
             name="my-project",
-            repo_path="/path/to/repo",
             github_url="https://github.com/user/repo",
         )
 
         assert project.id is not None
         assert project.name == "my-project"
-        assert project.repo_path == "/path/to/repo"
+        assert project.repo_path is None
         assert project.github_url == "https://github.com/user/repo"
 
     def test_create_project_minimal(self, project_manager: LocalProjectManager) -> None:
@@ -180,13 +191,13 @@ class TestLocalProjectManager:
         self, project_manager: LocalProjectManager
     ) -> None:
         project_id = str(uuid.uuid4())
-        project_manager.ensure_exists(project_id, "old-name", "/old/path")
+        project_manager.ensure_exists(project_id, "old-name")
 
-        ensured = project_manager.ensure_exists(project_id, "new-name", "/new/path")
+        ensured = project_manager.ensure_exists(project_id, "new-name")
 
         assert ensured.id == project_id
         assert ensured.name == "new-name"
-        assert ensured.repo_path == "/new/path"
+        assert ensured.repo_path is None
 
     def test_list_projects(self, project_manager: LocalProjectManager) -> None:
         """Test listing all projects."""
@@ -216,12 +227,11 @@ class TestLocalProjectManager:
         updated = project_manager.update(
             created.id,
             name="updated",
-            repo_path="/new/path",
         )
 
         assert updated is not None
         assert updated.name == "updated"
-        assert updated.repo_path == "/new/path"
+        assert updated.repo_path is None
 
     def test_update_linear_project_id(self, project_manager: LocalProjectManager) -> None:
         """Test updating the Linear project binding."""
@@ -234,10 +244,7 @@ class TestLocalProjectManager:
 
     def test_update_partial(self, project_manager: LocalProjectManager) -> None:
         """Test updating only some fields."""
-        created = project_manager.create(
-            name="partial",
-            repo_path="/original/path",
-        )
+        created = project_manager.create(name="partial")
 
         updated = project_manager.update(
             created.id,
@@ -246,7 +253,7 @@ class TestLocalProjectManager:
 
         assert updated is not None
         assert updated.name == "partial"  # unchanged
-        assert updated.repo_path == "/original/path"  # unchanged
+        assert updated.repo_path is None
         assert updated.github_url == "https://github.com/new/url"
 
     def test_update_nonexistent(self, project_manager: LocalProjectManager) -> None:
@@ -288,3 +295,132 @@ class TestLocalProjectManager:
         """Test deleting nonexistent project returns False."""
         result = project_manager.delete(MISSING_PROJECT_ID)
         assert result is False
+
+
+def _checkout_row(db: HubDatabase, machine_id: str, project_id: str) -> dict[str, object] | None:
+    row = db.fetchone(
+        """
+        SELECT root_path FROM project_checkouts
+        WHERE machine_id = %s AND project_id = %s
+        """,
+        (machine_id, project_id),
+    )
+    return dict(row) if row is not None else None
+
+
+def test_create_writes_checkout_not_repo_path(
+    project_manager: LocalProjectManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = insert_isolated_machine(project_manager.db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    root = tmp_path / "created-root"
+    root.mkdir()
+    project_id = str(uuid.uuid4())
+    write_project_marker(root, project_id=project_id, name="checkout-create")
+    monkeypatch.setattr("gobby.storage.projects.uuid.uuid4", lambda: uuid.UUID(project_id))
+    project = project_manager.create(name="checkout-create", repo_path=str(root))
+    assert project.id == project_id
+    assert project.repo_path is None
+    stored = project_manager.db.fetchone(
+        "SELECT repo_path FROM projects WHERE id = %s", (project.id,)
+    )
+    assert stored is not None
+    assert stored["repo_path"] in (None, "")
+    checkout = _checkout_row(project_manager.db, machine_id, project.id)
+    assert checkout is not None
+    assert checkout["root_path"] == str(root)
+
+
+def test_ensure_exists_writes_checkout_not_repo_path(
+    project_manager: LocalProjectManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = insert_isolated_machine(project_manager.db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    root = tmp_path / "ensured-root"
+    root.mkdir()
+    project_id = str(uuid.uuid4())
+    write_project_marker(root, project_id=project_id, name="checkout-ensure")
+    project = project_manager.ensure_exists(project_id, "checkout-ensure", str(root))
+    assert project.id == project_id
+    assert project.repo_path is None
+    checkout = _checkout_row(project_manager.db, machine_id, project.id)
+    assert checkout is not None
+    assert checkout["root_path"] == str(root)
+
+
+def test_update_writes_checkout_not_repo_path(
+    project_manager: LocalProjectManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = insert_isolated_machine(project_manager.db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    created = project_manager.create(name="checkout-update")
+    root = tmp_path / "updated-root"
+    root.mkdir()
+    write_project_marker(root, project_id=created.id, name="checkout-update")
+    updated = project_manager.update(created.id, repo_path=str(root))
+    assert updated is not None
+    assert updated.repo_path is None
+    checkout = _checkout_row(project_manager.db, machine_id, created.id)
+    assert checkout is not None
+    assert checkout["root_path"] == str(root)
+
+
+def test_create_refuses_overlay_path(
+    project_manager: LocalProjectManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = insert_isolated_machine(project_manager.db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    owner = project_manager.create(name="overlay-owner")
+    overlay = tmp_path / "wt"
+    overlay.mkdir()
+    project_id = str(uuid.uuid4())
+    write_project_marker(overlay, project_id=project_id, name="overlay-create")
+    monkeypatch.setattr("gobby.storage.projects.uuid.uuid4", lambda: uuid.UUID(project_id))
+    insert_overlay(
+        project_manager.db,
+        project_id=owner.id,
+        machine_id=machine_id,
+        path=str(overlay),
+        kind="worktree",
+    )
+    with pytest.raises((OverlayRegistrationRejectedError, IsolatedAgentProjectPathError)):
+        project_manager.create(name="overlay-create", repo_path=str(overlay))
+    assert _checkout_row(project_manager.db, machine_id, project_id) is None
+
+
+def test_sample_project_uses_isolated_machine_helper(
+    sample_project: dict[str, Any],
+    project_manager: LocalProjectManager,
+) -> None:
+    from gobby.utils.project_context import get_project_context
+
+    assert "repo_path" not in sample_project
+    checkout = LocalProjectCheckoutManager(project_manager.db).get(
+        _sample_checkout_machine(project_manager.db, sample_project["id"]),
+        sample_project["id"],
+    )
+    assert checkout is not None
+    marker = get_project_context(Path(checkout.root_path))
+    assert marker is not None
+    assert marker["id"] == sample_project["id"]
+    machine = project_manager.db.fetchone(
+        "SELECT 1 FROM machines WHERE id = %s", (checkout.machine_id,)
+    )
+    assert machine is not None
+
+
+def _sample_checkout_machine(db: HubDatabase, project_id: str) -> str:
+    row = db.fetchone(
+        "SELECT machine_id FROM project_checkouts WHERE project_id = %s",
+        (project_id,),
+    )
+    assert row is not None
+    return str(row["machine_id"])
