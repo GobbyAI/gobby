@@ -301,6 +301,31 @@ class TestTmuxAttachReservation:
         assert server._tmux_pending == {}
         harness.attach.assert_not_awaited()
 
+    async def test_native_rows_under_proxy_delivery_never_reserve_a_tmux_client(
+        self, server: WebSocketServer
+    ) -> None:
+        native = make_memory_terminal(backend="native", session_name="native-demo")
+        server.terminal_manager = MemoryTerminalStore(native)
+        ws = MockWebSocket()
+
+        with activation_harness(server, bridge=make_bridge(terminal_id=native.id)) as harness:
+            await server._handle_terminal_attach(
+                ws,
+                {
+                    "terminal_id": native.id,
+                    "frame_delivery": "proxy",
+                    "request_id": "r1",
+                },
+            )
+
+        # No runtime is registered here, so the attach honestly fails —
+        # and still must not touch the tmux reservation path.
+        result = ws.messages_of_type("terminal_attach_result")[0]
+        assert result["success"] is False
+        assert result["code"] == "runtime_unavailable"
+        assert server._tmux_pending == {}
+        harness.attach.assert_not_awaited()
+
 
 class TestTmuxActivation:
     async def test_first_resize_activates_in_order(

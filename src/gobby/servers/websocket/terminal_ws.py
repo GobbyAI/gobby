@@ -35,7 +35,9 @@ PROXY_ATTACH_FAILURE_REASONS: dict[str, str] = {
     "proxy_unavailable": "proxy frame opener is not available",
     "locator_failed": "attach_locator raised",
     "locator_invalid": "attach_locator did not return an AttachLocator",
-    "host_unavailable": "proxy frame handshake failed",
+    "host_unavailable": "opening the proxy frame connection failed",
+    "frame_invalid": "proxy frame opener returned an unusable frame",
+    "proxy_start_failed": "proxy frame handshake or relay start failed",
 }
 
 
@@ -48,6 +50,18 @@ def _log_proxy_attach_failure(terminal_id: str, code: str, *, exc_info: bool = F
         exc_info=exc_info,
     )
     return code
+
+
+async def _close_frame_quietly(frame: Any) -> None:
+    closer = getattr(frame, "close", None)
+    if not callable(closer):
+        return
+    try:
+        result = closer()
+        if asyncio.iscoroutine(result):
+            await result
+    except Exception:
+        logger.debug("closing failed proxy frame raised", exc_info=True)
 
 
 def write_handler_faulted() -> bool:
@@ -724,13 +738,19 @@ class TerminalWsMixin:
             frame = await opener(locator)
         except Exception:
             return _log_proxy_attach_failure(row.id, "host_unavailable", exc_info=True)
-        await self._proxy().start_proxy(
-            websocket,
-            terminal_id=row.id,
-            attachment_id=record.attachment_id,
-            locator=locator,
-            frame=frame,
-        )
+        if frame is None:
+            return _log_proxy_attach_failure(row.id, "frame_invalid")
+        try:
+            await self._proxy().start_proxy(
+                websocket,
+                terminal_id=row.id,
+                attachment_id=record.attachment_id,
+                locator=locator,
+                frame=frame,
+            )
+        except Exception:
+            await _close_frame_quietly(frame)
+            return _log_proxy_attach_failure(row.id, "proxy_start_failed", exc_info=True)
         return None
 
     async def _wait_joined_write(self, attachment_id: str, seq: int) -> tuple[str, str | None]:

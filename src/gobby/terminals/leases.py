@@ -15,17 +15,6 @@ from gobby.terminals.ws_protocol import (
     SafeIntegerOverflowError,
 )
 
-FINALIZE_REASONS = (
-    "detach",
-    "ws_close",
-    "ws_loss",
-    "proxy_frame_eof",
-    "proxy_lag",
-    "relay_overflow",
-    "host_loss",
-    "message_seq_overflow",
-)
-
 
 @dataclass(frozen=True)
 class ControlResult:

@@ -22,6 +22,8 @@ _Kind = Literal[
     "locator_raises",
     "locator_invalid",
     "opener_raises",
+    "frame_none",
+    "start_proxy_raises",
 ]
 
 
@@ -53,7 +55,25 @@ async def _raising_opener(_locator: AttachLocator) -> object:
     raise OSError("frame host down")
 
 
-def _configure(server: Any, temp_db: HubDatabase, kind: _Kind) -> None:
+async def _none_opener(_locator: AttachLocator) -> object | None:
+    return None
+
+
+class _ExplodingFrame:
+    """Frame whose handshake blows up inside ProxyHub.start_proxy."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def handshake(self, locator: AttachLocator, *, encoding: str) -> None:
+        del locator, encoding
+        raise OSError("handshake refused")
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _configure(server: Any, temp_db: HubDatabase, kind: _Kind) -> _ExplodingFrame | None:
     registry = TerminalRuntimeRegistry()
     if kind != "no_runtime":
         if kind == "locator_raises":
@@ -66,8 +86,19 @@ def _configure(server: Any, temp_db: HubDatabase, kind: _Kind) -> None:
     server.configure_terminals(TerminalManager(temp_db), registry, MagicMock())
     if kind == "opener_raises":
         server.open_proxy_frame = _raising_opener
+    elif kind == "frame_none":
+        server.open_proxy_frame = _none_opener
+    elif kind == "start_proxy_raises":
+        frame = _ExplodingFrame()
+
+        async def _frame_opener(_locator: AttachLocator) -> _ExplodingFrame:
+            return frame
+
+        server.open_proxy_frame = _frame_opener
+        return frame
     elif kind in {"locator_raises", "locator_invalid"}:
         server.open_proxy_frame = _unused_opener
+    return None
 
 
 @pytest.mark.asyncio
@@ -82,7 +113,13 @@ def _configure(server: Any, temp_db: HubDatabase, kind: _Kind) -> None:
             "locator_invalid",
             "attach_locator did not return an AttachLocator",
         ),
-        ("opener_raises", "host_unavailable", "proxy frame handshake failed"),
+        ("opener_raises", "host_unavailable", "opening the proxy frame connection failed"),
+        ("frame_none", "frame_invalid", "proxy frame opener returned an unusable frame"),
+        (
+            "start_proxy_raises",
+            "proxy_start_failed",
+            "proxy frame handshake or relay start failed",
+        ),
     ],
 )
 async def test_proxy_attach_failures_are_typed_and_finalized(
@@ -95,7 +132,7 @@ async def test_proxy_attach_failures_are_typed_and_finalized(
 ) -> None:
     terminal_id = _live_row(temp_db, sample_project)
     server = _ws_server()
-    _configure(server, temp_db, kind)
+    frame = _configure(server, temp_db, kind)
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
     with caplog.at_level(logging.WARNING, logger="gobby.servers.websocket.terminal_ws"):
@@ -117,6 +154,9 @@ async def test_proxy_attach_failures_are_typed_and_finalized(
     attachment = result["attachment_id"]
     assert attachment
     assert server.lease_registry.get(attachment) is None
+    if frame is not None:
+        assert frame.closed is True
+        assert attachment not in server._proxy().attachments
     assert any(
         record.levelno == logging.WARNING
         and code in record.getMessage()
