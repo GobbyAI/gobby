@@ -605,7 +605,10 @@ def _unique_name(prefix: str) -> str:
 
 
 class TestProjectRebindCli:
-    """§ 2.3.1 / 2.3.2 gobby projects rebind."""
+    """§ 2.3.1 / 2.3.2 gobby projects rebind.
+
+    Named methods are the TDD acceptance symbols for close.
+    """
 
     def test_rebind_verifies_marker_and_updates_only_local_checkout(
         self,
