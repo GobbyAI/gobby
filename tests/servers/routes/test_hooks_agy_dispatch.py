@@ -35,6 +35,14 @@ def _processed_dir(gobby_home: Path) -> Path:
     return gobby_home / "hooks" / "inbox" / "processed"
 
 
+def _without_delivery_receipt(payload: object) -> object:
+    if not isinstance(payload, dict):
+        return payload
+    body = dict(payload)
+    body.pop("_gobby_delivery_receipt", None)
+    return body
+
+
 def _wait_for_marker_status(
     processed_dir: Path,
     envelope_id: str,
@@ -516,7 +524,10 @@ class TestAgyAdapterTimeoutFencing:
 
             gate.set()
             processed = _wait_for_marker_status(processed_dir, envelope_id, "processed")
-            assert processed.get("response") == {"continue": True, "decision": "allow"}
+            assert _without_delivery_receipt(processed.get("response")) == {
+                "continue": True,
+                "decision": "allow",
+            }
 
             stored = client.post(
                 "/api/hooks/execute",
@@ -524,7 +535,10 @@ class TestAgyAdapterTimeoutFencing:
                 json=envelope,
             )
             assert stored.status_code == 200
-            assert stored.json() == {"continue": True, "decision": "allow"}
+            assert _without_delivery_receipt(stored.json()) == {
+                "continue": True,
+                "decision": "allow",
+            }
             assert effects == {"session": 1, "rule": 1, "pending": 1, "activity": 1}
 
     def test_failed_worker_after_timeout_releases_claim_for_replay(
@@ -784,7 +798,7 @@ class TestAgyAdapterTimeoutFencing:
             assert replay.status_code == 409
             gate.set()
             processed = _wait_for_marker_status(processed_dir, envelope_id, "processed")
-            assert processed.get("response") == {"continue": True}
+            assert _without_delivery_receipt(processed.get("response")) == {"continue": True}
 
 
 class TestHookResponseCapabilityGate:
@@ -920,3 +934,119 @@ class TestHookResponseCapabilityGate:
         assert response.status_code == 200
         assert response.json() == {"decision": "allow"}
         run_adapter.assert_awaited_once()
+
+
+def _delivery_receipt_server(session_storage: SessionManager) -> Any:
+    server = create_http_server(
+        port=60887,
+        test_mode=True,
+        session_manager=session_storage,
+    )
+    server.app.state.hook_manager = MagicMock()
+    server.app.state.hook_manager.shutdown_async = AsyncMock()
+    return server
+
+
+class TestExecuteHookDeliveryReceipt:
+    def test_durable_envelope_attaches_delivery_receipt(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+        envelope = _agy_pre_invocation_envelope()
+        receipt = SimpleNamespace(
+            receipt_id="receipt-durable-1",
+            original_envelope_id="env-durable-1",
+            delivery_generation=1,
+        )
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value={"decision": "allow"},
+            ),
+            patch(
+                "gobby.storage.hook_receipts.prepare_receipt",
+                return_value=receipt,
+            ) as prepare_receipt,
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: "env-durable-1"},
+                json=envelope,
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["decision"] == "allow"
+        assert body["_gobby_delivery_receipt"] == {
+            "receipt_id": "receipt-durable-1",
+            "original_envelope_id": "env-durable-1",
+            "delivery_generation": 1,
+        }
+        prepare_receipt.assert_called_once()
+        kwargs = prepare_receipt.call_args.kwargs
+        assert kwargs["envelope_id"] == "env-durable-1"
+        assert kwargs["session_id"]
+
+    def test_identity_less_direct_post_does_not_prepare_or_attach(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+        envelope = _agy_pre_invocation_envelope()
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value={"decision": "allow"},
+            ),
+            patch("gobby.storage.hook_receipts.prepare_receipt") as prepare_receipt,
+        ):
+            response = client.post("/api/hooks/execute", json=envelope)
+
+        assert response.status_code == 200
+        assert response.json() == {"decision": "allow"}
+        prepare_receipt.assert_not_called()
+
+    def test_prepare_failure_still_emits_adapter_result(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+        envelope = _agy_pre_invocation_envelope()
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                return_value={"decision": "allow"},
+            ),
+            patch(
+                "gobby.storage.hook_receipts.prepare_receipt",
+                side_effect=RuntimeError("receipt store down"),
+            ) as prepare_receipt,
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: "env-durable-fail"},
+                json=envelope,
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {"decision": "allow"}
+        prepare_receipt.assert_called_once()

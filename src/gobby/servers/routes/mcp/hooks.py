@@ -341,6 +341,59 @@ def _is_codex_root_context_miss(
     return isinstance(cwd, str) and is_unusable_hook_cwd(cwd)
 
 
+def _receipt_session_id(
+    *,
+    claim_lease: StartupClaimLease | None,
+    payload: dict[str, Any],
+    platform_session_id: str,
+    envelope_id: str,
+) -> str:
+    if claim_lease is not None and claim_lease.session_id:
+        return claim_lease.session_id
+    if platform_session_id:
+        return platform_session_id
+    input_data = payload.get("input_data")
+    if isinstance(input_data, dict):
+        for key in ("session_id", "conversationId", "conversation_id"):
+            value = input_data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return envelope_id
+
+
+def _attach_delivery_receipt(
+    response: dict[str, Any],
+    *,
+    db: Any,
+    envelope_id: str,
+    session_id: str,
+) -> dict[str, Any]:
+    if db is None:
+        return response
+    try:
+        from gobby.storage.hook_receipts import prepare_receipt
+
+        receipt = prepare_receipt(
+            db,
+            session_id=session_id,
+            envelope_id=envelope_id,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to prepare hook delivery receipt for envelope %s",
+            envelope_id,
+            exc_info=True,
+        )
+        return response
+    attached = dict(response)
+    attached["_gobby_delivery_receipt"] = {
+        "receipt_id": receipt.receipt_id,
+        "original_envelope_id": receipt.original_envelope_id,
+        "delivery_generation": receipt.delivery_generation,
+    }
+    return attached
+
+
 def create_hooks_router(server: "HTTPServer") -> APIRouter:
     """
     Create hooks router with endpoints bound to server instance.
@@ -385,9 +438,23 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             "enqueued_at": None,
         }
         envelope_id = request.headers.get(ENVELOPE_ID_HEADER, "").strip()
+        payload: dict[str, Any] = {}
+        platform_session_id = ""
 
         def mark_processed_and_return(response: dict[str, Any]) -> dict[str, Any]:
             response = strip_private_startup_claim_fields(response)
+            if envelope_id:
+                response = _attach_delivery_receipt(
+                    response,
+                    db=getattr(getattr(server, "services", None), "database", None),
+                    envelope_id=envelope_id,
+                    session_id=_receipt_session_id(
+                        claim_lease=claim_lease,
+                        payload=payload,
+                        platform_session_id=platform_session_id,
+                        envelope_id=envelope_id,
+                    ),
+                )
             if envelope_id and owner_token:
                 try:
                     finalize_envelope_processed(
