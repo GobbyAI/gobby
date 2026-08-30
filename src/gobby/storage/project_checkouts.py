@@ -124,6 +124,9 @@ class LocalProjectCheckoutManager:
                     f"is already {existing.root_path}"
                 )
         except UniqueViolation as exc:
+            raced = self.get(machine_id, project_id)
+            if raced is not None and raced.root_path == root_path:
+                return raced, False
             self._raise_root_taken(exc, machine_id, root_path)
 
     def rebind(self, machine_id: str, project_id: str, root_path: str) -> ProjectCheckout:

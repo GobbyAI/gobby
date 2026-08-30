@@ -7,28 +7,54 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from gobby.config.validation_detection import (
     ValidationDetectionConfig,
-    clear_project_validation_detection,
     load_project_validation_detection,
     save_project_validation_detection,
 )
 from gobby.servers.tool_approvals import (
-    clear_project_approval_rules,
     load_project_approval_rules,
-    migrate_project_approval_rules,
     save_project_approval_rules,
 )
 from gobby.storage.external_issue_sync import ExternalIssueSyncStatusStore
 from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
-from gobby.storage.projects import SYSTEM_PROJECT_NAMES, LocalProjectManager, Project
+from gobby.storage.project_checkouts import (
+    CheckoutConflictError,
+    CheckoutNotFoundError,
+    CheckoutRootTakenError,
+    CheckoutSentinelRejectedError,
+    LocalProjectCheckoutManager,
+    MissingMachineContextError,
+    OverlayRegistrationRejectedError,
+    ProjectCheckout,
+    SoftDeletedProjectRejectedError,
+    require_root,
+)
+from gobby.storage.projects import (
+    CHECKOUT_FREE_PROJECT_IDS,
+    SYSTEM_PROJECT_NAMES,
+    IsolatedAgentProjectPathError,
+    LocalProjectManager,
+    Project,
+)
+from gobby.storage.workspace_machine_scope import (
+    MachineOwnershipMismatchError,
+    require_local_machine_id,
+)
 from gobby.sync.github_issue_sync import (
     GitHubIssueSyncService,
     GitHubRepositoryReadinessError,
 )
 from gobby.sync.linear import LinearSyncService
+from gobby.utils.checkout_root import (
+    InvalidCheckoutRootError,
+    MarkerMismatchError,
+    validate_checkout_root,
+)
+from gobby.utils.machine_id import get_machine_id
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -42,7 +68,6 @@ class ProjectUpdate(BaseModel):
     """Request body for updating a project."""
 
     name: str | None = None
-    repo_path: str | None = None
     github_url: str | None = None
     github_repo: str | None = None
     linear_team_id: str | None = None
@@ -61,6 +86,67 @@ class GitHubTriageConfigUpdate(BaseModel):
     repositories: list[str] = Field(default_factory=list)
     reconcile_interval_seconds: int = 3600
     webhook_secret_ref: str | None = None
+
+
+class CheckoutRootBody(BaseModel):
+    """Request body for checkout register and rebind."""
+
+    root_path: str
+
+
+_CHECKOUT_HTTP_CONFLICTS = (
+    MissingMachineContextError,
+    MachineOwnershipMismatchError,
+    CheckoutConflictError,
+    CheckoutRootTakenError,
+    OverlayRegistrationRejectedError,
+    MarkerMismatchError,
+    CheckoutSentinelRejectedError,
+    SoftDeletedProjectRejectedError,
+    CheckoutNotFoundError,
+    IsolatedAgentProjectPathError,
+)
+
+
+def _checkout_payload(checkout: ProjectCheckout | None) -> dict[str, str] | None:
+    if checkout is None:
+        return None
+    return {"machine_id": checkout.machine_id, "root_path": checkout.root_path}
+
+
+def _checkout_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, InvalidCheckoutRootError):
+        return HTTPException(400, detail={"error": type(exc).__name__, "message": str(exc)})
+    if isinstance(exc, _CHECKOUT_HTTP_CONFLICTS):
+        return HTTPException(409, detail={"error": type(exc).__name__, "message": str(exc)})
+    raise exc
+
+
+def _require_checkout_machine(project_id: str, provided_machine_id: str | None) -> str:
+    try:
+        return require_local_machine_id(
+            provided_machine_id,
+            resource_kind="project_checkout",
+            resource_id=project_id,
+        )
+    except RuntimeError as exc:
+        if isinstance(exc, MachineOwnershipMismatchError):
+            raise
+        raise MissingMachineContextError(str(exc)) from exc
+
+
+def _reject_checkout_sentinel(project_id: str) -> None:
+    if project_id in CHECKOUT_FREE_PROJECT_IDS:
+        raise CheckoutSentinelRejectedError(
+            f"checkout-free sentinel project {project_id} cannot own a checkout"
+        )
+
+
+def _local_checkout(db: Any, project_id: str) -> ProjectCheckout | None:
+    machine_id = get_machine_id()
+    if not machine_id:
+        return None
+    return LocalProjectCheckoutManager(db).get(machine_id, project_id)
 
 
 def _get_project_manager(server: HTTPServer) -> LocalProjectManager:
@@ -126,12 +212,14 @@ def _project_to_response(
     data = cast(dict[str, Any], jsonable_encoder(project.to_dict()))
     data["display_name"] = "Personal" if project.name == "_personal" else project.name
     data.update(stats if stats is not None else _get_project_stats(server, project.id))
-    data["approval_rules"] = (
-        load_project_approval_rules(project.repo_path) if project.repo_path else []
-    )
-    data["validation_detection"] = (
-        load_project_validation_detection(project.repo_path) if project.repo_path else None
-    )
+    checkout = _local_checkout(_get_project_manager(server).db, project.id)
+    data["checkout"] = _checkout_payload(checkout)
+    if checkout is None:
+        data["approval_rules"] = []
+        data["validation_detection"] = None
+    else:
+        data["approval_rules"] = load_project_approval_rules(checkout.root_path)
+        data["validation_detection"] = load_project_validation_detection(checkout.root_path)
     return data
 
 
@@ -168,6 +256,85 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
 
         return cast(dict[str, Any], await server.run_db(_project_to_response, server, project))
 
+    @router.get("/{project_id}/checkouts")
+    async def get_checkout(project_id: str) -> dict[str, Any]:
+        """Return the calling daemon's checkout object-or-null."""
+        pm = _get_project_manager(server)
+        project = await server.run_db(pm.get, project_id)
+        if not project:
+            raise HTTPException(404, "Project not found")
+        checkout = await server.run_db(_local_checkout, pm.db, project_id)
+        return {"checkout": _checkout_payload(checkout)}
+
+    @router.post("/{project_id}/checkouts")
+    async def register_checkout(project_id: str, body: CheckoutRootBody) -> JSONResponse:
+        """Register this daemon's checkout. 201 on insert, 200 on same-root retry."""
+        pm = _get_project_manager(server)
+        project = await server.run_db(pm.get, project_id)
+        if not project:
+            raise HTTPException(404, "Project not found")
+        if project.deleted_at is not None:
+            raise _checkout_http_error(
+                SoftDeletedProjectRejectedError(
+                    f"project {project_id} is soft-deleted; HTTP register does not restore"
+                )
+            )
+
+        def apply_register() -> tuple[ProjectCheckout, bool]:
+            try:
+                _reject_checkout_sentinel(project_id)
+                machine_id = _require_checkout_machine(project_id, None)
+                root = validate_checkout_root(
+                    pm.db,
+                    project_id=project_id,
+                    machine_id=machine_id,
+                    candidate_path=body.root_path,
+                    expected_marker_id=project_id,
+                )
+                return LocalProjectCheckoutManager(pm.db).register(machine_id, project_id, root)
+            except (
+                *_CHECKOUT_HTTP_CONFLICTS,
+                InvalidCheckoutRootError,
+            ) as exc:
+                raise _checkout_http_error(exc) from exc
+
+        checkout, created = await server.run_db(apply_register)
+        return JSONResponse(
+            status_code=201 if created else 200,
+            content={"checkout": _checkout_payload(checkout)},
+        )
+
+    @router.post("/{project_id}/checkouts/{machine_id}/rebind")
+    async def rebind_checkout(
+        project_id: str, machine_id: str, body: CheckoutRootBody
+    ) -> dict[str, Any]:
+        """Rebind this daemon's checkout. Soft-deleted projects stay deleted."""
+        pm = _get_project_manager(server)
+        project = await server.run_db(pm.get, project_id)
+        if not project:
+            raise HTTPException(404, "Project not found")
+
+        def apply_rebind() -> ProjectCheckout:
+            try:
+                _reject_checkout_sentinel(project_id)
+                local_machine_id = _require_checkout_machine(project_id, machine_id)
+                root = validate_checkout_root(
+                    pm.db,
+                    project_id=project_id,
+                    machine_id=local_machine_id,
+                    candidate_path=body.root_path,
+                    expected_marker_id=project_id,
+                )
+                return LocalProjectCheckoutManager(pm.db).rebind(local_machine_id, project_id, root)
+            except (
+                *_CHECKOUT_HTTP_CONFLICTS,
+                InvalidCheckoutRootError,
+            ) as exc:
+                raise _checkout_http_error(exc) from exc
+
+        checkout = await server.run_db(apply_rebind)
+        return {"checkout": _checkout_payload(checkout)}
+
     @router.put("/{project_id}")
     @router.patch("/{project_id}")
     async def update_project(project_id: str, body: ProjectUpdate) -> dict[str, Any]:
@@ -180,9 +347,6 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         fields = body.model_dump(exclude_unset=True)
         approval_rules = fields.pop("approval_rules", None)
         validation_detection = fields.pop("validation_detection", None)
-        original_repo_path = project.repo_path
-        requested_repo_path = fields.get("repo_path", original_repo_path)
-        repo_path_changed = requested_repo_path != original_repo_path
 
         effective_linear_sync_enabled = fields.get(
             "linear_sync_enabled", project.linear_sync_enabled
@@ -196,14 +360,7 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                     "Linear sync requires both linear_team_id and linear_project_id",
                 )
 
-        if approval_rules is not None and not requested_repo_path:
-            raise HTTPException(400, "Project has no repo_path for project-scoped approval rules")
-
         if validation_detection is not None:
-            if not requested_repo_path:
-                raise HTTPException(
-                    400, "Project has no repo_path for project-scoped validation detection"
-                )
             try:
                 validation_detection = ValidationDetectionConfig.model_validate(
                     validation_detection
@@ -211,16 +368,20 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
             except ValidationError as exc:
                 raise HTTPException(400, str(exc)) from exc
 
-        migrated_rules = (
-            load_project_approval_rules(original_repo_path)
-            if repo_path_changed and original_repo_path
-            else []
-        )
-        migrated_validation_detection = (
-            load_project_validation_detection(original_repo_path)
-            if repo_path_changed and original_repo_path
-            else None
-        )
+        checkout_root: str | None = None
+        if approval_rules is not None or validation_detection is not None:
+            try:
+                checkout_root = require_root(
+                    pm.db,
+                    project_id,
+                    _require_checkout_machine(project_id, None),
+                )
+            except (
+                *_CHECKOUT_HTTP_CONFLICTS,
+                InvalidCheckoutRootError,
+            ) as exc:
+                raise _checkout_http_error(exc) from exc
+
         if not fields:
             if approval_rules is None and validation_detection is None:
                 return cast(
@@ -238,43 +399,12 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                     updated = project
 
                 if approval_rules is not None:
-                    assert updated.repo_path is not None
-                    if repo_path_changed and original_repo_path:
-                        migrate_project_approval_rules(
-                            original_repo_path, updated.repo_path, approval_rules
-                        )
-                    else:
-                        save_project_approval_rules(updated.repo_path, approval_rules)
-                elif repo_path_changed and updated.repo_path and migrated_rules:
-                    migrate_project_approval_rules(original_repo_path, updated.repo_path)
+                    assert checkout_root is not None
+                    save_project_approval_rules(checkout_root, approval_rules)
 
                 if validation_detection is not None:
-                    assert updated.repo_path is not None
-                    save_project_validation_detection(updated.repo_path, validation_detection)
-                elif (
-                    repo_path_changed
-                    and updated.repo_path
-                    and migrated_validation_detection is not None
-                ):
-                    save_project_validation_detection(
-                        updated.repo_path, migrated_validation_detection
-                    )
-
-                if (
-                    repo_path_changed
-                    and original_repo_path
-                    and (approval_rules is not None or migrated_rules)
-                ):
-                    clear_project_approval_rules(original_repo_path)
-                if (
-                    repo_path_changed
-                    and original_repo_path
-                    and (
-                        validation_detection is not None
-                        or migrated_validation_detection is not None
-                    )
-                ):
-                    clear_project_validation_detection(original_repo_path)
+                    assert checkout_root is not None
+                    save_project_validation_detection(checkout_root, validation_detection)
 
                 return updated
 

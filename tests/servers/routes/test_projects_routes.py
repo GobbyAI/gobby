@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -15,17 +17,52 @@ from fastapi.testclient import TestClient
 from gobby.projects.purge import PurgeOutcome
 from gobby.servers.routes import projects as projects_routes
 from gobby.storage.external_issue_sync import ExternalIssueSyncStatusStore
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
+from tests.fixtures.isolated_checkout import (
+    IsolatedCheckoutProject,
+    insert_isolated_machine,
+    insert_overlay,
+    install_isolated_checkout_project,
+    write_project_marker,
+)
 from tests.servers.conftest import create_http_server
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+FOREIGN_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
+
+
+def _unique_name(prefix: str) -> str:
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def _http_error(response: Any) -> str:
+    payload = response.json()
+    detail = payload.get("detail", payload) if isinstance(payload, dict) else payload
+    if isinstance(detail, dict):
+        return str(detail.get("error") or "")
+    return str(detail)
+
+
+def _install_local_checkout(
+    db: HubDatabase,
+    root: Path,
+    *,
+    name: str,
+) -> IsolatedCheckoutProject:
+    return install_isolated_checkout_project(
+        db,
+        root,
+        name=name,
+        machine_id=LOCAL_MACHINE_ID,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +90,6 @@ class TestProjectRoutes:
         """Create a real project in the database."""
         proj = project_manager.create(
             name="my-project",
-            repo_path="/tmp/my-project",
             github_url="https://github.com/test/my-project",
         )
         return proj.to_dict()
@@ -286,15 +322,17 @@ class TestProjectRoutes:
         assert data["github_url"] is None
         assert data["name"] == "my-project"
 
-    def test_update_project_repo_path(self, client: TestClient, real_project: dict) -> None:
-        """Update project repo_path."""
-        response = client.put(
-            f"/api/projects/{real_project['id']}",
-            json={"repo_path": "/new/path"},
-        )
+    def test_update_project_ignores_repo_path(self, client: TestClient, real_project: dict) -> None:
+        """repo_path is not a project JSON field and cannot be updated here."""
+        with TestClient(client.app, raise_server_exceptions=False) as http:
+            response = http.put(
+                f"/api/projects/{real_project['id']}",
+                json={"repo_path": "/new/path"},
+            )
         assert response.status_code == 200
         data = response.json()
-        assert data["repo_path"] == "/new/path"
+        assert "repo_path" not in data
+        assert data["checkout"] is None
 
     def test_update_project_github_repo(self, client: TestClient, real_project: dict) -> None:
         """Update project github_repo field."""
@@ -457,13 +495,12 @@ class TestProjectRoutes:
         project_manager: LocalProjectManager,
         tmp_path: Path,
     ) -> None:
-        repo_path = tmp_path / "repo"
-        repo_path.mkdir()
-        project = project_manager.create(
-            name="rules-project",
-            repo_path=str(repo_path),
-            github_url="https://github.com/test/rules-project",
+        isolated = _install_local_checkout(
+            project_manager.db,
+            tmp_path / "rules-repo",
+            name=_unique_name("rules-project"),
         )
+        project = isolated.project
 
         response = client.put(
             f"/api/projects/{project.id}",
@@ -472,24 +509,29 @@ class TestProjectRoutes:
         assert response.status_code == 200
         data = response.json()
         assert data["approval_rules"] == ["tool:Write", "mcp:third-party:*"]
+        assert data["checkout"] == {
+            "machine_id": LOCAL_MACHINE_ID,
+            "root_path": isolated.root_path,
+        }
 
-        project_file = repo_path / ".gobby" / "project.json"
+        project_file = Path(isolated.root_path) / ".gobby" / "project.json"
         assert project_file.exists()
         saved = json.loads(project_file.read_text())
         assert saved["tool_approvals"]["allow"] == ["tool:Write", "mcp:third-party:*"]
 
-    def test_update_project_approval_rules_requires_repo_path(
+    def test_update_project_approval_rules_requires_local_checkout(
         self,
         client: TestClient,
         project_manager: LocalProjectManager,
     ) -> None:
-        project = project_manager.create(name="no-repo-project", repo_path=None)
+        project = project_manager.create(name=_unique_name("no-checkout-project"))
 
         response = client.put(
             f"/api/projects/{project.id}",
             json={"approval_rules": ["tool:Write"]},
         )
-        assert response.status_code == 400
+        assert response.status_code == 409
+        assert _http_error(response) == "CheckoutNotFoundError"
 
     def test_update_project_validation_detection(
         self,
@@ -497,13 +539,12 @@ class TestProjectRoutes:
         project_manager: LocalProjectManager,
         tmp_path: Path,
     ) -> None:
-        repo_path = tmp_path / "repo"
-        repo_path.mkdir()
-        project = project_manager.create(
-            name="validation-detection-project",
-            repo_path=str(repo_path),
-            github_url="https://github.com/test/validation-detection-project",
+        isolated = _install_local_checkout(
+            project_manager.db,
+            tmp_path / "validation-repo",
+            name=_unique_name("validation-detection-project"),
         )
+        project = isolated.project
 
         payload = {
             "builtin_matchers_enabled": False,
@@ -523,7 +564,7 @@ class TestProjectRoutes:
         assert response.status_code == 200
         data = response.json()
         assert data["validation_detection"]["builtin_matchers_enabled"] is False
-        project_file = repo_path / ".gobby" / "project.json"
+        project_file = Path(isolated.root_path) / ".gobby" / "project.json"
         saved = json.loads(project_file.read_text())
         assert saved["validation_detection"]["custom_matchers"][0]["id"] == "project-ci"
 
@@ -531,28 +572,16 @@ class TestProjectRoutes:
         self,
         client: TestClient,
         project_manager: LocalProjectManager,
-        tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        old_repo = tmp_path / "old-repo"
-        new_repo = tmp_path / "new-repo"
-        old_repo.mkdir()
-        new_repo.mkdir()
-        project = project_manager.create(name="unchanged", repo_path=str(old_repo))
-        project_file = old_repo / ".gobby" / "project.json"
-        project_file.parent.mkdir(parents=True)
-        original_payload = {"verification": {"lint": "uv run ruff check src/"}}
-        project_file.write_text(json.dumps(original_payload))
+        project = project_manager.create(name="unchanged")
 
         def fail_mutation(*args: object, **kwargs: object) -> None:
             raise AssertionError("invalid request attempted a project-file mutation")
 
         for function_name in (
             "save_project_approval_rules",
-            "migrate_project_approval_rules",
-            "clear_project_approval_rules",
             "save_project_validation_detection",
-            "clear_project_validation_detection",
         ):
             monkeypatch.setattr(projects_routes, function_name, fail_mutation)
 
@@ -560,7 +589,6 @@ class TestProjectRoutes:
             f"/api/projects/{project.id}",
             json={
                 "name": "changed",
-                "repo_path": str(new_repo),
                 "approval_rules": ["tool:Write"],
                 "validation_detection": {
                     "custom_matchers": [{"id": " ", "label": "Invalid", "prefixes": ["test"]}]
@@ -572,9 +600,6 @@ class TestProjectRoutes:
         persisted = project_manager.get(project.id)
         assert persisted is not None
         assert persisted.name == "unchanged"
-        assert persisted.repo_path == str(old_repo)
-        assert json.loads(project_file.read_text()) == original_payload
-        assert not (new_repo / ".gobby" / "project.json").exists()
 
     def test_update_project_file_failure_rolls_back_database_update(
         self,
@@ -583,9 +608,12 @@ class TestProjectRoutes:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        repo_path = tmp_path / "repo"
-        repo_path.mkdir()
-        project = project_manager.create(name="unchanged", repo_path=str(repo_path))
+        isolated = _install_local_checkout(
+            project_manager.db,
+            tmp_path / "rollback-repo",
+            name=_unique_name("unchanged"),
+        )
+        project = isolated.project
 
         def fail_save(*args: object, **kwargs: object) -> None:
             raise OSError("project file write failed")
@@ -600,95 +628,7 @@ class TestProjectRoutes:
 
         persisted = project_manager.get(project.id)
         assert persisted is not None
-        assert persisted.name == "unchanged"
-
-    def test_update_project_repo_path_migrates_approval_rules_and_preserves_metadata(
-        self,
-        client: TestClient,
-        project_manager: LocalProjectManager,
-        tmp_path: Path,
-    ) -> None:
-        old_repo = tmp_path / "old-repo"
-        new_repo = tmp_path / "new-repo"
-        old_repo.mkdir()
-        new_repo.mkdir()
-        project = project_manager.create(name="migrate-project", repo_path=str(old_repo))
-        project_file = old_repo / ".gobby" / "project.json"
-        project_file.parent.mkdir(parents=True, exist_ok=True)
-        project_file.write_text(
-            json.dumps(
-                {
-                    "id": project.id,
-                    "name": project.name,
-                    "created_at": project.created_at.isoformat(),
-                    "verification": {"lint": "uv run ruff check src/"},
-                    "tool_approvals": {"allow": ["tool:Write"]},
-                }
-            )
-        )
-
-        response = client.put(
-            f"/api/projects/{project.id}",
-            json={"repo_path": str(new_repo)},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["repo_path"] == str(new_repo)
-        assert data["approval_rules"] == ["tool:Write"]
-
-        migrated = json.loads((new_repo / ".gobby" / "project.json").read_text())
-        assert migrated["id"] == project.id
-        assert migrated["verification"]["lint"] == "uv run ruff check src/"
-        assert migrated["tool_approvals"]["allow"] == ["tool:Write"]
-
-        original = json.loads(project_file.read_text())
-        assert original["verification"]["lint"] == "uv run ruff check src/"
-        assert "tool_approvals" not in original
-
-    def test_update_project_repo_path_with_explicit_approval_rules_preserves_metadata(
-        self,
-        client: TestClient,
-        project_manager: LocalProjectManager,
-        tmp_path: Path,
-    ) -> None:
-        old_repo = tmp_path / "old-repo"
-        new_repo = tmp_path / "new-repo"
-        old_repo.mkdir()
-        new_repo.mkdir()
-        project = project_manager.create(name="migrate-project", repo_path=str(old_repo))
-        project_file = old_repo / ".gobby" / "project.json"
-        project_file.parent.mkdir(parents=True, exist_ok=True)
-        project_file.write_text(
-            json.dumps(
-                {
-                    "id": project.id,
-                    "name": project.name,
-                    "created_at": project.created_at.isoformat(),
-                    "verification": {"unit_tests": "uv run pytest tests/ -v"},
-                    "tool_approvals": {"allow": ["tool:Write"]},
-                }
-            )
-        )
-
-        response = client.put(
-            f"/api/projects/{project.id}",
-            json={"repo_path": str(new_repo), "approval_rules": ["mcp:third-party:*"]},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["repo_path"] == str(new_repo)
-        assert data["approval_rules"] == ["mcp:third-party:*"]
-
-        migrated = json.loads((new_repo / ".gobby" / "project.json").read_text())
-        assert migrated["id"] == project.id
-        assert migrated["verification"]["unit_tests"] == "uv run pytest tests/ -v"
-        assert migrated["tool_approvals"]["allow"] == ["mcp:third-party:*"]
-
-        original = json.loads(project_file.read_text())
-        assert original["verification"]["unit_tests"] == "uv run pytest tests/ -v"
-        assert "tool_approvals" not in original
+        assert persisted.name == project.name
 
     def test_update_project_not_found(self, client: TestClient) -> None:
         """404 when updating nonexistent project."""
@@ -716,7 +656,7 @@ class TestProjectRoutes:
         # Update something other than name
         response = client.put(
             f"/api/projects/{personal_project['id']}",
-            json={"repo_path": "/updated/path"},
+            json={"github_url": "https://github.com/test/personal"},
         )
         assert response.status_code == 200
         data = response.json()
@@ -859,3 +799,429 @@ class TestProjectRoutes:
         client = TestClient(server.app)
         response = client.get("/api/projects")
         assert response.status_code == 503
+
+
+class TestProjectCheckoutHttp:
+    """§ 2.4 checkout HTTP routes and path-free project JSON.
+
+    Named methods are the TDD acceptance symbols for close.
+    """
+
+    @pytest.fixture
+    def client(
+        self, session_manager: SessionManager, project_manager: LocalProjectManager
+    ) -> TestClient:
+        server = create_http_server(
+            session_manager=session_manager,
+            database=session_manager.db,
+        )
+        return TestClient(server.app)
+
+    def test_project_json_has_calling_checkout_not_repo_path(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        bare = project_manager.create(name=_unique_name("bare-json"))
+        isolated = _install_local_checkout(
+            project_manager.db,
+            tmp_path / "json-repo",
+            name=_unique_name("json-checkout"),
+        )
+        require_root = patch("gobby.storage.project_checkouts.require_root")
+        routes_require_root = patch.object(projects_routes, "require_root", create=True)
+        with require_root as mocked_root, routes_require_root as mocked_routes_root:
+            mocked_root.side_effect = AssertionError("require_root must not serialize")
+            mocked_routes_root.side_effect = AssertionError("require_root must not serialize")
+            bare_response = client.get(f"/api/projects/{bare.id}")
+            isolated_response = client.get(f"/api/projects/{isolated.project.id}")
+            sentinel_response = client.get(f"/api/projects/{PERSONAL_PROJECT_ID}")
+            listed = client.get("/api/projects")
+
+        assert bare_response.status_code == 200
+        bare_data = bare_response.json()
+        assert "repo_path" not in bare_data
+        assert "checkout" in bare_data
+        assert bare_data["checkout"] is None
+        assert bare_data["approval_rules"] == []
+        assert bare_data["validation_detection"] is None
+
+        assert isolated_response.status_code == 200
+        isolated_data = isolated_response.json()
+        assert "repo_path" not in isolated_data
+        assert isolated_data["checkout"] == {
+            "machine_id": LOCAL_MACHINE_ID,
+            "root_path": isolated.root_path,
+        }
+
+        assert sentinel_response.status_code == 200
+        sentinel_data = sentinel_response.json()
+        assert "repo_path" not in sentinel_data
+        assert "checkout" in sentinel_data
+        assert sentinel_data["checkout"] is None
+        assert sentinel_data["approval_rules"] == []
+
+        assert listed.status_code == 200
+        listed_ids = {item["id"]: item for item in listed.json()}
+        assert "checkout" in listed_ids[bare.id]
+        assert listed_ids[bare.id]["checkout"] is None
+        assert listed_ids[isolated.project.id]["checkout"] == {
+            "machine_id": LOCAL_MACHINE_ID,
+            "root_path": isolated.root_path,
+        }
+
+    def test_get_checkouts_returns_calling_daemon_object_or_null(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        isolated = _install_local_checkout(
+            project_manager.db,
+            tmp_path / "get-checkout",
+            name=_unique_name("get-checkout"),
+        )
+        foreign = insert_isolated_machine(project_manager.db, FOREIGN_MACHINE_ID)
+        LocalProjectCheckoutManager(project_manager.db).register(
+            foreign, isolated.project.id, "/foreign/root"
+        )
+        missing = client.get("/api/projects/00000000-0000-4000-8000-000000000099/checkouts")
+        present = client.get(f"/api/projects/{isolated.project.id}/checkouts")
+        sentinel = client.get(f"/api/projects/{PERSONAL_PROJECT_ID}/checkouts")
+        bare = project_manager.create(name=_unique_name("get-null"))
+        null_checkout = client.get(f"/api/projects/{bare.id}/checkouts")
+
+        assert missing.status_code == 404
+        assert present.status_code == 200
+        assert present.json() == {
+            "checkout": {
+                "machine_id": LOCAL_MACHINE_ID,
+                "root_path": isolated.root_path,
+            }
+        }
+        assert "/foreign/root" not in json.dumps(present.json())
+        assert sentinel.status_code == 200
+        assert sentinel.json() == {"checkout": None}
+        assert null_checkout.status_code == 200
+        assert null_checkout.json() == {"checkout": None}
+
+    def test_register_is_201_then_200_and_maps_typed_errors(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        isolated = _install_local_checkout(
+            project_manager.db,
+            tmp_path / "register-root",
+            name=_unique_name("register-http"),
+        )
+        project_manager.db.execute(
+            "DELETE FROM project_checkouts WHERE project_id = %s AND machine_id = %s",
+            (isolated.project.id, LOCAL_MACHINE_ID),
+        )
+        url = f"/api/projects/{isolated.project.id}/checkouts"
+        body = {"root_path": isolated.root_path}
+        created = client.post(url, json=body)
+        retry = client.post(url, json=body)
+        assert created.status_code == 201
+        assert created.json() == {
+            "checkout": {
+                "machine_id": LOCAL_MACHINE_ID,
+                "root_path": isolated.root_path,
+            }
+        }
+        assert retry.status_code == 200
+        assert retry.json() == created.json()
+
+        other = tmp_path / "other-root"
+        other.mkdir()
+        write_project_marker(other, project_id=isolated.project.id, name=isolated.project.name)
+        conflict = client.post(url, json={"root_path": str(other)})
+        assert conflict.status_code == 409
+        assert _http_error(conflict) == "CheckoutConflictError"
+
+        overlay_root = tmp_path / "register-overlay"
+        overlay_root.mkdir()
+        write_project_marker(
+            overlay_root, project_id=isolated.project.id, name=isolated.project.name
+        )
+        insert_overlay(
+            project_manager.db,
+            project_id=isolated.project.id,
+            machine_id=LOCAL_MACHINE_ID,
+            path=str(overlay_root),
+            kind="worktree",
+        )
+        overlay = client.post(url, json={"root_path": str(overlay_root)})
+        assert overlay.status_code == 409
+        assert _http_error(overlay) == "OverlayRegistrationRejectedError"
+
+        mismatch = tmp_path / "register-mismatch"
+        mismatch.mkdir()
+        write_project_marker(mismatch, project_id=str(uuid.uuid4()), name="other")
+        marker = client.post(url, json={"root_path": str(mismatch)})
+        assert marker.status_code == 409
+        assert _http_error(marker) == "MarkerMismatchError"
+
+        relative = client.post(url, json={"root_path": "relative/path"})
+        home = client.post(url, json={"root_path": "~/repo"})
+        missing_dir = client.post(url, json={"root_path": str(tmp_path / "no-such-root")})
+        for response in (relative, home, missing_dir):
+            assert response.status_code == 400
+            assert _http_error(response) == "InvalidCheckoutRootError"
+
+        sentinel = client.post(
+            f"/api/projects/{PERSONAL_PROJECT_ID}/checkouts",
+            json={"root_path": isolated.root_path},
+        )
+        assert sentinel.status_code == 409
+        assert _http_error(sentinel) == "CheckoutSentinelRejectedError"
+
+        def _no_machine() -> str:
+            raise RuntimeError("Local machine ID is unavailable")
+
+        monkeypatch.setattr(
+            "gobby.storage.workspace_machine_scope.require_machine_id",
+            _no_machine,
+        )
+        unavailable = client.post(url, json=body)
+        assert unavailable.status_code == 409
+        assert _http_error(unavailable) == "MissingMachineContextError"
+        assert "RuntimeError" not in unavailable.text
+
+    def test_concurrent_same_root_register_yields_one_201(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        isolated = _install_local_checkout(
+            project_manager.db,
+            tmp_path / "concurrent-root",
+            name=_unique_name("concurrent-register"),
+        )
+        project_manager.db.execute(
+            "DELETE FROM project_checkouts WHERE project_id = %s AND machine_id = %s",
+            (isolated.project.id, LOCAL_MACHINE_ID),
+        )
+        url = f"/api/projects/{isolated.project.id}/checkouts"
+        body = {"root_path": isolated.root_path}
+        app = client.app
+
+        def _post() -> int:
+            with TestClient(app, raise_server_exceptions=False) as nested:
+                return nested.post(url, json=body).status_code
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            statuses = list(pool.map(lambda _: _post(), range(4)))
+        assert statuses.count(201) == 1, statuses
+        assert set(statuses) <= {200, 201}, statuses
+        assert statuses.count(200) == len(statuses) - 1, statuses
+
+    def test_rebind_is_200_and_rejects_foreign_overlay_and_mismatch(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        isolated = _install_local_checkout(
+            project_manager.db,
+            tmp_path / "rebind-first",
+            name=_unique_name("rebind-http"),
+        )
+        second = tmp_path / "rebind-second"
+        second.mkdir()
+        write_project_marker(second, project_id=isolated.project.id, name=isolated.project.name)
+        overlay_root = tmp_path / "overlay"
+        overlay_root.mkdir()
+        write_project_marker(
+            overlay_root, project_id=isolated.project.id, name=isolated.project.name
+        )
+        insert_overlay(
+            project_manager.db,
+            project_id=isolated.project.id,
+            machine_id=LOCAL_MACHINE_ID,
+            path=str(overlay_root),
+            kind="worktree",
+        )
+        mismatch = tmp_path / "mismatch"
+        mismatch.mkdir()
+        write_project_marker(mismatch, project_id=str(uuid.uuid4()), name="other")
+        taken = project_manager.create(name=_unique_name("root-taken"))
+        taken_root = tmp_path / "taken-root"
+        taken_root.mkdir()
+        write_project_marker(taken_root, project_id=taken.id, name=taken.name)
+
+        rebind_url = f"/api/projects/{isolated.project.id}/checkouts/{LOCAL_MACHINE_ID}/rebind"
+        rebound = client.post(rebind_url, json={"root_path": str(second)})
+        assert rebound.status_code == 200
+        assert rebound.json() == {
+            "checkout": {"machine_id": LOCAL_MACHINE_ID, "root_path": str(second)}
+        }
+        persisted_checkout = LocalProjectCheckoutManager(project_manager.db).get(
+            LOCAL_MACHINE_ID, isolated.project.id
+        )
+        assert persisted_checkout is not None
+        assert persisted_checkout.root_path == str(second)
+
+        overlay = client.post(rebind_url, json={"root_path": str(overlay_root)})
+        assert overlay.status_code == 409
+        assert _http_error(overlay) == "OverlayRegistrationRejectedError"
+
+        marker = client.post(rebind_url, json={"root_path": str(mismatch)})
+        assert marker.status_code == 409
+        assert _http_error(marker) == "MarkerMismatchError"
+
+        first = client.post(
+            f"/api/projects/{taken.id}/checkouts",
+            json={"root_path": str(taken_root)},
+        )
+        assert first.status_code == 201
+        write_project_marker(taken_root, project_id=isolated.project.id, name=isolated.project.name)
+        taken_conflict = client.post(rebind_url, json={"root_path": str(taken_root)})
+        assert taken_conflict.status_code == 409
+        assert _http_error(taken_conflict) == "CheckoutRootTakenError"
+
+        filesystem_calls: list[str] = []
+
+        def _boom(*args: object, **kwargs: object) -> str:
+            filesystem_calls.append("validate")
+            raise AssertionError("foreign machine must not touch the filesystem")
+
+        monkeypatch.setattr("gobby.utils.checkout_root.validate_checkout_root", _boom)
+        monkeypatch.setattr(projects_routes, "validate_checkout_root", _boom, raising=False)
+        foreign = client.post(
+            f"/api/projects/{isolated.project.id}/checkouts/{FOREIGN_MACHINE_ID}/rebind",
+            json={"root_path": str(second)},
+        )
+        assert foreign.status_code == 409
+        assert filesystem_calls == []
+        assert _http_error(foreign) in {
+            "MachineOwnershipMismatchError",
+            "MissingMachineContextError",
+        }
+
+        def _no_machine() -> str:
+            raise RuntimeError("Local machine ID is unavailable")
+
+        monkeypatch.setattr(
+            "gobby.storage.workspace_machine_scope.require_machine_id",
+            _no_machine,
+        )
+        unavailable = client.post(rebind_url, json={"root_path": str(second)})
+        assert unavailable.status_code == 409
+        assert _http_error(unavailable) == "MissingMachineContextError"
+        assert "RuntimeError" not in unavailable.text
+
+    def test_settings_use_local_checkout_never_other_machine(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        isolated = _install_local_checkout(
+            project_manager.db,
+            tmp_path / "settings-local",
+            name=_unique_name("settings-local"),
+        )
+        loaded = client.get(f"/api/projects/{isolated.project.id}")
+        assert loaded.status_code == 200
+        assert loaded.json()["approval_rules"] == []
+
+        written = client.put(
+            f"/api/projects/{isolated.project.id}",
+            json={"approval_rules": ["tool:Write"]},
+        )
+        assert written.status_code == 200
+        assert written.json()["approval_rules"] == ["tool:Write"]
+        saved = json.loads((Path(isolated.root_path) / ".gobby" / "project.json").read_text())
+        assert saved["tool_approvals"]["allow"] == ["tool:Write"]
+
+        foreign_only = project_manager.create(name=_unique_name("foreign-settings"))
+        foreign_root = tmp_path / "foreign-settings"
+        foreign_root.mkdir()
+        write_project_marker(foreign_root, project_id=foreign_only.id, name=foreign_only.name)
+        (foreign_root / ".gobby" / "project.json").write_text(
+            json.dumps(
+                {
+                    "id": foreign_only.id,
+                    "name": foreign_only.name,
+                    "tool_approvals": {"allow": ["tool:Bash"]},
+                }
+            )
+        )
+        LocalProjectCheckoutManager(project_manager.db).register(
+            insert_isolated_machine(project_manager.db, FOREIGN_MACHINE_ID),
+            foreign_only.id,
+            str(foreign_root),
+        )
+
+        def fail_load(*args: object, **kwargs: object) -> list[str]:
+            raise AssertionError("null-checkout reads must not touch the filesystem")
+
+        monkeypatch.setattr(projects_routes, "load_project_approval_rules", fail_load)
+        monkeypatch.setattr(projects_routes, "load_project_validation_detection", fail_load)
+        monkeypatch.setattr(
+            "gobby.storage.project_checkouts.require_root",
+            fail_load,
+        )
+        null_read = client.get(f"/api/projects/{foreign_only.id}")
+        assert null_read.status_code == 200
+        assert null_read.json()["checkout"] is None
+        assert null_read.json()["approval_rules"] == []
+        assert null_read.json()["validation_detection"] is None
+
+        monkeypatch.undo()
+        missing_write = client.put(
+            f"/api/projects/{foreign_only.id}",
+            json={"approval_rules": ["tool:Write"]},
+        )
+        assert missing_write.status_code == 409
+        assert _http_error(missing_write) == "CheckoutNotFoundError"
+        foreign_saved = json.loads((foreign_root / ".gobby" / "project.json").read_text())
+        assert foreign_saved["tool_approvals"]["allow"] == ["tool:Bash"]
+
+    def test_register_refuses_soft_deleted_rebind_preserves_deleted_at(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        isolated = _install_local_checkout(
+            project_manager.db,
+            tmp_path / "deleted-root",
+            name=_unique_name("deleted-http"),
+        )
+        second = tmp_path / "deleted-second"
+        second.mkdir()
+        write_project_marker(second, project_id=isolated.project.id, name=isolated.project.name)
+        assert project_manager.soft_delete(isolated.project.id) is True
+        deleted_at = project_manager.get(isolated.project.id)
+        assert deleted_at is not None
+        assert deleted_at.deleted_at is not None
+        original_deleted_at = deleted_at.deleted_at
+
+        register = client.post(
+            f"/api/projects/{isolated.project.id}/checkouts",
+            json={"root_path": isolated.root_path},
+        )
+        assert register.status_code == 409
+        assert _http_error(register) == "SoftDeletedProjectRejectedError"
+        after_register = project_manager.get(isolated.project.id)
+        assert after_register is not None
+        assert after_register.deleted_at == original_deleted_at
+
+        rebind = client.post(
+            f"/api/projects/{isolated.project.id}/checkouts/{LOCAL_MACHINE_ID}/rebind",
+            json={"root_path": str(second)},
+        )
+        assert rebind.status_code == 200
+        assert rebind.json()["checkout"]["root_path"] == str(second)
+        after_rebind = project_manager.get(isolated.project.id)
+        assert after_rebind is not None
+        assert after_rebind.deleted_at == original_deleted_at
