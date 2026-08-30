@@ -30,10 +30,11 @@ from gobby.servers.routes.mcp.endpoints.server import (
     add_mcp_server,
     import_mcp_server,
     list_mcp_servers,
+    patch_mcp_server,
     remove_mcp_server,
-    set_mcp_server_enabled,
     update_mcp_server,
 )
+from gobby.servers.routes.mcp.endpoints.templates import list_mcp_templates
 
 
 def create_mcp_router() -> APIRouter:
@@ -56,8 +57,9 @@ def create_mcp_router() -> APIRouter:
     router.post("/servers")(add_mcp_server)
     router.post("/servers/import")(import_mcp_server)
     router.put("/servers/{name}")(update_mcp_server)
-    router.patch("/servers/{name}")(set_mcp_server_enabled)
+    router.patch("/servers/{name}")(patch_mcp_server)
     router.delete("/servers/{name}")(remove_mcp_server)
+    router.get("/templates")(list_mcp_templates)
 
     # Discovery endpoints from endpoints/discovery.py
     router.get("/tools")(list_all_mcp_tools)

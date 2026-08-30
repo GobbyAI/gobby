@@ -9,6 +9,7 @@ import pytest
 
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.servers.routes.mcp.endpoints.execution import mcp_proxy
+from tests.mcp_proxy.named_server_test_support import attach_named_servers
 
 pytestmark = pytest.mark.unit
 
@@ -55,6 +56,7 @@ def _make_server(db: object | None = None) -> tuple[MagicMock, MagicMock]:
     mcp_manager = MagicMock()
     mcp_manager.project_id = None
     mcp_manager.call_tool = AsyncMock(return_value={"success": True, "ok": True})
+    attach_named_servers(mcp_manager, "gobby-sessions")
     # ToolProxyService.session_manager prefers the manager's session_manager;
     # leaving it as an auto-MagicMock would shadow this stub.
     mcp_manager.session_manager = session_manager
@@ -109,8 +111,8 @@ async def test_stdio_rest_path_resolves_target_session_but_uses_wrapper_context(
     assert server.session_manager.resolve_session_reference.call_args is not None
     mcp_manager.call_tool.assert_awaited_once_with(
         "gobby-sessions",
-        "get_session",
-        {"session_id": SESSION_UUID_3},
+        tool_name="get_session",
+        arguments={"session_id": SESSION_UUID_3},
         session_id=SESSION_UUID_4,
         timeout=30.0,
     )
@@ -130,8 +132,8 @@ async def test_stdio_resolves_hash_ref_from_header_hash_ref_without_project_head
     assert server.session_manager.resolve_session_reference.call_args is not None
     mcp_manager.call_tool.assert_awaited_once_with(
         "gobby-sessions",
-        "get_session",
-        {"session_id": SESSION_UUID_3},
+        tool_name="get_session",
+        arguments={"session_id": SESSION_UUID_3},
         session_id=SESSION_UUID_4,
         timeout=30.0,
     )

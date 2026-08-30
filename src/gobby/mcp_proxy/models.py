@@ -2,9 +2,11 @@
 MCP Proxy data models and configuration classes.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
+from typing import Any
+from uuid import uuid4
 
 from gobby.config.url_validation import (
     HTTP_URL_SCHEMES,
@@ -22,21 +24,51 @@ class ConnectionState(str, Enum):
     CONNECTING = "connecting"
     CONNECTED = "connected"
     FAILED = "failed"
+    NEEDS_CONFIGURATION = "needs_configuration"
+    STALE_TEMPLATE = "stale_template"
+    DISABLED = "disabled"
 
 
 class MCPError(Exception):
     """Base exception for MCP client errors."""
 
-    def __init__(self, message: str, code: int | None = None):
+    def __init__(
+        self,
+        message: str,
+        code: int | None = None,
+        *,
+        missing_secrets: list[str] | None = None,
+    ):
         """
         Initialize MCP error.
 
         Args:
             message: Error message
             code: JSON-RPC error code (if applicable)
+            missing_secrets: Secret names that blocked a fail-closed connect
         """
         super().__init__(message)
         self.code = code
+        self.missing_secrets = missing_secrets
+
+
+class TemplateOwnedFieldsError(ValueError):
+    """A PATCH named template-owned runtime fields on a templated instance."""
+
+    error = "template_owned_fields"
+
+    def __init__(self, fields: list[str]) -> None:
+        self.fields = fields
+        super().__init__("template_owned_fields")
+
+
+class TemplateValuesInvalidError(ValueError):
+    """Merged template values failed expand_template validation."""
+
+    error = "template_values_invalid"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
 
 
 class ToolProxyErrorCode(str, Enum):
@@ -80,6 +112,8 @@ class MCPConnectionHealth:
     consecutive_failures: int = 0
     last_error: str | None = None
     response_time_ms: float | None = None
+    project_id: str | None = None
+    missing_secrets: list[str] | None = None
 
     def record_success(self, response_time_ms: float | None = None) -> None:
         """
@@ -148,8 +182,16 @@ class MCPServerConfig:
     # Connection timeout (seconds) for establishing connections
     connect_timeout: float = 30.0
 
+    id: str = field(default_factory=lambda: str(uuid4()))
+    template_id: str | None = None
+    template: str | None = None
+    runtime_hook: str | None = None
+    template_values: dict[str, Any] | None = None
+
     def validate(self) -> None:
         """Validate configuration based on transport type."""
+        if not str(self.id).strip():
+            raise ValueError("id must be a non-empty string")
         if self.transport not in SUPPORTED_TRANSPORTS:
             raise ValueError(
                 f"Unsupported transport: {self.transport}. Supported: {list(SUPPORTED_TRANSPORTS)}"

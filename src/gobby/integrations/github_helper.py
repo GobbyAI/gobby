@@ -112,6 +112,8 @@ class GitHubMCPHelper:
         mcp_manager: MCPClientManager,
         repo_path: str,
         github_repo: str,
+        *,
+        project_id: str | None = None,
     ) -> None:
         """Initialize GitHubMCPHelper.
 
@@ -119,8 +121,10 @@ class GitHubMCPHelper:
             mcp_manager: MCPClientManager for GitHub MCP server access.
             repo_path: Path to the local git repository.
             github_repo: GitHub repo in "owner/repo" format.
+            project_id: Project scope used to resolve the github instance.
         """
-        self.github = GitHubIntegration(mcp_manager)
+        self.project_id = project_id
+        self.github = GitHubIntegration(mcp_manager, project_id=project_id)
         self.mcp_manager = mcp_manager
         self.repo_path = repo_path
         self.owner, self.repo = parse_github_repo(github_repo)
@@ -135,7 +139,16 @@ class GitHubMCPHelper:
         Returns:
             Parsed response from the MCP tool.
         """
-        session = await self.mcp_manager.get_client_session("github")
+        from gobby.mcp_proxy.services.server_resolution import as_project_id, resolve_server
+
+        project_id = as_project_id(
+            self.project_id,
+            default=as_project_id(getattr(self.mcp_manager, "project_id", None)),
+        )
+        config = resolve_server(self.mcp_manager, "github", project_id=project_id)
+        if config is None:
+            raise GitHubMCPToolError(tool_name, f"github server not found in project {project_id}")
+        session = await self.mcp_manager.get_client_session(config.id)
         result = await session.call_tool(tool_name, arguments)
         return parse_github_mcp_result(result, tool_name)
 

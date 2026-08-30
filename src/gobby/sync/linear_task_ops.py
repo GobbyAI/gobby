@@ -185,7 +185,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
 
         while True:
             result = await self.mcp_manager.call_tool(
-                server_name="linear",
+                self._linear_server_id(),
                 tool_name="list_issues",
                 arguments=self._issue_list_args(
                     team_id,
@@ -394,7 +394,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             update_args["status"] = linear_state
 
         result = await self.mcp_manager.call_tool(
-            server_name="linear",
+            self._linear_server_id(),
             tool_name="update_issue",
             arguments=update_args,
         )
@@ -480,7 +480,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             arguments["projectId"] = linear_project_id
 
         result = await self.mcp_manager.call_tool(
-            server_name="linear",
+            self._linear_server_id(),
             tool_name="create_issue",
             arguments=arguments,
         )

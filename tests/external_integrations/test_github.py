@@ -18,7 +18,19 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def mock_mcp_manager():
     """Create a mock MCPClientManager."""
+    from gobby.mcp_proxy.models import MCPServerConfig
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
     manager = MagicMock()
+    config = MCPServerConfig(
+        name="github",
+        project_id=GLOBAL_PROJECT_ID,
+        url="https://github.example.test",
+        id="github",
+    )
+    manager.server_configs = [config]
+    manager._configs = {config.id: config}
+    manager.get_server_config.side_effect = lambda sid: manager._configs.get(sid)
     manager.has_server = MagicMock(return_value=True)
     manager.health = {
         "github": MagicMock(state="connected"),
@@ -185,6 +197,20 @@ class TestGitHubIntegrationServerName:
 
     def test_custom_server_name(self, mock_mcp_manager) -> None:
         """Server name can be customized."""
+        from gobby.mcp_proxy.models import MCPServerConfig
+        from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+        config = MCPServerConfig(
+            name="github-custom",
+            project_id=GLOBAL_PROJECT_ID,
+            url="https://github.example.test",
+            id="github-custom",
+        )
+        mock_mcp_manager.server_configs = [config]
+        mock_mcp_manager._configs = {config.id: config}
+        mock_mcp_manager.get_server_config.side_effect = lambda sid: mock_mcp_manager._configs.get(
+            sid
+        )
         integration = GitHubIntegration(mock_mcp_manager, server_name="github-custom")
         assert integration.server_name == "github-custom"
         mock_mcp_manager.has_server.assert_not_called()  # Not called until is_available()

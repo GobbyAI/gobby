@@ -1729,7 +1729,7 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
     );
-    assert_eq!(MIGRATIONS.len(), 36);
+    assert_eq!(MIGRATIONS.len(), 37);
     assert_eq!(MIGRATIONS[0].version, 376);
     assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
     assert_eq!(MIGRATIONS[1].version, 377);
@@ -1835,6 +1835,13 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
     );
     assert_eq!(MIGRATIONS[25].version, 401);
     assert_eq!(MIGRATIONS[25].filename, "401_model_metadata_reasoning.sql");
+    assert_eq!(MIGRATIONS[35].version, 411);
+    assert_eq!(MIGRATIONS[35].filename, "411_terminals.sql");
+    assert_eq!(MIGRATIONS[36].version, 412);
+    assert_eq!(
+        MIGRATIONS[36].filename,
+        "412_mcp_templates_project_secrets.sql"
+    );
     assert!(MIGRATIONS[5].sql.contains("-- gobby:destructive"));
     for migration in MIGRATIONS {
         assert_eq!(
@@ -2395,6 +2402,14 @@ fn migration_receipt_count(
         .get(0))
 }
 
+fn migrations_through(version: i32) -> &'static [EmbeddedMigration] {
+    let end = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version > version)
+        .unwrap_or(MIGRATIONS.len());
+    &MIGRATIONS[..end]
+}
+
 #[test]
 fn migration_411_on_a_410_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
@@ -2404,7 +2419,8 @@ fn migration_411_on_a_410_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
         return Ok(());
     };
 
-    let through_410 = &MIGRATIONS[..MIGRATIONS.len() - 1];
+    let through_410 = migrations_through(410);
+    let through_411 = migrations_through(411);
     assert_eq!(
         through_410.last().map(|migration| migration.version),
         Some(410)
@@ -2425,19 +2441,150 @@ fn migration_411_on_a_410_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
         .collect();
     assert_eq!(legacy_columns, ["tmux_session_name"]);
 
+    let upgraded =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", through_411)?.apply()?;
+    assert!(!upgraded.baseline_applied);
+    assert_eq!(upgraded.migrations_applied, 1);
+    let repeat =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", through_411)?.apply()?;
+    assert_eq!(repeat.migrations_applied, 0);
+
+    let fresh =
+        SchemaRunner::with_migrations_for_test(&mut client, "fresh_411", through_411)?.apply()?;
+    assert!(fresh.baseline_applied);
+    assert_eq!(fresh.migrations_applied, through_411.len());
+
+    assert_eq!(
+        catalog_manifest(&mut client, "public")?,
+        catalog_manifest(&mut client, "fresh_411")?
+    );
+    Ok(())
+}
+
+#[test]
+fn migration_412_on_a_411_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert_eq!(
+        MIGRATIONS.last().map(|migration| migration.version),
+        Some(412)
+    );
+    assert_eq!(
+        MIGRATIONS.last().map(|migration| migration.filename),
+        Some("412_mcp_templates_project_secrets.sql")
+    );
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    let through_411 = migrations_through(411);
+    assert_eq!(
+        through_411.last().map(|migration| migration.version),
+        Some(411)
+    );
+    let hub =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", through_411)?.apply()?;
+    assert!(hub.baseline_applied);
+    assert_eq!(hub.migrations_applied, through_411.len());
+
+    let templates_before: bool = client
+        .query_one(
+            "SELECT to_regclass('public.mcp_server_templates') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    assert!(!templates_before);
+    let provenance_before: Vec<String> = client
+        .query(
+            "SELECT column_name FROM information_schema.columns
+             WHERE table_schema = 'public' AND table_name = 'mcp_servers'
+               AND column_name IN ('template_id', 'template_values', 'runtime_hook')
+             ORDER BY column_name",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert!(provenance_before.is_empty());
+    let secrets_project_before: bool = client
+        .query_one(
+            "SELECT EXISTS (
+                 SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'secrets'
+                   AND column_name = 'project_id'
+             )",
+            &[],
+        )?
+        .get(0);
+    assert!(!secrets_project_before);
+
     let upgraded = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(!upgraded.baseline_applied);
     assert_eq!(upgraded.migrations_applied, 1);
     let repeat = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert_eq!(repeat.migrations_applied, 0);
 
-    let fresh = SchemaRunner::new(&mut client, "fresh_411")?.apply()?;
+    let templates_after: bool = client
+        .query_one(
+            "SELECT to_regclass('public.mcp_server_templates') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    assert!(templates_after);
+    let provenance_after: Vec<String> = client
+        .query(
+            "SELECT column_name FROM information_schema.columns
+             WHERE table_schema = 'public' AND table_name = 'mcp_servers'
+               AND column_name IN ('template_id', 'template_values', 'runtime_hook')
+             ORDER BY column_name",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(
+        provenance_after,
+        ["runtime_hook", "template_id", "template_values"]
+    );
+    let secrets_project_after: bool = client
+        .query_one(
+            "SELECT EXISTS (
+                 SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'secrets'
+                   AND column_name = 'project_id'
+             )",
+            &[],
+        )?
+        .get(0);
+    assert!(secrets_project_after);
+    let secrets_name_key: bool = client
+        .query_one(
+            "SELECT EXISTS (
+                 SELECT 1 FROM pg_constraint
+                 WHERE conname = 'secrets_name_key'
+             )",
+            &[],
+        )?
+        .get(0);
+    assert!(!secrets_name_key);
+    let secrets_name_project: bool = client
+        .query_one(
+            "SELECT EXISTS (
+                 SELECT 1 FROM pg_indexes
+                 WHERE schemaname = 'public' AND indexname = 'idx_secrets_name_project'
+             )",
+            &[],
+        )?
+        .get(0);
+    assert!(secrets_name_project);
+
+    let fresh = SchemaRunner::new(&mut client, "fresh_412")?.apply()?;
     assert!(fresh.baseline_applied);
     assert_eq!(fresh.migrations_applied, MIGRATIONS.len());
-
     assert_eq!(
         catalog_manifest(&mut client, "public")?,
-        catalog_manifest(&mut client, "fresh_408")?
+        catalog_manifest(&mut client, "fresh_412")?
     );
     SchemaRunner::new(&mut client, "public")?.verify()?;
     Ok(())

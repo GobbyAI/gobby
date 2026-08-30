@@ -21,6 +21,7 @@ class _HealthConnection(Protocol):
 
 
 class _HealthStatus(Protocol):
+    name: str
     health: HealthState
     consecutive_failures: int
     last_error: str | None
@@ -46,7 +47,7 @@ class _HealthManager(Protocol):
     @property
     def health(self) -> Mapping[str, _HealthStatus]: ...
 
-    def _reconnect(self, server_name: str) -> Coroutine[Any, Any, None]: ...
+    def _reconnect(self, server_id: str) -> Coroutine[Any, Any, None]: ...
 
 
 def _reconnect_done_callback(
@@ -78,13 +79,13 @@ def _health_failure_reason(connection: _HealthConnection, result: Any) -> str:
 async def health_check_all(manager: _HealthManager) -> dict[str, Any]:
     """Perform an immediate health check on all connected transports."""
     tasks: list[Awaitable[Any]] = []
-    server_names: list[str] = []
+    server_ids: list[str] = []
     connections: list[_HealthConnection] = []
 
-    for name, connection in manager._connections.items():
+    for server_id, connection in manager._connections.items():
         if connection.is_connected:
             tasks.append(connection.health_check(timeout=5.0))
-            server_names.append(name)
+            server_ids.append(server_id)
             connections.append(connection)
 
     if not tasks:
@@ -93,14 +94,14 @@ async def health_check_all(manager: _HealthManager) -> dict[str, Any]:
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     health_status: dict[str, bool] = {}
-    for name, connection, result in zip(server_names, connections, results, strict=True):
+    for server_id, connection, result in zip(server_ids, connections, results, strict=True):
         if isinstance(result, BaseException) or result is False:
             reason = _health_failure_reason(connection, result)
-            manager.health[name].record_failure(reason)
-            health_status[name] = False
+            manager.health[server_id].record_failure(reason)
+            health_status[server_id] = False
         else:
-            manager.health[name].record_success()
-            health_status[name] = True
+            manager.health[server_id].record_success()
+            health_status[server_id] = True
 
     return health_status
 
@@ -116,55 +117,69 @@ async def monitor_health(
             await sleep(manager._health_check_interval)
 
             tasks: list[Awaitable[Any]] = []
-            server_names: list[str] = []
+            server_ids: list[str] = []
             connections: list[_HealthConnection] = []
 
-            for name, connection in manager._connections.items():
+            for server_id, connection in manager._connections.items():
                 if connection.is_connected:
                     tasks.append(connection.health_check(timeout=5.0))
-                    server_names.append(name)
+                    server_ids.append(server_id)
                     connections.append(connection)
 
             if not tasks:
                 continue
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
+            configs = getattr(manager, "_configs", {})
 
-            for name, connection, result in zip(server_names, connections, results, strict=True):
+            for server_id, connection, result in zip(server_ids, connections, results, strict=True):
+                status = manager.health[server_id]
+                config = configs.get(server_id)
+                label = config.name if config is not None else status.name
+                project_id = (
+                    config.project_id if config is not None else getattr(status, "project_id", None)
+                )
                 if isinstance(result, BaseException) or result is False:
-                    previous_health = manager.health[name].health
+                    previous_health = status.health
                     reason = _health_failure_reason(connection, result)
-                    manager.health[name].record_failure(reason)
+                    status.record_failure(reason)
                     failure_context = {
-                        "server_name": name,
+                        "server_id": server_id,
+                        "server_name": label,
+                        "project_id": project_id,
                         "previous_health": previous_health.value,
-                        "current_health": manager.health[name].health.value,
-                        "consecutive_failures": manager.health[name].consecutive_failures,
-                        "last_error": manager.health[name].last_error,
+                        "current_health": status.health.value,
+                        "consecutive_failures": status.consecutive_failures,
+                        "last_error": status.last_error,
                     }
-                    if manager.health[name].health == HealthState.UNHEALTHY:
+                    if status.health == HealthState.UNHEALTHY:
                         if previous_health != HealthState.UNHEALTHY:
                             logger.warning(
-                                "Health check failed for %s; server is unhealthy",
-                                name,
+                                "Health check failed for %s (%s); server is unhealthy",
+                                label,
+                                project_id,
                                 extra=failure_context,
                             )
                         else:
                             logger.debug(
                                 "Health check failed for %s",
-                                name,
+                                label,
                                 extra=failure_context,
                             )
                     else:
                         logger.debug(
                             "Health check failed for %s",
-                            name,
+                            label,
                             extra=failure_context,
                         )
 
-                    if manager.health[name].health == HealthState.UNHEALTHY:
-                        logger.info("Attempting reconnection for unhealthy server: %s", name)
-                        task = asyncio.create_task(manager._reconnect(name))
+                    if status.health == HealthState.UNHEALTHY:
+                        logger.info(
+                            "Attempting reconnection for unhealthy server: %s (%s)",
+                            label,
+                            project_id,
+                        )
+                        task = asyncio.create_task(manager._reconnect(server_id))
                         manager._reconnect_tasks.add(task)
                         task.add_done_callback(
                             lambda done_task: _reconnect_done_callback(
@@ -174,7 +189,7 @@ async def monitor_health(
                             )
                         )
                 else:
-                    manager.health[name].record_success()
+                    status.record_success()
         except asyncio.CancelledError:
             break
         except Exception as exc:
@@ -182,11 +197,18 @@ async def monitor_health(
 
 
 def get_server_health(manager: Any) -> dict[str, dict[str, Any]]:
-    """Format health status for all known servers."""
-    return {
-        name: {
+    """Format health status for all known servers, keyed by server id."""
+    report: dict[str, dict[str, Any]] = {}
+    configs = getattr(manager, "_configs", {})
+    for server_id, status in manager.health.items():
+        config = configs.get(server_id)
+        entry: dict[str, Any] = {
             "state": status.state.value,
             "health": status.health.value,
+            "name": status.name,
+            "project_id": (
+                config.project_id if config is not None else getattr(status, "project_id", None)
+            ),
             "last_check": (
                 status.last_health_check.isoformat() if status.last_health_check else None
             ),
@@ -194,5 +216,8 @@ def get_server_health(manager: Any) -> dict[str, dict[str, Any]]:
             "last_error": status.last_error,
             "response_time_ms": status.response_time_ms,
         }
-        for name, status in manager.health.items()
-    }
+        missing = getattr(status, "missing_secrets", None)
+        if missing:
+            entry["missing_secrets"] = list(missing)
+        report[server_id] = entry
+    return report

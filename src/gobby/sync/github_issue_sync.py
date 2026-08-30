@@ -77,6 +77,7 @@ class GitHubIssueSyncService:
                         "page": 1,
                         "per_page": 1,
                     },
+                    project_id=str(project.id),
                 )
             except Exception as exc:
                 error = GitHubRepositoryReadinessError(
@@ -110,7 +111,7 @@ class GitHubIssueSyncService:
         if repo not in repositories:
             raise ValueError(f"Repository {repo!r} is not enabled for GitHub issue sync")
 
-        issue = issue_data or await self._fetch_issue(repo, issue_number)
+        issue = issue_data or await self._fetch_issue(repo, issue_number, project_id=project_id)
         if issue.get("pull_request"):
             return {"action": "skipped_pull_request"}
         response_number = normalize_github_issue_number(issue.get("number", issue_number))
@@ -223,6 +224,7 @@ class GitHubIssueSyncService:
                             "page": page,
                             "per_page": _GITHUB_PAGE_SIZE,
                         },
+                        project_id=project_id,
                     )
                     issues = result.get("issues", []) if isinstance(result, dict) else result
                     if not isinstance(issues, list):
@@ -316,19 +318,27 @@ class GitHubIssueSyncService:
                 )
         return stats
 
-    async def _fetch_issue(self, repo: str, issue_number: int) -> dict[str, Any]:
+    async def _fetch_issue(
+        self, repo: str, issue_number: int, *, project_id: str
+    ) -> dict[str, Any]:
         owner, repo_name = parse_github_repo(repo)
         result = await self._call(
             "get_issue",
             {"owner": owner, "repo": repo_name, "issue_number": issue_number},
+            project_id=project_id,
         )
         if not isinstance(result, dict):
             raise RuntimeError("GitHub get_issue returned an invalid payload")
         return result
 
-    async def _call(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+    async def _call(self, tool_name: str, arguments: dict[str, Any], *, project_id: str) -> Any:
+        from gobby.mcp_proxy.services.server_resolution import resolved_server_id
+
+        server_id = resolved_server_id(self.mcp_manager, "github", project_id=project_id)
+        if server_id is None:
+            raise RuntimeError(f"GitHub MCP server not found in project {project_id}")
         result = await self.mcp_manager.call_tool(
-            server_name="github", tool_name=tool_name, arguments=arguments
+            server_id, tool_name=tool_name, arguments=arguments
         )
         return parse_github_mcp_result(result, tool_name)
 

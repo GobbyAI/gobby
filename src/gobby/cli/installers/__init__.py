@@ -13,7 +13,6 @@ from .embedding import install_embedding
 from .falkor import install_falkordb
 from .git_hooks import install_git_hooks
 from .grok import install_grok, uninstall_grok
-from .mcp_config import install_default_mcp_servers
 from .postgres import install_postgres
 from .qdrant import install_qdrant
 from .qwen import install_qwen, uninstall_qwen
@@ -31,7 +30,6 @@ __all__ = [
     "install_shared_content",
     "install_cli_content",
     "install_global_hooks",
-    "install_default_mcp_servers",
     # AGY
     "install_agy",
     "uninstall_agy",

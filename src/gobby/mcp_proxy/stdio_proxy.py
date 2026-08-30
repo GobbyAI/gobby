@@ -454,33 +454,51 @@ class DaemonProxy:
     async def add_mcp_server(
         self,
         name: str,
-        transport: str,
+        transport: str | None = None,
         url: str | None = None,
         headers: dict[str, str] | None = None,
         command: str | None = None,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
         enabled: bool = True,
+        template: str | None = None,
+        values: dict[str, str] | None = None,
+        scope: str = "project",
+        description: str | None = None,
     ) -> dict[str, Any]:
         """Add a new MCP server to the daemon's configuration."""
+        payload: dict[str, Any] = {
+            "name": name,
+            "transport": transport,
+            "url": url,
+            "headers": headers,
+            "command": command,
+            "args": args,
+            "env": env,
+            "enabled": enabled,
+            "scope": scope,
+            "template": template,
+            "values": values,
+            "description": description,
+        }
+        if self._project_id:
+            payload["project_id"] = self._project_id
         return await self._request(
             "POST",
             "/api/mcp/servers",
-            json={
-                "name": name,
-                "transport": transport,
-                "url": url,
-                "headers": headers,
-                "command": command,
-                "args": args,
-                "env": env,
-                "enabled": enabled,
-            },
+            json=_strip_none(payload),
         )
 
-    async def remove_mcp_server(self, name: str) -> dict[str, Any]:
+    async def remove_mcp_server(self, name: str, scope: str = "project") -> dict[str, Any]:
         """Remove an MCP server from the daemon's configuration."""
-        return await self._request("DELETE", f"/api/mcp/servers/{name}")
+        params = {"scope": scope}
+        if self._project_id:
+            params["project_id"] = self._project_id
+        return await self._request(
+            "DELETE",
+            f"/api/mcp/servers/{name}",
+            params=params,
+        )
 
     async def import_mcp_server(
         self,

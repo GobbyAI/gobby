@@ -18,9 +18,11 @@ There are two ways to reach a tool from an MCP client:
 2. **Internal registries** — `gobby-*` servers reached through the proxy
    (`call_tool(server_name="gobby-tasks", tool_name="create_task", ...)`).
 
-External (downstream) MCP servers — `context7`, `github`, `linear`,
-`playwright`, etc. — are also reached through `call_tool`, but with their
-own non-`gobby-*` names.
+External (downstream) MCP servers are **template instances** with project or
+global scope. Bundled names such as `context7`, `github`, `linear`, and
+`playwright` are templates until instantiated. Reach an instance through
+`call_tool` with its instance name (non-`gobby-*`). See the `mcp-servers`
+skill.
 
 ## Progressive Discovery Pattern
 
@@ -71,9 +73,12 @@ the stdio proxy wrapper in `src/gobby/mcp_proxy/stdio.py`.
 
 Get current daemon status and health information. No arguments.
 
-#### `list_mcp_servers()`
+#### `list_mcp_servers(name_filter?, session_id?, scope?, project_id?)`
 
-List all configured MCP servers and their connection state. No arguments.
+List MCP **instances** visible to the caller (project first, then global)
+and their connection state. The payload also includes `templates`: the
+catalog of templates visible in that scope. `scope` is `project` or
+`global`; `project_id` selects another project.
 
 ### Tool Proxy
 
@@ -111,12 +116,16 @@ Proxy a resource read on a downstream MCP server.
 
 #### `add_mcp_server(...)`
 
-Add a new MCP server to the current project.
+Add an MCP server instance. Prefer `template` + `values` + `scope`. Manual
+transport fields still work for non-template servers.
 
 | Parameter | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
-| `name` | string | Yes | Unique server name |
-| `transport` | string | Yes | `http`, `stdio`, `websocket`, or `sse` (accepted by validation; no transport implementation yet) |
+| `name` | string | Yes | Instance name (defaults in YAML to the file stem; often the template name) |
+| `template` | string | For template instantiate | Template name |
+| `values` | object | No | Template parameter values; secret params must be `$secret:<name>` |
+| `scope` | string | No | `project` (default) or `global` |
+| `transport` | string | For manual add | `http`, `stdio`, `websocket`, or `sse` |
 | `url` | string | For http/ws/sse | Server URL |
 | `headers` | object | No | Custom HTTP headers |
 | `command` | string | For stdio | Command to run |

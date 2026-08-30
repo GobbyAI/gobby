@@ -21,14 +21,9 @@ _GDAEMON_PIN = MANAGED_BIN_VERSION_PINS["gdaemon"]
 
 def _stub_non_schema_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from gobby import sync_registry
-    from gobby.cli import install_setup_impeccable, install_setup_srt, installers
+    from gobby.cli import install_setup_impeccable, install_setup_srt
     from gobby.cli.installers import ide_config, tmux_config
 
-    monkeypatch.setattr(
-        installers,
-        "install_default_mcp_servers",
-        lambda: {"success": True, "servers_added": [], "servers_skipped": []},
-    )
     monkeypatch.setattr(
         sync_registry,
         "sync_bundled_content_to_db",
@@ -72,7 +67,9 @@ def test_run_daemon_setup_provisions_gdaemon_before_database_init(
     @contextmanager
     def database() -> Iterator[MagicMock]:
         events.append("database")
-        yield MagicMock()
+        db = MagicMock()
+        db.list_templates.return_value = []
+        yield db
 
     monkeypatch.setattr(runtime, "runtime_hub_database", database)
     _stub_non_schema_setup(monkeypatch, tmp_path)

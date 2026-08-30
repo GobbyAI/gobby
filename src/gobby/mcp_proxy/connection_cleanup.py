@@ -64,8 +64,16 @@ async def discard_connection(
     logger: logging.Logger,
     *,
     tool_schema_cache: MutableMapping[str, Any] | None = None,
-) -> None:
-    """Drop a cached connection and best-effort disconnect the old transport."""
+    expected: Any | None = None,
+) -> Any | None:
+    """Drop a cached connection and best-effort disconnect the old transport.
+
+    When ``expected`` is provided, the registry entry is popped only if it is
+    still that same object so a concurrent refresh cannot be discarded.
+    """
+    current = connections.get(name)
+    if expected is not None and current is not expected:
+        return None
     connection = clear_connection_state(
         name,
         connections,
@@ -75,6 +83,7 @@ async def discard_connection(
     )
     if connection is not None:
         await disconnect_connection(name, connection, logger)
+    return connection
 
 
 async def finalize_disconnect_all(

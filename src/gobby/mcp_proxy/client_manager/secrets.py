@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import re
 from typing import Any, Protocol
 
-from gobby.mcp_proxy.models import MCPServerConfig
+from gobby.mcp_proxy.models import MCPError, MCPServerConfig
 
 
 class _SecretResolvingManager(Protocol):
@@ -26,83 +27,63 @@ def resolve_secrets_in_config(
         from gobby.storage.secret_names import SECRET_REF_PATTERN
         from gobby.storage.secrets import SecretStore
 
-        has_refs = False
-        for values in (config.headers, config.env):
-            if values:
-                for value in values.values():
-                    if SECRET_REF_PATTERN.search(value):
-                        has_refs = True
-                        break
-        if not has_refs and config.args:
-            has_refs = any(SECRET_REF_PATTERN.search(arg) for arg in config.args)
-
-        if not has_refs:
+        texts: list[str] = []
+        if config.headers:
+            texts.extend(config.headers.values())
+        if config.env:
+            texts.extend(config.env.values())
+        if config.args:
+            texts.extend(config.args)
+        if not any(SECRET_REF_PATTERN.search(text) for text in texts):
             return config
 
         db = getattr(manager.mcp_db_manager, "db", None) if manager.mcp_db_manager else None
         if not db:
-            return config
+            # Fail closed: launching a transport with literal $secret: strings
+            # would authenticate with the reference text itself.
+            names = list(
+                dict.fromkeys(
+                    match.group(1)
+                    for text_value in texts
+                    for match in SECRET_REF_PATTERN.finditer(text_value)
+                )
+            )
+            raise MCPError(
+                f"Server '{config.name}' needs configuration: cannot resolve secret(s) "
+                f"{', '.join(names)} without a database handle",
+                missing_secrets=names,
+            )
 
         store = SecretStore(db)
+        missing: list[str] = []
 
-        def strip_unresolved_secrets(values: dict[str, str], label: str) -> dict[str, str]:
-            resolved = store.resolve_dict(values)
-            unresolved = [
-                key for key, value in resolved.items() if SECRET_REF_PATTERN.search(value)
-            ]
-            if unresolved:
-                logger.warning(
-                    "Stripping unresolved secret refs from %s %s: %s",
-                    config.name,
-                    label,
-                    ", ".join(unresolved),
-                )
-                resolved = {key: value for key, value in resolved.items() if key not in unresolved}
-            return resolved
+        def resolve_text(text: str) -> str:
+            def _replace(match: re.Match[str]) -> str:
+                name = match.group(1)
+                value = store.get(name, project_id=config.project_id)
+                if value is None:
+                    missing.append(name)
+                    return match.group(0)
+                return value
 
-        def strip_unresolved_secret_args(values: list[str]) -> list[str]:
-            resolved = [store.resolve(value) for value in values]
-            stripped: list[str] = []
-            skip_next = False
-            for index, value in enumerate(resolved):
-                if skip_next:
-                    skip_next = False
-                    continue
-                if not SECRET_REF_PATTERN.search(value):
-                    stripped.append(value)
-                    continue
-                removed = False
-                if (
-                    SECRET_REF_PATTERN.fullmatch(value)
-                    and index > 0
-                    and resolved[index - 1].startswith("-")
-                    and stripped
-                    and stripped[-1] == resolved[index - 1]
-                ):
-                    stripped.pop()
-                    removed = True
-                elif value.startswith("-") and index + 1 < len(resolved):
-                    next_value = resolved[index + 1]
-                    if SECRET_REF_PATTERN.fullmatch(next_value):
-                        skip_next = True
-                        removed = True
-                elif SECRET_REF_PATTERN.search(value):
-                    removed = True
-                if removed:
-                    logger.warning(
-                        "Stripping unresolved secret ref from %s args",
-                        config.name,
-                    )
-            return stripped
+            return SECRET_REF_PATTERN.sub(_replace, text)
 
         updates: dict[str, Any] = {}
         if config.headers:
-            updates["headers"] = strip_unresolved_secrets(config.headers, "headers")
+            updates["headers"] = {key: resolve_text(value) for key, value in config.headers.items()}
         if config.env:
-            updates["env"] = strip_unresolved_secrets(config.env, "env")
+            updates["env"] = {key: resolve_text(value) for key, value in config.env.items()}
         if config.args:
-            updates["args"] = strip_unresolved_secret_args(config.args)
+            updates["args"] = [resolve_text(value) for value in config.args]
+        if missing:
+            names = list(dict.fromkeys(missing))
+            raise MCPError(
+                f"Server '{config.name}' needs configuration: missing secret(s) {', '.join(names)}",
+                missing_secrets=names,
+            )
         return dataclasses.replace(config, **updates)
+    except MCPError:
+        raise
     except ImportError as exc:
         logger.debug("Secret resolution skipped for %s: %s", config.name, exc)
         return config

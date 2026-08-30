@@ -71,7 +71,7 @@ class GitHubSyncService:
         self.task_manager = task_manager
         self.project_id = project_id
         self.github_repo = github_repo
-        self.github = GitHubIntegration(mcp_manager)
+        self.github = GitHubIntegration(mcp_manager, project_id=project_id)
 
     def is_available(self) -> bool:
         """Check if GitHub MCP server is available.
@@ -87,10 +87,15 @@ class GitHubSyncService:
         arguments: dict[str, Any],
     ) -> Any:
         """Call GitHub through the manager and unwrap its MCP SDK result."""
+        from gobby.mcp_proxy.services.server_resolution import resolve_server
+        from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+        project_id = self.project_id or GLOBAL_PROJECT_ID
+        config = resolve_server(self.mcp_manager, "github", project_id=project_id)
+        if config is None:
+            raise GitHubSyncError(f"github server not found in project {project_id}")
         result = await self.mcp_manager.call_tool(
-            server_name="github",
-            tool_name=tool_name,
-            arguments=arguments,
+            config.id, tool_name=tool_name, arguments=arguments
         )
         return parse_github_mcp_result(result, tool_name)
 

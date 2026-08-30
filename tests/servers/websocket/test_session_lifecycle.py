@@ -75,8 +75,8 @@ async def test_idle_cleanup_unregisters_registry_state(
     queued_wake_task.done.return_value = False
     registry.register("conversation", stale_session)
     registry.active_tasks["conversation"] = MagicMock()
-    registry._queued_compactions["conversation"] = "compact"
-    registry._queued_wakes["conversation"] = "wake"
+    registry._queued_compactions["conversation"] = ("compact", None)
+    registry._queued_wakes["conversation"] = ("session", "wake")
     registry._queued_compaction_tasks["conversation"] = queued_compaction_task
     registry._queued_wake_tasks["conversation"] = queued_wake_task
 

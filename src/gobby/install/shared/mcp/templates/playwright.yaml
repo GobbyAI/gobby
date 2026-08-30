@@ -1,0 +1,7 @@
+name: playwright
+description: Playwright MCP for browser automation and inspection
+version: 1
+enabled: true
+transport: stdio
+command: npx
+args: ["-y", "@playwright/mcp@latest"]

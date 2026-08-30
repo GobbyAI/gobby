@@ -11,10 +11,10 @@ def manager_has_method(mcp_manager: Any, method_name: str) -> bool:
     return callable(getattr(mcp_manager, method_name, None))
 
 
-async def manager_is_connected(mcp_manager: Any, name: str) -> bool:
+async def manager_is_connected(mcp_manager: Any, server_id: str) -> bool:
     is_connected = getattr(mcp_manager, "is_connected", None)
     if callable(is_connected):
-        result = is_connected(name)
+        result = is_connected(server_id)
         if inspect.isawaitable(result):
             result = await result
         return bool(result)
@@ -22,16 +22,16 @@ async def manager_is_connected(mcp_manager: Any, name: str) -> bool:
         return is_connected
 
     connections = getattr(mcp_manager, "connections", None)
-    return isinstance(connections, dict) and name in connections
+    return isinstance(connections, dict) and server_id in connections
 
 
-async def disconnect_manager_server(mcp_manager: Any, name: str) -> None:
+async def disconnect_manager_server(mcp_manager: Any, server_id: str) -> None:
     if manager_has_method(mcp_manager, "disconnect_server"):
-        await mcp_manager.disconnect_server(name)
+        await mcp_manager.disconnect_server(server_id)
         return
 
     connections = getattr(mcp_manager, "connections", None)
-    connection = connections.pop(name, None) if isinstance(connections, dict) else None
+    connection = connections.pop(server_id, None) if isinstance(connections, dict) else None
     if connection is not None and getattr(connection, "is_connected", False):
         await connection.disconnect()
 

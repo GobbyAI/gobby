@@ -24,7 +24,7 @@ from gobby.utils.session_context import session_context_for_test
 pytestmark = pytest.mark.unit
 
 _SESSION_ID = "796c13d5-34bd-4b6a-b60c-b022df873ad2"
-_CONFIG_KEY = "digest.num_pairs"
+_CONFIG_KEY = "chat_history.max_message_chars"
 
 
 class _MutableRuntime(ConfigRuntime):
@@ -65,8 +65,8 @@ class _MemoryManager:
         self.db = db
 
 
-def _snapshot(revision: int, num_pairs: int) -> ConfigSnapshot:
-    config = DaemonConfig.model_validate({"digest": {"num_pairs": num_pairs}})
+def _snapshot(revision: int, max_chars: int) -> ConfigSnapshot:
+    config = DaemonConfig.model_validate({"chat_history": {"max_message_chars": max_chars}})
     return ConfigSnapshot(
         revision=revision,
         desired=config,
@@ -74,8 +74,8 @@ def _snapshot(revision: int, num_pairs: int) -> ConfigSnapshot:
         row_revisions={_CONFIG_KEY: revision},
         pending_restart_keys=frozenset(),
         failed_live_keys={},
-        desired_values={_CONFIG_KEY: num_pairs},
-        active_values={_CONFIG_KEY: num_pairs},
+        desired_values={_CONFIG_KEY: max_chars},
+        active_values={_CONFIG_KEY: max_chars},
     )
 
 
@@ -146,7 +146,7 @@ def _epoch_probe(
         second = server.resolve_runtime_config()
         assert first is not None
         assert second is not None
-        return [first.digest.num_pairs, second.digest.num_pairs]
+        return [first.chat_history.max_message_chars, second.chat_history.max_message_chars]
 
     manager = InternalRegistryManager()
     manager.add_registry(registry)
@@ -168,12 +168,12 @@ async def test_in_process_mcp_call_pins_one_active_runtime_epoch() -> None:
     assert runtime.capture_count == 1
     current = http_server.resolve_runtime_config()
     assert current is not None
-    assert current.digest.num_pairs == 17
+    assert current.chat_history.max_message_chars == 17
 
 
 @pytest.mark.asyncio
 async def test_in_process_mcp_call_pins_pre_start_fallback() -> None:
-    startup_config = DaemonConfig.model_validate({"digest": {"num_pairs": 3}})
+    startup_config = DaemonConfig.model_validate({"chat_history": {"max_message_chars": 3}})
     runtime = _MutableRuntime(_snapshot(2, 17), ready=False)
     http_server = _http_server(startup_config)
     http_server.services.config_runtime = runtime
@@ -190,7 +190,7 @@ async def test_in_process_mcp_call_pins_pre_start_fallback() -> None:
     assert runtime.capture_count == 0
     current = http_server.resolve_runtime_config()
     assert current is not None
-    assert current.digest.num_pairs == 17
+    assert current.chat_history.max_message_chars == 17
 
 
 @pytest.mark.asyncio
@@ -206,9 +206,9 @@ async def test_live_config_patch_changes_next_mcp_call(temp_db: HubDatabase) -> 
     observed: list[int] = []
     probe = InternalToolRegistry("gobby-probe")
 
-    @probe.tool(name="read_num_pairs", description="Record the digest pair budget in force.")
-    async def read_num_pairs() -> int:
-        value = runtime.snapshot.active.digest.num_pairs
+    @probe.tool(name="read_max_chars", description="Record the chat-history char budget in force.")
+    async def read_max_chars() -> int:
+        value = runtime.snapshot.active.chat_history.max_message_chars
         observed.append(value)
         return value
 
@@ -218,16 +218,16 @@ async def test_live_config_patch_changes_next_mcp_call(temp_db: HubDatabase) -> 
     proxy = _proxy(manager)
 
     with session_context_for_test(_SESSION_ID):
-        await proxy.call_tool("gobby-probe", "read_num_pairs", {})
+        await proxy.call_tool("gobby-probe", "read_max_chars", {})
         patch_result = await proxy.call_tool(
             "gobby-config",
             "patch_config_values",
             {
                 "expected_revision": 1,
-                "values": {"digest": {"num_pairs": 17}},
+                "values": {"chat_history": {"max_message_chars": 17}},
             },
         )
-        await proxy.call_tool("gobby-probe", "read_num_pairs", {})
+        await proxy.call_tool("gobby-probe", "read_max_chars", {})
 
     assert patch_result["committed"] is True
     assert patch_result["apply_status"] == "applied"

@@ -257,6 +257,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "d70abddeec801fab9845861c18610efcb0ecb7b84b2eec9d27e78ac2ae5ed34a",
         sql: include_str!("../../assets/schema/migrations/411_terminals.sql"),
     },
+    EmbeddedMigration {
+        version: 412,
+        filename: "412_mcp_templates_project_secrets.sql",
+        checksum: "f126ac50673377e92ef8a157410ed6fce1c5f386f7c1b733dca1e9f6121cf5c9",
+        sql: include_str!("../../assets/schema/migrations/412_mcp_templates_project_secrets.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

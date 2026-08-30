@@ -120,6 +120,7 @@ def protect_mcp_mapping(
             value,
             category="mcp_server",
             description=slot.description,
+            project_id=scope,
         )
         protected[key] = f"{SECRET_REF_PREFIX}{slot.name}"
     return protected
@@ -144,8 +145,8 @@ def cleanup_replaced_mcp_secrets(
             if value != f"{SECRET_REF_PREFIX}{slot.name}" or slot.name in new_references:
                 continue
             row = secret_store.db.fetchone(
-                "SELECT description FROM secrets WHERE name = %s",
-                (slot.name,),
+                "SELECT description FROM secrets WHERE name = %s AND project_id = %s",
+                (slot.name, scope),
             )
             if row is not None and row["description"] == slot.description:
-                secret_store.delete(slot.name)
+                secret_store.delete(slot.name, project_id=scope)

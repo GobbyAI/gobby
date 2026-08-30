@@ -14,6 +14,7 @@ from fastapi import Depends, HTTPException, Request
 
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
+from gobby.mcp_proxy.services.server_resolution import resolve_server
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
@@ -22,6 +23,7 @@ from gobby.mcp_proxy.wait_tools import (
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
 from gobby.servers.routes.mcp.endpoints import request_context
 from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
+from gobby.servers.routes.mcp.endpoints.request_context import request_mcp_scope
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 from gobby.utils.datetime import to_json_safe
 from gobby.utils.session_context import get_current_session_id
@@ -71,6 +73,17 @@ def _success_response_payload(result: Any, response_time_ms: float) -> dict[str,
             "result": result,
             "response_time_ms": response_time_ms,
         }
+    )
+
+
+def _http_request_scope(request: Request, server: "HTTPServer", ctx_token: Any, body: Any) -> str:
+    """Sessionless HTTP fallback is always the global project."""
+    payload = body if isinstance(body, dict) else {}
+    return request_mcp_scope(
+        request,
+        server,
+        payload,
+        session_project_id=getattr(ctx_token, "resolved_project_id", None),
     )
 
 
@@ -411,12 +424,17 @@ async def get_tool_schema(
         server_name = body.get("server_name")
         tool_name = body.get("tool_name")
 
-        if not server_name or not tool_name:
+        server_id = body.get("server_id")
+        if (not server_name and not server_id) or not tool_name:
             raise HTTPException(
                 status_code=400,
-                detail={"success": False, "error": "Required fields: server_name, tool_name"},
+                detail={
+                    "success": False,
+                    "error": "Required fields: server_name or server_id, and tool_name",
+                },
             )
-        server_name, tool_name = _normalize_schema_ref(str(server_name), str(tool_name))
+        if server_name:
+            server_name, tool_name = _normalize_schema_ref(str(server_name), str(tool_name))
 
         ctx_token = await request_context._set_context_for_request(server, body, request)
 
@@ -454,15 +472,30 @@ async def get_tool_schema(
                     detail={"success": False, "error": "MCP manager not available"},
                 )
 
-            if server_name == _PROXY_NAMESPACE or not server.mcp_manager.has_server(server_name):
-                if server.tool_proxy is None:
-                    response_time_ms = (time.perf_counter() - start_time) * 1000
-                    return {
-                        "success": False,
-                        "error": f"Unknown MCP server: '{server_name}'",
-                        "response_time_ms": response_time_ms,
-                    }
-                proxied = await server.tool_proxy.get_tool_schema(server_name, tool_name)
+            scope_project = _http_request_scope(request, server, ctx_token, body)
+            resolved = (
+                resolve_server(
+                    server.mcp_manager,
+                    server_name,
+                    server_id=str(server_id) if isinstance(server_id, str) else None,
+                    project_id=scope_project,
+                )
+                if server.mcp_manager is not None
+                else None
+            )
+            if resolved is not None:
+                server_name = resolved.name
+            elif resolved is None and server_name != _PROXY_NAMESPACE:
+                response_time_ms = (time.perf_counter() - start_time) * 1000
+                return {
+                    "success": False,
+                    "error": f"Unknown MCP server: '{server_id or server_name}'",
+                    "response_time_ms": response_time_ms,
+                }
+            if server.tool_proxy is not None:
+                proxied = await server.tool_proxy.get_tool_schema(
+                    server_name, tool_name, project_id=scope_project
+                )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 if not proxied.get("success"):
                     return {
@@ -563,15 +596,19 @@ async def call_mcp_tool(
                 detail={"success": False, "error": f"Invalid JSON: {exc.msg}"},
             ) from exc
         server_name = body.get("server_name")
+        server_id = body.get("server_id")
         tool_name = body.get("tool_name")
         arguments = body.get("arguments", {})
         raw_intent = body.get("intent")
         intent = raw_intent if isinstance(raw_intent, str) and raw_intent else None
 
-        if not server_name or not tool_name:
+        if (not server_name and not server_id) or not tool_name:
             raise HTTPException(
                 status_code=400,
-                detail={"success": False, "error": "Required fields: server_name, tool_name"},
+                detail={
+                    "success": False,
+                    "error": "Required fields: server_name or server_id, and tool_name",
+                },
             )
 
         incompatible_wrapper_result = _incompatible_stdio_wrapper_wait_result(
@@ -590,6 +627,27 @@ async def call_mcp_tool(
         # InternalToolRegistry.call strips unknown kwargs via signature inspection.
         try:
             timeout = _mcp_call_timeout(server)
+            scope_project = _http_request_scope(request, server, ctx_token, body)
+            if server.mcp_manager is not None:
+                resolved = resolve_server(
+                    server.mcp_manager,
+                    str(server_name) if server_name else None,
+                    server_id=str(server_id) if isinstance(server_id, str) else None,
+                    project_id=scope_project,
+                )
+                if resolved is None and not (
+                    server._internal_manager
+                    and isinstance(server_name, str)
+                    and server._internal_manager.is_internal(server_name)
+                ):
+                    response_time_ms = (time.perf_counter() - start_time) * 1000
+                    return {
+                        "success": False,
+                        "error": f"Unknown MCP server: '{server_id or server_name}'",
+                        "response_time_ms": response_time_ms,
+                    }
+                if resolved is not None:
+                    server_name = resolved.name
             # Route through ToolProxyService for consistent error enrichment
             if server.tool_proxy:
                 result = await server.tool_proxy.call_tool(
@@ -600,6 +658,7 @@ async def call_mcp_tool(
                     timeout=timeout,
                     wrapper_originated=True,
                     intent=intent,
+                    project_id=scope_project,
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
@@ -697,6 +756,7 @@ async def mcp_proxy(
         ctx_token = await request_context._set_context_for_request(server, arguments, request)
         try:
             timeout = _mcp_call_timeout(server)
+            scope_project = _http_request_scope(request, server, ctx_token, arguments)
             # Route through ToolProxyService for consistent error enrichment
             if server.tool_proxy:
                 result = await server.tool_proxy.call_tool(
@@ -707,6 +767,7 @@ async def mcp_proxy(
                     timeout=timeout,
                     wrapper_originated=True,
                     intent=intent,
+                    project_id=scope_project,
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)

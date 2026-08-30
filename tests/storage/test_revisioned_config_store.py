@@ -38,7 +38,7 @@ from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase, Row, Transaction
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.mcp_secrets import MCPSecretSlot, cleanup_replaced_mcp_secrets
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.schema_contract import apply_schema
 from gobby.storage.secrets import SecretStore
 
@@ -649,13 +649,14 @@ def test_mcp_cleanup_preserves_secret_held_by_config(
     revision_db: HubDatabase,
     secret_store: SecretStore,
 ) -> None:
-    slot = MCPSecretSlot("global", "shared", "server", "env", "TOKEN")
+    slot = MCPSecretSlot("global", GLOBAL_PROJECT_ID, "server", "env", "TOKEN")
     reference = f"$secret:{slot.name}"
     secret_store.set(
         name=slot.name,
         plaintext_value="shared-secret",
         category="mcp_server",
         description=slot.description,
+        project_id=GLOBAL_PROJECT_ID,
     )
     ConfigMutations(revision_db, secret_store=secret_store).patch(
         expected_revision=0,
@@ -674,6 +675,44 @@ def test_mcp_cleanup_preserves_secret_held_by_config(
     )
 
     assert secret_store.get(slot.name) == "shared-secret"
+
+
+def test_mcp_cleanup_ignores_same_named_secret_in_other_project(
+    revision_db: HubDatabase,
+    secret_store: SecretStore,
+) -> None:
+    owner = LocalProjectManager(revision_db).create(name=f"owner-{uuid.uuid4().hex[:8]}")
+    other = LocalProjectManager(revision_db).create(name=f"other-{uuid.uuid4().hex[:8]}")
+    slot = MCPSecretSlot("database", owner.id, "server", "env", "TOKEN")
+    reference = f"$secret:{slot.name}"
+    secret_store.set(
+        name=slot.name,
+        plaintext_value="owner-secret",
+        category="mcp_server",
+        description=slot.description,
+        project_id=owner.id,
+    )
+    secret_store.set(
+        name=slot.name,
+        plaintext_value="other-secret",
+        category="mcp_server",
+        description=slot.description,
+        project_id=other.id,
+    )
+
+    cleanup_replaced_mcp_secrets(
+        secret_store,
+        persistence=slot.persistence,
+        scope=owner.id,
+        server_name=slot.server_name,
+        old_env={slot.key: reference},
+        old_headers=None,
+        new_env={},
+        new_headers=None,
+    )
+
+    assert secret_store.get(slot.name, project_id=owner.id) is None
+    assert secret_store.get(slot.name, project_id=other.id) == "other-secret"
 
 
 def test_namespace_replacement_preserves_managed_embedding_keys(

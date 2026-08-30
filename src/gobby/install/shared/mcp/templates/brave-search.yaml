@@ -1,0 +1,13 @@
+name: brave-search
+description: Brave Search API for web search, local search, and news
+version: 1
+enabled: true
+transport: stdio
+command: npx
+args: ["-y", "@brave/brave-search-mcp-server"]
+params:
+  - name: api_key
+    env: BRAVE_API_KEY
+    required: true
+    secret: true
+    default_secret: brave_api_key

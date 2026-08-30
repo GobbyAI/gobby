@@ -37,6 +37,14 @@ class LinearProjectOpsMixin:
     linear: LinearIntegration
     _project_manager: LocalProjectManager | None
 
+    def _linear_server_id(self) -> str:
+        from gobby.mcp_proxy.services.server_resolution import resolved_server_id
+
+        server_id = resolved_server_id(self.mcp_manager, "linear", project_id=self.project_id)
+        if server_id is None:
+            raise LinearSyncError("Linear MCP server not found")
+        return server_id
+
     @property
     def project_manager(self) -> LocalProjectManager:
         """Lazy-init project manager from task_manager's db if not provided."""
@@ -144,7 +152,7 @@ class LinearProjectOpsMixin:
             if not self._linear_mcp_has_tool("list_teams"):
                 raise LinearSyncError("Linear MCP server does not expose list_teams.")
             result = await self.mcp_manager.call_tool(
-                server_name="linear",
+                self._linear_server_id(),
                 tool_name="list_teams",
                 arguments={},
             )
@@ -165,7 +173,7 @@ class LinearProjectOpsMixin:
             if not self._linear_mcp_has_tool("list_projects"):
                 raise LinearSyncError("Linear MCP server does not expose list_projects.")
             result = await self.mcp_manager.call_tool(
-                server_name="linear",
+                self._linear_server_id(),
                 tool_name="list_projects",
                 arguments={"teamId": team_id},
             )
@@ -200,7 +208,7 @@ class LinearProjectOpsMixin:
             )
             try:
                 result = await self.mcp_manager.call_tool(
-                    server_name="linear",
+                    self._linear_server_id(),
                     tool_name="create_project",
                     arguments={"teamId": team_id, "name": project_name},
                 )

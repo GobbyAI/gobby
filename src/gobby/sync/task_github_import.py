@@ -112,7 +112,7 @@ class GitHubIssueImporter:
                     "error": "Could not determine project ID. Run from within a gobby project.",
                 }
 
-            issues = await self._fetch_github_issues_mcp(owner, repo, limit)
+            issues = await self._fetch_github_issues_mcp(owner, repo, limit, project_id=project_id)
             if issues is None:
                 issues = await asyncio.to_thread(
                     self._fetch_github_issues_cli, owner, repo, repo_url, limit
@@ -281,9 +281,13 @@ class GitHubIssueImporter:
         return imported, imported_count
 
     async def _fetch_github_issues_mcp(
-        self, owner: str, repo: str, limit: int
+        self, owner: str, repo: str, limit: int, *, project_id: str
     ) -> list[dict[str, Any]] | None:
         """Fetch issues using GitHub MCP server. Returns None if unavailable."""
+        # Guard before the availability try-block: a missing scope is a caller
+        # bug and must not degrade into the unavailable/CLI-fallback path.
+        if not (isinstance(project_id, str) and project_id.strip()):
+            raise ValueError("GitHub issue import requires an explicit project_id")
         try:
             from gobby.app_context import get_app_context
             from gobby.integrations.github import GitHubIntegration
@@ -291,10 +295,15 @@ class GitHubIssueImporter:
             ctx = get_app_context()
             if not ctx or not ctx.mcp_manager:
                 return None
-            gh = GitHubIntegration(ctx.mcp_manager)
+            from gobby.mcp_proxy.services.server_resolution import resolved_server_id
+
+            gh = GitHubIntegration(ctx.mcp_manager, project_id=project_id)
             if not gh.is_available():
                 return None
-            session = await ctx.mcp_manager.get_client_session("github")
+            server_id = resolved_server_id(ctx.mcp_manager, "github", project_id=project_id)
+            if server_id is None:
+                return None
+            session = await ctx.mcp_manager.get_client_session(server_id)
             result = await session.call_tool(
                 "list_issues",
                 {

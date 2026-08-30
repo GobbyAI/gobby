@@ -383,6 +383,7 @@ class ConfigStore:
         *,
         category: str,
         description: str | None,
+        project_id: str | None = None,
     ) -> SecretInfo:
         """Mutate a generic secret under embedding-switch admission control."""
         mutations = self._bind_secret_store(secret_store)
@@ -418,7 +419,11 @@ class ConfigStore:
                     expected_revision=snapshot.revision,
                 )
                 info = next(
-                    (item for item in secret_store.list() if item.name == normalized_name),
+                    (
+                        item
+                        for item in secret_store.list(project_id=project_id)
+                        if item.name == normalized_name
+                    ),
                     None,
                 )
                 if info is None:
@@ -444,18 +449,27 @@ class ConfigStore:
                 plaintext_value=plaintext_value,
                 category=category,
                 description=description,
+                project_id=project_id,
             )
 
-    def delete_named_secret(self, secret_store: SecretStore, name: str) -> bool:
+    def delete_named_secret(
+        self,
+        secret_store: SecretStore,
+        name: str,
+        *,
+        project_id: str | None = None,
+    ) -> bool:
         """Delete a generic secret under embedding-switch admission control."""
         self._bind_secret_store(secret_store)
         normalized_name = normalize_secret_name(name)
         with embedding_mutation_context(self.db) as transaction:
             if normalized_name == EMBEDDING_API_KEY_SECRET_NAME:
                 self._assert_embedding_mutation_allowed(AI_EMBEDDING_CONFIG_KEY_SET, transaction)
-            if normalized_name in secret_store.find_persisted_secret_references():
+            if normalized_name in secret_store.find_persisted_secret_references(
+                project_id=project_id
+            ):
                 return False
-            return bool(secret_store.delete(normalized_name))
+            return bool(secret_store.delete(normalized_name, project_id=project_id))
 
     @staticmethod
     def _validate_internal_lifecycle_key(key: str) -> None:

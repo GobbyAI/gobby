@@ -3,17 +3,13 @@
 import json
 import logging
 import uuid
-from typing import Any, Protocol, cast
+from typing import Any
 
 from gobby.storage.embedding_generation_state import EmbeddingGenerationState
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.mcp_models import MCPServer, Tool
+from gobby.storage.mcp_models import Tool
 
 logger = logging.getLogger(__name__)
-
-
-class _ServerLookup(Protocol):
-    def get_server(self, name: str, project_id: str) -> MCPServer | None: ...
 
 
 def _normalized_tool_entries(tools: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
@@ -46,23 +42,11 @@ class MCPToolStorageMixin:
 
     db: HubDatabase
 
-    def cache_tools(self, server_name: str, tools: list[dict[str, Any]], project_id: str) -> int:
-        """
-        Cache tools for a server.
-
-        Replaces existing tools for the server.
-
-        Args:
-            server_name: Server name
-            tools: List of tool definitions with name, description, and inputSchema (or args)
-            project_id: Required project ID
-
-        Returns:
-            Number of tools cached
-        """
-        server = cast(_ServerLookup, self).get_server(server_name, project_id=project_id)
-        if not server:
-            logger.warning("Server not found: %s", server_name)
+    def cache_tools(self, server_id: str, tools: list[dict[str, Any]]) -> int:
+        """Replace cached tools for a server, keyed by `tools.mcp_server_id`."""
+        exists = self.db.fetchone("SELECT id FROM mcp_servers WHERE id = %s", (server_id,))
+        if not exists:
+            logger.warning("Server not found: %s", server_id)
             return 0
         entries = _normalized_tool_entries(tools)
 
@@ -70,9 +54,9 @@ class MCPToolStorageMixin:
         with self.db.transaction() as conn:
             stale_rows = conn.execute(
                 "SELECT id FROM tools WHERE mcp_server_id = %s",
-                (server.id,),
+                (server_id,),
             ).fetchall()
-            conn.execute("DELETE FROM tools WHERE mcp_server_id = %s", (server.id,))
+            conn.execute("DELETE FROM tools WHERE mcp_server_id = %s", (server_id,))
             for stale_row in stale_rows:
                 generation_state.append_change(
                     "tool", str(stale_row["id"]), is_tombstone=True, transaction=conn
@@ -87,7 +71,7 @@ class MCPToolStorageMixin:
                     """,
                     (
                         tool_id,
-                        server.id,
+                        server_id,
                         tool_name,
                         tool.get("description"),
                         json.dumps(input_schema) if input_schema is not None else None,
@@ -97,20 +81,14 @@ class MCPToolStorageMixin:
 
         return len(entries)
 
-    def get_cached_tools(self, server_name: str, project_id: str) -> list[Tool]:
-        """
-        Get cached tools for a server.
-
-        Args:
-            server_name: Server name
-            project_id: Required project ID
-        """
-        server = cast(_ServerLookup, self).get_server(server_name, project_id=project_id)
-        if not server:
+    def get_cached_tools(self, server_id: str) -> list[Tool]:
+        """Return cached tools for a server id."""
+        exists = self.db.fetchone("SELECT id FROM mcp_servers WHERE id = %s", (server_id,))
+        if not exists:
             return []
 
         rows = self.db.fetchall(
             "SELECT * FROM tools WHERE mcp_server_id = %s ORDER BY name",
-            (server.id,),
+            (server_id,),
         )
         return [Tool.from_row(row) for row in rows]

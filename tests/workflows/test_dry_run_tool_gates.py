@@ -15,6 +15,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import yaml
 
+from gobby.mcp_proxy.manager import MCPClientManager, MCPServerConfig
+from gobby.mcp_proxy.tools.workflows import workflow_mcp_inventory
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
     AgentStepWorkflowBody,
@@ -272,3 +274,45 @@ class TestBundledTemplateDriftCanary:
         check_agent_tool_gates(agent, result)
         errors = [i for i in result.items if i.level == "error"]
         assert not errors, [i.message for i in errors]
+
+
+@pytest.mark.asyncio
+async def test_workflow_inventory_is_scoped_to_workflow_project() -> None:
+    from uuid import uuid4
+
+    project_a = str(uuid4())
+    project_b = str(uuid4())
+    config_a = MCPServerConfig(
+        name="github",
+        project_id=project_a,
+        transport="http",
+        url="http://a.example",
+    )
+    config_b = MCPServerConfig(
+        name="github",
+        project_id=project_b,
+        transport="http",
+        url="http://b.example",
+    )
+    manager = MCPClientManager(server_configs=[config_a, config_b])
+    manager._tool_schema_cache[config_a.id] = [{"name": "create_issue_a"}]
+    manager._tool_schema_cache[config_b.id] = [{"name": "create_issue_b"}]
+
+    inventory_a = workflow_mcp_inventory(
+        None,
+        lambda: manager,
+        lambda: project_a,
+    )
+    inventory_b = workflow_mcp_inventory(
+        None,
+        lambda: manager,
+        lambda: project_b,
+    )
+    assert inventory_a is not None
+    assert inventory_b is not None
+    assert inventory_a.get_available_servers() == ["github"]
+    assert inventory_b.get_available_servers() == ["github"]
+    tools_a = await inventory_a.list_tools()
+    tools_b = await inventory_b.list_tools()
+    assert tools_a == {"github": [{"name": "create_issue_a"}]}
+    assert tools_b == {"github": [{"name": "create_issue_b"}]}

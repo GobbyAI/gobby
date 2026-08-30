@@ -1,0 +1,31 @@
+name: openapi
+description: MCP tools generated from an OpenAPI 3.x specification (AWS Labs openapi-mcp-server)
+version: 1
+enabled: true
+transport: stdio
+command: uvx
+args: ["awslabs.openapi-mcp-server@1.1.5", "--log-level", "ERROR"]
+connect_timeout: 120
+env: {}
+params:
+  - {name: api_name, env: API_NAME, required: true, description: Short name used in tool descriptions}
+  - {name: api_base_url, env: API_BASE_URL, required: true}
+  - {name: spec_url, env: API_SPEC_URL}
+  - {name: spec_path, env: API_SPEC_PATH, description: Absolute path; the daemon's cwd is not the project}
+  - {name: auth_type, env: AUTH_TYPE, default: "none", choices: ["none", bearer, api_key, basic]}
+  - {name: auth_token, env: AUTH_TOKEN, secret: true}
+  - {name: auth_api_key, env: AUTH_API_KEY, secret: true}
+  - {name: auth_api_key_name, env: AUTH_API_KEY_NAME, default: api_key}
+  - {name: auth_api_key_in, env: AUTH_API_KEY_IN, default: header, choices: [header, query, cookie]}
+  - {name: auth_username, env: AUTH_USERNAME}
+  - {name: auth_password, env: AUTH_PASSWORD, secret: true}
+  - {name: include_tags, env: INCLUDE_TAGS}
+  - {name: exclude_tags, env: EXCLUDE_TAGS}
+  - {name: allow_insecure_http, env: ALLOW_INSECURE_HTTP, choices: ["true", "false"]}
+  - {name: allow_private_networks, env: ALLOW_PRIVATE_NETWORKS, choices: ["true", "false"]}
+require_one_of:
+  - [spec_url, spec_path]
+require_when:
+  - {param: auth_type, equals: bearer, requires: [auth_token]}
+  - {param: auth_type, equals: api_key, requires: [auth_api_key]}
+  - {param: auth_type, equals: basic, requires: [auth_username, auth_password]}

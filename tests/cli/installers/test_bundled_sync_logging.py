@@ -17,6 +17,7 @@ SYNC_TARGETS = (
     "gobby.workflows.sync_variables.sync_bundled_variables",
     "gobby.storage.build_profiles.sync_bundled_build_profiles",
     "gobby.agents.detection.registry.sync_bundled_detection_manifests",
+    "gobby.mcp_proxy.sync_templates.sync_bundled_mcp_templates",
 )
 
 

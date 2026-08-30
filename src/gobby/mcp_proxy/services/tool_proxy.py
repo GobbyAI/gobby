@@ -250,9 +250,14 @@ class ToolProxyService:
         self,
         server_name: str,
         session_id: str | None = None,
+        *,
+        project_id: str | None = None,
+        scope: str | None = None,
     ) -> dict[str, Any]:
         """List tools for a specific server with progressive discovery format."""
-        return await list_tools_impl(self, server_name, session_id)
+        return await list_tools_impl(
+            self, server_name, session_id, project_id=project_id, scope=scope
+        )
 
     async def call_tool(
         self,
@@ -265,6 +270,8 @@ class ToolProxyService:
         timeout: float | None = None,
         wrapper_originated: bool = False,
         intent: str | None = None,
+        project_id: str | None = None,
+        scope: str | None = None,
     ) -> Any:
         """Execute a tool with optional pre-validation."""
         operation_context = (
@@ -284,36 +291,60 @@ class ToolProxyService:
                 timeout,
                 wrapper_originated,
                 intent,
+                project_id=project_id,
+                scope=scope,
             )
 
-    async def read_resource(self, server_name: str, uri: str) -> Any:
+    async def read_resource(
+        self,
+        server_name: str,
+        uri: str,
+        *,
+        project_id: str | None = None,
+        scope: str | None = None,
+    ) -> Any:
         """Read a resource."""
-        return await read_resource_impl(self, server_name, uri)
+        return await read_resource_impl(self, server_name, uri, project_id=project_id, scope=scope)
 
     async def get_tool_schema(
         self,
         server_name: str,
         tool_name: str,
+        *,
+        project_id: str | None = None,
+        scope: str | None = None,
     ) -> dict[str, Any]:
         """Get full schema for a specific tool."""
-        return await get_tool_schema_impl(self, server_name, tool_name)
+        return await get_tool_schema_impl(
+            self, server_name, tool_name, project_id=project_id, scope=scope
+        )
 
-    def find_tool_server(self, tool_name: str) -> str | None:
+    def find_tool_server(self, tool_name: str, *, project_id: str | None = None) -> str | None:
         """Find which server owns a tool by searching all available servers."""
-        return find_tool_server_impl(self, tool_name)
+        return find_tool_server_impl(self, tool_name, project_id=project_id)
 
-    async def list_servers(self, name_filter: str | None = None) -> dict[str, Any]:
+    async def list_servers(
+        self,
+        name_filter: str | None = None,
+        *,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
         """List all available MCP servers (internal + external)."""
-        return await list_servers_impl(self, name_filter)
+        return await list_servers_impl(self, name_filter, project_id=project_id)
 
     async def call_tool_by_name(
         self,
         tool_name: str,
         arguments: dict[str, Any] | None = None,
         session_id: str | None = None,
+        *,
+        project_id: str | None = None,
+        scope: str | None = None,
     ) -> Any:
         """Call a tool by name, automatically resolving the server."""
-        return await call_tool_by_name_impl(self, tool_name, arguments, session_id)
+        return await call_tool_by_name_impl(
+            self, tool_name, arguments, session_id, project_id=project_id, scope=scope
+        )
 
 
 __all__ = ["ToolProxyService", "safe_truncate"]

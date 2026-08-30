@@ -5,12 +5,18 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 
-def compact_mcp_server_list(result: dict[str, Any]) -> dict[str, Any]:
+
+def compact_mcp_server_list(
+    result: dict[str, Any],
+    *,
+    include_ids: bool = False,
+) -> dict[str, Any]:
     """Compact server details for MCP tool output.
 
-    Connected servers are represented by name. Servers that need attention retain
-    enough status detail for diagnosis.
+    Each row carries ``name``, ``scope``, ``template``, ``state``, ``transport``,
+    and ``enabled``. ``id`` is included only when ``include_ids`` is true.
     """
     if result.get("success") is False:
         return result
@@ -19,12 +25,12 @@ def compact_mcp_server_list(result: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(servers, list):
         return result
 
-    server_names: list[str] = []
+    compact_servers: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
 
     for server in servers:
         if isinstance(server, str):
-            server_names.append(server)
+            compact_servers.append({"name": server})
             continue
         if not isinstance(server, Mapping):
             continue
@@ -33,16 +39,35 @@ def compact_mcp_server_list(result: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(name, str) or not name:
             continue
 
-        server_names.append(name)
         state_value = server.get("state", "unknown")
         state = state_value if isinstance(state_value, str) else "unknown"
         enabled = server.get("enabled", True)
+        transport = server.get("transport")
+        row: dict[str, Any] = {
+            "name": name,
+            "state": state,
+            "enabled": enabled is not False,
+        }
+        if isinstance(transport, str) and transport:
+            row["transport"] = transport
+        scope = server.get("scope")
+        if isinstance(scope, str) and scope:
+            row["scope"] = scope
+        elif server.get("project_id") == GLOBAL_PROJECT_ID:
+            row["scope"] = "global"
+        template = server.get("template")
+        if isinstance(template, str) and template:
+            row["template"] = template
+        if include_ids:
+            server_id = server.get("id")
+            if isinstance(server_id, str) and server_id:
+                row["id"] = server_id
+        compact_servers.append(row)
 
         if state == "connected" and enabled is not False:
             continue
 
         issue: dict[str, Any] = {"name": name, "state": state}
-        transport = server.get("transport")
         if isinstance(transport, str) and transport:
             issue["transport"] = transport
         if enabled is False:
@@ -52,7 +77,7 @@ def compact_mcp_server_list(result: dict[str, Any]) -> dict[str, Any]:
     compact: dict[str, Any] = {}
     if "success" in result:
         compact["success"] = result["success"]
-    compact["servers"] = server_names
+    compact["servers"] = compact_servers
     if "total" in result:
         compact["total"] = result["total"]
     if "connected" in result:

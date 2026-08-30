@@ -10,8 +10,9 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request
 
+from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.servers.routes.dependencies import get_server
 
 if TYPE_CHECKING:
@@ -177,19 +178,17 @@ async def refresh_mcp_tools(
 
     try:
         body = await request.json()
-        cwd = body.get("cwd")
+        if not isinstance(body, dict):
+            body = {}
         force = body.get("force", False)
         server_filter = body.get("server")
+        server_id_filter = body.get("server_id")
 
-        # Resolve project_id from cwd
-        try:
-            project_id = server.resolve_project_id(None, cwd)
-        except ValueError as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "response_time_ms": (time.perf_counter() - start_time) * 1000,
-            }
+        from gobby.mcp_proxy.services.server_resolution import resolve_server
+        from gobby.servers.routes.mcp.endpoints.request_context import request_mcp_scope
+        from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+        project_id = request_mcp_scope(request, server, body)
 
         # Need schema hash manager and semantic search
         if not server._mcp_db_manager:
@@ -218,28 +217,51 @@ async def refresh_mcp_tools(
             "by_server": {},
         }
 
-        # Collect servers to process
-        servers_to_process: list[str] = []
+        work: list[tuple[str, MCPServerConfig | None]] = []
 
-        # Internal servers
-        if server._internal_manager:
+        if server._internal_manager and server_id_filter is None:
             for registry in server._internal_manager.get_all_registries():
                 if server_filter is None or registry.name == server_filter:
-                    servers_to_process.append(registry.name)
+                    work.append((registry.name, None))
 
-        # External MCP servers
         if server.mcp_manager:
             for config in server.mcp_manager.server_configs:
-                if config.enabled:
-                    if server_filter is None or config.name == server_filter:
-                        servers_to_process.append(config.name)
+                if not getattr(config, "enabled", True):
+                    continue
+                name = getattr(config, "name", None)
+                if not isinstance(name, str):
+                    continue
+                config_id = getattr(config, "id", None)
+                if isinstance(config_id, str) and config_id:
+                    resolved = resolve_server(
+                        server.mcp_manager,
+                        name,
+                        server_id=str(server_id_filter) if server_id_filter else None,
+                        project_id=project_id,
+                    )
+                    if resolved is None or resolved.id != config.id:
+                        continue
+                elif server_id_filter:
+                    continue
+                if server_filter is not None and name != server_filter:
+                    continue
+                work.append((name, config))
 
-        # Process each server
-        for server_name in servers_to_process:
+        for server_name, instance in work:
             try:
                 tools: list[dict[str, Any]] = []
+                hash_project = str(instance.project_id) if instance is not None else project_id
+                stats_key = (
+                    instance.id
+                    if instance is not None and isinstance(instance.id, str)
+                    else server_name
+                )
+                scope_label = (
+                    "global"
+                    if instance is not None and str(instance.project_id) == GLOBAL_PROJECT_ID
+                    else "project"
+                )
 
-                # Get tools from internal or external server
                 if server._internal_manager and server._internal_manager.is_internal(server_name):
                     internal_registry = server._internal_manager.get_registry(server_name)
                     if internal_registry:
@@ -252,26 +274,61 @@ async def refresh_mcp_tools(
                                     "inputSchema": internal_registry.get_schema(tool_name),
                                 }
                             )
-                elif server.mcp_manager:
+                elif server.mcp_manager and instance is not None:
                     try:
-                        session = await server.mcp_manager.ensure_connected(server_name)
-                        tools_result = await session.list_tools()
-                        for mcp_tool in tools_result.tools:
-                            tools.append(
-                                {
-                                    "name": mcp_tool.name,
-                                    "description": mcp_tool.description,
-                                    "inputSchema": mcp_tool.input_schema,
-                                }
+                        refresh = getattr(server.mcp_manager, "refresh_server", None)
+                        if callable(refresh):
+                            refreshed = refresh(instance.id)
+                            if asyncio.iscoroutine(refreshed):
+                                await refreshed
+                        loaded = server.mcp_manager.get_server_config(instance.id)
+                        if loaded is None:
+                            loaded = instance
+                        cached: list[Any] = []
+                        db = server._mcp_db_manager
+                        if db is not None and hasattr(db, "get_cached_tools"):
+                            cached = list(db.get_cached_tools(instance.id) or [])
+                        if cached:
+                            for cached_tool in cached:
+                                tools.append(
+                                    {
+                                        "name": cached_tool.name,
+                                        "description": getattr(cached_tool, "description", None),
+                                        "inputSchema": getattr(cached_tool, "input_schema", None),
+                                    }
+                                )
+                        elif loaded.tools:
+                            for cached_tool in loaded.tools:
+                                if isinstance(cached_tool, dict):
+                                    tools.append(
+                                        {
+                                            "name": cached_tool.get("name"),
+                                            "description": cached_tool.get("description")
+                                            or cached_tool.get("brief"),
+                                            "inputSchema": cached_tool.get("inputSchema"),
+                                        }
+                                    )
+                        if not tools:
+                            connect_id = (
+                                instance.id if isinstance(instance.id, str) else server_name
                             )
-                        await asyncio.to_thread(
-                            server.mcp_manager.cache_discovered_tools,
-                            server_name,
-                            tools,
-                        )
+                            session = await server.mcp_manager.ensure_connected(connect_id)
+                            tools_result = await session.list_tools()
+                            for mcp_tool in tools_result.tools:
+                                tools.append(
+                                    {
+                                        "name": mcp_tool.name,
+                                        "description": mcp_tool.description,
+                                        "inputSchema": mcp_tool.input_schema,
+                                    }
+                                )
                     except Exception as e:
-                        logger.warning("Failed to connect to %s: %s", server_name, e)
-                        stats["by_server"][server_name] = {"error": str(e)}
+                        logger.warning("Failed to refresh %s: %s", server_name, e)
+                        stats["by_server"][stats_key] = {
+                            "error": str(e),
+                            "name": server_name,
+                            "scope": scope_label,
+                        }
                         continue
 
                 # Check for schema changes
@@ -285,11 +342,11 @@ async def refresh_mcp_tools(
                 else:
                     changes = schema_hash_manager.check_tools_for_changes(
                         server_name=server_name,
-                        project_id=project_id,
+                        project_id=hash_project,
                         tools=tools,
                     )
 
-                server_stats = {
+                server_stats: dict[str, Any] = {
                     "new": len(changes["new"]),
                     "changed": len(changes["changed"]),
                     "unchanged": len(changes["unchanged"]),
@@ -310,7 +367,7 @@ async def refresh_mcp_tools(
                         schema_hash_manager.store_hash(
                             server_name=server_name,
                             tool_name=tool_name,
-                            project_id=project_id,
+                            project_id=hash_project,
                             schema_hash=schema_hash,
                         )
                         tools_to_embed.append(tool)
@@ -319,14 +376,14 @@ async def refresh_mcp_tools(
                         schema_hash_manager.update_verification_time(
                             server_name=server_name,
                             tool_name=tool_name,
-                            project_id=project_id,
+                            project_id=hash_project,
                         )
 
                 # Clean up stale hashes
                 valid_tool_names = [t["name"] for t in tools]
                 removed = schema_hash_manager.cleanup_stale_hashes(
                     server_name=server_name,
-                    project_id=project_id,
+                    project_id=hash_project,
                     valid_tool_names=valid_tool_names,
                 )
                 server_stats["removed"] = removed
@@ -334,8 +391,15 @@ async def refresh_mcp_tools(
                 # Generate embeddings for new/changed tools
                 if semantic_search and tools_to_embed:
                     # Look up DB-assigned tool IDs if available, else use synthetic IDs
-                    cached_tools = server._mcp_db_manager.get_cached_tools(
-                        server_name, project_id=project_id
+                    stored = None
+                    if instance is not None:
+                        stored = type("Row", (), {"id": instance.id})()
+                    else:
+                        stored = server._mcp_db_manager.get_server(
+                            server_name, project_id=hash_project
+                        )
+                    cached_tools = (
+                        server._mcp_db_manager.get_cached_tools(stored.id) if stored else []
                     )
                     tool_id_map = {t.name: t.id for t in cached_tools}
 
@@ -343,7 +407,6 @@ async def refresh_mcp_tools(
                         tool_name = tool["name"]
                         tool_id = tool_id_map.get(tool_name)
                         if not tool_id:
-                            # Deterministic UUID for internal tools not in DB
                             import uuid
 
                             tool_id = str(
@@ -356,13 +419,16 @@ async def refresh_mcp_tools(
                                 description=tool.get("description"),
                                 input_schema=tool.get("inputSchema"),
                                 server_name=server_name,
-                                project_id=project_id,
+                                project_id=hash_project,
+                                server_id=instance.id if instance is not None else None,
                             )
                             server_stats["embeddings"] += 1
                         except Exception as e:
                             logger.warning("Failed to embed %s/%s: %s", server_name, tool_name, e)
 
-                stats["by_server"][server_name] = server_stats
+                server_stats["name"] = server_name
+                server_stats["scope"] = scope_label
+                stats["by_server"][stats_key] = server_stats
                 stats["servers_processed"] += 1
                 stats["tools_new"] += server_stats["new"]
                 stats["tools_changed"] += server_stats["changed"]
@@ -382,6 +448,8 @@ async def refresh_mcp_tools(
             "response_time_ms": response_time_ms,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Refresh tools error: %s", e)
         response_time_ms = (time.perf_counter() - start_time) * 1000
