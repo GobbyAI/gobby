@@ -105,7 +105,7 @@ ghook --version
 | `--diagnose` | introspection | Prints a JSON snapshot of what *would* happen. No network, no envelope write. |
 | `--version` | metadata | Prints version and writes `~/.gobby/bin/.ghook-runtime.json` for the daemon. |
 | `--cli` | required for dispatch/diagnose | Host CLI name: `claude`, `codex`, `qwen`, `droid`, `grok`, `agy`. Case-insensitive. |
-| `--type` | required for dispatch/diagnose | Hook type. CLI-specific (e.g. `session-start` for Claude, `SessionStart` for Codex/Qwen/Agy, `PreToolUse`, `PostToolUse`, `Stop`, `pre-compact`, `session-end`). |
+| `--type` | required for dispatch/diagnose | Hook type. CLI-specific (e.g. `session-start` for Claude, `SessionStart` for Codex/Qwen, `PreInvocation`/`PreToolUse` for AGY, `PostToolUse`, `Stop`, `pre-compact`, `session-end`). |
 | `--detach` | dispatch | After enqueue and project-root walk-up, call `setsid(2)` to escape the host CLI's process group before the POST. Useful for hooks where the host CLI tears down its session immediately. |
 
 ### Exit Codes
@@ -181,11 +181,7 @@ Most users get this configured automatically by the Gobby installer. To wire it 
 
 Claude Code uses lowercase-hyphenated names internally for some hooks (`session-start`, `pre-compact`, `session-end`) and PascalCase for others (`PreToolUse`, `PostToolUse`). ghook treats `--type` as an opaque string, so pass the exact identifier the daemon expects for that CLI.
 
-Lifecycle hook criticality (`session-start`, `session-end`, `pre-compact`) comes from ghook's per-CLI registry. Tool-use hooks are non-critical — the envelope still spools, but a transient daemon outage won't block your tool call.
-Codex and Qwen `Stop` fail closed when the daemon is unavailable. Qwen must not
-bypass Gobby's `turn_end` gates merely because the daemon cannot evaluate them;
-the Qwen session can therefore remain active during an outage until the daemon
-recovers or hooks are disabled. Claude's existing fail-open behavior is unchanged.
+Lifecycle hook criticality (`session-start`, `session-end`, `pre-compact`) comes from ghook's per-CLI registry. Tool-use hooks are non-critical — the envelope still spools, but a transient daemon outage won't block your tool call. Turn-level `Stop` is never critical, so a daemon outage does not freeze the CLI on every turn.
 
 ### Codex, Qwen, Droid, Grok, AGY
 
@@ -197,11 +193,11 @@ tmux pane env vars.
 | CLI | Critical hooks |
 |-----|----------------|
 | `claude` | `session-start`, `session-end`, `pre-compact` |
-| `codex` | `SessionStart`, `Stop` |
-| `qwen` | `SessionStart`, `SessionEnd`, `PreCompact`, `Stop` |
-| `droid` | none |
+| `codex` | `SessionStart`, `SessionEnd`, `PreCompact` |
+| `qwen` | `SessionStart`, `SessionEnd`, `PreCompact` |
+| `droid` | `SessionStart`, `SessionEnd`, `PreCompact` |
 | `grok` | `session_start`, `session_end`, `pre_compact` |
-| `agy` | `SessionStart` |
+| `agy` | none |
 
 Grok uses native snake_case hook types (e.g. `session_start`, `session_end`,
 `pre_compact`, `stop`, `pre_tool_use`) — distinct from Claude's hyphenated
@@ -217,12 +213,13 @@ file for daemon recovery.
 
 Droid uses PascalCase hook types (`SessionStart`, `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Notification`, `Stop`, `SubagentStop`, `PreCompact`, `SessionEnd`) and ghook forwards droid's stdin payload unchanged to the daemon with `source: "droid"`. Droid-specific block handling differs slightly from the other CLIs: daemon responses containing `continue:false` exit 2, while other meaningful response JSON is written to stdout with exit 0.
 
-AGY uses PascalCase hook types (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`) and ghook forwards them with `source: "agy"`. `SessionStart` is fail-closed; `Stop`, prompt, and tool hooks are non-critical.
+AGY uses PascalCase hook types (`PreInvocation`, `PreToolUse`, `PostToolUse`, `PostInvocation`, `Stop`) and ghook forwards them with `source: "agy"`. AGY: PreInvocation, PreToolUse, PostToolUse, PostInvocation, Stop — none critical.
 
 Qwen uses its current PascalCase terminal-hook names. Malformed input and
-transport failures exit `2` for its four critical hooks and `1` for its other
-hooks. Successful Qwen responses, including a blocking `Stop`, are serialized
-to stdout with exit `0` so Qwen can consume the structured decision and reason.
+transport failures exit `2` for its three critical lifecycle hooks and `1` for
+its other hooks, including `Stop`. Successful Qwen responses, including a
+blocking `Stop`, are serialized to stdout with exit `0` so Qwen can consume the
+structured decision and reason.
 
 Unknown `--cli` values fall back to conservative Claude-like dispatch behavior on the live path. Diagnose mode still reports unknown CLIs as unrecognized.
 

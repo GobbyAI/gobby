@@ -19,12 +19,16 @@ fn malformed_stdin_uses_cli_specific_json_error_contract() -> TestResult {
     for (cli, hook_type, expected_exit) in [
         ("claude", "session-start", 2),
         ("codex", "SessionStart", 2),
+        ("codex", "SessionEnd", 2),
+        ("codex", "PreCompact", 2),
+        ("codex", "Stop", 1),
         ("qwen", "SessionStart", 2),
-        ("qwen", "Stop", 2),
+        ("qwen", "Stop", 1),
         ("qwen", "PreToolUse", 1),
         ("droid", "SessionStart", 1),
         ("grok", "session_start", 2),
-        ("agy", "SessionStart", 2),
+        ("agy", "PreToolUse", 2),
+        ("agy", "Stop", 2),
     ] {
         let home = tempfile::tempdir()?;
         let gobby_home = tempfile::tempdir()?;
@@ -170,15 +174,21 @@ fn hooks_disabled_short_circuits_before_dispatch_side_effects() -> TestResult {
 #[test]
 fn daemon_down_distinguishes_critical_and_noncritical_hooks() -> TestResult {
     for (cli, hook_type) in [
-        ("codex", "Stop"),
-        ("agy", "SessionStart"),
-        ("grok", "session_start"),
-        ("grok", "session_end"),
-        ("grok", "pre_compact"),
+        ("claude", "session-start"),
+        ("claude", "session-end"),
+        ("claude", "pre-compact"),
+        ("codex", "SessionStart"),
+        ("codex", "SessionEnd"),
+        ("codex", "PreCompact"),
         ("qwen", "SessionStart"),
         ("qwen", "SessionEnd"),
         ("qwen", "PreCompact"),
-        ("qwen", "Stop"),
+        ("grok", "session_start"),
+        ("grok", "session_end"),
+        ("grok", "pre_compact"),
+        ("droid", "SessionStart"),
+        ("droid", "SessionEnd"),
+        ("droid", "PreCompact"),
     ] {
         let critical = run_with_closed_daemon(cli, hook_type)?;
         assert_eq!(
@@ -198,12 +208,34 @@ fn daemon_down_distinguishes_critical_and_noncritical_hooks() -> TestResult {
 
     for (cli, hook_type) in [
         ("agy", "Stop"),
+        ("agy", "PreToolUse"),
         ("grok", "stop"),
         ("claude", "Stop"),
         ("droid", "Stop"),
         ("qwen", "PreToolUse"),
+        ("qwen", "Stop"),
+        ("codex", "Stop"),
+        ("codex", "PreToolUse"),
     ] {
         let noncritical = run_with_closed_daemon(cli, hook_type)?;
+        if cli == "agy" {
+            assert_eq!(
+                noncritical.status.code(),
+                Some(0),
+                "{cli} {hook_type} should fail open"
+            );
+            let expected = if hook_type == "PreToolUse" {
+                serde_json::json!({"decision": "allow"})
+            } else {
+                serde_json::json!({})
+            };
+            assert_json_stdout(&noncritical, expected)?;
+            assert!(
+                String::from_utf8(noncritical.stderr)?.contains("Daemon unreachable"),
+                "{cli} {hook_type} should report daemon failure on stderr"
+            );
+            continue;
+        }
         assert_eq!(
             noncritical.status.code(),
             Some(1),
@@ -233,14 +265,19 @@ fn diagnose_json_reports_terminal_criticality_contract() -> TestResult {
     let gobby_home = tempfile::tempdir()?;
     let daemon_url = closed_local_url()?;
 
-    let critical =
-        run_diagnose_with_dirs(home.path(), gobby_home.path(), "codex", "Stop", &daemon_url)?;
+    let critical = run_diagnose_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        "codex",
+        "SessionStart",
+        &daemon_url,
+    )?;
     assert_eq!(critical.status.code(), Some(0));
-    assert_stderr_empty(&critical, "codex Stop diagnose")?;
+    assert_stderr_empty(&critical, "codex SessionStart diagnose")?;
     let critical_json: Value = serde_json::from_slice(&critical.stdout)?;
     assert_eq!(critical_json["schema_version"], 2);
     assert_eq!(critical_json["cli"], "codex");
-    assert_eq!(critical_json["hook_type"], "Stop");
+    assert_eq!(critical_json["hook_type"], "SessionStart");
     assert_eq!(critical_json["source"], "codex");
     assert_eq!(critical_json["critical"], true);
     assert_eq!(critical_json["terminal_context_enabled"], true);
@@ -1410,15 +1447,17 @@ fn enqueue_only_failure_does_not_fall_back_to_direct_post() -> TestResult {
     )?;
 
     assert!(started.elapsed() < Duration::from_secs(3));
-    assert_eq!(output.status.code(), Some(1));
-    let stdout: Value = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(stdout["status"], "error");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr.clone())?;
     assert!(
-        stdout["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("enqueue"))
+        stderr.contains("critical hook 'SessionEnd'"),
+        "enqueue-only failure stderr:\n{stderr}"
     );
-    assert_stderr_empty(&output, "enqueue-only failure")?;
+    assert!(
+        stderr.contains("enqueue"),
+        "enqueue-only failure stderr:\n{stderr}"
+    );
     assert_eq!(read_failure_artifacts(gobby_home.path())?.len(), 0);
     assert!(
         listener

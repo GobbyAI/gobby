@@ -29,19 +29,21 @@ impl CliConfig {
             }),
             "qwen" => Some(Self {
                 source: "qwen",
-                critical_hooks: ["SessionStart", "SessionEnd", "PreCompact", "Stop"]
+                critical_hooks: ["SessionStart", "SessionEnd", "PreCompact"]
                     .into_iter()
                     .collect(),
                 json_error_exit_code: 1,
             }),
             "codex" => Some(Self {
                 source: "codex",
-                critical_hooks: ["SessionStart", "Stop"].into_iter().collect(),
+                critical_hooks: ["SessionStart", "SessionEnd", "PreCompact"]
+                    .into_iter()
+                    .collect(),
                 json_error_exit_code: 2,
             }),
             "agy" => Some(Self {
                 source: "agy",
-                critical_hooks: ["SessionStart"].into_iter().collect(),
+                critical_hooks: HashSet::new(),
                 json_error_exit_code: 2,
             }),
             "grok" => Some(Self {
@@ -53,7 +55,9 @@ impl CliConfig {
             }),
             "droid" => Some(Self {
                 source: "droid",
-                critical_hooks: HashSet::new(),
+                critical_hooks: ["SessionStart", "SessionEnd", "PreCompact"]
+                    .into_iter()
+                    .collect(),
                 json_error_exit_code: 1,
             }),
             _ => None,
@@ -65,8 +69,12 @@ impl CliConfig {
     }
 
     pub fn malformed_input_exit_code(&self, hook_type: &str) -> u8 {
-        if self.source == "qwen" && self.is_critical_hook(hook_type) {
-            2
+        if self.source == "qwen" || self.source == "codex" {
+            if self.is_critical_hook(hook_type) {
+                2
+            } else {
+                1
+            }
         } else {
             self.json_error_exit_code
         }
@@ -92,9 +100,13 @@ mod tests {
     fn codex_stop_is_critical() {
         let c = CliConfig::for_cli("codex").unwrap();
         assert!(c.is_critical_hook("SessionStart"));
-        assert!(c.is_critical_hook("Stop"));
+        assert!(c.is_critical_hook("SessionEnd"));
+        assert!(c.is_critical_hook("PreCompact"));
+        assert!(!c.is_critical_hook("Stop"));
         assert!(!c.is_critical_hook("PreToolUse"));
         assert_eq!(c.json_error_exit_code, 2);
+        assert_eq!(c.malformed_input_exit_code("SessionStart"), 2);
+        assert_eq!(c.malformed_input_exit_code("Stop"), 1);
     }
 
     #[test]
@@ -104,9 +116,10 @@ mod tests {
         assert!(c.is_critical_hook("SessionStart"));
         assert!(c.is_critical_hook("SessionEnd"));
         assert!(c.is_critical_hook("PreCompact"));
-        assert!(c.is_critical_hook("Stop"));
+        assert!(!c.is_critical_hook("Stop"));
         assert!(!c.is_critical_hook("PreToolUse"));
-        assert_eq!(c.malformed_input_exit_code("Stop"), 2);
+        assert_eq!(c.malformed_input_exit_code("SessionStart"), 2);
+        assert_eq!(c.malformed_input_exit_code("Stop"), 1);
         assert_eq!(c.malformed_input_exit_code("PreToolUse"), 1);
     }
 
@@ -114,7 +127,9 @@ mod tests {
     fn agy_uses_antigravity_hook_contract() {
         let c = CliConfig::for_cli("agy").unwrap();
         assert_eq!(c.source, "agy");
-        assert!(c.is_critical_hook("SessionStart"));
+        assert!(c.critical_hooks.is_empty());
+        assert!(!c.is_critical_hook("SessionStart"));
+        assert!(!c.is_critical_hook("PreInvocation"));
         assert!(!c.is_critical_hook("Stop"));
         assert!(!c.is_critical_hook("PreToolUse"));
         assert_eq!(c.json_error_exit_code, 2);
@@ -137,7 +152,11 @@ mod tests {
     fn droid_recognized_with_no_critical_hooks() {
         let c = CliConfig::for_cli("droid").unwrap();
         assert_eq!(c.source, "droid");
-        assert!(c.critical_hooks.is_empty());
+        assert!(c.is_critical_hook("SessionStart"));
+        assert!(c.is_critical_hook("SessionEnd"));
+        assert!(c.is_critical_hook("PreCompact"));
+        assert!(!c.is_critical_hook("Stop"));
+        assert!(!c.is_critical_hook("PreToolUse"));
         assert_eq!(c.json_error_exit_code, 1);
     }
 

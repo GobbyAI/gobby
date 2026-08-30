@@ -76,26 +76,28 @@ invocation blocks. A planned Gobby stop or restart is a separate case: a fresh
 shutdown marker makes `ghook` return a continue response for Stop hooks so an
 intentional daemon shutdown cannot strand an agent.
 
-The terminal-hook policy fails closed for Codex and Qwen when an unplanned
-daemon outage prevents Stop evaluation:
+Turn-level `Stop` is never critical. A daemon outage fails open on every
+provider's Stop, PreToolUse, and other turn-level hooks so an unreachable
+daemon cannot freeze the CLI on every turn. Session-lifecycle hooks still fail
+closed:
 
 | Source / CLI | Terminal Hook | Daemon-Down Posture |
 | --- | --- | --- |
 | `claude` | `stop` | Fail open; non-critical transport failure |
 | `agy` | `Stop` | Fail open; non-critical transport failure |
-| `qwen` | `Stop` | **Fail closed**; protects Gobby `turn_end` gates |
-| `codex` | `Stop` | **Fail closed**; critical transport failure |
+| `qwen` | `Stop` | Fail open; non-critical transport failure |
+| `codex` | `Stop` | Fail open; non-critical transport failure |
 | `droid` | `Stop` | Fail open; non-critical transport failure |
 | `grok` | `stop` | Fail open; non-critical transport failure |
 
-Non-critical transport failures use `ghook`'s exit-1 error path. Critical
-transport failures use exit 2 and do not emit a continue response. This policy
-does not make every Codex hook critical: Codex `SessionStart` and `Stop` are the
-critical set. The other transport-critical hooks are Claude `session-start`,
-`session-end`, and `pre-compact`; Qwen `SessionStart`, `SessionEnd`,
-`PreCompact`, and `Stop`; AGY `SessionStart`; and
-Grok `session_start`, `session_end`, and `pre_compact`. Droid has no critical
-transport hooks.
+Non-critical transport failures use `ghook`'s fail-open path (exit 1 with an
+error JSON for most CLIs; AGY exits 0 with per-event skip JSON). Critical
+transport failures use exit 2 and do not emit a continue response. The
+critical set is session-lifecycle only: Claude `session-start`, `session-end`,
+and `pre-compact`; Codex, Qwen, and Droid `SessionStart`, `SessionEnd`, and
+`PreCompact`; Grok `session_start`, `session_end`, and `pre_compact`. AGY has
+no critical native event: PreInvocation, PreToolUse, PostToolUse,
+PostInvocation, and Stop are all non-critical.
 
 This transport policy is intentionally narrower than the daemon's evaluation
 failure posture. Once a request reaches the daemon, every `Stop` / `stop` hook
@@ -105,9 +107,8 @@ hook whose envelope explicitly carries `critical: true` also fails closed.
 `ghook` is versioned and released from the authoritative
 [`GobbyAI/gobby`](https://github.com/GobbyAI/gobby/tree/0.5.0/crates/ghook)
 monorepo. The retired `gobby-cli` checkout and repository preserve audit history
-only. Qwen `Stop` fails closed so a daemon outage cannot bypass Gobby's
-`turn_end` gates. The Qwen session can remain active until the daemon recovers
-or hooks are disabled; Claude's existing fail-open Stop behavior is unchanged.
+only. Turn-level `Stop` fails open on daemon outage so a down daemon cannot
+block every turn; Claude's existing fail-open Stop behavior is unchanged.
 ### Runtime Schema Compatibility
 
 Running `ghook --version` writes

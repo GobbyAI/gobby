@@ -216,20 +216,6 @@ pub(crate) fn action_from_failure(
     failure_kind: transport::DeliveryFailureKind,
     detail: &str,
 ) -> HookAction {
-    if cfg.source == "droid" {
-        let message = match failure_kind {
-            transport::DeliveryFailureKind::Http => format!("Daemon error: {detail}"),
-            transport::DeliveryFailureKind::Connect => "Daemon unreachable".to_string(),
-            transport::DeliveryFailureKind::Timeout => "Hook execution timeout".to_string(),
-            transport::DeliveryFailureKind::Other => detail.to_string(),
-        };
-        return HookAction {
-            exit_code: 1,
-            stdout_json: None,
-            stderr_message: Some(message),
-        };
-    }
-
     if cfg.is_critical_hook(hook_type) {
         let reason = match failure_kind {
             transport::DeliveryFailureKind::Http => format!(
@@ -259,8 +245,24 @@ pub(crate) fn action_from_failure(
         transport::DeliveryFailureKind::Other => detail.to_string(),
     };
 
+    if cfg.source == "droid" {
+        return HookAction {
+            exit_code: 1,
+            stdout_json: None,
+            stderr_message: Some(message),
+        };
+    }
+
     if is_claude_worktree_create(cfg.source, hook_type) {
         return worktree_create_failure(&message);
+    }
+
+    if cfg.source == "agy" {
+        return HookAction {
+            exit_code: 0,
+            stdout_json: Some(skip_stdout_json(cfg.source, hook_type)),
+            stderr_message: Some(message),
+        };
     }
 
     HookAction {
@@ -650,20 +652,23 @@ mod tests {
 
     #[test]
     fn action_from_failure_blocks_critical_hooks() {
-        let action = action_from_failure(
-            "SessionStart",
-            &CliConfig::for_cli("codex").expect("supported CLI"),
-            DeliveryFailureKind::Http,
-            "Internal Server Error",
-        );
-        assert_eq!(action.exit_code, 2);
-        assert!(action.stdout_json.is_none());
-        assert!(
-            action
-                .stderr_message
-                .unwrap()
-                .contains("Hook error on critical hook 'SessionStart'")
-        );
+        for cli in ["codex", "droid"] {
+            let action = action_from_failure(
+                "SessionStart",
+                &CliConfig::for_cli(cli).expect("supported CLI"),
+                DeliveryFailureKind::Http,
+                "Internal Server Error",
+            );
+            assert_eq!(action.exit_code, 2, "{cli}");
+            assert!(action.stdout_json.is_none(), "{cli}");
+            assert!(
+                action
+                    .stderr_message
+                    .unwrap()
+                    .contains("Hook error on critical hook 'SessionStart'"),
+                "{cli}"
+            );
+        }
     }
 
     #[test]
@@ -683,6 +688,30 @@ mod tests {
     }
 
     #[test]
+    fn action_from_failure_returns_json_for_agy_noncritical_hooks() {
+        for (hook_type, expected) in [
+            ("PreToolUse", serde_json::json!({"decision": "allow"})),
+            ("Stop", serde_json::json!({})),
+        ] {
+            let action = action_from_failure(
+                hook_type,
+                &CliConfig::for_cli("agy").expect("supported CLI"),
+                DeliveryFailureKind::Connect,
+                "ignored",
+            );
+            assert_eq!(action.exit_code, 0, "{hook_type}");
+            let parsed: Value =
+                serde_json::from_str(action.stdout_json.as_deref().unwrap()).unwrap();
+            assert_eq!(parsed, expected, "{hook_type}");
+            assert_eq!(
+                action.stderr_message.as_deref(),
+                Some("Daemon unreachable"),
+                "{hook_type}"
+            );
+        }
+    }
+
+    #[test]
     fn action_from_failure_treats_timeout_like_python() {
         let action = action_from_failure(
             "PreToolUse",
@@ -698,7 +727,7 @@ mod tests {
     #[test]
     fn action_from_failure_treats_connect_on_critical_hook_as_exit_two() {
         let action = action_from_failure(
-            "Stop",
+            "SessionStart",
             &CliConfig::for_cli("codex").expect("supported CLI"),
             DeliveryFailureKind::Connect,
             "connection failed",
@@ -707,7 +736,9 @@ mod tests {
         assert!(action.stdout_json.is_none());
         assert_eq!(
             action.stderr_message.as_deref(),
-            Some("Daemon connection failed on critical hook 'Stop' — blocking to fail safe.")
+            Some(
+                "Daemon connection failed on critical hook 'SessionStart' — blocking to fail safe."
+            )
         );
     }
 

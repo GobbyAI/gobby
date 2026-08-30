@@ -168,31 +168,46 @@ mod tests {
 
     #[test]
     fn agy_uses_antigravity_pascal_case_hooks() {
-        for (hook_type, critical) in [
-            ("SessionStart", true),
-            ("UserPromptSubmit", false),
-            ("PreToolUse", false),
-            ("PostToolUse", false),
-            ("Stop", false),
+        for hook_type in [
+            "PreInvocation",
+            "PreToolUse",
+            "PostToolUse",
+            "PostInvocation",
+            "Stop",
         ] {
             let d = diagnose("agy", hook_type);
             assert!(d.cli_recognized);
             assert_eq!(d.source.as_deref(), Some("agy"));
-            assert_eq!(d.critical, critical, "{hook_type}");
+            assert!(!d.critical, "{hook_type}");
         }
     }
 
     #[test]
     fn terminal_hook_criticality_matches_supported_cli_contracts() {
         for (cli, hook_type, critical) in [
-            ("codex", "Stop", true),
-            ("agy", "Stop", false),
-            ("grok", "stop", false),
-            ("claude", "Stop", false),
+            ("claude", "session-start", true),
             ("claude", "session-end", true),
-            ("droid", "Stop", false),
-            ("qwen", "Stop", true),
+            ("claude", "pre-compact", true),
+            ("claude", "Stop", false),
+            ("codex", "SessionStart", true),
+            ("codex", "SessionEnd", true),
+            ("codex", "PreCompact", true),
+            ("codex", "Stop", false),
+            ("qwen", "SessionStart", true),
+            ("qwen", "SessionEnd", true),
+            ("qwen", "PreCompact", true),
+            ("qwen", "Stop", false),
             ("qwen", "PreToolUse", false),
+            ("grok", "session_start", true),
+            ("grok", "session_end", true),
+            ("grok", "pre_compact", true),
+            ("grok", "stop", false),
+            ("droid", "SessionStart", true),
+            ("droid", "SessionEnd", true),
+            ("droid", "PreCompact", true),
+            ("droid", "Stop", false),
+            ("agy", "Stop", false),
+            ("agy", "PreToolUse", false),
         ] {
             let output = diagnose(cli, hook_type);
             assert!(output.cli_recognized, "{cli} should be recognized");
@@ -202,11 +217,11 @@ mod tests {
     }
 
     #[test]
-    fn droid_session_start_is_recognized_noncritical_with_terminal_context_enabled() {
+    fn droid_session_start_is_recognized_critical_with_terminal_context_enabled() {
         let d = diagnose("droid", "SessionStart");
         assert!(d.cli_recognized);
         assert_eq!(d.source.as_deref(), Some("droid"));
-        assert!(!d.critical);
+        assert!(d.critical);
         assert!(d.terminal_context_enabled);
     }
 

@@ -379,6 +379,12 @@ EVENT_TYPE_CLI_SUPPORT[HookEventType.PRE_COMPACT]["droid"] = "PreCompact"
 EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL]["droid"] = "PreToolUse"
 EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_TOOL]["droid"] = "PostToolUse"
 
+EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_AGENT]["agy"] = "PreInvocation"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL]["agy"] = "PreToolUse"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_TOOL]["agy"] = "PostToolUse"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_AGENT]["agy"] = "PostInvocation"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.STOP]["agy"] = "Stop"
+
 EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["grok"] = "session_start"
 EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_END]["grok"] = "session_end"
 EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_AGENT]["grok"] = "user_prompt_submit"

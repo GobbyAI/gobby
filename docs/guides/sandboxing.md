@@ -154,6 +154,12 @@ Provider-native OS sandbox flags are omitted in SRT mode, while provider approva
 policies, tool permissions, MCP/browser/computer-use controls, authentication,
 worktree/clone isolation, resource limits, and hooks remain independent.
 
+Hook delivery is fail-open for every tool-use event. No CLI treats `PreToolUse`
+as critical, so a PreToolUse denial degrades to allow when the daemon is
+unreachable. Session-lifecycle hooks (`session-start` / `SessionStart`,
+`session-end` / `SessionEnd`, `pre-compact` / `PreCompact`) still fail closed.
+Turn-level `Stop` is never critical.
+
 The Gobby runner inherits stdin/stdout/stderr and forwards `SIGINT`, `SIGTERM`,
 `SIGHUP`, and `SIGWINCH` to the provider process. Tmux remains responsible for
 detach/reattach, pane capture, resize delivery, provider/PID verification, and
