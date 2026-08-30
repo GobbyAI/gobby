@@ -995,6 +995,7 @@ class TestRefreshServer:
             patch.object(MCPClientManager, "_resolve_secrets_in_config", resolve),
         ):
             manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
+            assert callable(getattr(manager, "refresh_server"))
             await manager.connect_all()
             first_a = manager._connections[a.id]
             first_b = manager._connections[b.id]
@@ -1057,6 +1058,7 @@ class TestRefreshServer:
             ),
         ):
             manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
+            assert callable(getattr(manager, "refresh_server"))
             await manager.connect_all()
             in_flight = asyncio.create_task(manager.call_tool(row.id, "probe", {}))
             await asyncio.wait_for(in_flight_entered.wait(), timeout=1)
@@ -1093,6 +1095,7 @@ class TestRefreshServer:
             ),
         ):
             manager = MCPClientManager(mcp_db_manager=db, lazy_connect=True)
+            assert callable(getattr(manager, "refresh_server"))
             health = manager.get_server_health()[row.id]
             assert health["state"] == "needs_configuration"
             assert health["missing_secrets"] == ["github_token"]
@@ -1176,6 +1179,7 @@ class TestRefreshServer:
             ),
         ):
             manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
+            assert callable(getattr(manager, "refresh_server"))
             await manager.connect_all()
             await manager.refresh_server(row.id)
             assert manager._configs[row.id].env == {"TOKEN": "$secret:github_token"}
@@ -1199,6 +1203,7 @@ class TestRefreshServer:
             patch.object(MCPClientManager, "_resolve_secrets_in_config", _resolve_with_store({})),
         ):
             manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
+            assert callable(getattr(manager, "refresh_server"))
             await manager.connect_all()
             live = manager._connections[stale.id]
             db.expand_errors[stale.id] = {
@@ -1246,6 +1251,7 @@ class TestRefreshServer:
             ),
         ):
             manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
+            assert callable(getattr(manager, "refresh_server"))
             await manager.connect_all()
             old = manager._connections[row.id]
             assert isinstance(old, RecordingConnection)
