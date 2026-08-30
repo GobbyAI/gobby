@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.agents.constants import UV_CACHE_DIR
+from gobby.agents.session import ChildSessionConfig
 from gobby.agents.spawn import (
     PreparedSpawn,
     _issue_prelaunch_credential,
@@ -271,6 +272,31 @@ class TestPrepareTerminalSpawnMetadata:
             managed_tool_bin_dir(),
             "/usr/bin",
         ]
+
+    def test_agy_prepare_terminal_spawn_links_parent_source_and_variables(self) -> None:
+        """AGY prepare_terminal_spawn persists parent linkage, source, and variables."""
+        sm = _make_session_manager()
+        with patch("gobby.workflows.state_manager.SessionVariableManager") as mock_sv_mgr:
+            result = prepare_terminal_spawn(
+                session_manager=sm,
+                parent_session_id="parent-agy",
+                project_id="proj-1",
+                machine_id="21000000-0000-4000-8000-000000000001",
+                source="agy",
+                initial_variables={"_agent_type": "explorer"},
+            )
+
+        config = sm.create_child_session.call_args.args[0]
+        assert isinstance(config, ChildSessionConfig)
+        assert config.parent_session_id == "parent-agy"
+        assert config.source == "agy"
+        assert result.session_id == "child-sess-1"
+        assert result.parent_session_id == "parent-agy"
+        mock_sv_mgr.assert_called_once()
+        mock_sv_mgr.return_value.merge_variables.assert_called_once_with(
+            "child-sess-1",
+            {"_agent_type": "explorer"},
+        )
 
 
 class TestPrepareTerminalSpawnCleanup:

@@ -1,10 +1,10 @@
 """Tests for SpawnExecutor unified spawn dispatch."""
 
 import asyncio
-import inspect
 import json
 import logging
 import os
+import signal
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -1479,6 +1479,7 @@ class TestExecuteSpawn:
         import gobby.agents.spawn_executor as spawn_executor_mod
 
         mock_session_manager = MagicMock()
+        mock_session_manager._storage.db = object()
         request = SpawnRequest(
             prompt="implement the task",
             cwd="/repo",
@@ -1494,6 +1495,7 @@ class TestExecuteSpawn:
             prepared_spawn=prepared_spawn(
                 session_id="gobby-sess-agy",
                 agent_run_id="run-agy123",
+                parent_session_id="parent",
                 env_vars={"GOBBY_SESSION_ID": "gobby-sess-agy"},
             ),
             terminal_backend="tmux",
@@ -1508,6 +1510,7 @@ class TestExecuteSpawn:
                 AsyncMock(return_value=record),
             ),
             patch("gobby.agents.spawn_executor_providers.pre_approve_directory") as mock_preapprove,
+            patch("gobby.workflows.state_manager.SessionVariableManager") as mock_sv_mgr,
         ):
             result = await execute_spawn(request)
 
@@ -1527,6 +1530,13 @@ class TestExecuteSpawn:
         assert result.success is True
         assert result.child_session_id == "gobby-sess-agy"
         assert result.run_id == "run-agy123"
+        assert request.parent_session_id == "parent"
+        assert request.prepared_spawn.parent_session_id == "parent"
+        mock_sv_mgr.assert_called_once()
+        mock_sv_mgr.return_value.merge_variables.assert_called_once_with(
+            "gobby-sess-agy",
+            {"_agent_type": "explorer"},
+        )
 
     @pytest.mark.asyncio
     async def test_agy_terminal_spawn_pins_sandbox_false_under_srt(self) -> None:
@@ -1585,12 +1595,15 @@ class TestExecuteSpawn:
         self,
     ) -> None:
         from gobby.adapters.agy import AgyAdapter
+        from gobby.agents.spawn_executor import kill_spawn_key
+        from gobby.agents.tmux.session_manager import TmuxSessionManager
+        from gobby.hooks.adapter_execution import run_adapter_hook
         from gobby.hooks.events import HookEventType, HookResponse, SessionSource
 
         mock_session_manager = MagicMock()
         request = SpawnRequest(
             prompt="Test",
-            cwd="/repo",
+            cwd="/agy-workspace",
             provider="agy",
             session_id="sess",
             run_id="run",
@@ -1621,11 +1634,13 @@ class TestExecuteSpawn:
         command = _spawn_kwargs(request)["command"]
         assert "--add-dir" in command
         add_dir_at = command.index("--add-dir")
-        assert command[add_dir_at : add_dir_at + 2] == ["--add-dir", "/repo"]
+        spawned_cwd = command[add_dir_at + 1]
+        assert command[add_dir_at : add_dir_at + 2] == ["--add-dir", "/agy-workspace"]
+        assert spawned_cwd == request.cwd
 
         hook_manager = MagicMock()
         hook_manager.handle.return_value = HookResponse(decision="allow")
-        adapter = AgyAdapter()
+        adapter = AgyAdapter(hook_manager=hook_manager)
         native_events: tuple[tuple[str, dict[str, object]], ...] = (
             ("PreInvocation", {"invocationNum": 0}),
             ("PreToolUse", {}),
@@ -1634,33 +1649,47 @@ class TestExecuteSpawn:
             ("Stop", {}),
         )
         for hook_type, extra in native_events:
-            adapter.handle_native(
-                {
-                    "source": "agy",
-                    "hook_type": hook_type,
-                    "input_data": {
-                        "hookEventName": hook_type,
-                        "conversationId": "conv-1",
-                        "workspacePaths": ["/repo"],
-                        "transcriptPath": "/tmp/agy.jsonl",
-                        **extra,
-                    },
+            payload = {
+                "source": "agy",
+                "hook_type": hook_type,
+                "input_data": {
+                    "hookEventName": hook_type,
+                    "conversationId": "conv-1",
+                    "workspacePaths": [spawned_cwd],
+                    "transcriptPath": "/tmp/agy.jsonl",
+                    **extra,
                 },
-                hook_manager,
-            )
+            }
+            await run_adapter_hook(adapter, payload, hook_manager, timeout_seconds=None)
         dispatched = [call.args[0] for call in hook_manager.handle.call_args_list]
         assert dispatched
         assert all(event.source is SessionSource.AGY for event in dispatched)
         assert any(event.event_type is HookEventType.SESSION_START for event in dispatched)
         assert any(
-            event.data.get("workspace_paths") == ["/repo"] or event.cwd == "/repo"
+            event.data.get("workspace_paths") == [spawned_cwd] or event.cwd == spawned_cwd
             for event in dispatched
         )
-        from gobby.agents.spawn_executor import kill_spawn_key
-        from gobby.agents.tmux.session_manager import TmuxSessionManager
 
-        assert "Stop" not in inspect.getsource(kill_spawn_key)
-        assert "killpg" in inspect.getsource(TmuxSessionManager.kill_session)
+        runtime = _runtime_of(request)
+        spawned = runtime.last_request
+        assert spawned is not None
+        await kill_spawn_key(runtime, spawned.spawn_key, pending=None)
+        assert spawned.spawn_key in runtime.killed
+
+        mgr = TmuxSessionManager()
+        with (
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+            patch("os.killpg") as mock_killpg,
+            patch("os.getpgid", return_value=12345),
+        ):
+            mock_run.side_effect = [
+                (0, "12345\n", ""),
+                (0, "", ""),
+            ]
+            killed = await mgr.kill_session("agy-spawn", timeout=0)
+        assert killed is True
+        mock_killpg.assert_any_call(12345, signal.SIGTERM)
+        mock_killpg.assert_any_call(12345, signal.SIGKILL)
 
 
 class TestExecuteSpawnSandbox:
