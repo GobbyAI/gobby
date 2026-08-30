@@ -9,7 +9,7 @@ import os
 from collections.abc import Iterator
 from dataclasses import FrozenInstanceError
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -25,6 +25,7 @@ from gobby.providers.version_gate import (
     AGY_REQUIRED_VERSION,
     AGY_REVALIDATING_REASON,
     AGY_UNPUBLISHED_REASON,
+    AgySupportRecord,
     agy_support_is_published,
     assert_agy_support_published,
     ensure_agy_support,
@@ -34,6 +35,7 @@ from gobby.providers.version_gate import (
 )
 from gobby.servers.provider_model_discovery import get_cli_version
 from gobby.servers.routes.providers import _agy_snapshot_payload
+from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
 
@@ -441,3 +443,88 @@ def test_get_cli_version_has_no_agy_caller_outside_version_gate() -> None:
             if isinstance(arg0, ast.Constant) and arg0.value == "agy":
                 offenders.append(f"{path}:{node.lineno}")
     assert offenders == []
+
+
+@pytest.mark.asyncio
+async def test_execute_spawn_awaits_ensure_before_agy_result() -> None:
+    from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
+
+    ensure = AsyncMock(
+        return_value=AgySupportRecord(
+            installed_version="1.1.18",
+            required_version=AGY_REQUIRED_VERSION,
+            supported=True,
+            reason="AGY 1.1.18 meets required version 1.1.18.",
+            identity=None,
+        )
+    )
+    request = SpawnRequest(
+        prompt="Test",
+        cwd="/path",
+        provider="agy",
+        session_id="sess",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="proj",
+        prepared_spawn=prepared_spawn(),
+        terminal_backend="tmux",
+    )
+    with patch("gobby.providers.version_gate.ensure_agy_support", ensure):
+        result = await execute_spawn(request)
+    ensure.assert_awaited_once()
+    assert result.success is False
+    assert AGY_UNAVAILABLE_REASON in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_capability_refresh_awaits_ensure_for_agy() -> None:
+    from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
+
+    ensure = AsyncMock(return_value=peek_agy_support())
+    collected = asyncio.Event()
+
+    class _Collector:
+        provider = "agy"
+        sources: tuple[object, ...] = ()
+
+        async def collect(self) -> object:
+            collected.set()
+            raise RuntimeError("collect")
+
+    class _Store:
+        def get_provider_snapshot(self, provider: str) -> None:
+            return None
+
+        def get_all_snapshots(self) -> tuple[object, ...]:
+            return ()
+
+        def replace_provider_snapshot(self, snapshot: object) -> None:
+            return None
+
+        def record_source_failure(self, provider: str, source_key: str, error: str) -> None:
+            return None
+
+    from gobby.providers.capabilities.collectors import CapabilityCollector
+    from gobby.providers.capabilities.refresh import CapabilityStore
+
+    collector = cast(CapabilityCollector, _Collector())
+    with patch("gobby.providers.version_gate.ensure_agy_support", ensure):
+        coordinator = CapabilityRefreshCoordinator(
+            cast(CapabilityStore, _Store()),
+            {"agy": collector},
+        )
+        await coordinator._refresh_provider(collector)
+
+    ensure.assert_awaited_once()
+    assert collected.is_set()
+
+
+def test_side_effect_owners_use_peek_or_ensure() -> None:
+    from gobby.agents.spawn_executor import execute_spawn
+    from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
+    from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
+
+    assert "ensure_agy_support" in inspect.getsource(execute_spawn)
+    assert "ensure_agy_support" in inspect.getsource(CapabilityRefreshCoordinator._refresh_provider)
+    assert "peek_agy_support" in inspect.getsource(WebChatRuntimeManager.health)
+    assert "peek_agy_support" in inspect.getsource(WebChatRuntimeManager.create_session)

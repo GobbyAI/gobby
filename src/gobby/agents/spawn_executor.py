@@ -156,12 +156,15 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
         elif request.provider == "droid":
             result = await _spawn_droid_terminal(request)
         elif request.provider == "agy":
+            from gobby.providers.version_gate import ensure_agy_support
+
+            record = await ensure_agy_support()
             result = SpawnResult(
                 success=False,
                 run_id=request.run_id,
                 child_session_id=None,
                 status="failed",
-                error=AGY_UNAVAILABLE_REASON,
+                error=record.reason if not record.supported else AGY_UNAVAILABLE_REASON,
             )
         elif request.provider == "claude":
             result = await _spawn_claude_terminal(request)

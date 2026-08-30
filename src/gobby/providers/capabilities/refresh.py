@@ -118,6 +118,10 @@ class CapabilityRefreshCoordinator:
             await self._sleep(self._interval_seconds)
 
     async def _refresh_provider(self, collector: CapabilityCollector) -> None:
+        if collector.provider == "agy":
+            from gobby.providers.version_gate import ensure_agy_support
+
+            await ensure_agy_support()
         try:
             snapshot = await asyncio.wait_for(
                 collector.collect(),

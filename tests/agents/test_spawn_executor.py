@@ -1365,7 +1365,15 @@ class TestExecuteSpawn:
             terminal_backend="tmux",
         )
 
-        result = await execute_spawn(request)
+        supported = SimpleNamespace(
+            supported=True,
+            reason="AGY 1.1.18 meets required version 1.1.18.",
+        )
+        with patch(
+            "gobby.providers.version_gate.ensure_agy_support",
+            AsyncMock(return_value=supported),
+        ):
+            result = await execute_spawn(request)
 
         assert result.success is False
         assert result.child_session_id is None

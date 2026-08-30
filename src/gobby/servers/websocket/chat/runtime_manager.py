@@ -187,10 +187,13 @@ class WebChatRuntimeManager:
         if provider == "qwen":
             return self._qwen_backend.health()
         if provider == "agy":
+            from gobby.providers.version_gate import peek_agy_support
+
+            record = peek_agy_support()
             return ProviderBackendHealth(
                 provider=provider,
                 available=False,
-                startup_error=AGY_UNAVAILABLE_REASON,
+                startup_error=(record.reason if not record.supported else AGY_UNAVAILABLE_REASON),
             )
         if provider == "droid":
             return self._droid_backend.health()
@@ -273,7 +276,10 @@ class WebChatRuntimeManager:
         if provider not in {"claude", "codex", "droid", "grok", "qwen", "agy"}:
             raise RuntimeError(f"Unsupported web chat provider: {provider}")
         if provider == "agy":
-            raise RuntimeError(AGY_UNAVAILABLE_REASON)
+            from gobby.providers.version_gate import peek_agy_support
+
+            record = peek_agy_support()
+            raise RuntimeError(record.reason if not record.supported else AGY_UNAVAILABLE_REASON)
         if provider == "qwen":
             return QwenManagedChatSession(
                 conversation_id=conversation_id,

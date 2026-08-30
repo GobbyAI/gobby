@@ -20,7 +20,7 @@ from gobby.agents.sandbox import SandboxConfig
 from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.llm.claude_models import DoneEvent, TextChunk, ToolCallEvent, ToolResultEvent
-from gobby.providers import AGY_UNAVAILABLE_REASON
+from gobby.providers.version_gate import AGY_UNPUBLISHED_REASON
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat.backends import (
     CodexManagedChatSession,
@@ -192,15 +192,15 @@ class TestWebChatRuntimeManager:
         health = manager.health("agy")
 
         assert health.available is False
-        assert health.startup_error == AGY_UNAVAILABLE_REASON
+        assert health.startup_error == AGY_UNPUBLISHED_REASON
 
     def test_create_session_uses_shared_agy_unavailable_reason(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
 
-        with pytest.raises(RuntimeError, match="or agent spawning") as exc:
+        with pytest.raises(RuntimeError, match="version probe has not run") as exc:
             manager.create_session(provider="agy", conversation_id="conv-agy")
 
-        assert str(exc.value) == AGY_UNAVAILABLE_REASON
+        assert str(exc.value) == AGY_UNPUBLISHED_REASON
 
     def test_create_session_routes_codex_local_selector_to_oss_backend(self) -> None:
         config = DaemonConfig(
