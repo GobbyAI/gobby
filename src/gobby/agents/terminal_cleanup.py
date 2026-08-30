@@ -218,6 +218,7 @@ class TerminalResourceCleaner:
                 )
 
     async def _close_tmux_session(self, run: AgentRun) -> bool:
+        from gobby.agents.capture import backend_session_present
         from gobby.storage.terminals import TerminalManager
 
         if not run.terminal_id:
@@ -227,18 +228,21 @@ class TerminalResourceCleaner:
             return False
         manager = TerminalManager(self._agent_run_manager.db)
         terminal = manager.get(run.terminal_id)
-        if terminal is None or terminal.state not in {"pending", "live"}:
+        if terminal is None:
             return False
         if self._terminal_services is not None:
             try:
                 runtime = self._terminal_services.runtime_for(terminal)
-                await runtime.terminate(terminal, grace_seconds=5.0)
-                if await runtime.is_live(terminal):
-                    logger.warning(
-                        "Terminal %s for agent %s was not closed",
-                        run.terminal_id,
-                        run.id,
-                    )
+                if await backend_session_present(runtime, terminal):
+                    await runtime.terminate(terminal, grace_seconds=5.0)
+                    if await backend_session_present(runtime, terminal):
+                        logger.warning(
+                            "Terminal %s for agent %s was not closed",
+                            run.terminal_id,
+                            run.id,
+                        )
+                        return False
+                elif terminal.state not in {"pending", "live"}:
                     return False
             except Exception:
                 logger.warning(
@@ -248,7 +252,10 @@ class TerminalResourceCleaner:
                     exc_info=True,
                 )
                 return False
-        manager.mark_exited(run.terminal_id)
+        elif terminal.state not in {"pending", "live"}:
+            return False
+        if terminal.state in {"pending", "live", "orphaned"}:
+            manager.mark_exited(run.terminal_id)
         # The stored pid is the pane pid of the terminal just closed; keeping it
         # would offer a stale signal target to later recovery.
         await self._run_db(self._agent_run_manager.update_runtime, run.id, pid=None)

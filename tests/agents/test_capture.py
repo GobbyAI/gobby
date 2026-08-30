@@ -572,3 +572,40 @@ async def test_truncation_metadata_is_persisted() -> None:
     assert parsed.dropped_bytes == 0
     assert parsed.total_bytes == 5
     assert parsed.text == "whole"
+
+
+@pytest.mark.asyncio
+async def test_terminate_managed_runtime_kills_remain_on_exit_session() -> None:
+    from gobby.agents.capture import KillOutcome, terminate_managed_runtime_async
+    from gobby.terminals.runtime import SnapshotResult
+    from tests.terminals.fakes import FakeRuntime, make_memory_terminal
+
+    class RemainOnExitRuntime(FakeRuntime):
+        async def is_live(self, terminal: object) -> bool:
+            del terminal
+            return False
+
+        async def session_present(self, terminal: object) -> bool:
+            return getattr(terminal, "id", None) not in self.killed_ids
+
+    storage = FakeCaptureStorage(_run("remain"))
+    terminal = make_memory_terminal(session_name="gobby-remain")
+    runtime = RemainOnExitRuntime()
+    runtime.snapshot_full_result = SnapshotResult(
+        text="orphan scrollback",
+        truncated=False,
+        dropped_bytes=0,
+        total_bytes=18,
+    )
+
+    result = await terminate_managed_runtime_async(
+        storage=storage,
+        run=storage.runs["remain"],
+        terminal=terminal,
+        runtime=runtime,
+        action="complete",
+    )
+    assert result.success
+    assert result.kill_outcome == KillOutcome.KILLED
+    assert runtime.killed == ["gobby-remain"]
+    assert await runtime.session_present(terminal) is False

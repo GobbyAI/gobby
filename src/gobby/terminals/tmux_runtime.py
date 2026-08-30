@@ -228,6 +228,10 @@ class TmuxTerminalRuntime:
                 "display-message", "-p", "-t", pane_id, "#{pane_dead}"
             )
             return rc == 0 and stdout.strip() != "1"
+        return await self.session_present(terminal)
+
+    async def session_present(self, terminal: Terminal) -> bool:
+        """True when the tmux session still exists, including remain-on-exit dead panes."""
         name = self._tmux_name(terminal)
         if not name:
             return False

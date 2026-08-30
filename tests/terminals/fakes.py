@@ -406,6 +406,11 @@ class FakeRuntime:
             return True
         return terminal.state == "live"
 
+    async def session_present(self, terminal: Terminal) -> bool:
+        if terminal.id in self.killed_ids:
+            return False
+        return await self.is_live(terminal)
+
     async def snapshot(self, terminal: Terminal, lines: int = 50) -> SnapshotResult:
         del lines
         if self.snapshot_effects:

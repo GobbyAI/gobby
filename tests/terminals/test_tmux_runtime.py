@@ -44,6 +44,7 @@ class _StubSessions(TmuxSessionManager):
     create_session: Any
     capture_pane: Any
     capture_full_pane: Any
+    has_session: Any
 
 
 def _sessions() -> _StubSessions:
@@ -266,3 +267,16 @@ async def test_write_key_encodes_against_live_pane_flags() -> None:
     sessions._run = AsyncMock(side_effect=run_normal_keypad)
     await runtime.write_key(terminal, "kpplus")
     assert hex_payloads[-1] != app_keypad
+
+
+@pytest.mark.asyncio
+async def test_session_present_when_remain_on_exit_pane_is_dead() -> None:
+    sessions = _sessions()
+    runtime = TmuxTerminalRuntime(sessions)
+    terminal = make_memory_terminal(session_name="gobby-orphan")
+    sessions.has_session = AsyncMock(return_value=True)
+    sessions._run = AsyncMock(return_value=(0, "1", ""))
+
+    assert await runtime.is_live(terminal) is False
+    assert await runtime.session_present(terminal) is True
+    sessions.has_session.assert_awaited_once_with("gobby-orphan")

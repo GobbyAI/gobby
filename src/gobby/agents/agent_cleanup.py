@@ -169,20 +169,25 @@ class AgentCleanupHandler:
         reason: str | None,
         terminalize: Callable[[], Awaitable[AgentRun | None]],
     ) -> tuple[bool, AgentRun | None]:
-        """Route a live managed tmux session through capture-before-kill.
+        """Route a still-present managed tmux session through capture-before-kill.
 
-        Returns (routed, terminal_run). routed=False means no live session
-        needed the policy and the caller applies its direct transition —
-        including when a policy invocation higher in the stack (reconciler,
-        watchdog) already killed the session before invoking this terminalizer.
+        Returns (routed, terminal_run). routed=False means the session is already
+        gone and the caller applies its direct transition. Pane-process death is
+        not absence: remain-on-exit keeps the gobby-socket session for capture.
         """
         if run.status not in ("pending", "running"):
             return False, None
-        from gobby.agents.capture import terminate_managed_runtime_async
+        from gobby.agents.capture import (
+            backend_session_present,
+            terminate_managed_runtime_async,
+        )
 
         services = self._terminal_services
         terminal = None if services is None else services.terminal_for(run)
-        if services is None or terminal is None or not await services.is_live(run):
+        if services is None or terminal is None:
+            return False, None
+        runtime = services.runtime_for(terminal)
+        if not await backend_session_present(runtime, terminal):
             return False, None
 
         async def _terminalize(
@@ -195,7 +200,7 @@ class AgentCleanupHandler:
             storage=self._agent_run_manager,
             run=run,
             terminal=terminal,
-            runtime=services.runtime_for(terminal),
+            runtime=runtime,
             action=action,
             reason=reason,
             terminalize=_terminalize,
