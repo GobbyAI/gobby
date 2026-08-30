@@ -184,7 +184,7 @@ class TestCloseTaskTool:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             MockSessionManager.return_value.resolve_session_reference.return_value = "test-session"
             MockSVManager.return_value.get_variables.return_value = {
@@ -228,7 +228,7 @@ class TestCloseTaskTool:
             ),
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -276,7 +276,7 @@ class TestCloseTaskTool:
 
         with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager:
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager)
@@ -311,7 +311,7 @@ class TestCloseTaskTool:
             ),
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -354,7 +354,7 @@ class TestCloseTaskTool:
             ),
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "ambient-head"
 
@@ -415,7 +415,7 @@ class TestCloseTaskTool:
             patch("gobby.hooks.event_handlers._plan.on_epic_terminal") as archive,
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager)
@@ -470,9 +470,7 @@ class TestCloseTaskTool:
             ),
         ):
             mock_proj_instance = MagicMock()
-            mock_project = MagicMock()
-            mock_project.repo_path = expected_repo_path
-            mock_proj_instance.get.return_value = mock_project
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -520,7 +518,7 @@ class TestCloseTaskTool:
 
         with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager:
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager)
@@ -726,7 +724,7 @@ class TestCloseTaskTool:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
 
             mock_session_instance = MagicMock()
@@ -788,7 +786,7 @@ class TestCloseTaskTool:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
 
             mock_session_instance = MagicMock()
@@ -843,7 +841,7 @@ class TestCloseTaskTool:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -917,7 +915,7 @@ class TestCloseTaskTool:
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -1001,7 +999,7 @@ class TestCloseTaskTool:
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -1083,7 +1081,7 @@ class TestCloseTaskTool:
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager)
@@ -1164,7 +1162,7 @@ class TestCloseTaskTool:
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(
@@ -1427,7 +1425,7 @@ class TestSessionVariableMirroring:
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 

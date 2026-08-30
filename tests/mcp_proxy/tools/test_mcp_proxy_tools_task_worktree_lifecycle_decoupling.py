@@ -102,7 +102,7 @@ async def test_close_task_does_not_mutate_worktree_status(
         mock_wt_instance = MagicMock()
         MockWorktreeManager.return_value = mock_wt_instance
         mock_proj_instance = MagicMock()
-        mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+        mock_proj_instance.get.return_value = MagicMock()
         MockProjManager.return_value = mock_proj_instance
         mock_git.return_value = "abc123"
 

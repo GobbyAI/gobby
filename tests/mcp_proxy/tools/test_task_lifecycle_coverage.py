@@ -161,7 +161,7 @@ def _stub_project_manager() -> Iterator[None]:
             return_value=None,
         ),
     ):
-        mock_pm.return_value.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+        mock_pm.return_value.get.return_value = MagicMock()
         mock_pm.return_value.list.return_value = []
         mock_pm.return_value.db = MagicMock()
         yield
@@ -590,7 +590,7 @@ class TestCloseTask:
                 side_effect=lambda sha, cwd=None: sha,
             ) as mock_norm,
         ):
-            MockPM.return_value.get.return_value = MagicMock(repo_path=str(repo_path))
+            MockPM.return_value.get.return_value = MagicMock()
             MockSVM.return_value.get_variables.return_value = {
                 "task_edited_files": {task.id: ["src/owned.py"]},
             }
@@ -673,7 +673,7 @@ class TestCloseTask:
                 side_effect=lambda sha, cwd=None: sha,
             ) as mock_norm,
         ):
-            MockPM.return_value.get.return_value = MagicMock(repo_path=str(task_repo))
+            MockPM.return_value.get.return_value = MagicMock()
             MockSVM.return_value.get_variables.return_value = {
                 "task_edited_files": {task.id: ["src/owned.py"]},
             }
@@ -712,7 +712,7 @@ class TestCloseTask:
         mock_task_manager.list_tasks.return_value = []
 
         with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockPM:
-            MockPM.return_value.get.return_value = MagicMock(repo_path=str(tmp_path))
+            MockPM.return_value.get.return_value = MagicMock()
             registry = _create_registry(mock_task_manager)
             result = await registry.call(
                 "close_task",
@@ -739,7 +739,7 @@ class TestCloseTask:
         project_path.write_text("not a repo")
 
         with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockPM:
-            MockPM.return_value.get.return_value = MagicMock(repo_path=str(tmp_path))
+            MockPM.return_value.get.return_value = MagicMock()
             registry = _create_registry(mock_task_manager)
             result = await registry.call(
                 "close_task",
