@@ -44,6 +44,7 @@ from gobby.config.hooks import HookTimeoutConfig
 from gobby.config.persistence import MemoryBackupConfig, MemoryConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
+    FeedbackReviewConfig,
     MessageTrackingConfig,
     SessionFeedbackConfig,
     SessionLifecycleConfig,
@@ -408,6 +409,36 @@ class TestSessionFeedbackConfig:
             SessionFeedbackConfig(survey="nope")
         with pytest.raises(ValidationError):
             DaemonConfig(session_feedback={"survey": "nope"})
+
+
+class TestFeedbackReviewConfig:
+    """Tests for FeedbackReviewConfig and SessionFeedbackConfig.review."""
+
+    def test_default_values(self) -> None:
+        config = FeedbackReviewConfig()
+        assert config.enabled is True
+        assert config.schedule_cron == "0 3 * * *"
+        assert config.prompt_path == "feedback/review"
+        assert config.max_tokens == 8192
+        assert config.max_rows_per_run == 200
+        assert config.max_tasks_per_run == 10
+        assert config.profile == FeatureProfile.MID
+        assert DaemonConfig().session_feedback.review == config
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"max_tokens": 0},
+            {"max_rows_per_run": 0},
+            {"max_tasks_per_run": -1},
+            {"profile": "ultra"},
+        ],
+    )
+    def test_rejects_invalid_values(self, kwargs: dict[str, object]) -> None:
+        with pytest.raises(ValidationError):
+            FeedbackReviewConfig(**kwargs)
+        with pytest.raises(ValidationError):
+            DaemonConfig(session_feedback={"review": kwargs})
 
 
 class TestMCPClientProxyConfig:
