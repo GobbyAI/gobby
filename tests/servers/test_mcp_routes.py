@@ -28,7 +28,7 @@ import json
 import threading
 import time
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
@@ -42,7 +42,13 @@ from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.hooks.agent_run_ingress import validate_managed_agent_hook
-from gobby.hooks.envelope_dedupe import is_envelope_processed
+from gobby.hooks.envelope_dedupe import (
+    ENVELOPE_ID_HEADER,
+    ENVELOPE_REPLAY_GRACE_SECONDS,
+    claim_envelope_processing,
+    is_envelope_processed,
+    read_envelope_marker,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.inbox import drain_hook_inbox_barrier
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
@@ -3662,6 +3668,7 @@ class TestHooksEndpoints:
 
     @pytest.mark.asyncio
     async def test_adapter_executor_bounds_and_releases_hung_evaluation_workers(self) -> None:
+        from gobby.hooks.adapter_execution import run_adapter_hook
         from gobby.servers.routes.mcp import hooks as hook_routes
 
         worker_limit = hook_routes.HOOK_ADAPTER_MAX_WORKERS
@@ -3686,7 +3693,7 @@ class TestHooksEndpoints:
         adapter.handle_native.side_effect = bounded_evaluation_wait
         results = await asyncio.gather(
             *(
-                hook_routes._run_adapter_hook(
+                run_adapter_hook(
                     adapter,
                     {},
                     MagicMock(),
@@ -4639,6 +4646,202 @@ class TestCodexValidateSettings:
             "Stop",
         ):
             assert hook in config.required_hooks, f"Missing required hook: {hook}"
+
+
+class TestEnvelopeOwnershipLease:
+    """4.1.16: processing markers are leases at the hook route seam."""
+
+    def test_live_worker_past_replay_grace_retains_exclusion(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.adapters.claude_code import ClaudeCodeAdapter
+
+        gobby_home = tmp_path / "gobby-home"
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        envelope_id = "n-0000000000001-live-lease"
+        started = threading.Event()
+        gate = threading.Event()
+
+        def handle_native(
+            _self: object,
+            _payload: dict[str, Any],
+            _hook_manager: object,
+        ) -> dict[str, bool]:
+            started.set()
+            assert gate.wait(timeout=5)
+            return {"continue": True}
+
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+            config=DaemonConfig(),
+        )
+        assert server.config is not None
+        server.config.workflow.timeout = 0.05
+        server.config.hooks.adapter_timeout = 0.15
+        server.app.state.hook_manager = _mock_hook_manager()
+        envelope = _hook_envelope(
+            hook_type="session-start",
+            source="claude",
+            critical=True,
+        )
+        envelope["response_capability"] = "hook-response.v1"
+        processed_dir = gobby_home / "hooks" / "inbox" / "processed"
+        with (
+            TestClient(server.app) as client,
+            patch.object(ClaudeCodeAdapter, "handle_native", handle_native),
+        ):
+            timeout_response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=envelope,
+            )
+            assert started.wait(timeout=2)
+            assert timeout_response.status_code == 503
+            aged = (
+                datetime.now(UTC) - timedelta(seconds=ENVELOPE_REPLAY_GRACE_SECONDS + 5)
+            ).isoformat()
+            record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+            assert record is not None
+            record["claimed_at"] = aged
+            record["renewed_at"] = aged
+            record["lease_expires_at"] = aged
+            marker_path = next(processed_dir.glob("*.json"))
+            marker_path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+
+            replay = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=envelope,
+            )
+            assert replay.status_code == 409
+            assert replay.json()["status"] == "processing"
+            gate.set()
+
+    def test_dead_owner_expired_lease_is_reclaimable(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        gobby_home = tmp_path / "gobby-home"
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        envelope_id = "n-0000000000001-dead-lease"
+        processed_dir = gobby_home / "hooks" / "inbox" / "processed"
+        assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+        aged = (
+            datetime.now(UTC) - timedelta(seconds=ENVELOPE_REPLAY_GRACE_SECONDS + 5)
+        ).isoformat()
+        record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+        assert record is not None
+        record["claimed_at"] = aged
+        record["renewed_at"] = aged
+        record["lease_expires_at"] = aged
+        record["owner_pid"] = 2_147_483_646
+        record["owner_create_time"] = 0.0
+        marker_path = next(processed_dir.glob("*.json"))
+        marker_path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = _mock_hook_manager()
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
+        ):
+            adapter = MagicMock()
+            adapter.handle_native.return_value = {"continue": True}
+            adapter_cls.return_value = adapter
+            response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=_hook_envelope(hook_type="session-start", source="claude"),
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {"continue": True}
+        adapter.handle_native.assert_called_once()
+
+    def test_losing_owner_cannot_finalize_processed_marker(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.adapters.claude_code import ClaudeCodeAdapter
+
+        gobby_home = tmp_path / "gobby-home"
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        envelope_id = "n-0000000000001-lost-owner"
+        started = threading.Event()
+        gate = threading.Event()
+
+        def handle_native(
+            _self: object,
+            _payload: dict[str, Any],
+            _hook_manager: object,
+        ) -> dict[str, Any]:
+            started.set()
+            assert gate.wait(timeout=5)
+            return {"continue": True, "source": "losing-owner"}
+
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+            config=DaemonConfig(),
+        )
+        assert server.config is not None
+        server.config.workflow.timeout = 0.05
+        server.config.hooks.adapter_timeout = 0.15
+        server.app.state.hook_manager = _mock_hook_manager()
+        envelope = _hook_envelope(hook_type="session-start", source="claude")
+        envelope["response_capability"] = "hook-response.v1"
+        processed_dir = gobby_home / "hooks" / "inbox" / "processed"
+        with (
+            TestClient(server.app) as client,
+            patch.object(ClaudeCodeAdapter, "handle_native", handle_native),
+        ):
+            timeout_response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=envelope,
+            )
+            assert started.wait(timeout=2)
+            assert timeout_response.status_code == 503
+            record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+            assert record is not None
+            record["owner_token"] = "thief-token"
+            marker_path = next(processed_dir.glob("*.json"))
+            marker_path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+            finalized = threading.Event()
+
+            def _track_finalize(*args: Any, **kwargs: Any) -> bool:
+                from gobby.hooks.envelope_dedupe import finalize_envelope_processed as real
+
+                try:
+                    return real(*args, **kwargs)
+                finally:
+                    finalized.set()
+
+            with patch(
+                "gobby.hooks.adapter_execution.finalize_envelope_processed",
+                _track_finalize,
+            ):
+                gate.set()
+                assert finalized.wait(timeout=2)
+            latest = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+            assert latest is not None
+            assert latest.get("status") == "processing"
+            assert latest.get("owner_token") == "thief-token"
+            assert latest.get("response") is None
 
 
 # ============================================================================

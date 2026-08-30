@@ -15,7 +15,9 @@ from fastapi import FastAPI
 
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
+    ENVELOPE_REPLAY_GRACE_SECONDS,
     claim_envelope_processing,
+    finalize_envelope_processed,
     is_envelope_processed,
     is_inbox_envelope_fresh,
     mark_envelope_processed,
@@ -517,7 +519,7 @@ async def test_drain_hook_inbox_skips_active_processing_marker(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_drain_hook_inbox_clears_stale_processing_marker_and_replays(
+async def test_drain_hook_inbox_retains_live_owner_past_replay_grace(
     tmp_path: Path,
 ) -> None:
     inbox_dir = tmp_path / "hooks" / "inbox"
@@ -529,7 +531,46 @@ async def test_drain_hook_inbox_clears_stale_processing_marker_and_replays(
     claim_envelope_processing(envelope_id, processed_dir=processed_dir)
     marker_path = next(processed_dir.glob("*.json"))
     marker = json.loads(marker_path.read_text(encoding="utf-8"))
-    marker["claimed_at"] = (datetime.now(UTC) - timedelta(seconds=121)).isoformat()
+    aged = (datetime.now(UTC) - timedelta(seconds=ENVELOPE_REPLAY_GRACE_SECONDS + 1)).isoformat()
+    marker["claimed_at"] = aged
+    marker["renewed_at"] = aged
+    marker["lease_expires_at"] = aged
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=mock_client):
+        replayed = await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir)
+
+    assert replayed == 0
+    assert envelope_path.exists()
+    mock_client.post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_drain_hook_inbox_clears_dead_owner_expired_lease_and_replays(
+    tmp_path: Path,
+) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    envelope_id = "n-0000000000001-abcd"
+    envelope_path = inbox_dir / f"{envelope_id}.json"
+    envelope_path.write_text(json.dumps(_valid_envelope()))
+    processed_dir = inbox_dir / "processed"
+    claim_envelope_processing(envelope_id, processed_dir=processed_dir)
+    marker_path = next(processed_dir.glob("*.json"))
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    aged = (datetime.now(UTC) - timedelta(seconds=ENVELOPE_REPLAY_GRACE_SECONDS + 1)).isoformat()
+    marker["claimed_at"] = aged
+    marker["renewed_at"] = aged
+    marker["lease_expires_at"] = aged
+    marker["owner_pid"] = 2_147_483_646
+    marker["owner_create_time"] = 0.0
     marker_path.write_text(json.dumps(marker), encoding="utf-8")
 
     mock_response = MagicMock()
@@ -673,7 +714,13 @@ def test_release_envelope_processing_claim_preserves_finalized_or_absent_marker(
     processed_dir = tmp_path / "processed"
     envelope_id = "n-0000000000001-finalized"
     assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
-    mark_envelope_processed(envelope_id, processed_dir=processed_dir)
+    token = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+    assert token is not None
+    owner_token = token.get("owner_token")
+    assert isinstance(owner_token, str) and owner_token
+    assert (
+        finalize_envelope_processed(envelope_id, owner_token, processed_dir=processed_dir) is True
+    )
 
     assert release_envelope_processing_claim(envelope_id, processed_dir=processed_dir) is False
     marker = read_envelope_marker(envelope_id, processed_dir=processed_dir)

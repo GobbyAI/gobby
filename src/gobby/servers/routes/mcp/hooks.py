@@ -5,10 +5,8 @@ Provides hook execution endpoint for CLI adapters.
 Extracted from base.py as part of Strangler Fig decomposition.
 """
 
-import asyncio
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from fastapi import APIRouter, HTTPException, Request
@@ -18,12 +16,23 @@ from gobby.adapters.capabilities import ContextChannel, get_provider_capabilitie
 from gobby.adapters.claude_contract import get_claude_contract
 from gobby.adapters.degradation import AdapterDegradationKind, record_adapter_degradation
 from gobby.config.hooks import HookTimeoutConfig
+from gobby.hooks.adapter_execution import HOOK_ADAPTER_MAX_WORKERS as _HOOK_ADAPTER_MAX_WORKERS
+from gobby.hooks.adapter_execution import (
+    AdapterHookTimeout,
+    schedule_adapter_timeout_finalization,
+    start_envelope_lease_renewal,
+)
+from gobby.hooks.adapter_execution import (
+    run_adapter_hook as _run_adapter_hook,
+)
 from gobby.hooks.agent_run_ingress import AgentRunIngressRetryableError
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
     claim_envelope_processing,
     clear_stale_envelope_processing_marker,
+    envelope_processing_owner_token,
     envelope_terminal_response,
+    finalize_envelope_processed,
     mark_envelope_processed,
     read_envelope_marker,
     release_envelope_processing_claim,
@@ -43,7 +52,6 @@ from gobby.hooks.startup_claim_preflight import (
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.mcp import hook_hold_open
 from gobby.telemetry.instruments import inc_counter
-from gobby.workflows.hooks import WorkflowEvaluationTimeout
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -58,11 +66,7 @@ HOLD_OPEN_HOOK_TYPE_MAP: dict[str, str] = {
 }
 
 FAIL_SAFE_HOOK_TYPES = frozenset(hook_type.casefold() for hook_type in {"Stop", "stop"})
-HOOK_ADAPTER_MAX_WORKERS = 8
-_HOOK_ADAPTER_EXECUTOR = ThreadPoolExecutor(
-    max_workers=HOOK_ADAPTER_MAX_WORKERS,
-    thread_name_prefix="gobby-hook-adapter",
-)
+HOOK_ADAPTER_MAX_WORKERS = _HOOK_ADAPTER_MAX_WORKERS
 SUPPORTED_HOOK_SOURCES: Final = ("claude", "grok", "qwen", "codex", "droid", "agy")
 
 
@@ -286,67 +290,6 @@ def _hook_exception_response(
     return _hook_block_response(adapter, hook_type, source, reason)
 
 
-async def _run_adapter_hook(
-    adapter: Any,
-    payload: dict[str, Any],
-    hook_manager: Any,
-    *,
-    timeout_seconds: float | None,
-) -> dict[str, Any]:
-    """Run blocking hook work in the bounded adapter executor."""
-    loop = asyncio.get_running_loop()
-    queued_at = time.perf_counter()
-    started_at: float | None = None
-    finished_at: float | None = None
-    exception_type: str | None = None
-
-    def run_adapter() -> dict[str, Any]:
-        nonlocal started_at, finished_at
-        started_at = time.perf_counter()
-        try:
-            return cast(dict[str, Any], adapter.handle_native(payload, hook_manager))
-        finally:
-            finished_at = time.perf_counter()
-
-    pending = loop.run_in_executor(
-        _HOOK_ADAPTER_EXECUTOR,
-        run_adapter,
-    )
-    try:
-        if timeout_seconds is None:
-            return await pending
-        return await asyncio.wait_for(pending, timeout=timeout_seconds)
-    except WorkflowEvaluationTimeout as exc:
-        exception_type = type(exc).__name__
-        now = time.perf_counter()
-        exc.queue_duration_seconds = (
-            started_at - queued_at if started_at is not None else now - queued_at
-        )
-        exc.execution_duration_seconds = now - started_at if started_at is not None else 0.0
-        raise
-    except BaseException as exc:
-        exception_type = type(exc).__name__
-        raise
-    finally:
-        now = finished_at or time.perf_counter()
-        queue_duration = started_at - queued_at if started_at is not None else now - queued_at
-        execution_duration = now - started_at if started_at is not None else 0.0
-        input_data = payload.get("input_data")
-        payload_session_id = input_data.get("session_id") if isinstance(input_data, dict) else None
-        logger.debug(
-            "Hook adapter timing",
-            extra={
-                "hook_type": payload.get("hook_type"),
-                "source": payload.get("source"),
-                "session_id": payload.get("_platform_session_id") or payload_session_id,
-                "timeout_seconds": timeout_seconds,
-                "queue_duration_seconds": queue_duration,
-                "execution_duration_seconds": execution_duration,
-                "exception_type": exception_type,
-            },
-        )
-
-
 def _normalize_hold_open_hook_type(hook_type: str | None) -> str | None:
     """Normalize provider-specific hook names for web-chat hold-open gating."""
     if not hook_type:
@@ -434,6 +377,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         source: str | None = None  # Track for error handling
         adapter: Any | None = None
         claim_lease: StartupClaimLease | None = None
+        owner_token: str | None = None
         request_metadata: dict[str, Any] = {
             "request_shape": "unknown",
             "schema_version": None,
@@ -444,6 +388,21 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
         def mark_processed_and_return(response: dict[str, Any]) -> dict[str, Any]:
             response = strip_private_startup_claim_fields(response)
+            if envelope_id and owner_token:
+                try:
+                    finalize_envelope_processed(
+                        envelope_id,
+                        owner_token,
+                        response=response,
+                        hook_type=hook_type if isinstance(hook_type, str) else None,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to finalize hook envelope %s: %s",
+                        envelope_id,
+                        exc,
+                    )
+                return response
             if envelope_id:
                 try:
                     mark_envelope_processed(
@@ -540,6 +499,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                             "reason": reason,
                         },
                     )
+
+            if envelope_id:
+                owner_token = envelope_processing_owner_token(envelope_id)
+                if owner_token:
+                    start_envelope_lease_renewal(envelope_id, owner_token)
 
             # Select adapter based on source
             from gobby.adapters.agy import AgyAdapter
@@ -729,10 +693,30 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         exc, "execution_duration_seconds", None
                     ),
                 }
+                live_worker = False
+                if isinstance(exc, AdapterHookTimeout):
+                    executor_future = exc.executor_future
+                    if (
+                        executor_future is not None
+                        and not executor_future.done()
+                        and envelope_id
+                        and owner_token
+                    ):
+                        live_worker = True
+                        schedule_adapter_timeout_finalization(
+                            executor_future,
+                            envelope_id=envelope_id,
+                            owner_token=owner_token,
+                            hook_type=hook_type if isinstance(hook_type, str) else None,
+                        )
                 if envelope_has_hook_response_capability(
                     request_metadata.get("response_capability")
                 ):
-                    released = bool(envelope_id and release_envelope_processing_claim(envelope_id))
+                    released = False
+                    if not live_worker:
+                        released = bool(
+                            envelope_id and release_envelope_processing_claim(envelope_id)
+                        )
                     logger.warning(
                         "Retrying hook after adapter timeout",
                         extra=_hook_log_extra(

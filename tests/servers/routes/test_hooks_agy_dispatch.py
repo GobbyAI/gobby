@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import threading
+import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,16 +13,51 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.config.app import DaemonConfig
 from gobby.hooks.agent_run_ingress import AgentRunIngressRetryableError
-from gobby.hooks.envelope_dedupe import ENVELOPE_ID_HEADER
+from gobby.hooks.envelope_dedupe import (
+    ENVELOPE_ID_HEADER,
+    read_envelope_marker,
+    release_envelope_processing_claim,
+)
+from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import StartupContextClaim
 from tests.servers.conftest import create_http_server
 
-SUPPORTED_HOOK_RESPONSE_CAPABILITY = "hook-response.v1"
-
 pytestmark = pytest.mark.unit
+
+_ADAPTER_TIMEOUT_SECONDS = 0.15
+
+
+def _processed_dir(gobby_home: Path) -> Path:
+    return gobby_home / "hooks" / "inbox" / "processed"
+
+
+def _wait_for_marker_status(
+    processed_dir: Path,
+    envelope_id: str,
+    status: str,
+    *,
+    timeout: float = 2.0,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    record: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+        if record is not None and record.get("status") == status:
+            return record
+        time.sleep(0.02)
+    raise AssertionError(f"expected marker status {status!r}, last record={record!r}")
+
+
+def _rewrite_marker(processed_dir: Path, envelope_id: str, **updates: object) -> None:
+    record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+    assert record is not None
+    record.update(updates)
+    marker_path = next(processed_dir.glob("*.json"))
+    marker_path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _agy_pre_invocation_envelope(*, conversation_id: str = "agy-conv-1") -> dict[str, Any]:
@@ -288,6 +327,7 @@ class TestAgyAdapterTimeoutRetry:
                 new_callable=AsyncMock,
                 side_effect=TimeoutError,
             ),
+            patch("gobby.servers.routes.mcp.hooks.finalize_envelope_processed") as finalize,
             patch("gobby.servers.routes.mcp.hooks.mark_envelope_processed") as mark_processed,
         ):
             response = client.post(
@@ -300,7 +340,8 @@ class TestAgyAdapterTimeoutRetry:
         body = response.json()
         assert body.get("retry_kind") is None
         assert body.get("status") != "retry"
-        mark_processed.assert_called()
+        finalize.assert_called()
+        mark_processed.assert_not_called()
 
     def test_timeout_with_capability_returns_503_adapter_timeout(
         self,
@@ -383,3 +424,352 @@ class TestAgyAdapterTimeoutRetry:
         assert body["retry_kind"] == "ingress_backpressure"
         assert body["reason"] == "agent_run_identity_pending"
         mark_processed.assert_not_called()
+
+
+def _short_timeout_server(session_storage: SessionManager) -> Any:
+    server = create_http_server(
+        port=60887,
+        test_mode=True,
+        session_manager=session_storage,
+        config=DaemonConfig(),
+    )
+    assert server.config is not None
+    server.config.workflow.timeout = 0.05
+    server.config.hooks.adapter_timeout = _ADAPTER_TIMEOUT_SECONDS
+    server.app.state.hook_manager = MagicMock()
+    server.app.state.hook_manager.shutdown_async = AsyncMock()
+    return server
+
+
+class TestAgyAdapterTimeoutFencing:
+    def test_timeout_keeps_claim_until_completed_worker_finalizes(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.adapters.agy import AgyAdapter
+
+        gobby_home = tmp_path / "gobby-home"
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        envelope_id = "env-agy-fence-complete"
+        envelope = _agy_pre_invocation_envelope()
+        envelope["response_capability"] = SUPPORTED_HOOK_RESPONSE_CAPABILITY
+        started = threading.Event()
+        gate = threading.Event()
+        effects = {"session": 0, "rule": 0, "pending": 0, "activity": 0}
+
+        def handle_native(
+            _self: object,
+            _payload: dict[str, Any],
+            _hook_manager: object,
+        ) -> dict[str, Any]:
+            effects["session"] += 1
+            effects["rule"] += 1
+            effects["pending"] += 1
+            effects["activity"] += 1
+            started.set()
+            assert gate.wait(timeout=5)
+            return {"continue": True, "decision": "allow"}
+
+        server = _short_timeout_server(session_storage)
+        processed_dir = _processed_dir(gobby_home)
+        with (
+            TestClient(server.app) as client,
+            patch.object(AgyAdapter, "handle_native", handle_native),
+        ):
+            timeout_response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=envelope,
+            )
+            assert started.wait(timeout=2)
+            assert timeout_response.status_code == 503
+            assert timeout_response.json() == {
+                "status": "retry",
+                "retry_kind": "adapter_timeout",
+            }
+            in_flight = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+            assert in_flight is not None
+            assert in_flight.get("status") == "processing"
+
+            replay = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=envelope,
+            )
+            assert replay.status_code == 409
+            assert replay.json()["status"] == "processing"
+            assert effects == {"session": 1, "rule": 1, "pending": 1, "activity": 1}
+
+            gate.set()
+            processed = _wait_for_marker_status(processed_dir, envelope_id, "processed")
+            assert processed.get("response") == {"continue": True, "decision": "allow"}
+
+            stored = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=envelope,
+            )
+            assert stored.status_code == 200
+            assert stored.json() == {"continue": True, "decision": "allow"}
+            assert effects == {"session": 1, "rule": 1, "pending": 1, "activity": 1}
+
+    def test_failed_worker_after_timeout_releases_claim_for_replay(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.adapters.agy import AgyAdapter
+
+        gobby_home = tmp_path / "gobby-home"
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        envelope_id = "env-agy-fence-fail"
+        envelope = _agy_pre_invocation_envelope()
+        envelope["response_capability"] = SUPPORTED_HOOK_RESPONSE_CAPABILITY
+        started = threading.Event()
+        gate = threading.Event()
+
+        def handle_native(
+            _self: object,
+            _payload: dict[str, Any],
+            _hook_manager: object,
+        ) -> dict[str, Any]:
+            started.set()
+            assert gate.wait(timeout=5)
+            raise RuntimeError("adapter failed")
+
+        server = _short_timeout_server(session_storage)
+        processed_dir = _processed_dir(gobby_home)
+        with (
+            TestClient(server.app) as client,
+            patch.object(AgyAdapter, "handle_native", handle_native),
+        ):
+            timeout_response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=envelope,
+            )
+            assert started.wait(timeout=2)
+            assert timeout_response.status_code == 503
+            assert read_envelope_marker(envelope_id, processed_dir=processed_dir) is not None
+
+            released = threading.Event()
+            real_release = release_envelope_processing_claim
+
+            def _track_release(*args: Any, **kwargs: Any) -> bool:
+                result = real_release(*args, **kwargs)
+                released.set()
+                return result
+
+            with patch(
+                "gobby.hooks.adapter_execution.release_envelope_processing_claim",
+                _track_release,
+            ):
+                gate.set()
+                assert released.wait(timeout=2)
+            assert read_envelope_marker(envelope_id, processed_dir=processed_dir) is None
+
+    def test_late_worker_output_after_lost_lease_is_discarded(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.adapters.agy import AgyAdapter
+
+        gobby_home = tmp_path / "gobby-home"
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        envelope_id = "env-agy-fence-lost"
+        envelope = _agy_pre_invocation_envelope()
+        envelope["response_capability"] = SUPPORTED_HOOK_RESPONSE_CAPABILITY
+        started = threading.Event()
+        gate = threading.Event()
+
+        def handle_native(
+            _self: object,
+            _payload: dict[str, Any],
+            _hook_manager: object,
+        ) -> dict[str, Any]:
+            started.set()
+            assert gate.wait(timeout=5)
+            return {"continue": True, "decision": "allow", "source": "late-worker"}
+
+        server = _short_timeout_server(session_storage)
+        processed_dir = _processed_dir(gobby_home)
+        with (
+            TestClient(server.app) as client,
+            patch.object(AgyAdapter, "handle_native", handle_native),
+        ):
+            timeout_response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=envelope,
+            )
+            assert started.wait(timeout=2)
+            assert timeout_response.status_code == 503
+            _rewrite_marker(processed_dir, envelope_id, owner_token="thief-token")
+            finalized = threading.Event()
+
+            def _track_finalize(*args: Any, **kwargs: Any) -> bool:
+                from gobby.hooks.envelope_dedupe import finalize_envelope_processed as real
+
+                try:
+                    return real(*args, **kwargs)
+                finally:
+                    finalized.set()
+
+            with patch(
+                "gobby.hooks.adapter_execution.finalize_envelope_processed",
+                _track_finalize,
+            ):
+                gate.set()
+                assert finalized.wait(timeout=2)
+            record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+            assert record is not None
+            assert record.get("status") == "processing"
+            assert record.get("owner_token") == "thief-token"
+            assert record.get("response") is None
+
+    def test_timeout_invalidates_startup_claim_and_does_not_commit(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.adapters.agy import AgyAdapter
+
+        gobby_home = tmp_path / "gobby-home"
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        envelope_id = "env-agy-fence-startup"
+        envelope = _agy_pre_invocation_envelope()
+        envelope["response_capability"] = SUPPORTED_HOOK_RESPONSE_CAPABILITY
+        started = threading.Event()
+        gate = threading.Event()
+        matching = SimpleNamespace(
+            id="sess-fence-1",
+            project_id="proj-agy",
+            source="agy",
+            machine_id="machine-agy",
+            session_type="interactive",
+            status="active",
+            workspace_path="/tmp/agy-ws",
+            tombstoned=False,
+        )
+        mock_sessions = MagicMock()
+        mock_sessions.get.return_value = matching
+        mock_sessions.db = session_storage.db
+        server = _short_timeout_server(session_storage)
+        server.app.state.hook_manager.session_manager = mock_sessions
+        server.app.state.hook_manager._session_manager = mock_sessions
+
+        def handle_native(
+            _self: object,
+            _payload: dict[str, Any],
+            _hook_manager: object,
+        ) -> dict[str, Any]:
+            started.set()
+            assert gate.wait(timeout=5)
+            return {"continue": True, "decision": "allow"}
+
+        def claim(
+            _self: object,
+            session_id: str,
+            owner_token: str | None = None,
+        ) -> StartupContextClaim:
+            return StartupContextClaim("full", 7, owner_token or "owner-1", "claimed")
+
+        with (
+            TestClient(server.app) as client,
+            patch.object(AgyAdapter, "handle_native", handle_native),
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.claim_startup_context",
+                claim,
+            ),
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.commit_startup_context",
+            ) as commit,
+            patch(
+                "gobby.servers.routes.mcp.hooks.invalidate_agy_startup_claim",
+            ) as invalidate,
+        ):
+            timeout_response = client.post(
+                "/api/hooks/execute",
+                headers={
+                    ENVELOPE_ID_HEADER: envelope_id,
+                    "X-Gobby-Session-Id": "sess-fence-1",
+                },
+                json=envelope,
+            )
+            assert started.wait(timeout=2)
+            assert timeout_response.status_code == 503
+            invalidate.assert_called()
+            gate.set()
+            _wait_for_marker_status(_processed_dir(gobby_home), envelope_id, "processed")
+            commit.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("source", "hook_type", "adapter_path", "critical"),
+        [
+            ("claude", "session-start", "gobby.adapters.claude_code.ClaudeCodeAdapter", True),
+            ("droid", "PreToolUse", "gobby.adapters.droid.DroidAdapter", False),
+        ],
+    )
+    def test_non_agy_adapter_timeout_uses_the_same_fencing(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        source: str,
+        hook_type: str,
+        adapter_path: str,
+        critical: bool,
+    ) -> None:
+        gobby_home = tmp_path / "gobby-home"
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        envelope_id = f"env-{source}-fence"
+        envelope = {
+            "schema_version": 1,
+            "enqueued_at": "2026-06-24T12:00:00Z",
+            "critical": critical,
+            "hook_type": hook_type,
+            "source": source,
+            "input_data": {"session_id": f"{source}-1", "cwd": "/tmp"},
+            "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
+        }
+        started = threading.Event()
+        gate = threading.Event()
+
+        def handle_native(
+            _self: object,
+            _payload: dict[str, Any],
+            _hook_manager: object,
+        ) -> dict[str, Any]:
+            started.set()
+            assert gate.wait(timeout=5)
+            return {"continue": True}
+
+        server = _short_timeout_server(session_storage)
+        processed_dir = _processed_dir(gobby_home)
+        with (
+            TestClient(server.app) as client,
+            patch(f"{adapter_path}.handle_native", handle_native),
+        ):
+            timeout_response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=envelope,
+            )
+            assert started.wait(timeout=2)
+            assert timeout_response.status_code == 503
+            assert timeout_response.json()["retry_kind"] == "adapter_timeout"
+            replay = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=envelope,
+            )
+            assert replay.status_code == 409
+            gate.set()
+            processed = _wait_for_marker_status(processed_dir, envelope_id, "processed")
+            assert processed.get("response") == {"continue": True}

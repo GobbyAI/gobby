@@ -10,10 +10,12 @@ import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 from uuid import uuid4
+
+import psutil
 
 from gobby.cli.utils import get_gobby_home
 
@@ -21,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 ENVELOPE_ID_HEADER: Final = "X-Gobby-Envelope-Id"
 ENVELOPE_REPLAY_GRACE_SECONDS: Final = 120.0
+ENVELOPE_PROCESSING_LEASE_TTL_SECONDS: Final = 15.0
+_OWNER_CREATE_TIME_MATCH_SECONDS: Final = 1.0
 _ENVELOPE_FILENAME_RE: Final = re.compile(r"^[nc]-(?P<timestamp_ms>\d+)-.+$")
 
 # A marker only has to outlive the window in which its envelope can still
@@ -178,14 +182,24 @@ def claim_envelope_processing(envelope_id: str, *, processed_dir: Path | None = 
 
     marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
     marker.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(UTC)
+    try:
+        pid, create_time = _owner_process_identity()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        pid, create_time = os.getpid(), time.time()
     try:
         with marker.open("x", encoding="utf-8") as fh:
             fh.write(
                 json.dumps(
                     {
                         "envelope_id": envelope_id,
-                        "claimed_at": datetime.now(UTC).isoformat(),
+                        "claimed_at": now.isoformat(),
                         "status": "processing",
+                        "owner_token": str(uuid4()),
+                        "owner_pid": pid,
+                        "owner_create_time": create_time,
+                        "renewed_at": now.isoformat(),
+                        "lease_expires_at": _lease_expiry(now).isoformat(),
                     },
                     sort_keys=True,
                 )
@@ -196,14 +210,92 @@ def claim_envelope_processing(envelope_id: str, *, processed_dir: Path | None = 
     return True
 
 
+def envelope_processing_owner_token(
+    envelope_id: str,
+    *,
+    processed_dir: Path | None = None,
+) -> str | None:
+    """Return the live processing lease token for an envelope, if present."""
+    record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+    if record is None or record.get("status") != "processing":
+        return None
+    token = record.get("owner_token")
+    return token if isinstance(token, str) and token else None
+
+
+def renew_envelope_processing_lease(
+    envelope_id: str,
+    owner_token: str,
+    *,
+    processed_dir: Path | None = None,
+) -> bool:
+    """Extend a live processing lease when the owner token still matches."""
+    now = datetime.now(UTC)
+
+    def _renew(record: dict[str, Any]) -> dict[str, Any]:
+        record["renewed_at"] = now.isoformat()
+        record["lease_expires_at"] = _lease_expiry(now).isoformat()
+        return record
+
+    return _cas_mutate_processing_marker(
+        envelope_id,
+        owner_token,
+        processed_dir=processed_dir,
+        writer=_renew,
+    )
+
+
+def finalize_envelope_processed(
+    envelope_id: str,
+    owner_token: str,
+    *,
+    response: Mapping[str, Any] | None = None,
+    processed_dir: Path | None = None,
+    hook_type: str | None = None,
+) -> bool:
+    """Compare-and-set a live processing lease into a terminal processed marker."""
+
+    def _finalize(record: dict[str, Any]) -> dict[str, Any]:
+        finalized: dict[str, Any] = {
+            "envelope_id": envelope_id,
+            "processed_at": datetime.now(UTC).isoformat(),
+            "status": "processed",
+        }
+        if response is not None:
+            finalized["response"] = dict(response)
+        stored_hook_type = hook_type if hook_type else None
+        if stored_hook_type is None:
+            existing_hook_type = record.get("hook_type")
+            if isinstance(existing_hook_type, str) and existing_hook_type:
+                stored_hook_type = existing_hook_type
+        if stored_hook_type:
+            finalized["hook_type"] = stored_hook_type
+        return finalized
+
+    return _cas_mutate_processing_marker(
+        envelope_id,
+        owner_token,
+        processed_dir=processed_dir,
+        writer=_finalize,
+    )
+
+
 def release_envelope_processing_claim(
     envelope_id: str,
     *,
     processed_dir: Path | None = None,
+    owner_token: str | None = None,
 ) -> bool:
     """Release a live processing claim so a retry can reclaim the envelope."""
     if not envelope_id:
         return False
+    if owner_token:
+        return _cas_mutate_processing_marker(
+            envelope_id,
+            owner_token,
+            processed_dir=processed_dir,
+            writer=lambda _record: None,
+        )
     marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
     claimed_marker = marker.with_name(f".{marker.name}.{uuid4().hex}.release")
     try:
@@ -356,6 +448,8 @@ def mark_envelope_processed(
     marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
     marker.parent.mkdir(parents=True, exist_ok=True)
     existing = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+    if existing is not None and existing.get("status") == "processing":
+        return
     if (
         response is None
         and existing is not None
@@ -424,13 +518,118 @@ def _is_active_processing_record(
     if record is None or record.get("status") != "processing":
         return False
 
+    reference = now or datetime.now(UTC)
+    if _owner_process_is_live(record):
+        return True
+    if not _lease_is_expired(record, now=reference, stale_after_seconds=stale_after_seconds):
+        return True
+    return False
+
+
+def _lease_expiry(now: datetime) -> datetime:
+    return now + timedelta(seconds=ENVELOPE_PROCESSING_LEASE_TTL_SECONDS)
+
+
+def _lease_is_expired(
+    record: Mapping[str, Any],
+    *,
+    now: datetime,
+    stale_after_seconds: float,
+) -> bool:
+    expires_at = _parse_iso_datetime(record.get("lease_expires_at"))
+    if expires_at is not None:
+        return now >= expires_at
     claimed_at = _processing_claimed_at(record)
     if claimed_at is None:
+        return True
+    age_seconds = (now - claimed_at).total_seconds()
+    return age_seconds < 0 or age_seconds >= stale_after_seconds
+
+
+def _owner_process_identity() -> tuple[int, float]:
+    process = psutil.Process()
+    return int(process.pid), float(process.create_time())
+
+
+def _owner_process_is_live(record: Mapping[str, Any]) -> bool:
+    pid = record.get("owner_pid")
+    create_time = record.get("owner_create_time")
+    if not isinstance(pid, int) or isinstance(pid, bool):
+        return False
+    if isinstance(create_time, bool) or not isinstance(create_time, (int, float)):
+        return False
+    try:
+        process = psutil.Process(pid)
+        if process.status() == psutil.STATUS_ZOMBIE:
+            return False
+        return abs(float(process.create_time()) - float(create_time)) < (
+            _OWNER_CREATE_TIME_MATCH_SECONDS
+        )
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
         return False
 
-    reference = now or datetime.now(UTC)
-    age_seconds = (reference - claimed_at).total_seconds()
-    return 0 <= age_seconds < stale_after_seconds
+
+def _restore_marker(claimed_marker: Path, marker: Path) -> None:
+    if marker.exists():
+        claimed_marker.unlink(missing_ok=True)
+        return
+    try:
+        os.link(claimed_marker, marker)
+    except FileExistsError:
+        pass
+    finally:
+        claimed_marker.unlink(missing_ok=True)
+
+
+def _cas_mutate_processing_marker(
+    envelope_id: str,
+    owner_token: str,
+    *,
+    processed_dir: Path | None,
+    writer: Callable[[dict[str, Any]], dict[str, Any] | None],
+) -> bool:
+    if not envelope_id or not owner_token:
+        return False
+    marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
+    claimed_marker = marker.with_name(f".{marker.name}.{uuid4().hex}.cas")
+    try:
+        marker.rename(claimed_marker)
+    except FileNotFoundError:
+        return False
+    try:
+        try:
+            record = json.loads(claimed_marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            _restore_marker(claimed_marker, marker)
+            return False
+        if (
+            not isinstance(record, dict)
+            or record.get("status") != "processing"
+            or record.get("owner_token") != owner_token
+        ):
+            _restore_marker(claimed_marker, marker)
+            return False
+        updated = writer(record)
+        if updated is None:
+            claimed_marker.unlink(missing_ok=True)
+            return True
+        temp_path = marker.with_name(f"{marker.name}.{uuid4().hex}.tmp")
+        temp_path.write_text(
+            json.dumps(updated, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        try:
+            os.replace(temp_path, marker)
+        finally:
+            temp_path.unlink(missing_ok=True)
+        claimed_marker.unlink(missing_ok=True)
+        return True
+    except Exception:
+        if claimed_marker.exists() and not marker.exists():
+            _restore_marker(claimed_marker, marker)
+        else:
+            claimed_marker.unlink(missing_ok=True)
+        raise
 
 
 def _clear_stale_unreadable_marker(
