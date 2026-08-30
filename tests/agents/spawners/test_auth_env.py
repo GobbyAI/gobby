@@ -89,3 +89,49 @@ def test_claude_oauth_token_is_never_forwarded() -> None:
 
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in terminal_env_passthrough("claude", source=source)
     assert has_auth_env("claude", source=source) is False
+
+
+def test_agy_allowlist_and_credentials_are_explicitly_empty() -> None:
+    from gobby.agents.sandbox_policy import _PROVIDER_CREDENTIAL_ENV
+    from gobby.agents.spawners.auth_env import CLI_CREDENTIAL_KEYS, CLI_ENV_ALLOWLIST
+    from gobby.agents.tmux.spawner import _SUPPORTED_AUTH_CLIS
+
+    assert "agy" in CLI_ENV_ALLOWLIST
+    assert CLI_ENV_ALLOWLIST["agy"] == frozenset()
+    assert "agy" in CLI_CREDENTIAL_KEYS
+    assert CLI_CREDENTIAL_KEYS["agy"] == frozenset()
+    assert frozenset(_PROVIDER_CREDENTIAL_ENV["agy"]) == CLI_CREDENTIAL_KEYS["agy"]
+    assert "agy" not in _SUPPORTED_AUTH_CLIS
+
+
+def test_agy_passthrough_strips_ignored_google_ambient_keys() -> None:
+    from gobby.agents.spawners import auth_env as auth_env_mod
+    from gobby.agents.tmux.spawner import tmux_spawn_shell_and_env
+
+    source = {
+        "HOME": "/home/tester",
+        "PATH": "/usr/bin",
+        "GOOGLE_API_KEY": "google-secret",
+        "GEMINI_API_KEY": "gemini-secret",
+        "GOOGLE_APPLICATION_CREDENTIALS": "/tmp/creds.json",
+        "UNRELATED_SECRET": "nope",
+    }
+    result = terminal_env_passthrough("agy", source=source)
+    assert result == {"HOME": "/home/tester", "PATH": "/usr/bin"}
+    assert has_auth_env("agy", source=source) is False
+    denied = getattr(auth_env_mod, "CLI_DENIED_AMBIENT_KEYS", None)
+    assert denied is not None
+    assert denied["agy"] == frozenset(
+        {"GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS"}
+    )
+
+    shell_cmd, extra_env = tmux_spawn_shell_and_env(
+        ["agy", "--dangerously-skip-permissions"],
+        {"HOME": "/home/tester", "PATH": "/usr/bin"},
+        "agy",
+    )
+    unset_clause = shell_cmd.split(";", 1)[0]
+    assert "GOOGLE_API_KEY" not in extra_env or extra_env["GOOGLE_API_KEY"] == ""
+    assert "GOOGLE_API_KEY" in unset_clause
+    assert "GEMINI_API_KEY" in unset_clause
+    assert "GOOGLE_APPLICATION_CREDENTIALS" in unset_clause

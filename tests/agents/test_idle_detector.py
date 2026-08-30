@@ -285,6 +285,45 @@ class TestStatusBarFiltering:
         assert self.detector.detect(output) == "active"
 
 
+class TestAgyStatusBarFiltering:
+    """AGY pane captures from record 1.1.17: prompt `>` and `? for shortcuts`."""
+
+    def setup_method(self) -> None:
+        self.detector = IdleDetector(BundledDetectionRegistry(), "agy")
+
+    def test_idle_prompt_above_status_bar(self) -> None:
+        output = (
+            "Ready.\n────────\n>\n────────\n? for shortcuts                  gemini-2.5-flash\n"
+        )
+        assert self.detector.detect(output) == "idle"
+
+    def test_working_spinner_is_active(self) -> None:
+        output = (
+            "✶ Running run_command\n"
+            "  ls -la\n"
+            "────────\n"
+            "? for shortcuts                  gemini-2.5-flash\n"
+        )
+        assert self.detector.detect(output) == "active"
+
+    def test_claude_footer_regex_is_removed(self) -> None:
+        manifest = self.detector._manifest()
+        assert manifest is not None
+        assert manifest.match_rule("status_bar", "   Opus 4.6  34.2%").match is None
+        assert manifest.match_rule("status_bar", "bypass permissions on").match is None
+        assert (
+            manifest.match_rule(
+                "status_bar",
+                "? for shortcuts                  gemini-2.5-flash",
+            ).match
+            is not None
+        )
+
+    def test_interrupted_prompt_is_idle(self) -> None:
+        output = "Interrupted · What should Antigravity CLI do instead?\n>\n"
+        assert self.detector.detect(output) == "idle"
+
+
 class TestStalledBuffer:
     """Tests for detecting stalled buffer (unsubmitted text at prompt)."""
 

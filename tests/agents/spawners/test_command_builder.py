@@ -11,6 +11,7 @@ pytestmark = pytest.mark.unit
     ("provider", "expected"),
     [
         ("claude", ["--effort", "high"]),
+        ("agy", ["--effort", "high"]),
         ("codex", ["-c", 'model_reasoning_effort="high"']),
         ("droid", ["--reasoning-effort", "high"]),
         ("grok", ["--reasoning-effort", "high"]),
@@ -19,6 +20,7 @@ pytestmark = pytest.mark.unit
 def test_reasoning_flag_styles_unchanged(provider: str, expected: list[str]) -> None:
     cmd, _env = build_cli_command(provider, reasoning_effort="high", prompt="hello")
 
+    assert expected[0] in cmd
     start = cmd.index(expected[0])
     assert cmd[start : start + len(expected)] == expected
 
@@ -220,6 +222,61 @@ class TestBuildCliCommand:
         assert "--worktree" not in cmd
         assert "--session-id" not in cmd
 
+    def test_agy_agent_command_uses_recorded_flag_forms(self) -> None:
+        cmd, _env = build_cli_command(
+            "agy",
+            prompt="implement the task",
+            auto_approve=True,
+            working_directory="/repo",
+            model="gemini-2.5-flash",
+            reasoning_effort="high",
+            sandbox_args=["--sandbox=false"],
+        )
+        assert cmd == [
+            "agy",
+            "--dangerously-skip-permissions",
+            "--add-dir",
+            "/repo",
+            "--model",
+            "gemini-2.5-flash",
+            "--effort",
+            "high",
+            "--sandbox=false",
+            "implement the task",
+        ]
+        assert "--mode" not in cmd
+        assert "-p" not in cmd
+        assert "--print" not in cmd
+        assert "--input-format" not in cmd
+
+    def test_agy_resume_uses_conversation_and_add_dir(self) -> None:
+        cmd, _env = build_cli_command(
+            "agy",
+            prompt="continue",
+            resume_session_id="conv-123",
+            auto_approve=True,
+            working_directory="/repo",
+        )
+        assert "--conversation" in cmd
+        assert "--add-dir" in cmd
+        conversation_at = cmd.index("--conversation")
+        add_dir_at = cmd.index("--add-dir")
+        assert cmd[conversation_at : conversation_at + 2] == ["--conversation", "conv-123"]
+        assert cmd[add_dir_at : add_dir_at + 2] == ["--add-dir", "/repo"]
+        assert "--mode" not in cmd
+
+    def test_agy_does_not_add_mode_flag(self) -> None:
+        cmd, _env = build_cli_command(
+            "agy",
+            prompt="plan this",
+            auto_approve=True,
+            working_directory="/repo",
+            mode="agent",
+        )
+        assert "--add-dir" in cmd
+        assert "--mode" not in cmd
+        assert cmd[0] == "agy"
+
     def test_droid_auto_approve_false_uses_low_autonomy(self) -> None:
         cmd, _env = build_cli_command("droid", auto_approve=False, prompt="hello")
         assert cmd == [
@@ -382,6 +439,23 @@ class TestBuildCliCommand:
                     "--reasoning-effort",
                     "high",
                     "--auto",
+                    "high",
+                    "--sandbox",
+                    "continue",
+                ],
+            ),
+            (
+                "agy",
+                [
+                    "agy",
+                    "--conversation",
+                    "native-123",
+                    "--dangerously-skip-permissions",
+                    "--add-dir",
+                    "/tmp/wt",
+                    "--model",
+                    "model-x",
+                    "--effort",
                     "high",
                     "--sandbox",
                     "continue",

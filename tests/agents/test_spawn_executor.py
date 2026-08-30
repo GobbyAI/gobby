@@ -1,6 +1,7 @@
 """Tests for SpawnExecutor unified spawn dispatch."""
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -1396,8 +1397,8 @@ class TestExecuteSpawn:
         assert "grok cannot prove the sensitive-root contract" in (result.error or "")
 
     @pytest.mark.asyncio
-    async def test_agy_spawn_rejects_unavailable_provider(self) -> None:
-        """AGY is visible but explicitly unavailable for agent spawning."""
+    async def test_agy_spawn_rejects_unsupported_record_before_side_effects(self) -> None:
+        """Sub-floor AGY records refuse spawn before sandbox, session, or process start."""
         request = SpawnRequest(
             prompt="Test",
             cwd="/path",
@@ -1406,23 +1407,260 @@ class TestExecuteSpawn:
             run_id="run",
             parent_session_id="parent",
             project_id="proj",
+            session_manager=MagicMock(),
             prepared_spawn=prepared_spawn(),
             terminal_backend="tmux",
         )
-
-        supported = SimpleNamespace(
-            supported=True,
-            reason="AGY 1.1.18 meets required version 1.1.18.",
+        record = SimpleNamespace(
+            supported=False,
+            reason="Installed AGY version 1.1.0 does not meet required version 1.1.18.",
         )
-        with patch(
-            "gobby.providers.version_gate.ensure_agy_support",
-            AsyncMock(return_value=supported),
+        with (
+            patch(
+                "gobby.providers.version_gate.ensure_agy_support",
+                AsyncMock(return_value=record),
+            ),
+            patch(
+                "gobby.agents.spawn_executor_providers.prepare_sandbox_launch",
+                AsyncMock(),
+            ) as mock_sandbox,
+            patch(
+                "gobby.agents.spawn_executor._runtime_spawn",
+                AsyncMock(),
+            ) as mock_runtime,
         ):
             result = await execute_spawn(request)
 
         assert result.success is False
         assert result.child_session_id is None
-        assert "machine transport" in (result.error or "")
+        assert result.error == record.reason
+        assert mock_sandbox.await_count == 0
+        assert mock_runtime.await_count == 0
+        assert _runtime_of(request).last_request is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            "Installed AGY version none does not meet required version 1.1.18.",
+            "Installed AGY version unparseable does not meet required version 1.1.18.",
+            "version probe has not run",
+        ],
+    )
+    async def test_agy_spawn_refuses_absent_unparseable_and_unpublished_records(
+        self, reason: str
+    ) -> None:
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="agy",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=MagicMock(),
+            prepared_spawn=prepared_spawn(),
+            terminal_backend="tmux",
+        )
+        record = SimpleNamespace(supported=False, reason=reason)
+        with patch(
+            "gobby.providers.version_gate.ensure_agy_support",
+            AsyncMock(return_value=record),
+        ):
+            result = await execute_spawn(request)
+
+        assert result.success is False
+        assert result.error == reason
+        assert _runtime_of(request).last_request is None
+
+    @pytest.mark.asyncio
+    async def test_agy_terminal_spawn_constructs_add_dir_command(self) -> None:
+        """Supported AGY spawn uses --add-dir cwd and parent/child env linkage."""
+        import gobby.agents.spawn_executor as spawn_executor_mod
+
+        mock_session_manager = MagicMock()
+        request = SpawnRequest(
+            prompt="implement the task",
+            cwd="/repo",
+            provider="agy",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=mock_session_manager,
+            model="gemini-2.5-flash",
+            effective_reasoning_effort="high",
+            initial_variables={"_agent_type": "explorer"},
+            prepared_spawn=prepared_spawn(
+                session_id="gobby-sess-agy",
+                agent_run_id="run-agy123",
+                env_vars={"GOBBY_SESSION_ID": "gobby-sess-agy"},
+            ),
+            terminal_backend="tmux",
+        )
+        record = SimpleNamespace(
+            supported=True,
+            reason="AGY 1.1.18 meets required version 1.1.18.",
+        )
+        with (
+            patch(
+                "gobby.providers.version_gate.ensure_agy_support",
+                AsyncMock(return_value=record),
+            ),
+            patch("gobby.agents.spawn_executor_providers.pre_approve_directory") as mock_preapprove,
+        ):
+            result = await execute_spawn(request)
+
+        assert getattr(spawn_executor_mod, "_spawn_agy_terminal", None) is not None
+        mock_preapprove.assert_called_once_with("agy", "/repo")
+        spawn_kwargs = _spawn_kwargs(request)
+        command = spawn_kwargs["command"]
+        assert spawn_kwargs["cwd"] == "/repo"
+        assert spawn_kwargs["env"]["GOBBY_SESSION_ID"] == "gobby-sess-agy"
+        assert spawn_kwargs["auth_cli"] == "agy"
+        assert command[0] == "agy"
+        assert "--add-dir" in command
+        add_dir_at = command.index("--add-dir")
+        assert command[add_dir_at : add_dir_at + 2] == ["--add-dir", "/repo"]
+        assert "--dangerously-skip-permissions" in command
+        assert "--mode" not in command
+        assert result.success is True
+        assert result.child_session_id == "gobby-sess-agy"
+        assert result.run_id == "run-agy123"
+
+    @pytest.mark.asyncio
+    async def test_agy_terminal_spawn_pins_sandbox_false_under_srt(self) -> None:
+        from gobby.agents.srt_runtime import SandboxLaunch
+
+        mock_session_manager = MagicMock()
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/repo",
+            provider="agy",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=mock_session_manager,
+            sandbox_config=SandboxConfig(enabled=True, backend="srt"),
+            prepared_spawn=prepared_spawn(
+                session_id="gobby-sess-agy",
+                agent_run_id="run-agy123",
+                env_vars={"GOBBY_SESSION_ID": "gobby-sess-agy"},
+            ),
+            terminal_backend="tmux",
+        )
+        record = SimpleNamespace(
+            supported=True,
+            reason="AGY 1.1.18 meets required version 1.1.18.",
+        )
+        launch = SandboxLaunch(
+            backend="srt",
+            enforced=True,
+            provider_executable="/bin/agy",
+            node_path="/usr/bin/node",
+            runner_path="/tmp/runner.js",
+            policy_path="/tmp/policy.json",
+            violation_path="/tmp/violations.json",
+        )
+        with (
+            patch(
+                "gobby.providers.version_gate.ensure_agy_support",
+                AsyncMock(return_value=record),
+            ),
+            patch(
+                "gobby.agents.spawn_executor_providers.prepare_sandbox_launch",
+                AsyncMock(return_value=launch),
+            ),
+            patch("gobby.agents.spawn_executor_providers.pre_approve_directory"),
+        ):
+            result = await execute_spawn(request)
+
+        assert result.success is True
+        command = _spawn_kwargs(request)["command"]
+        assert "--sandbox=false" in command
+
+    @pytest.mark.asyncio
+    async def test_agy_spawned_session_dispatches_source_agy_hooks_and_add_dir(
+        self,
+    ) -> None:
+        from gobby.adapters.agy import AgyAdapter
+        from gobby.hooks.events import HookEventType, HookResponse, SessionSource
+
+        mock_session_manager = MagicMock()
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/repo",
+            provider="agy",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=mock_session_manager,
+            prepared_spawn=prepared_spawn(
+                session_id="gobby-sess-agy",
+                agent_run_id="run-agy123",
+                env_vars={"GOBBY_SESSION_ID": "gobby-sess-agy"},
+            ),
+            terminal_backend="tmux",
+        )
+        record = SimpleNamespace(
+            supported=True,
+            reason="AGY 1.1.18 meets required version 1.1.18.",
+        )
+        with (
+            patch(
+                "gobby.providers.version_gate.ensure_agy_support",
+                AsyncMock(return_value=record),
+            ),
+            patch("gobby.agents.spawn_executor_providers.pre_approve_directory"),
+        ):
+            result = await execute_spawn(request)
+
+        assert result.success is True
+        command = _spawn_kwargs(request)["command"]
+        assert "--add-dir" in command
+        add_dir_at = command.index("--add-dir")
+        assert command[add_dir_at : add_dir_at + 2] == ["--add-dir", "/repo"]
+
+        hook_manager = MagicMock()
+        hook_manager.handle.return_value = HookResponse(decision="allow")
+        adapter = AgyAdapter()
+        native_events: tuple[tuple[str, dict[str, object]], ...] = (
+            ("PreInvocation", {"invocationNum": 0}),
+            ("PreToolUse", {}),
+            ("PostToolUse", {}),
+            ("PostInvocation", {}),
+            ("Stop", {}),
+        )
+        for hook_type, extra in native_events:
+            adapter.handle_native(
+                {
+                    "source": "agy",
+                    "hook_type": hook_type,
+                    "input_data": {
+                        "hookEventName": hook_type,
+                        "conversationId": "conv-1",
+                        "workspacePaths": ["/repo"],
+                        "transcriptPath": "/tmp/agy.jsonl",
+                        **extra,
+                    },
+                },
+                hook_manager,
+            )
+        dispatched = [call.args[0] for call in hook_manager.handle.call_args_list]
+        assert dispatched
+        assert all(event.source is SessionSource.AGY for event in dispatched)
+        assert any(event.event_type is HookEventType.SESSION_START for event in dispatched)
+        assert any(
+            event.data.get("workspace_paths") == ["/repo"] or event.cwd == "/repo"
+            for event in dispatched
+        )
+        from gobby.agents.spawn_executor import kill_spawn_key
+        from gobby.agents.tmux.session_manager import TmuxSessionManager
+
+        assert "Stop" not in inspect.getsource(kill_spawn_key)
+        assert "killpg" in inspect.getsource(TmuxSessionManager.kill_session)
 
 
 class TestExecuteSpawnSandbox:

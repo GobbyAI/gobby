@@ -50,6 +50,14 @@ def test_registry_returns_diagnostics_only_readers(provider: str) -> None:
     assert reader.supports_reasoning_interrupt is False
 
 
-@pytest.mark.parametrize("provider", ["agy", "unknown"])
-def test_registry_returns_none_for_uninstalled_readers(provider: str) -> None:
-    assert WatchdogReaderRegistry().for_provider(provider) is None
+def test_registry_returns_agy_reader() -> None:
+    reader = WatchdogReaderRegistry().for_provider(" AGY ")
+
+    assert reader is not None
+    assert reader.provider_id == "agy"
+    assert reader.capacity_pane_message is None
+    assert reader.supports_reasoning_interrupt is False
+
+
+def test_registry_returns_none_for_uninstalled_readers() -> None:
+    assert WatchdogReaderRegistry().for_provider("unknown") is None

@@ -482,6 +482,30 @@ def _claude_native_option(
     return None
 
 
+def _agy_open_then(key: str) -> PlanKeystrokeSequence:
+    """Open the Action required list with ctrl+r, then send y or n."""
+    return PlanKeystrokeSequence(
+        strokes=(PlanKeystroke("C-r"), PlanKeystroke(key, literal=True)),
+    )
+
+
+_AGY_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
+    "approve_yolo": _agy_open_then("y"),
+    "approve_act": _agy_open_then("y"),
+    REQUEST_CHANGES_OPTION_ID: _agy_open_then("n"),
+}
+
+
+def _agy_native_option(option: int, pane_text: str) -> PlanKeystrokeSequence | None:
+    if "Action required" not in pane_text:
+        return None
+    if option == 1:
+        return _agy_open_then("y")
+    if option == 2:
+        return _agy_open_then("n")
+    return None
+
+
 def _qwen_native_option(
     option: int,
     pane_text: str,
@@ -575,6 +599,12 @@ def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
         "qwen",
         _pane_contains_all("Apply this change?", "Yes, allow once", "No, suggest changes (esc)"),
     )
+    # --- agy (artifact review: Action required, ctrl+r then y/n) -- task #20755 ---
+    agy_matcher = _pane_contains_all("Action required")
+    for _agy_option_id, _agy_sequence in _AGY_PLAN_MENU.items():
+        registry.register("agy", _agy_option_id, _agy_sequence)
+    registry.register_menu_matcher("agy", agy_matcher)
+    registry.register_native_option_resolver("agy", _agy_native_option)
     registry.register_native_option_resolver("qwen", _qwen_native_option)
 
 

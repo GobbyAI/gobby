@@ -5,6 +5,7 @@ from typing import Any, cast
 import pytest
 
 from gobby.agents.watchdog.models import (
+    KNOWN_WATCHDOG_PROVIDERS,
     WATCHDOG_TAIL_LIMIT,
     TranscriptEventSummary,
     WatchdogTranscriptSnapshot,
@@ -22,6 +23,13 @@ def _event(line_num: int = 1) -> TranscriptEventSummary:
         event_type="event_msg",
         payload_type="task_complete",
     )
+
+
+def test_agy_is_a_known_watchdog_provider() -> None:
+    snapshot = WatchdogTranscriptSnapshot(provider="agy")
+
+    assert "agy" in KNOWN_WATCHDOG_PROVIDERS
+    assert snapshot.provider == "agy"
 
 
 def test_event_summary_coerces_content_bearing_fields_and_serializes_json() -> None:

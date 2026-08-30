@@ -156,3 +156,52 @@ async def test_output_reader_streams_multibyte_fifo_data(
         await _wait_for(lambda: "fifo-multibyte: cafe é 漢" in "".join(chunks))
     finally:
         await reader.stop_reader("run-fifo")
+
+
+async def test_agy_live_child_strips_denied_ambient_credentials(
+    tmux_manager: TmuxSessionManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+
+    from gobby.agents.tmux.spawner import tmux_spawn_shell_and_env
+
+    output_path = tmp_path / "child-env.txt"
+    monkeypatch.setenv("GOOGLE_API_KEY", "google-secret")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-secret")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/tmp/creds.json")
+    monkeypatch.setenv("PATH", os.environ.get("PATH", "/usr/bin"))
+    quoted = shlex.quote(str(output_path))
+    command = [
+        "python3",
+        "-c",
+        (
+            "import os; "
+            f"open({str(output_path)!r}, 'w', encoding='utf-8').write("
+            "'\\n'.join("
+            "f'{k}={os.environ.get(k, \"\")}' "
+            "for k in ("
+            "'GOOGLE_API_KEY','GEMINI_API_KEY',"
+            "'GOOGLE_APPLICATION_CREDENTIALS','PATH'"
+            ")"
+            ")"
+            ")"
+        ),
+    ]
+    shell_cmd, extra_env = tmux_spawn_shell_and_env(command, {"PATH": os.environ["PATH"]}, "agy")
+    extra_env["PATH"] = os.environ["PATH"]
+    await tmux_manager.create_session(
+        name="agy-env",
+        command=shell_cmd,
+        env=extra_env,
+    )
+    await _wait_for(lambda: output_path.exists())
+    text = output_path.read_text(encoding="utf-8")
+    assert "GOOGLE_API_KEY=\n" in text or "GOOGLE_API_KEY=" in text.splitlines()
+    values = dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
+    assert values.get("GOOGLE_API_KEY", "") == ""
+    assert values.get("GEMINI_API_KEY", "") == ""
+    assert values.get("GOOGLE_APPLICATION_CREDENTIALS", "") == ""
+    assert values.get("PATH")
+    del quoted

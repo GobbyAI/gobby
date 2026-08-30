@@ -22,6 +22,7 @@ from gobby.agents.spawn_executor_providers import (
     _NATIVE_SUBAGENT_RESEARCH_AGENTS,
     ProviderSpawnPlan,
     _prepare_managed_code_index,
+    prepare_agy_spawn,
     prepare_claude_spawn,
     prepare_codex_spawn,
     prepare_droid_spawn,
@@ -40,7 +41,6 @@ from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.agents.trust import pre_approve_directory as pre_approve_directory
 from gobby.config.terminals import TerminalConfig
-from gobby.providers import AGY_UNAVAILABLE_REASON
 from gobby.providers.capabilities.apply import speed_result
 from gobby.storage.terminals import Terminal, TerminalManager, mint_terminal_id
 from gobby.terminals import TerminalRuntimeRegistry, UnregisteredBackendError
@@ -156,16 +156,7 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
         elif request.provider == "droid":
             result = await _spawn_droid_terminal(request)
         elif request.provider == "agy":
-            from gobby.providers.version_gate import ensure_agy_support
-
-            record = await ensure_agy_support()
-            result = SpawnResult(
-                success=False,
-                run_id=request.run_id,
-                child_session_id=None,
-                status="failed",
-                error=record.reason if not record.supported else AGY_UNAVAILABLE_REASON,
-            )
+            result = await _spawn_agy_terminal(request)
         elif request.provider == "claude":
             result = await _spawn_claude_terminal(request)
         else:
@@ -244,6 +235,24 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
             ),
         )
     plan = await prepare_droid_spawn(request)
+    if isinstance(plan, SpawnResult):
+        return plan
+    return await _runtime_spawn(request, plan)
+
+
+async def _spawn_agy_terminal(request: SpawnRequest) -> SpawnResult:
+    from gobby.providers.version_gate import ensure_agy_support
+
+    record = await ensure_agy_support()
+    if not record.supported:
+        return SpawnResult(
+            success=False,
+            run_id=request.run_id,
+            child_session_id=None,
+            status="failed",
+            error=record.reason,
+        )
+    plan = await prepare_agy_spawn(request)
     if isinstance(plan, SpawnResult):
         return plan
     return await _runtime_spawn(request, plan)

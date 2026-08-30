@@ -178,6 +178,20 @@ def build_cli_command(
             command.extend(["--reasoning-effort", reasoning_effort])
         command.extend(["--auto", "high" if auto_approve else "low"])
 
+    elif cli == "agy":
+        # Terminal spawn uses the 1.1.7/1.1.3 recorded TUI flags, not print-mode
+        # `-p` / stream-json. `--mode` is never added (1.1.14/1.1.23).
+        if resume_session_id:
+            command.extend(["--conversation", resume_session_id])
+        if auto_approve:
+            command.append("--dangerously-skip-permissions")
+        if working_directory:
+            command.extend(["--add-dir", working_directory])
+        if model:
+            command.extend(["--model", model])
+        if reasoning_effort and reasoning_effort != "auto" and reasoning_flag == "claude-effort":
+            command.extend(["--effort", reasoning_effort])
+
     # Add sandbox args before prompt (prompt must be last)
     if sandbox_args and not sandbox_args_consumed:
         command.extend(sandbox_args)

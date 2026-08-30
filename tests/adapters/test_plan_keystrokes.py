@@ -277,6 +277,25 @@ def _qwen_escape() -> PlanKeystrokeSequence:
     return PlanKeystrokeSequence((PlanKeystroke("Escape"),))
 
 
+def _agy_approve() -> PlanKeystrokeSequence:
+    return PlanKeystrokeSequence(
+        strokes=(PlanKeystroke("C-r"), PlanKeystroke("y", literal=True)),
+    )
+
+
+def _agy_reject() -> PlanKeystrokeSequence:
+    return PlanKeystrokeSequence(
+        strokes=(PlanKeystroke("C-r"), PlanKeystroke("n", literal=True)),
+    )
+
+
+_AGY_PLAN_MENU_PANE = """\
+Action required
+  brain/abc/plan.md
+  y approve   n reject
+"""
+
+
 class TestClaudeResolver:
     """Claude's pane-aware mapping over both native ExitPlanMode menu shapes."""
 
@@ -701,10 +720,62 @@ class TestNativeNumberedPlanOptions:
         )
 
 
+class TestAgyPlanMenu:
+    """AGY artifact review: ctrl+r opens Action required, y approves, n rejects."""
+
+    def test_agy_is_registered(self) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.has_source("agy") is True
+        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("agy") is True
+
+    def test_registered_options(self) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.registered_options("agy") == frozenset(
+            {"approve_yolo", "approve_act", REQUEST_CHANGES_OPTION_ID}
+        )
+
+    @pytest.mark.parametrize(
+        ("option_id", "expected"),
+        [
+            ("approve_yolo", _agy_approve()),
+            ("approve_act", _agy_approve()),
+            (REQUEST_CHANGES_OPTION_ID, _agy_reject()),
+        ],
+    )
+    def test_plan_menu_mapping(self, option_id: str, expected: PlanKeystrokeSequence) -> None:
+        assert (
+            DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("agy", option_id, _AGY_PLAN_MENU_PANE)
+            == expected
+        )
+
+    def test_matcher_requires_action_required_header(self) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("agy", "approve_act", "") is None
+        assert (
+            DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("agy", "approve_act", "ordinary prompt")
+            is None
+        )
+
+    def test_native_options_map_approve_and_reject(self) -> None:
+        assert (
+            DEFAULT_PLAN_KEYSTROKES.resolve_native_option_for_pane(
+                "agy",
+                1,
+                _AGY_PLAN_MENU_PANE,
+            )
+            == _agy_approve()
+        )
+        assert (
+            DEFAULT_PLAN_KEYSTROKES.resolve_native_option_for_pane(
+                "agy",
+                2,
+                _AGY_PLAN_MENU_PANE,
+            )
+            == _agy_reject()
+        )
+
+
 class TestDefaultRegistry:
     def test_all_clis_registered(self) -> None:
         # Every managed CLI now has a captured native plan-menu mapping: claude
-        # (#15727), codex (#15728), droid (#15729), grok (#15731), and qwen
-        # (#15732). No per-CLI source remains pending.
-        for source in ("claude", "codex", "droid", "grok", "qwen"):
+        # (#15727), codex (#15728), droid (#15729), grok (#15731), qwen
+        # (#15732), and agy (#20755). No per-CLI source remains pending.
+        for source in ("claude", "codex", "droid", "grok", "qwen", "agy"):
             assert DEFAULT_PLAN_KEYSTROKES.has_source(source) is True

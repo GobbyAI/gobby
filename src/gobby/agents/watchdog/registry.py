@@ -1,5 +1,6 @@
 """Static registry of provider-specific transcript watchdog readers."""
 
+from gobby.agents.watchdog.agy import AGY_WATCHDOG_READER
 from gobby.agents.watchdog.claude import CLAUDE_WATCHDOG_READER
 from gobby.agents.watchdog.codex import CODEX_WATCHDOG_READER
 from gobby.agents.watchdog.droid import DROID_WATCHDOG_READER
@@ -9,6 +10,7 @@ from gobby.agents.watchdog.qwen import QWEN_WATCHDOG_READER
 from gobby.agents.watchdog.reader import TranscriptWatchdogReader
 
 _READERS: dict[str, TranscriptWatchdogReader] = {
+    "agy": AGY_WATCHDOG_READER,
     "claude": CLAUDE_WATCHDOG_READER,
     "codex": CODEX_WATCHDOG_READER,
     "droid": DROID_WATCHDOG_READER,

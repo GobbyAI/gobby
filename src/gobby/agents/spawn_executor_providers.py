@@ -488,3 +488,50 @@ async def prepare_droid_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         agent_run_id=spawn_context.agent_run_id,
         title=f"gobby-droid-d{request.agent_depth}",
     )
+
+
+async def prepare_agy_spawn(request: SpawnRequest) -> ProviderSpawnPlan | SpawnResult:
+    if validation_error := _session_manager_validation_error(request, "AGY"):
+        return validation_error
+    spawn_context = request.prepared_spawn
+    gobby_session_id = spawn_context.session_id
+    if preflight_error := await _prepare_managed_code_index(request, spawn_context):
+        return preflight_error
+    env = spawn_context.env_vars.copy()
+    _apply_extra_env(env, request)
+    if request.machine_id:
+        env["GOBBY_MACHINE_ID"] = request.machine_id
+    sandbox_result = await _prepare_provider_sandbox(request, spawn_context, "agy", env)
+    if isinstance(sandbox_result, SpawnResult):
+        return sandbox_result
+    launch = sandbox_result
+    sandbox_args = list(launch.provider_args)
+    if launch.enforced and launch.backend == "srt" and "--sandbox=false" not in sandbox_args:
+        sandbox_args.append("--sandbox=false")
+    cmd, _cmd_env = build_cli_command(
+        cli="agy",
+        prompt=request.prompt,
+        auto_approve=True,
+        working_directory=request.cwd,
+        model=request.model,
+        reasoning_effort=request.effective_reasoning_effort,
+        sandbox_args=sandbox_args or None,
+    )
+    _record_resume_launch_details(
+        request,
+        agent_run_id=spawn_context.agent_run_id,
+        sandbox_args=sandbox_args,
+        sandbox_env=launch.provider_env,
+        env=env,
+        sandbox_launch=launch,
+    )
+    pre_approve_directory("agy", request.cwd)
+    return ProviderSpawnPlan(
+        command=cmd,
+        env=env,
+        launch=launch,
+        auth_cli="agy",
+        child_session_id=gobby_session_id,
+        agent_run_id=spawn_context.agent_run_id,
+        title=f"gobby-agy-d{request.agent_depth}",
+    )

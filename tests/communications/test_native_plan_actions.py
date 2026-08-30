@@ -169,9 +169,26 @@ async def test_plan_actions_use_runtime(monkeypatch: pytest.MonkeyPatch) -> None
     assert runtime.write_log
 
 
-async def test_agy_is_excluded_from_native_plan_actions(
+_AGY_MENU = """\
+Action required
+1. Approve
+2. Reject
+"""
+
+
+async def test_agy_native_plan_actions_dispatch_ctrl_r_then_y(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service, _ = _service(monkeypatch, source="agy")
+    service, tmux = _service(monkeypatch, source="agy", pane_text=_AGY_MENU)
+    menu = await service.get_menu(SESSION_ID)
+    assert menu is not None
+    assert [choice.option for choice in menu.choices] == [1, 2]
 
-    assert await service.get_menu(SESSION_ID) is None
+    result = await service.dispatch(
+        SESSION_ID,
+        option=1,
+        expected_fingerprint=menu.fingerprint,
+    )
+
+    assert result == "sent"
+    assert tmux.sent == [("%42", "C-r", False), ("%42", "y", True)]

@@ -85,6 +85,7 @@ CLI_ENV_ALLOWLIST: dict[str, frozenset[str]] = {
             "FACTORY_API_BASE_URL",
         }
     ),
+    "agy": frozenset(),
 }
 
 CLI_CREDENTIAL_KEYS: dict[str, frozenset[str]] = {
@@ -104,6 +105,17 @@ CLI_CREDENTIAL_KEYS: dict[str, frozenset[str]] = {
     "grok": frozenset({"XAI_API_KEY", "GROK_API_KEY"}),
     "qwen": frozenset({"DASHSCOPE_API_KEY", "OPENAI_API_KEY", "QWEN_API_KEY"}),
     "droid": frozenset({"FACTORY_API_KEY"}),
+    "agy": frozenset(),
+}
+
+CLI_DENIED_AMBIENT_KEYS: dict[str, frozenset[str]] = {
+    "agy": frozenset(
+        {
+            "GOOGLE_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+        }
+    ),
 }
 
 ALL_CREDENTIAL_KEYS: frozenset[str] = frozenset(

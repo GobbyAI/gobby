@@ -20,7 +20,7 @@ from gobby.agents.constants import get_terminal_env_vars
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.sandbox_resolvers import get_sandbox_resolver
 from gobby.agents.spawn_cache_policy import apply_spawn_cache_policy
-from gobby.agents.spawners.auth_env import terminal_env_passthrough
+from gobby.agents.spawners.auth_env import CLI_DENIED_AMBIENT_KEYS, terminal_env_passthrough
 from gobby.agents.spawners.base import (
     SpawnResult,
     TerminalSpawnerBase,
@@ -57,11 +57,16 @@ def tmux_spawn_shell_and_env(
 ) -> tuple[str, dict[str, str]]:
     """Build the pane shell command and extra env TmuxSessionManager.create_session needs."""
     shell_cmd = shlex.join(command) if len(command) > 1 else command[0]
-    shell_cmd = f"unset VIRTUAL_ENV VIRTUAL_ENV_PROMPT; {shell_cmd}"
+    cli = auth_cli or _infer_auth_cli(command)
+    denied = CLI_DENIED_AMBIENT_KEYS.get(cli or "", frozenset())
+    unset_names = ["VIRTUAL_ENV", "VIRTUAL_ENV_PROMPT", *sorted(denied)]
+    shell_cmd = f"unset {' '.join(unset_names)}; {shell_cmd}"
     spawn_env = dict(env or {})
-    if cli := auth_cli or _infer_auth_cli(command):
+    if cli:
         for key, value in terminal_env_passthrough(cli).items():
             spawn_env.setdefault(key, value)
+        for key in denied:
+            spawn_env.pop(key, None)
     apply_spawn_cache_policy(spawn_env)
     clean_env = make_spawn_env(spawn_env)
     extra_env = {k: v for k, v in clean_env.items() if k in spawn_env}

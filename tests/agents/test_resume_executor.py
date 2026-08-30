@@ -796,3 +796,82 @@ async def test_resume_vllm_endpoint_reports_unresolved_secret(
     assert result.success is False
     assert "secret" in (result.error or "")
     assert runner._test_runtime.create_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_agy_resume_uses_conversation_and_add_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata = _resume_metadata()
+    metadata["provider"] = "agy"
+    metadata["auto_approve"] = True
+    runner = _runner()
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    finalize = AsyncMock()
+    _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+    record = SimpleNamespace(
+        supported=True,
+        reason="AGY 1.1.18 meets required version 1.1.18.",
+    )
+    monkeypatch.setattr(
+        resume_executor,
+        "ensure_agy_support",
+        AsyncMock(return_value=record),
+        raising=False,
+    )
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(provider="agy"),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is True
+    command = runner._test_runtime.last_request.command
+    assert "--conversation" in command
+    assert "--add-dir" in command
+    conversation_at = command.index("--conversation")
+    add_dir_at = command.index("--add-dir")
+    assert command[conversation_at : conversation_at + 2] == [
+        "--conversation",
+        "native-123",
+    ]
+    assert command[add_dir_at : add_dir_at + 2] == ["--add-dir", "/repo"]
+    assert "--dangerously-skip-permissions" in command
+    assert "--mode" not in command
+    assert result.error != "resume_unsupported_provider:agy"
+
+
+@pytest.mark.asyncio
+async def test_agy_resume_refuses_unsupported_record_before_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata = _resume_metadata()
+    metadata["provider"] = "agy"
+    runner = _runner()
+    spawner = MagicMock()
+    finalize = AsyncMock()
+    _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+    record = SimpleNamespace(
+        supported=False,
+        reason="Installed AGY version 1.1.0 does not meet required version 1.1.18.",
+    )
+    monkeypatch.setattr(
+        resume_executor,
+        "ensure_agy_support",
+        AsyncMock(return_value=record),
+        raising=False,
+    )
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(provider="agy"),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is False
+    assert result.error == record.reason
+    assert runner._test_runtime.last_request is None

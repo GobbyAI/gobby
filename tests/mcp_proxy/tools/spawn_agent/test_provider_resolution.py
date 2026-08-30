@@ -17,19 +17,21 @@ from gobby.mcp_proxy.tools.spawn_agent._runtime import _normalize_optional_model
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.parametrize("provider", ["claude", "codex", "droid", "grok", "qwen"])
+@pytest.mark.parametrize("provider", ["agy", "claude", "codex", "droid", "grok", "qwen"])
 def test_inherit_uses_spawn_capable_default_provider(provider: str) -> None:
-    assert (
-        resolve_spawn_provider(
+    resolved: str | None
+    try:
+        resolved = resolve_spawn_provider(
             explicit_provider="inherit",
             agent_provider="inherit",
             default_provider=provider,
         )
-        == provider
-    )
+    except ValueError:
+        resolved = None
+    assert resolved == provider
 
 
-@pytest.mark.parametrize("provider", [None, "", "inherit", "agy", "pipeline", "unknown"])
+@pytest.mark.parametrize("provider", [None, "", "inherit", "pipeline", "unknown"])
 def test_inherit_fails_for_unsupported_default_provider(provider: str | None) -> None:
     with pytest.raises(ValueError, match="Set the provider argument"):
         resolve_spawn_provider(
@@ -37,6 +39,33 @@ def test_inherit_fails_for_unsupported_default_provider(provider: str | None) ->
             agent_provider="inherit",
             default_provider=provider,
         )
+
+
+@pytest.mark.parametrize(
+    ("explicit_provider", "agent_provider", "default_provider"),
+    [
+        ("agy", "claude", "codex"),
+        (None, "agy", "claude"),
+        ("inherit", "agy", "claude"),
+        ("inherit", "inherit", "agy"),
+    ],
+    ids=["explicit", "agent-configured", "inherited-agent", "default"],
+)
+def test_agy_is_spawn_capable_across_selection_paths(
+    explicit_provider: str | None,
+    agent_provider: str | None,
+    default_provider: str | None,
+) -> None:
+    resolved: str | None
+    try:
+        resolved = resolve_spawn_provider(
+            explicit_provider=explicit_provider,
+            agent_provider=agent_provider,
+            default_provider=default_provider,
+        )
+    except ValueError:
+        resolved = None
+    assert resolved == "agy"
 
 
 def test_explicit_provider_precedes_agent_and_default() -> None:

@@ -41,12 +41,13 @@ from gobby.ai.codex_endpoint import (
     codex_endpoint_env,
 )
 from gobby.ai.endpoints import resolve_generation_endpoint_selector
+from gobby.providers.version_gate import ensure_agy_support
 from gobby.storage import daemon_resume_keys
 from gobby.storage.agents import AgentRun
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_RESUME_PROVIDERS = frozenset({"claude", "qwen", "grok", "codex", "droid"})
+SUPPORTED_RESUME_PROVIDERS = frozenset({"agy", "claude", "qwen", "grok", "codex", "droid"})
 
 # Protocol bookkeeping accumulated on the original run must never leak into a
 # successor's launch snapshot: each recovery episode starts clean.
@@ -111,6 +112,10 @@ async def resume_agent_run(
     provider = _metadata_str(resume_metadata, "provider") or original_run.provider
     if provider not in SUPPORTED_RESUME_PROVIDERS:
         return ResumeAgentResult(False, error=f"resume_unsupported_provider:{provider}")
+    if provider == "agy":
+        record = await ensure_agy_support()
+        if not record.supported:
+            return ResumeAgentResult(False, error=record.reason)
     if provider == "droid" and shutil.which("droid") is None:
         return ResumeAgentResult(False, error="droid CLI not found in PATH")
 
@@ -348,7 +353,7 @@ async def resume_agent_run(
         prompt=None if provider in {"claude", "codex"} else prompt,
         resume_session_id=native_session_id,
         auto_approve=bool(resume_metadata.get("auto_approve", True)),
-        working_directory=cwd if provider in {"codex", "droid", "grok"} else None,
+        working_directory=cwd if provider in {"agy", "codex", "droid", "grok"} else None,
         sandbox_args=None if provider == "claude" else sandbox_args,
         model=resume_model,
         codex_oss_provider=codex_oss_provider,

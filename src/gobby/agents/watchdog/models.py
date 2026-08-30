@@ -14,7 +14,7 @@ KNOWN_ACTIVITY_KINDS = frozenset({"reasoning", "message", "tool", "user_input", 
 KNOWN_TURN_EVENT_KINDS = frozenset({"started", "completed", "aborted"})
 KNOWN_PROVIDER_ERROR_KINDS = frozenset({"capacity", "api_error", "retry"})
 KNOWN_ERROR_REASONS = frozenset({"server_overloaded", "api_error", "retrying"})
-KNOWN_WATCHDOG_PROVIDERS = frozenset({"claude", "codex", "droid", "grok", "qwen"})
+KNOWN_WATCHDOG_PROVIDERS = frozenset({"agy", "claude", "codex", "droid", "grok", "qwen"})
 
 # Readers may retain only these structural labels. Raw content never enters a model.
 KNOWN_EVENT_TYPES = frozenset(

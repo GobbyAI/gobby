@@ -9,7 +9,7 @@ real CLI's keystrokes.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -61,6 +61,7 @@ _GROK_PLAN_MENU_PANE = "1 [*] Yes, and don't ask again\n4 [ ] No, reject (type t
 _QWEN_PLAN_MENU_PANE = (
     "Apply this change?\n1. Yes, allow once\n2. Yes, allow always\n3. No, suggest changes (esc)\n"
 )
+_AGY_PLAN_MENU_PANE = "Action required\n1. Approve\n2. Reject\n"
 
 
 class ConcreteSessionControl(SessionControlMixin):
@@ -808,3 +809,74 @@ class TestPlanApprovalRouting:
         assert recovered.await_args.args[2] == "conv-1"
         assert ws.send.await_count == 0
         attached.assert_not_awaited()
+
+
+class TestAttachedPlanApprovalAgy:
+    """AGY artifact review: Action required header, C-r then y/n."""
+
+    @pytest.mark.asyncio
+    async def test_approve_dispatches_ctrl_r_then_y(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="agy"
+        )
+
+        tmux_manager = MagicMock()
+        tmux_manager.capture_pane = AsyncMock(return_value=_AGY_PLAN_MENU_PANE)
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "approve", "option_id": "approve_act"},
+                registry=build_default_plan_keystroke_registry(),
+            )
+
+        assert [call.args for call in tmux_manager.send_keys.await_args_list] == [
+            ("%11", "C-r"),
+            ("%11", "y"),
+        ]
+        assert [call.kwargs["literal"] for call in tmux_manager.send_keys.await_args_list] == [
+            False,
+            True,
+        ]
+        send = cast(AsyncMock, ws.send)
+        assert send.await_args is not None
+        msg = json.loads(send.await_args.args[0])
+        assert msg["option_id"] == "approve_act"
+        assert msg["ok"] is True
+        cast(AsyncMock, server._send_error).assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_request_changes_dispatches_ctrl_r_then_n(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="agy"
+        )
+
+        tmux_manager = MagicMock()
+        tmux_manager.capture_pane = AsyncMock(return_value=_AGY_PLAN_MENU_PANE)
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "request_changes"},
+                registry=build_default_plan_keystroke_registry(),
+            )
+
+        assert [call.args for call in tmux_manager.send_keys.await_args_list] == [
+            ("%11", "C-r"),
+            ("%11", "n"),
+        ]
+        assert [call.kwargs["literal"] for call in tmux_manager.send_keys.await_args_list] == [
+            False,
+            True,
+        ]
+        cast(AsyncMock, server._send_error).assert_not_awaited()

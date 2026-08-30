@@ -11,7 +11,7 @@ PROVIDER_ALIASES = {
     "openai": "codex",
 }
 
-SPAWN_CAPABLE_PROVIDERS = frozenset({"claude", "codex", "droid", "grok", "qwen"})
+SPAWN_CAPABLE_PROVIDERS = frozenset({"agy", "claude", "codex", "droid", "grok", "qwen"})
 
 
 class _SessionLookup(Protocol):

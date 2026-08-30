@@ -102,21 +102,21 @@ id = "status_bar"
 state = "working"
 priority = 200
 region = "whole_recent"
-line_regex = ['(?i)(?:Opus|Sonnet|Haiku|bypass permissions|^\s*[⎇𖠰]|^\s*/|^\s*[─━▪▫]+)']
+line_regex = ['(?i)(?:[?] for shortcuts|^\s*[─━]+\s*$)']
 
 [[rules]]
 id = "idle_prompt"
 state = "idle"
 priority = 100
 region = "whole_recent"
-line_regex = ['(?m)^\s*[❯>$]\s*$']
+line_regex = ['(?m)^\s*>\s*$']
 
 [[rules]]
 id = "stalled_input"
 state = "idle"
 priority = 90
 region = "whole_recent"
-line_regex = ['(?m)^\s*[❯>$]\s+\S']
+line_regex = ['(?i)(?:Interrupted\s*[·•].*What should Antigravity CLI do instead|^\s*>\s+\S)']
 
 [[rules]]
 id = "source_shaped"
