@@ -965,337 +965,333 @@ class TestIdKeyedManager:
         assert list(manager._configs) == [existing.id]
 
 
-class TestRefreshServer:
-    @pytest.mark.asyncio
-    async def test_refresh_server_rotates_secret_for_selected_instance_only(self) -> None:
-        project_a = str(uuid4())
-        project_b = str(uuid4())
-        a = _row(
-            name="github",
-            project_id=project_a,
-            env={"TOKEN": "$secret:github_token"},
+@pytest.mark.asyncio
+async def test_refresh_server_rotates_secret_for_selected_instance_only() -> None:
+    project_a = str(uuid4())
+    project_b = str(uuid4())
+    a = _row(
+        name="github",
+        project_id=project_a,
+        env={"TOKEN": "$secret:github_token"},
+    )
+    b = _row(
+        name="github",
+        project_id=project_b,
+        env={"TOKEN": "$secret:github_token"},
+    )
+    db = FakeMCPDb([a, b])
+    store = {f"{project_a}:github_token": "alpha", f"{project_b}:github_token": "beta"}
+
+    def resolve(self: MCPClientManager, config: MCPServerConfig) -> MCPServerConfig:
+        from dataclasses import replace
+
+        key = f"{config.project_id}:github_token"
+        return replace(config, env={"TOKEN": store[key]})
+
+    created, factory = _patch_transport()
+    with (
+        patch("gobby.mcp_proxy.manager.create_transport_connection", side_effect=factory),
+        patch.object(MCPClientManager, "_resolve_secrets_in_config", resolve),
+    ):
+        manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
+        assert callable(manager.refresh_server)
+        await manager.connect_all()
+        first_a = manager._connections[a.id]
+        first_b = manager._connections[b.id]
+        store[f"{project_a}:github_token"] = "rotated-a"
+        await manager.refresh_server(a.id)
+        after_a = await manager.call_tool(a.id, "probe", {})
+        after_b = await manager.call_tool(b.id, "probe", {})
+
+    assert after_a["token"] == "rotated-a"
+    assert after_b["token"] == "beta"
+    assert manager._connections[a.id] is not first_a
+    assert manager._connections[b.id] is first_b
+    assert a.id not in manager._tool_schema_cache or manager._tool_schema_cache[a.id]
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_is_linearizable_against_concurrent_calls() -> None:
+    project_id = str(uuid4())
+    row = _row(
+        name="github",
+        project_id=project_id,
+        env={"TOKEN": "$secret:github_token"},
+    )
+    db = FakeMCPDb([row])
+    store = {"github_token": "before"}
+    created, factory = _patch_transport()
+    in_flight_entered = asyncio.Event()
+    in_flight_release = asyncio.Event()
+
+    class BlockingSession(FakeToolSession):
+        async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+            in_flight_entered.set()
+            await in_flight_release.wait()
+            return await super().call_tool(name, arguments)
+
+    class BlockingConnection(RecordingConnection):
+        async def connect(self) -> FakeToolSession:
+            self.connect_calls += 1
+            self.is_connected = True
+            self.session = BlockingSession(self)
+            return self.session
+
+    blocking: list[RecordingConnection] = []
+
+    def first_factory(
+        config: MCPServerConfig, stdio_errlog_path: str | None = None
+    ) -> RecordingConnection:
+        if not blocking:
+            connection = BlockingConnection(config)
+            blocking.append(connection)
+            return connection
+        return factory(config, stdio_errlog_path)
+
+    with (
+        patch(
+            "gobby.mcp_proxy.manager.create_transport_connection",
+            side_effect=first_factory,
+        ),
+        patch.object(MCPClientManager, "_resolve_secrets_in_config", _resolve_with_store(store)),
+    ):
+        manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
+        assert callable(manager.refresh_server)
+        await manager.connect_all()
+        in_flight = asyncio.create_task(manager.call_tool(row.id, "probe", {}))
+        await asyncio.wait_for(in_flight_entered.wait(), timeout=1)
+        store["github_token"] = "after"
+        refresh_task = asyncio.create_task(manager.refresh_server(row.id))
+        await refresh_task
+        in_flight_release.set()
+        in_flight_result = await in_flight
+        after = await manager.call_tool(row.id, "probe", {})
+
+    assert after["token"] == "after"
+    assert in_flight_result["token"] in {"before", "after"}
+
+    db.deleted_ids.add(row.id)
+    db.servers.pop(row.id, None)
+    with pytest.raises(MCPError, match="[Uu]nknown|[Nn]ot found"):
+        await manager.refresh_server(row.id)
+
+
+@pytest.mark.asyncio
+async def test_missing_required_secret_fails_closed_on_every_connection_path() -> None:
+    project_id = str(uuid4())
+    row = _row(
+        name="github",
+        project_id=project_id,
+        env={"TOKEN": "$secret:github_token"},
+    )
+    db = FakeMCPDb([row])
+    store: dict[str, str] = {}
+    created, factory = _patch_transport()
+    with (
+        patch("gobby.mcp_proxy.manager.create_transport_connection", side_effect=factory),
+        patch.object(MCPClientManager, "_resolve_secrets_in_config", _resolve_with_store(store)),
+    ):
+        manager = MCPClientManager(mcp_db_manager=db, lazy_connect=True)
+        assert callable(manager.refresh_server)
+        health = manager.get_server_health()[row.id]
+        assert health["state"] == "needs_configuration"
+        assert health["missing_secrets"] == ["github_token"]
+        assert "$secret:" not in str(health.get("missing_secrets"))
+        assert created == []
+        with pytest.raises(MCPError, match="missing secret"):
+            await manager.ensure_connected(row.id)
+        assert row.id not in manager._connections
+        store["github_token"] = "set"
+        await manager.refresh_server(row.id)
+        assert manager.is_connected(row.id)
+        result = await manager.call_tool(row.id, "probe", {})
+        assert result["token"] == "set"
+
+
+@pytest.mark.asyncio
+async def test_optional_secret_reexpands_on_all_connection_paths() -> None:
+    project_id = str(uuid4())
+    template_id = str(uuid4())
+    row = _row(
+        name="search",
+        project_id=project_id,
+        template_id=template_id,
+        template="brave-search",
+        env={"KEY": "plain"},
+    )
+    db = FakeMCPDb([row])
+    optional_present = {"on": False}
+
+    def expand(_template: Any, server: MCPServer) -> dict[str, Any]:
+        env = {"KEY": "plain"}
+        if optional_present["on"]:
+            env["OPTIONAL"] = "$secret:optional_token"
+        return {"env": env}
+
+    store = {"optional_token": "opt-value"}
+    created, factory = _patch_transport()
+    with (
+        patch("gobby.mcp_proxy.manager.create_transport_connection", side_effect=factory),
+        patch.object(MCPClientManager, "_resolve_secrets_in_config", _resolve_with_store(store)),
+    ):
+        manager = MCPClientManager(
+            mcp_db_manager=db,
+            lazy_connect=False,
+            template_expand=expand,
         )
-        b = _row(
-            name="github",
-            project_id=project_b,
-            env={"TOKEN": "$secret:github_token"},
-        )
-        db = FakeMCPDb([a, b])
-        store = {f"{project_a}:github_token": "alpha", f"{project_b}:github_token": "beta"}
+        await manager.connect_all()
+        assert "OPTIONAL" not in (manager._configs[row.id].env or {})
+        optional_present["on"] = True
+        await manager.refresh_server(row.id)
+        assert manager._configs[row.id].env == {
+            "KEY": "plain",
+            "OPTIONAL": "$secret:optional_token",
+        }
+        resolved_env = manager._connections[row.id].config.env
+        assert resolved_env is not None
+        assert resolved_env["OPTIONAL"] == "opt-value"
+        health = manager.get_server_health()[row.id]
+        assert health["state"] != "needs_configuration"
+        optional_present["on"] = False
+        await manager.refresh_server(row.id)
+        assert "OPTIONAL" not in (manager._configs[row.id].env or {})
+        assert manager.get_server_health()[row.id]["state"] != "needs_configuration"
 
-        def resolve(self: MCPClientManager, config: MCPServerConfig) -> MCPServerConfig:
-            from dataclasses import replace
 
-            key = f"{config.project_id}:github_token"
-            return replace(config, env={"TOKEN": store[key]})
+@pytest.mark.asyncio
+async def test_registry_config_keeps_secret_references_after_refresh() -> None:
+    project_id = str(uuid4())
+    row = _row(
+        name="github",
+        project_id=project_id,
+        env={"TOKEN": "$secret:github_token"},
+    )
+    db = FakeMCPDb([row])
+    store = {"github_token": "live"}
+    created, factory = _patch_transport()
+    with (
+        patch("gobby.mcp_proxy.manager.create_transport_connection", side_effect=factory),
+        patch.object(MCPClientManager, "_resolve_secrets_in_config", _resolve_with_store(store)),
+    ):
+        manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
+        assert callable(manager.refresh_server)
+        await manager.connect_all()
+        await manager.refresh_server(row.id)
+        assert manager._configs[row.id].env == {"TOKEN": "$secret:github_token"}
+        assert manager._connections[row.id].config.env == {"TOKEN": "live"}
 
-        created, factory = _patch_transport()
-        with (
-            patch("gobby.mcp_proxy.manager.create_transport_connection", side_effect=factory),
-            patch.object(MCPClientManager, "_resolve_secrets_in_config", resolve),
-        ):
-            manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
-            assert callable(getattr(manager, "refresh_server"))
-            await manager.connect_all()
-            first_a = manager._connections[a.id]
-            first_b = manager._connections[b.id]
-            store[f"{project_a}:github_token"] = "rotated-a"
-            await manager.refresh_server(a.id)
-            after_a = await manager.call_tool(a.id, "probe", {})
-            after_b = await manager.call_tool(b.id, "probe", {})
 
-        assert after_a["token"] == "rotated-a"
-        assert after_b["token"] == "beta"
-        assert manager._connections[a.id] is not first_a
-        assert manager._connections[b.id] is first_b
-        assert a.id not in manager._tool_schema_cache or manager._tool_schema_cache[a.id]
-
-    @pytest.mark.asyncio
-    async def test_refresh_server_is_linearizable_against_concurrent_calls(self) -> None:
-        project_id = str(uuid4())
-        row = _row(
-            name="github",
-            project_id=project_id,
-            env={"TOKEN": "$secret:github_token"},
-        )
-        db = FakeMCPDb([row])
-        store = {"github_token": "before"}
-        created, factory = _patch_transport()
-        in_flight_entered = asyncio.Event()
-        in_flight_release = asyncio.Event()
-
-        class BlockingSession(FakeToolSession):
-            async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-                in_flight_entered.set()
-                await in_flight_release.wait()
-                return await super().call_tool(name, arguments)
-
-        class BlockingConnection(RecordingConnection):
-            async def connect(self) -> FakeToolSession:
-                self.connect_calls += 1
-                self.is_connected = True
-                self.session = BlockingSession(self)
-                return self.session
-
-        blocking: list[RecordingConnection] = []
-
-        def first_factory(
-            config: MCPServerConfig, stdio_errlog_path: str | None = None
-        ) -> RecordingConnection:
-            if not blocking:
-                connection = BlockingConnection(config)
-                blocking.append(connection)
-                return connection
-            return factory(config, stdio_errlog_path)
-
-        with (
-            patch(
-                "gobby.mcp_proxy.manager.create_transport_connection",
-                side_effect=first_factory,
-            ),
-            patch.object(
-                MCPClientManager, "_resolve_secrets_in_config", _resolve_with_store(store)
-            ),
-        ):
-            manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
-            assert callable(getattr(manager, "refresh_server"))
-            await manager.connect_all()
-            in_flight = asyncio.create_task(manager.call_tool(row.id, "probe", {}))
-            await asyncio.wait_for(in_flight_entered.wait(), timeout=1)
-            store["github_token"] = "after"
-            refresh_task = asyncio.create_task(manager.refresh_server(row.id))
-            await refresh_task
-            in_flight_release.set()
-            in_flight_result = await in_flight
-            after = await manager.call_tool(row.id, "probe", {})
-
-        assert after["token"] == "after"
-        assert in_flight_result["token"] in {"before", "after"}
-
-        db.deleted_ids.add(row.id)
-        db.servers.pop(row.id, None)
-        with pytest.raises(MCPError, match="[Uu]nknown|[Nn]ot found"):
-            await manager.refresh_server(row.id)
-
-    @pytest.mark.asyncio
-    async def test_missing_required_secret_fails_closed_on_every_connection_path(self) -> None:
-        project_id = str(uuid4())
-        row = _row(
-            name="github",
-            project_id=project_id,
-            env={"TOKEN": "$secret:github_token"},
-        )
-        db = FakeMCPDb([row])
-        store: dict[str, str] = {}
-        created, factory = _patch_transport()
-        with (
-            patch("gobby.mcp_proxy.manager.create_transport_connection", side_effect=factory),
-            patch.object(
-                MCPClientManager, "_resolve_secrets_in_config", _resolve_with_store(store)
-            ),
-        ):
-            manager = MCPClientManager(mcp_db_manager=db, lazy_connect=True)
-            assert callable(getattr(manager, "refresh_server"))
-            health = manager.get_server_health()[row.id]
-            assert health["state"] == "needs_configuration"
-            assert health["missing_secrets"] == ["github_token"]
-            assert "$secret:" not in str(health.get("missing_secrets"))
-            assert created == []
-            with pytest.raises(MCPError, match="missing secret"):
-                await manager.ensure_connected(row.id)
-            assert row.id not in manager._connections
-            store["github_token"] = "set"
-            await manager.refresh_server(row.id)
-            assert manager.is_connected(row.id)
-            result = await manager.call_tool(row.id, "probe", {})
-            assert result["token"] == "set"
-
-    @pytest.mark.asyncio
-    async def test_optional_secret_reexpands_on_all_connection_paths(self) -> None:
-        project_id = str(uuid4())
-        template_id = str(uuid4())
-        row = _row(
-            name="search",
-            project_id=project_id,
-            template_id=template_id,
-            template="brave-search",
-            env={"KEY": "plain"},
-        )
-        db = FakeMCPDb([row])
-        optional_present = {"on": False}
-
-        def expand(_template: Any, server: MCPServer) -> dict[str, Any]:
-            env = {"KEY": "plain"}
-            if optional_present["on"]:
-                env["OPTIONAL"] = "$secret:optional_token"
-            return {"env": env}
-
-        store = {"optional_token": "opt-value"}
-        created, factory = _patch_transport()
-        with (
-            patch("gobby.mcp_proxy.manager.create_transport_connection", side_effect=factory),
-            patch.object(
-                MCPClientManager, "_resolve_secrets_in_config", _resolve_with_store(store)
-            ),
-        ):
-            manager = MCPClientManager(
-                mcp_db_manager=db,
-                lazy_connect=False,
-                template_expand=expand,
-            )
-            await manager.connect_all()
-            assert "OPTIONAL" not in (manager._configs[row.id].env or {})
-            optional_present["on"] = True
-            await manager.refresh_server(row.id)
-            assert manager._configs[row.id].env == {
-                "KEY": "plain",
-                "OPTIONAL": "$secret:optional_token",
-            }
-            resolved_env = manager._connections[row.id].config.env
-            assert resolved_env is not None
-            assert resolved_env["OPTIONAL"] == "opt-value"
-            health = manager.get_server_health()[row.id]
-            assert health["state"] != "needs_configuration"
-            optional_present["on"] = False
-            await manager.refresh_server(row.id)
-            assert "OPTIONAL" not in (manager._configs[row.id].env or {})
-            assert manager.get_server_health()[row.id]["state"] != "needs_configuration"
-
-    @pytest.mark.asyncio
-    async def test_registry_config_keeps_secret_references_after_refresh(self) -> None:
-        project_id = str(uuid4())
-        row = _row(
-            name="github",
-            project_id=project_id,
-            env={"TOKEN": "$secret:github_token"},
-        )
-        db = FakeMCPDb([row])
-        store = {"github_token": "live"}
-        created, factory = _patch_transport()
-        with (
-            patch("gobby.mcp_proxy.manager.create_transport_connection", side_effect=factory),
-            patch.object(
-                MCPClientManager, "_resolve_secrets_in_config", _resolve_with_store(store)
-            ),
-        ):
-            manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
-            assert callable(getattr(manager, "refresh_server"))
-            await manager.connect_all()
-            await manager.refresh_server(row.id)
-            assert manager._configs[row.id].env == {"TOKEN": "$secret:github_token"}
-            assert manager._connections[row.id].config.env == {"TOKEN": "live"}
-
-    @pytest.mark.asyncio
-    async def test_refresh_server_keeps_last_known_good_on_expansion_error(self) -> None:
-        project_id = str(uuid4())
-        good = _row(name="ok", project_id=project_id, url="http://ok.example")
-        stale = _row(
-            name="stale",
-            project_id=project_id,
-            template_id=str(uuid4()),
-            template="broken",
-            url="http://stale.example",
-        )
-        db = FakeMCPDb([good, stale])
-        created, factory = _patch_transport()
-        with (
-            patch("gobby.mcp_proxy.manager.create_transport_connection", side_effect=factory),
-            patch.object(MCPClientManager, "_resolve_secrets_in_config", _resolve_with_store({})),
-        ):
-            manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
-            assert callable(getattr(manager, "refresh_server"))
-            await manager.connect_all()
-            live = manager._connections[stale.id]
-            db.expand_errors[stale.id] = {
-                "name": "stale",
-                "project_id": project_id,
-                "error": "Missing required parameter 'api_key'",
-            }
-            with pytest.raises(MCPError, match="api_key"):
-                await manager.refresh_server(stale.id)
-            assert manager._connections[stale.id] is live
-            assert manager._configs[stale.id].url == "http://stale.example"
-            health = manager.get_server_health()[stale.id]
-            assert health["state"] == "stale_template"
-            assert "api_key" in (health["last_error"] or "")
-            assert "$secret:" not in (health["last_error"] or "")
-            assert manager.has_server(good.id)
-            assert manager.get_server_health()[good.id]["state"] == "connected"
-
-        db2 = FakeMCPDb([good, stale])
-        db2.expand_errors[stale.id] = {
+@pytest.mark.asyncio
+async def test_refresh_server_keeps_last_known_good_on_expansion_error() -> None:
+    project_id = str(uuid4())
+    good = _row(name="ok", project_id=project_id, url="http://ok.example")
+    stale = _row(
+        name="stale",
+        project_id=project_id,
+        template_id=str(uuid4()),
+        template="broken",
+        url="http://stale.example",
+    )
+    db = FakeMCPDb([good, stale])
+    created, factory = _patch_transport()
+    with (
+        patch("gobby.mcp_proxy.manager.create_transport_connection", side_effect=factory),
+        patch.object(MCPClientManager, "_resolve_secrets_in_config", _resolve_with_store({})),
+    ):
+        manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
+        assert callable(manager.refresh_server)
+        await manager.connect_all()
+        live = manager._connections[stale.id]
+        db.expand_errors[stale.id] = {
             "name": "stale",
             "project_id": project_id,
             "error": "Missing required parameter 'api_key'",
         }
-        manager2 = MCPClientManager(mcp_db_manager=db2, lazy_connect=True)
-        assert manager2.get_server_health()[stale.id]["state"] == "stale_template"
-        assert manager2.has_server(good.id)
-        assert stale.id not in manager2._connections
+        with pytest.raises(MCPError, match="api_key"):
+            await manager.refresh_server(stale.id)
+        assert manager._connections[stale.id] is live
+        assert manager._configs[stale.id].url == "http://stale.example"
+        health = manager.get_server_health()[stale.id]
+        assert health["state"] == "stale_template"
+        assert "api_key" in (health["last_error"] or "")
+        assert "$secret:" not in (health["last_error"] or "")
+        assert manager.has_server(good.id)
+        assert manager.get_server_health()[good.id]["state"] == "connected"
 
-    @pytest.mark.asyncio
-    async def test_refresh_with_deleted_secret_disconnects_old_transport(self) -> None:
-        project_id = str(uuid4())
-        row = _row(
-            name="github",
-            project_id=project_id,
-            env={"TOKEN": "$secret:github_token"},
-        )
-        db = FakeMCPDb([row])
-        store = {"github_token": "live"}
-        created, factory = _patch_transport()
-        with (
-            patch("gobby.mcp_proxy.manager.create_transport_connection", side_effect=factory),
-            patch.object(
-                MCPClientManager, "_resolve_secrets_in_config", _resolve_with_store(store)
-            ),
-        ):
-            manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
-            assert callable(getattr(manager, "refresh_server"))
-            await manager.connect_all()
-            old = manager._connections[row.id]
-            assert isinstance(old, RecordingConnection)
-            del store["github_token"]
-            with pytest.raises(MCPError, match="missing secret"):
-                await manager.refresh_server(row.id)
-            assert old.disconnect_calls >= 1
-            assert row.id not in manager._connections
-            assert manager.get_server_health()[row.id]["state"] == "needs_configuration"
-            with pytest.raises(MCPError):
-                await manager.call_tool(row.id, "probe", {})
-            assert row.id not in manager._connections or not manager.is_connected(row.id)
+    db2 = FakeMCPDb([good, stale])
+    db2.expand_errors[stale.id] = {
+        "name": "stale",
+        "project_id": project_id,
+        "error": "Missing required parameter 'api_key'",
+    }
+    manager2 = MCPClientManager(mcp_db_manager=db2, lazy_connect=True)
+    assert manager2.get_server_health()[stale.id]["state"] == "stale_template"
+    assert manager2.has_server(good.id)
+    assert stale.id not in manager2._connections
 
-    @pytest.mark.asyncio
-    async def test_refresh_server_never_connects_disabled_instance(self) -> None:
-        project_id = str(uuid4())
-        row = _row(
-            name="github",
-            project_id=project_id,
-            enabled=False,
-            env={"TOKEN": "$secret:github_token"},
-        )
-        db = FakeMCPDb([row])
-        resolved = {"called": False}
 
-        def resolve(self: MCPClientManager, config: MCPServerConfig) -> MCPServerConfig:
-            resolved["called"] = True
-            raise AssertionError("disabled refresh must not resolve secrets")
-
-        created, factory = _patch_transport()
-        with (
-            patch("gobby.mcp_proxy.manager.create_transport_connection", side_effect=factory),
-            patch.object(MCPClientManager, "_resolve_secrets_in_config", resolve),
-        ):
-            manager = MCPClientManager(mcp_db_manager=db, lazy_connect=True)
+@pytest.mark.asyncio
+async def test_refresh_with_deleted_secret_disconnects_old_transport() -> None:
+    project_id = str(uuid4())
+    row = _row(
+        name="github",
+        project_id=project_id,
+        env={"TOKEN": "$secret:github_token"},
+    )
+    db = FakeMCPDb([row])
+    store = {"github_token": "live"}
+    created, factory = _patch_transport()
+    with (
+        patch("gobby.mcp_proxy.manager.create_transport_connection", side_effect=factory),
+        patch.object(MCPClientManager, "_resolve_secrets_in_config", _resolve_with_store(store)),
+    ):
+        manager = MCPClientManager(mcp_db_manager=db, lazy_connect=False)
+        assert callable(manager.refresh_server)
+        await manager.connect_all()
+        old = manager._connections[row.id]
+        assert isinstance(old, RecordingConnection)
+        del store["github_token"]
+        with pytest.raises(MCPError, match="missing secret"):
             await manager.refresh_server(row.id)
-
-        assert created == []
-        assert resolved["called"] is False
+        assert old.disconnect_calls >= 1
         assert row.id not in manager._connections
-        assert manager.get_server_health()[row.id]["state"] == "disabled"
-        disabled = manager.get_server_config(row.id)
-        assert disabled is not None
-        assert disabled.enabled is False
+        assert manager.get_server_health()[row.id]["state"] == "needs_configuration"
+        with pytest.raises(MCPError):
+            await manager.call_tool(row.id, "probe", {})
+        assert row.id not in manager._connections or not manager.is_connected(row.id)
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_never_connects_disabled_instance() -> None:
+    project_id = str(uuid4())
+    row = _row(
+        name="github",
+        project_id=project_id,
+        enabled=False,
+        env={"TOKEN": "$secret:github_token"},
+    )
+    db = FakeMCPDb([row])
+    resolved = {"called": False}
+
+    def resolve(self: MCPClientManager, config: MCPServerConfig) -> MCPServerConfig:
+        resolved["called"] = True
+        raise AssertionError("disabled refresh must not resolve secrets")
+
+    created, factory = _patch_transport()
+    with (
+        patch("gobby.mcp_proxy.manager.create_transport_connection", side_effect=factory),
+        patch.object(MCPClientManager, "_resolve_secrets_in_config", resolve),
+    ):
+        manager = MCPClientManager(mcp_db_manager=db, lazy_connect=True)
+        await manager.refresh_server(row.id)
+
+    assert created == []
+    assert resolved["called"] is False
+    assert row.id not in manager._connections
+    assert manager.get_server_health()[row.id]["state"] == "disabled"
+    disabled = manager.get_server_config(row.id)
+    assert disabled is not None
+    assert disabled.enabled is False
 
 
 class TestCacheDiscoveredToolsById:
