@@ -141,6 +141,9 @@ def _pending_snapshot_payload() -> dict[str, Any]:
 
 
 def _agy_snapshot_payload() -> dict[str, Any]:
+    from gobby.providers.version_gate import peek_agy_support
+
+    record = peek_agy_support()
     return {
         "models": [
             {key: value for key, value in model.items() if key != "effort_display"}
@@ -148,7 +151,18 @@ def _agy_snapshot_payload() -> dict[str, Any]:
         ],
         "refresh": {
             "generation": 0,
-            "sources": [{"source_key": "static", "state": "ok"}],
+            "sources": [
+                {
+                    "source_key": "version_gate",
+                    "state": "ok" if record.supported else "unsupported",
+                }
+            ],
+        },
+        "support": {
+            "installed_version": record.installed_version,
+            "required_version": record.required_version,
+            "supported": record.supported,
+            "reason": record.reason,
         },
     }
 

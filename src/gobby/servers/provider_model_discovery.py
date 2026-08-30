@@ -599,13 +599,14 @@ async def probe_claude_model(
 
 
 async def get_cli_version(provider: str, *, which: Which) -> str | None:
-    if not which(provider):
+    executable = which(provider)
+    if not executable:
         return None
 
     if provider == "grok":
-        args = [provider, "version"]
+        args = [executable, "version"]
     else:
-        args = [provider, "--version"]
+        args = [executable, "--version"]
 
     proc = await asyncio.create_subprocess_exec(
         *args,

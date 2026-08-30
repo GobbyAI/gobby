@@ -21,6 +21,7 @@ from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
 from gobby.llm.service import LLMService
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata
+from gobby.providers.version_gate import AGY_UNPUBLISHED_REASON
 from gobby.servers.provider_model_defaults import AGY_MODELS
 
 pytestmark = pytest.mark.unit
@@ -476,7 +477,8 @@ def test_daemon_registry_scopes_agy_to_strict_text_generation_when_installed() -
         binding = registry.binding(capability, "agy")
         assert binding is not None
         assert binding.available is False
-        assert binding.reason == AGY_UNAVAILABLE_REASON
+        assert binding.reason == AGY_UNPUBLISHED_REASON
+        assert binding.metadata["agy_supported"] is False
 
 
 def test_tool_chat_binding_has_no_agy_branch() -> None:

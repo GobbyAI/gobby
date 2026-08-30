@@ -2260,10 +2260,24 @@ class TestRunGobbyFunction:
                 "gobby.utils.machine_id.require_machine_id", return_value="machine-id"
             ) as mock_require_machine_id,
             patch("gobby.deployment.deployment_token", return_value="deadbeefdeadbeef"),
+            patch(
+                "gobby.providers.version_gate.probe_and_publish_agy_support",
+                new_callable=AsyncMock,
+            ) as mock_probe,
         ):
+            order: list[str] = []
+
+            async def record_probe() -> None:
+                order.append("probe")
+
+            async def record_create(**kwargs: object) -> object:
+                order.append("create")
+                return mock_runner
+
+            mock_probe.side_effect = record_probe
             mock_runner = AsyncMock()
             mock_runner.run = AsyncMock()
-            mock_runner_cls.create = AsyncMock(return_value=mock_runner)
+            mock_runner_cls.create = AsyncMock(side_effect=record_create)
 
             ownership = FailOpenPidOwnership("test")
             await run_gobby(
@@ -2271,6 +2285,8 @@ class TestRunGobbyFunction:
                 verbose=True,
                 ownership_resolution=ownership,
             )
+            assert order == ["probe", "create"]
+            mock_probe.assert_awaited_once()
 
             mock_runner_cls.create.assert_awaited_once_with(
                 config_path=Path("/tmp/config.yaml"), verbose=True

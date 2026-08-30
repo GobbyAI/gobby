@@ -407,6 +407,9 @@ async def run_gobby(
             if not promoted:
                 return
 
+        from gobby.providers.version_gate import probe_and_publish_agy_support
+
+        await probe_and_publish_agy_support()
         runner = await GobbyRunner.create(config_path=config_path, verbose=verbose)
         active = runner
         active.daemon_lease = lease

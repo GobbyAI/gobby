@@ -414,8 +414,10 @@ class TestProviderModelsRoute:
         assert [model["value"] for model in agy_models] == list(AGY_MODELS)
         assert providers["agy"]["refresh"] == {
             "generation": 0,
-            "sources": [{"source_key": "static", "state": "ok"}],
+            "sources": [{"source_key": "version_gate", "state": "unsupported"}],
         }
+        assert providers["agy"]["support"]["supported"] is False
+        assert providers["agy"]["support"]["required_version"] == "1.1.18"
         assert providers["agy"]["supports_web_chat"] is False
         assert providers["agy"]["available"] is False
         agy_by_id = {model["value"]: model for model in agy_models}
@@ -632,7 +634,9 @@ class TestProviderModelsRoute:
         }
         assert providers["droid"]["models"][0]["canonical_model"] == "droid-model"
         assert [model["value"] for model in providers["agy"]["models"]] == list(AGY_MODELS)
-        assert providers["agy"]["refresh"]["sources"] == [{"source_key": "static", "state": "ok"}]
+        assert providers["agy"]["refresh"]["sources"] == [
+            {"source_key": "version_gate", "state": "unsupported"}
+        ]
         assert providers["codex"]["refresh"]["generation"] == 1
 
     def test_models_route_serializes_droid_capability_snapshot(
@@ -1187,7 +1191,9 @@ def test_agy_and_endpoint_groups_unchanged() -> None:
 
     providers = {entry["provider"]: entry for entry in response.json()["providers"]}
     assert [model["value"] for model in providers["agy"]["models"]] == list(AGY_MODELS)
-    assert providers["agy"]["refresh"]["sources"] == [{"source_key": "static", "state": "ok"}]
+    assert providers["agy"]["refresh"]["sources"] == [
+        {"source_key": "version_gate", "state": "unsupported"}
+    ]
     assert any(
         model.get("value") == "endpoint:openrouter/moonshotai/kimi-k3"
         for model in providers["codex"]["models"]

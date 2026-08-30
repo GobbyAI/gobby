@@ -715,11 +715,21 @@ def _adapter_style_for_provider(capability: AICapability, provider: str) -> AIAd
 
 
 def _agy_unavailable_bindings() -> tuple[CapabilityBinding, ...]:
+    from gobby.providers.version_gate import peek_agy_support
+
+    record = peek_agy_support()
+    reason = record.reason if not record.supported else AGY_UNAVAILABLE_REASON
+    metadata = {
+        "agy_installed_version": record.installed_version,
+        "agy_required_version": record.required_version,
+        "agy_supported": record.supported,
+    }
     return tuple(
         CapabilityBinding.unavailable(
             capability,
             "agy",
-            reason=AGY_UNAVAILABLE_REASON,
+            reason=reason,
+            metadata=metadata,
         )
         for capability in (
             AICapability.VISION_EXTRACT,

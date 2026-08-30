@@ -36,6 +36,10 @@ def create_lifespan(
 
         if server.test_mode:
             logger.debug("Running in test mode - external connections disabled")
+        else:
+            from gobby.providers.version_gate import assert_agy_support_published
+
+            assert_agy_support_published()
 
         config = server.resolve_runtime_config()
         hook_manager_kwargs: dict[str, Any] = {

@@ -120,11 +120,16 @@ async def test_run_gobby_contention_returns_before_runner_construction(
         patch("gobby.runner_pid_file.claim_pid_file", return_value=None),
         patch("gobby.runner_pid_file.probe_daemon_lock", return_value=_daemon_probe()),
         patch("gobby.runner.GobbyRunner") as runner_cls,
+        patch(
+            "gobby.providers.version_gate.probe_and_publish_agy_support",
+            new_callable=AsyncMock,
+        ) as probe,
         caplog.at_level(logging.INFO, logger="gobby.runner"),
     ):
         await run_gobby()
 
     runner_cls.assert_not_called()
+    probe.assert_not_called()
     assert "4242" in caplog.text
     assert "exiting cleanly" in caplog.text
 
@@ -712,9 +717,14 @@ class TestRunGobbyMaintenanceContention:
             patch("gobby.runner_pid_file.claim_pid_file", return_value=None),
             patch("gobby.runner_pid_file.probe_daemon_lock", return_value=probe),
             patch("gobby.runner.GobbyRunner") as runner_cls,
+            patch(
+                "gobby.providers.version_gate.probe_and_publish_agy_support",
+                new_callable=AsyncMock,
+            ) as version_probe,
             caplog.at_level(logging.INFO, logger="gobby.runner"),
         ):
             await run_gobby()
         runner_cls.assert_not_called()
+        version_probe.assert_not_called()
         assert "maintenance" in caplog.text.lower()
         assert "live daemon" not in caplog.text.lower()

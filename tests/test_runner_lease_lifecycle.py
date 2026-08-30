@@ -59,6 +59,14 @@ async def test_standby_never_constructs_full_runner(monkeypatch: pytest.MonkeyPa
     )
     monkeypatch.setattr("gobby.daemon_lease.ActiveDaemonLease", lambda *_a, **_kw: lease)
 
+    async def fake_probe() -> None:
+        events.append("probe")
+
+    monkeypatch.setattr(
+        "gobby.providers.version_gate.probe_and_publish_agy_support",
+        fake_probe,
+    )
+
     async def serve(*_args: object, **_kwargs: object) -> bool:
         events.append("standby")
         return False
@@ -97,6 +105,14 @@ async def test_active_constructs_runner_only_after_verify_and_acquire(
     )
     monkeypatch.setattr("gobby.daemon_lease.ActiveDaemonLease", lambda *_a, **_kw: lease)
 
+    async def fake_probe() -> None:
+        events.append("probe")
+
+    monkeypatch.setattr(
+        "gobby.providers.version_gate.probe_and_publish_agy_support",
+        fake_probe,
+    )
+
     class FakeRunner:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             events.append("construct")
@@ -116,7 +132,7 @@ async def test_active_constructs_runner_only_after_verify_and_acquire(
 
     await runner_module.run_gobby(ownership_resolution=cast(PidOwnershipResolution, ownership))
 
-    assert events[:4] == ["verify", "acquire", "construct", "run"]
+    assert events[:5] == ["verify", "acquire", "probe", "construct", "run"]
     assert events[-1] == "release"
     assert ownership.released == 1
 
@@ -146,6 +162,14 @@ async def test_lease_loss_records_typed_shutdown_source_before_request(
     monkeypatch.setattr(
         "gobby.servers.lease_fence.drain_effect_fence",
         lambda _fence: events.append("drain"),
+    )
+
+    async def fake_probe() -> None:
+        return None
+
+    monkeypatch.setattr(
+        "gobby.providers.version_gate.probe_and_publish_agy_support",
+        fake_probe,
     )
 
     async def lose_lease(*_args: object, **kwargs: object) -> None:
