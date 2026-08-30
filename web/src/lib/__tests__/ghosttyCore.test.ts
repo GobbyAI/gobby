@@ -15,7 +15,14 @@ import { loadGhosttyCore } from "../ghosttyCore";
 // The loader pipes every core through withGobbyAnsiPalette, which rebinds
 // these two cell accessors on the loaded instance.
 function fakeCore(id: string) {
-  return { id, getCell: vi.fn(), getScrollbackCell: vi.fn() };
+  return {
+    id,
+    getCell: vi.fn(),
+    getScrollbackCell: vi.fn(),
+    writeString: vi.fn(),
+    writeRaw: vi.fn(),
+    mouseTracking: vi.fn(() => 0 as const),
+  };
 }
 
 describe("loadGhosttyCore", () => {

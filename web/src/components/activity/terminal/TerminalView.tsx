@@ -13,6 +13,7 @@ import {
 } from "react";
 
 import { loadGhosttyCore } from "../../../lib/ghosttyCore";
+import { withAnyMotionMouseTracking } from "../../../lib/terminalMouseTracking";
 import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/Button";
 import { coarseHitAreaCls } from "../../ui/controlStyles";
@@ -211,6 +212,11 @@ function TerminalInstance({
       .init()
       .then((readyTerminal) => {
         if (disposed) return;
+        // Ghostty cores are wrapped at load. The fallback Zig core is created
+        // inside WTerm.init, so 1003 has to be recovered here before PTY bytes.
+        if (resolution.status !== "ghostty" && readyTerminal.bridge) {
+          withAnyMotionMouseTracking(readyTerminal.bridge);
+        }
         const input = readyTerminal.element.querySelector("textarea");
         input?.setAttribute("inputmode", "text");
         input?.setAttribute("autocomplete", "on");
