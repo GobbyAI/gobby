@@ -17,7 +17,8 @@ import time
 from pathlib import Path
 
 from gobby.agents.constants import get_terminal_env_vars
-from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths, get_sandbox_resolver
+from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
+from gobby.agents.sandbox_resolvers import get_sandbox_resolver
 from gobby.agents.spawn_cache_policy import apply_spawn_cache_policy
 from gobby.agents.spawners.auth_env import terminal_env_passthrough
 from gobby.agents.spawners.base import (

@@ -7,7 +7,9 @@ import hashlib
 import json
 import logging
 import os
+import shlex
 import shutil
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,12 +35,8 @@ from gobby.utils.dependency_requirements import (
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
 
-from gobby.agents.sandbox import (
-    ResolvedSandboxPaths,
-    SandboxConfig,
-    SandboxResolver,
-    preflight_provider_native_settings,
-)
+from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig
+from gobby.agents.sandbox_resolvers import SandboxResolver, preflight_provider_native_settings
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +69,7 @@ class SandboxLaunch:
     violation_path: str | None = None
     node_path: str | None = None
     runner_path: str | None = None
+    shim_path: str | None = None
 
     def wrap(self, command: Sequence[str]) -> list[str]:
         """Wrap one provider argv exactly once when SRT is active."""
@@ -115,6 +114,44 @@ class SandboxLaunch:
             "violation_path": self.violation_path,
             "provider_executable": self.provider_executable,
         }
+
+    def compose_subprocess(
+        self, argv: Sequence[str], identity_env: Mapping[str, str]
+    ) -> tuple[list[str], dict[str, str]]:
+        """Merge identity env then provider_env and wrap argv exactly once."""
+        env = dict(identity_env)
+        env.update(self.provider_env)
+        return self.wrap(list(argv)), env
+
+    def emit_cli_shim(self, *, command: Sequence[str], directory: Path) -> Path:
+        """Write a private executable that execs the SRT-wrapped argv with extra args."""
+        wrapped = self.wrap(list(command))
+        if not wrapped:
+            raise SrtRuntimeError("SRT shim requires a wrapped command")
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"gobby-srt-shim-{os.getpid()}-{uuid.uuid4().hex}.sh"
+        quoted = " ".join(shlex.quote(part) for part in wrapped)
+        script = f'#!/bin/sh\nexec {quoted} "$@"\n'
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(script)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        os.chmod(path, 0o700)
+        object.__setattr__(self, "shim_path", str(path))
+        return path
+
+    def cleanup_cli_shim(self) -> None:
+        """Remove the per-launch Claude shim if this launch emitted one."""
+        path = self.shim_path
+        if not path:
+            return
+        Path(path).unlink(missing_ok=True)
+        object.__setattr__(self, "shim_path", None)
 
 
 def srt_install_root() -> Path:

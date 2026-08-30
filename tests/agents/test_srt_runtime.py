@@ -14,15 +14,17 @@ import pytest
 
 from gobby.agents import srt_runtime
 from gobby.agents.sandbox import (
+    ResolvedSandboxPaths,
+    SandboxConfig,
+    SandboxCredentialEnv,
+    compute_sandbox_paths,
+)
+from gobby.agents.sandbox_resolvers import (
     ClaudeSandboxResolver,
     CodexSandboxResolver,
     GrokSandboxResolver,
     QwenSandboxResolver,
-    ResolvedSandboxPaths,
-    SandboxConfig,
-    SandboxCredentialEnv,
     SandboxResolver,
-    compute_sandbox_paths,
 )
 from gobby.agents.sandbox_policy import _nearest_package_root, previous_run_write_paths
 from gobby.agents.srt_runtime import (
@@ -561,6 +563,47 @@ def test_non_enforced_srt_and_provider_native_launches_keep_provider_argv(
     command = ["claude", "--version"]
 
     assert launch.wrap(command) == command
+
+
+def _enforced_srt_launch() -> SandboxLaunch:
+    return SandboxLaunch(
+        backend="srt",
+        enforced=True,
+        node_path="/usr/bin/node",
+        runner_path="/opt/srt/runner.js",
+        policy_path="/tmp/srt-policy.json",
+        violation_path="/tmp/srt-violations.jsonl",
+        provider_executable="/resolved/claude",
+        provider_env={"TMPDIR": "/tmp/srt-run", "GOBBY_SRT_TMPDIR": "/tmp/srt-sock"},
+    )
+
+
+def test_emit_cli_shim_execs_wrapped_argv_and_passes_sdk_args(tmp_path: Path) -> None:
+    launch = _enforced_srt_launch()
+    shim = launch.emit_cli_shim(command=["claude"], directory=tmp_path)
+
+    assert shim.is_file()
+    assert shim.stat().st_mode & 0o111
+    body = shim.read_text(encoding="utf-8")
+    wrapped = launch.wrap(["claude"])
+    for token in wrapped:
+        assert token in body
+    assert '"$@"' in body
+    assert body.count("exec") == 1
+    launch.cleanup_cli_shim()
+    assert not shim.exists()
+
+
+def test_compose_sandbox_subprocess_merges_identity_then_provider_env() -> None:
+    launch = _enforced_srt_launch()
+    identity = {"PATH": "/bin", "GOBBY_SESSION_ID": "sess-1", "TMPDIR": "/tmp/identity"}
+    argv, env = launch.compose_subprocess(["claude", "--print"], identity)
+
+    assert argv == launch.wrap(["claude", "--print"])
+    assert env["GOBBY_SESSION_ID"] == "sess-1"
+    assert env["PATH"] == "/bin"
+    assert env["TMPDIR"] == "/tmp/srt-run"
+    assert env["GOBBY_SRT_TMPDIR"] == "/tmp/srt-sock"
 
 
 @pytest.mark.asyncio

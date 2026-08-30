@@ -91,6 +91,8 @@ class _BulkUpdateMixin:
         project_id: str | None = None,
         sandbox_enabled: bool | None = None,
         sandbox_policy_hash: str | None = None,
+        workspace_path: str | None | UnsetType = UNSET,
+        workspace_generation: int | None = None,
     ) -> Session | None:
         """
         Update multiple session fields at once.
@@ -173,6 +175,10 @@ class _BulkUpdateMixin:
             values["sandbox_enabled"] = bool(sandbox_enabled)
         if sandbox_policy_hash is not None:
             values["sandbox_policy_hash"] = sandbox_policy_hash
+        if is_set(workspace_path):
+            values["workspace_path"] = workspace_path
+        if workspace_generation is not None:
+            values["workspace_generation"] = int(workspace_generation)
 
         if (
             not values

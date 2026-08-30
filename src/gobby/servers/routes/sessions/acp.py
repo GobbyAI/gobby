@@ -19,6 +19,7 @@ from gobby.sessions.acp_lifecycle import (
     ACPSessionLifecycleService,
     ACPSessionNotFoundError,
     ACPTargetNotSupportedError,
+    ACPWorkspaceIdentityError,
 )
 
 if TYPE_CHECKING:
@@ -36,6 +37,8 @@ def _raise_for_lifecycle_error(exc: ACPLifecycleError) -> NoReturn:
     elif isinstance(exc, ACPTargetNotSupportedError):
         status_code = 400
     elif isinstance(exc, ACPCapabilityUnsupportedError):
+        status_code = 409
+    elif isinstance(exc, ACPWorkspaceIdentityError):
         status_code = 409
     elif isinstance(exc, ACPProviderUnavailableError):
         status_code = 503

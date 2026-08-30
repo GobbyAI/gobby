@@ -516,6 +516,8 @@ class TestCreateChatSessionInner:
             mock_db_sess.usage_output_tokens = 0
             mock_db_sess.chat_mode = "plan"
             mock_db_sess.approved_tools_json = None
+            mock_db_sess.workspace_path = None
+            mock_db_sess.workspace_generation = 0
 
             mixin.session_manager = MagicMock()
             mixin.session_manager.register.return_value = mock_db_sess
@@ -529,6 +531,8 @@ class TestCreateChatSessionInner:
                 sandbox_enabled=True,
                 sandbox_policy_hash="verified-hash",
                 terminal_context={"sandbox": mock_session.sandbox_metadata},
+                workspace_path=".",
+                workspace_generation=1,
             )
             assert mixin.session_manager.update.call_count == 1
             assert mixin.session_manager.update.call_args is not None
@@ -666,6 +670,8 @@ class TestCreateChatSessionInner:
         existing_db_sess.usage_output_tokens = 0
         existing_db_sess.chat_mode = None
         existing_db_sess.approved_tools_json = None
+        existing_db_sess.workspace_path = None
+        existing_db_sess.workspace_generation = 0
 
         mock_session = AsyncMock()
         mock_session.provider = "codex"
@@ -708,6 +714,8 @@ class TestCreateChatSessionInner:
         existing_db_sess.usage_output_tokens = 100
         existing_db_sess.chat_mode = "normal"
         existing_db_sess.approved_tools_json = None
+        existing_db_sess.workspace_path = None
+        existing_db_sess.workspace_generation = 0
 
         mock_session = AsyncMock()
         mock_session.provider = "codex"
@@ -736,6 +744,8 @@ class TestCreateChatSessionInner:
         mixin.session_manager.update.assert_called_once_with(
             "db-existing",
             project_id="project-new",
+            workspace_path=".",
+            workspace_generation=1,
         )
 
     @pytest.mark.asyncio

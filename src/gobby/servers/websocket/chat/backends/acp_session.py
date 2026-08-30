@@ -64,6 +64,7 @@ class ACPManagedChatSession(
     _plan_feedback: str | None = field(default=None, repr=False)
     _is_first_turn: bool = field(default=True, repr=False)
     available_commands: list[dict[str, Any]] = field(default_factory=list)
+    _acp_client: Any = field(default=None, repr=False)
 
     def _web_chat_source(self) -> str:
         return f"{self.provider}_web_chat"

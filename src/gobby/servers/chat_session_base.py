@@ -36,6 +36,7 @@ class ChatSessionProtocol(Protocol):
     provider: str
     reasoning_effort: str | None
     sandbox_policy_hash: str | None
+    sandbox_config: Any
     sandbox_metadata: dict[str, Any]
 
     # Lifecycle callbacks

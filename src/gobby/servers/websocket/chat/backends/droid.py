@@ -23,6 +23,7 @@ from gobby.adapters.acp_client import (
 )
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.srt_runtime import prepare_sandbox_launch
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.llm.claude_models import (
     ChatEvent,
@@ -528,6 +529,22 @@ class DroidWebChatBackend:
         env = os.environ.copy()
         env["GOBBY_HOOKS_DISABLED"] = "1"
         env["GOBBY_WEB_CHAT_CHILD"] = "1"
+        sandbox_config = self._sandbox_config or SandboxConfig(enabled=False)
+        if sandbox_config.enabled:
+            daemon_cfg = getattr(session, "_config", None)
+            websocket = getattr(daemon_cfg, "websocket", None)
+            launch = await prepare_sandbox_launch(
+                config=sandbox_config,
+                provider="droid",
+                workspace_path=cwd,
+                run_id=session.db_session_id or session.conversation_id,
+                resolver=None,
+                daemon_port=int(getattr(daemon_cfg, "daemon_port", 60887)),
+                websocket_port=int(getattr(websocket, "port", 60888)),
+                api_base=None,
+                env=env,
+            )
+            cmd, env = launch.compose_subprocess(cmd, env)
 
         process = await asyncio.create_subprocess_exec(
             *cmd,

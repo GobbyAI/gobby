@@ -18,7 +18,7 @@ from gobby.agents.constants import (
     GOBBY_SESSION_ID,
 )
 from gobby.agents.isolation_code_index import ensure_isolation_code_index
-from gobby.agents.sandbox import get_sandbox_resolver
+from gobby.agents.sandbox_resolvers import get_sandbox_resolver
 from gobby.agents.spawn import PreparedSpawn, build_cli_command
 from gobby.agents.spawn_cache_policy import (
     sandbox_config_for_spawn as _sandbox_config_for_spawn,

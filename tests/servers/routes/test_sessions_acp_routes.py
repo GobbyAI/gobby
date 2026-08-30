@@ -38,6 +38,8 @@ class _Session:
     status: str = "active"
     session_type: str = "web_chat"
     machine_id: str = MACHINE
+    workspace_path: str | None = "/tmp/acp-workspace"
+    workspace_generation: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -147,8 +149,23 @@ class _Backend:
         self._pages = pages or []
         self.start_calls = 0
         self.list_calls = 0
-        self.closed: list[str] = []
-        self.deleted: list[str] = []
+        self.clients: list[_FakeRouteACPClient] = []
+
+        def _factory(*_args: Any, **kwargs: Any) -> _FakeRouteACPClient:
+            client = _FakeRouteACPClient(**kwargs)
+            client.session_capabilities = dict(self.capabilities)
+            self.clients.append(client)
+            return client
+
+        self.acp_client_cls = _factory
+
+    @property
+    def closed(self) -> list[str]:
+        return [item for client in self.clients for item in client.closed]
+
+    @property
+    def deleted(self) -> list[str]:
+        return [item for client in self.clients for item in client.deleted]
 
     async def start(self) -> None:
         self.start_calls += 1
@@ -164,6 +181,20 @@ class _Backend:
         if index >= len(self._pages):
             return {"sessions": [], "nextCursor": None}
         return self._pages[index]
+
+
+class _FakeRouteACPClient:
+    def __init__(self, cwd: str | None = None, **_kwargs: Any) -> None:
+        self.cwd = cwd
+        self.closed: list[str] = []
+        self.deleted: list[str] = []
+        self.session_capabilities: dict[str, bool] = {}
+
+    async def start(self, **_kwargs: Any) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
 
     async def close_session(self, session_id: str) -> dict[str, Any]:
         self.closed.append(session_id)

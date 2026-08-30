@@ -6,7 +6,8 @@ import asyncio
 import logging
 import os
 import re
-from collections.abc import AsyncIterator, Mapping
+import shutil
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -16,7 +17,8 @@ from gobby.adapters.codex_impl.item_normalization import (
     parse_mcp_arguments,
 )
 from gobby.agents.local_model import LocalModelError, ensure_local_model
-from gobby.agents.sandbox import CodexSandboxResolver, SandboxConfig
+from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.sandbox_resolvers import CodexSandboxResolver
 from gobby.ai.endpoints import parse_endpoint_model_selector
 from gobby.config.ai import GenerationEndpointConfig
 from gobby.llm.claude_models import ChatEvent, DoneEvent, TextChunk
@@ -36,10 +38,8 @@ from gobby.servers.tool_approvals import (
     normalize_approved_tool_keys,
 )
 from gobby.servers.websocket.chat.backends.base import (
-    _BACKEND_START_TIMEOUT_SECONDS,
     ManagedChatSessionBase,
     ProviderBackendHealth,
-    _error_message,
     _extract_text,
 )
 from gobby.servers.websocket.chat.backends.codex_turns import stream_codex_turn
@@ -94,6 +94,7 @@ class CodexManagedChatSession(
         default=_CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS,
         repr=False,
     )
+    _app_client: CodexAppServerClient | None = field(default=None, repr=False)
     _pending_approvals: dict[str, PendingApproval] = field(default_factory=dict, repr=False)
     _pending_approval_events: dict[str, asyncio.Event] = field(default_factory=dict, repr=False)
     _pending_approval_decisions: dict[str, str] = field(default_factory=dict, repr=False)
@@ -314,12 +315,14 @@ class CodexWebChatBackend:
         self,
         *,
         client: CodexAppServerClient | None = None,
+        client_factory: Callable[..., CodexAppServerClient] | None = None,
         generation_endpoint: GenerationEndpointConfig | None = None,
         transcript_retry_attempts: int = _CODEX_TRANSCRIPT_RETRY_ATTEMPTS,
         transcript_retry_delay_seconds: float = _CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS,
         sandbox_config: SandboxConfig | None = None,
     ) -> None:
         self._client = client
+        self._client_factory = client_factory
         self._generation_endpoint = generation_endpoint
         self._sandbox_config = sandbox_config
         self._health = ProviderBackendHealth(
@@ -335,46 +338,32 @@ class CodexWebChatBackend:
     def set_sandbox_config(self, config: SandboxConfig) -> None:
         self._sandbox_config = config.model_copy(deep=True)
 
+    @staticmethod
+    def native_sandbox_pin(config: SandboxConfig | None) -> str | None:
+        """Return the Codex thread sandbox when SRT is the outer boundary."""
+        if config is None or not config.enabled:
+            return None
+        if config.backend == "srt":
+            return "danger-full-access"
+        return CodexSandboxResolver.thread_sandbox_policy(config)
+
     @property
     def client(self) -> CodexAppServerClient | None:
         """Expose the shared Codex app-server client for callers."""
         return self._client
 
     async def _start_inner(self) -> None:
-        if self._client is None:
-            self._health = ProviderBackendHealth(
-                provider=self.provider,
-                available=False,
-                startup_error="codex CLI not found in PATH",
-            )
-            return
-
-        if self._client.is_connected:
+        if self._client is not None and self._client.is_connected:
             self._health = ProviderBackendHealth(provider=self.provider, available=True)
             return
-
-        try:
-            await asyncio.wait_for(
-                self._client.start(),
-                timeout=_BACKEND_START_TIMEOUT_SECONDS,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            try:
-                await self._client.stop()
-            except Exception:
-                logger.debug("Codex backend cleanup after failed startup", exc_info=True)
-            self._health = ProviderBackendHealth(
-                provider=self.provider,
-                available=False,
-                startup_error=_error_message(exc),
-            )
-            logger.warning("Codex backend startup failed: %s", exc)
+        if self._client is not None or shutil.which("codex"):
+            self._health = ProviderBackendHealth(provider=self.provider, available=True)
             return
-
-        self._client.register_approval_handler(self.handle_approval_request)
-        self._health = ProviderBackendHealth(provider=self.provider, available=True)
+        self._health = ProviderBackendHealth(
+            provider=self.provider,
+            available=False,
+            startup_error="codex CLI not found in PATH",
+        )
 
     async def start(self, *, background: bool = False) -> None:
         if self._health.available:
@@ -403,6 +392,9 @@ class CodexWebChatBackend:
     def health(self) -> ProviderBackendHealth:
         return self._health
 
+    def _client_for(self, session: CodexManagedChatSession) -> CodexAppServerClient | None:
+        return session._app_client or self._client
+
     async def attach_session(
         self,
         session: CodexManagedChatSession,
@@ -413,8 +405,18 @@ class CodexWebChatBackend:
             self._apply_requested_model(session, model)
 
         await self.start()
-        if not self._health.available or self._client is None:
+        client = self._client_for(session)
+        if client is None and self._client_factory is not None:
+            client = self._client_factory()
+            session._app_client = client
+        if not self._health.available or client is None:
             raise RuntimeError(self._health.startup_error or "Codex backend unavailable")
+        if not client.is_connected:
+            try:
+                await client.start()
+            except Exception:
+                session._app_client = None
+                raise
 
         if (
             self._generation_endpoint is not None
@@ -429,9 +431,9 @@ class CodexWebChatBackend:
                 raise RuntimeError(local_model_preflight_message(local_endpoint, exc)) from exc
 
         if session._thread_id:
-            thread = await self._client.resume_thread(session._thread_id)
+            thread = await client.resume_thread(session._thread_id)
         elif session.resume_session_id:
-            thread = await self._client.resume_thread(session.resume_session_id)
+            thread = await client.resume_thread(session.resume_session_id)
         else:
             terminal_context = None
             if session.db_session_id:
@@ -439,11 +441,11 @@ class CodexWebChatBackend:
                     "gobby_session_id": session.db_session_id,
                     "gobby_web_chat_child": "1",
                 }
-            thread = await self._client.start_thread(
+            thread = await client.start_thread(
                 cwd=session.project_path or ".",
                 model=session._model,
                 approval_policy=_CODEX_WEB_CHAT_APPROVAL_POLICY,
-                sandbox=CodexSandboxResolver.thread_sandbox_policy(self._sandbox_config),
+                sandbox=self.native_sandbox_pin(self._sandbox_config),
                 terminal_context=terminal_context,
             )
 
@@ -486,6 +488,13 @@ class CodexWebChatBackend:
         session._turn_id = None
         if session._thread_id:
             self._sessions_by_thread.pop(session._thread_id, None)
+        client = session._app_client
+        session._app_client = None
+        if client is not None and client is not self._client:
+            try:
+                await client.stop()
+            except Exception:
+                logger.debug("Codex session client stop failed", exc_info=True)
 
     @staticmethod
     def _decline_response(method: str) -> dict[str, Any]:
@@ -683,13 +692,14 @@ class CodexWebChatBackend:
         context_prefix: str | None = None,
         request_parameters: Mapping[str, object] | None = None,
     ) -> AsyncIterator[ChatEvent]:
-        if not self._health.available or self._client is None:
+        client = self._client_for(session)
+        if not self._health.available or client is None:
             raise RuntimeError(self._health.startup_error or "Codex backend unavailable")
         if not session._thread_id:
             raise RuntimeError("Codex session missing threadId")
 
         async for event in stream_codex_turn(
-            client=self._client,
+            client=client,
             session=session,
             prompt=prompt,
             context_prefix=context_prefix,
@@ -699,9 +709,10 @@ class CodexWebChatBackend:
             yield event
 
     async def interrupt(self, session: CodexManagedChatSession) -> None:
-        if not self._client or not session._thread_id or not session._turn_id:
+        client = self._client_for(session)
+        if not client or not session._thread_id or not session._turn_id:
             return
-        await self._client.interrupt_turn(session._thread_id, session._turn_id)
+        await client.interrupt_turn(session._thread_id, session._turn_id)
         session._turn_id = None
 
     async def switch_model(self, session: CodexManagedChatSession, new_model: str) -> None:
@@ -715,7 +726,8 @@ class CodexWebChatBackend:
         the "approve + clear context" option) re-seeds the approved plan into
         the next turn, so implementation continues on a clean thread.
         """
-        if self._client is None or not self._health.available:
+        client = self._client_for(session)
+        if client is None or not self._health.available:
             logger.warning("Codex clear-context requested while backend unavailable")
             return False
         old_thread_id = session._thread_id
@@ -724,7 +736,7 @@ class CodexWebChatBackend:
             session._reset_continuation_state()
             if old_thread_id:
                 try:
-                    await self._client.archive_thread(old_thread_id)
+                    await client.archive_thread(old_thread_id)
                 except Exception:
                     logger.debug(
                         "Failed to archive Codex thread %s during context clear",

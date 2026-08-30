@@ -20,7 +20,8 @@ from gobby.agents.resume_metadata import (
     filter_resume_config_overrides,
     merge_resume_metadata_env,
 )
-from gobby.agents.sandbox import coerce_sandbox_config, get_sandbox_resolver
+from gobby.agents.sandbox import coerce_sandbox_config
+from gobby.agents.sandbox_resolvers import get_sandbox_resolver
 from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_cache_policy import (
     PATH_ENV_VAR,

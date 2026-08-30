@@ -374,12 +374,16 @@ async def handle_set_project(
             session_manager = getattr(mixin, "session_manager", None)
             if session_manager:
                 try:
+                    current = session_manager.get(session.db_session_id)
+                    next_generation = int(getattr(current, "workspace_generation", 0) or 0) + 1
                     await run_db(
                         mixin,
                         session_manager.update,
                         session.db_session_id,
                         status="paused",
                         project_id=new_project_id,
+                        workspace_path=None,
+                        workspace_generation=next_generation,
                     )
                 except Exception as e:
                     logger.warning("Failed to update session on project switch: %s", e)
@@ -468,11 +472,15 @@ async def handle_set_worktree(
             session_manager = getattr(mixin, "session_manager", None)
             if session_manager:
                 try:
+                    current = session_manager.get(session.db_session_id)
+                    next_generation = int(getattr(current, "workspace_generation", 0) or 0) + 1
                     await run_db(
                         mixin,
                         session_manager.update,
                         session.db_session_id,
                         status="paused",
+                        workspace_path=worktree_path,
+                        workspace_generation=next_generation,
                     )
                 except Exception as e:
                     logger.warning("Failed to update session on worktree switch: %s", e)

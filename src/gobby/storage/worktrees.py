@@ -436,18 +436,34 @@ class LocalWorktreeManager:
         Returns:
             True if deleted, False if not found
         """
-        cursor = self.db.execute(
-            "DELETE FROM worktrees WHERE id = %s AND machine_id = %s",
-            (worktree_id, machine_id := require_machine_id()),
-        )
-        if cursor.rowcount <= 0:
+        machine_id = require_machine_id()
+        current = self.get(worktree_id)
+        workspace_path = getattr(current, "worktree_path", None) if current is not None else None
+        with self.db.transaction() as conn:
+            if workspace_path:
+                conn.execute(
+                    """
+                    UPDATE sessions
+                    SET workspace_path = NULL,
+                        workspace_generation = workspace_generation + 1,
+                        updated_at = NOW()
+                    WHERE workspace_path = %s
+                    """,
+                    (workspace_path,),
+                )
+            cursor = conn.execute(
+                "DELETE FROM worktrees WHERE id = %s AND machine_id = %s",
+                (worktree_id, machine_id),
+            )
+            deleted = cursor.rowcount > 0
+        if not deleted:
             raise_if_foreign_workspace(
                 self.db,
                 "worktree",
                 worktree_id,
                 current_machine_id=machine_id,
             )
-        return cursor.rowcount > 0
+        return deleted
 
     # Status transition methods
 

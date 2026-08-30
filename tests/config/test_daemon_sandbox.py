@@ -17,6 +17,8 @@ class TestDaemonSandboxConfig:
         assert config.web_chat_sandbox.backend == "srt"
         assert config.web_chat_sandbox.mode == "permissive"
         assert config.web_chat_sandbox.allow_network is False
+        assert config.web_chat_sandbox.allow_git_network is True
+        assert config.web_chat_sandbox.allow_package_registries is True
         assert config.web_chat_sandbox.extra_read_paths == []
         assert config.web_chat_sandbox.extra_write_paths == []
         assert config.agent_sandbox.enabled is True
@@ -57,9 +59,9 @@ class TestDaemonSandboxConfig:
         assert config.agent_sandbox.extra_read_paths == ["/tmp/agent-shared"]
 
     @pytest.mark.parametrize("field", ["web_chat_sandbox", "agent_sandbox"])
-    def test_rejects_provider_native_backend(self, field: str) -> None:
-        with pytest.raises(ValueError, match="Input should be 'srt'"):
-            DaemonConfig.model_validate({field: {"backend": "provider-native"}})
+    def test_accepts_explicit_provider_native_backend(self, field: str) -> None:
+        config = DaemonConfig.model_validate({field: {"backend": "provider-native"}})
+        assert getattr(config, field).backend == "provider-native"
 
     def test_rejects_invalid_sandbox_mode(self) -> None:
         with pytest.raises(ValueError, match="Input should be 'permissive' or 'restrictive'"):

@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from gobby.agents.sandbox import get_sandbox_resolver as get_sandbox_resolver
+from gobby.agents.sandbox_resolvers import get_sandbox_resolver as get_sandbox_resolver
 from gobby.agents.spawn import (
     prepare_terminal_spawn as prepare_terminal_spawn,
 )

@@ -133,7 +133,7 @@
     {
       "activation": "live",
       "default": "srt",
-      "description": "Managed Sandbox Runtime backend.",
+      "description": "Managed Sandbox Runtime backend, or provider-native override.",
       "key": "agent_sandbox.backend",
       "machineExport": false,
       "namespace": "agent_sandbox",
@@ -5512,7 +5512,7 @@
     },
     {
       "activation": "live",
-      "default": false,
+      "default": true,
       "description": "Allow Git forge network endpoints for push, pull, and fetch.",
       "key": "web_chat_sandbox.allow_git_network",
       "machineExport": false,
@@ -5534,7 +5534,7 @@
     },
     {
       "activation": "live",
-      "default": false,
+      "default": true,
       "description": "Allow package-registry endpoints and their local caches.",
       "key": "web_chat_sandbox.allow_package_registries",
       "machineExport": false,
@@ -5568,7 +5568,7 @@
     {
       "activation": "live",
       "default": "srt",
-      "description": "Managed Sandbox Runtime backend.",
+      "description": "Managed Sandbox Runtime backend, or provider-native override.",
       "key": "web_chat_sandbox.backend",
       "machineExport": false,
       "namespace": "web_chat_sandbox",

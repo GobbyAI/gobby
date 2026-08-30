@@ -59,6 +59,10 @@ class ACPCapabilityUnsupportedError(ACPLifecycleError):
         super().__init__(f"ACP agent does not support {method}")
 
 
+class ACPWorkspaceIdentityError(ACPLifecycleError):
+    """Persisted workspace identity is absent, tombstoned, or stale (fail closed)."""
+
+
 def _acp_provider_names(runtime_manager: WebChatRuntimeManager | None) -> frozenset[str]:
     """Resolve the ACP provider set, preferring the live runtime registry."""
     if runtime_manager is not None:
@@ -126,10 +130,13 @@ class ACPSessionLifecycleService:
         """Close an ACP session: ``session/close`` then transition the row to ``expired``."""
         session = self._require_session(session_id)
         provider, external_id = self._acp_target(session)
-        backend = self._require_available_backend(provider)
-        self._require_capability(provider, "close")
         try:
-            await backend.close_session(external_id)
+            await self._with_operation_client(
+                session,
+                provider,
+                lambda client: client.close_session(external_id),
+                capability="close",
+            )
         except UnsupportedACPMethodError as exc:
             raise ACPCapabilityUnsupportedError("session/close") from exc
 
@@ -147,10 +154,13 @@ class ACPSessionLifecycleService:
         """
         session = self._require_session(session_id)
         provider, external_id = self._acp_target(session)
-        backend = self._require_available_backend(provider)
-        self._require_capability(provider, "delete")
         try:
-            await backend.delete_session(external_id)
+            await self._with_operation_client(
+                session,
+                provider,
+                lambda client: client.delete_session(external_id),
+                capability="delete",
+            )
         except UnsupportedACPMethodError as exc:
             raise ACPCapabilityUnsupportedError("session/delete") from exc
 
@@ -182,6 +192,55 @@ class ACPSessionLifecycleService:
             raise ACPTargetNotSupportedError(getattr(session, "id", None))
         return session.source, external_id
 
+    def _require_workspace(self, session: Session) -> tuple[str, int]:
+        path = getattr(session, "workspace_path", None)
+        if not isinstance(path, str) or not path.strip():
+            raise ACPWorkspaceIdentityError("session workspace identity is absent")
+        generation = int(getattr(session, "workspace_generation", 0) or 0)
+        return path, generation
+
+    async def _with_operation_client(
+        self,
+        session: Session,
+        provider: str,
+        operation: Any,
+        *,
+        capability: str,
+    ) -> Any:
+        backend = self._require_available_backend(provider)
+        path, generation = self._require_workspace(session)
+        current = self._session_manager.get(session.id)
+        if current is None or int(getattr(current, "workspace_generation", 0) or 0) != generation:
+            raise ACPWorkspaceIdentityError("session workspace identity changed before launch")
+        client = backend.acp_client_cls(
+            cwd=path,
+            sandbox_config=getattr(backend, "_sandbox_config", None),
+            sandbox_run_id=str(session.id),
+        )
+        try:
+            try:
+                await client.start(auto_session=False, cwd=path)
+            except FileNotFoundError as exc:
+                raise ACPProviderUnavailableError(provider) from exc
+            current = self._session_manager.get(session.id)
+            if (
+                current is None
+                or int(getattr(current, "workspace_generation", 0) or 0) != generation
+            ):
+                raise ACPWorkspaceIdentityError("session workspace identity changed during launch")
+            if not client.session_capabilities.get(capability):
+                raise ACPCapabilityUnsupportedError(f"session/{capability}")
+            return await operation(client)
+        finally:
+            try:
+                await client.stop()
+            except Exception:
+                logger.debug(
+                    "ACP operation-owned client stop failed",
+                    extra={"session_id": session.id},
+                    exc_info=True,
+                )
+
     def _require_available_backend(self, provider: str) -> Any:
         backend = self._runtime_manager.acp_backend(provider) if self._runtime_manager else None
         if backend is None or not backend.health().available:
@@ -210,6 +269,7 @@ __all__ = [
     "ACPSessionLifecycleService",
     "ACPSessionNotFoundError",
     "ACPTargetNotSupportedError",
+    "ACPWorkspaceIdentityError",
     "attach_acp_block",
     "is_acp_session",
 ]

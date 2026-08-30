@@ -404,29 +404,30 @@ class TestGrokBackend:
 
     @pytest.mark.asyncio
     async def test_start_marks_backend_unavailable_on_error(self) -> None:
-        client = MagicMock()
-        client.is_started = False
-        client.start = AsyncMock(side_effect=RuntimeError("boom"))
-
-        backend = GrokWebChatBackend(client=client)
-        await backend.start()
+        with patch(
+            "gobby.servers.websocket.chat.backends.acp.shutil.which",
+            return_value=None,
+        ):
+            backend = GrokWebChatBackend()
+            await backend.start()
 
         health = backend.health()
         assert health.available is False
-        assert health.startup_error == "boom"
+        assert health.startup_error is not None
+        assert "not found" in health.startup_error
 
     @pytest.mark.asyncio
-    async def test_start_reports_explicit_timeout_message(self) -> None:
-        client = MagicMock()
-        client.is_started = False
-        client.start = AsyncMock(side_effect=TimeoutError())
-
-        backend = GrokWebChatBackend(client=client)
-        await backend.start()
+    async def test_start_reports_cli_available_without_launching(self) -> None:
+        with patch(
+            "gobby.servers.websocket.chat.backends.acp.shutil.which",
+            return_value="/usr/bin/grok",
+        ):
+            backend = GrokWebChatBackend()
+            await backend.start()
 
         health = backend.health()
-        assert health.available is False
-        assert health.startup_error == "Timed out starting Grok ACP backend after 15.0s"
+        assert health.available is True
+        assert health.startup_error is None
 
     @pytest.mark.asyncio
     async def test_managed_session_translates_stream_events(self) -> None:
@@ -605,6 +606,7 @@ class TestGrokBackend:
         backend = GrokWebChatBackend(client=client)
         backend._health = ProviderBackendHealth(provider="grok", available=True)
         session = GrokManagedChatSession(conversation_id="conv-grok", _backend=backend)
+        session._acp_client = client
         session._connected = True
         session.sdk_session_id = "sess-1"
         session._model = "grok-ctx"

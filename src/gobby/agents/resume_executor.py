@@ -25,7 +25,8 @@ from gobby.agents.resume_metadata import (
     filter_resume_config_overrides,
     merge_resume_metadata_env,
 )
-from gobby.agents.sandbox import coerce_sandbox_config, get_sandbox_resolver
+from gobby.agents.sandbox import coerce_sandbox_config
+from gobby.agents.sandbox_resolvers import get_sandbox_resolver
 from gobby.agents.spawn import prepare_terminal_resume
 from gobby.agents.spawn_executor_support import schedule_codex_prompt_delivery
 from gobby.agents.spawners.command_builder import build_cli_command

@@ -4273,6 +4273,14 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "sessions.workspace_generation",
+      "definition": "integer|int4|NO|0|NEVER"
+    },
+    {
+      "name": "sessions.workspace_path",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "skill_files.content",
       "definition": "text|text|NO||NEVER"
     },
@@ -7241,6 +7249,10 @@
     {
       "name": "sessions.sessions_summary_revision_fk",
       "definition": "FOREIGN KEY (summary_revision_id, id) REFERENCES session_summary_revisions(id, session_id) ON DELETE SET NULL (summary_revision_id) DEFERRABLE"
+    },
+    {
+      "name": "sessions.sessions_workspace_generation_nonnegative",
+      "definition": "CHECK (workspace_generation >= 0)"
     },
     {
       "name": "skill_files.skill_files_pkey",

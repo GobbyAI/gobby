@@ -12,7 +12,8 @@ from typing import Literal
 
 import pytest
 
-from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths, merge_claude_settings
+from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
+from gobby.agents.sandbox_resolvers import merge_claude_settings
 from gobby.agents.srt_runtime import render_srt_settings
 from gobby.cli.install_setup_srt import install_srt_runtime
 

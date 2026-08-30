@@ -14,9 +14,9 @@ class DaemonOwnedSandboxConfig(BaseModel):
         default=True,
         description="Enable sandboxing for daemon-owned runtimes in this category.",
     )
-    backend: Literal["srt"] = Field(
+    backend: Literal["srt", "provider-native"] = Field(
         default="srt",
-        description="Managed Sandbox Runtime backend.",
+        description="Managed Sandbox Runtime backend, or provider-native override.",
     )
     mode: Literal["permissive", "restrictive"] = Field(
         default="permissive",

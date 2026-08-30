@@ -15,6 +15,7 @@ from gobby.sessions.acp_lifecycle import (
     ACPSessionLifecycleService,
     ACPSessionNotFoundError,
     ACPTargetNotSupportedError,
+    ACPWorkspaceIdentityError,
 )
 
 pytestmark = pytest.mark.unit
@@ -31,6 +32,8 @@ class _FakeSession:
     title_source: str | None = "manual"
     status: str = "active"
     session_type: str = "web_chat"
+    workspace_path: str | None = "/tmp/acp-workspace"
+    workspace_generation: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +79,30 @@ class _FakeSessionManager:
         return True
 
 
+class _FakeACPClient:
+    def __init__(self, cwd: str | None = None, **_kwargs: Any) -> None:
+        self.cwd = cwd
+        self.started = False
+        self.stopped = False
+        self.closed: list[str] = []
+        self.deleted: list[str] = []
+        self.session_capabilities: dict[str, bool] = {}
+
+    async def start(self, **_kwargs: Any) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+    async def close_session(self, session_id: str) -> dict[str, Any]:
+        self.closed.append(session_id)
+        return {}
+
+    async def delete_session(self, session_id: str) -> dict[str, Any]:
+        self.deleted.append(session_id)
+        return {}
+
+
 class _FakeBackend:
     def __init__(
         self,
@@ -85,19 +112,26 @@ class _FakeBackend:
     ) -> None:
         self._available = available
         self.capabilities = capabilities or {}
-        self.closed: list[str] = []
-        self.deleted: list[str] = []
+        self.clients: list[_FakeACPClient] = []
+
+        def _factory(*_args: Any, **kwargs: Any) -> _FakeACPClient:
+            client = _FakeACPClient(**kwargs)
+            client.session_capabilities = dict(self.capabilities)
+            self.clients.append(client)
+            return client
+
+        self.acp_client_cls = _factory
 
     def health(self) -> SimpleNamespace:
         return SimpleNamespace(available=self._available)
 
-    async def close_session(self, session_id: str) -> dict[str, Any]:
-        self.closed.append(session_id)
-        return {}
+    @property
+    def closed(self) -> list[str]:
+        return [item for client in self.clients for item in client.closed]
 
-    async def delete_session(self, session_id: str) -> dict[str, Any]:
-        self.deleted.append(session_id)
-        return {}
+    @property
+    def deleted(self) -> list[str]:
+        return [item for client in self.clients for item in client.deleted]
 
 
 class _FakeRuntimeManager:
@@ -161,6 +195,18 @@ async def test_close_requires_advertised_capability() -> None:
     with pytest.raises(ACPCapabilityUnsupportedError):
         await _service(_FakeSessionManager(_FakeSession()), backend).close("sess-1")
 
+    assert backend.closed == []
+
+
+@pytest.mark.asyncio
+async def test_close_fails_closed_without_workspace_identity() -> None:
+    session_manager = _FakeSessionManager(_FakeSession(workspace_path=None))
+    backend = _FakeBackend(capabilities={"close": True})
+
+    with pytest.raises(ACPWorkspaceIdentityError):
+        await _service(session_manager, backend).close("sess-1")
+
+    assert backend.clients == []
     assert backend.closed == []
 
 

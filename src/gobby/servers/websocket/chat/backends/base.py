@@ -104,6 +104,7 @@ class ManagedChatSessionBase:
     _model: str | None = field(default=None, repr=False)
     reasoning_effort: str | None = field(default=None, repr=False)
     sandbox_policy_hash: str | None = field(default=None, repr=False)
+    sandbox_config: Any = field(default=None, repr=False)
     sandbox_metadata: dict[str, Any] = field(default_factory=dict, repr=False)
     _tool_approval_config: Any | None = field(default=None, repr=False)
     _tool_approval_callback: Any | None = field(default=None, repr=False)

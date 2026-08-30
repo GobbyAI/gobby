@@ -8,6 +8,7 @@ WebSocket reconnections) rather than ephemeral client_id.
 
 import asyncio
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -22,8 +23,8 @@ from claude_agent_sdk.types import (
     PermissionMode,
 )
 
-from gobby.agents.sandbox import (
-    SandboxConfig,
+from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.sandbox_resolvers import (
     materialize_claude_settings_async,
     preflight_provider_native_settings_file_async,
 )
@@ -114,6 +115,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
     sandbox_config: SandboxConfig | None = field(default=None, repr=False)
     sandbox_policy_hash: str | None = field(default=None, repr=False)
     sandbox_metadata: dict[str, Any] = field(default_factory=dict, repr=False)
+    _sandbox_launch: Any = field(default=None, repr=False)
 
     # Lifecycle callbacks — set by ChatMixin to bridge SDK hooks to workflow engine
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
@@ -261,19 +263,56 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
         resolved_model = await self._resolve_requested_model(model, env)
 
         resolved_effort = self._resolve_reasoning_effort()
-        settings_path = await materialize_claude_settings_async(
-            base_settings_path=_HEADLESS_SETTINGS,
-            config=self.sandbox_config or SandboxConfig(enabled=False),
-            workspace_path=cwd,
-            name="web-chat",
-        )
-        verified_sandbox = await preflight_provider_native_settings_file_async(
-            provider="claude",
-            settings_path=settings_path,
-            config=self.sandbox_config or SandboxConfig(enabled=False),
-            workspace_path=cwd,
-            policy_hash=self.sandbox_policy_hash,
-        )
+        sandbox_config = self.sandbox_config or SandboxConfig(enabled=False)
+        identity_env = os.environ.copy()
+        identity_env.update(env)
+        settings_path: str | None
+        verified_sandbox: dict[str, Any]
+        if sandbox_config.enabled and sandbox_config.backend == "srt":
+            from gobby.agents.srt_runtime import prepare_sandbox_launch
+            from gobby.paths import get_gobby_home
+
+            daemon_cfg = self._config
+            websocket = getattr(daemon_cfg, "websocket", None)
+            launch = await prepare_sandbox_launch(
+                config=sandbox_config,
+                provider="claude",
+                workspace_path=cwd,
+                run_id=self.db_session_id or self.conversation_id,
+                resolver=None,
+                daemon_port=int(getattr(daemon_cfg, "daemon_port", 60887)),
+                websocket_port=int(getattr(websocket, "port", 60888)),
+                api_base=None,
+                env=identity_env,
+            )
+            shim = launch.emit_cli_shim(
+                command=[cli_path],
+                directory=get_gobby_home() / "run" / "shims",
+            )
+            self._sandbox_launch = launch
+            cli_path = str(shim)
+            env = {**identity_env, **launch.provider_env}
+            settings_path = await materialize_claude_settings_async(
+                base_settings_path=_HEADLESS_SETTINGS,
+                config=SandboxConfig(enabled=False),
+                workspace_path=cwd,
+                name="web-chat",
+            )
+            verified_sandbox = launch.metadata()
+        else:
+            settings_path = await materialize_claude_settings_async(
+                base_settings_path=_HEADLESS_SETTINGS,
+                config=sandbox_config,
+                workspace_path=cwd,
+                name="web-chat",
+            )
+            verified_sandbox = await preflight_provider_native_settings_file_async(
+                provider="claude",
+                settings_path=settings_path,
+                config=sandbox_config,
+                workspace_path=cwd,
+                policy_hash=self.sandbox_policy_hash,
+            )
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             max_turns=None,
@@ -305,12 +344,23 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
         )
 
         self._client = ClaudeSDKClient(options=options)
-        await self._client.connect()
+        try:
+            await self._client.connect()
+        except Exception:
+            self._cleanup_sandbox_launch()
+            raise
         self.sandbox_metadata = verified_sandbox
         self._connected = True
         self._active_reasoning_effort = resolved_effort
         self.last_activity = datetime.now(UTC)
         logger.debug("ChatSession %s started", self.conversation_id)
+
+    def _cleanup_sandbox_launch(self) -> None:
+        launch = self._sandbox_launch
+        self._sandbox_launch = None
+        cleanup = getattr(launch, "cleanup_cli_shim", None)
+        if callable(cleanup):
+            cleanup()
 
     async def stop(self) -> None:
         """Disconnect the ClaudeSDKClient and clean up."""
@@ -340,6 +390,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
                 self._client = None
                 self._connected = False
                 self._active_reasoning_effort = None
+                self._cleanup_sandbox_launch()
                 logger.debug("ChatSession %s stopped", self.conversation_id)
 
     async def clear_context(self) -> bool:

@@ -13,16 +13,21 @@ import pytest
 from gobby.agents.constants import GOBBY_SESSION_ID, get_agent_session_cache_dir
 from gobby.agents.provider_capabilities import provider_capabilities
 from gobby.agents.sandbox import (
-    ClaudeSandboxResolver,
-    CodexSandboxResolver,
-    QwenSandboxResolver,
     ResolvedSandboxPaths,
     SandboxConfig,
-    SandboxResolver,
-    _normalize_sandbox_path,
+    _DAEMON_SANDBOX_POLICY_VERSION,
     _resolve_git_metadata_path,
     coerce_sandbox_config,
     compute_sandbox_paths,
+    daemon_owned_sandbox_policy_hash,
+    web_chat_sandbox_policy_hash,
+)
+from gobby.agents.sandbox_resolvers import (
+    ClaudeSandboxResolver,
+    CodexSandboxResolver,
+    QwenSandboxResolver,
+    SandboxResolver,
+    _normalize_sandbox_path,
     get_sandbox_resolver,
     materialize_claude_settings,
     materialize_claude_settings_async,
@@ -1478,3 +1483,64 @@ class TestSandboxCacheProvisioning:
 
         for env_var in SANDBOX_CACHE_ENV_VARS:
             assert env_var not in env
+
+
+def _daemon_sandbox_ns(**overrides: Any) -> SimpleNamespace:
+    payload: dict[str, Any] = {
+        "enabled": True,
+        "backend": "srt",
+        "mode": "permissive",
+        "allow_network": False,
+        "extra_read_paths": [],
+        "extra_write_paths": [],
+        "extra_deny_read_paths": [],
+        "extra_deny_write_paths": [],
+        "allowed_domains": [],
+        "denied_domains": [],
+        "allow_git_network": False,
+        "allow_package_registries": False,
+        "allow_unix_sockets": [],
+    }
+    payload.update(overrides)
+    return SimpleNamespace(**payload)
+
+
+@pytest.mark.unit
+class TestDaemonOwnedSandboxPolicyHash:
+    def test_hash_version_is_explicit(self) -> None:
+        assert _DAEMON_SANDBOX_POLICY_VERSION >= 2
+
+    @pytest.mark.parametrize(
+        "override",
+        [
+            {"backend": "provider-native"},
+            {"allowed_domains": ["api.example.com"]},
+            {"denied_domains": ["evil.test"]},
+            {"allow_git_network": True},
+            {"allow_package_registries": True},
+            {"allow_unix_sockets": ["/tmp/gobby.sock"]},
+            {"extra_deny_read_paths": ["/secret"]},
+            {"extra_deny_write_paths": ["/secret-w"]},
+        ],
+        ids=[
+            "backend",
+            "allowed_domains",
+            "denied_domains",
+            "allow_git_network",
+            "allow_package_registries",
+            "allow_unix_sockets",
+            "extra_deny_read_paths",
+            "extra_deny_write_paths",
+        ],
+    )
+    def test_complete_policy_field_changes_hash(self, override: dict[str, Any]) -> None:
+        base = daemon_owned_sandbox_policy_hash(_daemon_sandbox_ns(), scope="web_chat")
+        changed = daemon_owned_sandbox_policy_hash(_daemon_sandbox_ns(**override), scope="web_chat")
+        assert changed != base
+
+    def test_web_chat_hash_tracks_daemon_owned_hash(self) -> None:
+        raw = _daemon_sandbox_ns(allowed_domains=["api.example.com"])
+        daemon = SimpleNamespace(web_chat_sandbox=raw)
+        assert web_chat_sandbox_policy_hash(daemon) == daemon_owned_sandbox_policy_hash(
+            raw, scope="web_chat"
+        )

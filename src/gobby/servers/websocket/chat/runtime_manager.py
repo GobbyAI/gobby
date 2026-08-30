@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
@@ -12,6 +13,7 @@ from gobby.agents.codex_oss import (
     codex_oss_provider_for_local_endpoint,
     codex_oss_supported_provider_clause,
 )
+from gobby.agents.provider_capabilities import provider_capabilities
 from gobby.agents.sandbox import (
     SandboxConfig,
     web_chat_policy_mismatch_message,
@@ -43,6 +45,14 @@ from gobby.servers.websocket.chat.backends import (
 from gobby.servers.websocket.chat.backends.acp import ACPWebChatBackend
 
 
+@dataclass(frozen=True)
+class SandboxPolicySnapshot:
+    """Immutable per-create_session sandbox policy for later launch."""
+
+    config: SandboxConfig
+    policy_hash: str
+
+
 class WebChatRuntimeManager:
     """Owns startup-managed provider backends for web chat."""
 
@@ -50,12 +60,21 @@ class WebChatRuntimeManager:
         self,
         *,
         codex_client: CodexAppServerClient | None = None,
+        codex_client_factory: Callable[..., CodexAppServerClient] | None = None,
         codex_transcript_retry_attempts: int = 5,
         codex_transcript_retry_delay_seconds: float = 0.1,
         daemon_config: DaemonConfig | None = None,
         config_resolver: Callable[[], DaemonConfig | None] | None = None,
     ) -> None:
         self._config_resolver = config_resolver
+        if codex_client_factory is None and codex_client is not None:
+            shared = codex_client
+
+            def _shared_factory(**_kwargs: Any) -> CodexAppServerClient:
+                return shared
+
+            codex_client_factory = _shared_factory
+        self._codex_client_factory = codex_client_factory
         self._sandbox_config = web_chat_sandbox_config(daemon_config)
         self._sandbox_policy_hash = web_chat_sandbox_policy_hash(daemon_config)
         self._generation_endpoints: dict[str, GenerationEndpointConfig] = {}
@@ -70,6 +89,7 @@ class WebChatRuntimeManager:
         )
         self._codex_backend = CodexWebChatBackend(
             client=codex_client,
+            client_factory=self._codex_client_factory,
             transcript_retry_attempts=codex_transcript_retry_attempts,
             transcript_retry_delay_seconds=codex_transcript_retry_delay_seconds,
             sandbox_config=self._sandbox_config.model_copy(deep=True),
@@ -125,7 +145,7 @@ class WebChatRuntimeManager:
     @property
     def sandbox_config(self) -> SandboxConfig:
         """Return current daemon-owned web-chat sandbox config."""
-        return self._refresh_sandbox_config().model_copy(deep=True)
+        return self._refresh_sandbox_config().config.model_copy(deep=True)
 
     @property
     def sandbox_policy_hash(self) -> str:
@@ -272,7 +292,15 @@ class WebChatRuntimeManager:
         reasoning_effort: str | None = None,
     ) -> ChatSessionProtocol:
         """Create a provider-specific session wrapper for web chat."""
-        self._refresh_sandbox_config()
+        snapshot = self._refresh_sandbox_config()
+        if (
+            snapshot.config.enabled
+            and snapshot.config.backend == "provider-native"
+            and not provider_capabilities(provider).sensitive_path_enforcement
+        ):
+            raise RuntimeError(
+                f"{provider} cannot prove the sensitive-root contract under provider-native sandbox"
+            )
         if provider not in {"claude", "codex", "droid", "grok", "qwen", "agy"}:
             raise RuntimeError(f"Unsupported web chat provider: {provider}")
         if provider == "agy":
@@ -280,23 +308,24 @@ class WebChatRuntimeManager:
 
             record = await ensure_agy_support()
             raise RuntimeError(record.reason if not record.supported else AGY_UNAVAILABLE_REASON)
+        session: ChatSessionProtocol
         if provider == "qwen":
-            return QwenManagedChatSession(
+            session = QwenManagedChatSession(
                 conversation_id=conversation_id,
                 _backend=self._qwen_backend,
                 _model=model,
                 reasoning_effort=reasoning_effort,
             )
-        if provider == "grok":
-            return GrokManagedChatSession(
+        elif provider == "grok":
+            session = GrokManagedChatSession(
                 conversation_id=conversation_id,
                 _backend=self._grok_backend,
                 _model=model,
                 reasoning_effort=reasoning_effort,
             )
-        if provider == "codex":
+        elif provider == "codex":
             codex_backend, resolved_model = self._codex_backend_for_model(model)
-            return CodexManagedChatSession(
+            session = CodexManagedChatSession(
                 conversation_id=conversation_id,
                 _backend=codex_backend,
                 _model=resolved_model,
@@ -305,31 +334,47 @@ class WebChatRuntimeManager:
                 _transcript_retry_attempts=codex_backend.transcript_retry_attempts,
                 _transcript_retry_delay_seconds=codex_backend.transcript_retry_delay_seconds,
             )
-        if provider == "droid":
-            return DroidManagedChatSession(
+        elif provider == "droid":
+            session = DroidManagedChatSession(
                 conversation_id=conversation_id,
                 _backend=self._droid_backend,
                 _model=model,
                 reasoning_effort=reasoning_effort,
             )
-        if provider != "claude":
+        elif provider == "claude":
+            session = self._claude_backend.create_session(conversation_id)
+            if isinstance(session, ChatSession) and model:
+                session._model = model
+            if isinstance(session, ChatSession):
+                session.reasoning_effort = reasoning_effort
+        else:
             raise RuntimeError(f"Unsupported web chat provider: {provider}")
-
-        session: ChatSessionProtocol = self._claude_backend.create_session(conversation_id)
-        if isinstance(session, ChatSession) and model:
-            session._model = model
-        if isinstance(session, ChatSession):
-            session.reasoning_effort = reasoning_effort
+        self._apply_launch_snapshot(session, snapshot)
         return session
 
-    def _refresh_sandbox_config(self) -> SandboxConfig:
+    def _apply_launch_snapshot(
+        self, session: ChatSessionProtocol, snapshot: SandboxPolicySnapshot
+    ) -> None:
+        session.sandbox_policy_hash = snapshot.policy_hash
+        if hasattr(session, "sandbox_config"):
+            session.sandbox_config = snapshot.config.model_copy(deep=True)
+
+    def _refresh_sandbox_config(self) -> SandboxPolicySnapshot:
         if self._config_resolver is None:
-            return self._sandbox_config
+            return SandboxPolicySnapshot(
+                config=self._sandbox_config, policy_hash=self._sandbox_policy_hash
+            )
         daemon_config = self._config_resolver()
         if daemon_config is None:
-            return self._sandbox_config
-        self._sandbox_config = web_chat_sandbox_config(daemon_config)
-        self._sandbox_policy_hash = web_chat_sandbox_policy_hash(daemon_config)
+            return SandboxPolicySnapshot(
+                config=self._sandbox_config, policy_hash=self._sandbox_policy_hash
+            )
+        snapshot = SandboxPolicySnapshot(
+            config=web_chat_sandbox_config(daemon_config),
+            policy_hash=web_chat_sandbox_policy_hash(daemon_config),
+        )
+        self._sandbox_config = snapshot.config
+        self._sandbox_policy_hash = snapshot.policy_hash
         self._claude_backend.set_sandbox_config(self._sandbox_config)
         self._codex_backend.set_sandbox_config(self._sandbox_config)
         for backend in self._codex_endpoint_backends.values():
@@ -337,7 +382,7 @@ class WebChatRuntimeManager:
         self._grok_backend.set_sandbox_config(self._sandbox_config)
         self._qwen_backend.set_sandbox_config(self._sandbox_config)
         self._droid_backend.set_sandbox_config(self._sandbox_config)
-        return self._sandbox_config
+        return snapshot
 
     def _codex_backend_for_model(self, model: str | None) -> tuple[CodexWebChatBackend, str | None]:
         selector = parse_endpoint_model_selector(model)

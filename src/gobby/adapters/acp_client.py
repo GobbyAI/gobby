@@ -174,6 +174,8 @@ class ACPClient:
         extra_args: list[str] | None = None,
         env_overrides: dict[str, str] | None = None,
         purpose: str = "runtime",
+        sandbox_config: Any | None = None,
+        sandbox_run_id: str | None = None,
     ) -> None:
         if not self.cli_name or not self.display_name or not self.prompt_timeout_env:
             raise TypeError(
@@ -187,6 +189,9 @@ class ACPClient:
         self._purpose = purpose
         self._extra_args = list(extra_args or [])
         self._env_overrides = dict(env_overrides or {})
+        self._sandbox_config = sandbox_config
+        self._sandbox_run_id = sandbox_run_id
+        self._sandbox_launch: Any = None
         self._prompt_timeout = _resolve_timeout(
             prompt_timeout,
             env_name=self.prompt_timeout_env,
@@ -269,6 +274,23 @@ class ACPClient:
         # ghook still carries this marker into the hook envelope's
         # terminal_context, and _session_start refuses to register on it.
         env["GOBBY_ACP_CHILD"] = "1"
+        sandbox_config = self._sandbox_config
+        if sandbox_config is not None and getattr(sandbox_config, "enabled", False):
+            from gobby.agents.srt_runtime import prepare_sandbox_launch
+
+            launch = await prepare_sandbox_launch(
+                config=sandbox_config,
+                provider=self.cli_name,
+                workspace_path=self._cwd or ".",
+                run_id=self._sandbox_run_id or self.cli_name,
+                resolver=None,
+                daemon_port=60887,
+                websocket_port=60888,
+                api_base=None,
+                env=env,
+            )
+            cmd, env = launch.compose_subprocess(cmd, env)
+            self._sandbox_launch = launch
 
         self._process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -896,6 +918,11 @@ class ACPClient:
         Safe to call multiple times. If the process has already exited,
         this is a no-op.
         """
+        launch = self._sandbox_launch
+        self._sandbox_launch = None
+        cleanup = getattr(launch, "cleanup_cli_shim", None)
+        if callable(cleanup):
+            cleanup()
         if not self._process:
             await self._stderr_drain.stop()
             await self._terminal_manager.release_all()

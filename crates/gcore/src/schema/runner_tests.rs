@@ -2396,7 +2396,7 @@ fn migration_receipt_count(
 }
 
 #[test]
-fn migration_411_on_a_410_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
+fn migration_412_on_a_411_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2404,40 +2404,47 @@ fn migration_411_on_a_410_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
         return Ok(());
     };
 
-    let through_410 = &MIGRATIONS[..MIGRATIONS.len() - 1];
+    let through_411 = &MIGRATIONS[..MIGRATIONS.len() - 1];
     assert_eq!(
-        through_410.last().map(|migration| migration.version),
-        Some(410)
+        through_411.last().map(|migration| migration.version),
+        Some(411)
     );
     let hub =
-        SchemaRunner::with_migrations_for_test(&mut client, "public", through_410)?.apply()?;
+        SchemaRunner::with_migrations_for_test(&mut client, "public", through_411)?.apply()?;
     assert!(hub.baseline_applied);
-    assert_eq!(hub.migrations_applied, through_410.len());
-    let legacy_columns: Vec<String> = client
-        .query(
-            "SELECT column_name FROM information_schema.columns
-             WHERE table_schema = 'public' AND table_name = 'agent_runs'
-               AND column_name IN ('tmux_session_name', 'terminal_id')",
+    assert_eq!(hub.migrations_applied, through_411.len());
+    let missing_workspace: i64 = client
+        .query_one(
+            "SELECT COUNT(*) FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'sessions'
+           AND column_name = 'workspace_path'",
             &[],
         )?
-        .into_iter()
-        .map(|row| row.get(0))
-        .collect();
-    assert_eq!(legacy_columns, ["tmux_session_name"]);
+        .get(0);
+    assert_eq!(missing_workspace, 0);
 
     let upgraded = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(!upgraded.baseline_applied);
     assert_eq!(upgraded.migrations_applied, 1);
     let repeat = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert_eq!(repeat.migrations_applied, 0);
+    let present_workspace: i64 = client
+        .query_one(
+            "SELECT COUNT(*) FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'sessions'
+           AND column_name = 'workspace_path'",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(present_workspace, 1);
 
-    let fresh = SchemaRunner::new(&mut client, "fresh_411")?.apply()?;
+    let fresh = SchemaRunner::new(&mut client, "fresh_412")?.apply()?;
     assert!(fresh.baseline_applied);
     assert_eq!(fresh.migrations_applied, MIGRATIONS.len());
 
     assert_eq!(
         catalog_manifest(&mut client, "public")?,
-        catalog_manifest(&mut client, "fresh_408")?
+        catalog_manifest(&mut client, "fresh_412")?
     );
     SchemaRunner::new(&mut client, "public")?.verify()?;
     Ok(())

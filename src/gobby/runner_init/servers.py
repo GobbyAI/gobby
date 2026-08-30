@@ -11,7 +11,7 @@ import weakref
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import psycopg
@@ -210,17 +210,23 @@ def init_servers(runner: GobbyRunner) -> None:
         )
 
     codex_client = None
+    web_chat_codex_factory = None
     from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 
     if CodexAdapter.is_codex_available():
         from gobby.adapters.codex_impl.client import CodexAppServerClient
 
         codex_client = CodexAppServerClient()
+
+        def _web_chat_codex_factory(**kwargs: Any) -> CodexAppServerClient:
+            return CodexAppServerClient(**kwargs)
+
+        web_chat_codex_factory = _web_chat_codex_factory
         logger.info("Codex app-server client created (will start after HTTP readiness)")
     runner.codex_client = codex_client
 
     services.web_chat_runtime_manager = WebChatRuntimeManager(
-        codex_client=codex_client,
+        codex_client_factory=web_chat_codex_factory,
         daemon_config=config,
         config_resolver=lambda: (
             runner.config_runtime.snapshot.active if runner.config_runtime.ready else None

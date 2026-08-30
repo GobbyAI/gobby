@@ -387,8 +387,18 @@ class TestInitSubsystems:
                 self.runner_getter = getter
 
         class FakeWebChatRuntimeManager:
-            def __init__(self, *, codex_client: object | None, **kwargs: object) -> None:
-                web_chat_init.update(codex_client=codex_client, kwargs=kwargs)
+            def __init__(
+                self,
+                *,
+                codex_client: object | None = None,
+                codex_client_factory: object | None = None,
+                **kwargs: object,
+            ) -> None:
+                web_chat_init.update(
+                    codex_client=codex_client,
+                    codex_client_factory=codex_client_factory,
+                    kwargs=kwargs,
+                )
 
         config = DaemonConfig(websocket={"enabled": False})
         registry = AICapabilityRegistry(
@@ -483,8 +493,10 @@ class TestInitSubsystems:
             init_servers(runner)
 
         assert runner.codex_client is fake_client
-        assert web_chat_init["codex_client"] is fake_client
         assert http_init["codex_client"] is fake_client
+        assert web_chat_init.get("codex_client") is None
+        factory = web_chat_init["codex_client_factory"]
+        assert callable(factory)
         services = cast(ServiceContainer, http_init["services"])
         assert services.text_generation_service is text_generation_service
         assert services.llm_service is None

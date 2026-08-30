@@ -102,6 +102,8 @@ class Session:
     session_type: str = "terminal"
     sandbox_enabled: bool | None = False
     sandbox_policy_hash: str | None = None
+    workspace_path: str | None = None
+    workspace_generation: int = 0
     # Task-ref enrichment populated post-load by callers that join the tasks
     # table. Default empty so unenriched Session instances serialize cleanly.
     claimed_task_refs: list[int] = field(default_factory=list)
@@ -192,6 +194,10 @@ class Session:
             sandbox_policy_hash=row["sandbox_policy_hash"]
             if "sandbox_policy_hash" in row.keys()
             else None,
+            workspace_path=cls._get_optional(row, "workspace_path"),
+            workspace_generation=int(row["workspace_generation"] or 0)
+            if "workspace_generation" in row.keys()
+            else 0,
         )
 
     @classmethod
@@ -309,6 +315,8 @@ class Session:
             "session_type": self.session_type,
             "sandbox_enabled": self.sandbox_enabled,
             "sandbox_policy_hash": self.sandbox_policy_hash,
+            "workspace_path": self.workspace_path,
+            "workspace_generation": self.workspace_generation,
             "can_proxy_attach": self.can_proxy_attach,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -343,6 +351,8 @@ class Session:
             "session_type": self.session_type,
             "sandbox_enabled": self.sandbox_enabled,
             "sandbox_policy_hash": self.sandbox_policy_hash,
+            "workspace_path": self.workspace_path,
+            "workspace_generation": self.workspace_generation,
             "can_proxy_attach": self.can_proxy_attach,
             "created_at": self.created_at,
             "updated_at": self.updated_at,

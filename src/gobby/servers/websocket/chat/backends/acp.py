@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,7 +25,6 @@ from gobby.config.ai import GenerationEndpointConfig
 from gobby.servers.websocket.chat.backends.base import (
     _BACKEND_START_TIMEOUT_SECONDS,
     ProviderBackendHealth,
-    _error_message,
 )
 
 if TYPE_CHECKING:
@@ -71,37 +71,15 @@ class ACPWebChatBackend:
         if self._client.is_started:
             self._health = ProviderBackendHealth(provider=self.provider, available=True)
             return
-
-        try:
-            await asyncio.wait_for(
-                self._client.start(
-                    auto_session=False,
-                    model=self._default_model,
-                ),
-                timeout=self.start_timeout_seconds,
-            )
-        except Exception as exc:
-            startup_error = _error_message(exc)
-            if isinstance(exc, TimeoutError) and startup_error == "TimeoutError":
-                startup_error = (
-                    f"Timed out starting {self.display_name} ACP backend after "
-                    f"{self.start_timeout_seconds:.1f}s"
-                )
-            try:
-                await self._client.stop()
-            except Exception:
-                logger.debug(
-                    "%s backend cleanup after failed startup", self.display_name, exc_info=True
-                )
-            self._health = ProviderBackendHealth(
-                provider=self.provider,
-                available=False,
-                startup_error=startup_error,
-            )
-            logger.warning("%s ACP backend startup failed: %s", self.display_name, startup_error)
+        cli_name = getattr(self.acp_client_cls, "cli_name", "")
+        if shutil.which(cli_name):
+            self._health = ProviderBackendHealth(provider=self.provider, available=True)
             return
-
-        self._health = ProviderBackendHealth(provider=self.provider, available=True)
+        self._health = ProviderBackendHealth(
+            provider=self.provider,
+            available=False,
+            startup_error=f"{self.display_name} CLI not found in PATH",
+        )
 
     async def start(self, *, background: bool = False) -> None:
         if self._health.available:
@@ -199,31 +177,59 @@ class ACPWebChatBackend:
         session_id = session.sdk_session_id or session.resume_session_id
         cwd = str(Path(session.project_path or ".").expanduser().resolve())
         pre_approve_directory(self.provider, cwd)
+        if self._client.is_started:
+            client = self._client
+        else:
+            client = self.acp_client_cls(
+                cwd=cwd,
+                sandbox_config=self._sandbox_config,
+                sandbox_run_id=session.db_session_id or session.conversation_id,
+            )
+        session._acp_client = client
+        if not client.is_started:
+            try:
+                await client.start(
+                    auto_session=False,
+                    cwd=cwd,
+                    model=session._model,
+                    reasoning_effort=session.reasoning_effort,
+                )
+            except Exception:
+                session._acp_client = None
+                try:
+                    await client.stop()
+                except Exception:
+                    logger.debug(
+                        "%s session client cleanup after failed start",
+                        self.display_name,
+                        exc_info=True,
+                    )
+                raise
         # Re-establish an existing session preferring session/resume, since
         # Gobby re-renders the transcript from its own DB on continue_in_chat:
         #   resume (no agent-side replay) -> load (replays history) -> new.
         if not session_id:
-            session_info = await self._client.create_session(
+            session_info = await client.create_session(
                 model=session._model,
                 cwd=cwd,
                 reasoning_effort=session.reasoning_effort,
             )
-        elif self._client.session_capabilities.get("resume"):
-            session_info = await self._client.resume_session(
+        elif client.session_capabilities.get("resume"):
+            session_info = await client.resume_session(
                 session_id,
                 model=session._model,
                 cwd=cwd,
                 reasoning_effort=session.reasoning_effort,
             )
-        elif self._client.agent_capabilities.get("loadSession") is True:
-            session_info = await self._client.load_session(
+        elif client.agent_capabilities.get("loadSession") is True:
+            session_info = await client.load_session(
                 session_id,
                 model=session._model,
                 cwd=cwd,
                 reasoning_effort=session.reasoning_effort,
             )
         else:
-            session_info = await self._client.create_session(
+            session_info = await client.create_session(
                 model=session._model,
                 cwd=cwd,
                 reasoning_effort=session.reasoning_effort,
@@ -232,7 +238,7 @@ class ACPWebChatBackend:
         resolved_session_id = (
             session_info.get("sessionId")
             or session_info.get("session_id")
-            or self._client.session_id
+            or client.session_id
             or session_id
         )
         if isinstance(resolved_session_id, str) and resolved_session_id:
@@ -245,6 +251,13 @@ class ACPWebChatBackend:
 
     async def detach_session(self, session: ACPManagedChatSession) -> None:
         session._connected = False
+        client = session._acp_client
+        session._acp_client = None
+        if client is not None:
+            try:
+                await client.stop()
+            except Exception:
+                logger.debug("%s session client stop failed", self.display_name, exc_info=True)
 
     async def send_message(
         self,
@@ -273,7 +286,10 @@ class ACPWebChatBackend:
                 tool_input if isinstance(tool_input, dict) else {},
             )
 
-        async for event in self._client.send(
+        client = session._acp_client
+        if client is None:
+            raise RuntimeError(f"{self.display_name} session has no ACP client")
+        async for event in client.send(
             prompt,
             session_id=session.sdk_session_id,
             model=session._model,
@@ -283,7 +299,10 @@ class ACPWebChatBackend:
             yield event
 
     async def interrupt(self, session: ACPManagedChatSession) -> None:
-        await self._client.cancel_session(session.sdk_session_id)
+        client = session._acp_client
+        if client is None:
+            return
+        await client.cancel_session(session.sdk_session_id)
 
     async def switch_model(self, session: ACPManagedChatSession, new_model: str) -> None:
         session._model = new_model
