@@ -1562,7 +1562,9 @@ _AGY_PROBE_DOMAINS = (
     "oauth2.googleapis.com",
     "accounts.google.com",
     "play.googleapis.com",
-    "playwright*.azureedge.net",
+    "playwright.azureedge.net",
+    "playwright-akamai.azureedge.net",
+    "playwright-verizon.azureedge.net",
     "googleusercontent.com",
 )
 
@@ -1622,6 +1624,18 @@ class TestAgySandboxResolver:
         assert caps.sensitive_path_enforcement is False
         assert caps.reasoning_flag == "claude-effort"
         assert provider_supports_sandbox("agy") is True
+
+    def test_provider_domain_tables_contain_only_srt_valid_patterns(self) -> None:
+        """gobby-srt rejects infix wildcards; only exact domains or *.domain pass."""
+        import re
+
+        label = r"[a-z0-9]([a-z0-9-]*[a-z0-9])?"
+        srt_pattern = re.compile(rf"^(\*\.)?({label}\.)+{label}$")
+        for provider, domains in sandbox_policy._PROVIDER_DOMAINS.items():
+            for domain in domains:
+                assert srt_pattern.fullmatch(domain), (
+                    f"{provider} domain {domain!r} is not an SRT-valid pattern"
+                )
 
     def test_agy_sandbox_policy_uses_probe_recorded_domains_roots_and_masks_ambient_keys(
         self,
