@@ -188,7 +188,12 @@ class AgyAdapter(ACPHookAdapter):
         is_denied = response.decision in {"deny", "block"}
         decision: str | None = None
         reason = normalized_reason
-        if response.permission_decision in {"allow", "deny"}:
+        if is_denied:
+            # First-block-wins: a permission "allow" or auto_approve from a
+            # higher-priority rule must not override a lower-priority block
+            # (#16670, which fixed only the Claude adapter).
+            decision = "deny"
+        elif response.permission_decision in {"allow", "deny"}:
             decision = response.permission_decision
         elif response.permission_decision:
             # ``HookResponse`` is a plain dataclass and a permission effect's

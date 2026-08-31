@@ -516,3 +516,36 @@ class TestAgyResponseMapping:
         assert "permissionOverrides" not in result
         assert all("toolCall" not in step for step in result["injectSteps"])
         assert "terminate" not in result.values()
+
+
+@pytest.mark.parametrize("blocking", ["deny", "block"])
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"permission_decision": "allow"},
+        {"auto_approve": True},
+    ],
+)
+def test_a_block_wins_over_a_permission_allow(blocking: str, override: dict[str, Any]) -> None:
+    """First-block-wins: an allow from a higher-priority rule cannot run the tool.
+
+    #16670 fixed this fail-open in the Claude adapter only; AGY consulted
+    permission_decision and auto_approve before is_denied, so a lower-priority
+    block was silently overridden.
+    """
+    result = AgyAdapter().translate_from_hook_response(
+        HookResponse(decision=cast(Any, blocking), reason="policy", **override),
+        hook_type="PreToolUse",
+    )
+
+    assert result["decision"] == "deny"
+    assert result["reason"] == "policy"
+
+
+def test_an_undenied_permission_allow_still_allows() -> None:
+    result = AgyAdapter().translate_from_hook_response(
+        HookResponse(decision="allow", permission_decision="allow"),
+        hook_type="PreToolUse",
+    )
+
+    assert result["decision"] == "allow"

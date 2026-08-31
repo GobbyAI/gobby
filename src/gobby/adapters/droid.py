@@ -265,7 +265,10 @@ class DroidAdapter(BaseAdapter):
             if normalized_reason:
                 result["reason"] = normalized_reason
         elif decision_style == DroidDecisionStyle.PRE_TOOL_USE:
-            permission_decision: str | None = response.permission_decision
+            # First-block-wins: a permission "allow" or auto_approve from a
+            # higher-priority rule must not override a lower-priority block
+            # (#16670, which fixed only the Claude adapter).
+            permission_decision: str | None = "deny" if is_denied else response.permission_decision
             if not permission_decision:
                 if response.auto_approve:
                     permission_decision = "allow"

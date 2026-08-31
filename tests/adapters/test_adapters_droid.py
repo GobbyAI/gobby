@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -221,6 +222,33 @@ class TestDroidTranslateFromHookResponse:
                 "permissionDecisionReason": "No writes",
             },
         }
+
+    @pytest.mark.parametrize("blocking", ["deny", "block"])
+    @pytest.mark.parametrize("override", [{"permission_decision": "allow"}, {"auto_approve": True}])
+    def test_a_block_wins_over_a_permission_allow(
+        self, blocking: str, override: dict[str, Any]
+    ) -> None:
+        """First-block-wins: an allow from a higher-priority rule cannot run the tool.
+
+        #16670 fixed this fail-open in the Claude adapter only; Droid took
+        response.permission_decision verbatim and applied the deny only when it
+        was empty, so a lower-priority block was silently overridden.
+        """
+        result = DroidAdapter().translate_from_hook_response(
+            HookResponse(decision=cast(Any, blocking), reason="No writes", **override),
+            hook_type="PreToolUse",
+        )
+
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert result["hookSpecificOutput"]["permissionDecisionReason"] == "No writes"
+
+    def test_an_undenied_permission_allow_still_allows(self) -> None:
+        result = DroidAdapter().translate_from_hook_response(
+            HookResponse(decision="allow", permission_decision="allow"),
+            hook_type="PreToolUse",
+        )
+
+        assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
 
     def test_pre_tool_use_ask_and_updated_input(self) -> None:
         adapter = DroidAdapter()
