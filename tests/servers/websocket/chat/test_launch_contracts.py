@@ -425,3 +425,390 @@ class TestAgySrtWrap:
         assert any("antigravity-cli" in path for path in writes)
         assert any("keychain" in path.lower() or "Keychains" in path for path in reads)
         assert "daily-cloudcode-pa.googleapis.com" in domains
+
+
+# --- Plan row 3.1.7: ACP subprocesses are session-owned at the post-hydration seam ---
+
+
+class _SeamACPClient:
+    """Operation-owned ACP client fake that records its launch inputs."""
+
+    def __init__(
+        self,
+        registry: list[_SeamACPClient],
+        *,
+        cwd: str | None = None,
+        sandbox_config: Any = None,
+        sandbox_run_id: str | None = None,
+        fail_start: bool = False,
+        **_: Any,
+    ) -> None:
+        self.cwd = cwd
+        self.sandbox_config = sandbox_config
+        self.sandbox_run_id = sandbox_run_id
+        self.fail_start = fail_start
+        self.is_started = False
+        self.session_id: str | None = None
+        self.session_capabilities: dict[str, bool] = {"resume": True}
+        self.agent_capabilities: dict[str, Any] = {}
+        self.stopped = False
+        self.resumed: str | None = None
+        self.created = False
+        self.start_kwargs: dict[str, Any] = {}
+        registry.append(self)
+
+    async def start(self, **kwargs: Any) -> None:
+        if self.fail_start:
+            raise RuntimeError("acp launch failed")
+        self.is_started = True
+        self.start_kwargs = kwargs
+
+    async def stop(self) -> None:
+        self.stopped = True
+        self.is_started = False
+
+    async def create_session(self, **_: Any) -> dict[str, Any]:
+        self.created = True
+        self.session_id = f"acp-new-{len(self.start_kwargs)}"
+        return {"sessionId": self.session_id}
+
+    async def resume_session(self, session_id: str, **_: Any) -> dict[str, Any]:
+        self.resumed = session_id
+        self.session_id = session_id
+        return {"sessionId": session_id}
+
+
+def _seam_owner() -> SimpleNamespace:
+    return SimpleNamespace(
+        _chat_sessions={},
+        clients={},
+        _fire_lifecycle=AsyncMock(return_value=None),
+        web_chat_session_registry=None,
+    )
+
+
+def _seam_context(workspace: Path, *domains: str) -> Any:
+    from gobby.servers.websocket.chat._session_launch import SessionLaunchContext
+
+    config = SandboxConfig(
+        enabled=True,
+        backend="srt",
+        allow_network=False,
+        allowed_domains=list(domains),
+    )
+    return SessionLaunchContext(
+        sandbox=SandboxPolicySnapshot(config=config, policy_hash=f"hash-{'-'.join(domains)}"),
+        workspace_path=str(workspace),
+    )
+
+
+async def _seam_start(owner: Any, session: Any, context: Any) -> Any:
+    from gobby.servers.websocket.chat._session_launch import start_hydrated_session
+
+    return await start_hydrated_session(
+        owner,
+        session,
+        context,
+        session_key=session.conversation_id,
+        effective_model="qwen3-coder",
+        persona_selected=False,
+        pending_agent=None,
+        pending_mode="plan",
+        agent_name="qwen",
+        provider_name="qwen",
+        session_manager=None,
+        existing_db_session=None,
+        project_context_changed=False,
+        effective_pid="proj",
+    )
+
+
+class TestAcpSubprocessesAreSessionOwned:
+    @pytest.fixture
+    def acp(self) -> Any:
+        from gobby.servers.websocket.chat.backends.base import ProviderBackendHealth
+
+        manager = WebChatRuntimeManager(daemon_config=DaemonConfig())
+        backend = manager._qwen_backend
+        clients: list[_SeamACPClient] = []
+        failures: list[bool] = []
+
+        def factory(**kwargs: Any) -> _SeamACPClient:
+            fail = failures.pop(0) if failures else False
+            return _SeamACPClient(clients, fail_start=fail, **kwargs)
+
+        backend.acp_client_cls = factory  # type: ignore[assignment]
+        backend._health = ProviderBackendHealth(provider="qwen", available=True)
+        return SimpleNamespace(manager=manager, backend=backend, clients=clients, failures=failures)
+
+    @pytest.fixture(autouse=True)
+    def _no_trust_writes(self) -> Any:
+        with (
+            patch("gobby.servers.websocket.chat.backends.acp.pre_approve_directory"),
+            patch(
+                "gobby.servers.websocket.chat.backends.acp.ACPWebChatBackend.start",
+                new_callable=AsyncMock,
+            ),
+        ):
+            yield
+
+    @pytest.mark.asyncio
+    async def test_first_start_launches_under_final_path_and_policy(
+        self, acp: Any, tmp_path: Path
+    ) -> None:
+        session = await acp.manager.create_session(
+            provider="qwen", conversation_id="conv-first", model="qwen3-coder"
+        )
+        assert acp.clients == []
+        owner = _seam_owner()
+        workspace = tmp_path / "wt-a"
+        workspace.mkdir()
+
+        await _seam_start(owner, session, _seam_context(workspace, "a.test"))
+
+        assert owner._chat_sessions["conv-first"] is session
+        assert len(acp.clients) == 1
+        client = acp.clients[0]
+        assert client.cwd == str(workspace.resolve())
+        assert client.start_kwargs["cwd"] == str(workspace.resolve())
+        assert client.sandbox_config.allowed_domains == ["a.test"]
+        assert client.sandbox_config is not acp.backend._sandbox_config
+        assert client.created is True
+        assert session.is_connected is True
+        assert session.project_path == str(workspace)
+
+    @pytest.mark.asyncio
+    async def test_resume_reuses_persisted_identity(self, acp: Any, tmp_path: Path) -> None:
+        session = await acp.manager.create_session(
+            provider="qwen", conversation_id="conv-resume", model="qwen3-coder"
+        )
+        session.resume_session_id = "acp-old"
+
+        await _seam_start(_seam_owner(), session, _seam_context(tmp_path, "a.test"))
+
+        assert acp.clients[0].resumed == "acp-old"
+        assert acp.clients[0].created is False
+        assert session.sdk_session_id == "acp-old"
+
+    @pytest.mark.asyncio
+    async def test_failed_resume_falls_back_to_fresh_launch(self, acp: Any, tmp_path: Path) -> None:
+        session = await acp.manager.create_session(
+            provider="qwen", conversation_id="conv-fallback", model="qwen3-coder"
+        )
+        session.resume_session_id = "acp-old"
+        acp.failures.extend([True, False])
+
+        await _seam_start(_seam_owner(), session, _seam_context(tmp_path, "a.test"))
+
+        assert len(acp.clients) == 2
+        assert acp.clients[0].stopped is True
+        assert acp.clients[1].resumed is None
+        assert acp.clients[1].created is True
+        assert session.resume_session_id is None
+        assert session.is_connected is True
+
+    @pytest.mark.asyncio
+    async def test_failed_start_cleans_up_and_registers_nothing(
+        self, acp: Any, tmp_path: Path
+    ) -> None:
+        session = await acp.manager.create_session(
+            provider="qwen", conversation_id="conv-fail", model="qwen3-coder"
+        )
+        acp.failures.append(True)
+        owner = _seam_owner()
+
+        with pytest.raises(RuntimeError, match="acp launch failed"):
+            await _seam_start(owner, session, _seam_context(tmp_path, "a.test"))
+
+        assert owner._chat_sessions == {}
+        assert all(client.stopped for client in acp.clients)
+        assert session.is_connected is False
+        assert session._acp_client is None
+        owner._fire_lifecycle.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_teardown_stops_the_session_owned_client(self, acp: Any, tmp_path: Path) -> None:
+        session = await acp.manager.create_session(
+            provider="qwen", conversation_id="conv-teardown", model="qwen3-coder"
+        )
+        await _seam_start(_seam_owner(), session, _seam_context(tmp_path, "a.test"))
+        client = acp.clients[0]
+        assert client.stopped is False
+
+        await session.stop()
+
+        assert client.stopped is True
+        assert session.is_connected is False
+        assert session._acp_client is None
+
+    @pytest.mark.asyncio
+    async def test_concurrent_sessions_get_distinct_confinement_roots(
+        self, acp: Any, tmp_path: Path
+    ) -> None:
+        import asyncio
+
+        session_a = await acp.manager.create_session(
+            provider="qwen", conversation_id="conv-a", model="qwen3-coder"
+        )
+        session_b = await acp.manager.create_session(
+            provider="qwen", conversation_id="conv-b", model="qwen3-coder"
+        )
+        worktree_a = tmp_path / "project-a" / "wt"
+        worktree_b = tmp_path / "project-b" / "wt"
+        worktree_a.mkdir(parents=True)
+        worktree_b.mkdir(parents=True)
+        owner = _seam_owner()
+
+        await asyncio.gather(
+            _seam_start(owner, session_a, _seam_context(worktree_a, "a.test")),
+            _seam_start(owner, session_b, _seam_context(worktree_b, "b.test")),
+        )
+
+        assert set(owner._chat_sessions) == {"conv-a", "conv-b"}
+        by_run = {client.sandbox_run_id: client for client in acp.clients}
+        assert set(by_run) == {"conv-a", "conv-b"}
+        assert by_run["conv-a"].cwd == str(worktree_a.resolve())
+        assert by_run["conv-b"].cwd == str(worktree_b.resolve())
+        assert by_run["conv-a"].cwd != by_run["conv-b"].cwd
+        assert by_run["conv-a"].sandbox_config.allowed_domains == ["a.test"]
+        assert by_run["conv-b"].sandbox_config.allowed_domains == ["b.test"]
+        assert session_a._acp_client is by_run["conv-a"]
+        assert session_b._acp_client is by_run["conv-b"]
+
+
+# --- Plan row 3.1.8: the Claude shim execs the SRT-wrapped argv exactly once ---
+
+
+def _claude_srt_launch() -> SandboxLaunch:
+    return SandboxLaunch(
+        backend="srt",
+        enforced=True,
+        node_path="/bin/echo",
+        runner_path="/opt/srt/runner.js",
+        policy_path="/tmp/srt-policy.json",
+        violation_path="/tmp/srt-violations.jsonl",
+        provider_executable="/usr/bin/claude",
+        provider_env={"TMPDIR": "/tmp/srt-run"},
+        policy_hash="srt-hash",
+    )
+
+
+async def _start_claude_under_srt(
+    session: Any,
+    tmp_path: Path,
+    *,
+    connect_error: Exception | None = None,
+    disconnect_error: Exception | None = None,
+) -> tuple[dict[str, Any], SandboxLaunch]:
+    launch = _claude_srt_launch()
+    captured: dict[str, Any] = {}
+    headless = tmp_path / "headless.json"
+    headless.write_text('{"hooks":{"SessionStart":[]}}', encoding="utf-8")
+
+    def capture_options(**kwargs: Any) -> MagicMock:
+        captured.update(kwargs)
+        return MagicMock()
+
+    async def fake_prepare(**_: Any) -> SandboxLaunch:
+        return launch
+
+    with (
+        patch("gobby.servers.chat_session._find_cli_path", return_value="/usr/bin/claude"),
+        patch(
+            "gobby.servers.chat_session._build_gobby_mcp_entry",
+            return_value={"command": "gobby", "args": ["mcp-server"]},
+        ),
+        patch("gobby.servers.chat_session._find_project_root", return_value=None),
+        patch("gobby.servers.chat_session._HEADLESS_SETTINGS", headless),
+        patch("gobby.agents.srt_runtime.prepare_sandbox_launch", new=fake_prepare),
+        patch("gobby.paths.get_gobby_home", return_value=tmp_path / "home"),
+        patch("gobby.servers.chat_session.ClaudeAgentOptions", side_effect=capture_options),
+        patch("gobby.servers.chat_session.ClaudeSDKClient") as client_cls,
+    ):
+        client = AsyncMock()
+        if connect_error is not None:
+            client.connect.side_effect = connect_error
+        if disconnect_error is not None:
+            client.disconnect.side_effect = disconnect_error
+        client_cls.return_value = client
+        await session.start()
+    return captured, launch
+
+
+class TestClaudeShimContract:
+    @pytest.fixture
+    def session(self) -> Any:
+        from gobby.servers.chat_session import ChatSession
+
+        session = ChatSession(conversation_id="conv-claude-shim")
+        session.sandbox_config = SandboxConfig(enabled=True, backend="srt")
+        session.db_session_id = "db-claude"
+        return session
+
+    @pytest.mark.asyncio
+    async def test_shim_execs_wrapped_argv_and_passes_sdk_args_once(
+        self, session: Any, tmp_path: Path
+    ) -> None:
+        import subprocess
+
+        captured, launch = await _start_claude_under_srt(session, tmp_path)
+
+        shim = Path(captured["cli_path"])
+        assert shim.parent == tmp_path / "home" / "run" / "shims"
+        assert shim.is_file()
+        assert shim.stat().st_mode & 0o777 == 0o700
+        script = shim.read_text(encoding="utf-8")
+        assert script.startswith("#!/bin/sh\nexec ")
+        assert script.count('"$@"') == 1
+        wrapped = launch.wrap(["/usr/bin/claude"])
+        run = subprocess.run(
+            [str(shim), "--sdk-appended", "x y"], capture_output=True, text=True, check=True
+        )
+        argv = run.stdout.split()
+        assert argv == [*wrapped[1:], "--sdk-appended", "x", "y"]
+        assert argv.count("/opt/srt/runner.js") == 1
+        assert argv.count("--") == 1
+        assert captured["env"]["TMPDIR"] == "/tmp/srt-run"
+        assert captured["env"]["GOBBY_SESSION_ID"] == "db-claude"
+        session._cleanup_sandbox_launch()
+
+    @pytest.mark.asyncio
+    async def test_shim_is_removed_on_teardown(self, session: Any, tmp_path: Path) -> None:
+        captured, _ = await _start_claude_under_srt(session, tmp_path)
+        shim = Path(captured["cli_path"])
+        assert shim.exists()
+
+        await session.stop()
+
+        assert not shim.exists()
+        assert session._sandbox_launch is None
+        assert session.is_connected is False
+
+    @pytest.mark.asyncio
+    async def test_shim_is_removed_on_disconnect_failure(
+        self, session: Any, tmp_path: Path
+    ) -> None:
+        captured, _ = await _start_claude_under_srt(
+            session,
+            tmp_path,
+            disconnect_error=RuntimeError("Attempted to exit cancel scope in a different task"),
+        )
+        shim = Path(captured["cli_path"])
+
+        await session.stop()
+
+        assert not shim.exists()
+        assert session._sandbox_launch is None
+        assert session._client is None
+
+    @pytest.mark.asyncio
+    async def test_shim_is_removed_on_failed_start(self, session: Any, tmp_path: Path) -> None:
+        with pytest.raises(RuntimeError, match="connect failed"):
+            await _start_claude_under_srt(
+                session, tmp_path, connect_error=RuntimeError("connect failed")
+            )
+
+        shims = list((tmp_path / "home" / "run" / "shims").glob("gobby-srt-shim-*"))
+        assert shims == []
+        assert session._sandbox_launch is None
+        assert session.is_connected is False

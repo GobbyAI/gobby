@@ -761,3 +761,133 @@ class TestHistoryInjection:
 
         result = await session._load_history_context()
         assert result is None
+
+
+class TestShimLaunchContract:
+    """Plan row 3.1.14: start/stop and option cleanup adopt the shim launch contract."""
+
+    @staticmethod
+    def _launch(tmp_path: Path) -> Any:
+        from gobby.agents.srt_runtime import SandboxLaunch
+
+        return SandboxLaunch(
+            backend="srt",
+            enforced=True,
+            node_path="/usr/bin/node",
+            runner_path=str(tmp_path / "runner.js"),
+            policy_path=str(tmp_path / "policy.json"),
+            violation_path=str(tmp_path / "violations.jsonl"),
+            provider_executable="/usr/bin/claude",
+            provider_env={"TMPDIR": str(tmp_path / "srt-tmp")},
+            policy_hash="srt-hash",
+        )
+
+    async def _start(
+        self,
+        session: ChatSession,
+        tmp_path: Path,
+        *,
+        connect_error: Exception | None = None,
+    ) -> tuple[dict[str, Any], Any]:
+        launch = self._launch(tmp_path)
+        headless = tmp_path / "headless.json"
+        headless.write_text('{"hooks":{"SessionStart":[]}}', encoding="utf-8")
+        captured: dict[str, Any] = {}
+
+        def capture_options(**kwargs: Any) -> MagicMock:
+            captured.update(kwargs)
+            return MagicMock()
+
+        async def fake_prepare(**kwargs: Any) -> Any:
+            captured["prepare"] = kwargs
+            return launch
+
+        with (
+            patch("gobby.servers.chat_session._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.servers.chat_session._build_gobby_mcp_entry",
+                return_value={"command": "gobby", "args": ["mcp-server"]},
+            ),
+            patch("gobby.servers.chat_session._find_project_root", return_value=None),
+            patch("gobby.servers.chat_session._HEADLESS_SETTINGS", headless),
+            patch("gobby.agents.srt_runtime.prepare_sandbox_launch", new=fake_prepare),
+            patch("gobby.paths.get_gobby_home", return_value=tmp_path / "home"),
+            patch("gobby.servers.chat_session.ClaudeAgentOptions", side_effect=capture_options),
+            patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            if connect_error is not None:
+                mock_client.connect.side_effect = connect_error
+            mock_client_cls.return_value = mock_client
+            await session.start()
+        return captured, launch
+
+    @pytest.mark.asyncio
+    async def test_start_under_srt_points_sdk_at_shim(
+        self, session: ChatSession, tmp_path: Path
+    ) -> None:
+        session.sandbox_config = SandboxConfig(enabled=True, backend="srt")
+        session.db_session_id = "db-shim"
+        session.project_path = str(tmp_path)
+
+        captured, launch = await self._start(session, tmp_path)
+
+        shim = Path(captured["cli_path"])
+        assert shim != Path("/usr/bin/claude")
+        assert shim.parent == tmp_path / "home" / "run" / "shims"
+        assert shim.is_file()
+        assert captured["prepare"]["workspace_path"] == str(tmp_path)
+        assert captured["prepare"]["provider"] == "claude"
+        assert captured["prepare"]["env"]["GOBBY_SESSION_ID"] == "db-shim"
+        assert captured["env"]["TMPDIR"] == str(tmp_path / "srt-tmp")
+        assert captured["env"]["GOBBY_SESSION_ID"] == "db-shim"
+        assert captured["setting_sources"] == []
+        settings = json.loads(Path(captured["settings"]).read_text(encoding="utf-8"))
+        # SRT wraps the CLI; the provider-native sandbox block is never enabled.
+        assert settings.get("sandbox", {}).get("enabled", False) is False
+        assert session._sandbox_launch is launch
+        assert session.sandbox_metadata == launch.metadata()
+        assert session.is_connected is True
+        session._cleanup_sandbox_launch()
+
+    @pytest.mark.asyncio
+    async def test_stop_releases_shim_launch_state(
+        self, session: ChatSession, tmp_path: Path
+    ) -> None:
+        session.sandbox_config = SandboxConfig(enabled=True, backend="srt")
+        captured, _ = await self._start(session, tmp_path)
+        shim = Path(captured["cli_path"])
+        assert shim.exists()
+
+        await session.stop()
+
+        assert not shim.exists()
+        assert session._sandbox_launch is None
+        assert session._client is None
+        assert session.is_connected is False
+
+    @pytest.mark.asyncio
+    async def test_failed_connect_cleans_shim_and_stays_stopped(
+        self, session: ChatSession, tmp_path: Path
+    ) -> None:
+        session.sandbox_config = SandboxConfig(enabled=True, backend="srt")
+
+        with pytest.raises(RuntimeError, match="connect failed"):
+            await self._start(session, tmp_path, connect_error=RuntimeError("connect failed"))
+
+        assert list((tmp_path / "home" / "run" / "shims").glob("gobby-srt-shim-*")) == []
+        assert session._sandbox_launch is None
+        assert session.is_connected is False
+
+    @pytest.mark.asyncio
+    async def test_provider_native_start_emits_no_shim(
+        self, session: ChatSession, tmp_path: Path
+    ) -> None:
+        session.sandbox_config = SandboxConfig(enabled=True, backend="provider-native")
+
+        captured, _ = await self._start(session, tmp_path)
+
+        assert captured["cli_path"] == "/usr/bin/claude"
+        assert session._sandbox_launch is None
+        assert not (tmp_path / "home" / "run" / "shims").exists()
+        assert "prepare" not in captured
