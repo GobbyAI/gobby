@@ -52,7 +52,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_CLEAR_ACK_TIMEOUT_SECONDS = 5.0
+# Successor binding lands 2-3s after staging on an idle daemon (production
+# markers: claude 2.59s, grok 2.18s). A missed deadline reverts the staged
+# handoff and leaves a late-binding successor unbound, so the window must
+# cover a loaded daemon while still bounding the Codex reclaim case.
+_CLEAR_ACK_TIMEOUT_SECONDS = 30.0
 _CLEAR_ACK_POLL_SECONDS = 0.05
 
 CLEAR_COMMAND = "/clear"
