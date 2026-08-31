@@ -43,7 +43,7 @@
     "prompts/import/github_fetch.md": "f354de54d8e699f1d1127eb7caccbd97da02a05f3119b735c31e53f103394941",
     "prompts/import/search_fetch.md": "c4e02d306fe15537ccc7a75b3f1d0f73e0a4d5a5e2cd3f1a95f5a1feda4a41cc",
     "prompts/import/system.md": "57260c7a7a4311d2d0ca04e1acecca2d9774c95ecd37939d83a9e967d3c8a62c",
-    "prompts/mcp/progressive-discovery.md": "a6fb04538116ba4d8fb5e94ffd261210e4ae1aa2d86bbce9ac00655a01be3cd9",
+    "prompts/mcp/progressive-discovery.md": "7c8cf9dcac430bd9062fed311c7c79c2ce230f60d5d3b2c76e43545e2b39b8dd",
     "prompts/memory/delete_relations.md": "a6bf7a7374f48b8454335a794e00260d3c8e70c15ec4e4aeb66f94522d145779",
     "prompts/memory/dream.md": "7167cd192d0722c896a5c89d870fac37d903a7d6f3154bd2cc8fa517acb7888c",
     "prompts/memory/extract_entities.md": "81098e10d6a27973549c313685ffd44961138dddd96d45cd2e57169be65a2910",
