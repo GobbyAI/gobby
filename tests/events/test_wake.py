@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import json
 import logging
 import weakref
 from dataclasses import dataclass
@@ -444,6 +445,38 @@ class TestWakeDispatch:
         ism_manager.create_message.assert_not_called()
         assert ism_manager.create_message.call_count == 0
         assert not ism_manager.create_message.called
+
+    @pytest.mark.asyncio
+    async def test_registry_replay_dedupes_without_producer_run_or_execution_id(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """A fresh registry replay reuses its authoritative completion ID."""
+        session_manager.get.return_value = FakeSession(id=WAKE_SESSION_ID, agent_depth=0)
+        ism_manager.list_messages.return_value = []
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+        )
+
+        first_registry = CompletionEventRegistry(wake_callback=dispatcher.wake)
+        first_registry.register(WAKE_RUN_ID, subscribers=[WAKE_SESSION_ID])
+        await first_registry.notify(WAKE_RUN_ID, {"status": "cancelled"})
+
+        assert ism_manager.create_message.call_count == 1
+        first_metadata = json.loads(ism_manager.create_message.call_args.kwargs["metadata_json"])
+        assert first_metadata["completion_id"] == WAKE_RUN_ID
+        assert "run_id" not in first_metadata
+        assert "execution_id" not in first_metadata
+
+        persisted = MagicMock(metadata_json=json.dumps(first_metadata))
+        ism_manager.list_messages.return_value = [persisted]
+        replay_registry = CompletionEventRegistry(wake_callback=dispatcher.wake)
+        replay_registry.register(WAKE_RUN_ID, subscribers=[WAKE_SESSION_ID])
+        await replay_registry.notify(WAKE_RUN_ID, {"status": "cancelled"})
+
+        assert ism_manager.create_message.call_count == 1
 
     @pytest.mark.asyncio
     async def test_interactive_tmux_session_uses_repaired_active_pane(
