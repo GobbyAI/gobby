@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Protocol
 
 from gobby.agents.tmux.session_manager import TmuxPaneInfo
-from gobby.config.tmux import TmuxConfig
+from gobby.config.tmux import TmuxConfig, socket_root
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.terminals import (
@@ -50,10 +50,7 @@ def socket_path_for(config: TmuxConfig) -> str:
     """Canonical socket path tmux will use for ``config`` (matches ``#{socket_path}``)."""
     if config.socket_path:
         return os.path.realpath(config.socket_path)
-    base = os.environ.get("TMUX_TMPDIR") or "/tmp"
-    return os.path.realpath(
-        os.path.join(base, f"tmux-{os.getuid()}", config.socket_name or "default")
-    )
+    return os.path.realpath(os.path.join(socket_root(), config.socket_name or "default"))
 
 
 def pane_owners(sessions: Iterable[Session]) -> dict[tuple[str, str], PaneOwner]:

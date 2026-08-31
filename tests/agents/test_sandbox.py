@@ -3,6 +3,7 @@ Tests for Sandbox Configuration Models.
 """
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,7 +25,7 @@ from gobby.agents.sandbox import (
     daemon_owned_sandbox_policy_hash,
     web_chat_sandbox_policy_hash,
 )
-from gobby.agents.sandbox_policy import default_write_paths
+from gobby.agents.sandbox_policy import default_write_paths, tmux_socket_roots
 from gobby.agents.sandbox_resolvers import (
     ClaudeSandboxResolver,
     CodexSandboxResolver,
@@ -41,8 +42,10 @@ from gobby.agents.spawn_cache_policy import (
     sandbox_config_for_spawn,
 )
 from gobby.config.app import DaemonConfig
+from gobby.config.tmux import TmuxConfig, socket_root
 from gobby.integrations.rtk import platform_paths
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
+from gobby.terminals.tmux_discovery import socket_path_for
 
 pytestmark = pytest.mark.unit
 
@@ -1721,3 +1724,39 @@ class TestAgySandboxResolver:
 
         assert isinstance(session, AgyManagedChatSession)
         assert session.conversation_id == "agy-srt"
+
+
+@pytest.mark.unit
+class TestTmuxSocketAllowance:
+    """The sandbox unix-socket allowance must name the directory tmux really uses."""
+
+    def test_defaults_to_tmp_not_the_per_user_tmpdir(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("TMUX_TMPDIR", raising=False)
+        monkeypatch.setenv("TMPDIR", "/var/folders/xx/T")
+
+        assert socket_root() == f"/tmp/tmux-{os.getuid()}"
+
+    def test_honours_tmux_tmpdir_when_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TMUX_TMPDIR", "/custom/tmux")
+
+        assert socket_root() == f"/custom/tmux/tmux-{os.getuid()}"
+
+    def test_treats_empty_tmux_tmpdir_as_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TMUX_TMPDIR", "")
+
+        assert socket_root() == f"/tmp/tmux-{os.getuid()}"
+
+    @pytest.mark.parametrize("tmux_tmpdir", [None, "/custom/tmux"])
+    def test_allowance_is_the_directory_holding_the_socket(
+        self, monkeypatch: pytest.MonkeyPatch, tmux_tmpdir: str | None
+    ) -> None:
+        if tmux_tmpdir is None:
+            monkeypatch.delenv("TMUX_TMPDIR", raising=False)
+        else:
+            monkeypatch.setenv("TMUX_TMPDIR", tmux_tmpdir)
+
+        roots = tmux_socket_roots()
+        socket_path = socket_path_for(TmuxConfig(socket_name="gobby"))
+
+        assert roots == [os.path.realpath(socket_root())]
+        assert os.path.dirname(socket_path) in roots

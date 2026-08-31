@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -11,6 +12,19 @@ from pydantic import BaseModel, Field
 # default bound. The cost model behind it is measured by
 # web/tests/history-perf.spec.ts and recorded on the field below.
 ATTACH_HISTORY_LINES = 500
+
+
+def socket_root() -> str:
+    """Return the directory tmux puts its sockets in, resolved the way tmux does.
+
+    tmux honours ``TMUX_TMPDIR`` when it is set and non-empty and otherwise uses
+    ``/tmp``; it never reads ``TMPDIR``, which on macOS names a per-user
+    directory no tmux server lives under. Both consumers that have to name this
+    directory - the pane sweep and the sandbox unix-socket allowance - resolve it
+    here, so an allowance cannot point somewhere tmux never listens.
+    """
+    base = os.environ.get("TMUX_TMPDIR") or "/tmp"
+    return os.path.join(base, f"tmux-{os.getuid()}")
 
 
 class TmuxConfig(BaseModel):

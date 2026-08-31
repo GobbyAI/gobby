@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +12,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from gobby.agents.credential_inventory import denied_ambient_keys
+from gobby.config.tmux import socket_root
 from gobby.paths import get_gobby_home
 
 if TYPE_CHECKING:
@@ -459,8 +459,7 @@ def tmux_socket_roots() -> list[str]:
     """
     if not hasattr(os, "getuid"):
         return []
-    tmux_tmpdir = os.environ.get("TMUX_TMPDIR", tempfile.gettempdir())
-    return canonical_paths([str(Path(tmux_tmpdir) / f"tmux-{os.getuid()}")])
+    return canonical_paths([socket_root()])
 
 
 def provider_write_exceptions(provider: str) -> list[str]:
