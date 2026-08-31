@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import inspect
+import json
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.adapters.acp_hook_adapter import ACPHookAdapter
-from gobby.adapters.agy import AgyAdapter
+from gobby.adapters.agy import AGY_APPROVAL_DENIED_REASON, AgyAdapter
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 pytestmark = pytest.mark.unit
@@ -103,7 +104,8 @@ def test_pre_tool_use_block_response_becomes_agy_deny() -> None:
     assert result == {"decision": "deny", "reason": "policy blocked this command"}
 
 
-def test_pre_tool_use_ask_response_can_rewrite_input() -> None:
+def test_pre_tool_use_ask_response_fails_closed_as_deny() -> None:
+    """AGY cannot prompt (record 1.1.14): an approval request is denied, never ``ask``."""
     result = AgyAdapter().translate_from_hook_response(
         HookResponse(
             decision="ask",
@@ -113,11 +115,40 @@ def test_pre_tool_use_ask_response_can_rewrite_input() -> None:
         hook_type="PreToolUse",
     )
 
-    assert result == {
-        "decision": "ask",
-        "reason": "needs confirmation",
-        "overwrite": {"command": "pwd"},
-    }
+    assert result["decision"] == "deny"
+    assert result["reason"] == f"{AGY_APPROVAL_DENIED_REASON} (needs confirmation)"
+    assert "approval" in result["reason"]
+    assert result["overwrite"] == {"command": "pwd"}
+
+
+def test_pre_tool_use_ask_without_reason_still_explains_the_deny() -> None:
+    result = AgyAdapter().translate_from_hook_response(
+        HookResponse(decision="ask"),
+        hook_type="PreToolUse",
+    )
+
+    assert result == {"decision": "deny", "reason": AGY_APPROVAL_DENIED_REASON}
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        HookResponse(decision="ask"),
+        HookResponse(decision="ask", reason="confirm"),
+        HookResponse(decision="ask", auto_approve=True),
+        HookResponse(decision="ask", permission_decision="allow"),
+        HookResponse(decision="ask", permission_decision="deny"),
+        HookResponse(decision="allow"),
+        HookResponse(decision="deny", reason="no"),
+        HookResponse(decision="block", reason="no"),
+    ],
+)
+@pytest.mark.parametrize("hook_type", ["PreToolUse", "PostToolUse", "PreInvocation", "Stop"])
+def test_agy_never_emits_ask_or_force_ask(response: HookResponse, hook_type: str) -> None:
+    result = AgyAdapter().translate_from_hook_response(response, hook_type=hook_type)
+
+    assert result.get("decision") not in {"ask", "force_ask"}
+    assert "force_ask" not in json.dumps(result)
 
 
 def test_stop_block_response_continues_the_agent_loop() -> None:

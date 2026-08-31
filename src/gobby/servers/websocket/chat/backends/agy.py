@@ -35,7 +35,7 @@ from gobby.llm.claude_models import (
 from gobby.servers.chat_session_helpers import PendingApproval
 from gobby.servers.websocket.chat.backends.agy_stream import (
     agy_tool_name_adapter,
-    iter_agy_turn,
+    iter_agy_turn_events,
     parse_agy_stream_line,
 )
 from gobby.servers.websocket.chat.backends.base import (
@@ -193,6 +193,7 @@ class AgyManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSessionBa
     _pending_approval_decisions: dict[str, str] = field(default_factory=dict, repr=False)
     _plan_approved: bool = field(default=False, repr=False)
     _plan_feedback: str | None = field(default=None, repr=False)
+    _turn_tool_calls: int = field(default=0, repr=False)
 
     def _web_chat_source(self) -> str:
         return "agy"
@@ -206,6 +207,27 @@ class AgyManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSessionBa
     def _confirm_conversation_id(self, value: object) -> None:
         if isinstance(value, str) and value:
             self.sdk_session_id = value
+
+    async def _apply_pre_tool_lifecycle(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Native ghook is the sole BEFORE_TOOL authority for AGY (plan row 5.3.5)."""
+        del tool_name, tool_input
+        return None
+
+    async def _apply_post_tool_lifecycle(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        tool_response: Any,
+        *,
+        is_error: bool | None = None,
+    ) -> dict[str, Any] | None:
+        """Native ghook is the sole AFTER_TOOL authority for AGY (plan row 5.3.5)."""
+        del tool_name, tool_input, tool_response, is_error
+        return None
 
     async def send_message(
         self,
@@ -227,6 +249,7 @@ class AgyManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSessionBa
 
         async with self._lock:
             self.last_activity = datetime.now(UTC)
+            self._turn_tool_calls = 0
             prompt = _extract_text(content)
             final_done: DoneEvent | None = None
             try:
@@ -250,7 +273,7 @@ class AgyManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSessionBa
                 logger.error("AGY managed session %s error: %s", self.conversation_id, exc)
                 yield TextChunk(content=f"Generation failed: {exc}")
             yield final_done or DoneEvent(
-                tool_calls_count=0,
+                tool_calls_count=self._turn_tool_calls,
                 sdk_session_id=self.sdk_session_id,
                 context_window=self._resolve_context_window(),
             )
@@ -262,8 +285,8 @@ class AgyManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSessionBa
                 content = event.data.get("content") or event.data.get("text") or ""
                 return TextChunk(content=content) if content else None
             if kind == "tool_use":
-                raw_name = event.data.get("tool_name") or event.data.get("name") or "unknown"
-                tool_name = self._tool_name_adapter()(str(raw_name))
+                # parse_agy_stream_line already applied agy_tool_name_adapter.
+                tool_name = str(event.data.get("tool_name") or event.data.get("name") or "unknown")
                 tool_input = event.data.get("tool_input") or event.data.get("input") or {}
                 normalized = normalize_tool_fields(
                     {
@@ -284,6 +307,7 @@ class AgyManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSessionBa
                     arguments=arguments,
                 )
             if kind == "tool_result":
+                self._turn_tool_calls += 1
                 call_id = event.data.get("call_id") or event.data.get("id") or "unknown"
                 success = bool(event.data.get("success", True))
                 return ToolResultEvent(
@@ -308,7 +332,7 @@ class AgyManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSessionBa
             if input_tokens is not None or cache_read is not None:
                 total = (input_tokens or 0) + (cache_read or 0)
             return DoneEvent(
-                tool_calls_count=0,
+                tool_calls_count=self._turn_tool_calls,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 cache_read_input_tokens=cache_read,
@@ -410,6 +434,9 @@ class AgyWebChatBackend:
 
     def _identity_env(self, session: AgyManagedChatSession) -> dict[str, str]:
         env = os.environ.copy()
+        # The daemon's own environment may disable hooks; the AGY child must
+        # still run native ghook (plan row 5.2.19).
+        env.pop("GOBBY_HOOKS_DISABLED", None)
         env["GOBBY_WEB_CHAT_CHILD"] = "1"
         if session.db_session_id:
             env[GOBBY_SESSION_ID] = session.db_session_id
@@ -520,8 +547,8 @@ class AgyWebChatBackend:
         deadline = _ProgressDeadline(self._prompt_timeout)
         state = _TurnProgressState()
         try:
-            async for event in iter_agy_turn(
-                self._iter_progress_lines(handle, session, deadline, state)
+            async for event in iter_agy_turn_events(
+                self._iter_progress_events(handle, session, deadline, state)
             ):
                 if event.event_type == "error" and event.data.get("code") in {
                     "eof",
@@ -561,13 +588,14 @@ class AgyWebChatBackend:
         await self.detach_session(session)
         await self.attach_session(session, model=new_model)
 
-    async def _iter_progress_lines(
+    async def _iter_progress_events(
         self,
         handle: _AgyProcessHandle,
         session: AgyManagedChatSession,
         deadline: _ProgressDeadline,
         state: _TurnProgressState,
-    ) -> AsyncIterator[bytes]:
+    ) -> AsyncIterator[list[StreamEvent]]:
+        """Parse each stdout line exactly once, renewing the clock on accepted input."""
         stdout = handle.process.stdout
         if stdout is None:
             return
@@ -582,7 +610,7 @@ class AgyWebChatBackend:
             events = parse_agy_stream_line(line)
             if _agy_line_is_progress(events, state):
                 deadline.renew()
-            yield line
+            yield events
 
     async def _abandon_handle(self, handle: _AgyProcessHandle, conversation_id: str) -> None:
         current = self._handles.get(conversation_id)

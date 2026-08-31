@@ -638,7 +638,10 @@ async def test_print_timeout_flag_is_effectively_unbounded() -> None:
 
 
 @pytest.mark.asyncio
-async def test_identity_env_is_exported_and_hooks_resolve_canonical_row() -> None:
+async def test_identity_env_is_exported_and_hooks_resolve_canonical_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOOKS_DISABLED", "1")
     process = _FakeProcess([_init(), *_turn_lines("ok")])
     backend, session = _session(process)
     which, create = _spawn_patches(process)
@@ -813,7 +816,10 @@ async def test_eof_and_switch_model_reattach_with_conversation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_child_env_and_native_pretooluse_deny_without_mode_flag() -> None:
+async def test_child_env_and_native_pretooluse_deny_without_mode_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOOKS_DISABLED", "1")
     process = _FakeProcess([_init(), _tool_active(), _result(usage=_usage())])
     backend, session = _session(process)
     session.chat_mode = "plan"
@@ -901,6 +907,139 @@ async def test_attach_session_uses_start_new_session_for_process_group() -> None
         await backend.attach_session(session)
     assert create_process.call_args.kwargs["start_new_session"] is True
     assert create_process.call_args.kwargs["limit"] == ACP_STREAM_READER_LIMIT_BYTES
+
+
+def _tool_done(*, step_index: int, name: str = "write_to_file", output: str = "ok") -> str:
+    return json.dumps(
+        {
+            "event": "step_update",
+            "step_update": {
+                "conversation_id": CONV,
+                "step_index": step_index,
+                "state": "DONE",
+                "step_type": "tool",
+                "tool_name": name,
+                "tool_info": {"name": name, "parameters": {}, "output": output},
+            },
+        }
+    )
+
+
+def _tool_start(*, step_index: int, name: str = "write_to_file") -> str:
+    return json.dumps(
+        {
+            "event": "step_update",
+            "step_update": {
+                "conversation_id": CONV,
+                "step_index": step_index,
+                "state": "ACTIVE",
+                "step_type": "tool",
+                "tool_name": name,
+                "tool_info": {"name": name, "parameters": {"TargetFile": "a.py"}},
+            },
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_identity_env_drops_daemon_hooks_disabled_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The daemon may run with hooks disabled; the AGY child must run native ghook."""
+    monkeypatch.setenv("GOBBY_HOOKS_DISABLED", "1")
+    monkeypatch.setenv("GOBBY_KEEP_ME", "yes")
+    backend, session = _session(_FakeProcess([_init()]))
+
+    env = backend._identity_env(session)
+
+    assert "GOBBY_HOOKS_DISABLED" not in env
+    assert env["GOBBY_KEEP_ME"] == "yes"
+    assert env["GOBBY_WEB_CHAT_CHILD"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_done_event_counts_tool_end_events_per_turn() -> None:
+    process = _FakeProcess(
+        [
+            _init(),
+            _tool_start(step_index=3),
+            _tool_done(step_index=3),
+            _tool_start(step_index=5, name="run_command"),
+            _tool_done(step_index=5, name="run_command"),
+            _result(usage=_usage()),
+            _text("no tools this time"),
+            _result(usage=_usage()),
+        ]
+    )
+    backend, session = _session(process)
+    which, create = _spawn_patches(process)
+    with which, create:
+        await backend.attach_session(session)
+        first = [event async for event in session.send_message("write")]
+        second = [event async for event in session.send_message("chat")]
+
+    first_done = next(event for event in first if isinstance(event, DoneEvent))
+    second_done = next(event for event in second if isinstance(event, DoneEvent))
+    assert sum(isinstance(event, ToolResultEvent) for event in first) == 2
+    assert first_done.tool_calls_count == 2
+    assert second_done.tool_calls_count == 0
+
+
+@pytest.mark.asyncio
+async def test_eof_fallback_done_event_reports_tool_ends_seen() -> None:
+    process = _FakeProcess([_init(), _tool_start(step_index=3), _tool_done(step_index=3)])
+    backend, session = _session(process)
+    which, create = _spawn_patches(process)
+    with which, create:
+        await backend.attach_session(session)
+        events = [event async for event in session.send_message("write")]
+
+    done = next(event for event in events if isinstance(event, DoneEvent))
+    assert done.tool_calls_count == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_tool_name_is_adapted_exactly_once() -> None:
+    stream_mod = "gobby.servers.websocket.chat.backends.agy_stream"
+    real_adapter = importlib.import_module(stream_mod).agy_tool_name_adapter
+    calls: list[str] = []
+
+    def counting_adapter(raw_tool_name: str, tool_input: Any = None) -> str:
+        calls.append(raw_tool_name)
+        return real_adapter(raw_tool_name, tool_input)
+
+    process = _FakeProcess([_init(), _tool_start(step_index=3), _result(usage=_usage())])
+    backend, session = _session(process)
+    which, create = _spawn_patches(process)
+    with (
+        which,
+        create,
+        patch(f"{stream_mod}.agy_tool_name_adapter", counting_adapter),
+        patch.object(session, "_tool_name_adapter", return_value=counting_adapter),
+    ):
+        await backend.attach_session(session)
+        events = [event async for event in session.send_message("write")]
+
+    tool_calls = [event for event in events if isinstance(event, ToolCallEvent)]
+    assert [event.tool_name for event in tool_calls] == ["Write"]
+    assert calls == ["write_to_file"]
+
+
+@pytest.mark.asyncio
+async def test_agy_session_refuses_base_managed_tool_lifecycle_routes() -> None:
+    """Even a bound callback is never fired: native ghook is the single authority."""
+    backend, session = _session(_FakeProcess([_init()]))
+    session._on_pre_tool = AsyncMock(return_value={"context": "x"})
+    session._on_post_tool = AsyncMock(return_value={"context": "y"})
+
+    pre = await session._apply_pre_tool_lifecycle("Write", {"TargetFile": "a.py"})
+    post = await session._apply_post_tool_lifecycle("Write", {"TargetFile": "a.py"}, "ok")
+
+    assert pre is None
+    assert post is None
+    session._on_pre_tool.assert_not_awaited()
+    session._on_post_tool.assert_not_awaited()
+    assert session._deferred_contexts == []
 
 
 def test_agy_tool_name_adapter_is_wired() -> None:

@@ -30,21 +30,24 @@ class SessionLaunchContext:
     workspace_path: str
 
 
+NATIVE_HOOK_AUTHORITY_PROVIDERS = frozenset({"agy"})
+"""Providers whose native hook binary is the sole workflow-effect authority.
+
+For these providers the managed session never routes ``BEFORE_AGENT``,
+``BEFORE_TOOL``, ``AFTER_TOOL``, ``PRE_COMPACT``, or ``STOP`` through
+``_fire_lifecycle`` (plan row 5.3.5); the callbacks stay unbound so the
+invariant holds by construction.
+"""
+
+
+def uses_native_hook_authority(session: ChatSessionProtocol) -> bool:
+    return getattr(session, "provider", None) in NATIVE_HOOK_AUTHORITY_PROVIDERS
+
+
 def bind_session_lifecycle(owner: Any, session: ChatSessionProtocol, session_key: str) -> None:
     """Wire lifecycle and plan callbacks before backend start."""
-    session._on_before_agent = lambda data: owner._fire_lifecycle(
-        session_key, HookEventType.BEFORE_AGENT, data
-    )
-    session._on_pre_tool = lambda data: owner._fire_lifecycle(
-        session_key, HookEventType.BEFORE_TOOL, data
-    )
-    session._on_post_tool = lambda data: owner._fire_lifecycle(
-        session_key, HookEventType.AFTER_TOOL, data
-    )
-    session._on_pre_compact = lambda data: owner._fire_lifecycle(
-        session_key, HookEventType.PRE_COMPACT, data
-    )
-    session._on_stop = lambda data: owner._fire_lifecycle(session_key, HookEventType.STOP, data)
+    if not uses_native_hook_authority(session):
+        _bind_managed_lifecycle(owner, session, session_key)
 
     async def _notify_mode_changed(mode: str, reason: str) -> None:
         msg = json_dumps(
@@ -100,6 +103,22 @@ def bind_session_lifecycle(owner: Any, session: ChatSessionProtocol, session_key
                 pass
 
     session._on_plan_ready = _notify_plan_ready
+
+
+def _bind_managed_lifecycle(owner: Any, session: ChatSessionProtocol, session_key: str) -> None:
+    session._on_before_agent = lambda data: owner._fire_lifecycle(
+        session_key, HookEventType.BEFORE_AGENT, data
+    )
+    session._on_pre_tool = lambda data: owner._fire_lifecycle(
+        session_key, HookEventType.BEFORE_TOOL, data
+    )
+    session._on_post_tool = lambda data: owner._fire_lifecycle(
+        session_key, HookEventType.AFTER_TOOL, data
+    )
+    session._on_pre_compact = lambda data: owner._fire_lifecycle(
+        session_key, HookEventType.PRE_COMPACT, data
+    )
+    session._on_stop = lambda data: owner._fire_lifecycle(session_key, HookEventType.STOP, data)
 
 
 def apply_launch_context(session: ChatSessionProtocol, context: SessionLaunchContext) -> None:
@@ -263,7 +282,7 @@ async def start_hydrated_session(
         if exc:
             logger.warning("SESSION_START lifecycle hook failed: %s", exc)
 
-    if provider_name != "agy":
+    if provider_name not in NATIVE_HOOK_AUTHORITY_PROVIDERS:
         t = asyncio.create_task(
             owner._fire_lifecycle(session_key, HookEventType.SESSION_START, start_data)
         )

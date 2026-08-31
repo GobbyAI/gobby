@@ -206,12 +206,14 @@ def parse_agy_stream_line(line: bytes | str) -> list[StreamEvent]:
         return []
 
 
-async def iter_agy_turn(lines: AsyncIterator[bytes | str]) -> AsyncIterator[StreamEvent]:
-    """Yield one turn of AGY stream events, stopping after the ``result`` record."""
+async def iter_agy_turn_events(
+    parsed_lines: AsyncIterator[list[StreamEvent]],
+) -> AsyncIterator[StreamEvent]:
+    """Yield one turn from per-line parsed events, stopping after the ``result`` record."""
     seen_init = False
     emitted = False
-    async for line in lines:
-        for event in parse_agy_stream_line(line):
+    async for events in parsed_lines:
+        for event in events:
             if event.event_type == "init":
                 if seen_init or emitted:
                     continue
@@ -223,4 +225,20 @@ async def iter_agy_turn(lines: AsyncIterator[bytes | str]) -> AsyncIterator[Stre
     yield StreamEvent(event_type="error", data={"code": "eof"})
 
 
-__all__ = ["agy_tool_name_adapter", "iter_agy_turn", "parse_agy_stream_line"]
+async def iter_agy_turn(lines: AsyncIterator[bytes | str]) -> AsyncIterator[StreamEvent]:
+    """Yield one turn of AGY stream events, parsing each line exactly once."""
+
+    async def _parsed() -> AsyncIterator[list[StreamEvent]]:
+        async for line in lines:
+            yield parse_agy_stream_line(line)
+
+    async for event in iter_agy_turn_events(_parsed()):
+        yield event
+
+
+__all__ = [
+    "agy_tool_name_adapter",
+    "iter_agy_turn",
+    "iter_agy_turn_events",
+    "parse_agy_stream_line",
+]

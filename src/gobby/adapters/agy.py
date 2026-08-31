@@ -25,6 +25,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+AGY_APPROVAL_DENIED_REASON = (
+    "This tool requires user approval, which AGY cannot collect; the call is denied."
+)
+
+
+def _approval_denied_reason(reason: str | None) -> str:
+    """Fail closed: AGY has no approval prompt, so ``ask`` becomes an explained deny."""
+    if reason:
+        return f"{AGY_APPROVAL_DENIED_REASON} ({reason})"
+    return AGY_APPROVAL_DENIED_REASON
+
 
 def _join_response_text(*parts: str | None) -> str | None:
     values = [part for part in parts if part]
@@ -176,20 +187,24 @@ class AgyAdapter(ACPHookAdapter):
 
         is_denied = response.decision in {"deny", "block"}
         decision: str | None = None
+        reason = normalized_reason
         if response.permission_decision:
             decision = response.permission_decision
         elif response.auto_approve:
             decision = "allow"
         elif response.decision == "ask":
-            decision = "ask"
+            # AGY cannot prompt the user (record 1.1.14), so an approval
+            # request is never forwarded as ``ask``: it fails closed as a deny.
+            decision = "deny"
+            reason = _approval_denied_reason(normalized_reason)
         elif is_denied:
             decision = "deny"
 
         tool_result: dict[str, Any] = {}
         if decision is not None:
             tool_result["decision"] = decision
-        if normalized_reason:
-            tool_result["reason"] = normalized_reason
+        if reason:
+            tool_result["reason"] = reason
         if response.modified_input is not None:
             tool_result["overwrite"] = response.modified_input
         return tool_result
