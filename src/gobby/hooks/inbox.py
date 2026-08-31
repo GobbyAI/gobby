@@ -192,6 +192,48 @@ def _consume_inbox_delivery_receipt(
     path.unlink(missing_ok=True)
 
 
+def consume_pending_delivery_receipts(app: Any, inbox_dir: Path | None = None) -> int:
+    """Consume well-formed delivery-receipt acks waiting in the inbox.
+
+    A receipted hook response re-prepares the session's newest undelivered
+    receipt onto its own envelope, bumping the delivery generation. ghook
+    writes acks back into the inbox, but the periodic drain (60s) is too slow
+    for a busy session: by the time it runs, the ack's generation is stale and
+    the CAS records a no-op, so the receipt re-prepares forever. Sweeping acks
+    synchronously before the re-prepare lets an in-flight ack land while its
+    generation is still current. Only files whose parsed body is a well-formed
+    delivery receipt are touched; every other file is left for the drain and
+    its quarantine rules.
+    """
+    pending_dir = inbox_dir or get_hook_inbox_dir()
+    if not pending_dir.exists():
+        return 0
+    consumed = 0
+    processed_dir = get_processed_envelope_dir(pending_dir)
+    for path in _iter_inbox_files(pending_dir):
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(raw, dict) or raw.get("kind") != "delivery-receipt":
+            continue
+        receipt_id = raw.get("receipt_id")
+        generation = raw.get("delivery_generation")
+        if not isinstance(receipt_id, str) or not receipt_id:
+            continue
+        if not isinstance(generation, int) or generation < 1:
+            continue
+        _consume_inbox_delivery_receipt(
+            app,
+            raw,
+            path,
+            envelope_id_from_inbox_path(path),
+            processed_dir=processed_dir,
+        )
+        consumed += 1
+    return consumed
+
+
 def _mark_carrying_envelopes_processed(
     receipt: Any,
     *,

@@ -42,6 +42,7 @@ from gobby.hooks.envelope_dedupe import (
     release_envelope_processing_claim,
 )
 from gobby.hooks.health_gate import DaemonNotReadyError
+from gobby.hooks.inbox import consume_pending_delivery_receipts
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
 from gobby.hooks.receipt_redelivery import (
     attach_delivery_receipt,
@@ -498,6 +499,17 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 raise HTTPException(status_code=503, detail="HookManager not initialized")
 
             hook_manager = request.app.state.hook_manager
+
+            # Land in-flight delivery-receipt acks before this response's
+            # carry-forward can presume the previous delivery lost and bump
+            # the generation those acks would CAS against.
+            try:
+                consume_pending_delivery_receipts(request.app)
+            except Exception:
+                logger.warning(
+                    "Pending delivery-receipt sweep failed; the periodic drain remains",
+                    exc_info=True,
+                )
 
             if source not in SUPPORTED_HOOK_SOURCES:
                 raise HTTPException(

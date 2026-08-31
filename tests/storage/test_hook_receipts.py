@@ -761,3 +761,60 @@ def _receipt_exists(db: HubDatabase, receipt_id: str) -> bool:
             (receipt_id,),
         ).fetchone()
     return row is not None
+
+
+def test_in_flight_ack_lands_before_reprepare_presumes_loss(
+    receipts_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """A swept ack terminalizes the receipt so the next envelope re-prepares nothing."""
+    import json
+
+    from fastapi import FastAPI
+
+    from gobby.hooks.inbox import consume_pending_delivery_receipts
+
+    receipts = _receipts()
+    session_id = str(uuid4())
+    receipt = receipts.prepare_receipt(
+        receipts_db,
+        session_id=session_id,
+        envelope_id="env-1",
+        staged_payload={"one": 1},
+    )
+    inbox_dir = tmp_path / "inbox"
+    inbox_dir.mkdir()
+    (inbox_dir / "n-0000000000001-ack.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "kind": "delivery-receipt",
+                "receipt_id": receipt.receipt_id,
+                "original_envelope_id": "env-1",
+                "delivery_generation": receipt.delivery_generation,
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = FastAPI()
+    app.state.database = receipts_db
+    app.state.hook_manager = None
+
+    assert consume_pending_delivery_receipts(app, inbox_dir=inbox_dir) == 1
+
+    with receipts_db.transaction() as conn:
+        row = conn.execute(
+            "SELECT state, delivery_generation FROM hook_receipt_effects WHERE receipt_id = %s",
+            (receipt.receipt_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["state"] == "acknowledged"
+    assert row["delivery_generation"] == receipt.delivery_generation
+    assert (
+        receipts.release_and_reprepare_for_session(
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-2",
+        )
+        is None
+    )

@@ -927,6 +927,53 @@ async def test_drain_consumes_delivery_receipt_without_posting(tmp_path: Path) -
     post.assert_not_awaited()
 
 
+def test_sweep_consumes_only_well_formed_delivery_receipts(tmp_path: Path) -> None:
+    from gobby.hooks.inbox import consume_pending_delivery_receipts
+
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    ack = inbox_dir / "n-0000000000001-ack1.json"
+    ack.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
+    hook_envelope = inbox_dir / "n-0000000000002-hook.json"
+    hook_envelope.write_text(
+        json.dumps({"schema_version": 1, "hook_type": "Stop", "source": "claude"}),
+        encoding="utf-8",
+    )
+    malformed = inbox_dir / "n-0000000000003-bad.json"
+    malformed.write_text("{not json", encoding="utf-8")
+    zero_generation = dict(_delivery_receipt_envelope())
+    zero_generation["delivery_generation"] = 0
+    bad_ack = inbox_dir / "n-0000000000004-bad-ack.json"
+    bad_ack.write_text(json.dumps(zero_generation), encoding="utf-8")
+    app = FastAPI()
+    app.state.database = object()
+    app.state.hook_manager = MagicMock()
+
+    with patch(
+        "gobby.storage.hook_receipts.acknowledge_receipt",
+        return_value=None,
+    ) as acknowledge:
+        consumed = consume_pending_delivery_receipts(app, inbox_dir=inbox_dir)
+
+    assert consumed == 1
+    acknowledge.assert_called_once()
+    assert acknowledge.call_args.kwargs["receipt_id"] == "11111111-1111-1111-1111-111111111111"
+    assert acknowledge.call_args.kwargs["delivery_generation"] == 1
+    assert not ack.exists()
+    # Hook envelopes, malformed files, and invalid acks stay for the drain.
+    assert hook_envelope.exists()
+    assert malformed.exists()
+    assert bad_ack.exists()
+    assert not (inbox_dir / "quarantine").exists()
+
+
+def test_sweep_missing_inbox_dir_is_a_noop(tmp_path: Path) -> None:
+    from gobby.hooks.inbox import consume_pending_delivery_receipts
+
+    app = FastAPI()
+    assert consume_pending_delivery_receipts(app, inbox_dir=tmp_path / "absent") == 0
+
+
 def test_consume_delivery_receipt_applies_pending_message_marks(tmp_path: Path) -> None:
     from gobby.hooks.inbox import _consume_inbox_delivery_receipt
     from gobby.storage.hook_receipts import HookReceipt
