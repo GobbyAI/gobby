@@ -318,6 +318,148 @@ async def test_search_failure_records_no_review_completion() -> None:
     state_manager_cls.assert_not_called()
 
 
+_LADDER_MEMORY = SimpleNamespace(
+    id="memory-ladder",
+    content=(
+        "Current positive timeout defaults are workflow evaluation 90s < daemon adapter 105s "
+        "< provider client 120s, enforced by DaemonConfig.validate_hook_timeout_order. "
+        "Changing adapter_timeout or workflow.timeout requires a daemon restart."
+    ),
+    rationale="Serve when changing hook deadlines.",
+    memory_type=MemoryType.FACT,
+    tags=["hooks", "timeouts"],
+    similarity=0.84,
+)
+
+_UNRELATED_MEMORY = SimpleNamespace(
+    id="memory-unrelated",
+    content=(
+        "Gobby web MemoryTab search architecture after task #16818: non-empty queries call "
+        "useMemory.searchMemories and render the server's searchResults."
+    ),
+    rationale="Serve when changing the web memory tab.",
+    memory_type=MemoryType.FACT,
+    tags=["web", "memory"],
+    similarity=0.31,
+)
+
+# A long-form, multi-topic changes_summary of the shape #21394 produced: it names
+# constants that appear verbatim in ``_LADDER_MEMORY`` but buries them among the
+# repeated path and process boilerplate every summary carries.
+_LONG_SUMMARY = (
+    "Refit the daemon hook timeout ladder so every internal bound answers before ghook's "
+    "transport window closes. Added HOOK_TRANSPORT_WINDOW_SECONDS to src/gobby/config/hooks.py "
+    "and lowered the adapter_timeout default from 105.0 to 26.0. Lowered workflow.timeout via "
+    "DEFAULT_WORKFLOW_TIMEOUT_SECONDS in src/gobby/config/tasks.py from 90.0 to 24.0. Extended "
+    "validate_hook_timeout_order in src/gobby/config/app.py so it spans all five members. "
+    "Bounded WorkflowEvaluationRuntime.run in src/gobby/workflows/evaluation_runtime.py so a "
+    "wedged runtime releases its adapter thread instead of pinning an executor slot. Replaced "
+    "the flat git timeout in src/gobby/workflows/git_utils.py and derived it from the shared "
+    "BlockingEffectDeadline in src/gobby/workflows/hooks.py, with a floor so a spent budget "
+    "never degenerates to a zero-second scan that reads as a clean tree. Regenerated the Rust "
+    "runtime config contract asset. Added tests across eight files in tests/config, "
+    "tests/workflows, tests/hooks, and tests/servers; three carried hardcoded values that no "
+    "longer validate. Validation: focused pytest runs green, ruff format clean, ruff check "
+    "clean, mypy src/ clean, test-types audit reports zero new entries against the baseline. "
+) * 3
+
+
+@pytest.mark.asyncio
+async def test_long_summary_is_embedded_verbatim_not_yake_compressed() -> None:
+    """#21402: the summary reaches the vector leg whole, so identifiers survive.
+
+    ``search_memories`` runs YAKE over ``query`` whenever ``embed_text`` is absent.
+    YAKE ranks by term repetition, so on a changes_summary it keeps the boilerplate
+    and discards the identifiers a memory records. Passing ``embed_text`` is what
+    skips that compression.
+    """
+    from gobby.search.keywords import extract_keywords
+
+    assert len(_LONG_SUMMARY) > 2000
+
+    registry, memory_manager, _task_manager, _session_manager = _registry(
+        task=_task(title="Fit the hook timeout ladder under ghook's transport window"),
+        candidates=[_LADDER_MEMORY],
+    )
+    state_manager = MagicMock()
+    state_manager.get_variables.return_value = {}
+
+    with patch(
+        "gobby.mcp_proxy.tools.memory_review.SessionVariableManager",
+        MagicMock(return_value=state_manager),
+    ):
+        result = await registry.call(
+            "review_task_memories",
+            {
+                "task_id": "#42",
+                "changes_summary": _LONG_SUMMARY,
+                "session_id": SESSION_ID,
+            },
+        )
+
+    assert result["success"] is True
+    search_kwargs = memory_manager.search_memories.await_args.kwargs
+    embedded = search_kwargs["embed_text"]
+
+    # The vector leg receives the whole query, not a compressed stand-in.
+    assert embedded == search_kwargs["query"]
+    identifiers = ("adapter_timeout", "workflow.timeout", "validate_hook_timeout_order")
+    for identifier in identifiers:
+        assert identifier in embedded
+
+    # Guard the reason: without embed_text the service would embed YAKE's output,
+    # which drops every one of those identifiers even though each appears verbatim
+    # in the summary and in the memory the change invalidates.
+    compressed = extract_keywords(search_kwargs["query"])
+    assert compressed is not None
+    for identifier in identifiers:
+        assert identifier in _LADDER_MEMORY.content
+        assert identifier not in compressed
+
+
+@pytest.mark.asyncio
+async def test_review_surfaces_the_invalidated_memory_and_not_an_unrelated_one() -> None:
+    """#21402: recall must improve without degrading into returning noise."""
+
+    def _search(**kwargs: Any) -> list[SimpleNamespace]:
+        # Stand in for the vector leg: a memory is a candidate when the text the
+        # caller hands the embedder shares its distinguishing identifiers.
+        embedded = kwargs["embed_text"] or ""
+        hits = []
+        if all(
+            identifier in embedded
+            for identifier in ("adapter_timeout", "workflow.timeout", "validate_hook_timeout_order")
+        ):
+            hits.append(_LADDER_MEMORY)
+        if "MemoryTab" in embedded or "searchResults" in embedded:
+            hits.append(_UNRELATED_MEMORY)
+        return hits
+
+    registry, memory_manager, _task_manager, _session_manager = _registry(
+        task=_task(title="Fit the hook timeout ladder under ghook's transport window"),
+    )
+    memory_manager.search_memories = AsyncMock(side_effect=_search)
+    state_manager = MagicMock()
+    state_manager.get_variables.return_value = {}
+
+    with patch(
+        "gobby.mcp_proxy.tools.memory_review.SessionVariableManager",
+        MagicMock(return_value=state_manager),
+    ):
+        result = await registry.call(
+            "review_task_memories",
+            {
+                "task_id": "#42",
+                "changes_summary": _LONG_SUMMARY,
+                "session_id": SESSION_ID,
+            },
+        )
+
+    returned = [candidate["id"] for candidate in result["candidates"]]
+    assert "memory-ladder" in returned
+    assert "memory-unrelated" not in returned
+
+
 def test_closed_task_is_accepted_as_explicit_create_memory_source() -> None:
     db = MagicMock()
     with patch(
