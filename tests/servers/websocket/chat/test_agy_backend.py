@@ -19,6 +19,7 @@ from gobby.adapters.acp_client import (
     DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS,
 )
 from gobby.adapters.agy import AgyAdapter
+from gobby.agents.sandbox import SandboxConfig
 from gobby.hooks.events import HookResponse
 from gobby.llm.claude_models import DoneEvent, TextChunk, ToolCallEvent, ToolResultEvent
 from gobby.servers.chat_stream_transport import ChatStreamTransport
@@ -289,7 +290,11 @@ def _session(
 ) -> tuple[Any, Any]:
     mod = _agy()
     backend = mod.AgyWebChatBackend(prompt_timeout=prompt_timeout)
-    session = mod.AgyManagedChatSession(conversation_id=GOBBY_CONV, _backend=backend)
+    session = mod.AgyManagedChatSession(
+        conversation_id=GOBBY_CONV,
+        _backend=backend,
+        sandbox_config=SandboxConfig(enabled=False),
+    )
     session.project_path = project_path or str(Path.cwd())
     session.db_session_id = "sess-agy-web"
     session.project_id = "proj-agy"
@@ -538,6 +543,7 @@ async def test_reconstructed_session_argv_carries_conversation() -> None:
         rebuilt = _agy().AgyManagedChatSession(
             conversation_id="gobby-web-conv-2",
             _backend=backend,
+            sandbox_config=SandboxConfig(enabled=False),
         )
         rebuilt.project_path = session.project_path
         rebuilt.sdk_session_id = session.sdk_session_id
@@ -889,7 +895,11 @@ async def test_ignored_lines_expire_on_progress_clock(trickle: str) -> None:
 @pytest.mark.asyncio
 async def test_attach_session_rejects_missing_cwd(tmp_path: Path) -> None:
     backend = _agy().AgyWebChatBackend()
-    session = _agy().AgyManagedChatSession(conversation_id=GOBBY_CONV, _backend=backend)
+    session = _agy().AgyManagedChatSession(
+        conversation_id=GOBBY_CONV,
+        _backend=backend,
+        sandbox_config=SandboxConfig(enabled=False),
+    )
     session.project_path = str(tmp_path / "missing")
     with (
         patch(f"{_AGY_MOD}.shutil.which", return_value="/bin/agy"),
@@ -1046,6 +1056,7 @@ def test_agy_tool_name_adapter_is_wired() -> None:
     session = _agy().AgyManagedChatSession(
         conversation_id=GOBBY_CONV,
         _backend=_agy().AgyWebChatBackend(),
+        sandbox_config=SandboxConfig(enabled=False),
     )
     adapter = session._tool_name_adapter()
     assert adapter("write_to_file") == "Write"

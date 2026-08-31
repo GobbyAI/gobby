@@ -146,16 +146,18 @@ class TestDroidSrtWrap:
         async def fake_init(handle: Any, session: Any, cwd: str) -> SimpleNamespace:
             return SimpleNamespace(data={"session_id": "droid-1"})
 
-        backend = DroidWebChatBackend(
+        backend = DroidWebChatBackend()
+        session = DroidManagedChatSession(
+            conversation_id="conv-droid",
+            _backend=backend,
             sandbox_config=SandboxConfig(
                 enabled=True,
                 backend="srt",
                 allow_network=False,
                 allow_git_network=True,
                 allow_package_registries=True,
-            )
+            ),
         )
-        session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
         session.project_path = str(tmp_path)
         session.db_session_id = "sess-droid"
 
@@ -350,16 +352,18 @@ class TestAgySrtWrap:
             captured["provider"] = kwargs["provider"]
             return launch
 
-        backend = AgyWebChatBackend(
+        backend = AgyWebChatBackend()
+        session = AgyManagedChatSession(
+            conversation_id="conv-agy",
+            _backend=backend,
             sandbox_config=SandboxConfig(
                 enabled=True,
                 backend="srt",
                 allow_network=False,
                 allow_git_network=True,
                 allow_package_registries=True,
-            )
+            ),
         )
-        session = AgyManagedChatSession(conversation_id="conv-agy", _backend=backend)
         session.project_path = str(tmp_path)
         session.db_session_id = "sess-agy"
         session.project_id = "proj-agy"
@@ -572,7 +576,6 @@ class TestAcpSubprocessesAreSessionOwned:
         assert client.cwd == str(workspace.resolve())
         assert client.start_kwargs["cwd"] == str(workspace.resolve())
         assert client.sandbox_config.allowed_domains == ["a.test"]
-        assert client.sandbox_config is not acp.backend._sandbox_config
         assert client.created is True
         assert session.is_connected is True
         assert session.project_path == str(workspace)
