@@ -322,23 +322,28 @@ async def test_non_codex_clear_leaves_continuation_to_session_start(tmp_path: Pa
     acknowledgment.assert_awaited_once()
 
 
-def test_find_new_codex_rollout_ignores_predecessor_and_older_files(tmp_path: Path) -> None:
+def test_find_new_codex_rollout_accepts_only_files_absent_from_baseline(tmp_path: Path) -> None:
     rollouts = _rollout_dir(tmp_path)
     predecessor = rollouts / "rollout-old.jsonl"
     predecessor.write_text("{}\n")
-    stale = rollouts / "rollout-stale.jsonl"
-    stale.write_text("{}\n")
-    stale_mtime = time.time() - 600
-    os.utime(stale, (stale_mtime, stale_mtime))
-    since = time.time()
+    sibling = rollouts / "rollout-sibling.jsonl"
+    sibling.write_text("{}\n")
 
-    assert _terminal_clear._find_new_codex_rollout(str(predecessor), since=since) is None
+    baseline = _terminal_clear._codex_rollout_baseline(str(predecessor))
+
+    assert baseline == frozenset({sibling})
+    assert _terminal_clear._find_new_codex_rollout(str(predecessor), baseline=baseline) is None
+
+    # A concurrently active thread keeps bumping its rollout; that is never the successor.
+    bumped = time.time() + 60
+    os.utime(sibling, (bumped, bumped))
+    assert _terminal_clear._find_new_codex_rollout(str(predecessor), baseline=baseline) is None
 
     fresh = rollouts / "rollout-fresh.jsonl"
     fresh.write_text("{}\n")
 
-    assert _terminal_clear._find_new_codex_rollout(str(predecessor), since=since) == fresh
-    assert _terminal_clear._find_new_codex_rollout(None, since=since) is None
+    assert _terminal_clear._find_new_codex_rollout(str(predecessor), baseline=baseline) == fresh
+    assert _terminal_clear._find_new_codex_rollout(None, baseline=frozenset()) is None
 
 
 async def test_codex_clear_acknowledges_marker_consumed_by_typed_prompt(tmp_path: Path) -> None:

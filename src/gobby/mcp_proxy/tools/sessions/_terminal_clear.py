@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -68,7 +67,6 @@ _CLEAR_ACK_POLL_SECONDS = 0.05
 _CODEX_CLEAR_ROLLOUT_TIMEOUT_SECONDS = 10.0
 _CODEX_CLEAR_ROLLOUT_POLL_SECONDS = 0.25
 _CODEX_CLEAR_CONTINUE_DELAY_SECONDS = 0.5
-_CODEX_ROLLOUT_MTIME_SLACK_SECONDS = 2.0
 
 CLEAR_COMMAND = "/clear"
 
@@ -153,13 +151,12 @@ def _codex_rollout_dirs(predecessor_transcript: Path) -> list[Path]:
     return dirs
 
 
-def _find_new_codex_rollout(predecessor_transcript: str | None, *, since: float) -> Path | None:
-    """Return the newest Codex rollout written after ``since`` that is not the predecessor's."""
+def _scan_codex_rollouts(predecessor_transcript: str | None) -> list[tuple[float, Path]]:
+    """List (mtime, path) for every rollout near the predecessor's, excluding it."""
     if not predecessor_transcript:
-        return None
+        return []
     predecessor = Path(predecessor_transcript)
-    threshold = since - _CODEX_ROLLOUT_MTIME_SLACK_SECONDS
-    newest: tuple[float, Path] | None = None
+    found: list[tuple[float, Path]] = []
     for directory in _codex_rollout_dirs(predecessor):
         try:
             entries = list(os.scandir(directory))
@@ -175,23 +172,40 @@ def _find_new_codex_rollout(predecessor_transcript: str | None, *, since: float)
                 mtime = entry.stat().st_mtime
             except OSError:
                 continue
-            if mtime < threshold:
-                continue
-            if newest is None or mtime > newest[0]:
-                newest = (mtime, path)
+            found.append((mtime, path))
+    return found
+
+
+def _codex_rollout_baseline(predecessor_transcript: str | None) -> frozenset[Path]:
+    """Rollouts that already exist before /clear; none of them can be the successor."""
+    return frozenset(path for _mtime, path in _scan_codex_rollouts(predecessor_transcript))
+
+
+def _find_new_codex_rollout(
+    predecessor_transcript: str | None,
+    *,
+    baseline: frozenset[Path],
+) -> Path | None:
+    """Return the newest rollout that did not exist when the baseline was captured."""
+    newest: tuple[float, Path] | None = None
+    for mtime, path in _scan_codex_rollouts(predecessor_transcript):
+        if path in baseline:
+            continue
+        if newest is None or mtime > newest[0]:
+            newest = (mtime, path)
     return None if newest is None else newest[1]
 
 
 async def _wait_for_new_codex_rollout(
     predecessor_transcript: str | None,
     *,
-    since: float,
+    baseline: frozenset[Path],
 ) -> Path | None:
     """Poll for the successor thread's rollout until it appears or the window closes."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _CODEX_CLEAR_ROLLOUT_TIMEOUT_SECONDS
     while True:
-        found = _find_new_codex_rollout(predecessor_transcript, since=since)
+        found = _find_new_codex_rollout(predecessor_transcript, baseline=baseline)
         if found is not None:
             return found
         remaining = deadline - loop.time()
@@ -428,7 +442,12 @@ async def execute_clear_session(
         )
 
     async def deliver_clear() -> dict[str, Any]:
-        clear_sent_at = time.time()
+        # Snapshot before /clear: only a rollout absent from this set can be the successor.
+        rollout_baseline = (
+            _codex_rollout_baseline(getattr(session, "transcript_path", None))
+            if source == "codex"
+            else frozenset()
+        )
         try:
             ok, reason, _pending, failure_detail = await _send_terminal_compaction_command(
                 tmux,
@@ -466,7 +485,7 @@ async def execute_clear_session(
             # UserPromptSubmit materializes the successor and consumes the marker.
             successor_rollout = await _wait_for_new_codex_rollout(
                 getattr(session, "transcript_path", None),
-                since=clear_sent_at,
+                baseline=rollout_baseline,
             )
             if successor_rollout is None:
                 restored = restore_failed_attempt()
