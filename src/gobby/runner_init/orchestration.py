@@ -670,6 +670,11 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
                     feedback_review_config,
                     runner.task_manager,
                 )
+                interrupted = runner.feedback_review_service.store.mark_running_interrupted()
+                if interrupted:
+                    logger.info(
+                        "Marked %d orphaned feedback review run(s) interrupted", interrupted
+                    )
                 registered = register_feedback_review_cron(
                     cron_storage=runner.cron_storage,
                     cron_executor=cron_executor,

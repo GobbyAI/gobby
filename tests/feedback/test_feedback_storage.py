@@ -166,3 +166,29 @@ def test_latest_run_returns_newest(temp_db: HubDatabase) -> None:
     assert latest is not None
     assert latest.id == newest_id
     assert latest.dry_run is True
+
+
+def test_mark_running_interrupted_finalizes_only_orphaned_runs(
+    temp_db: HubDatabase,
+) -> None:
+    store = FeedbackReviewStore(temp_db)
+    orphaned_id = store.create_run(
+        dry_run=False, window_start=None, window_end=None, rows_considered=5
+    )
+    completed_id = store.create_run(
+        dry_run=False, window_start=None, window_end=None, rows_considered=2
+    )
+    store.finalize_run(completed_id, status="completed", digest_md="# done")
+
+    assert store.mark_running_interrupted() == 1
+
+    orphaned = store.get_run(orphaned_id)
+    assert orphaned is not None
+    assert orphaned.status == "interrupted"
+    assert orphaned.completed_at is not None
+
+    completed = store.get_run(completed_id)
+    assert completed is not None
+    assert completed.status == "completed"
+
+    assert store.mark_running_interrupted() == 0

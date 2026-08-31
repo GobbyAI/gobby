@@ -120,6 +120,24 @@ class FeedbackReviewStore:
             (status, _json(findings), _json(actions), digest_md, error, _now(), run_id),
         )
 
+    def mark_running_interrupted(self) -> int:
+        """Finalize orphaned running runs as interrupted.
+
+        Runs live inside the daemon process, so at startup no run can
+        legitimately still be running; their rows stay unreviewed and are
+        re-picked by the next run.
+        """
+        with self.db.transaction() as conn:
+            result = conn.execute(
+                """
+                UPDATE feedback_review_runs
+                SET status = 'interrupted', completed_at = %s
+                WHERE status = 'running'
+                """,
+                (_now(),),
+            )
+            return int(result.rowcount or 0)
+
     def mark_reviewed(self, feedback_ids: list[str], run_id: str) -> int:
         """Flip the batch reviewed and link it to *run_id* in one transaction."""
         if not feedback_ids:
