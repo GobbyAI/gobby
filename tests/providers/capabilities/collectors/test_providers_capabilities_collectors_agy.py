@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict, cast
@@ -11,6 +12,7 @@ import pytest
 from gobby.providers.capabilities.collectors import CapabilityCollector, validate_snapshot
 from gobby.providers.capabilities.collectors.agy import (
     _COMMAND,
+    _EFFORT_SUFFIXES,
     AgyCollector,
     AgySourceError,
     _run_agy_models,
@@ -355,3 +357,19 @@ async def test_collector_parses_the_installed_agy_catalog() -> None:
     assert [(model.canonical_model, model.display_name) for model in snapshot.models] == [
         (row["id"], row["label"]) for row in rows
     ]
+
+    # Structural invariants the offline record test cannot vouch for, because it
+    # only ever sees the frozen 1.1.20 rows. A new vendor catalog has to satisfy
+    # these too, and only a live run can say whether it does.
+    ids = [model.canonical_model for model in snapshot.models]
+    assert all(ids)
+    assert len(set(ids)) == len(ids)
+
+    efforts = {effort for model in snapshot.models for effort in (model.supported_efforts or ())}
+    assert efforts <= set(_EFFORT_SUFFIXES), f"unknown effort vocabulary: {efforts}"
+
+    # A11: a base model's bare alias lands on exactly one effort variant.
+    alias_owners: Counter[str] = Counter()
+    for model in snapshot.models:
+        alias_owners.update(model.aliases)
+    assert [alias for alias, count in alias_owners.items() if count > 1] == []
