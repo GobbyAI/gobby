@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.sessions import _terminal_clear
+from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
 from gobby.sessions.handoff import build_handoff_continue_prompt
 
 
@@ -196,10 +197,13 @@ def _clear_patches(
         patch.object(_terminal_clear, "clear_failed_attempt", restore_failed_attempt),
         patch.object(_terminal_clear, "_send_terminal_compaction_command", send_command),
         patch.object(_terminal_clear, "schedule_handoff_continuation", schedule_continuation),
-        patch.object(_terminal_clear, "_wait_for_clear_acknowledgment", acknowledgment),
         patch.object(_terminal_clear, "_CODEX_CLEAR_ROLLOUT_TIMEOUT_SECONDS", 0.2),
         patch.object(_terminal_clear, "_CODEX_CLEAR_ROLLOUT_POLL_SECONDS", 0.01),
-    ]
+    ] + (
+        []
+        if acknowledgment is None
+        else [patch.object(_terminal_clear, "_wait_for_clear_acknowledgment", acknowledgment)]
+    )
 
 
 async def _run_clear(session: SimpleNamespace, patches: list[Any]) -> dict[str, Any]:
@@ -335,3 +339,56 @@ def test_find_new_codex_rollout_ignores_predecessor_and_older_files(tmp_path: Pa
 
     assert _terminal_clear._find_new_codex_rollout(str(predecessor), since=since) == fresh
     assert _terminal_clear._find_new_codex_rollout(None, since=since) is None
+
+
+async def test_codex_clear_acknowledges_marker_consumed_by_typed_prompt(tmp_path: Path) -> None:
+    """The real acknowledgment wait binds the successor once the marker is consumed."""
+    rollouts = _rollout_dir(tmp_path)
+    predecessor = rollouts / "rollout-old.jsonl"
+    predecessor.write_text("{}\n")
+    session = _terminal_session(transcript_path=str(predecessor))
+
+    async def send_command(*_args: Any, **_kwargs: Any) -> tuple[bool, None, bool, None]:
+        (rollouts / "rollout-new.jsonl").write_text("{}\n")
+        return True, None, True, None
+
+    stage_attempt = MagicMock(return_value=MagicMock())
+    restore = MagicMock(return_value=True)
+    schedule = MagicMock(return_value=True)
+
+    class _VariablesAfterPrompt:
+        """Marker reads as consumed only after the continuation prompt was scheduled."""
+
+        def __init__(self, _db: Any) -> None:
+            pass
+
+        def get_variables(self, _session_id: str) -> dict[str, Any]:
+            if not schedule.called:
+                return {}
+            return {
+                CLEAR_ATTEMPT_VARIABLE: {
+                    "attempt_id": stage_attempt.call_args.kwargs["attempt_id"],
+                    "consumed_by": "successor-1",
+                }
+            }
+
+    patches = _clear_patches(
+        session,
+        send_command,
+        acknowledgment=None,
+        restore_failed_attempt=restore,
+        schedule_continuation=schedule,
+    )
+    patches = [p for p in patches if getattr(p, "attribute", None) != "stage_clear_attempt"]
+    patches.append(patch.object(_terminal_clear, "stage_clear_attempt", stage_attempt))
+    patches.append(patch.object(_terminal_clear, "SessionVariableManager", _VariablesAfterPrompt))
+    patches.append(patch.object(_terminal_clear, "_find_new_provider_session", return_value=None))
+
+    result = await _run_clear(session, patches)
+
+    assert result["success"] is True
+    assert result["acknowledged_by"] == "successor_binding"
+    assert result["successor_id"] == "successor-1"
+    assert result["attempt_id"] == stage_attempt.call_args.kwargs["attempt_id"]
+    schedule.assert_called_once()
+    restore.assert_not_called()
