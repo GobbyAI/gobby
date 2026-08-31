@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
+from gobby.mcp_proxy.templates import MCPServerTemplate, get_bundled_templates_path
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.secrets import SecretStore
@@ -316,3 +318,84 @@ def test_non_bool_enabled_is_a_sync_error(temp_db: Any, tmp_path: Path) -> None:
     assert result["synced"] == 0
     assert any("invalid enabled value" in error for error in result["errors"])
     assert manager.get_server("bad-enabled", project_id=GLOBAL_PROJECT_ID) is None
+
+
+_BUNDLED_TEMPLATE_NAMES = sorted(path.stem for path in get_bundled_templates_path().glob("*.yaml"))
+
+
+def _required_values(template: MCPServerTemplate) -> dict[str, str]:
+    """Minimal instance values satisfying a template's required and one-of rules."""
+    needed = {param.name for param in template.params if param.required}
+    needed.update(group[0] for group in template.require_one_of)
+    values: dict[str, str] = {}
+    for param in template.params:
+        if param.name not in needed:
+            continue
+        if param.secret:
+            values[param.name] = f"$secret:{param.name}_test"
+        elif param.choices:
+            values[param.name] = param.choices[0]
+        else:
+            values[param.name] = f"{param.name}-value"
+    return values
+
+
+@pytest.mark.parametrize("template_name", _BUNDLED_TEMPLATE_NAMES)
+def test_project_override_adds_env_param_for_every_bundled_template(
+    temp_db: Any, tmp_path: Path, sample_project: dict[str, Any], template_name: str
+) -> None:
+    """A project-level override can add an env-backed param to any bundled template."""
+    from gobby.mcp_proxy.sync_servers import sync_mcp_server_files
+    from gobby.mcp_proxy.sync_templates import sync_bundled_mcp_templates
+
+    manager = LocalMCPManager(temp_db)
+    bundled_sync = sync_bundled_mcp_templates(temp_db, get_bundled_templates_path(), tag="gobby")
+    assert bundled_sync["errors"] == []
+
+    bundled_path = get_bundled_templates_path() / f"{template_name}.yaml"
+    override = yaml.safe_load(bundled_path.read_text(encoding="utf-8"))
+    override["override"] = True
+    override.setdefault("params", []).append(
+        {"name": "extra_flag", "env": "EXTRA_FLAG", "default": "off", "choices": ["on", "off"]}
+    )
+    project_templates = tmp_path / "project" / "templates"
+    project_templates.mkdir(parents=True)
+    (project_templates / f"{template_name}.yaml").write_text(
+        yaml.safe_dump(override), encoding="utf-8"
+    )
+    template_sync = sync_bundled_mcp_templates(
+        temp_db,
+        [project_templates],
+        tag="user",
+        project_id=sample_project["id"],
+        project_root=project_templates,
+    )
+    assert template_sync["errors"] == []
+    project_template = manager.get_template(template_name, project_id=sample_project["id"])
+    assert project_template is not None
+    assert project_template.project_id == sample_project["id"]
+    assert project_template.owner == "user"
+
+    values = _required_values(MCPServerTemplate.from_definition(project_template.definition))
+    values["extra_flag"] = "on"
+    project_servers = tmp_path / "project" / "servers"
+    project_servers.mkdir(parents=True)
+    instance_name = f"{template_name}-inst"
+    (project_servers / f"{instance_name}.yaml").write_text(
+        yaml.safe_dump({"name": instance_name, "template": template_name, "values": values}),
+        encoding="utf-8",
+    )
+    server_sync = sync_mcp_server_files(
+        temp_db,
+        [project_servers],
+        project_id=sample_project["id"],
+        project_root=project_servers,
+        secret_store=SecretStore(temp_db),
+    )
+    assert server_sync["errors"] == []
+
+    row = manager.get_server(instance_name, project_id=sample_project["id"])
+    assert row is not None
+    assert row.template_id == project_template.id
+    assert row.env is not None
+    assert row.env["EXTRA_FLAG"] == "on"
