@@ -15,7 +15,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE, IndexedFile, IndexedProject
+from gobby.code_index.models import (
+    CODE_INDEX_UUID_NAMESPACE,
+    IndexedFile,
+    IndexedProject,
+    IndexWriteMode,
+)
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.mcp_proxy.tools import plans as plans_tools
@@ -30,6 +35,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.project_context import reset_project_context, set_project_context
+from tests.fixtures.isolated_checkout import write_project_marker
 
 pytestmark = pytest.mark.unit
 
@@ -84,15 +90,22 @@ def _write_plan(
     return path
 
 
-def _create_indexed_project(db: HubDatabase, root: Path) -> str:
-    project_id = (
+def _create_project(db: HubDatabase, root: Path, name: str) -> str:
+    project_id = str(uuid.uuid4())
+    write_project_marker(root, project_id=project_id, name=name)
+    return (
         LocalProjectManager(db)
         .create(
-            name=f"plans-validation-{root.name}",
+            name=name,
             repo_path=str(root),
+            project_id=project_id,
         )
         .id
     )
+
+
+def _create_indexed_project(db: HubDatabase, root: Path) -> str:
+    project_id = _create_project(db, root, f"plans-validation-{root.name}")
     indexed_path = root / "docs" / "demo.md"
     indexed_path.parent.mkdir(parents=True, exist_ok=True)
     indexed_path.write_text("Demo.\n", encoding="utf-8")
@@ -105,7 +118,8 @@ def _create_indexed_project(db: HubDatabase, root: Path) -> str:
             root_path=str(root),
             total_files=1,
             total_symbols=0,
-        )
+        ),
+        mode=IndexWriteMode.OVERLAY,
     )
     code_index.upsert_file(
         IndexedFile(
@@ -116,7 +130,9 @@ def _create_indexed_project(db: HubDatabase, root: Path) -> str:
             content_hash=content_hash,
             symbol_count=0,
             byte_size=indexed_path.stat().st_size,
-        )
+        ),
+        root_path=str(root),
+        mode=IndexWriteMode.OVERLAY,
     )
     return project_id
 
@@ -318,7 +334,7 @@ async def test_large_plan_coverage_does_not_starve_short_db_job(
     monkeypatch: pytest.MonkeyPatch,
     coverage_executor: CoverageExecutor,
 ) -> None:
-    project_id = LocalProjectManager(temp_db).create(name="large-plan", repo_path=str(tmp_path)).id
+    project_id = _create_project(temp_db, tmp_path, "large-plan")
     root_task = LocalTaskManager(temp_db).create_task(
         project_id,
         "Large plan root",
@@ -379,7 +395,7 @@ async def test_plan_tool_schemas_and_happy_path(
     tmp_path: Path,
     coverage_executor: CoverageExecutor,
 ) -> None:
-    project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
+    project_id = _create_project(temp_db, tmp_path, "plans")
     root_task = LocalTaskManager(temp_db).create_task(
         project_id,
         "Plan root",
@@ -487,11 +503,7 @@ async def test_snapshot_returns_complete_decoded_document(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    project_id = (
-        LocalProjectManager(temp_db)
-        .create(name="review-evidence-tools", repo_path=str(tmp_path))
-        .id
-    )
+    project_id = _create_project(temp_db, tmp_path, "review-evidence-tools")
     session = SessionManager(temp_db).register(
         external_id="review-evidence-tools",
         machine_id="21000000-0000-4000-8000-000000000002",
@@ -563,7 +575,7 @@ async def test_delete_plan_with_unresolvable_project_does_not_delete_unscoped_pl
     tmp_path: Path,
     coverage_executor: CoverageExecutor,
 ) -> None:
-    project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
+    project_id = _create_project(temp_db, tmp_path, "plans")
     root_task = LocalTaskManager(temp_db).create_task(
         project_id,
         "Plan root",
@@ -598,7 +610,7 @@ async def test_delete_plan_with_unresolvable_project_does_not_delete_unscoped_pl
 
 @pytest.mark.asyncio
 async def test_create_plan_rejects_invalid_plan_kind(temp_db: HubDatabase, tmp_path: Path) -> None:
-    project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
+    project_id = _create_project(temp_db, tmp_path, "plans")
     plan_path = _write_plan(tmp_path)
     registry = create_plan_registry(temp_db, default_project_id=project_id)
 
@@ -669,7 +681,8 @@ async def test_validate_plan_uses_complete_isolated_context(
             root_path=str(worktree_root),
             total_files=1,
             total_symbols=0,
-        )
+        ),
+        mode=IndexWriteMode.OVERLAY,
     )
     code_index.upsert_file(
         IndexedFile(
@@ -680,7 +693,9 @@ async def test_validate_plan_uses_complete_isolated_context(
             content_hash=content_hash,
             symbol_count=0,
             byte_size=indexed_path.stat().st_size,
-        )
+        ),
+        root_path=str(worktree_root),
+        mode=IndexWriteMode.OVERLAY,
     )
     registry = create_plan_registry(temp_db)
     token = set_project_context(
@@ -791,8 +806,9 @@ async def test_validate_plan_fails_closed_without_project_context(
 async def test_validate_plan_returns_warnings_for_missing_plan_id(
     temp_db: HubDatabase, tmp_path: Path
 ) -> None:
+    project_id = _create_project(temp_db, tmp_path, "missing-plan-id")
     plan_path = _write_plan_without_plan_id(tmp_path)
-    registry = create_plan_registry(temp_db, default_project_id="project-1")
+    registry = create_plan_registry(temp_db, default_project_id=project_id)
 
     result = await registry.call("validate_plan", {"plan_file": str(plan_path)})
 
@@ -807,6 +823,7 @@ async def test_validate_plan_returns_warnings_for_missing_plan_id(
 async def test_validate_plan_rejects_plan_with_old_phase_form(
     temp_db: HubDatabase, tmp_path: Path
 ) -> None:
+    project_id = _create_project(temp_db, tmp_path, "old-phase-plan")
     plan_dir = tmp_path / ".gobby" / "plans"
     plan_dir.mkdir(parents=True)
     plan_path = plan_dir / "broken.md"
@@ -831,7 +848,7 @@ async def test_validate_plan_rejects_plan_with_old_phase_form(
         ).lstrip(),
         encoding="utf-8",
     )
-    registry = create_plan_registry(temp_db, default_project_id="project-1")
+    registry = create_plan_registry(temp_db, default_project_id=project_id)
 
     result = await registry.call("validate_plan", {"plan_file": str(plan_path)})
 
@@ -843,10 +860,11 @@ async def test_validate_plan_rejects_plan_with_old_phase_form(
 async def test_validate_plan_returns_semantic_lint_errors(
     temp_db: HubDatabase, tmp_path: Path
 ) -> None:
+    project_id = _create_project(temp_db, tmp_path, "semantic-lint-plan")
     plan_path = _write_plan(tmp_path)
     text = plan_path.read_text(encoding="utf-8")
     plan_path.write_text(text.replace("Target: `docs/demo.md`\n\n", ""), encoding="utf-8")
-    registry = create_plan_registry(temp_db, default_project_id="project-1")
+    registry = create_plan_registry(temp_db, default_project_id=project_id)
 
     result = await registry.call("validate_plan", {"plan_file": str(plan_path)})
 
@@ -860,11 +878,7 @@ async def test_prepare_review_round_uses_call_tool_envelope_session(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    project_id = (
-        LocalProjectManager(temp_db)
-        .create(name="envelope-review-evidence", repo_path=str(tmp_path))
-        .id
-    )
+    project_id = _create_project(temp_db, tmp_path, "envelope-review-evidence")
     tools, session_manager = _create_plan_daemon_tools(temp_db, project_id)
     session = session_manager.register(
         external_id="envelope-review-evidence",
@@ -894,11 +908,7 @@ async def test_prepare_review_round_staged_binding_with_ambient_context(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    project_id = (
-        LocalProjectManager(temp_db)
-        .create(name="staged-review-evidence", repo_path=str(tmp_path))
-        .id
-    )
+    project_id = _create_project(temp_db, tmp_path, "staged-review-evidence")
     tools, session_manager = _create_plan_daemon_tools(temp_db, project_id)
     ambient_session = session_manager.register(
         external_id="staged-review-evidence-ambient",
@@ -937,11 +947,7 @@ async def test_prepare_review_round_explicit_session_wins_over_ambient_context(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    project_id = (
-        LocalProjectManager(temp_db)
-        .create(name="explicit-review-evidence", repo_path=str(tmp_path))
-        .id
-    )
+    project_id = _create_project(temp_db, tmp_path, "explicit-review-evidence")
     tools, session_manager = _create_plan_daemon_tools(temp_db, project_id)
     ambient_session = session_manager.register(
         external_id="explicit-review-evidence-ambient",
@@ -978,7 +984,7 @@ async def test_apply_plan_review_repairs_registered(
     tmp_path: Path,
     coverage_executor: CoverageExecutor,
 ) -> None:
-    project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
+    project_id = _create_project(temp_db, tmp_path, "plans")
     registry = create_plan_registry(
         temp_db,
         default_project_id=project_id,
