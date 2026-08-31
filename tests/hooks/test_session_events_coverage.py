@@ -654,13 +654,20 @@ class TestSessionStartAndHelpers:
             assert skills == {"skill1"}
 
     @pytest.mark.parametrize(
-        "session_kwargs",
-        [{"agent_depth": 1}, {"parent_session_id": "parent-session"}],
-        ids=["agent-depth", "parent-session"],
+        ("session_kwargs", "expected_spawned"),
+        [
+            ({"agent_depth": 1}, True),
+            ({"agent_run_id": "run-1"}, True),
+            # parent_session_id is lineage only — clear successors carry it
+            # while staying interactive.
+            ({"parent_session_id": "parent-session"}, False),
+        ],
+        ids=["agent-depth", "agent-run", "parent-lineage-only"],
     )
     def test_build_agent_changes_marks_child_as_spawned(
         self,
         session_kwargs: dict[str, Any],
+        expected_spawned: bool,
     ) -> None:
         handler = _TestHandler()
         handler._session_manager.get.return_value = _make_session(**session_kwargs)
@@ -686,7 +693,7 @@ class TestSessionStartAndHelpers:
                 enabled_variables=[],
             )
 
-        assert changes["is_spawned_agent"] is True
+        assert changes["is_spawned_agent"] is expected_spawned
         assert changes["_agent_type"] == "test-agent"
 
 
