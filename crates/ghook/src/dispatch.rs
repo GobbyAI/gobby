@@ -1,6 +1,7 @@
 use crate::action::{
-    DeliveryReceiptAck, HookAction, action_from_failure, action_from_success_response,
-    continue_action, emit_action, emit_empty_json, extract_delivery_receipt,
+    DeliveryReceiptAck, HookAction, action_from_failure, action_from_malformed_input,
+    action_from_success_response, continue_action, emit_action, emit_empty_json,
+    extract_delivery_receipt,
 };
 use crate::args::Args;
 use crate::cli_config::CliConfig;
@@ -77,9 +78,9 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
             if project_root.is_none() && !managed_by_environment {
                 return emit_exit(continue_action(cfg.source, hook_type));
             }
-            let _ = transport::quarantine_malformed(&stdin_raw, &e.to_string(), is_critical);
-            emit_empty_json();
-            return ExitCode::from(cfg.malformed_input_exit_code(hook_type));
+            let error = e.to_string();
+            let _ = transport::quarantine_malformed(&stdin_raw, &error, is_critical);
+            return emit_exit(action_from_malformed_input(&cfg, hook_type, &error));
         }
     };
 
@@ -215,9 +216,9 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
                 return emit_exit(continue_action(cfg.source, hook_type));
             }
 
-            if report.is_adapter_timeout()
-                && (cfg.source == "agy" || !cfg.is_critical_hook(hook_type))
-            {
+            // Noncritical hooks fail open on an adapter timeout; the per-CLI
+            // matrix alone decides criticality (AGY declares none).
+            if report.is_adapter_timeout() && !is_critical {
                 return emit_exit(continue_action(cfg.source, hook_type));
             }
 

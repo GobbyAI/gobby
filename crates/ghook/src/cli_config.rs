@@ -13,7 +13,9 @@ pub struct CliConfig {
     pub source: &'static str,
     /// Hooks where failure should fail-closed.
     pub critical_hooks: HashSet<&'static str>,
-    /// Exit code to use for malformed JSON input, matching the Python dispatcher.
+    /// Exit code for malformed JSON input. Zero fails open: the host gets its
+    /// skip JSON on stdout and the parse error on stderr, because AGY blocks
+    /// the tool on any non-zero `PreToolUse` exit.
     pub json_error_exit_code: u8,
 }
 
@@ -44,7 +46,7 @@ impl CliConfig {
             "agy" => Some(Self {
                 source: "agy",
                 critical_hooks: HashSet::new(),
-                json_error_exit_code: 2,
+                json_error_exit_code: 0,
             }),
             "grok" => Some(Self {
                 source: "grok",
@@ -97,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_stop_is_critical() {
+    fn codex_lifecycle_hooks_critical_and_stop_noncritical() {
         let c = CliConfig::for_cli("codex").unwrap();
         assert!(c.is_critical_hook("SessionStart"));
         assert!(c.is_critical_hook("SessionEnd"));
@@ -129,10 +131,21 @@ mod tests {
         assert_eq!(c.source, "agy");
         assert!(c.critical_hooks.is_empty());
         assert!(!c.is_critical_hook("SessionStart"));
-        assert!(!c.is_critical_hook("PreInvocation"));
-        assert!(!c.is_critical_hook("Stop"));
-        assert!(!c.is_critical_hook("PreToolUse"));
-        assert_eq!(c.json_error_exit_code, 2);
+        assert_eq!(c.json_error_exit_code, 0);
+        for hook in [
+            "PreInvocation",
+            "PreToolUse",
+            "PostToolUse",
+            "PostInvocation",
+            "Stop",
+        ] {
+            assert!(!c.is_critical_hook(hook), "{hook} must not be critical");
+            assert_eq!(
+                c.malformed_input_exit_code(hook),
+                0,
+                "{hook} must fail open on malformed input"
+            );
+        }
     }
 
     #[test]
@@ -149,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn droid_recognized_with_no_critical_hooks() {
+    fn droid_lifecycle_hooks_critical_and_stop_noncritical() {
         let c = CliConfig::for_cli("droid").unwrap();
         assert_eq!(c.source, "droid");
         assert!(c.is_critical_hook("SessionStart"));
@@ -158,6 +171,8 @@ mod tests {
         assert!(!c.is_critical_hook("Stop"));
         assert!(!c.is_critical_hook("PreToolUse"));
         assert_eq!(c.json_error_exit_code, 1);
+        assert_eq!(c.malformed_input_exit_code("SessionStart"), 1);
+        assert_eq!(c.malformed_input_exit_code("Stop"), 1);
     }
 
     #[test]

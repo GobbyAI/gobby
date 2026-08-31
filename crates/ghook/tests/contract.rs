@@ -31,8 +31,6 @@ fn malformed_stdin_uses_cli_specific_json_error_contract() -> TestResult {
         ("droid", "SessionEnd", 1),
         ("droid", "PreCompact", 1),
         ("grok", "session_start", 2),
-        ("agy", "PreToolUse", 2),
-        ("agy", "Stop", 2),
     ] {
         let home = tempfile::tempdir()?;
         let gobby_home = tempfile::tempdir()?;
@@ -55,6 +53,47 @@ fn malformed_stdin_uses_cli_specific_json_error_contract() -> TestResult {
         );
         assert_json_stdout(&output, serde_json::json!({}))?;
         assert_stderr_empty(&output, cli)?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn malformed_stdin_agy_fails_open_with_skip_json() -> TestResult {
+    // A non-zero PreToolUse exit blocks the tool in AGY, so malformed input
+    // takes the same fail-open shape as its daemon-down paths.
+    for (hook_type, expected) in [
+        ("PreToolUse", serde_json::json!({"decision": "allow"})),
+        ("PreInvocation", serde_json::json!({})),
+        ("PostToolUse", serde_json::json!({})),
+        ("PostInvocation", serde_json::json!({})),
+        ("Stop", serde_json::json!({})),
+    ] {
+        let home = tempfile::tempdir()?;
+        let gobby_home = tempfile::tempdir()?;
+        let daemon_url = closed_local_url()?;
+
+        let output = run_ghook_with_dirs(
+            home.path(),
+            gobby_home.path(),
+            Some("agy"),
+            Some(hook_type),
+            &daemon_url,
+            "not json",
+            &[],
+        )?;
+
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "agy {hook_type} malformed stdin should fail open"
+        );
+        assert_json_stdout(&output, expected)?;
+        let stderr = String::from_utf8(output.stderr)?;
+        assert!(
+            stderr.contains("Malformed hook input"),
+            "agy {hook_type} should report the parse error on stderr:\n{stderr}"
+        );
     }
 
     Ok(())
@@ -1220,36 +1259,44 @@ fn daemon_retry_backpressure_continues_noncritical_hook_and_keeps_envelope() -> 
 
 #[test]
 fn daemon_adapter_timeout_fails_closed_on_critical_hook() -> TestResult {
-    let home = tempfile::tempdir()?;
-    let gobby_home = tempfile::tempdir()?;
-    let (daemon_url, daemon) = start_daemon(http_json_status(
-        503,
-        "Service Unavailable",
-        r#"{"status":"retry","retry_kind":"adapter_timeout"}"#,
-    ))?;
+    for hook_type in ["session-start", "session-end"] {
+        let home = tempfile::tempdir()?;
+        let gobby_home = tempfile::tempdir()?;
+        let (daemon_url, daemon) = start_daemon(http_json_status(
+            503,
+            "Service Unavailable",
+            r#"{"status":"retry","retry_kind":"adapter_timeout"}"#,
+        ))?;
 
-    let output = run_ghook_with_dirs(
-        home.path(),
-        gobby_home.path(),
-        Some("claude"),
-        Some("session-end"),
-        &daemon_url,
-        VALID_STDIN,
-        &[],
-    )?;
-    let _request = join_daemon(daemon)?;
+        let output = run_ghook_with_dirs(
+            home.path(),
+            gobby_home.path(),
+            Some("claude"),
+            Some(hook_type),
+            &daemon_url,
+            VALID_STDIN,
+            &[],
+        )?;
+        let _request = join_daemon(daemon)?;
 
-    assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
-    let stderr = String::from_utf8(output.stderr)?;
-    assert!(stderr.contains("Hook error on critical hook 'session-end'"));
-    assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1);
+        assert_eq!(output.status.code(), Some(2), "{hook_type}");
+        assert!(output.stdout.is_empty(), "{hook_type}");
+        let stderr = String::from_utf8(output.stderr)?;
+        assert!(
+            stderr.contains(&format!("Hook error on critical hook '{hook_type}'")),
+            "{hook_type} stderr:\n{stderr}"
+        );
+        assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1, "{hook_type}");
+    }
 
     Ok(())
 }
 
 #[test]
 fn daemon_adapter_timeout_agy_skip_stdout_is_protojson_legal() -> TestResult {
+    // AGY declares no critical hook in `CliConfig`, so the matrix alone lets
+    // every native event continue past an adapter timeout — no source-specific
+    // clause in the dispatcher.
     for (hook_type, expected) in [
         ("PreToolUse", serde_json::json!({"decision": "allow"})),
         ("PreInvocation", serde_json::json!({})),
@@ -1280,6 +1327,7 @@ fn daemon_adapter_timeout_agy_skip_stdout_is_protojson_legal() -> TestResult {
         assert_json_stdout(&output, expected.clone())?;
         assert_ne!(stdout, serde_json::json!({"continue": true}), "{hook_type}");
         assert_ne!(stdout.get("status"), Some(&Value::String("error".into())));
+        assert_stderr_empty(&output, &format!("agy {hook_type} adapter timeout"))?;
         assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1, "{hook_type}");
     }
 

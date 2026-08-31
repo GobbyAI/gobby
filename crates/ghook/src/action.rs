@@ -80,6 +80,29 @@ pub(crate) fn continue_action(source: &str, hook_type: &str) -> HookAction {
     }
 }
 
+/// Malformed stdin: `{}` plus the host's JSON-error exit. A zero exit in the
+/// matrix means the host fails open, so it gets its skip JSON on stdout and
+/// the parse error on stderr instead of a silent `{}`.
+pub(crate) fn action_from_malformed_input(
+    cfg: &CliConfig,
+    hook_type: &str,
+    detail: &str,
+) -> HookAction {
+    let exit_code = cfg.malformed_input_exit_code(hook_type);
+    if exit_code == 0 {
+        return HookAction {
+            exit_code,
+            stdout_json: Some(skip_stdout_json(cfg.source, hook_type)),
+            stderr_message: Some(format!("Malformed hook input: {detail}")),
+        };
+    }
+    HookAction {
+        exit_code,
+        stdout_json: Some("{}".to_string()),
+        stderr_message: None,
+    }
+}
+
 /// Claude consumes WorktreeCreate stdout verbatim as the created worktree
 /// path, so this hook type must never receive the JSON envelope (or any
 /// other JSON) on stdout — only the bare path on success, or a non-zero
@@ -413,6 +436,57 @@ mod tests {
             continue_action("agy", "Stop").stdout_json.as_deref(),
             Some("{}")
         );
+    }
+
+    #[test]
+    fn action_from_malformed_input_fails_open_for_agy() {
+        for (hook_type, expected) in [
+            ("PreToolUse", json!({"decision": "allow"})),
+            ("PreInvocation", json!({})),
+            ("PostToolUse", json!({})),
+            ("PostInvocation", json!({})),
+            ("Stop", json!({})),
+        ] {
+            let action = action_from_malformed_input(
+                &CliConfig::for_cli("agy").expect("supported CLI"),
+                hook_type,
+                "expected value at line 1 column 1",
+            );
+            assert_eq!(action.exit_code, 0, "{hook_type}");
+            let parsed: Value =
+                serde_json::from_str(action.stdout_json.as_deref().unwrap()).unwrap();
+            assert_eq!(parsed, expected, "{hook_type}");
+            assert_eq!(
+                action.stderr_message.as_deref(),
+                Some("Malformed hook input: expected value at line 1 column 1"),
+                "{hook_type}"
+            );
+        }
+    }
+
+    #[test]
+    fn action_from_malformed_input_uses_host_exit_code_elsewhere() {
+        for (cli, hook_type, exit_code) in [
+            ("claude", "session-start", 2),
+            ("codex", "SessionStart", 2),
+            ("codex", "Stop", 1),
+            ("qwen", "PreToolUse", 1),
+            ("droid", "Stop", 1),
+            ("grok", "session_start", 2),
+        ] {
+            let action = action_from_malformed_input(
+                &CliConfig::for_cli(cli).expect("supported CLI"),
+                hook_type,
+                "ignored",
+            );
+            assert_eq!(action.exit_code, exit_code, "{cli} {hook_type}");
+            assert_eq!(
+                action.stdout_json.as_deref(),
+                Some("{}"),
+                "{cli} {hook_type}"
+            );
+            assert!(action.stderr_message.is_none(), "{cli} {hook_type}");
+        }
     }
 
     #[test]
