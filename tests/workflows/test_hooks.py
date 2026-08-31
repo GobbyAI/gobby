@@ -1971,3 +1971,93 @@ class TestHookBlockingWorkOffload:
             "git_status",
         }
         assert all(thread_id != loop_thread_id for thread_id in collaborator_threads.values())
+
+
+class TestStagedEffectsCrossRuntimeThread:
+    """on_receipt staged effects must survive the isolated-runtime thread hop.
+
+    ``WorkflowEvaluationRuntime`` evaluates on its own "gobby-workflow-runtime"
+    thread, while ``adapter_execution.run_adapter`` calls
+    ``take_worker_staging`` on the adapter thread. The staging store is a
+    ``threading.local``, so a payload recorded only inside the coroutine is
+    invisible to the consumer and the receipt is prepared without it.
+    """
+
+    def test_staged_effects_reach_the_calling_thread(self) -> None:
+        from gobby.hooks.receipt_effects import (
+            STAGED_EFFECTS_FIELD,
+            take_worker_staging,
+        )
+
+        staged = {
+            "session_id": SESSION_ID,
+            "session_variables": {"_gobby_feedback_epoch_reviewed": True},
+        }
+        runtime_thread: dict[str, str] = {}
+
+        async def fake_evaluate_rules(
+            event: HookEvent,
+            *,
+            blocking_deadline: BlockingEffectDeadline | None = None,
+        ) -> HookResponse:
+            runtime_thread["name"] = threading.current_thread().name
+            return HookResponse(
+                decision="block",
+                reason="survey required",
+                metadata={STAGED_EFFECTS_FIELD: staged},
+            )
+
+        runtime = WorkflowEvaluationRuntime()
+        handler = WorkflowHookHandler(evaluation_runtime=runtime)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"tool_name": "mcp__gobby__call_tool"},
+            metadata={"_platform_session_id": SESSION_ID},
+        )
+        try:
+            take_worker_staging()  # clear, as run_adapter does
+            caller_thread = threading.current_thread().name
+
+            with patch.object(handler, "_evaluate_rules", new=fake_evaluate_rules):
+                response = handler.evaluate(event)
+
+            assert response.decision == "block"
+            # Teeth: the evaluation really did run on another thread, which is
+            # why re-recording on this one is required at all.
+            assert runtime_thread["name"] != caller_thread
+            assert runtime_thread["name"] == "gobby-workflow-runtime"
+
+            assert take_worker_staging() == staged
+        finally:
+            handler.shutdown()
+
+    def test_absent_staged_effects_record_nothing(self) -> None:
+        from gobby.hooks.receipt_effects import take_worker_staging
+
+        async def fake_evaluate_rules(
+            event: HookEvent,
+            *,
+            blocking_deadline: BlockingEffectDeadline | None = None,
+        ) -> HookResponse:
+            return HookResponse(decision="allow")
+
+        runtime = WorkflowEvaluationRuntime()
+        handler = WorkflowHookHandler(evaluation_runtime=runtime)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={},
+            metadata={"_platform_session_id": SESSION_ID},
+        )
+        try:
+            take_worker_staging()
+            with patch.object(handler, "_evaluate_rules", new=fake_evaluate_rules):
+                handler.evaluate(event)
+            assert take_worker_staging() == {}
+        finally:
+            handler.shutdown()

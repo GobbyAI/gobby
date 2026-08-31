@@ -880,10 +880,20 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     raise RuntimeError(
                         "Synchronous workflow evaluation requires a runtime"
                     ) from None
-                return self._evaluation_runtime.run(
+                response = self._evaluation_runtime.run(
                     self.evaluate_async(event, blocking_deadline=blocking_deadline),
                     timeout=runtime_wait,
                 )
+                # The runtime evaluates on its own "gobby-workflow-runtime" thread,
+                # so the ``record_worker_staging`` call inside ``_evaluate_rules``
+                # landed on that thread's ``threading.local``. ``take_worker_staging``
+                # runs on this adapter thread, so re-record the staged payload here
+                # or the receipt is prepared without it and every on_receipt
+                # ``acknowledge_variable`` is lost.
+                staged = response.metadata.get(STAGED_EFFECTS_FIELD)
+                if isinstance(staged, dict) and staged:
+                    record_worker_staging(staged)
+                return response
 
         except (asyncio.CancelledError, concurrent.futures.CancelledError):
             return self._handle_cancelled(event)
