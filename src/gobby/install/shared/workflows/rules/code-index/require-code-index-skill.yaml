@@ -80,7 +80,7 @@ rules:
       and event.data.get('canonical_code_navigation_repo_scope') is not False
     effects:
       - type: block
-        reason: 'Use compact `gcode grep "pattern" -m 50` (supports -F -i -w -l -g; exit 0 even with no matches) or `gcode search-content "query"` — the code index has full access to this repo and returns ranked, token-cheap pages. Run any printed continuation command exactly. If gcode errors, read its one-line JSON and follow the `recovery` directive; do NOT re-run the failing gcode call — its recorded failure fails this rule open, so re-run the grep/rg command that was blocked instead.'
+        reason: 'Use compact `gcode grep "pattern" -m 50` (supports -F -i -w -l -g; exit 0 even with no matches) or `gcode search-content "query"` — the code index has full access to this repo and returns ranked, token-cheap pages. Patterns are Rust regex, not grep BRE: write alternation as `a|b`, because `a\|b` matches a literal pipe and silently returns nothing. Run any printed continuation command exactly. If gcode errors, read its one-line JSON and follow the `recovery` directive; do NOT re-run the failing gcode call — its recorded failure fails this rule open, so re-run the grep/rg command that was blocked instead.'
 
   prefer-gcode-for-source-read:
     description: "Block broad source reads in indexed projects after code-index is loaded"

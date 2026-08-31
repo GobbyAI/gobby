@@ -189,10 +189,10 @@ pub(crate) enum Command {
     },
     /// Indexed grep: exact pattern search on content chunks
     #[command(
-        after_help = "gcode grep is indexed search over code_content_chunks. Accepted flags: -F -i -w -l -m -A -B -C -g plus accepted no-ops -E -n -r -R. Remaining grep/rg flags are not supported; use raw `rg` for filesystem grep."
+        after_help = "gcode grep is indexed search over code_content_chunks. Accepted flags: -F -i -w -l -m -A -B -C -g plus accepted no-ops -E -n -r -R. Remaining grep/rg flags are not supported; use raw `rg` for filesystem grep.\n\nPatterns are Rust regex, not grep BRE: write alternation as `a|b`, because `a\\|b` matches a literal pipe and returns no matches."
     )]
     Grep {
-        /// Pattern to search for (regex or fixed string)
+        /// Pattern to search for (Rust regex, or fixed string with -F)
         #[arg(value_parser = non_empty_grep_pattern)]
         pattern: String,
         /// Optional file paths or globs to filter results
