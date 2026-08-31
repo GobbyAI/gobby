@@ -59,7 +59,7 @@ rules:
           - "gobby-sessions:set_handoff"
         acknowledge_variable: _gobby_feedback_epoch_reviewed
         reason: |
-          Before compacting, perform one bounded Gobby-experience survey using
+          Before handing off, perform one bounded Gobby-experience survey using
           only first-hand evidence from this context epoch. Call
           `gobby-sessions:feedback` with at most 3 observations. Required
           fields: source, kind (friction | bug | noise | surprise |

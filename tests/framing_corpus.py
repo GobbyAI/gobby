@@ -83,6 +83,7 @@ REDIRECT_RULES = frozenset(
 
 TRUE_RESTRICTION_RULES = frozenset(
     {
+        "block-autonomous-clear-session",
         "block-cross-session-foreign-dirty-edit",
         "block-cross-session-foreign-staged-commit",
         "block-docker-policy-edits",
@@ -128,7 +129,8 @@ TRUE_RESTRICTION_RULES = frozenset(
         "no-uv-add",
         "no-wget-upload",
         "no-yarn-add",
-        "review-closed-task-memories-before-compact",
+        "review-closed-task-memories-before-handoff",
+        "review-gobby-session-feedback-before-handoff",
     }
 )
 

@@ -36,7 +36,7 @@ rules:
           - "gobby-sessions:set_handoff"
         acknowledge_variable: _memory_review_stop_delivered
         reason: |
-          Before compacting, closed task(s) need one bounded memory review while
+          Before handing off, closed task(s) need one bounded memory review while
           their context is still live:
           {% for item in variables.get('_memory_pending_task_reviews') or [] %}- {{ item.task_ref }} (task_id `{{ item.task_id }}`): {{ item.changes_summary | truncate(200) }}
           {% endfor %}For each, call `gobby-memory:review_task_memories(task_id, changes_summary)`;
