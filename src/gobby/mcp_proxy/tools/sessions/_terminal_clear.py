@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-from datetime import datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -17,6 +14,7 @@ from gobby.agents.terminal_delivery import (
 from gobby.mcp_proxy.tools.sessions._terminal import (
     _authorize_send_keys_target,
     _backfill_tmux_context_from_sibling,
+    _capture_pane_snapshot,
     _resolve_session_for_compaction,
     _resolve_tmux_target,
     _send_terminal_compaction_command,
@@ -49,6 +47,7 @@ from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
+    from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.hub.protocol import HubDatabase
@@ -62,10 +61,11 @@ logger = logging.getLogger(__name__)
 # cover a loaded daemon while still bounding the Codex reclaim case.
 _CLEAR_ACK_TIMEOUT_SECONDS = 30.0
 _CLEAR_ACK_POLL_SECONDS = 0.05
-# Codex opens a fresh rollout for the new thread within ~2s of /clear but emits no
-# SessionStart for it; the daemon types the continuation once that rollout exists.
-_CODEX_CLEAR_ROLLOUT_TIMEOUT_SECONDS = 10.0
-_CODEX_CLEAR_ROLLOUT_POLL_SECONDS = 0.25
+# Codex prints ``codex resume <thread id>`` when the /clear'd thread ends; the
+# successor's rollout only appears once its first prompt is typed.
+_CODEX_CLEAR_BANNER_TIMEOUT_SECONDS = 10.0
+_CODEX_CLEAR_BANNER_POLL_SECONDS = 0.25
+_CODEX_CLEAR_BANNER_CAPTURE_LINES = 300
 _CODEX_CLEAR_CONTINUE_DELAY_SECONDS = 0.5
 
 CLEAR_COMMAND = "/clear"
@@ -133,85 +133,34 @@ def _find_new_provider_session(
     return None
 
 
-def _codex_rollout_dirs(predecessor_transcript: Path) -> list[Path]:
-    """Directories that can hold the successor rollout: predecessor's day, today, yesterday."""
-    dirs = [predecessor_transcript.parent]
-    root = predecessor_transcript.parent
-    for _ in range(3):
-        if root.name == "sessions":
-            break
-        root = root.parent
-    else:
-        return dirs
-    now = datetime.now()
-    for day in (now, now - timedelta(days=1)):
-        candidate = root / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}"
-        if candidate not in dirs:
-            dirs.append(candidate)
-    return dirs
-
-
-def _scan_codex_rollouts(predecessor_transcript: str | None) -> list[tuple[float, Path]]:
-    """List (mtime, path) for every rollout near the predecessor's, excluding it."""
-    if not predecessor_transcript:
-        return []
-    predecessor = Path(predecessor_transcript)
-    found: list[tuple[float, Path]] = []
-    for directory in _codex_rollout_dirs(predecessor):
-        try:
-            entries = list(os.scandir(directory))
-        except OSError:
-            continue
-        for entry in entries:
-            if not (entry.name.startswith("rollout-") and entry.name.endswith(".jsonl")):
-                continue
-            path = Path(entry.path)
-            if path == predecessor:
-                continue
-            try:
-                mtime = entry.stat().st_mtime
-            except OSError:
-                continue
-            found.append((mtime, path))
-    return found
-
-
-def _codex_rollout_baseline(predecessor_transcript: str | None) -> frozenset[Path]:
-    """Rollouts that already exist before /clear; none of them can be the successor."""
-    return frozenset(path for _mtime, path in _scan_codex_rollouts(predecessor_transcript))
-
-
-def _find_new_codex_rollout(
-    predecessor_transcript: str | None,
+async def _codex_thread_end_banner_count(
+    tmux: TmuxSessionManager,
+    target: str,
     *,
-    baseline: frozenset[Path],
-) -> Path | None:
-    """Return the newest rollout that did not exist when the baseline was captured."""
-    newest: tuple[float, Path] | None = None
-    for mtime, path in _scan_codex_rollouts(predecessor_transcript):
-        if path in baseline:
-            continue
-        if newest is None or mtime > newest[0]:
-            newest = (mtime, path)
-    return None if newest is None else newest[1]
+    thread_id: str,
+) -> int:
+    """Count ``codex resume <thread_id>`` on the pane; Codex prints it when that thread ends."""
+    snapshot = await _capture_pane_snapshot(tmux, target, lines=_CODEX_CLEAR_BANNER_CAPTURE_LINES)
+    return (snapshot or "").count(f"codex resume {thread_id}")
 
 
-async def _wait_for_new_codex_rollout(
-    predecessor_transcript: str | None,
+async def _wait_for_codex_thread_end(
+    tmux: TmuxSessionManager,
+    target: str,
     *,
-    baseline: frozenset[Path],
-) -> Path | None:
-    """Poll for the successor thread's rollout until it appears or the window closes."""
+    thread_id: str,
+    baseline: int,
+) -> bool:
+    """Poll the pane until Codex prints the predecessor's thread-end banner after /clear."""
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + _CODEX_CLEAR_ROLLOUT_TIMEOUT_SECONDS
+    deadline = loop.time() + _CODEX_CLEAR_BANNER_TIMEOUT_SECONDS
     while True:
-        found = _find_new_codex_rollout(predecessor_transcript, baseline=baseline)
-        if found is not None:
-            return found
+        if await _codex_thread_end_banner_count(tmux, target, thread_id=thread_id) > baseline:
+            return True
         remaining = deadline - loop.time()
         if remaining <= 0:
-            return None
-        await asyncio.sleep(min(_CODEX_CLEAR_ROLLOUT_POLL_SECONDS, remaining))
+            return False
+        await asyncio.sleep(min(_CODEX_CLEAR_BANNER_POLL_SECONDS, remaining))
 
 
 async def _wait_for_clear_acknowledgment(
@@ -442,12 +391,33 @@ async def execute_clear_session(
         )
 
     async def deliver_clear() -> dict[str, Any]:
-        # Snapshot before /clear: only a rollout absent from this set can be the successor.
-        rollout_baseline = (
-            _codex_rollout_baseline(getattr(session, "transcript_path", None))
-            if source == "codex"
-            else frozenset()
-        )
+        def failed(message: str, error_code: str, *, command_sent: bool) -> dict[str, Any]:
+            failure = _error(message, error_code)
+            failure.update(
+                {
+                    "session_id": resolved_session_id,
+                    "attempt_id": attempt_id,
+                    "command_sent": command_sent,
+                    "attempt_restored": restore_failed_attempt(),
+                }
+            )
+            return failure
+
+        codex_thread_id: str | None = None
+        banner_baseline = 0
+        if source == "codex":
+            thread_id = getattr(session, "external_id", None)
+            if not isinstance(thread_id, str) or not thread_id:
+                return failed(
+                    "Codex session has no thread id to confirm /clear",
+                    "codex_thread_id_unavailable",
+                    command_sent=False,
+                )
+            codex_thread_id = thread_id
+            # Snapshot before /clear: only a thread-end banner beyond this count is new.
+            banner_baseline = await _codex_thread_end_banner_count(
+                tmux, target, thread_id=thread_id
+            )
         try:
             ok, reason, _pending, failure_detail = await _send_terminal_compaction_command(
                 tmux,
@@ -478,54 +448,34 @@ async def execute_clear_session(
                 failure.update(failure_detail)
             return failure
 
-        if source == "codex":
-            # Codex never emits SessionStart for the post-/clear thread, so the
-            # successor only registers once a prompt is typed. Type the
-            # continuation ourselves as soon as the new rollout exists; its
-            # UserPromptSubmit materializes the successor and consumes the marker.
-            successor_rollout = await _wait_for_new_codex_rollout(
-                getattr(session, "transcript_path", None),
-                baseline=rollout_baseline,
-            )
-            if successor_rollout is None:
-                restored = restore_failed_attempt()
-                failure = _error(
-                    "timed out waiting for the Codex successor thread after /clear",
+        if codex_thread_id is not None:
+            # Codex never emits SessionStart for the post-/clear thread and writes its
+            # rollout only on the first prompt, so the successor registers only once a
+            # prompt is typed. Type the continuation ourselves as soon as the pane shows
+            # the predecessor's thread-end banner; that prompt's UserPromptSubmit
+            # materializes the successor and consumes the marker.
+            if not await _wait_for_codex_thread_end(
+                tmux, target, thread_id=codex_thread_id, baseline=banner_baseline
+            ):
+                return failed(
+                    "timed out waiting for Codex to end the thread after /clear",
                     "clear_successor_not_observed",
+                    command_sent=True,
                 )
-                failure.update(
-                    {
-                        "session_id": resolved_session_id,
-                        "attempt_id": attempt_id,
-                        "command_sent": True,
-                        "attempt_restored": restored,
-                    }
-                )
-                return failure
-            scheduled = schedule_handoff_continuation(
+            if not schedule_handoff_continuation(
                 session,
                 build_handoff_continue_prompt(),
                 delay_seconds=_CODEX_CLEAR_CONTINUE_DELAY_SECONDS,
-            )
-            if not scheduled:
-                restored = restore_failed_attempt()
-                failure = _error(
+            ):
+                return failed(
                     "failed to schedule the Codex clear continuation prompt",
                     "clear_continuation_unscheduled",
+                    command_sent=True,
                 )
-                failure.update(
-                    {
-                        "session_id": resolved_session_id,
-                        "attempt_id": attempt_id,
-                        "command_sent": True,
-                        "attempt_restored": restored,
-                    }
-                )
-                return failure
             logger.info(
-                "Scheduled Codex clear continuation for session %s after rollout %s",
+                "Scheduled Codex clear continuation for session %s after thread %s ended",
                 resolved_session_id,
-                successor_rollout.name,
+                codex_thread_id,
             )
 
         acknowledgment = await _wait_for_clear_acknowledgment(

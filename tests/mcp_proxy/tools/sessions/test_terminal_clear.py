@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import time
 from contextlib import ExitStack
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,10 +12,15 @@ from gobby.mcp_proxy.tools.sessions import _terminal_clear
 from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
 from gobby.sessions.handoff import build_handoff_continue_prompt
 
+_THREAD_ID = "01a0580a-b0c8-7552-aa18-8927ff248f85"
+_THREAD_END_BANNER = f"To continue this session, run codex resume {_THREAD_ID}\n"
+_IDLE_PANE = "› Ask Codex to do anything\n"
+
 
 def _terminal_session(**overrides: Any) -> SimpleNamespace:
     fields: dict[str, Any] = {
         "id": "session-1",
+        "external_id": _THREAD_ID,
         "status": "active",
         "source": "codex",
         "session_type": "terminal",
@@ -29,6 +31,17 @@ def _terminal_session(**overrides: Any) -> SimpleNamespace:
     }
     fields.update(overrides)
     return SimpleNamespace(**fields)
+
+
+class _Pane:
+    """Pane text as tmux would capture it; /clear delivery appends to it."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    async def snapshot(self, _tmux: Any, _target: str, *, lines: int) -> str:
+        assert lines > 0
+        return self.text
 
 
 @pytest.mark.asyncio
@@ -77,10 +90,11 @@ async def test_clear_delivery_survives_caller_cancellation() -> None:
         patch.object(_terminal_clear, "stage_clear_attempt", return_value=MagicMock()),
         patch.object(_terminal_clear, "clear_failed_attempt", restore_failed_attempt),
         patch.object(_terminal_clear, "_send_terminal_compaction_command", send_command),
+        patch.object(_terminal_clear, "_capture_pane_snapshot", new=AsyncMock(return_value="")),
         patch.object(
             _terminal_clear,
-            "_wait_for_new_codex_rollout",
-            new=AsyncMock(return_value=Path("rollout-new.jsonl")),
+            "_wait_for_codex_thread_end",
+            new=AsyncMock(return_value=True),
         ),
         patch.object(_terminal_clear, "schedule_handoff_continuation", return_value=True),
         patch.object(
@@ -142,6 +156,7 @@ async def test_clear_delivery_failure_restores_staged_attempt() -> None:
         patch.object(_terminal_clear, "_codex_interrupt_observer", return_value=lambda: True),
         patch.object(_terminal_clear, "stage_clear_attempt", stage_attempt),
         patch.object(_terminal_clear, "clear_failed_attempt", restore_failed_attempt),
+        patch.object(_terminal_clear, "_capture_pane_snapshot", new=AsyncMock(return_value="")),
         patch.object(
             _terminal_clear,
             "_send_terminal_compaction_command",
@@ -173,6 +188,7 @@ def _clear_patches(
     session: SimpleNamespace,
     send_command: Any,
     *,
+    pane: _Pane,
     acknowledgment: Any,
     restore_failed_attempt: MagicMock,
     schedule_continuation: MagicMock,
@@ -196,9 +212,10 @@ def _clear_patches(
         patch.object(_terminal_clear, "stage_clear_attempt", return_value=MagicMock()),
         patch.object(_terminal_clear, "clear_failed_attempt", restore_failed_attempt),
         patch.object(_terminal_clear, "_send_terminal_compaction_command", send_command),
+        patch.object(_terminal_clear, "_capture_pane_snapshot", pane.snapshot),
         patch.object(_terminal_clear, "schedule_handoff_continuation", schedule_continuation),
-        patch.object(_terminal_clear, "_CODEX_CLEAR_ROLLOUT_TIMEOUT_SECONDS", 0.2),
-        patch.object(_terminal_clear, "_CODEX_CLEAR_ROLLOUT_POLL_SECONDS", 0.01),
+        patch.object(_terminal_clear, "_CODEX_CLEAR_BANNER_TIMEOUT_SECONDS", 0.2),
+        patch.object(_terminal_clear, "_CODEX_CLEAR_BANNER_POLL_SECONDS", 0.01),
     ] + (
         []
         if acknowledgment is None
@@ -221,22 +238,24 @@ async def _run_clear(session: SimpleNamespace, patches: list[Any]) -> dict[str, 
         )
 
 
-def _rollout_dir(tmp_path: Path) -> Path:
-    directory = tmp_path / "sessions" / "2026" / "08" / "30"
-    directory.mkdir(parents=True)
-    return directory
-
-
-async def test_codex_clear_types_continuation_once_new_rollout_appears(tmp_path: Path) -> None:
-    rollouts = _rollout_dir(tmp_path)
-    predecessor = rollouts / "rollout-old.jsonl"
-    predecessor.write_text("{}\n")
-    session = _terminal_session(transcript_path=str(predecessor))
-
+def _clear_that_ends_the_thread(pane: _Pane) -> Any:
     async def send_command(*_args: Any, **_kwargs: Any) -> tuple[bool, None, bool, None]:
-        (rollouts / "rollout-new.jsonl").write_text("{}\n")
+        pane.text += _THREAD_END_BANNER + _IDLE_PANE
         return True, None, True, None
 
+    return send_command
+
+
+def _clear_that_leaves_the_pane() -> Any:
+    async def send_command(*_args: Any, **_kwargs: Any) -> tuple[bool, None, bool, None]:
+        return True, None, True, None
+
+    return send_command
+
+
+async def test_codex_clear_types_continuation_once_thread_end_banner_appears() -> None:
+    session = _terminal_session()
+    pane = _Pane(_IDLE_PANE)
     restore = MagicMock(return_value=True)
     schedule = MagicMock(return_value=True)
     acknowledgment = AsyncMock(return_value=("successor-1", "successor_binding"))
@@ -245,7 +264,8 @@ async def test_codex_clear_types_continuation_once_new_rollout_appears(tmp_path:
         session,
         _clear_patches(
             session,
-            send_command,
+            _clear_that_ends_the_thread(pane),
+            pane=pane,
             acknowledgment=acknowledgment,
             restore_failed_attempt=restore,
             schedule_continuation=schedule,
@@ -262,15 +282,9 @@ async def test_codex_clear_types_continuation_once_new_rollout_appears(tmp_path:
     restore.assert_not_called()
 
 
-async def test_codex_clear_without_new_rollout_restores_attempt(tmp_path: Path) -> None:
-    rollouts = _rollout_dir(tmp_path)
-    predecessor = rollouts / "rollout-old.jsonl"
-    predecessor.write_text("{}\n")
-    session = _terminal_session(transcript_path=str(predecessor))
-
-    async def send_command(*_args: Any, **_kwargs: Any) -> tuple[bool, None, bool, None]:
-        return True, None, True, None
-
+async def test_codex_clear_without_thread_end_banner_restores_attempt() -> None:
+    session = _terminal_session()
+    pane = _Pane(_IDLE_PANE)
     restore = MagicMock(return_value=True)
     schedule = MagicMock(return_value=True)
     acknowledgment = AsyncMock(return_value=("successor-1", "successor_binding"))
@@ -279,7 +293,8 @@ async def test_codex_clear_without_new_rollout_restores_attempt(tmp_path: Path) 
         session,
         _clear_patches(
             session,
-            send_command,
+            _clear_that_leaves_the_pane(),
+            pane=pane,
             acknowledgment=acknowledgment,
             restore_failed_attempt=restore,
             schedule_continuation=schedule,
@@ -295,12 +310,84 @@ async def test_codex_clear_without_new_rollout_restores_attempt(tmp_path: Path) 
     acknowledgment.assert_not_awaited()
 
 
-async def test_non_codex_clear_leaves_continuation_to_session_start(tmp_path: Path) -> None:
-    session = _terminal_session(source="claude", transcript_path=str(tmp_path / "missing.jsonl"))
+async def test_codex_clear_ignores_thread_end_banner_already_on_the_pane() -> None:
+    """A banner from an earlier resume of the same thread never proves this /clear."""
+    session = _terminal_session()
+    pane = _Pane(f"$ codex resume {_THREAD_ID}\n" + _THREAD_END_BANNER + _IDLE_PANE)
+    restore = MagicMock(return_value=True)
+    schedule = MagicMock(return_value=True)
 
-    async def send_command(*_args: Any, **_kwargs: Any) -> tuple[bool, None, bool, None]:
-        return True, None, True, None
+    result = await _run_clear(
+        session,
+        _clear_patches(
+            session,
+            _clear_that_leaves_the_pane(),
+            pane=pane,
+            acknowledgment=AsyncMock(),
+            restore_failed_attempt=restore,
+            schedule_continuation=schedule,
+        ),
+    )
 
+    assert result["error_code"] == "clear_successor_not_observed"
+    restore.assert_called_once()
+    schedule.assert_not_called()
+
+
+async def test_codex_clear_counts_only_a_banner_printed_after_the_command() -> None:
+    session = _terminal_session()
+    pane = _Pane(f"$ codex resume {_THREAD_ID}\n" + _THREAD_END_BANNER + _IDLE_PANE)
+    restore = MagicMock(return_value=True)
+    schedule = MagicMock(return_value=True)
+
+    result = await _run_clear(
+        session,
+        _clear_patches(
+            session,
+            _clear_that_ends_the_thread(pane),
+            pane=pane,
+            acknowledgment=AsyncMock(return_value=("successor-1", "successor_binding")),
+            restore_failed_attempt=restore,
+            schedule_continuation=schedule,
+        ),
+    )
+
+    assert result["success"] is True
+    schedule.assert_called_once()
+    restore.assert_not_called()
+
+
+async def test_codex_clear_without_thread_id_fails_closed_before_sending() -> None:
+    session = _terminal_session(external_id=None)
+    pane = _Pane(_IDLE_PANE)
+    send_command = AsyncMock(return_value=(True, None, True, None))
+    restore = MagicMock(return_value=True)
+    schedule = MagicMock(return_value=True)
+
+    result = await _run_clear(
+        session,
+        _clear_patches(
+            session,
+            send_command,
+            pane=pane,
+            acknowledgment=AsyncMock(),
+            restore_failed_attempt=restore,
+            schedule_continuation=schedule,
+        ),
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "codex_thread_id_unavailable"
+    assert result["command_sent"] is False
+    assert result["attempt_restored"] is True
+    send_command.assert_not_awaited()
+    restore.assert_called_once()
+    schedule.assert_not_called()
+
+
+async def test_non_codex_clear_leaves_continuation_to_session_start() -> None:
+    session = _terminal_session(source="claude", external_id="claude-session")
+    pane = _Pane(_IDLE_PANE)
     restore = MagicMock(return_value=True)
     schedule = MagicMock(return_value=True)
     acknowledgment = AsyncMock(return_value=("successor-2", "successor_binding"))
@@ -309,7 +396,8 @@ async def test_non_codex_clear_leaves_continuation_to_session_start(tmp_path: Pa
         session,
         _clear_patches(
             session,
-            send_command,
+            _clear_that_leaves_the_pane(),
+            pane=pane,
             acknowledgment=acknowledgment,
             restore_failed_attempt=restore,
             schedule_continuation=schedule,
@@ -322,41 +410,10 @@ async def test_non_codex_clear_leaves_continuation_to_session_start(tmp_path: Pa
     acknowledgment.assert_awaited_once()
 
 
-def test_find_new_codex_rollout_accepts_only_files_absent_from_baseline(tmp_path: Path) -> None:
-    rollouts = _rollout_dir(tmp_path)
-    predecessor = rollouts / "rollout-old.jsonl"
-    predecessor.write_text("{}\n")
-    sibling = rollouts / "rollout-sibling.jsonl"
-    sibling.write_text("{}\n")
-
-    baseline = _terminal_clear._codex_rollout_baseline(str(predecessor))
-
-    assert baseline == frozenset({sibling})
-    assert _terminal_clear._find_new_codex_rollout(str(predecessor), baseline=baseline) is None
-
-    # A concurrently active thread keeps bumping its rollout; that is never the successor.
-    bumped = time.time() + 60
-    os.utime(sibling, (bumped, bumped))
-    assert _terminal_clear._find_new_codex_rollout(str(predecessor), baseline=baseline) is None
-
-    fresh = rollouts / "rollout-fresh.jsonl"
-    fresh.write_text("{}\n")
-
-    assert _terminal_clear._find_new_codex_rollout(str(predecessor), baseline=baseline) == fresh
-    assert _terminal_clear._find_new_codex_rollout(None, baseline=frozenset()) is None
-
-
-async def test_codex_clear_acknowledges_marker_consumed_by_typed_prompt(tmp_path: Path) -> None:
+async def test_codex_clear_acknowledges_marker_consumed_by_typed_prompt() -> None:
     """The real acknowledgment wait binds the successor once the marker is consumed."""
-    rollouts = _rollout_dir(tmp_path)
-    predecessor = rollouts / "rollout-old.jsonl"
-    predecessor.write_text("{}\n")
-    session = _terminal_session(transcript_path=str(predecessor))
-
-    async def send_command(*_args: Any, **_kwargs: Any) -> tuple[bool, None, bool, None]:
-        (rollouts / "rollout-new.jsonl").write_text("{}\n")
-        return True, None, True, None
-
+    session = _terminal_session()
+    pane = _Pane(_IDLE_PANE)
     stage_attempt = MagicMock(return_value=MagicMock())
     restore = MagicMock(return_value=True)
     schedule = MagicMock(return_value=True)
@@ -379,7 +436,8 @@ async def test_codex_clear_acknowledges_marker_consumed_by_typed_prompt(tmp_path
 
     patches = _clear_patches(
         session,
-        send_command,
+        _clear_that_ends_the_thread(pane),
+        pane=pane,
         acknowledgment=None,
         restore_failed_attempt=restore,
         schedule_continuation=schedule,
