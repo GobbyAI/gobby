@@ -3191,36 +3191,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/hooks/test_hook_manager_extra.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 96,
-      "message": "\"HookManager\" has no attribute \"_resolve_summary_output_path\"",
-      "occurrences": 3,
-      "path": "tests/hooks/test_hook_manager_extra.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/hooks/test_hook_manager_extra.py::::mypy:no-untyped-call",
-      "issue_code": "mypy:no-untyped-call",
-      "line": 223,
-      "message": "Call to untyped function \"_make_manager\" in typed context",
-      "occurrences": 11,
-      "path": "tests/hooks/test_hook_manager_extra.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/hooks/test_hook_manager_extra.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 17,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 13,
-      "path": "tests/hooks/test_hook_manager_extra.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/hooks/test_hook_types.py::::mypy:attr-defined",
       "issue_code": "mypy:attr-defined",
       "line": 207,

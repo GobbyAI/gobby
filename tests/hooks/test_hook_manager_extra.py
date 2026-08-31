@@ -82,7 +82,7 @@ class _SetStore:
 
 
 class TestReregisterActiveSessions:
-    def test_reregister_active_sessions(self):
+    def test_reregister_active_sessions(self) -> None:
         """Test _reregister_active_sessions calls coordinator method."""
         with patch("gobby.hooks.hook_manager.HookManagerFactory.create") as mock_create:
             mock_components = MagicMock()
@@ -145,7 +145,7 @@ class TestDispatchSessionSummaries:
         )
 
     @patch("gobby.hooks.session_summary_dispatcher.asyncio.get_running_loop")
-    def test_dispatches_on_running_loop(self, mock_get_loop) -> None:
+    def test_dispatches_on_running_loop(self, mock_get_loop: MagicMock) -> None:
         """Tests that a running loop uses the retained-task scheduler."""
         mock_loop = MagicMock()
         mock_get_loop.return_value = mock_loop
@@ -159,9 +159,6 @@ class TestDispatchSessionSummaries:
             mock_components = MagicMock()
             mock_create.return_value = mock_components
             manager = HookManager()
-
-            # Mock path resolution
-            manager._resolve_summary_output_path = MagicMock(return_value="/tmp/sum")
 
             event = threading.Event()
             manager._dispatch_session_summaries("sess-1", done_event=event)
@@ -207,8 +204,8 @@ class TestDispatchSessionSummaries:
     @patch("gobby.hooks.session_summary_dispatcher.asyncio.run_coroutine_threadsafe")
     @patch("gobby.sessions.summarize.generate_session_summaries", new_callable=AsyncMock)
     def test_dispatches_threadsafe_when_no_running_loop(
-        self, mock_generate, mock_threadsafe, mock_get_loop
-    ):
+        self, mock_generate: AsyncMock, mock_threadsafe: MagicMock, mock_get_loop: MagicMock
+    ) -> None:
         """Tests dispatch when no running loop, but manager has a running _loop."""
         # Force RuntimeError on get_running_loop
         mock_get_loop.side_effect = RuntimeError("no loop")
@@ -222,8 +219,6 @@ class TestDispatchSessionSummaries:
             manager._loop = MagicMock()
             manager._loop.is_running.return_value = True
 
-            manager._resolve_summary_output_path = MagicMock(return_value="/tmp/sum")
-
             event = threading.Event()
             manager._dispatch_session_summaries("sess-1", done_event=event)
 
@@ -234,7 +229,9 @@ class TestDispatchSessionSummaries:
     @patch("gobby.hooks.session_summary_dispatcher.asyncio.get_running_loop")
     @patch("gobby.hooks.session_summary_dispatcher.threading.Thread")
     @patch("gobby.sessions.summarize.generate_session_summaries", new_callable=AsyncMock)
-    def test_dispatches_in_new_thread(self, mock_generate, mock_thread, mock_get_loop):
+    def test_dispatches_in_new_thread(
+        self, mock_generate: AsyncMock, mock_thread: MagicMock, mock_get_loop: MagicMock
+    ) -> None:
         """Tests fallback to a new daemon thread when no loop is available/running."""
         mock_get_loop.side_effect = RuntimeError("no loop")
 
@@ -245,8 +242,6 @@ class TestDispatchSessionSummaries:
 
             # Manager has no attached loop or it's not running
             manager._loop = None
-
-            manager._resolve_summary_output_path = MagicMock(return_value="/tmp/sum")
 
             mock_thread_instance = MagicMock()
             mock_thread.return_value = mock_thread_instance
