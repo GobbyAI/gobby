@@ -62,7 +62,12 @@ fn hybrid_search_excludes_indexed_file_deleted_from_disk() -> anyhow::Result<()>
         indexer_version: None,
     };
     let machine_id = gobby_core::machine::read_local_machine_id()?;
-    api::upsert_project_stats(&mut conn, &machine_id, &project)?;
+    api::upsert_project_stats(
+        &mut conn,
+        &machine_id,
+        &project,
+        api::IndexWriteMode::Overlay,
+    )?;
     let indexed_file = IndexedFile {
         id: IndexedFile::make_id(&project_id, file_path, "indexed-before-delete"),
         project_id: project_id.clone(),
@@ -74,7 +79,13 @@ fn hybrid_search_excludes_indexed_file_deleted_from_disk() -> anyhow::Result<()>
         indexed_at: String::new(),
     };
     api::upsert_file(&mut conn, &indexed_file)?;
-    api::upsert_file_state(&mut conn, &machine_id, &indexed_file)?;
+    api::upsert_file_state(
+        &mut conn,
+        &machine_id,
+        &indexed_file,
+        project_root.path(),
+        api::IndexWriteMode::Overlay,
+    )?;
 
     let ctx = Context {
         database_url,

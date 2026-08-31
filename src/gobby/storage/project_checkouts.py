@@ -145,6 +145,16 @@ class LocalProjectCheckoutManager:
                     (machine_id, project_id, root_path),
                 ).fetchone()
                 if inserted is not None:
+                    indexed = conn.execute(
+                        """
+                        SELECT root_path
+                        FROM code_indexed_project_states
+                        WHERE machine_id = %s AND project_id = %s
+                        """,
+                        (machine_id, project_id),
+                    ).fetchone()
+                    if indexed is not None and indexed["root_path"] != root_path:
+                        self._clear_index_state(conn, machine_id, project_id)
                     return ProjectCheckout.from_row(inserted)
                 existing = self._lock_checkout(conn, machine_id, project_id)
                 if existing.root_path == root_path:
@@ -162,6 +172,7 @@ class LocalProjectCheckoutManager:
                     raise RuntimeError(
                         f"lost checkout row for machine {machine_id} project {project_id}"
                     )
+                self._clear_index_state(conn, machine_id, project_id)
                 return ProjectCheckout.from_row(updated)
         except UniqueViolation as exc:
             self._raise_root_taken(exc, machine_id, root_path)
@@ -190,6 +201,23 @@ class LocalProjectCheckoutManager:
             raise OverlayRegistrationRejectedError(
                 f"root {root_path} is a registered overlay on machine {machine_id}"
             )
+
+    @staticmethod
+    def _clear_index_state(conn: Transaction, machine_id: str, project_id: str) -> None:
+        conn.execute(
+            """
+            DELETE FROM code_indexed_file_states
+            WHERE machine_id = %s AND project_id = %s
+            """,
+            (machine_id, project_id),
+        )
+        conn.execute(
+            """
+            DELETE FROM code_indexed_project_states
+            WHERE machine_id = %s AND project_id = %s
+            """,
+            (machine_id, project_id),
+        )
 
     @staticmethod
     def _lock_checkout(conn: Transaction, machine_id: str, project_id: str) -> ProjectCheckout:

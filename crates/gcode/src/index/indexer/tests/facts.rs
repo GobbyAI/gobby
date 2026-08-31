@@ -735,8 +735,16 @@ mod serial_db {
         mark_owner_fully_synced(&mut conn, &project_id, "src/base.py", "hash-b");
         let machine_id = gobby_core::machine::read_local_machine_id().expect("machine");
         assert!(
-            api::adopt_file_state(&mut conn, &machine_id, &project_id, "src/base.py", "hash-b")
-                .expect("adopt provider")
+            api::adopt_file_state(
+                &mut conn,
+                &machine_id,
+                &project_id,
+                "src/base.py",
+                "hash-b",
+                Path::new("/tmp/provider-view"),
+                api::IndexWriteMode::Overlay,
+            )
+            .expect("adopt provider")
         );
         let owners =
             resolve_local_import_inheritance(&mut conn, &project_id, &["src/base.py".to_string()])
@@ -805,6 +813,7 @@ mod serial_db {
                 total_eligible_files: None,
                 indexer_version: None,
             },
+            api::IndexWriteMode::Overlay,
         )
         .expect("seed project");
         (conn, project_id, guard)
@@ -1077,8 +1086,13 @@ mod serial_db {
         parse: ParseResult,
     ) {
         let mut tx = conn.transaction().expect("tx");
-        let mut sink = PostgresCodeFactSink::new(&mut tx, project_id, Path::new("/tmp/inherit"))
-            .expect("sink");
+        let mut sink = PostgresCodeFactSink::new(
+            &mut tx,
+            project_id,
+            Path::new("/tmp/inherit"),
+            api::IndexWriteMode::Overlay,
+        )
+        .expect("sink");
         write_parsed_file_facts(
             &mut sink,
             project_id,

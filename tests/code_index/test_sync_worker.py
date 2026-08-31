@@ -21,7 +21,7 @@ from gobby.code_index.gcode_gateway import (
     GcodeProjectNotFoundError,
     GcodeTimeoutError,
 )
-from gobby.code_index.models import IndexedFile, IndexedProject
+from gobby.code_index.models import IndexedFile, IndexedProject, IndexWriteMode
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.code_index.sync_breaker import BreakerState, SyncCircuitBreaker
 from gobby.code_index.sync_worker import _sync_file, _sync_graph, _sync_pass, sync_worker_loop
@@ -966,9 +966,10 @@ async def test_sync_file_delegates_vector_sync_to_gcode_gateway(
     _write_source(tmp_path)
     indexed_file = _indexed_file(vectors_synced=False, graph_synced=True)
     code_storage.upsert_project_stats(
-        IndexedProject(id=project_id, root_path=str(tmp_path), total_files=1, total_symbols=1)
+        IndexedProject(id=project_id, root_path=str(tmp_path), total_files=1, total_symbols=1),
+        mode=IndexWriteMode.OVERLAY,
     )
-    code_storage.upsert_file(indexed_file)
+    code_storage.upsert_file(indexed_file, root_path=str(tmp_path), mode=IndexWriteMode.OVERLAY)
     code_storage.record_projection_cleanup_failure(project_id, "vector", "stale vector drift")
     gcode_gateway = RecordingGcodeGateway()
 
@@ -1005,9 +1006,10 @@ async def test_sync_file_warns_and_retries_when_vector_sync_times_out(
     _write_source(tmp_path)
     indexed_file = _indexed_file(vectors_synced=False, graph_synced=True)
     code_storage.upsert_project_stats(
-        IndexedProject(id=project_id, root_path=str(tmp_path), total_files=1, total_symbols=1)
+        IndexedProject(id=project_id, root_path=str(tmp_path), total_files=1, total_symbols=1),
+        mode=IndexWriteMode.OVERLAY,
     )
-    code_storage.upsert_file(indexed_file)
+    code_storage.upsert_file(indexed_file, root_path=str(tmp_path), mode=IndexWriteMode.OVERLAY)
     code_storage.record_projection_cleanup_failure(project_id, "vector", "stale vector drift")
     gcode_gateway = RecordingGcodeGateway(vector_timeout=True)
 
@@ -1149,9 +1151,10 @@ async def test_sync_file_does_not_mark_vectors_synced_when_gcode_vector_sync_fai
     _write_source(tmp_path)
     indexed_file = _indexed_file(vectors_synced=False, graph_synced=True)
     code_storage.upsert_project_stats(
-        IndexedProject(id=project_id, root_path=str(tmp_path), total_files=1, total_symbols=1)
+        IndexedProject(id=project_id, root_path=str(tmp_path), total_files=1, total_symbols=1),
+        mode=IndexWriteMode.OVERLAY,
     )
-    code_storage.upsert_file(indexed_file)
+    code_storage.upsert_file(indexed_file, root_path=str(tmp_path), mode=IndexWriteMode.OVERLAY)
     gcode_gateway = RecordingGcodeGateway(
         vector_result={"success": False, "error": "gcode vector sync failed"}
     )
@@ -1227,9 +1230,10 @@ async def test_sync_file_routes_vector_storage_calls_through_run_db(
             root_path=str(tmp_path),
             total_files=1,
             total_symbols=1,
-        )
+        ),
+        mode=IndexWriteMode.OVERLAY,
     )
-    code_storage.upsert_file(indexed_file)
+    code_storage.upsert_file(indexed_file, root_path=str(tmp_path), mode=IndexWriteMode.OVERLAY)
     run_db = RecordingRunDb()
     gcode_gateway = RecordingGcodeGateway()
 

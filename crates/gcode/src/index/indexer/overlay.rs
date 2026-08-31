@@ -17,7 +17,7 @@ use super::file::{create_semantic_resolver_if_needed, index_content_only, index_
 use super::lifecycle::{attach_projection_sync, refresh_project_stats};
 use super::local_imports::{resolve_local_import_calls, resolve_local_import_inheritance};
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
-use super::types::{IndexOutcome, IndexRequest, OverlayIndexMetadata};
+use super::types::{IndexOutcome, IndexRequest, IndexTarget, OverlayIndexMetadata};
 use super::util::{
     effective_excludes, epoch_secs_str, relative_path, requested_relative_path,
     unsupported_file_types,
@@ -99,8 +99,19 @@ pub(super) fn index_overlay_files(
     let start = Instant::now();
     let discovery_start = Instant::now();
     let root_path = &request.project_root;
+    let target = IndexTarget {
+        project_id: overlay_project_id,
+        root_path,
+        mode: api::IndexWriteMode::Overlay,
+    };
     let machine_id = gobby_core::machine::read_local_machine_id()?;
-    api::upsert_project_seed(conn, &machine_id, overlay_project_id, root_path)?;
+    api::upsert_project_seed(
+        conn,
+        &machine_id,
+        overlay_project_id,
+        root_path,
+        api::IndexWriteMode::Overlay,
+    )?;
     let mut outcome = IndexOutcome::new(overlay_project_id);
     outcome.overlay = Some(OverlayIndexMetadata {
         overlay_project_id: overlay_project_id.clone(),
@@ -197,7 +208,15 @@ pub(super) fn index_overlay_files(
             && indexable
             && matches!(action, OverlayReconcileAction::Index)
             && let Some(hash) = current_hash
-            && api::adopt_file_state(conn, &machine_id, overlay_project_id, &rel, hash)?
+            && api::adopt_file_state(
+                conn,
+                &machine_id,
+                overlay_project_id,
+                &rel,
+                hash,
+                root_path,
+                api::IndexWriteMode::Overlay,
+            )?
         {
             adopted_paths.push(rel.clone());
             outcome.skipped_files += 1;
@@ -208,8 +227,7 @@ pub(super) fn index_overlay_files(
                 match index_file(
                     conn,
                     &abs,
-                    overlay_project_id,
-                    root_path,
+                    target,
                     &excludes,
                     &import_context,
                     semantic_resolver.as_deref_mut(),
@@ -219,13 +237,20 @@ pub(super) fn index_overlay_files(
                 }
             }
             OverlayReconcileAction::Index if content_by_rel.contains_key(&rel) => {
-                match index_content_only(conn, &abs, overlay_project_id, root_path, &excludes)? {
+                match index_content_only(conn, &abs, target, &excludes)? {
                     Some(counts) => outcome.add_counts(counts),
                     None => outcome.skipped_files += 1,
                 }
             }
             OverlayReconcileAction::Inherit => {
-                api::delete_file_state(conn, &machine_id, overlay_project_id, &rel)?;
+                api::delete_file_state(
+                    conn,
+                    &machine_id,
+                    overlay_project_id,
+                    &rel,
+                    root_path,
+                    api::IndexWriteMode::Overlay,
+                )?;
                 outcome.skipped_files += 1;
             }
             OverlayReconcileAction::Tombstone => {
@@ -233,7 +258,14 @@ pub(super) fn index_overlay_files(
                 outcome.tombstones_indexed += 1;
             }
             OverlayReconcileAction::DeleteOverlay => {
-                api::delete_file_state(conn, &machine_id, overlay_project_id, &rel)?;
+                api::delete_file_state(
+                    conn,
+                    &machine_id,
+                    overlay_project_id,
+                    &rel,
+                    root_path,
+                    api::IndexWriteMode::Overlay,
+                )?;
             }
             OverlayReconcileAction::Index => {
                 anyhow::bail!("overlay index action selected for non-indexable path `{rel}`")
@@ -258,8 +290,7 @@ pub(super) fn index_overlay_files(
     refresh_project_stats(
         conn,
         &machine_id,
-        root_path,
-        overlay_project_id,
+        target,
         start.elapsed().as_millis() as u64,
         Some(ast_by_rel.len() + content_by_rel.len()),
         None,
@@ -519,7 +550,8 @@ fn write_tombstone(
     rel: &str,
 ) -> anyhow::Result<()> {
     let mut tx = conn.transaction().context("start tombstone transaction")?;
-    let mut sink = PostgresCodeFactSink::new(&mut tx, project_id, root_path)?;
+    let mut sink =
+        PostgresCodeFactSink::new(&mut tx, project_id, root_path, api::IndexWriteMode::Overlay)?;
     sink.upsert_file(&IndexedFile {
         id: IndexedFile::make_id(project_id, rel, visibility::TOMBSTONE_HASH),
         project_id: project_id.to_string(),

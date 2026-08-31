@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use postgres::GenericClient;
 
@@ -50,16 +50,28 @@ pub(super) trait CodeFactSink {
 pub(super) struct PostgresCodeFactSink<'a, C> {
     conn: &'a mut C,
     machine_id: String,
+    root_path: PathBuf,
+    mode: api::IndexWriteMode,
 }
 
 impl<'a, C> PostgresCodeFactSink<'a, C> {
-    pub(super) fn new(conn: &'a mut C, project_id: &str, root_path: &Path) -> anyhow::Result<Self>
+    pub(super) fn new(
+        conn: &'a mut C,
+        project_id: &str,
+        root_path: &Path,
+        mode: api::IndexWriteMode,
+    ) -> anyhow::Result<Self>
     where
         C: GenericClient,
     {
         let machine_id = gobby_core::machine::read_local_machine_id()?;
-        api::upsert_project_seed(conn, &machine_id, project_id, root_path)?;
-        Ok(Self { conn, machine_id })
+        api::upsert_project_seed(conn, &machine_id, project_id, root_path, mode)?;
+        Ok(Self {
+            conn,
+            machine_id,
+            root_path: root_path.to_path_buf(),
+            mode,
+        })
     }
 }
 
@@ -98,7 +110,13 @@ where
 
     fn upsert_file(&mut self, file: &IndexedFile) -> anyhow::Result<()> {
         api::upsert_file(self.conn, file)?;
-        api::upsert_file_state(self.conn, &self.machine_id, file)
+        api::upsert_file_state(
+            self.conn,
+            &self.machine_id,
+            file,
+            &self.root_path,
+            self.mode,
+        )
     }
 
     fn upsert_imports(

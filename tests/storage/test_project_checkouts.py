@@ -70,6 +70,49 @@ def _manager(db: HubDatabase) -> LocalProjectCheckoutManager:
     return LocalProjectCheckoutManager(db)
 
 
+def _seed_index_state(
+    db: HubDatabase,
+    machine_id: str,
+    project_id: str,
+    root_path: str,
+    *,
+    file_path: str = "src/app.py",
+) -> str:
+    content_hash = "sha256:indexed"
+    file_id = str(uuid.uuid5(uuid.UUID(project_id), f"{file_path}:{content_hash}"))
+    db.execute(
+        "INSERT INTO code_indexed_projects (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
+        (project_id,),
+    )
+    db.execute(
+        """
+        INSERT INTO code_indexed_files (
+            id, project_id, file_path, language, content_hash,
+            symbol_count, byte_size, graph_synced, vectors_synced
+        ) VALUES (%s, %s, %s, 'python', %s, 1, 10, true, true)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        (file_id, project_id, file_path, content_hash),
+    )
+    db.execute(
+        """
+        INSERT INTO code_indexed_project_states (
+            machine_id, project_id, root_path, total_files, total_symbols
+        ) VALUES (%s, %s, %s, 1, 1)
+        """,
+        (machine_id, project_id, root_path),
+    )
+    db.execute(
+        """
+        INSERT INTO code_indexed_file_states (
+            machine_id, project_id, file_path, content_hash
+        ) VALUES (%s, %s, %s, %s)
+        """,
+        (machine_id, project_id, file_path, content_hash),
+    )
+    return file_id
+
+
 def test_get_and_list_are_empty_until_register(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
@@ -267,37 +310,160 @@ def test_register_and_rebind_reject_machine_overlays(
     assert ordinary.root_path == "/ordinary/root"
 
 
-def test_rebind_insert_leaves_index_state_for_later_cleanup(
+def test_rebind_insert_clears_mismatched_local_project_state(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
-    """Mismatched index root_path is left for § 4.2 cleanup."""
+    """An absent checkout invalidates stale local state in its insert transaction."""
     machine_id = str(uuid.uuid4())
+    other_machine_id = str(uuid.uuid4())
     _insert_machine(temp_db, machine_id)
+    _insert_machine(temp_db, other_machine_id)
     project_id = sample_project["id"]
-    temp_db.execute(
-        "INSERT INTO code_indexed_projects (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
-        (project_id,),
-    )
-    temp_db.execute(
-        """
-        INSERT INTO code_indexed_project_states (
-            machine_id, project_id, root_path, total_files, total_symbols
-        ) VALUES (%s, %s, %s, %s, %s)
-        """,
-        (machine_id, project_id, "/old/index-root", 3, 9),
-    )
+    file_id = _seed_index_state(temp_db, machine_id, project_id, "/old/index-root")
+    _seed_index_state(temp_db, other_machine_id, project_id, "/other/index-root")
     manager = _manager(temp_db)
     checkout = manager.rebind(machine_id, project_id, "/new/checkout-root")
     assert checkout.root_path == "/new/checkout-root"
-    state = temp_db.fetchone(
+    assert (
+        temp_db.fetchone(
+            """
+        SELECT root_path FROM code_indexed_project_states
+        WHERE machine_id = %s AND project_id = %s
+        """,
+            (machine_id, project_id),
+        )
+        is None
+    )
+    assert (
+        temp_db.fetchone(
+            """
+        SELECT file_path FROM code_indexed_file_states
+        WHERE machine_id = %s AND project_id = %s
+        """,
+            (machine_id, project_id),
+        )
+        is None
+    )
+    assert temp_db.fetchone(
+        """
+        SELECT root_path FROM code_indexed_project_states
+        WHERE machine_id = %s AND project_id = %s
+        """,
+        (other_machine_id, project_id),
+    ) == {"root_path": "/other/index-root"}
+    assert temp_db.fetchone(
+        "SELECT id FROM code_indexed_files WHERE id = %s",
+        (file_id,),
+    ) == {"id": file_id}
+
+
+def test_rebind_insert_preserves_matching_local_index_state(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    machine_id = str(uuid.uuid4())
+    _insert_machine(temp_db, machine_id)
+    project_id = sample_project["id"]
+    root_path = "/matching/root"
+    _seed_index_state(temp_db, machine_id, project_id, root_path)
+
+    checkout = _manager(temp_db).rebind(machine_id, project_id, root_path)
+
+    assert checkout.root_path == root_path
+    assert temp_db.fetchone(
         """
         SELECT root_path FROM code_indexed_project_states
         WHERE machine_id = %s AND project_id = %s
         """,
         (machine_id, project_id),
+    ) == {"root_path": root_path}
+    assert temp_db.fetchone(
+        """
+        SELECT file_path FROM code_indexed_file_states
+        WHERE machine_id = %s AND project_id = %s
+        """,
+        (machine_id, project_id),
+    ) == {"file_path": "src/app.py"}
+
+
+def test_rebind_different_root_clears_local_index_state(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    machine_id = str(uuid.uuid4())
+    _insert_machine(temp_db, machine_id)
+    project_id = sample_project["id"]
+    manager = _manager(temp_db)
+    manager.register(machine_id, project_id, "/old/root")
+    _seed_index_state(temp_db, machine_id, project_id, "/old/root")
+
+    checkout = manager.rebind(machine_id, project_id, "/new/root")
+
+    assert checkout.root_path == "/new/root"
+    assert (
+        temp_db.fetchone(
+            """
+        SELECT root_path FROM code_indexed_project_states
+        WHERE machine_id = %s AND project_id = %s
+        """,
+            (machine_id, project_id),
+        )
+        is None
     )
-    assert state is not None
-    assert state["root_path"] == "/old/index-root"
+    assert (
+        temp_db.fetchone(
+            """
+        SELECT file_path FROM code_indexed_file_states
+        WHERE machine_id = %s AND project_id = %s
+        """,
+            (machine_id, project_id),
+        )
+        is None
+    )
+
+
+def test_failed_rebind_rolls_back_and_rerun_clears_state(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = str(uuid.uuid4())
+    _insert_machine(temp_db, machine_id)
+    project_id = sample_project["id"]
+    manager = _manager(temp_db)
+    manager.register(machine_id, project_id, "/old/root")
+    _seed_index_state(temp_db, machine_id, project_id, "/old/root")
+    clear_index_state = manager._clear_index_state
+
+    def _abort_after_clear(conn: Any, scoped_machine_id: str, scoped_project_id: str) -> None:
+        clear_index_state(conn, scoped_machine_id, scoped_project_id)
+        raise RuntimeError("abort rebind")
+
+    monkeypatch.setattr(manager, "_clear_index_state", _abort_after_clear)
+    with pytest.raises(RuntimeError, match="abort rebind"):
+        manager.rebind(machine_id, project_id, "/new/root")
+
+    rolled_back = manager.get(machine_id, project_id)
+    assert rolled_back is not None
+    assert rolled_back.root_path == "/old/root"
+    assert temp_db.fetchone(
+        """
+        SELECT root_path FROM code_indexed_project_states
+        WHERE machine_id = %s AND project_id = %s
+        """,
+        (machine_id, project_id),
+    ) == {"root_path": "/old/root"}
+
+    monkeypatch.setattr(manager, "_clear_index_state", clear_index_state)
+    assert manager.rebind(machine_id, project_id, "/new/root").root_path == "/new/root"
+    assert (
+        temp_db.fetchone(
+            """
+        SELECT root_path FROM code_indexed_project_states
+        WHERE machine_id = %s AND project_id = %s
+        """,
+            (machine_id, project_id),
+        )
+        is None
+    )
 
 
 def test_concurrent_absent_rebind_same_root_inserts_once(

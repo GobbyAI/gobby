@@ -17,6 +17,7 @@ from gobby.code_index.models import (
     ImportRelation,
     IndexedFile,
     IndexedProject,
+    IndexWriteMode,
     Symbol,
 )
 from gobby.code_index.storage import CodeIndexStorage
@@ -50,7 +51,11 @@ def _upsert_test_file(
         language="python",
         content_hash=content_hash,
     )
-    storage.upsert_file(indexed_file)
+    storage.upsert_file(
+        indexed_file,
+        root_path="/tmp/gobby-code-index-tests",
+        mode=IndexWriteMode.OVERLAY,
+    )
     return indexed_file
 
 
@@ -60,7 +65,8 @@ def _register_local_project(
     request: pytest.FixtureRequest,
 ) -> None:
     code_storage.upsert_project_stats(
-        IndexedProject(id=PROJECT_ID, root_path="/tmp/gobby-code-index-tests")
+        IndexedProject(id=PROJECT_ID, root_path="/tmp/gobby-code-index-tests"),
+        mode=IndexWriteMode.OVERLAY,
     )
     if "sample_symbols" in request.fixturenames:
         _upsert_test_file(code_storage, "src/app.py")
@@ -586,8 +592,12 @@ def test_get_pending_sync_files_deprioritizes_recent_failures(
         language="python",
         content_hash="new",
     )
-    code_storage.upsert_file(old_file)
-    code_storage.upsert_file(new_file)
+    code_storage.upsert_file(
+        old_file, root_path="/tmp/gobby-code-index-tests", mode=IndexWriteMode.OVERLAY
+    )
+    code_storage.upsert_file(
+        new_file, root_path="/tmp/gobby-code-index-tests", mode=IndexWriteMode.OVERLAY
+    )
     assert code_storage.mark_vector_sync_attempted(old_file.id) is True
     assert code_storage.mark_graph_sync_attempted(old_file.id) is True
 
@@ -607,7 +617,9 @@ def test_get_pending_sync_files_retries_after_failure_cooloff(
         language="python",
         content_hash="retry",
     )
-    code_storage.upsert_file(file)
+    code_storage.upsert_file(
+        file, root_path="/tmp/gobby-code-index-tests", mode=IndexWriteMode.OVERLAY
+    )
     assert code_storage.mark_vector_sync_attempted(file.id) is True
 
     pending = code_storage.get_pending_sync_files(
@@ -631,7 +643,9 @@ def test_upsert_and_get_file(code_storage: CodeIndexStorage) -> None:
         symbol_count=5,
         byte_size=2048,
     )
-    code_storage.upsert_file(f)
+    code_storage.upsert_file(
+        f, root_path="/tmp/gobby-code-index-tests", mode=IndexWriteMode.OVERLAY
+    )
 
     retrieved = code_storage.get_file(PROJECT_ID, "src/lib.py")
     assert retrieved is not None
@@ -655,7 +669,9 @@ def test_list_files(code_storage: CodeIndexStorage) -> None:
                 file_path=name,
                 language="python",
                 content_hash=f"hash-{name}",
-            )
+            ),
+            root_path="/tmp/gobby-code-index-tests",
+            mode=IndexWriteMode.OVERLAY,
         )
 
     files = code_storage.list_files(PROJECT_ID)
@@ -674,7 +690,9 @@ def test_get_stale_files(code_storage: CodeIndexStorage) -> None:
             file_path="changed.py",
             language="python",
             content_hash="old-hash",
-        )
+        ),
+        root_path="/tmp/gobby-code-index-tests",
+        mode=IndexWriteMode.OVERLAY,
     )
     code_storage.upsert_file(
         IndexedFile(
@@ -683,7 +701,9 @@ def test_get_stale_files(code_storage: CodeIndexStorage) -> None:
             file_path="same.py",
             language="python",
             content_hash="current-hash",
-        )
+        ),
+        root_path="/tmp/gobby-code-index-tests",
+        mode=IndexWriteMode.OVERLAY,
     )
 
     current_hashes = {
@@ -716,10 +736,14 @@ def test_list_orphaned_index_projects_excludes_selected_and_registered(
         " ON CONFLICT (id) DO NOTHING",
         (remote_machine_id, "test-0003", TEST_USER_ID),
     )
-    code_storage.upsert_project_stats(IndexedProject(id=PROJECT_ID, root_path="/local/repo"))
+    code_storage.upsert_project_stats(
+        IndexedProject(id=PROJECT_ID, root_path="/local/repo"),
+        mode=IndexWriteMode.OVERLAY,
+    )
     with patch("gobby.utils.machine_id.get_machine_id", return_value=remote_machine_id):
         code_storage.upsert_project_stats(
-            IndexedProject(id=remote_selected_id, root_path="/remote/repo")
+            IndexedProject(id=remote_selected_id, root_path="/remote/repo"),
+            mode=IndexWriteMode.OVERLAY,
         )
     code_storage.db.execute(
         "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, NOW())"
@@ -742,7 +766,10 @@ def test_purge_index_project_cascades_shared_content_and_spares_neighbours(
 ) -> None:
     orphan_id = _ordered_uuid(0xB1)
     orphan_symbol_id = _ordered_uuid(0xB2)
-    code_storage.upsert_project_stats(IndexedProject(id=orphan_id, root_path="/gone/worktree"))
+    code_storage.upsert_project_stats(
+        IndexedProject(id=orphan_id, root_path="/gone/worktree"),
+        mode=IndexWriteMode.OVERLAY,
+    )
     orphan_file = _upsert_test_file(code_storage, "src/gone.py", "gone-hash", project_id=orphan_id)
     code_storage.upsert_symbols(
         [
@@ -765,7 +792,10 @@ def test_purge_index_project_cascades_shared_content_and_spares_neighbours(
         ]
     )
     code_storage.delete_project_index(orphan_id)
-    code_storage.upsert_project_stats(IndexedProject(id=PROJECT_ID, root_path="/local/repo"))
+    code_storage.upsert_project_stats(
+        IndexedProject(id=PROJECT_ID, root_path="/local/repo"),
+        mode=IndexWriteMode.OVERLAY,
+    )
     kept_file = _upsert_test_file(code_storage, "src/kept.py")
     assert code_storage.list_orphaned_index_projects() == [orphan_id]
 
@@ -791,11 +821,17 @@ def test_file_states_coexist_across_machines(code_storage: CodeIndexStorage) -> 
         )
 
     with patch("gobby.utils.machine_id.get_machine_id", return_value=local_machine_id):
-        code_storage.upsert_project_stats(IndexedProject(id=PROJECT_ID, root_path="/local/repo"))
+        code_storage.upsert_project_stats(
+            IndexedProject(id=PROJECT_ID, root_path="/local/repo"),
+            mode=IndexWriteMode.OVERLAY,
+        )
         _upsert_test_file(code_storage, "src/shared.py", "local-hash")
 
     with patch("gobby.utils.machine_id.get_machine_id", return_value=remote_machine_id):
-        code_storage.upsert_project_stats(IndexedProject(id=PROJECT_ID, root_path="/remote/repo"))
+        code_storage.upsert_project_stats(
+            IndexedProject(id=PROJECT_ID, root_path="/remote/repo"),
+            mode=IndexWriteMode.OVERLAY,
+        )
         _upsert_test_file(code_storage, "src/shared.py", "remote-hash")
 
     with patch("gobby.utils.machine_id.get_machine_id", return_value=local_machine_id):
@@ -836,7 +872,7 @@ def test_upsert_and_get_project_stats(code_storage: CodeIndexStorage) -> None:
         last_indexed_at=datetime(2025, 1, 1, tzinfo=UTC),
         index_duration_ms=1200,
     )
-    code_storage.upsert_project_stats(project)
+    code_storage.upsert_project_stats(project, mode=IndexWriteMode.OVERLAY)
 
     retrieved = code_storage.get_project_stats(PROJECT_ID)
     assert retrieved is not None
@@ -844,6 +880,81 @@ def test_upsert_and_get_project_stats(code_storage: CodeIndexStorage) -> None:
     assert retrieved.total_files == 20
     assert retrieved.total_symbols == 150
     assert retrieved.index_duration_ms == 1200
+
+
+def test_primary_storage_writes_require_matching_checkout_and_overlay_does_not(
+    code_storage: CodeIndexStorage,
+) -> None:
+    machine_id = _ordered_uuid(901)
+    project_id = _ordered_uuid(902)
+    overlay_id = _ordered_uuid(903)
+    root_path = "/tmp/python-primary-checkout"
+    code_storage.db.execute(
+        "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s)",
+        (machine_id, "python-primary", TEST_USER_ID),
+    )
+    code_storage.db.execute(
+        "INSERT INTO projects (id, name) VALUES (%s, %s)",
+        (project_id, f"python-primary-{project_id}"),
+    )
+    code_storage.db.execute(
+        "INSERT INTO project_checkouts (machine_id, project_id, root_path) VALUES (%s, %s, %s)",
+        (machine_id, project_id, root_path),
+    )
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=machine_id):
+        code_storage.upsert_project_stats(
+            IndexedProject(id=project_id, root_path=root_path),
+            mode=IndexWriteMode.PRIMARY,
+        )
+        with pytest.raises(ValueError, match="checkout"):
+            code_storage.upsert_project_stats(
+                IndexedProject(id=project_id, root_path="/tmp/stale-checkout"),
+                mode=IndexWriteMode.PRIMARY,
+            )
+
+        indexed_file = IndexedFile(
+            id=IndexedFile.make_id(project_id, "src/lib.py", "primary-hash"),
+            project_id=project_id,
+            file_path="src/lib.py",
+            language="python",
+            content_hash="primary-hash",
+        )
+        code_storage.upsert_file(
+            indexed_file,
+            root_path=root_path,
+            mode=IndexWriteMode.PRIMARY,
+        )
+        with pytest.raises(ValueError, match="checkout"):
+            code_storage.delete_file(
+                project_id,
+                indexed_file.file_path,
+                root_path="/tmp/stale-checkout",
+                mode=IndexWriteMode.PRIMARY,
+            )
+        code_storage.delete_file(
+            project_id,
+            indexed_file.file_path,
+            root_path=root_path,
+            mode=IndexWriteMode.PRIMARY,
+        )
+
+        code_storage.upsert_project_stats(
+            IndexedProject(id=overlay_id, root_path="/tmp/overlay-view"),
+            mode=IndexWriteMode.OVERLAY,
+        )
+        overlay_file = IndexedFile(
+            id=IndexedFile.make_id(overlay_id, "src/overlay.py", "overlay-hash"),
+            project_id=overlay_id,
+            file_path="src/overlay.py",
+            language="python",
+            content_hash="overlay-hash",
+        )
+        code_storage.upsert_file(
+            overlay_file,
+            root_path="/tmp/overlay-view",
+            mode=IndexWriteMode.OVERLAY,
+        )
 
 
 def test_get_project_stats_not_found(code_storage: CodeIndexStorage) -> None:
@@ -970,11 +1081,11 @@ def test_upsert_project_stats_updates(code_storage: CodeIndexStorage) -> None:
         total_files=10,
         total_symbols=50,
     )
-    code_storage.upsert_project_stats(project)
+    code_storage.upsert_project_stats(project, mode=IndexWriteMode.OVERLAY)
 
     project.total_files = 20
     project.total_symbols = 100
-    code_storage.upsert_project_stats(project)
+    code_storage.upsert_project_stats(project, mode=IndexWriteMode.OVERLAY)
 
     retrieved = code_storage.get_project_stats(PROJECT_ID)
     assert retrieved is not None
@@ -993,7 +1104,8 @@ def test_delete_project_index_removes_only_local_project_state(
             root_path="/home/user/project",
             total_files=1,
             total_symbols=len(sample_symbols),
-        )
+        ),
+        mode=IndexWriteMode.OVERLAY,
     )
     code_storage.upsert_file(
         IndexedFile(
@@ -1003,7 +1115,9 @@ def test_delete_project_index_removes_only_local_project_state(
             language="python",
             content_hash=FILE_CONTENT_HASH,
             symbol_count=len(sample_symbols),
-        )
+        ),
+        root_path="/tmp/gobby-code-index-tests",
+        mode=IndexWriteMode.OVERLAY,
     )
     code_storage.upsert_symbols(sample_symbols)
     code_storage.upsert_imports(
@@ -1065,7 +1179,9 @@ def test_count_files(code_storage: CodeIndexStorage) -> None:
                 file_path=name,
                 language="python",
                 content_hash=f"h-{name}",
-            )
+            ),
+            root_path="/tmp/gobby-code-index-tests",
+            mode=IndexWriteMode.OVERLAY,
         )
     assert code_storage.count_files(PROJECT_ID) == 2
 
@@ -1364,12 +1480,20 @@ def test_stale_content_hash_rejects_sync_marks_and_summary(
         content_hash="old-hash",
         symbol_count=1,
     )
-    code_storage.upsert_file(indexed_file)
+    code_storage.upsert_file(
+        indexed_file,
+        root_path="/tmp/gobby-code-index-tests",
+        mode=IndexWriteMode.OVERLAY,
+    )
     stale_file_hash = indexed_file.content_hash
 
     indexed_file.content_hash = "new-hash"
     indexed_file.id = IndexedFile.make_id(PROJECT_ID, "src/app.py", "new-hash")
-    code_storage.upsert_file(indexed_file)
+    code_storage.upsert_file(
+        indexed_file,
+        root_path="/tmp/gobby-code-index-tests",
+        mode=IndexWriteMode.OVERLAY,
+    )
 
     assert code_storage.mark_vectors_synced(indexed_file.id, stale_file_hash) is False
     assert code_storage.mark_graph_synced(indexed_file.id, stale_file_hash) is False

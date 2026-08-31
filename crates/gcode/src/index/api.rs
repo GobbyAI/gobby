@@ -20,6 +20,12 @@ pub struct GraphSyncedFile {
 
 const SYMBOL_UPSERT_BATCH_SIZE: usize = 500;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexWriteMode {
+    Primary,
+    Overlay,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeFactWriteRequest {
     pub project_id: String,
@@ -278,6 +284,7 @@ pub fn upsert_project_seed(
     machine_id: &str,
     project_id: &str,
     root_path: &std::path::Path,
+    mode: IndexWriteMode,
 ) -> anyhow::Result<()> {
     let machine_id = id_param(machine_id)?;
     let project_id = id_param(project_id)?;
@@ -287,16 +294,40 @@ pub fn upsert_project_seed(
          ON CONFLICT(id) DO UPDATE SET updated_at=NOW()",
         &[&project_id],
     )?;
-    conn.execute(
-        "INSERT INTO code_indexed_project_states (
-            machine_id, project_id, root_path, total_files, total_symbols,
-            last_indexed_at, index_duration_ms
-        ) VALUES ($1,$2,$3,0,0,NULL,0)
-        ON CONFLICT(machine_id, project_id) DO UPDATE SET
-            root_path=excluded.root_path,
-            updated_at=NOW()",
-        &[&machine_id, &project_id, &root_path],
-    )?;
+    let written = match mode {
+        IndexWriteMode::Primary => conn.execute(
+            "WITH checkout AS (
+                SELECT 1
+                FROM project_checkouts
+                WHERE machine_id = $1 AND project_id = $2 AND root_path = $3
+                FOR SHARE
+             )
+             INSERT INTO code_indexed_project_states (
+                machine_id, project_id, root_path, total_files, total_symbols,
+                last_indexed_at, index_duration_ms
+             )
+             SELECT $1,$2,$3,0,0,NULL,0 FROM checkout
+             ON CONFLICT(machine_id, project_id) DO UPDATE SET
+                root_path=excluded.root_path,
+                updated_at=NOW()",
+            &[&machine_id, &project_id, &root_path],
+        )?,
+        IndexWriteMode::Overlay => conn.execute(
+            "INSERT INTO code_indexed_project_states (
+                machine_id, project_id, root_path, total_files, total_symbols,
+                last_indexed_at, index_duration_ms
+             ) VALUES ($1,$2,$3,0,0,NULL,0)
+             ON CONFLICT(machine_id, project_id) DO UPDATE SET
+                root_path=excluded.root_path,
+                updated_at=NOW()",
+            &[&machine_id, &project_id, &root_path],
+        )?,
+    };
+    if written == 0 {
+        anyhow::bail!(
+            "primary index root {root_path} does not match the committed checkout for project {project_id}"
+        );
+    }
     Ok(())
 }
 
@@ -304,7 +335,54 @@ pub fn upsert_file_state(
     conn: &mut impl GenericClient,
     machine_id: &str,
     file: &IndexedFile,
+    root_path: &std::path::Path,
+    mode: IndexWriteMode,
 ) -> anyhow::Result<()> {
+    let machine_id = id_param(machine_id)?;
+    let project_id = id_param(&file.project_id)?;
+    let root_path = root_path.to_string_lossy().to_string();
+    if mode == IndexWriteMode::Primary {
+        let row = conn.query_one(
+            "WITH checkout AS (
+                SELECT 1
+                FROM project_checkouts
+                WHERE machine_id = $1 AND project_id = $2 AND root_path = $5
+                FOR SHARE
+             ), state AS (
+                INSERT INTO code_indexed_file_states (
+                    machine_id, project_id, file_path, content_hash
+                )
+                SELECT $1,$2,$3,$4 FROM checkout
+                ON CONFLICT(machine_id, project_id, file_path) DO UPDATE SET
+                    content_hash=excluded.content_hash,
+                    updated_at=NOW()
+                RETURNING project_id, file_path, content_hash
+             ), referenced AS (
+                UPDATE code_indexed_files f
+                   SET last_referenced_at = NOW()
+                  FROM state s
+                 WHERE f.project_id = s.project_id
+                   AND f.file_path = s.file_path
+                   AND f.content_hash = s.content_hash
+                RETURNING 1
+             )
+             SELECT EXISTS(SELECT 1 FROM checkout)",
+            &[
+                &machine_id,
+                &project_id,
+                &file.file_path,
+                &file.content_hash,
+                &root_path,
+            ],
+        )?;
+        if !row.get::<_, bool>(0) {
+            anyhow::bail!(
+                "primary index root {root_path} does not match the committed checkout for project {}",
+                file.project_id
+            );
+        }
+        return Ok(());
+    }
     conn.execute(
         "WITH state AS (
             INSERT INTO code_indexed_file_states (
@@ -322,8 +400,8 @@ pub fn upsert_file_state(
             AND f.file_path = s.file_path
             AND f.content_hash = s.content_hash",
         &[
-            &id_param(machine_id)?,
-            &id_param(&file.project_id)?,
+            &machine_id,
+            &project_id,
             &file.file_path,
             &file.content_hash,
         ],
@@ -337,9 +415,59 @@ pub fn adopt_file_state(
     project_id: &str,
     file_path: &str,
     content_hash: &str,
+    root_path: &std::path::Path,
+    mode: IndexWriteMode,
 ) -> anyhow::Result<bool> {
     let machine_id = id_param(machine_id)?;
     let project_id = id_param(project_id)?;
+    let root_path = root_path.to_string_lossy().to_string();
+    if mode == IndexWriteMode::Primary {
+        let row = conn.query_one(
+            "WITH checkout AS (
+                SELECT 1
+                FROM project_checkouts
+                WHERE machine_id = $1 AND project_id = $2 AND root_path = $5
+                FOR SHARE
+             ), adopted AS (
+                INSERT INTO code_indexed_file_states (
+                    machine_id, project_id, file_path, content_hash
+                )
+                SELECT $1, f.project_id, f.file_path, f.content_hash
+                FROM code_indexed_files f, checkout
+                WHERE f.project_id = $2
+                  AND f.file_path = $3
+                  AND f.content_hash = $4
+                  AND f.graph_synced
+                  AND f.vectors_synced
+                ON CONFLICT(machine_id, project_id, file_path) DO UPDATE SET
+                    content_hash=excluded.content_hash,
+                    updated_at=NOW()
+                RETURNING project_id, file_path, content_hash
+             ), referenced AS (
+                UPDATE code_indexed_files f
+                   SET last_referenced_at = NOW()
+                  FROM adopted a
+                 WHERE f.project_id = a.project_id
+                   AND f.file_path = a.file_path
+                   AND f.content_hash = a.content_hash
+                RETURNING 1
+             )
+             SELECT EXISTS(SELECT 1 FROM checkout), EXISTS(SELECT 1 FROM adopted)",
+            &[
+                &machine_id,
+                &project_id,
+                &file_path,
+                &content_hash,
+                &root_path,
+            ],
+        )?;
+        if !row.get::<_, bool>(0) {
+            anyhow::bail!(
+                "primary index root {root_path} does not match the committed checkout for project {project_id}"
+            );
+        }
+        return Ok(row.get(1));
+    }
     let adopted = conn.execute(
         "WITH adopted AS (
             INSERT INTO code_indexed_file_states (
@@ -373,11 +501,39 @@ pub fn delete_file_state(
     machine_id: &str,
     project_id: &str,
     file_path: &str,
+    root_path: &std::path::Path,
+    mode: IndexWriteMode,
 ) -> anyhow::Result<bool> {
+    let machine_id = id_param(machine_id)?;
+    let project_id = id_param(project_id)?;
+    let root_path = root_path.to_string_lossy().to_string();
+    if mode == IndexWriteMode::Primary {
+        let row = conn.query_one(
+            "WITH checkout AS (
+                SELECT 1
+                FROM project_checkouts
+                WHERE machine_id = $1 AND project_id = $2 AND root_path = $4
+                FOR SHARE
+             ), deleted AS (
+                DELETE FROM code_indexed_file_states
+                WHERE machine_id = $1 AND project_id = $2 AND file_path = $3
+                  AND EXISTS (SELECT 1 FROM checkout)
+                RETURNING 1
+             )
+             SELECT EXISTS(SELECT 1 FROM checkout), EXISTS(SELECT 1 FROM deleted)",
+            &[&machine_id, &project_id, &file_path, &root_path],
+        )?;
+        if !row.get::<_, bool>(0) {
+            anyhow::bail!(
+                "primary index root {root_path} does not match the committed checkout for project {project_id}"
+            );
+        }
+        return Ok(row.get(1));
+    }
     let deleted = conn.execute(
         "DELETE FROM code_indexed_file_states
          WHERE machine_id = $1 AND project_id = $2 AND file_path = $3",
-        &[&id_param(machine_id)?, &id_param(project_id)?, &file_path],
+        &[&machine_id, &project_id, &file_path],
     )?;
     Ok(deleted > 0)
 }
@@ -416,15 +572,41 @@ pub fn upsert_project_stats(
     conn: &mut impl GenericClient,
     machine_id: &str,
     project: &IndexedProject,
+    mode: IndexWriteMode,
 ) -> anyhow::Result<()> {
+    let machine_id = id_param(machine_id)?;
     let project_id = id_param(&project.id)?;
     conn.execute(
         "INSERT INTO code_indexed_projects (id) VALUES ($1)
          ON CONFLICT(id) DO UPDATE SET updated_at=NOW()",
         &[&project_id],
     )?;
-    conn.execute(
-        "INSERT INTO code_indexed_project_states (
+    let state_upsert = match mode {
+        IndexWriteMode::Primary => {
+            "WITH checkout AS (
+            SELECT 1
+            FROM project_checkouts
+            WHERE machine_id = $1 AND project_id = $2 AND root_path = $3
+            FOR SHARE
+        )
+        INSERT INTO code_indexed_project_states (
+            machine_id, project_id, root_path, total_files, total_symbols,
+            last_indexed_at, index_duration_ms, indexer_version
+        ) SELECT $1,$2,$3,$4,$5,NOW(),$6,$7 FROM checkout
+        ON CONFLICT(machine_id, project_id) DO UPDATE SET
+            root_path=excluded.root_path,
+            total_files=excluded.total_files,
+            total_symbols=excluded.total_symbols,
+            last_indexed_at=excluded.last_indexed_at,
+            index_duration_ms=excluded.index_duration_ms,
+            indexer_version=COALESCE(
+                excluded.indexer_version,
+                code_indexed_project_states.indexer_version
+            ),
+            updated_at=NOW()"
+        }
+        IndexWriteMode::Overlay => {
+            "INSERT INTO code_indexed_project_states (
             machine_id, project_id, root_path, total_files, total_symbols,
             last_indexed_at, index_duration_ms, indexer_version
         ) VALUES ($1,$2,$3,$4,$5,NOW(),$6,$7)
@@ -438,9 +620,13 @@ pub fn upsert_project_stats(
                 excluded.indexer_version,
                 code_indexed_project_states.indexer_version
             ),
-            updated_at=NOW()",
+            updated_at=NOW()"
+        }
+    };
+    let written = conn.execute(
+        state_upsert,
         &[
-            &id_param(machine_id)?,
+            &machine_id,
             &project_id,
             &project.root_path,
             &to_i32(project.total_files),
@@ -449,6 +635,13 @@ pub fn upsert_project_stats(
             &project.indexer_version.as_deref(),
         ],
     )?;
+    if written == 0 {
+        anyhow::bail!(
+            "primary index root {} does not match the committed checkout for project {}",
+            project.root_path,
+            project.id
+        );
+    }
     Ok(())
 }
 

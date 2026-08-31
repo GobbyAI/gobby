@@ -6,12 +6,20 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import StrEnum
 from typing import Any, Literal
 
 from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 # Stable namespace for deterministic symbol UUIDs
 CODE_INDEX_UUID_NAMESPACE = uuid.UUID("c0de1de0-0000-4000-8000-000000000000")
+
+
+class IndexWriteMode(StrEnum):
+    """Checkout validation policy for machine-local index selector writes."""
+
+    PRIMARY = "primary"
+    OVERLAY = "overlay"
 
 
 def make_unresolved_callee_id(project_id: str, callee_name: str) -> str:

@@ -295,7 +295,13 @@ def test_skills_search_dialect_parity(hub_db: Any) -> None:
 
 @pytest.mark.skipif(not _SEAMS["code_index_hub_seam"], reason=_PENDING_REASON)
 def test_code_search_dialect_parity(hub_db: Any) -> None:
-    from gobby.code_index.models import ContentChunk, IndexedFile, IndexedProject, Symbol
+    from gobby.code_index.models import (
+        ContentChunk,
+        IndexedFile,
+        IndexedProject,
+        IndexWriteMode,
+        Symbol,
+    )
     from gobby.code_index.storage import CodeIndexStorage
 
     code_storage = (
@@ -322,7 +328,10 @@ def test_code_search_dialect_parity(hub_db: Any) -> None:
         "INSERT INTO projects (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
         (project_id, "code-search-parity"),
     )
-    storage.upsert_project_stats(IndexedProject(id=project_id, root_path="/tmp/code-search-parity"))
+    storage.upsert_project_stats(
+        IndexedProject(id=project_id, root_path="/tmp/code-search-parity"),
+        mode=IndexWriteMode.OVERLAY,
+    )
     for file_path, content_hash in (
         ("src/calculator.py", "hash-calculator"),
         ("src/helper.py", "hash-helper"),
@@ -334,7 +343,9 @@ def test_code_search_dialect_parity(hub_db: Any) -> None:
                 file_path=file_path,
                 language="python",
                 content_hash=content_hash,
-            )
+            ),
+            root_path="/tmp/code-search-parity",
+            mode=IndexWriteMode.OVERLAY,
         )
     storage.upsert_symbols(
         [
