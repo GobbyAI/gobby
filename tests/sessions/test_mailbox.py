@@ -234,6 +234,7 @@ class TestMailboxDirectSend:
         temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         sender = _register_session(session_manager, sample_project["id"], "sender")
         predecessor = _register_session(session_manager, sample_project["id"], "predecessor")
@@ -265,6 +266,22 @@ class TestMailboxDirectSend:
             "purpose": "regression",
             "redirected_from": predecessor.id,
         }
+
+        get_session = session_manager.get
+
+        def successor_disappears(session_id: str) -> Session | None:
+            if session_id == successor.id:
+                return None
+            return get_session(session_id)
+
+        monkeypatch.setattr(session_manager, "get", successor_disappears)
+        with pytest.raises(ValueError, match=f"Recipient session not found: {successor.id}"):
+            await _mailbox(temp_db, session_manager).send(
+                from_session_id=sender.id,
+                target="session",
+                target_id=predecessor.id,
+                content="do not fall back",
+            )
 
     @pytest.mark.asyncio
     async def test_direct_send_follows_chained_clear_successors(
