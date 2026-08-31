@@ -280,12 +280,12 @@ test("activity panel shows non-current web chats with a web badge", async ({
     "Sessions",
   );
   await expect(page.locator(".session-entry")).toHaveCount(2);
-  await expect(page.locator(".activity-panel-content")).toContainText(
-    "#201: Terminal Session",
-  );
-  await expect(page.locator(".activity-panel-content")).toContainText(
-    "#203: Other Web Chat",
-  );
+  await expect(
+    page.locator(".session-entry").filter({ hasText: "Terminal Session" }),
+  ).toHaveCount(1);
+  await expect(
+    page.locator(".session-entry").filter({ hasText: "Other Web Chat" }),
+  ).toHaveCount(1);
 
   await expect(page.locator(".activity-panel-content")).not.toContainText(
     "Current Web Chat",
@@ -505,7 +505,7 @@ test("activity panel refreshes sessions after a session_event websocket message"
   );
   await expect(page.locator(".session-entry")).toHaveCount(1);
   await expect(page.locator(".session-entry")).toContainText([
-    "#201: Terminal Session",
+    "Terminal Session",
   ]);
   await expect(page.locator(".activity-panel-content")).not.toContainText(
     "Other Web Chat",
@@ -521,9 +521,9 @@ test("activity panel refreshes sessions after a session_event websocket message"
 
   await expect(page.locator(".session-entry")).toHaveCount(2);
   await expect(page.locator(".activity-panel-content")).toContainText(
-    "#201: Terminal Session",
+    "Terminal Session",
   );
   await expect(page.locator(".activity-panel-content")).toContainText(
-    "#203: Other Web Chat",
+    "Other Web Chat",
   );
 });

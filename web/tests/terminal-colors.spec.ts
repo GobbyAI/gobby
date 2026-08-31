@@ -1,11 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 
 interface TmuxSessionFixture {
+  terminal_id: string;
   name: string;
   socket: string;
   pane_pid: number;
   pane_dead: boolean;
   pane_title: string;
+  pane_command: string | null;
+  pane_path: string | null;
   window_name: string;
   session_title: string;
   gobby_session_id: string | null;
@@ -28,11 +31,14 @@ const ANSI_OUTPUT =
 
 const MOCK_SESSIONS: TmuxSessionFixture[] = [
   {
+    terminal_id: "terminal-test-session",
     name: "test-session",
     socket: "default",
     pane_pid: 12345,
     pane_dead: false,
     pane_title: "Terminal color fixture",
+    pane_command: null,
+    pane_path: null,
     window_name: "colors",
     session_title: "Terminal color fixture",
     gobby_session_id: null,
@@ -41,11 +47,14 @@ const MOCK_SESSIONS: TmuxSessionFixture[] = [
     attached_bridge: null,
   },
   {
+    terminal_id: "terminal-second-session",
     name: "second-session",
     socket: "gobby",
     pane_pid: 23456,
     pane_dead: false,
     pane_title: "Second fixture",
+    pane_command: null,
+    pane_path: null,
     window_name: "second",
     session_title: "Second fixture",
     gobby_session_id: null,
@@ -187,7 +196,9 @@ async function installTerminalSocket(page: Page): Promise<TerminalHarness> {
         ws.send(
           JSON.stringify({
             type: "terminal_list",
-            sessions: MOCK_SESSIONS,
+            request_id: message.request_id,
+            next_cursor: null,
+            items: MOCK_SESSIONS,
             live_cli_session_ids: [],
           }),
         );
@@ -195,13 +206,18 @@ async function installTerminalSocket(page: Page): Promise<TerminalHarness> {
       }
 
       if (message.type === "terminal_attach") {
-        const sessionName = String(message.session_name);
+        const terminalId = String(message.terminal_id);
+        const session = MOCK_SESSIONS.find(
+          (candidate) => candidate.terminal_id === terminalId,
+        );
+        if (!session) return;
         ws.send(
           JSON.stringify({
             type: "terminal_attach_result",
             request_id: message.request_id,
             success: true,
-            streaming_id: STREAM_IDS[sessionName],
+            attachment_id: STREAM_IDS[session.name],
+            terminal_id: terminalId,
           }),
         );
         return;
@@ -219,13 +235,13 @@ async function installTerminalSocket(page: Page): Promise<TerminalHarness> {
       }
 
       if (message.type === "terminal_resize") {
-        const streamingId = String(message.streaming_id);
+        const streamingId = String(message.attachment_id);
         if (!outputSent.has(streamingId)) {
           outputSent.add(streamingId);
           ws.send(
             JSON.stringify({
               type: "terminal_output",
-              run_id: streamingId,
+              attachment_id: streamingId,
               data:
                 OUTPUT_BY_STREAM[streamingId] ?? "Unknown terminal output\r\n",
             }),
@@ -346,8 +362,7 @@ test("forwards terminal input and detaches before switching terminal sessions", 
     .poll(() => messagesOfType(harness, "terminal_attach"))
     .toContainEqual(
       expect.objectContaining({
-        session_name: "test-session",
-        socket: "default",
+        terminal_id: "terminal-test-session",
       }),
     );
 
@@ -369,7 +384,7 @@ test("forwards terminal input and detaches before switching terminal sessions", 
   expect([
     ...new Set(
       messagesOfType(harness, "terminal_input").map(
-        (message) => message.run_id,
+        (message) => message.attachment_id,
       ),
     ),
   ]).toEqual([STREAM_IDS["test-session"]]);
@@ -381,26 +396,25 @@ test("forwards terminal input and detaches before switching terminal sessions", 
     .poll(() => messagesOfType(harness, "terminal_detach"))
     .toContainEqual(
       expect.objectContaining({
-        streaming_id: STREAM_IDS["test-session"],
+        attachment_id: STREAM_IDS["test-session"],
       }),
     );
   await expect
     .poll(() => messagesOfType(harness, "terminal_attach"))
     .toContainEqual(
       expect.objectContaining({
-        session_name: "second-session",
-        socket: "gobby",
+        terminal_id: "terminal-second-session",
       }),
     );
   const firstDetachIndex = harness.messages.findIndex(
     (message) =>
       message.type === "terminal_detach" &&
-      message.streaming_id === STREAM_IDS["test-session"],
+      message.attachment_id === STREAM_IDS["test-session"],
   );
   const secondAttachIndex = harness.messages.findIndex(
     (message) =>
       message.type === "terminal_attach" &&
-      message.session_name === "second-session",
+      message.terminal_id === "terminal-second-session",
   );
 
   expect(firstDetachIndex).toBeGreaterThan(-1);

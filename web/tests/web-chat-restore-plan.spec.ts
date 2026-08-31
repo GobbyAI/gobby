@@ -540,7 +540,7 @@ test.describe("Web Chat Restore And Plan Mode", () => {
           localStorage.setItem("gobby-activity-panel-tab-v2", "sessions");
         }
         localStorage.setItem(
-          "gobby-sessions-filters",
+          "gobby-sessions-filters:proj-1",
           JSON.stringify({
             modes: [],
             providers: [],
@@ -606,7 +606,7 @@ test.describe("Web Chat Restore And Plan Mode", () => {
     );
     await expect(page.locator(".session-entry")).toHaveCount(1);
     await expect(page.locator(".activity-panel-content")).toContainText(
-      "#204: Task Linked Web Chat",
+      "Task Linked Web Chat",
     );
     await expect(page.locator(".activity-panel-content")).not.toContainText(
       "Other Web Chat",
@@ -616,7 +616,10 @@ test.describe("Web Chat Restore And Plan Mode", () => {
     );
 
     await page.locator(".activity-panel-mobile-trigger").click();
-    await page.getByRole("menuitemradio", { name: "Tasks" }).click();
+    await page
+      .locator(".activity-panel-mobile-menu")
+      .getByRole("button", { name: "Tasks", exact: true })
+      .click();
 
     await expect(page.locator(".activity-panel-mobile-trigger")).toContainText(
       "Tasks",
@@ -628,12 +631,14 @@ test.describe("Web Chat Restore And Plan Mode", () => {
     await expect(claimedTaskRow).toBeVisible();
     await expect(claimedTaskRow).toContainText("#14425");
     await expect(claimedTaskRow).toContainText("Development");
-    const detail = page.locator(".activity-task-detail-shell");
-    await expect(detail).toContainText("Task #14425");
-    await expect(detail).toContainText("web-main");
-    await expect(detail).not.toContainText("Claimed by");
-    await expect(detail).not.toContainText(CURRENT_DB_SESSION_ID);
-    await expect(detail).toContainText(/Development: In Progress.*Claimed/);
+    const tasksPanel = page.getByRole("complementary", {
+      name: "Activity: Tasks",
+    });
+    await expect(tasksPanel).toContainText("Task #14425");
+    await expect(tasksPanel).toContainText("web-main");
+    await expect(tasksPanel).not.toContainText("Claimed by");
+    await expect(tasksPanel).not.toContainText(CURRENT_DB_SESSION_ID);
+    await expect(tasksPanel).toContainText(/Development: In Progress.*Claimed/);
 
     await page.reload();
 
@@ -643,9 +648,9 @@ test.describe("Web Chat Restore And Plan Mode", () => {
       "Tasks",
     );
     await expect(claimedTaskRow).toBeVisible();
-    await expect(detail).toContainText("web-main");
-    await expect(detail).not.toContainText(CURRENT_DB_SESSION_ID);
-    await expect(detail).toContainText(/Development: In Progress.*Claimed/);
+    await expect(tasksPanel).toContainText("web-main");
+    await expect(tasksPanel).not.toContainText(CURRENT_DB_SESSION_ID);
+    await expect(tasksPanel).toContainText(/Development: In Progress.*Claimed/);
     expect(counters.currentMessageFetches).toBeGreaterThanOrEqual(2);
     expect(counters.otherMessageFetches).toBe(0);
     expect(counters.otherSessionDetailFetches).toBe(0);

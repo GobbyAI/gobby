@@ -274,7 +274,7 @@ test("can swap to another web chat, send a message, and receive a response", asy
       return;
     }
 
-    if (path === "/api/files/projects") {
+    if (path === "/api/projects" || path === "/api/files/projects") {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -387,6 +387,25 @@ test("can swap to another web chat, send a message, and receive a response", asy
       return;
     }
 
+    if (path === `/api/chat/${OTHER_DB_SESSION_ID}/messages`) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          messages: [
+            {
+              id: "other-msg-1",
+              role: "assistant",
+              content: "Other chat history",
+              created_at: "2026-04-08T12:25:00Z",
+              seq: 1,
+            },
+          ],
+        }),
+      });
+      return;
+    }
+
     if (path === `/api/sessions/${OTHER_DB_SESSION_ID}`) {
       await route.fulfill({
         status: 200,
@@ -414,7 +433,10 @@ test("can swap to another web chat, send a message, and receive a response", asy
   await expect(
     page.getByRole("dialog", { name: "Command palette" }),
   ).toBeVisible();
-  await page.getByText("Other Web Chat").click();
+  await page
+    .getByRole("listbox", { name: "Command palette results" })
+    .getByText("Other Web Chat", { exact: true })
+    .click();
 
   await expect(
     page.getByRole("button", { name: /#203 other web chat/i }),
@@ -434,12 +456,12 @@ test("can swap to another web chat, send a message, and receive a response", asy
         msg.type === "chat_message" && msg.content === "Hello after swap",
     );
   expect(chatMessage).toBeTruthy();
-  expect(chatMessage?.conversation_id).toBe(OTHER_CONVERSATION_ID);
+  expect(chatMessage?.conversation_id).toBe(OTHER_DB_SESSION_ID);
 
   await serverSend(page, {
     type: "chat_stream",
     message_id: "assistant-swapped",
-    conversation_id: OTHER_CONVERSATION_ID,
+    conversation_id: OTHER_DB_SESSION_ID,
     request_id: chatMessage?.request_id,
     content: "Response from swapped chat",
     done: false,
@@ -447,7 +469,7 @@ test("can swap to another web chat, send a message, and receive a response", asy
   await serverSend(page, {
     type: "chat_stream",
     message_id: "assistant-swapped",
-    conversation_id: OTHER_CONVERSATION_ID,
+    conversation_id: OTHER_DB_SESSION_ID,
     request_id: chatMessage?.request_id,
     content: "",
     done: true,
