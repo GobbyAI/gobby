@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -25,6 +29,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_webchat import (
 from gobby.sessions.clear_continuation import (
     CLEAR_ATTEMPT_VARIABLE,
     clear_failed_attempt,
+    schedule_handoff_continuation,
     stage_clear_attempt,
 )
 from gobby.sessions.compact_continuation import (
@@ -58,6 +63,12 @@ logger = logging.getLogger(__name__)
 # cover a loaded daemon while still bounding the Codex reclaim case.
 _CLEAR_ACK_TIMEOUT_SECONDS = 30.0
 _CLEAR_ACK_POLL_SECONDS = 0.05
+# Codex opens a fresh rollout for the new thread within ~2s of /clear but emits no
+# SessionStart for it; the daemon types the continuation once that rollout exists.
+_CODEX_CLEAR_ROLLOUT_TIMEOUT_SECONDS = 10.0
+_CODEX_CLEAR_ROLLOUT_POLL_SECONDS = 0.25
+_CODEX_CLEAR_CONTINUE_DELAY_SECONDS = 0.5
+_CODEX_ROLLOUT_MTIME_SLACK_SECONDS = 2.0
 
 CLEAR_COMMAND = "/clear"
 
@@ -122,6 +133,71 @@ def _find_new_provider_session(
         if external_changed or rollout_changed:
             return candidate.id
     return None
+
+
+def _codex_rollout_dirs(predecessor_transcript: Path) -> list[Path]:
+    """Directories that can hold the successor rollout: predecessor's day, today, yesterday."""
+    dirs = [predecessor_transcript.parent]
+    root = predecessor_transcript.parent
+    for _ in range(3):
+        if root.name == "sessions":
+            break
+        root = root.parent
+    else:
+        return dirs
+    now = datetime.now()
+    for day in (now, now - timedelta(days=1)):
+        candidate = root / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}"
+        if candidate not in dirs:
+            dirs.append(candidate)
+    return dirs
+
+
+def _find_new_codex_rollout(predecessor_transcript: str | None, *, since: float) -> Path | None:
+    """Return the newest Codex rollout written after ``since`` that is not the predecessor's."""
+    if not predecessor_transcript:
+        return None
+    predecessor = Path(predecessor_transcript)
+    threshold = since - _CODEX_ROLLOUT_MTIME_SLACK_SECONDS
+    newest: tuple[float, Path] | None = None
+    for directory in _codex_rollout_dirs(predecessor):
+        try:
+            entries = list(os.scandir(directory))
+        except OSError:
+            continue
+        for entry in entries:
+            if not (entry.name.startswith("rollout-") and entry.name.endswith(".jsonl")):
+                continue
+            path = Path(entry.path)
+            if path == predecessor:
+                continue
+            try:
+                mtime = entry.stat().st_mtime
+            except OSError:
+                continue
+            if mtime < threshold:
+                continue
+            if newest is None or mtime > newest[0]:
+                newest = (mtime, path)
+    return None if newest is None else newest[1]
+
+
+async def _wait_for_new_codex_rollout(
+    predecessor_transcript: str | None,
+    *,
+    since: float,
+) -> Path | None:
+    """Poll for the successor thread's rollout until it appears or the window closes."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _CODEX_CLEAR_ROLLOUT_TIMEOUT_SECONDS
+    while True:
+        found = _find_new_codex_rollout(predecessor_transcript, since=since)
+        if found is not None:
+            return found
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return None
+        await asyncio.sleep(min(_CODEX_CLEAR_ROLLOUT_POLL_SECONDS, remaining))
 
 
 async def _wait_for_clear_acknowledgment(
@@ -352,6 +428,7 @@ async def execute_clear_session(
         )
 
     async def deliver_clear() -> dict[str, Any]:
+        clear_sent_at = time.time()
         try:
             ok, reason, _pending, failure_detail = await _send_terminal_compaction_command(
                 tmux,
@@ -381,6 +458,56 @@ async def execute_clear_session(
             if failure_detail is not None:
                 failure.update(failure_detail)
             return failure
+
+        if source == "codex":
+            # Codex never emits SessionStart for the post-/clear thread, so the
+            # successor only registers once a prompt is typed. Type the
+            # continuation ourselves as soon as the new rollout exists; its
+            # UserPromptSubmit materializes the successor and consumes the marker.
+            successor_rollout = await _wait_for_new_codex_rollout(
+                getattr(session, "transcript_path", None),
+                since=clear_sent_at,
+            )
+            if successor_rollout is None:
+                restored = restore_failed_attempt()
+                failure = _error(
+                    "timed out waiting for the Codex successor thread after /clear",
+                    "clear_successor_not_observed",
+                )
+                failure.update(
+                    {
+                        "session_id": resolved_session_id,
+                        "attempt_id": attempt_id,
+                        "command_sent": True,
+                        "attempt_restored": restored,
+                    }
+                )
+                return failure
+            scheduled = schedule_handoff_continuation(
+                session,
+                build_handoff_continue_prompt(),
+                delay_seconds=_CODEX_CLEAR_CONTINUE_DELAY_SECONDS,
+            )
+            if not scheduled:
+                restored = restore_failed_attempt()
+                failure = _error(
+                    "failed to schedule the Codex clear continuation prompt",
+                    "clear_continuation_unscheduled",
+                )
+                failure.update(
+                    {
+                        "session_id": resolved_session_id,
+                        "attempt_id": attempt_id,
+                        "command_sent": True,
+                        "attempt_restored": restored,
+                    }
+                )
+                return failure
+            logger.info(
+                "Scheduled Codex clear continuation for session %s after rollout %s",
+                resolved_session_id,
+                successor_rollout.name,
+            )
 
         acknowledgment = await _wait_for_clear_acknowledgment(
             db,
