@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -130,6 +130,26 @@ def test_pre_tool_use_ask_without_reason_still_explains_the_deny() -> None:
     assert result == {"decision": "deny", "reason": AGY_APPROVAL_DENIED_REASON}
 
 
+def test_pre_tool_use_ask_permission_decision_fails_closed() -> None:
+    """A permission effect can hand the dataclass an unhonored ``ask``.
+
+    ``HookResponse.permission_decision`` is annotated ``Literal["allow", "deny"]``
+    but ``HookResponse`` is a plain dataclass, and the rule engine assigns
+    whatever string a ``_permission_response`` effect carries
+    (``workflows/engine/evaluation.py``). AGY honors neither ``ask`` nor
+    ``force_ask``, so the adapter denies with the explanation.
+    """
+    result = AgyAdapter().translate_from_hook_response(
+        HookResponse(decision="allow", permission_decision=cast(Any, "ask"), reason="confirm"),
+        hook_type="PreToolUse",
+    )
+
+    assert result == {
+        "decision": "deny",
+        "reason": f"{AGY_APPROVAL_DENIED_REASON} (confirm)",
+    }
+
+
 @pytest.mark.parametrize(
     "response",
     [
@@ -138,6 +158,8 @@ def test_pre_tool_use_ask_without_reason_still_explains_the_deny() -> None:
         HookResponse(decision="ask", auto_approve=True),
         HookResponse(decision="ask", permission_decision="allow"),
         HookResponse(decision="ask", permission_decision="deny"),
+        HookResponse(decision="allow", permission_decision=cast(Any, "ask")),
+        HookResponse(decision="allow", permission_decision=cast(Any, "force_ask")),
         HookResponse(decision="allow"),
         HookResponse(decision="deny", reason="no"),
         HookResponse(decision="block", reason="no"),

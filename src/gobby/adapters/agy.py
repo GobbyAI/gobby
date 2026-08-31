@@ -188,8 +188,14 @@ class AgyAdapter(ACPHookAdapter):
         is_denied = response.decision in {"deny", "block"}
         decision: str | None = None
         reason = normalized_reason
-        if response.permission_decision:
+        if response.permission_decision in {"allow", "deny"}:
             decision = response.permission_decision
+        elif response.permission_decision:
+            # ``HookResponse`` is a plain dataclass and a permission effect's
+            # decision reaches it unvalidated, so ``ask`` can arrive here. AGY
+            # honors only allow/deny, so it fails closed like ``decision``.
+            decision = "deny"
+            reason = _approval_denied_reason(normalized_reason)
         elif response.auto_approve:
             decision = "allow"
         elif response.decision == "ask":
