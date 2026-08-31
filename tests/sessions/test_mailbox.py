@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from typing import Any, Protocol
 
 import pytest
@@ -282,6 +283,27 @@ class TestMailboxDirectSend:
                 target_id=predecessor.id,
                 content="do not fall back",
             )
+
+        terminal_successor = replace(successor, status="expired")
+
+        def successor_becomes_terminal(session_id: str) -> Session | None:
+            if session_id == successor.id:
+                return terminal_successor
+            return get_session(session_id)
+
+        monkeypatch.setattr(session_manager, "get", successor_becomes_terminal)
+        terminal_error: ValueError | None = None
+        try:
+            await _mailbox(temp_db, session_manager).send(
+                from_session_id=sender.id,
+                target="session",
+                target_id=predecessor.id,
+                content="do not target a terminal successor",
+            )
+        except ValueError as exc:
+            terminal_error = exc
+        assert terminal_error is not None
+        assert str(terminal_error) == f"Recipient clear successor is not live: {successor.id}"
 
     @pytest.mark.asyncio
     async def test_direct_send_follows_chained_clear_successors(

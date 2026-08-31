@@ -393,6 +393,8 @@ class MailboxService:
                 successor = self._session_manager.get(successor_id)
                 if successor is None:
                     raise ValueError(f"Recipient session not found: {successor_id}")
+                if successor.status in TERMINAL_SESSION_STATUSES:
+                    raise ValueError(f"Recipient clear successor is not live: {successor_id}")
                 recipient = successor
                 to_session_id = successor.id
 
