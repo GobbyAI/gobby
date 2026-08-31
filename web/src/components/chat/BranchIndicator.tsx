@@ -41,6 +41,22 @@ async function readCheckoutError(
   return response.statusText || `Failed to switch to ${branchName}`;
 }
 
+function readCheckoutRoot(data: unknown): string | null {
+  if (typeof data !== "object" || data === null || !("checkout" in data)) {
+    return null;
+  }
+  const checkout = data.checkout;
+  if (
+    typeof checkout !== "object" ||
+    checkout === null ||
+    !("root_path" in checkout) ||
+    typeof checkout.root_path !== "string"
+  ) {
+    return null;
+  }
+  return checkout.root_path;
+}
+
 export function BranchIndicator({
   currentBranch,
   worktreePath,
@@ -53,7 +69,10 @@ export function BranchIndicator({
   const [isOpen, setIsOpen] = useState(false);
   const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
   const [branches, setBranches] = useState<BranchInfo[]>([]);
-  const [mainRepoPath, setMainRepoPath] = useState<string | null>(null);
+  const [checkoutState, setCheckoutState] = useState<{
+    projectId: string | null;
+    rootPath: string | null;
+  }>({ projectId: null, rootPath: null });
   const [apiBranch, setApiBranch] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -64,6 +83,17 @@ export function BranchIndicator({
     return params;
   }, [projectId]);
 
+  const fetchProjectCheckout = useCallback(async (): Promise<string | null> => {
+    if (!projectId) return null;
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/checkouts`,
+    );
+    if (!response.ok) return null;
+    return readCheckoutRoot(await response.json());
+  }, [projectId]);
+  const mainRepoPath =
+    checkoutState.projectId === projectId ? checkoutState.rootPath : undefined;
+
   // Eagerly fetch current branch on mount / project change
   useEffect(() => {
     let stale = false;
@@ -72,13 +102,19 @@ export function BranchIndicator({
       .then((data) => {
         if (stale || !data) return;
         if (data.current_branch) setApiBranch(data.current_branch);
-        if (data.repo_path) setMainRepoPath(data.repo_path);
       })
       .catch(() => {});
+    fetchProjectCheckout()
+      .then((rootPath) => {
+        if (!stale) setCheckoutState({ projectId, rootPath });
+      })
+      .catch(() => {
+        if (!stale) setCheckoutState({ projectId, rootPath: null });
+      });
     return () => {
       stale = true;
     };
-  }, [buildParams]);
+  }, [buildParams, fetchProjectCheckout, projectId]);
 
   // Click-outside-close
   useEffect(() => {
@@ -98,10 +134,11 @@ export function BranchIndicator({
   // Fetch worktrees + branches when dropdown opens
   const fetchDropdownData = useCallback(async () => {
     const params = buildParams();
-    const [wtRes, brRes, statusRes] = await Promise.allSettled([
+    const [wtRes, brRes, statusRes, checkoutRes] = await Promise.allSettled([
       fetch(`/api/source-control/worktrees?${params}`),
       fetch(`/api/source-control/branches?${params}`),
       fetch(`/api/source-control/status?${params}`),
+      fetchProjectCheckout(),
     ]);
 
     if (wtRes.status === "fulfilled" && wtRes.value.ok) {
@@ -116,10 +153,13 @@ export function BranchIndicator({
     }
     if (statusRes.status === "fulfilled" && statusRes.value.ok) {
       const data = await statusRes.value.json();
-      if (data.repo_path) setMainRepoPath(data.repo_path);
       if (data.current_branch) setApiBranch(data.current_branch);
     }
-  }, [buildParams]);
+    setCheckoutState({
+      projectId,
+      rootPath: checkoutRes.status === "fulfilled" ? checkoutRes.value : null,
+    });
+  }, [buildParams, fetchProjectCheckout, projectId]);
 
   const handleToggle = () => {
     if (disabled) return;
@@ -161,7 +201,7 @@ export function BranchIndicator({
 
       const data = await response.json();
       if (data.current_branch) setApiBranch(data.current_branch);
-      onWorktreeChange(data.repo_path || mainRepoPath);
+      onWorktreeChange(mainRepoPath);
       setIsOpen(false);
     } catch {
       setCheckoutError(`Failed to switch to ${branchName}`);
@@ -238,6 +278,15 @@ export function BranchIndicator({
               className="border-b border-border px-3 py-1.5 text-xs text-destructive-foreground"
             >
               {checkoutError}
+            </div>
+          )}
+
+          {mainRepoPath === null && (
+            <div
+              role="status"
+              className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground"
+            >
+              No checkout registered for this project
             </div>
           )}
 

@@ -169,7 +169,10 @@ function mockApiRoutes(
           {
             id: "proj-1",
             display_name: "Project One",
-            repo_path: "/tmp/project-one",
+            checkout: {
+              machine_id: "machine-1",
+              root_path: "/tmp/project-one",
+            },
             github_repo: null,
             session_count: 0,
             open_task_count: 0,
@@ -184,7 +187,14 @@ function mockApiRoutes(
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([
-          { id: "proj-1", name: "Project One", repo_path: "/tmp/project-one" },
+          {
+            id: "proj-1",
+            name: "Project One",
+            checkout: {
+              machine_id: "machine-1",
+              root_path: "/tmp/project-one",
+            },
+          },
         ]),
       });
       return;

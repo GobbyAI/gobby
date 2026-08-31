@@ -30,7 +30,7 @@ function makeProject(overrides: Partial<ProjectWithStats>): ProjectWithStats {
     id: "project-1",
     name: "alpha",
     display_name: "Alpha workspace",
-    repo_path: null,
+    checkout: null,
     github_url: null,
     github_repo: null,
     linear_team_id: null,

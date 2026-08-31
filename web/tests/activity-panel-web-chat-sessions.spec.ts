@@ -203,7 +203,10 @@ test("activity panel shows non-current web chats with a web badge", async ({
             id: "proj-1",
             name: "project-one",
             display_name: "Project One",
-            repo_path: "/tmp/project-one",
+            checkout: {
+              machine_id: "machine-1",
+              root_path: "/tmp/project-one",
+            },
             github_url: null,
             github_repo: null,
             linear_team_id: null,
@@ -424,7 +427,10 @@ test("activity panel refreshes sessions after a session_event websocket message"
             id: "proj-1",
             name: "project-one",
             display_name: "Project One",
-            repo_path: "/tmp/project-one",
+            checkout: {
+              machine_id: "machine-1",
+              root_path: "/tmp/project-one",
+            },
             github_url: null,
             github_repo: null,
             linear_team_id: null,

@@ -123,7 +123,10 @@ async function installApiMocks(page: Page, theme: "dark" | "light") {
             id: "project-terminal-history",
             name: "terminal-history",
             display_name: "Terminal History",
-            repo_path: "/tmp/terminal-history",
+            checkout: {
+              machine_id: "machine-1",
+              root_path: "/tmp/terminal-history",
+            },
             github_url: null,
             github_repo: null,
             linear_team_id: null,

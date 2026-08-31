@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useProjects, type ProjectWithStats } from "../useProjects";
@@ -20,7 +20,10 @@ function makeProject(
     id: "p1",
     name: "gobby",
     display_name: "Gobby",
-    repo_path: "/Users/josh/Projects/gobby",
+    checkout: {
+      machine_id: "machine-1",
+      root_path: "/Users/josh/Projects/gobby",
+    },
     github_url: null,
     github_repo: null,
     linear_team_id: null,
@@ -103,5 +106,40 @@ describe("useProjects auth gating (#20066)", () => {
     await waitFor(() => expect(result.current.allProjects).toHaveLength(1));
     expect(result.current.error).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("searches checkout roots and tolerates projects without a checkout", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        okResponse([
+          makeProject(),
+          makeProject({
+            id: "p2",
+            name: "checkout-free",
+            display_name: "Checkout Free",
+            checkout: null,
+          }),
+        ]),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useProjects());
+
+    await waitFor(() => expect(result.current.allProjects).toHaveLength(2));
+    expect(result.current.allProjects[1]).not.toHaveProperty("repo_path");
+
+    act(() => result.current.setSearchText("projects/gobby"));
+    expect(result.current.projects.map((project) => project.id)).toEqual([
+      "p1",
+    ]);
+
+    act(() => result.current.setSearchText("checkout free"));
+    expect(result.current.projects.map((project) => project.id)).toEqual([
+      "p2",
+    ]);
+
+    act(() => result.current.setSearchText("missing/root"));
+    expect(result.current.projects).toEqual([]);
   });
 });

@@ -224,7 +224,14 @@ async function mockApi(
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([
-          { id: "proj-1", name: "Project One", repo_path: "/tmp/project-one" },
+          {
+            id: "proj-1",
+            name: "Project One",
+            checkout: {
+              machine_id: "machine-1",
+              root_path: "/tmp/project-one",
+            },
+          },
         ]),
       });
       return;
@@ -239,7 +246,10 @@ async function mockApi(
             id: "proj-1",
             name: "project-one",
             display_name: "Project One",
-            repo_path: "/tmp/project-one",
+            checkout: {
+              machine_id: "machine-1",
+              root_path: "/tmp/project-one",
+            },
             github_url: null,
             github_repo: null,
             linear_team_id: null,

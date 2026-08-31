@@ -279,7 +279,14 @@ test("can swap to another web chat, send a message, and receive a response", asy
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([
-          { id: "proj-1", name: "Project One", repo_path: "/tmp/project-one" },
+          {
+            id: "proj-1",
+            name: "Project One",
+            checkout: {
+              machine_id: "machine-1",
+              root_path: "/tmp/project-one",
+            },
+          },
         ]),
       });
       return;

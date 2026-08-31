@@ -5,7 +5,10 @@ export interface ProjectWithStats {
   id: string;
   name: string;
   display_name: string;
-  repo_path: string | null;
+  checkout: {
+    machine_id: string;
+    root_path: string;
+  } | null;
   github_url: string | null;
   github_repo: string | null;
   linear_team_id: string | null;
@@ -101,7 +104,7 @@ export function useProjects({ enabled = true }: UseProjectsOptions = {}) {
     return projects.filter(
       (p) =>
         p.display_name.toLowerCase().includes(q) ||
-        (p.repo_path && p.repo_path.toLowerCase().includes(q)) ||
+        (p.checkout?.root_path.toLowerCase().includes(q) ?? false) ||
         (p.github_repo && p.github_repo.toLowerCase().includes(q)),
     );
   }, [projects, searchText]);

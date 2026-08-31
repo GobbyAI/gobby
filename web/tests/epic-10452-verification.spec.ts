@@ -12,9 +12,21 @@ const STORAGE_KEY = `gobby-chat-${CONVERSATION_ID}`;
 const CONVERSATION_ID_KEY = "gobby-conversation-id";
 
 const mockProjects = [
-  { id: "proj-personal", name: "Personal", repo_path: "/tmp/personal" },
-  { id: "proj-gobby", name: "gobby", repo_path: "/tmp/gobby" },
-  { id: "proj-other", name: "other-project", repo_path: "/tmp/other" },
+  {
+    id: "proj-personal",
+    name: "Personal",
+    checkout: { machine_id: "machine-1", root_path: "/tmp/personal" },
+  },
+  {
+    id: "proj-gobby",
+    name: "gobby",
+    checkout: { machine_id: "machine-1", root_path: "/tmp/gobby" },
+  },
+  {
+    id: "proj-other",
+    name: "other-project",
+    checkout: { machine_id: "machine-1", root_path: "/tmp/other" },
+  },
 ];
 
 function setupMockWebSocket(page: import("@playwright/test").Page) {

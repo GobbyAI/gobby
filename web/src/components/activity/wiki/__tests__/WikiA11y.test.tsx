@@ -113,7 +113,10 @@ function stubA11yFetch() {
       return jsonResponse(codewikiStatusBody());
     }
     if (route.includes("/api/projects/")) {
-      return jsonResponse({ id: "p1", repo_path: "/repo" });
+      return jsonResponse({
+        id: "p1",
+        checkout: { machine_id: "machine-1", root_path: "/repo" },
+      });
     }
     if (route.includes("/api/wiki/status")) return jsonResponse(statusEnvelope);
     if (route.includes("/api/wiki/health")) return jsonResponse(healthEnvelope);

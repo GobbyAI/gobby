@@ -5,7 +5,10 @@ const mockProjects = [
   {
     id: "proj-1",
     name: "test-project",
-    repo_path: "/tmp/test-project",
+    checkout: {
+      machine_id: "machine-1",
+      root_path: "/tmp/test-project",
+    },
   },
 ];
 

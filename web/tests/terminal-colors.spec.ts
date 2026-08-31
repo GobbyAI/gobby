@@ -122,7 +122,10 @@ async function installApiMocks(page: Page): Promise<void> {
             id: "project-terminal-test",
             name: "terminal-test",
             display_name: "Terminal Test",
-            repo_path: "/tmp/terminal-test",
+            checkout: {
+              machine_id: "machine-1",
+              root_path: "/tmp/terminal-test",
+            },
             github_url: null,
             github_repo: null,
             linear_team_id: null,
