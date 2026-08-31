@@ -460,6 +460,46 @@ async def test_review_surfaces_the_invalidated_memory_and_not_an_unrelated_one()
     assert "memory-unrelated" not in returned
 
 
+@pytest.mark.asyncio
+async def test_each_review_mints_its_own_recall_request_id() -> None:
+    """#21412: storage drops any signal event without a correlation id.
+
+    ``insert_signal_event`` returns early unless both ``session_id`` and
+    ``recall_request_id`` are set, so an absent id means this caller writes no
+    ``recall_signal_requests`` row at all — despite being listed in
+    ``SHADOW_ELIGIBLE_CALLERS``.
+    """
+    from uuid import UUID
+
+    registry, memory_manager, _task_manager, _session_manager = _registry(task=_task())
+    state_manager = MagicMock()
+    state_manager.get_variables.return_value = {}
+
+    seen: list[str] = []
+    for index in range(2):
+        with patch(
+            "gobby.mcp_proxy.tools.memory_review.SessionVariableManager",
+            MagicMock(return_value=state_manager),
+        ):
+            result = await registry.call(
+                "review_task_memories",
+                {
+                    "task_id": "#42",
+                    "changes_summary": f"Completed pass {index}.",
+                    "session_id": SESSION_ID,
+                },
+            )
+        assert result["success"] is True
+        request_id = memory_manager.search_memories.await_args.kwargs["recall_request_id"]
+        assert request_id
+        assert UUID(request_id).version == 4
+        seen.append(request_id)
+
+    # Per call, not a constant: a reused id would collide on the
+    # (session_id, recall_request_id) key and silently drop the second event.
+    assert seen[0] != seen[1]
+
+
 def test_closed_task_is_accepted_as_explicit_create_memory_source() -> None:
     db = MagicMock()
     with patch(

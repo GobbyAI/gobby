@@ -6,6 +6,7 @@ import asyncio
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.session_resolution import resolve_session_reference
@@ -169,6 +170,12 @@ def register_memory_review_tools(
             )
 
         query = f"{task.title}\n\n{summary}"
+        # Joinable correlation id, minted per call as memory.py does for
+        # search_memories. Without it insert_signal_event drops the event before
+        # the INSERT, which is why this caller had never produced a single
+        # recall_signal_requests row despite being listed in
+        # SHADOW_ELIGIBLE_CALLERS (#21412).
+        recall_request_id = str(uuid4())
         try:
             candidates = await memory_manager().search_memories(
                 query=query,
@@ -191,6 +198,7 @@ def register_memory_review_tools(
                 project_id=project_id,
                 limit=_CANDIDATE_LIMIT,
                 session_id=resolved_session_id,
+                recall_request_id=recall_request_id,
                 caller="mcp_proxy.memory.review_task_memories",
                 include_global=True,
             )
