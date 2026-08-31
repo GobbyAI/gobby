@@ -1,51 +1,54 @@
 """Full-route regression for on_receipt staged effects (#21424).
 
-Covers the whole seam, not just the engine: the staged payload is produced on
-the isolated ``WorkflowEvaluationRuntime`` thread, consumed by
-``take_worker_staging`` on the adapter-executor thread exactly as
-``adapter_execution.run_adapter`` does, written into ``hook_receipt_effects`` by
-``attach_delivery_receipt``, and applied to ``session_variables`` when the
-receipt is acknowledged.
+Drives the real ``review-gobby-session-feedback-before-handoff`` gate — the
+bundled rule body, a real ``RuleEngine``, the real ``WorkflowHookHandler`` —
+across the whole seam: the staged payload is produced on the isolated
+``WorkflowEvaluationRuntime`` thread, consumed by ``take_worker_staging`` on
+the adapter-executor thread exactly as ``adapter_execution.run_adapter`` does,
+written into ``hook_receipt_effects`` by ``attach_delivery_receipt``, and
+applied to ``session_variables`` when the receipt is acknowledged.
 
 Before the fix the payload never crossed the thread hop, so the receipt was
-prepared without it and the acknowledge_variable was lost on both the staged and
-direct-write paths at once, leaving every ``delivery: on_receipt`` gate unable to
-clear itself.
+prepared without it and the acknowledge_variable was lost on both the staged
+and the direct-write paths at once. The gate could never clear itself, which
+is what the second evaluation here proves it now does.
 """
 
 from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
 
-from gobby.hooks.effect_deadline import BlockingEffectDeadline
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.hooks.receipt_effects import (
-    STAGED_EFFECTS_FIELD,
-    apply_acknowledged_receipt,
-    take_worker_staging,
-)
+from gobby.adapters.claude_code import ClaudeCodeAdapter
+from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.receipt_effects import apply_acknowledged_receipt, take_worker_staging
 from gobby.hooks.receipt_redelivery import attach_delivery_receipt
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hook_receipts import acknowledge_receipt
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.engine.blocked_tool_recovery import extract_rule_name
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.sync_rules import sync_rule_file
 
 pytestmark = pytest.mark.unit
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 _RECEIPT_MIGRATION = (
-    Path(__file__).resolve().parents[2]
-    / "crates/gcore/assets/schema/migrations/416_hook_receipt_effects.sql"
+    REPO_ROOT / "crates/gcore/assets/schema/migrations/416_hook_receipt_effects.sql"
+)
+_SESSION_FEEDBACK_RULES = (
+    REPO_ROOT / "src/gobby/install/shared/workflows/rules/session-feedback/session-feedback.yaml"
 )
 
+RULE_NAME = "review-gobby-session-feedback-before-handoff"
 ACK_VARIABLE = "_gobby_feedback_epoch_reviewed"
 
 # Pre-seeded by the postgres fixture; sessions.machine_id carries an FK.
@@ -54,7 +57,7 @@ TEST_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
 @pytest.fixture
 def receipts_db(temp_db: HubDatabase) -> HubDatabase:
-    """temp_db with the hook-receipt table applied."""
+    """temp_db with the hook-receipt table applied and the real gate installed."""
     sql = "\n".join(
         line
         for line in _RECEIPT_MIGRATION.read_text(encoding="utf-8").splitlines()
@@ -64,6 +67,15 @@ def receipts_db(temp_db: HubDatabase) -> HubDatabase:
         for statement in (part.strip() for part in sql.split(";")):
             if statement:
                 conn.execute(statement)
+
+    result = sync_rule_file(temp_db, _SESSION_FEEDBACK_RULES, tag="gobby")
+    assert result["success"], result["errors"]
+
+    # Guard: the whole test is vacuous if the bundled gate is renamed or moved,
+    # so pin that the named rule really landed and is live.
+    row = RuleDefinitionManager(temp_db).get_by_name(RULE_NAME)
+    assert row is not None, f"{RULE_NAME} not synced from {_SESSION_FEEDBACK_RULES}"
+    assert row.enabled is True
     return temp_db
 
 
@@ -82,26 +94,64 @@ def _create_session(db: HubDatabase, session_id: str) -> None:
         )
 
 
-def _block_with_staged_ack(session_id: str) -> Any:
-    """Stand in for a delivered gate carrying an on_receipt acknowledge_variable."""
+def _handoff_event(session_id: str) -> HookEvent:
+    """A real before_tool event for gobby-sessions:set_handoff, adapter-translated.
 
-    async def fake_evaluate_rules(
-        event: HookEvent,
-        *,
-        blocking_deadline: BlockingEffectDeadline | None = None,
-    ) -> HookResponse:
-        return HookResponse(
-            decision="block",
-            reason="survey required",
-            metadata={
-                STAGED_EFFECTS_FIELD: {
-                    "session_id": session_id,
-                    "session_variables": {ACK_VARIABLE: True},
-                }
+    Built fresh per delivery: evaluation normalizes and annotates event.data in
+    place, so a reused instance would not be a second independent delivery.
+    """
+    event = ClaudeCodeAdapter().translate_to_hook_event(
+        {
+            "hook_type": "PreToolUse",
+            "input_data": {
+                "hook_event_name": "PreToolUse",
+                "session_id": session_id,
+                "cwd": str(REPO_ROOT),
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-sessions",
+                    "tool_name": "set_handoff",
+                    "arguments": {"current_state": "x"},
+                },
             },
-        )
+        }
+    )
+    event.metadata["_platform_session_id"] = session_id
+    return event
 
-    return fake_evaluate_rules
+
+def _deliver(handler: WorkflowHookHandler, event: HookEvent) -> tuple[HookResponse, dict[str, Any]]:
+    """Evaluate on an adapter thread, mirroring adapter_execution.run_adapter.
+
+    The handler hops to its own "gobby-workflow-runtime" thread internally;
+    staging is taken here, on the thread the real adapter takes it from.
+    """
+
+    def run() -> tuple[HookResponse, dict[str, Any]]:
+        take_worker_staging()
+        response = handler.evaluate(event)
+        return response, take_worker_staging()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(run).result(timeout=60)
+
+
+def _handler(db: HubDatabase) -> WorkflowHookHandler:
+    return WorkflowHookHandler(
+        rule_engine=RuleEngine(db),
+        evaluation_runtime=WorkflowEvaluationRuntime(),
+    )
+
+
+def _receipt(db: HubDatabase, envelope_id: str) -> tuple[str, int]:
+    with db.transaction() as conn:
+        row = conn.execute(
+            "SELECT receipt_id, delivery_generation FROM hook_receipt_effects "
+            "WHERE current_envelope_id = %s",
+            (envelope_id,),
+        ).fetchone()
+    assert row is not None, "attach_delivery_receipt prepared no receipt"
+    return str(row["receipt_id"]), int(row["delivery_generation"])
 
 
 def _staged_variables(db: HubDatabase, receipt_id: str) -> dict[str, Any]:
@@ -119,100 +169,28 @@ def _staged_variables(db: HubDatabase, receipt_id: str) -> dict[str, Any]:
     return variables if isinstance(variables, dict) else {}
 
 
-def test_on_receipt_ack_reaches_the_db_and_persists_on_acknowledgment(
+def test_delivered_gate_clears_itself_once_its_receipt_is_acknowledged(
     receipts_db: HubDatabase,
 ) -> None:
     session_id = str(uuid4())
     _create_session(receipts_db, session_id)
-    envelope_id = f"n-{uuid4()}"
-    handler = WorkflowHookHandler(evaluation_runtime=WorkflowEvaluationRuntime())
-    event = HookEvent(
-        event_type=HookEventType.BEFORE_TOOL,
-        session_id=session_id,
-        source=SessionSource.CLAUDE,
-        timestamp=datetime.now(UTC),
-        data={"tool_name": "mcp__gobby__call_tool"},
-        metadata={"_platform_session_id": session_id},
+    variables = SessionVariableManager(receipts_db)
+    variables.merge_variables(
+        session_id,
+        {"_gobby_feedback_survey_active": True, "task_claimed": True},
     )
-
-    def adapter_thread() -> dict[str, Any]:
-        """Mirror adapter_execution.run_adapter: clear, evaluate, take, attach."""
-        take_worker_staging()
-        with patch.object(handler, "_evaluate_rules", new=_block_with_staged_ack(session_id)):
-            response = handler.evaluate(event)
-        assert response.decision == "block"
-        staged = take_worker_staging()
-        return attach_delivery_receipt(
-            {"continue": True},
-            db=receipts_db,
-            envelope_id=envelope_id,
-            session_id=session_id,
-            staged_payload=staged or None,
-        )
+    envelope_id = f"n-{uuid4()}"
+    handler = _handler(receipts_db)
 
     try:
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            pool.submit(adapter_thread).result(timeout=30)
-    finally:
-        handler.shutdown()
+        response, staged = _deliver(handler, _handoff_event(session_id))
 
-    with receipts_db.transaction() as conn:
-        row = conn.execute(
-            "SELECT receipt_id, delivery_generation FROM hook_receipt_effects "
-            "WHERE current_envelope_id = %s",
-            (envelope_id,),
-        ).fetchone()
-    assert row is not None, "attach_delivery_receipt prepared no receipt"
-    receipt_id = row["receipt_id"]
-    generation = row["delivery_generation"]
+        assert response.decision == "block"
+        assert extract_rule_name(response.reason) == RULE_NAME
 
-    # The staged payload reached the database, not just the in-memory response.
-    assert _staged_variables(receipts_db, receipt_id) == {ACK_VARIABLE: True}
+        # The acknowledge_variable survived the hop to the consuming thread.
+        assert staged.get("session_variables") == {ACK_VARIABLE: True}
 
-    receipt = acknowledge_receipt(
-        receipts_db, receipt_id=receipt_id, delivery_generation=generation
-    )
-    assert receipt is not None
-
-    variables = SessionVariableManager(receipts_db)
-    apply_acknowledged_receipt(receipt, variable_manager=variables)
-
-    stored = variables.get_variables(session_id)
-    assert stored.get(ACK_VARIABLE) is True
-
-    # The gate's own guard (`not variables.get(...)`) is now false, so a second
-    # delivery would not fire: the gate can finally clear itself.
-    assert not (not stored.get(ACK_VARIABLE))
-
-
-def test_receipt_carries_no_variables_when_nothing_is_staged(
-    receipts_db: HubDatabase,
-) -> None:
-    """A pass-through evaluation must not invent staged variables."""
-    session_id = str(uuid4())
-    envelope_id = f"n-{uuid4()}"
-    handler = WorkflowHookHandler(evaluation_runtime=WorkflowEvaluationRuntime())
-    event = HookEvent(
-        event_type=HookEventType.BEFORE_TOOL,
-        session_id=session_id,
-        source=SessionSource.CLAUDE,
-        timestamp=datetime.now(UTC),
-        data={},
-        metadata={"_platform_session_id": session_id},
-    )
-
-    async def allow(
-        event: HookEvent,
-        *,
-        blocking_deadline: BlockingEffectDeadline | None = None,
-    ) -> HookResponse:
-        return HookResponse(decision="allow")
-
-    def adapter_thread() -> None:
-        take_worker_staging()
-        with patch.object(handler, "_evaluate_rules", new=allow):
-            handler.evaluate(event)
-        staged = take_worker_staging()
         attach_delivery_receipt(
             {"continue": True},
             db=receipts_db,
@@ -220,18 +198,61 @@ def test_receipt_carries_no_variables_when_nothing_is_staged(
             session_id=session_id,
             staged_payload=staged or None,
         )
+        receipt_id, generation = _receipt(receipts_db, envelope_id)
+        assert _staged_variables(receipts_db, receipt_id) == {ACK_VARIABLE: True}
 
-    try:
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            pool.submit(adapter_thread).result(timeout=30)
+        # delivery: on_receipt defers the write, so the variable is still unset
+        # here - whatever the second evaluation sees came from the ack below.
+        assert variables.get_variables(session_id).get(ACK_VARIABLE) is None
+
+        receipt = acknowledge_receipt(
+            receipts_db, receipt_id=receipt_id, delivery_generation=generation
+        )
+        assert receipt is not None
+        apply_acknowledged_receipt(receipt, variable_manager=variables)
+        assert variables.get_variables(session_id).get(ACK_VARIABLE) is True
+
+        # A second real evaluation of the same event: the gate is satisfied and
+        # no longer fires. This is the behavior the fix restores.
+        # Its staged payload is deliberately not asserted here - the runtime
+        # thread retains stale staging across evaluations, which is #21427.
+        second, _ = _deliver(handler, _handoff_event(session_id))
+        assert second.decision == "allow", second.reason
     finally:
         handler.shutdown()
 
-    with receipts_db.transaction() as conn:
-        row = conn.execute(
-            "SELECT receipt_id FROM hook_receipt_effects WHERE current_envelope_id = %s",
-            (envelope_id,),
-        ).fetchone()
-    assert row is not None
-    receipt_id = row["receipt_id"]
+
+def test_receipt_carries_no_variables_when_the_gate_does_not_fire(
+    receipts_db: HubDatabase,
+) -> None:
+    """A pass-through evaluation must not invent staged variables."""
+    session_id = str(uuid4())
+    _create_session(receipts_db, session_id)
+    variables = SessionVariableManager(receipts_db)
+    variables.merge_variables(
+        session_id,
+        {
+            "_gobby_feedback_survey_active": True,
+            "task_claimed": True,
+            ACK_VARIABLE: True,
+        },
+    )
+    envelope_id = f"n-{uuid4()}"
+    handler = _handler(receipts_db)
+
+    try:
+        response, staged = _deliver(handler, _handoff_event(session_id))
+        assert response.decision == "allow"
+        assert staged.get("session_variables") is None
+        attach_delivery_receipt(
+            {"continue": True},
+            db=receipts_db,
+            envelope_id=envelope_id,
+            session_id=session_id,
+            staged_payload=staged or None,
+        )
+    finally:
+        handler.shutdown()
+
+    receipt_id, _ = _receipt(receipts_db, envelope_id)
     assert _staged_variables(receipts_db, receipt_id) == {}
