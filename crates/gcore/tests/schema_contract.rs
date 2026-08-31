@@ -7,29 +7,26 @@ use gobby_core::schema::{
 
 #[test]
 fn embedded_assets_publish_a_complete_schema_identity() {
-    // Named 1.1.5 identity pin for project_checkouts schema 412.
+    // Identity pin for the checkout-only project schema after cutover.
     let identity = schema_identity();
 
     assert_eq!(BASELINE_VERSION, 375);
     assert_eq!(
         BASELINE_CHECKSUM,
-        "4f338eca3757d7a254915c9e124e6bced647cd14c1124d7820c0091a67592dfa"
+        "58524c140b36a49ef115bb7c9a83e9dedf8aeb59e0d53b280537fe564c3464ac"
     );
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 417);
-    assert_eq!(
-        identity.latest_asset.filename,
-        "417_provider_capacity_snapshots.sql"
-    );
+    assert_eq!(identity.latest_asset.version, 418);
+    assert_eq!(identity.latest_asset.filename, "418_project_checkouts.sql");
     assert_eq!(
         identity.latest_asset.checksum,
-        "7397e2d9f59cc4d4573d58d546c430abf34b2f6614afe3f5ac7bd2e9a7a0fea9"
+        "42c0684fb86430e525b325f2dcc57e7f41eb684515f2ce63be5a491821005243"
     );
     assert_eq!(
         identity.root_hash,
-        "fe0eedd22434cddd08f1ed930c787c729e7a8a9c02cf6c1b587e09b7d0b4c32e"
+        "2e36a3047225b768e5bda46b0dc8b36ce6be1461cc914cd3813168aea4617da5"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
@@ -56,8 +53,7 @@ fn baseline_resolve_tool_session_returns_checkout_columns() {
 }
 
 #[test]
-fn catalog_pins_project_checkouts_and_keeps_projects_repo_path() {
-    // Named 1.1.5 catalog pin: project_checkouts columns stay with projects.repo_path.
+fn catalog_pins_project_checkouts_and_drops_projects_repo_path() {
     let catalog: serde_json::Value =
         serde_json::from_str(CATALOG_MANIFEST_JSON).expect("catalog manifest must be valid JSON");
     let names = |kind: &str| -> Vec<&str> {
@@ -75,13 +71,13 @@ fn catalog_pins_project_checkouts_and_keeps_projects_repo_path() {
         "project_checkouts.root_path",
         "project_checkouts.created_at",
         "project_checkouts.updated_at",
-        "projects.repo_path",
     ] {
         assert!(
             columns.contains(&column),
             "catalog columns missing {column}"
         );
     }
+    assert!(!columns.contains(&"projects.repo_path"));
     let constraints = names("constraints");
     for constraint in [
         "project_checkouts.project_checkouts_pkey",

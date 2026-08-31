@@ -115,14 +115,13 @@ def _seed_canonical_checkout(
 def _assert_canonical_checkout(db: HubDatabase, project_id: str, canonical_path: Path) -> None:
     project = LocalProjectManager(db).get(project_id)
     assert project is not None
-    assert project.repo_path in (None, "")
     checkout = LocalProjectCheckoutManager(db).get(LOCAL_MACHINE_ID, project_id)
     assert checkout is not None
     assert checkout.root_path == str(canonical_path)
 
 
 @pytest.mark.parametrize("isolation", ["worktree", "clone"])
-def test_isolated_agent_init_preserves_canonical_repo_path(
+def test_isolated_agent_init_preserves_primary_checkout(
     temp_db: HubDatabase,
     tmp_path: Path,
     isolation: str,
@@ -150,7 +149,7 @@ def test_isolated_agent_init_preserves_canonical_repo_path(
 
 @pytest.mark.parametrize("isolation", ["worktree", "clone"])
 @pytest.mark.parametrize("variant", ["exact", "trailing-separator", "symlink"])
-def test_hook_project_sync_preserves_canonical_repo_path_before_session_resolution(
+def test_hook_project_sync_preserves_primary_checkout_before_session_resolution(
     temp_db: HubDatabase,
     tmp_path: Path,
     isolation: str,
@@ -185,7 +184,7 @@ def test_hook_project_sync_preserves_canonical_repo_path_before_session_resoluti
 
 @pytest.mark.parametrize("isolation", ["worktree", "clone"])
 @pytest.mark.parametrize("variant", ["exact", "trailing-separator", "symlink"])
-def test_registered_isolation_path_cannot_explicitly_update_repo_path(
+def test_registered_overlay_cannot_replace_primary_checkout(
     temp_db: HubDatabase,
     tmp_path: Path,
     isolation: str,
@@ -202,7 +201,7 @@ def test_registered_isolation_path_cannot_explicitly_update_repo_path(
         isolated_path=isolated_path,
         isolation=isolation,
     )
-    repo_path = _isolation_path_variant(tmp_path, isolated_path, variant)
+    overlay_path = _isolation_path_variant(tmp_path, isolated_path, variant)
 
     with pytest.raises(
         (
@@ -212,13 +211,13 @@ def test_registered_isolation_path_cannot_explicitly_update_repo_path(
         ),
         match="isolated agent session|registered overlay|normalized absolute path",
     ):
-        LocalProjectManager(temp_db).update(project.id, repo_path=repo_path)
+        LocalProjectManager(temp_db).update(project.id, repo_path=overlay_path)
 
     _assert_canonical_checkout(temp_db, project.id, canonical_path)
 
 
 @pytest.mark.parametrize("root", ["worktrees", "clones"])
-def test_unregistered_isolation_root_path_cannot_update_repo_path(
+def test_unregistered_isolation_root_cannot_replace_primary_checkout(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -275,7 +274,7 @@ def test_isolation_root_check_fails_closed_when_root_resolution_is_denied(
     assert LocalProjectManager._is_under_isolation_root(str(candidate)) is True
 
 
-def test_nonisolated_init_can_set_missing_repo_path(
+def test_nonisolated_init_can_register_missing_checkout(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:

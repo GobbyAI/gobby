@@ -192,7 +192,7 @@ class ServiceContainer:
     def get_git_manager(self, project_id: str) -> Any | None:
         """Get or create a WorktreeGitManager for a project.
 
-        Looks up the project's repo_path from the database and creates a
+        Looks up this machine's primary project checkout and creates a
         WorktreeGitManager, caching it for subsequent calls.
 
         Returns:

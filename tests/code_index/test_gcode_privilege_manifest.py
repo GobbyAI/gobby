@@ -72,7 +72,7 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
         "code_index_prune_dirty_projects",
     }
     assert relations["projects"]["operations"] == ["SELECT"]
-    assert relations["projects"]["columns"] == ["id", "name", "deleted_at", "repo_path"]
+    assert relations["projects"]["columns"] == ["id", "name", "deleted_at"]
     assert relations["project_checkouts"] == {
         "relation": "project_checkouts",
         "operations": ["SELECT", "UPDATE"],

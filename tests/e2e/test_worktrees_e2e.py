@@ -213,15 +213,7 @@ def git_repo_with_origin(
 
     # Write project.json with the created project's ID
     project_json = gobby_dir / "project.json"
-    project_json.write_text(
-        json.dumps(
-            {
-                "id": project_id,
-                "name": project_name,
-                "repo_path": str(e2e_project_dir),
-            }
-        )
-    )
+    project_json.write_text(json.dumps({"id": project_id, "name": project_name}))
 
     return e2e_project_dir
 

@@ -246,7 +246,7 @@ async def test_setup_worktrees_registry_claim_resolves_session_refs(
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
     worktree_storage = LocalWorktreeManager(temp_db)
-    project = project_manager.create(name="test-project", repo_path="/tmp/test-project")
+    project = project_manager.create(name="test-project")
     session = session_manager.register(
         machine_id=None,
         source="codex",
@@ -589,8 +589,8 @@ def test_setup_hub_registry_accepts_project_id(hub_db: Any) -> None:
     # Create a project in the database for foreign key constraint
     project_id = str(uuid4())
     db.execute(
-        "INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at) VALUES (%s, %s, %s, %s, NOW(), NOW())",
-        (project_id, "Test Project", "/tmp/test", None),
+        "INSERT INTO projects (id, name, github_url, created_at, updated_at) VALUES (%s, %s, %s, NOW(), NOW())",
+        (project_id, "Test Project", None),
     )
 
     manager = setup_internal_registries(

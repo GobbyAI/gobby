@@ -27,8 +27,10 @@ _MUTABLE_COUNT_TABLES = frozenset(
     }
 )
 _OLD_CAMPAIGNS = ("schema-apply", "purge", "reconcile", "flatten")
+_ACCOUNT_IDENTITY_CAMPAIGNS = (ACCOUNT_IDENTITY_CAMPAIGN, *_OLD_CAMPAIGNS)
 _TARGET_CAMPAIGNS = (
     ACCOUNT_IDENTITY_CAMPAIGN,
+    "project-checkout-cutover",
     "schema-apply",
     "purge",
     "reconcile",
@@ -93,7 +95,16 @@ class AccountIdentityCutoverPreflight:
 
 def admit_account_identity_campaign(connection: psycopg.Connection[Any]) -> None:
     """Admit the cutover campaign in the same transaction that opens its fence."""
-    _require_receipt(connection, PREDECESSOR_BASELINE_CHECKSUM)
+    admit_cutover_campaign(connection, predecessor_checksum=PREDECESSOR_BASELINE_CHECKSUM)
+
+
+def admit_cutover_campaign(
+    connection: psycopg.Connection[Any],
+    *,
+    predecessor_checksum: str,
+) -> None:
+    """Safely expand campaign constraints for a known baseline predecessor."""
+    _require_receipt(connection, predecessor_checksum)
     for table in ("maintenance_epochs", "destructive_batches"):
         constraint = f"{table}_campaign_check"
         definition_row = connection.execute(
@@ -661,7 +672,7 @@ def _receipt_checksum(connection: psycopg.Connection[Any]) -> str | None:
 
 def _campaign_constraint_is_known(definition: str) -> bool:
     values = tuple(re.findall(r"'([^']+)'::text", definition))
-    return values in (_OLD_CAMPAIGNS, _TARGET_CAMPAIGNS)
+    return values in (_OLD_CAMPAIGNS, _ACCOUNT_IDENTITY_CAMPAIGNS, _TARGET_CAMPAIGNS)
 
 
 def _scalar_count(

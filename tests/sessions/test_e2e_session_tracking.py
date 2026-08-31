@@ -69,9 +69,9 @@ async def env(tmp_path: Path, hub_db: HubDatabase) -> AsyncGenerator[dict[str, A
     ):
         # Insert a valid project for FK constraints
         db.execute(
-            "INSERT INTO projects (id, name, repo_path, created_at, updated_at) "
-            "VALUES (%s, %s, %s, %s, %s)",
-            ("proj-1", "Test Project", str(tmp_path), datetime.now(), datetime.now()),
+                "INSERT INTO projects (id, name, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s)",
+                ("proj-1", "Test Project", datetime.now(), datetime.now()),
         )
 
         # Start processor

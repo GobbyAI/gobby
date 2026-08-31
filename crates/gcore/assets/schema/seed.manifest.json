@@ -13,8 +13,7 @@
         "linear_sync_enabled": false,
         "linear_synced_at": null,
         "linear_team_id": null,
-        "name": "_orphaned",
-        "repo_path": null
+        "name": "_orphaned"
       }
     },
     {
@@ -30,8 +29,7 @@
         "linear_sync_enabled": false,
         "linear_synced_at": null,
         "linear_team_id": null,
-        "name": "_migrated",
-        "repo_path": null
+        "name": "_migrated"
       }
     },
     {
@@ -47,8 +45,7 @@
         "linear_sync_enabled": false,
         "linear_synced_at": null,
         "linear_team_id": null,
-        "name": "_global",
-        "repo_path": null
+        "name": "_global"
       }
     },
     {
@@ -64,8 +61,7 @@
         "linear_sync_enabled": false,
         "linear_synced_at": null,
         "linear_team_id": null,
-        "name": "_personal",
-        "repo_path": null
+        "name": "_personal"
       }
     }
   ],

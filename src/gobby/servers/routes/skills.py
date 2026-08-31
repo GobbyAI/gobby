@@ -220,7 +220,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             )
         project = await run_in_threadpool(partial(manager.get, project_id))
         if project is None:
-            raise HTTPException(status_code=400, detail="Project repo_path is required")
+            raise HTTPException(status_code=400, detail="Project not found")
         try:
             machine_id = require_local_machine_id(
                 None, resource_kind="project_checkout", resource_id=project_id

@@ -339,7 +339,6 @@ fn is_live_mutable_seed_field(table: &str, field: &str) -> bool {
                 | "linear_sync_enabled"
                 | "linear_synced_at"
                 | "linear_team_id"
-                | "repo_path"
         ),
         "sessions" => matches!(
             field,

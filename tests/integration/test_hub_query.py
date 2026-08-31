@@ -46,10 +46,10 @@ def multi_project_hub(hub_db):
         # Insert project
         hub_db.execute(
             """
-            INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            (project_id, project_name.replace("-", " ").title(), project_dir),
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """,
+        (project_id, project_name.replace("-", " ").title()),
         )
 
         task_manager = LocalTaskManager(hub_db)
@@ -315,10 +315,10 @@ class TestHubQueryEdgeCases:
         tasks_only_project = _test_uuid("tasks-only-project")
         hub_db.execute(
             """
-            INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            (tasks_only_project, "Tasks Only", "/path/tasks"),
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """,
+        (tasks_only_project, "Tasks Only"),
         )
         hub_db.execute(
             """
@@ -355,10 +355,10 @@ class TestHubQueryEdgeCases:
         sessions_only_project = _test_uuid("sessions-only-project")
         hub_db.execute(
             """
-            INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            (sessions_only_project, "Sessions Only", "/path/sessions"),
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """,
+        (sessions_only_project, "Sessions Only"),
         )
         hub_db.execute(
             """

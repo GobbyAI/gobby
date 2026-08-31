@@ -36,10 +36,10 @@ STALE_REVIEW_SESSION_ID = "44444444-4444-4444-8444-444444444444"
 def _seed_db(db: HubDatabase) -> None:
     """Insert project + session rows to satisfy FK constraints."""
     db.execute(
-        """INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-           VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-           ON CONFLICT DO NOTHING""",
-        (PROJECT_ID, "test-project", "/tmp/test"),
+        """INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT DO NOTHING""",
+        (PROJECT_ID, "test-project"),
     )
     db.execute(
         "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s) ON CONFLICT (id) DO NOTHING",

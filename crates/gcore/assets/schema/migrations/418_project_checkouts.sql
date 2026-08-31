@@ -90,7 +90,6 @@ CREATE POLICY gobby_gcode_project_update ON project_checkouts
 
 GRANT SELECT, INSERT, DELETE, UPDATE ON TABLE project_checkouts TO gobby_daemon_runtime;
 GRANT SELECT (deleted_at) ON TABLE projects TO gobby_gcode_capability;
-GRANT SELECT (repo_path) ON TABLE projects TO gobby_gcode_capability;
 GRANT SELECT (machine_id, project_id, root_path),
       UPDATE (machine_id, project_id, root_path)
     ON TABLE project_checkouts TO gobby_gcode_capability;

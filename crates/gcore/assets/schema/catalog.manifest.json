@@ -3257,10 +3257,6 @@
       "definition": "text|text|NO||NEVER"
     },
     {
-      "name": "projects.repo_path",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
       "name": "projects.updated_at",
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
@@ -6692,7 +6688,7 @@
     },
     {
       "name": "destructive_batches.destructive_batches_campaign_check",
-      "definition": "CHECK (campaign = ANY (ARRAY['account-identity-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))"
+      "definition": "CHECK (campaign = ANY (ARRAY['account-identity-cutover'::text, 'project-checkout-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))"
     },
     {
       "name": "destructive_batches.destructive_batches_check",
@@ -6924,7 +6920,7 @@
     },
     {
       "name": "maintenance_epochs.maintenance_epochs_campaign_check",
-      "definition": "CHECK (campaign = ANY (ARRAY['account-identity-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))"
+      "definition": "CHECK (campaign = ANY (ARRAY['account-identity-cutover'::text, 'project-checkout-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))"
     },
     {
       "name": "maintenance_epochs.maintenance_epochs_check",

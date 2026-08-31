@@ -221,8 +221,8 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
 
         self._model = model
 
-        # Use the project's repo_path if available (set by web UI project selector),
-        # otherwise fall back to gobby project root (dev mode) or cwd.
+        # Use the selected project checkout when available; otherwise fall back
+        # to the Gobby project root (dev mode) or cwd.
         if self.project_path:
             cwd = self.project_path
         else:

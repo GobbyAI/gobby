@@ -265,8 +265,8 @@ fn verify_accepts_runtime_mutation_of_seed_fields() -> anyhow::Result<()> {
     SchemaRunner::new(&mut client, "public")?.apply()?;
     client.batch_execute(
         "UPDATE projects
-            SET repo_path = '/installed/personal'
-          WHERE id = '00000000-0000-0000-0000-000000060887';
+         SET github_url = 'https://example.invalid/installed/personal'
+         WHERE id = '00000000-0000-0000-0000-000000060887';
          UPDATE sessions
             SET status = 'ended', message_count = 9
           WHERE id = '00000000-0000-0000-0000-000000000001';",

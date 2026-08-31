@@ -17,6 +17,7 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.observer_commits import detect_bash_commit
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import add_claimed_task
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.integration
 
@@ -43,7 +44,9 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
     session_var_manager = SessionVariableManager(temp_db)
 
     # Create project to satisfy FK
-    project = project_manager.create("test-project", str(repo_root))
+    project = install_isolated_checkout_project(
+        temp_db, repo_root, name="test-project", machine_id=LOCAL_MACHINE_ID
+    ).project
     project_id = project.id
 
     # EventHandlers needs session_storage and task_manager
@@ -130,7 +133,9 @@ def test_shell_edit_history_tracks_task_files(temp_db, tmp_path) -> None:
     project_manager = LocalProjectManager(temp_db)
     session_var_manager = SessionVariableManager(temp_db)
 
-    project = project_manager.create("test-shell-edit", str(repo_root))
+    project = install_isolated_checkout_project(
+        temp_db, repo_root, name="test-shell-edit", machine_id=LOCAL_MACHINE_ID
+    ).project
     session = session_manager.register(
         external_id="test-shell-session",
         machine_id="21000000-0000-4000-8000-000000000002",
@@ -185,7 +190,9 @@ def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
     project_manager = LocalProjectManager(temp_db)
     session_var_manager = SessionVariableManager(temp_db)
 
-    project = project_manager.create("test-project-outside", str(repo_root))
+    project = install_isolated_checkout_project(
+        temp_db, repo_root, name="test-project-outside", machine_id=LOCAL_MACHINE_ID
+    ).project
     session = session_manager.register(
         external_id="test-session-outside",
         machine_id="21000000-0000-4000-8000-000000000002",
@@ -227,7 +234,7 @@ def test_edit_history_not_set_if_task_not_claimed(temp_db) -> None:
     project_manager = LocalProjectManager(temp_db)
     handlers = EventHandlers(session_storage=session_manager, task_manager=task_manager)
 
-    project = project_manager.create("test-project-2", "/tmp/repo2")
+    project = project_manager.create("test-project-2")
     project_id = project.id
 
     session = session_manager.register(
@@ -274,7 +281,9 @@ def test_edit_history_without_claim_records_no_task_scoped_edits(temp_db, tmp_pa
     session_var_manager = SessionVariableManager(temp_db)
     handlers = EventHandlers(session_storage=session_manager, task_manager=task_manager)
 
-    project = project_manager.create("test-project-no-claim", str(repo_root))
+    project = install_isolated_checkout_project(
+        temp_db, repo_root, name="test-project-no-claim", machine_id=LOCAL_MACHINE_ID
+    ).project
     session = session_manager.register(
         external_id="test-session-no-claim",
         machine_id="21000000-0000-4000-8000-000000000002",
@@ -312,7 +321,9 @@ def test_edit_history_multiple_claims_use_active_task_id(temp_db, tmp_path) -> N
     session_var_manager = SessionVariableManager(temp_db)
     handlers = EventHandlers(session_storage=session_manager, task_manager=task_manager)
 
-    project = project_manager.create("test-project-multi-claim", str(repo_root))
+    project = install_isolated_checkout_project(
+        temp_db, repo_root, name="test-project-multi-claim", machine_id=LOCAL_MACHINE_ID
+    ).project
     session = session_manager.register(
         external_id="test-session-multi-claim",
         machine_id="21000000-0000-4000-8000-000000000002",
@@ -367,7 +378,9 @@ def test_codex_patch_ledger_survives_commit_observer_and_compaction_resume(
     repo_root.mkdir()
     session_manager = SessionManager(temp_db)
     task_manager = LocalTaskManager(temp_db)
-    project = LocalProjectManager(temp_db).create("patch-ledger-project", str(repo_root))
+    project = install_isolated_checkout_project(
+        temp_db, repo_root, name="patch-ledger-project", machine_id=LOCAL_MACHINE_ID
+    ).project
     variables_manager = SessionVariableManager(temp_db)
     handlers = EventHandlers(
         session_storage=cast(HookSessionManager, session_manager),

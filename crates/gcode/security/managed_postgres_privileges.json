@@ -12,7 +12,7 @@
     "overlay_binding": "managed agent_run and tool_chat principals derive the overlay from the run's registered worktree or clone; interactive principals bind the overlay the handshake names only when it is a registered worktree or clone of the project on the issuing machine, and reuse is keyed per (deployment token, machine, project, overlay)"
   },
   "relations": [
-    {"relation": "projects", "operations": ["SELECT"], "columns": ["id", "name", "deleted_at", "repo_path"], "scope_column": "id"},
+  {"relation": "projects", "operations": ["SELECT"], "columns": ["id", "name", "deleted_at"], "scope_column": "id"},
     {"relation": "project_checkouts", "operations": ["SELECT", "UPDATE"], "columns": ["machine_id", "project_id", "root_path"], "scope_column": "project_id", "machine_scope_column": "machine_id"},
     {"relation": "config_state", "operations": ["SELECT"], "columns": ["id", "revision"], "scope_note": "single global runtime configuration revision row; no per-project data"},
     {"relation": "code_indexed_projects", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "id"},

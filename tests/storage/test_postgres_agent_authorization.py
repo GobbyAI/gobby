@@ -136,14 +136,12 @@ def _issue(
 
 def _seed(conn: psycopg.Connection[Any], fixture: AuthorizationFixture) -> None:
     conn.execute(
-        "INSERT INTO public.projects (id, name, repo_path) VALUES (%s, %s, %s), (%s, %s, %s)",
+        "INSERT INTO public.projects (id, name) VALUES (%s, %s), (%s, %s)",
         (
             fixture.project_id,
             f"agent-auth-{fixture.project_id}",
-            f"/tmp/{fixture.project_id}",
             fixture.other_project_id,
             f"agent-auth-{fixture.other_project_id}",
-            f"/tmp/{fixture.other_project_id}",
         ),
     )
     conn.execute(
@@ -555,15 +553,12 @@ def test_project_checkouts_are_machine_isolated_lock_only_and_daemon_writable(
                 has_column_privilege(%s, 'project_checkouts', 'root_path', 'UPDATE')
                     AS capability_update,
                 has_column_privilege(%s, 'projects', 'deleted_at', 'SELECT')
-                    AS deleted_at_select,
-                has_column_privilege(%s, 'projects', 'repo_path', 'SELECT')
-                    AS repo_path_select
+                    AS deleted_at_select
             """,
             (
                 RUNTIME_ROLE,
                 RUNTIME_ROLE,
                 RUNTIME_ROLE,
-                CAPABILITY_ROLE,
                 CAPABILITY_ROLE,
                 CAPABILITY_ROLE,
                 CAPABILITY_ROLE,
@@ -576,7 +571,13 @@ def test_project_checkouts_are_machine_isolated_lock_only_and_daemon_writable(
         assert grants["capability_select"] is True
         assert grants["capability_update"] is True
         assert grants["deleted_at_select"] is True
-        assert grants["repo_path_select"] is True
+        assert admin.execute(
+            """
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'projects'
+              AND column_name = 'repo_path'
+            """
+        ).fetchone() is None
 
     extra_root = f"/tmp/daemon-checkout-{uuid4()}"
     with psycopg.connect(fixture.database_url, autocommit=True) as admin:
@@ -635,6 +636,8 @@ def test_project_checkouts_are_machine_isolated_lock_only_and_daemon_writable(
         )
         live = agent.execute("SELECT id FROM projects WHERE deleted_at IS NULL").fetchall()
         assert {row[0] for row in live} == {fixture.project_id}
+        with pytest.raises(psycopg.errors.UndefinedColumn):
+            agent.execute("SELECT repo_path FROM projects").fetchall()
 
     with psycopg.connect(fixture.other_agent_url, autocommit=True) as other:
         rows = other.execute(checkout_select).fetchall()

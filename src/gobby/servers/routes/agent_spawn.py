@@ -319,10 +319,10 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             effective_workflow = agent_body.workflows.pipeline
 
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
-        from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.project_checkouts import require_root
+        from gobby.utils.machine_id import require_machine_id
 
-        project = LocalProjectManager(task_manager.db).get(effective_project_id)
-        project_path = None if project is None else (project.repo_path or None)
+        project_path = require_root(task_manager.db, effective_project_id, require_machine_id())
 
         result = await spawn_agent_impl(
             prompt=effective_prompt,

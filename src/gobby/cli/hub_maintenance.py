@@ -182,6 +182,10 @@ def abort_campaign(disposition: str) -> None:
         disposition=disposition,
         confirmed=True,
     )
+    if epoch.campaign == "project-checkout-cutover" and state in {"applied", "verified"}:
+        click.echo("Install the staged gdaemon and gcode binaries, then start the daemon manually.")
+        click.echo(f"Maintenance epoch {epoch.id} aborted and released")
+        return
     _start_daemon()
     click.echo(f"Maintenance epoch {epoch.id} aborted and released")
 
@@ -281,7 +285,7 @@ def _finish_or_report(
         raise click.ClickException(
             f"Maintenance epoch {epoch.id} remains open for resume: {exc}"
         ) from exc
-    if epoch.campaign == "account-identity-cutover":
+    if epoch.campaign in {ACCOUNT_IDENTITY_CAMPAIGN, "project-checkout-cutover"}:
         click.echo("Install the staged gdaemon and gcode binaries, then start the daemon manually.")
         return
     _start_daemon()
@@ -338,6 +342,13 @@ def _load_campaign_executor(campaign: Campaign) -> CampaignExecutor:
         )
 
         install_account_identity_cutover_executor()
+        executor = _CAMPAIGN_EXECUTORS.get(campaign)
+    if executor is None and campaign == "project-checkout-cutover":
+        from gobby.cli.project_checkout_cutover import (
+            install_project_checkout_cutover_executor,
+        )
+
+        install_project_checkout_cutover_executor()
         executor = _CAMPAIGN_EXECUTORS.get(campaign)
     if executor is None:
         raise click.ClickException(

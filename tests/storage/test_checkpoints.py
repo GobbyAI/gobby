@@ -25,7 +25,7 @@ def _seed_parents(temp_db: HubDatabase) -> None:
     """Insert parent records so checkpoint FK constraints pass."""
     with temp_db.transaction() as conn:
         conn.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (%s, 'test', '/tmp/test')",
+            "INSERT INTO projects (id, name) VALUES (%s, 'test')",
             (PROJECT_ID,),
         )
         conn.execute(

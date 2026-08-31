@@ -144,21 +144,19 @@ def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) 
         and bool(config.files_home)
         and held_singleton_claim() is not None
     )
-    repo_path = str(personal_project_path()) if write_identity else None
     project_manager = LocalProjectManager(db)
     now = utc_now()
     with db.transaction() as txn:
         txn.execute(
             """
-            INSERT INTO projects (id, name, repo_path, deleted_at)
-            VALUES (%s, %s, %s, NULL)
+            INSERT INTO projects (id, name, deleted_at)
+            VALUES (%s, %s, NULL)
             ON CONFLICT (id) DO UPDATE
             SET name = EXCLUDED.name,
-                repo_path = COALESCE(EXCLUDED.repo_path, projects.repo_path),
                 deleted_at = NULL,
                 updated_at = EXCLUDED.updated_at
             """,
-            (PERSONAL_PROJECT_ID, "_personal", repo_path),
+            (PERSONAL_PROJECT_ID, "_personal"),
         )
     project = project_manager.get(PERSONAL_PROJECT_ID)
     if project is None:
@@ -184,7 +182,6 @@ class Project:
 
     id: str
     name: str
-    repo_path: str | None
     github_url: str | None
     created_at: datetime
     updated_at: datetime
@@ -202,7 +199,6 @@ class Project:
         return cls(
             id=row["id"],
             name=row["name"],
-            repo_path=row["repo_path"],
             github_url=row["github_url"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -300,7 +296,7 @@ class LocalProjectManager:
     @staticmethod
     def _is_under_isolation_root(repo_path: str | None) -> bool:
         # An orphaned worktree/clone directory (dir exists, registry row gone)
-        # must not become a project's canonical repo_path, so the roots are
+        # must not become a project's primary checkout, so the roots are
         # forbidden prefixes regardless of registration state.
         if not repo_path:
             return False
@@ -393,8 +389,8 @@ class LocalProjectManager:
         if checkout is None:
             row = self.db.fetchone(
                 """
-                INSERT INTO projects (id, name, repo_path, github_url)
-                VALUES (%s, %s, NULL, %s)
+                INSERT INTO projects (id, name, github_url)
+                VALUES (%s, %s, %s)
                 RETURNING *
                 """,
                 (resolved_id, name, github_url),
@@ -406,8 +402,8 @@ class LocalProjectManager:
         with self.db.transaction():
             row = self.db.fetchone(
                 """
-                INSERT INTO projects (id, name, repo_path, github_url)
-                VALUES (%s, %s, NULL, %s)
+                INSERT INTO projects (id, name, github_url)
+                VALUES (%s, %s, %s)
                 RETURNING *
                 """,
                 (resolved_id, name, github_url),
@@ -446,8 +442,8 @@ class LocalProjectManager:
     ) -> Project:
         """Get existing project or create a new one.
 
-        A ``repo_path`` never attaches an existing name. Name-only calls still
-        upsert the logical project row without writing ``projects.repo_path``.
+        A checkout root never attaches an existing name. Name-only calls still
+        upsert only the logical project row.
         """
         if repo_path is not None:
             existing = self.get_by_name(name, include_deleted=True)
@@ -462,8 +458,8 @@ class LocalProjectManager:
         project_id = str(uuid.uuid4())
         row = self.db.fetchone(
             """
-            INSERT INTO projects (id, name, repo_path, github_url)
-            VALUES (%s, %s, NULL, %s)
+            INSERT INTO projects (id, name, github_url)
+            VALUES (%s, %s, %s)
             ON CONFLICT (name) WHERE deleted_at IS NULL
             DO UPDATE SET name = EXCLUDED.name
             RETURNING *
@@ -509,15 +505,15 @@ class LocalProjectManager:
                 project = self.get(project_id)
                 if project is None:
                     raise IsolatedAgentProjectPathError(
-                        "isolated agent session cannot establish a canonical project repo_path"
+                        "isolated agent session cannot establish a canonical project checkout"
                     )
                 return project
             checkout = self._validated_ordinary_root(project_id, repo_path, machine_id=machine_id)
 
         self.db.execute(
             """
-            INSERT INTO projects (id, name, repo_path)
-            VALUES (%s, %s, NULL)
+            INSERT INTO projects (id, name)
+            VALUES (%s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 updated_at = now()
             """,
@@ -599,7 +595,7 @@ class LocalProjectManager:
         Args:
             project_id: Project ID
             machine_id: Claimed machine id, or None for the local daemon
-            **fields: Fields to update (name, repo_path, github_url)
+            **fields: Fields to update, plus an optional validated checkout root
 
         Returns:
             Updated Project or None if not found

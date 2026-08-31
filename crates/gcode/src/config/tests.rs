@@ -204,7 +204,6 @@ fn project_name_lookup_uses_the_calling_machine_checkout() {
     let (daemon_url, request) = serve_json_once(serde_json::json!([{
         "id": "00000000-0000-4000-8000-000000000001",
         "name": "gobby",
-        "repo_path": "/legacy/repo-path",
         "root_path": "/foreign/index-root",
         "checkout": {
             "machine_id": "00000000-0000-4000-8000-000000000010",

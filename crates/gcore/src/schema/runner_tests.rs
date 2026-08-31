@@ -22,8 +22,9 @@ use super::gate::{
     BackupGateContext, SourceIdentity, VerifiedBackupManifest, parse_backup_manifest,
 };
 use super::runner::{
-    ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM, PARENT_BASELINE_CHECKSUM, PREDECESSOR_BASELINE_CHECKSUM,
-    SchemaRunner, WORKTREE_BASELINE_CHECKSUM, auth_schema_for, render_sql_for_schema,
+    ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM, PARENT_BASELINE_CHECKSUM,
+    PREDECESSOR_BASELINE_CHECKSUM, PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM, SchemaRunner,
+    WORKTREE_BASELINE_CHECKSUM, auth_schema_for, render_sql_for_schema,
 };
 use super::sql_splitter::split_sql_statements;
 use super::verify::catalog_manifest;
@@ -432,6 +433,40 @@ fn obsolete_baseline_receipt_is_rejected_without_mutation() -> anyhow::Result<()
         )?
         .get(0);
     assert_eq!(checksum, ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM);
+    Ok(())
+}
+
+#[test]
+fn project_checkout_predecessor_requires_campaign_without_mutation() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    install_baseline(&mut client)?;
+    client.execute(
+        "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
+        &[&PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM, &BASELINE_VERSION],
+    )?;
+
+    let error = SchemaRunner::new(&mut client, "public")?
+        .apply()
+        .expect_err("project-checkout predecessor requires the dedicated campaign");
+    assert!(
+        error
+            .to_string()
+            .contains("gobby hub-maintenance run project-checkout-cutover"),
+        "{error}"
+    );
+    let checksum: String = client
+        .query_one(
+            "SELECT checksum FROM schema_migrations WHERE version = $1",
+            &[&BASELINE_VERSION],
+        )?
+        .get(0);
+    assert_eq!(checksum, PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM);
     Ok(())
 }
 
@@ -865,9 +900,13 @@ fn interactive_principal_binds_only_registered_worktree_overlays() -> anyhow::Re
         &[&machine_id, &owner_user_id],
     )?;
     client.execute(
-        "INSERT INTO projects(id, name, repo_path) \
-         VALUES ($1, 'parent', '/tmp/gobby-ix-parent'), ($2, 'unrelated', '/tmp/gobby-ix-unrelated')",
+        "INSERT INTO projects(id, name) VALUES ($1, 'parent'), ($2, 'unrelated')",
         &[&project_id, &unrelated_project_id],
+    )?;
+    client.execute(
+        "INSERT INTO project_checkouts(machine_id, project_id, root_path) \
+         VALUES ($1, $2, '/tmp/gobby-ix-parent'), ($1, $3, '/tmp/gobby-ix-unrelated')",
+        &[&machine_id, &project_id, &unrelated_project_id],
     )?;
     client.execute(
         "INSERT INTO sessions(id, external_id, machine_id, source, project_id) \
@@ -1156,9 +1195,13 @@ fn tool_chat_principal_reads_parent_and_writes_only_its_worktree_overlay() -> an
         &[&machine_id, &other_machine_id, &owner_user_id],
     )?;
     client.execute(
-        "INSERT INTO projects(id, name, repo_path) \
-         VALUES ($1, 'parent', '/tmp/gobby-parent'), ($2, 'unrelated', '/tmp/unrelated')",
+        "INSERT INTO projects(id, name) VALUES ($1, 'parent'), ($2, 'unrelated')",
         &[&project_id, &unrelated_project_id],
+    )?;
+    client.execute(
+        "INSERT INTO project_checkouts(machine_id, project_id, root_path) \
+         VALUES ($1, $2, '/tmp/gobby-parent'), ($1, $3, '/tmp/unrelated')",
+        &[&machine_id, &project_id, &unrelated_project_id],
     )?;
     client.execute(
         "INSERT INTO sessions(id, external_id, machine_id, source, project_id) \
@@ -1334,9 +1377,13 @@ fn tool_chat_principal_binding_handles_clone_parent_and_ambiguous_workspaces() -
         &[&machine_id, &owner_user_id],
     )?;
     client.execute(
-        "INSERT INTO projects(id, name, repo_path) \
-         VALUES ($1, 'tool-binding', '/tmp/gobby-tool-binding')",
+        "INSERT INTO projects(id, name) VALUES ($1, 'tool-binding')",
         &[&project_id],
+    )?;
+    client.execute(
+        "INSERT INTO project_checkouts(machine_id, project_id, root_path) \
+         VALUES ($1, $2, '/tmp/gobby-tool-binding')",
+        &[&machine_id, &project_id],
     )?;
     client.execute(
         "INSERT INTO sessions(id, external_id, machine_id, source, project_id) VALUES \
@@ -2194,9 +2241,13 @@ fn code_inheritance_has_gcode_project_policies() -> anyhow::Result<()> {
         &[&machine_id, &owner_user_id],
     )?;
     client.execute(
-        "INSERT INTO projects(id, name, repo_path) \
-         VALUES ($1, 'parent', '/tmp/gobby-inheritance'), ($2, 'other', '/tmp/other')",
+        "INSERT INTO projects(id, name) VALUES ($1, 'parent'), ($2, 'other')",
         &[&project_id, &other_project_id],
+    )?;
+    client.execute(
+        "INSERT INTO project_checkouts(machine_id, project_id, root_path) \
+         VALUES ($1, $2, '/tmp/gobby-inheritance'), ($1, $3, '/tmp/other')",
+        &[&machine_id, &project_id, &other_project_id],
     )?;
     client.execute(
         "INSERT INTO sessions(id, external_id, machine_id, source, project_id) \
