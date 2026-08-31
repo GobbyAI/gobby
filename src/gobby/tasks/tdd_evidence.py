@@ -227,7 +227,11 @@ def _find_red_run(
 def _has_named_assertion_failure(output: str | None, test: AcceptanceTest) -> bool:
     if not output:
         return False
-    symbols = (test.symbol, test.symbol.replace(".", "::"))
+    symbols = (
+        test.symbol,
+        test.symbol.replace(".", "::"),
+        test.symbol.replace("::", "."),
+    )
     symbol_patterns = tuple(
         re.compile(rf"(?<![A-Za-z0-9_]){re.escape(symbol)}(?![A-Za-z0-9_])") for symbol in symbols
     )

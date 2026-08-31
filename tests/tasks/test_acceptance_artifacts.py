@@ -684,6 +684,65 @@ E   AssertionError: assert 0 == 1
     assert evaluate_tdd_evidence((test,), named_failure).passed is True
 
 
+def test_tdd_evidence_accepts_rtk_class_dot_failure() -> None:
+    started = datetime(2026, 8, 30, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::TestFeature::test_behavior",
+        path="tests/test_feature.py",
+        symbol="TestFeature::test_behavior",
+        body="def test_behavior(): assert feature() == 1",
+    )
+    edits = (
+        _edit("tests/test_feature.py", started, 1),
+        _edit("src/feature.py", started + timedelta(minutes=2), 3),
+    )
+    green = _run(
+        test,
+        started + timedelta(minutes=3),
+        "success",
+        "tests/test_feature.py::TestFeature::test_behavior PASSED",
+        4,
+    )
+    rtk_failure = """\
+1. [FAIL] TestFeature.test_behavior
+    raise AssertionError(msg)
+    E   AssertionError: assert 0 == 1
+"""
+
+    accepted = evaluate_tdd_evidence(
+        (test,),
+        TranscriptEvidence(
+            edits=edits,
+            validation_runs=(
+                _run(test, started + timedelta(minutes=1), "failure", rtk_failure, 2),
+                green,
+            ),
+        ),
+    )
+
+    assert accepted.passed is True
+    assert accepted.red_runs
+
+    non_assertion = evaluate_tdd_evidence(
+        (test,),
+        TranscriptEvidence(
+            edits=edits,
+            validation_runs=(
+                _run(
+                    test,
+                    started + timedelta(minutes=1),
+                    "failure",
+                    "1. [FAIL] TestFeature.test_behavior\nE RuntimeError: broken fixture",
+                    2,
+                ),
+                green,
+            ),
+        ),
+    )
+    assert non_assertion.passed is False
+    assert non_assertion.red_runs == ()
+
+
 def test_tdd_evidence_merges_handoff_sessions_by_position() -> None:
     """Owner red and closer green form one cycle once merged order is global."""
     started = datetime(2026, 8, 21, tzinfo=UTC)
