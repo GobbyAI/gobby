@@ -216,7 +216,10 @@ Droid uses PascalCase hook types (`SessionStart`, `PreToolUse`, `PostToolUse`, `
 AGY uses exactly five PascalCase hook types: `PreInvocation`, `PreToolUse`,
 `PostToolUse`, `PostInvocation`, and `Stop`. ghook forwards them with
 `source: "agy"`. The registry marks all five non-critical; AGY has no native
-`SessionStart` or `UserPromptSubmit` hook.
+`SessionStart` or `UserPromptSubmit` hook. Every AGY failure fails open,
+including malformed stdin: ghook exits `0` with the skip JSON on stdout
+(`{"decision":"allow"}` for `PreToolUse`, `{}` otherwise) and the diagnostic
+on stderr, because a non-zero exit would block the tool call.
 
 Qwen uses its current PascalCase terminal-hook names. Malformed input and
 transport failures exit `2` for its three critical lifecycle hooks and `1` for

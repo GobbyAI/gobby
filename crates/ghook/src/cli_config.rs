@@ -1,8 +1,8 @@
 //! Per-CLI hook-dispatcher configuration.
 //!
-//! Mirrors the `CLIConfig` registry in `hook_dispatcher.py` — the set of
-//! host CLIs Gobby dispatches for and, per CLI, which hooks are "critical"
-//! (block on failure).
+//! The sole registry of host CLIs Gobby dispatches for and, per CLI, which
+//! hooks are "critical" (block on failure) plus the failure exit codes; no
+//! Python mirror exists.
 
 use std::collections::HashSet;
 
