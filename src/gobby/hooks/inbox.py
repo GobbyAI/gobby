@@ -157,7 +157,16 @@ def _consume_inbox_delivery_receipt(
     hook_manager = getattr(state, "hook_manager", None)
     db = getattr(state, "database", None)
     if db is None:
-        db = getattr(hook_manager, "db", None)
+        # The daemon app exposes the hub database as state.server.services.database.
+        server = getattr(state, "server", None)
+        db = getattr(getattr(server, "services", None), "database", None)
+    if db is None:
+        logger.warning(
+            "No hub database resolvable from the app; dropping delivery receipt %s "
+            "generation %s unacknowledged",
+            receipt_id,
+            generation,
+        )
     if db is not None and isinstance(receipt_id, str) and isinstance(generation, int):
         try:
             committed = acknowledge_receipt(
@@ -165,6 +174,12 @@ def _consume_inbox_delivery_receipt(
                 receipt_id=receipt_id,
                 delivery_generation=generation,
             )
+            if committed is None:
+                logger.info(
+                    "Delivery receipt %s generation %s was stale or unknown at consumption",
+                    receipt_id,
+                    generation,
+                )
             if committed is not None:
                 from gobby.workflows.state_manager import SessionVariableManager
 

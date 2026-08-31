@@ -858,3 +858,43 @@ def test_in_flight_ack_lands_before_reprepare_presumes_loss(
         )
         is None
     )
+
+
+def test_sweep_resolves_db_from_the_daemon_app_shape(
+    receipts_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """The daemon exposes the hub db only as state.server.services.database."""
+    import json
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+
+    from gobby.hooks.inbox import consume_pending_delivery_receipts
+
+    receipts = _receipts()
+    receipt = receipts.prepare_receipt(
+        receipts_db,
+        session_id=str(uuid4()),
+        envelope_id="env-daemon-shape",
+    )
+    inbox_dir = tmp_path / "inbox"
+    inbox_dir.mkdir()
+    (inbox_dir / "n-0000000000002-ack.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "kind": "delivery-receipt",
+                "receipt_id": receipt.receipt_id,
+                "original_envelope_id": "env-daemon-shape",
+                "delivery_generation": receipt.delivery_generation,
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = FastAPI()
+    app.state.hook_manager = None
+    app.state.server = SimpleNamespace(services=SimpleNamespace(database=receipts_db))
+
+    assert consume_pending_delivery_receipts(app, inbox_dir=inbox_dir) == 1
+    assert _receipt_state(receipts_db, receipt.receipt_id) == "acknowledged"
