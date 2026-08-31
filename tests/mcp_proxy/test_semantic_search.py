@@ -478,6 +478,37 @@ class TestEmbeddingGeneration:
             assert stats["by_server"]["embed-server"]["embedded"] == 2
 
     @pytest.mark.asyncio
+    async def test_embed_all_tools_preserves_cached_name_casing(
+        self,
+        semantic_search: SemanticToolSearch,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        """Regression for gobby-#21371: the embedded payload name must keep the
+        server's exact casing so search results stay valid lookup identifiers."""
+        server = mcp_manager.upsert(
+            name="casing-server",
+            transport="http",
+            url="http://localhost:8080",
+            project_id=sample_project["id"],
+        )
+        mcp_manager.cache_tools(
+            server.id,
+            [{"name": "GetRetailer", "description": "Mixed-case OpenAPI operation"}],
+        )
+
+        with patch.object(
+            semantic_search, "_embed_tool_admitted", new_callable=AsyncMock
+        ) as mock_embed:
+            await semantic_search.embed_all_tools(
+                project_id=sample_project["id"],
+                mcp_manager=mcp_manager,
+            )
+
+        embedded_names = [call.kwargs["name"] for call in mock_embed.await_args_list]
+        assert embedded_names == ["GetRetailer"]
+
+    @pytest.mark.asyncio
     async def test_embed_all_tools_with_internal_manager(
         self,
         semantic_search: SemanticToolSearch,

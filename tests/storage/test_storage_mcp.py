@@ -217,7 +217,7 @@ class TestTool:
 
         tools = mcp_manager.get_cached_tools(server.id)
         assert count == 1
-        assert [tool.name for tool in tools] == ["read_file"]
+        assert [tool.name for tool in tools] == ["Read_File"]
         assert tools[0].description == "kept"
 
 
@@ -641,12 +641,12 @@ class TestLocalMCPManager:
         count = mcp_manager.cache_tools(server.id, tools)
         assert count == 2
 
-    def test_cache_tools_normalizes_name(
+    def test_cache_tools_preserves_name_casing(
         self,
         mcp_manager: LocalMCPManager,
         sample_project: dict,
     ) -> None:
-        """Test that tool names are normalized to lowercase."""
+        """The cached name keeps the server's exact casing (only whitespace is trimmed)."""
         server = mcp_manager.upsert(
             name="normalize-server",
             transport="http",
@@ -656,11 +656,14 @@ class TestLocalMCPManager:
 
         mcp_manager.cache_tools(
             server.id,
-            [{"name": "MyTool", "description": "Test"}],
+            [
+                {"name": " GetRetailer ", "description": "Mixed-case OpenAPI operation"},
+                {"name": "MyTool", "description": "Test"},
+            ],
         )
 
         tools = mcp_manager.get_cached_tools(server.id)
-        assert tools[0].name == "mytool"
+        assert sorted(tool.name for tool in tools) == ["GetRetailer", "MyTool"]
 
     def test_cache_tools_replaces_existing(
         self,

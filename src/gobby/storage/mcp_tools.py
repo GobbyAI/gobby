@@ -17,12 +17,16 @@ def _normalized_tool_entries(tools: list[dict[str, Any]]) -> list[tuple[str, dic
     seen: set[str] = set()
     for tool in tools:
         raw_name = tool.get("name")
-        tool_name = str(raw_name).strip().lower() if raw_name is not None else ""
+        tool_name = str(raw_name).strip() if raw_name is not None else ""
         if not tool_name:
             continue
-        if tool_name in seen:
+        # Dedup case-insensitively, but cache the server's exact casing: the
+        # cached name is the executable identifier handed back by discovery
+        # and semantic search, and live servers match it case-sensitively.
+        folded = tool_name.lower()
+        if folded in seen:
             continue
-        seen.add(tool_name)
+        seen.add(folded)
         normalized_tool = dict(tool)
         normalized_tool["name"] = tool_name
         entries.append((tool_name, normalized_tool))
