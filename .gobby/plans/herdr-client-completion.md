@@ -2342,7 +2342,7 @@ the QA plan's assumptions.
 
 ```yaml
 deferral:
-  task_ref: "#TBD-created-at-expansion"
+  task_ref: "#21357"
   reason: "Native-runtime hardening and the default flip are daemon/host work with their own blast radius; the client epic consumes today's opt-in native path and must not carry a second subsystem rework."
   owner: "backend-developer"
   original_acceptance_items:
@@ -2604,6 +2604,966 @@ creates the 1.1 leaf, close open hanger #21191 as its duplicate with a backlink 
 that leaf, then verify exactly one open task owns the raw-input obligation before any
 leaf dispatches. Record the closure and the generated leaf's ref in this table.
 
-<!-- Updated after task creation -->
+Reconciliation performed 2026-08-31 (expansion run `2bf827d4-ee6b-4e70-881d-222d882878f0`):
+#21191 closed as duplicate of the generated 1.1 leaf #21340 with a `related` backlink edge;
+its parent epic #21120 auto-closed with it; exactly one open task (#21340) owns the
+raw-input obligation. Deferrals settled per §5.1: D1 created as #21357, D2 adopted
+#20202, D3 adopted #20201 — each an open `planning` task parented under #21334 as tail
+work with its dependency closure recorded.
+
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
+| Epic | #21334 | open |
+| P1 | #21335 | open |
+| P2 | #21336 | open |
+| P3 | #21337 | open |
+| P4 | #21338 | open |
+| P5 | #21339 | open |
+| 1.1 | #21340 | open |
+| 1.2 | #21341 | open |
+| 1.3 | #21342 | open |
+| 1.4 | #21343 | open |
+| 1.5 | #21344 | open |
+| 2.1 | #21345 | open |
+| 2.2 | #21346 | open |
+| 3.1 | #21347 | open |
+| 3.2 | #21348 | open |
+| 3.3 | #21349 | open |
+| 3.4 | #21350 | open |
+| 4.1 | #21351 | open |
+| 4.2 | #21352 | open |
+| 4.3 | #21353 | open |
+| 4.4 | #21354 | open |
+| 5.1 | #21355 | open |
+| D1 | #21357 | open — created at expansion, tail work under #21334 |
+| D2 | #20202 | open — adopted, rewritten, tail work under #21334 |
+| D3 | #20201 | open — adopted, tail work under #21334 |
+| #21191 hanger | #21340 | closed as duplicate of #21340 (backlink recorded; #21120 auto-closed) |
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Deliver `terminal_input` bytes as key codes through a `write_input` runtime
+    verb
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: "1.1.1: `TerminalRuntime` declares `write_input(terminal, data:\
+    \ bytes)` and both runtimes implement it: tmux invokes `send-keys -H` with the\
+    \ hex of the UTF-8 bytes in \u2264512-byte chunks, native sends a `kind=\"input\"\
+    ` host write; a payload over 64 KiB raises `InputPayloadTooLargeError` before\
+    \ any subprocess or socket write. test: `tests/terminals/test_write_input.py::test_write_input_uses_send_keys_hex_and_host_input`.\n\
+    1.1.2: A `terminal_input` of `\\x04` to a tmux terminal running `cat > f` ends\
+    \ cat, `\\x03` interrupts a running `sleep`, and `\\x1b[A` reaches the pane as\
+    \ the bytes `1b 5b 41`; `terminal_paste` still uses `paste-buffer` and a 20 KB\
+    \ paste arrives byte-identical. test: `tests/servers/test_terminal_ws_input.py::test_input_bytes_are_key_codes_and_paste_stays_bracketed`.\n\
+    1.1.3: `WriteRequest(kind=\"input\")` dispatches to `write_input`, `kind=\"paste\"\
+    ` to `write_paste`, and text with `submit=True` to `write_text`. test: `tests/terminals/test_write_input.py::test_coordinator_routes_by_kind`.\n\
+    1.1.4: Exactly one `_handle_terminal_input` exists under `src/gobby/servers/websocket/`,\
+    \ the dispatch table binds it by qualified name, and a `terminal_input` naming\
+    \ a tmux id is never parsed as an agent uuid. test: `tests/servers/test_terminal_ws_input.py::test_single_input_handler_is_bound_and_backend_neutral`.\n\
+    1.1.5: In a chunked tmux `write_input`, a deterministic failure on the first invocation\
+    \ yields the ordinary failed outcome with no bytes delivered, a deterministic\
+    \ failure on a middle or final invocation raises `TerminalWriteError(stage=\"\
+    partial\")` reporting the bytes known to have landed, and a backend timeout at\
+    \ any invocation raises `stage=\"partial\"` with an unknown delivered count \u2014\
+    \ handler-task cancellation is not this branch, because `write_input` propagates\
+    \ `CancelledError` unchanged instead of converting it to a `TerminalWriteError`,\
+    \ and 1.1.7 owns that outcome; no code path resends a payload after any `partial`\
+    \ outcome. test: `tests/terminals/test_write_input.py::test_chunked_write_classifies_partial_delivery`.\n\
+    1.1.6: Over the real WebSocket path, with the connection still usable, a chunked\
+    \ `terminal_input` whose middle invocation fails deterministically returns `terminal_write_outcome`\
+    \ with `outcome=\"indeterminate\"` and `reason=\"indeterminate_partial_delivered:<n>\"\
+    `, and a backend timeout mid-chunk returns `outcome=\"indeterminate\"` with `reason=\"\
+    indeterminate_backend\"`; no new outcome value appears on the wire. test: `tests/servers/test_terminal_ws_input.py::test_partial_write_reports_indeterminate_on_the_wire`.\n\
+    1.1.7: Every `write_input` failure, backend timeout, and handler-task cancellation\
+    \ completes the `client_write_seq` in the lease ledger: after each of those outcomes\
+    \ a replay of the same seq with a different payload fingerprint is refused with\
+    \ `write_seq_conflict`, a same-fingerprint replay is served the completed entry's\
+    \ recorded outcome rather than joining a dead in-flight entry, and the next seq\
+    \ is admitted and delivered, so no attachment is left permanently unwritable.\
+    \ The cancellation branch is asserted separately \u2014 the ledger entry completes\
+    \ as exactly `outcome=\"indeterminate\", reason=\"indeterminate_backend\"`, a\
+    \ later same-fingerprint replay is served that exact tuple, `CancelledError` propagates\
+    \ out of the handler, and no `terminal_write_outcome` is written to the socket.\
+    \ test: `tests/servers/test_terminal_ws_input.py::test_failed_write_completes_ledger_and_admits_next_seq`,\
+    \ `tests/servers/test_terminal_ws_input.py::test_disconnect_cancellation_closes_ledger_without_replying`.\n\
+    1.1.8: Retiring the run-id legacy input branch rewrites or removes its existing\
+    \ TestTerminalInputRouting expectation while preserving the detached-tmux non-UUID\
+    \ regression against the surviving attachment-scoped handler. test: `tests/servers/test_tmux_mixin.py::TestTerminalInputRouting`."
+  labels:
+  - covers:herdr-client-completion:1.1:1.1.1
+  - covers:herdr-client-completion:1.1:1.1.2
+  - covers:herdr-client-completion:1.1:1.1.3
+  - covers:herdr-client-completion:1.1:1.1.4
+  - covers:herdr-client-completion:1.1:1.1.5
+  - covers:herdr-client-completion:1.1:1.1.6
+  - covers:herdr-client-completion:1.1:1.1.7
+  - covers:herdr-client-completion:1.1:1.1.8
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: 'Close out attach honesty: drive the `attach_terminal` unwind branch and
+    port the stale e2e mocks'
+  category: test
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.2.1: A proxy frame whose `handshake` succeeds and whose
+    `attach_terminal` raises yields `success: false, code: "proxy_start_failed"`,
+    a closed frame, no lease record, and no `attachments`/`by_socket` entry. test:
+    `tests/servers/test_terminal_ws_attach_honesty.py::test_proxy_attach_failures_are_typed_and_finalized`
+    (new parametrize row `attach_raises`).
+
+    1.2.2: Both Playwright specs'' WebSocket mocks emit the merged wire shape and
+    their terminal-surface assertions pass against the attachment-routed hook. test:
+    `cd web && npx playwright test tests/style-surfaces.spec.ts tests/terminal-colors.spec.ts`.'
+  labels:
+  - covers:herdr-client-completion:1.2:1.2.1
+  - covers:herdr-client-completion:1.2:1.2.2
+  tdd: false
+  source_section: '1.2'
+  assigned_agent: backend-developer
+- title: Negotiate the frame encoding on `terminal_attach`, add the `direct` block,
+    and relay cell frames
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  validation_criteria: "1.3.1: A proxy attach with `encoding: \"semantic_frame\"`\
+    \ handshakes the host with that encoding and relays each host frame as a `terminal_frame`\
+    \ whose base64 payload decodes to the exact bincode bytes the fake host wrote;\
+    \ `terminal_ansi` and an omitted `encoding` still yield `terminal_output` byte-identical\
+    \ to the pre-change fixture; an unknown encoding is refused `invalid_encoding`.\
+    \ test: `tests/servers/test_native_web_proxy.py::test_semantic_frame_proxy_relays_bincode_payloads`.\n\
+    1.3.2: `_decode_server` retains `raw` for semantic frames and `decode_frame` round-trips\
+    \ a recorded semantic keyframe from `crates/gterminal/tests/fixtures/wire_golden/`.\
+    \ test: `tests/terminals/test_frame_client_semantic.py::test_semantic_frame_raw_is_retained`.\n\
+    1.3.3: A direct attach on a native row answers a `direct` block with the host\
+    \ epoch, frame socket path, and host terminal id; a direct attach on a tmux row\
+    \ additionally carries the pane locator; a proxy attach answers `direct: null`;\
+    \ a locator failure answers `success: false, code: \"locator_failed\"`; and a\
+    \ locator whose fields are incomplete or backend-incoherent \u2014 a native-row\
+    \ locator missing the epoch, socket, or host terminal id or carrying a pane, or\
+    \ a tmux-row locator with a partial pane \u2014 answers `success: false, code:\
+    \ \"locator_invalid\"` with the lease finalized, never `success: true` with an\
+    \ unusable `direct` block. test: `tests/servers/test_native_web_proxy.py::test_direct_attach_result_carries_locator`.\n\
+    1.3.4: A tmux proxy attach with `encoding: \"semantic_frame\"` delegates through\
+    \ the host/ProxyHub path, emits `terminal_frame`, and returns `direct: null`,\
+    \ while omitted or `terminal_ansi` encoding retains the legacy bridge. test: `tests/servers/test_native_web_proxy.py::test_tmux_semantic_proxy_uses_host_frames`."
+  labels:
+  - covers:herdr-client-completion:1.3:1.3.1
+  - covers:herdr-client-completion:1.3:1.3.2
+  - covers:herdr-client-completion:1.3:1.3.3
+  - covers:herdr-client-completion:1.3:1.3.4
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: 'Publish a lifecycle watermark: `daemon_epoch`, `seq` on lifecycle events,
+    and `snapshot` on the first list page'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: "1.4.1: The first `terminal_list` page (WS and REST) carries\
+    \ `snapshot.daemon_epoch` and `snapshot.seq`; continuation pages carry `snapshot:\
+    \ null`; a `terminal_event` emitted after the snapshot was taken has `seq` greater\
+    \ than the snapshot's, one emitted before has `seq` \u2264 it. test: `tests/servers/test_terminal_list_watermark.py::test_snapshot_orders_lifecycle_events`.\n\
+    1.4.2: `terminal_event`, `terminal_lease_lost`, and `terminal_attachment_finalized`\
+    \ all carry `seq` and `daemon_epoch`, `seq` is strictly increasing across the\
+    \ three emitters, and the legacy tmux emitter produces the same shape; a registry\
+    \ forced to `2**53 - 1` rotates `daemon_epoch` and resets `seq` atomically under\
+    \ the publisher lock before the next emission. test: `tests/servers/test_terminal_list_watermark.py::test_every_lifecycle_emitter_is_stamped`.\n\
+    1.4.3: With all three emitters firing concurrently and a forced yield injected\
+    \ between sequence allocation and fanout in each, the bytes observed on a subscribed\
+    \ socket arrive in strictly increasing `seq` order and the resulting reducer state\
+    \ matches serial emission of the same events; the snapshot `seq` returned by a\
+    \ `terminal_list` interleaved with that traffic never exceeds the highest sequence\
+    \ whose fanout has completed. test: `tests/servers/test_terminal_list_watermark.py::test_publication_order_matches_sequence_under_forced_yields`.\n\
+    1.4.4: Direct detach finalization and the unregistered-requester takeover fallback\
+    \ both publish stamped lifecycle events through the ordered registry path, preserving\
+    \ strictly increasing observed seq. test: `tests/servers/test_terminal_list_watermark.py::test_direct_lifecycle_fallbacks_are_ordered`.\n\
+    1.4.5: A successful `terminal_create` publishes a stamped `terminal_event` carrying\
+    \ the full created row, resolved through the same by-id read the REST route uses,\
+    \ after the `terminal_create_result` is sent; a successful `terminal_kill` publishes\
+    \ a stamped exit event naming the terminal id. Both are stamped and ordered like\
+    \ every other lifecycle emission, a refused create or kill publishes nothing,\
+    \ and a duplicate kill of an already-exited terminal publishes at most one exit\
+    \ event. test: `tests/servers/test_terminal_list_watermark.py::test_create_and_kill_publish_ordered_lifecycle_events`.\n\
+    1.4.6: With the proxy relay sender paused after enqueue, committed lifecycle high-water\
+    \ does not advance and no later direct lifecycle event is observed first; releasing\
+    \ the sender publishes both in strictly increasing sequence order. With the queue\
+    \ holding its full 256 entries (`LIFECYCLE_PUBLICATION_QUEUE_MAXSIZE`), submitter\
+    \ 257 waits until space is released rather than having its event dropped, no admitted\
+    \ event is dropped, the drain stays in strictly increasing sequence order, and\
+    \ an event whose submitter is cancelled after admission is still published and\
+    \ still advances the committed high-water. test: `tests/servers/test_terminal_list_watermark.py::test_proxy_relay_ack_precedes_committed_high_water`.\n\
+    1.4.7: The publication worker's lifecycle is explicit: `WebSocketServer.start`\
+    \ starts it before any submission is admitted and `WebSocketServer.stop` cancels\
+    \ and awaits it with no task left behind; a cleanup issued while the queue is\
+    \ full drains or fails every admitted completion deterministically; a submitter\
+    \ cancelled after admission does not strand the worker or the drain; and an injected\
+    \ worker exception fails queued and future submitters with a typed publication\
+    \ error while the registry performs bounded relay cleanup. test: `tests/servers/test_terminal_list_watermark.py::test_publication_worker_lifecycle_settles_all_waiters`.\n\
+    1.4.8: With 256 entries admitted and submitter 257 blocked on capacity, a concurrent\
+    \ close wakes that pre-admission waiter with the typed publication error and admits\
+    \ nothing behind the fence \u2014 the atomic closed-latch recheck rejects insertion\
+    \ even when the close itself freed queue space; and after a full `WebSocketServer.stop`\
+    \ a second `WebSocketServer.start` restarts the worker in place on the same registry\
+    \ \u2014 `daemon_epoch` unchanged, committed high-water continuing monotonically\
+    \ \u2014 so the second run admits, publishes, and cleanly shuts down. test: `tests/servers/test_terminal_list_watermark.py::test_preadmission_close_race_and_worker_restart`.\n\
+    1.4.9: `encode_page` truncation preserves forward progress on both transports:\
+    \ a page landing exactly at the byte budget includes its final row with no truncation,\
+    \ one row past the budget yields a truncated page whose `next_cursor` is the canonical\
+    \ `<created_at>|<terminal_id>` cursor of the last included raw row and whose next\
+    \ request returns the excluded row first, and a single row that cannot fit inside\
+    \ the budget alone produces a typed failure rather than an empty page \u2014 no\
+    \ branch emits a bare-id cursor, indexes a missing `id` key, or ends traversal\
+    \ with rows lost. test: `tests/servers/test_terminal_list_watermark.py::test_byte_cap_truncation_preserves_forward_progress`."
+  labels:
+  - covers:herdr-client-completion:1.4:1.4.1
+  - covers:herdr-client-completion:1.4:1.4.2
+  - covers:herdr-client-completion:1.4:1.4.3
+  - covers:herdr-client-completion:1.4:1.4.4
+  - covers:herdr-client-completion:1.4:1.4.5
+  - covers:herdr-client-completion:1.4:1.4.6
+  - covers:herdr-client-completion:1.4:1.4.7
+  - covers:herdr-client-completion:1.4:1.4.8
+  - covers:herdr-client-completion:1.4:1.4.9
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Move the golden corpus to `tests/fixtures/terminal_ws_golden/` and compare
+    real emitters
+  category: test
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  validation_criteria: '1.5.1: `tests/fixtures/terminal_ws_golden/manifest.json` lists
+    exactly 38 fixture entries (the 31 moved fixtures plus the seven new shapes);
+    the directory holds exactly 39 files, and the directory''s contents minus `manifest.json`
+    equal the manifest''s entry list in both directions; `manifest.json` parses as
+    well-formed JSON with the expected key set and is never listed as one of its own
+    entries; `tests/servers/fixtures/terminal_ws_golden/` holds no files; and `golden_fixtures`
+    no longer exists in production code. file: `tests/fixtures/terminal_ws_golden/manifest.json`.
+
+    1.5.2: Every reply and server-initiated shape produced by the real Python emitters
+    matches its fixture byte-for-byte after canonicalization, including `terminal_frame`,
+    `attach_result_direct`, `create_result_refused`, `list_snapshot`, `kill_result`,
+    and `detach_result`. test: `tests/servers/test_terminal_ws_golden.py::test_emitters_match_golden_replies`.
+
+    1.5.3: `crates/gclient/tests/ws_golden.rs` and the vitest hook suite replay all
+    38 manifest entries from the canonical path as WebSocket messages and decode the
+    new shapes, neither harness attempting to replay `manifest.json` itself; the Rust
+    safe-integer guard holds across every sequence field rather than at one point:
+    `message_seq`, `lease_generation`, `client_write_seq`, and lifecycle `seq` each
+    survive production encoding and decoding as JSON numbers, `2^53-2` and `2^53-1`
+    remain distinct encodings, and `2^53`, a string, and a float are each refused
+    rather than coerced. test: `crates/gclient/tests/ws_golden.rs::corpus_replays_from_canonical_manifest`.'
+  labels:
+  - covers:herdr-client-completion:1.5:1.5.1
+  - covers:herdr-client-completion:1.5:1.5.2
+  - covers:herdr-client-completion:1.5:1.5.3
+  tdd: false
+  source_section: '1.5'
+  assigned_agent: backend-developer
+- title: Implement the `Daemon` trait and `LiveDaemon` over REST and a single-reader
+    WebSocket
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  validation_criteria: "2.1.1: `Workspace<LiveDaemon>` follows `next_cursor` across\
+    \ three mock pages through repeated `Daemon::list_terminals` calls, yields every\
+    \ row once, and pins page one's `snapshot`; every page request it issues selects\
+    \ only pending and live rows through the comma-separated `states=pending,live`\
+    \ filter (`_parse_states`), no request reaches an unpaged listing, and retained\
+    \ history is fetched only through a separate explicit query the roster traversal\
+    \ never makes; `LiveDaemon::list_terminals` itself returns one page and retains\
+    \ no cursor, roster, or project state between calls; with one scripted page produced\
+    \ by byte-cap truncation \u2014 its `next_cursor` the canonical cursor of the\
+    \ last included row \u2014 the following request yields the excluded row first,\
+    \ no row is yielded twice, and traversal terminates rather than looping on a repeated\
+    \ cursor. test: `crates/gclient/tests/daemon_live.rs::list_terminals_follows_cursor_and_pins_snapshot`.\n\
+    2.1.2: Every `Daemon` method on `LiveDaemon` has an authenticated success case\
+    \ and a typed-failure case against the mock; every request carries the bearer;\
+    \ 401/404/5xx/malformed map to `Unauthorized`/`NotFound`/`Unavailable`/`Protocol`;\
+    \ `spawn` decodes `create_result_refused` to `Refused{reason}`. test: `crates/gclient/tests/daemon_live.rs::every_method_has_success_and_typed_failure`.\n\
+    2.1.3: With `spawn`, `terminate`, a write, a control request, and lifecycle events\
+    \ interleaved on one socket, each reply settles its own waiter through the correct\
+    \ map, an unmatched `request_id` is dropped, a `terminal_write_outcome` without\
+    \ `request_id` settles by `(attachment_id, client_write_seq)`, finalization fences\
+    \ both attachment maps before fan-out, and a connection drop fails every pending\
+    \ sender before the next generation serves a request. test: `crates/gclient/tests/daemon_live.rs::single_reader_routes_replies_and_events`.\n\
+    2.1.4: `notify(terminal_set_viewport)` resolves once the write completes, registers\
+    \ no waiter, and a write on a closed generation fails `Unavailable`. test: `crates/gclient/tests/daemon_live.rs::notify_settles_without_a_reply`.\n\
+    2.1.5: On reconnect `LiveDaemon` tombstones its previous generation's attachment\
+    \ ids, establishes the replacement socket, and publishes generation-ready, issuing\
+    \ no listing and no attach of its own; `Workspace` driven by that signal re-subscribes,\
+    \ re-lists its project, replays only `seq > pinned.seq`, and issues exactly one\
+    \ `terminal_attach` per shown pane; a subscriber that lags or subscribes late\
+    \ reads the ready generation as a value and attaches once. test: `crates/gclient/tests/reconciliation.rs::reconnect_reattaches_once_per_pane`.\n\
+    2.1.6: `Workspace<D: Daemon>` compiles against both `LiveDaemon` and `ScriptedDaemon`,\
+    \ and every pre-existing reducer test passes unchanged on the scripted double.\
+    \ symbol: `Workspace`.\n2.1.7: Driven directly as a `LiveDaemon` harness (this\
+    \ criterion owns the single-flight property of the primitive; 3.2.9 owns pane-originated\
+    \ concurrency, and panes never call `reconnect` themselves): two concurrent callers\
+    \ passing the same observation cause one replacement WS handshake, one reader,\
+    \ and one generation-ready publication shared by both, and both receive that generation;\
+    \ the transport performs no listing and no replay of its own, which stay `Workspace`'s\
+    \ under 2.1.5. A third caller suspended across the ready boundary and released\
+    \ afterwards passes its now-stale observation, receives the already-current generation,\
+    \ and causes no second handshake. A scripted failed attempt settles every caller\
+    \ for that observation and a later call performs one retry. A caller still holding\
+    \ the G1 observation that arrives while G2's own recovery is in flight joins that\
+    \ attempt rather than starting a third handshake, and one that arrives after G2\
+    \ connected and dropped receives the typed `Unavailable` \u2014 never G2 as a\
+    \ success \u2014 and starts no competing replacement. test: `crates/gclient/tests/reconciliation.rs::concurrent_reconnect_is_single_flight`.\n\
+    2.1.8: After a reconnect whose buffer holds a lifecycle event with `seq` at or\
+    \ below the highest `Workspace` has already applied in the same `daemon_epoch`,\
+    \ its replay discards the event and leaves the live-stream state intact; an epoch\
+    \ change resets the high-water and refetches instead of discarding; `LiveDaemon`\
+    \ holds no applied-seq state of its own. test: `crates/gclient/tests/reconciliation.rs::replay_never_rewinds_applied_state`.\n\
+    2.1.9: Across fifty requests whose replies are withheld until the exact `REQUEST_DEADLINE`\
+    \ (5 s) boundary under a paused clock \u2014 control waiters at the exact `CONTROL_REQUEST_DEADLINE`\
+    \ (2 s) \u2014 and fifty more cancelled by the caller, every entry is removed\
+    \ from all three correlation maps by its exact key and each map's size returns\
+    \ to zero; a withheld reply that arrives after its entry was removed is dropped\
+    \ and recreates nothing. Reuse follows the `write_started` boundary: a `request_id`\
+    \ or `(attachment_id, client_write_seq)` key is immediately reusable after exact-key\
+    \ removal on every path, and a control request cancelled before `write_started`\
+    \ is set \u2014 its sink send never invoked \u2014 leaves the attachment's control\
+    \ scope immediately reusable, so the next take or release is admitted normally.\
+    \ A control request whose sink send was invoked and that then timed out or was\
+    \ cancelled \u2014 including cancellation while the send future is paused mid-send\
+    \ \u2014 drains its waiter and tombstones that attachment's control scope instead\
+    \ \u2014 2.1.14 owns that case, and the two criteria partition the space rather\
+    \ than overlapping. test: `crates/gclient/tests/daemon_live.rs::correlation_maps_drain_on_every_terminal_path`.\n\
+    2.1.10: During `Workspace`'s subscribe-first handshake, the 1,025th buffered lifecycle\
+    \ event discards the partial listing and its pinned snapshot and restarts the\
+    \ listing from a fresh snapshot rather than replaying against a stale pin; a `cursor_stale`\
+    \ refusal mid-listing produces the same restart-and-re-pin, and the resulting\
+    \ pane set converges with the mock's roster. test: `crates/gclient/tests/reconciliation.rs::buffer_overflow_and_cursor_stale_restart_the_listing`.\n\
+    2.1.11: A `Workspace` driven 256 entries behind receives `DaemonEvent::Lagged`,\
+    \ re-subscribes, re-lists its project, and converges on the mock's current roster\
+    \ without reusing any pre-lag buffered event or pinned snapshot; when the lag\
+    \ spans the generation's sole `Disconnected` event, the re-subscribe snapshot\
+    \ reads `ready: false` with the disconnect in `last_error`, and the workspace\
+    \ runs the read-only/clear/recovery transition and submits exactly one recovery\
+    \ episode before re-listing. test: `crates/gclient/tests/reconciliation.rs::lagged_subscriber_relists_and_converges`.\n\
+    2.1.12: `Workspace<LiveDaemon>::reconcile_subscribe_first` runs the attention\
+    \ handshake over the mock transport with no second reducer or snapshot watch anywhere\
+    \ in the client: attention broadcasts arriving before, during, and after `GET\
+    \ /api/attention/roster` all land, in `seq` order, with none lost and none applied\
+    \ twice; an attention broadcast in a different `epoch` refetches the roster instead\
+    \ of applying; the resulting entry set and applied-`seq` sequence match the mock's\
+    \ ground truth. test: `crates/gclient/tests/reconciliation.rs::live_attention_subscribe_first_no_regression`.\n\
+    2.1.13: Every outbound WebSocket message emitted by LiveDaemon and Workspace production\
+    \ send/notify paths matches its canonical request fixture byte-for-byte after\
+    \ canonicalization. test: `crates/gclient/tests/daemon_live.rs::outbound_messages_match_corpus`.\n\
+    2.1.14: A take-control request whose sink send was invoked and that then times\
+    \ out at the exact `CONTROL_REQUEST_DEADLINE` (2 s) boundary under a paused clock\
+    \ tombstones its attachment's control scope: a release attempted afterwards on\
+    \ that same `attachment_id` is refused locally with the distinct `DaemonError::ControlScopeIndeterminate`\
+    \ \u2014 not `ControlRequestInFlight`, which would tell the caller to wait for\
+    \ a reply that will never settle \u2014 rather than registered, and when the original\
+    \ take's `terminal_control_result` finally arrives it settles nothing and is dropped.\
+    \ A take cancelled before its sink send is invoked (`write_started` unset) leaves\
+    \ the scope immediately reusable and the next control request is admitted normally,\
+    \ a take cancelled while its send future is paused mid-send tombstones the scope\
+    \ exactly as the timeout does, and a take cancelled after the send future completes\
+    \ does the same \u2014 the three paused-sink schedules are each driven. After\
+    \ a detach, a `terminal_attachment_finalized`, or a fresh attach yielding a new\
+    \ id, control requests are admitted again. test: `crates/gclient/tests/daemon_live.rs::late_control_reply_cannot_settle_a_newer_request`.\n\
+    2.1.15: `Daemon::close` is idempotent and terminal: after it returns, every new\
+    \ `send`, `notify`, and `reconnect` fails typed without touching the socket, every\
+    \ outstanding waiter in all three maps has been failed and cleared, the reader\
+    \ task has stopped, and the sink is closed; a second `close` is a no-op. With\
+    \ a reconnect episode paused inside its handshake and `close` raced against it,\
+    \ the episode is cancelled and awaited, every joiner settles with the terminal\
+    \ close error rather than a generation, and after `close` returns no sink, reader\
+    \ task, or generation-ready value has been installed \u2014 including when the\
+    \ paused attempt is released past its last await point, where the pre-publication\
+    \ fence check discards the connection it just built. test: `crates/gclient/tests/daemon_live.rs::close_is_idempotent_and_rejects_later_requests`.\n\
+    2.1.16: Under a paused clock with multiple live attachments, the fragment reassembler\
+    \ enforces its lifetime bounds: a second incomplete `message_seq` on an attachment\
+    \ with one already open is refused, an assembly exceeding 16 MiB and an aggregate\
+    \ exceeding 64 MiB per generation are each rejected before append, an incomplete\
+    \ assembly whose fixed 5 s deadline expires is discarded with its accounting released,\
+    \ and after saturation-then-release every budget returns to zero and a fresh fragment\
+    \ sequence reassembles normally. test: `crates/gclient/tests/daemon_live.rs::fragment_reassembly_bounds_hold_under_saturation`."
+  labels:
+  - covers:herdr-client-completion:2.1:2.1.1
+  - covers:herdr-client-completion:2.1:2.1.2
+  - covers:herdr-client-completion:2.1:2.1.3
+  - covers:herdr-client-completion:2.1:2.1.4
+  - covers:herdr-client-completion:2.1:2.1.5
+  - covers:herdr-client-completion:2.1:2.1.6
+  - covers:herdr-client-completion:2.1:2.1.7
+  - covers:herdr-client-completion:2.1:2.1.8
+  - covers:herdr-client-completion:2.1:2.1.9
+  - covers:herdr-client-completion:2.1:2.1.10
+  - covers:herdr-client-completion:2.1:2.1.11
+  - covers:herdr-client-completion:2.1:2.1.12
+  - covers:herdr-client-completion:2.1:2.1.13
+  - covers:herdr-client-completion:2.1:2.1.14
+  - covers:herdr-client-completion:2.1:2.1.15
+  - covers:herdr-client-completion:2.1:2.1.16
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: fullstack
+- title: Build the direct Unix-socket and cell-mode proxy frame sources
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: "2.2.1: The direct source connects to a real `gterm host` started\
+    \ by the test, verifies `Welcome.host_epoch` against the expected epoch before\
+    \ sending `AttachTerminal`, receives a keyframe for a native terminal it spawned\
+    \ through the control socket, and refuses typed `HostEpochChanged` without attaching\
+    \ on a mismatch. test: `crates/gclient/tests/frame_source_live.rs::direct_frames_verify_epoch_and_render`.\n\
+    2.2.2: The direct source attaches a tmux pane through the host observer using\
+    \ the pane locator, receives the `AttachHistory` frame then keyframes as the pane\
+    \ changes, and a client running inside the target pane is refused typed by the\
+    \ host. test: `crates/gclient/tests/frame_source_live.rs::tmux_pane_attaches_through_host_observer`.\n\
+    2.2.3: The proxy source decodes `terminal_frame` payloads from the canonical corpus\
+    \ into `FrameData` identical to the bincode fixture, sends both viewport and scroll\
+    \ through `notify` and registers no correlation waiter for either, surfaces `terminal_scroll_offset_applied`\
+    \ to the caller through `recv`, and reports `Transport::Proxy`. Its receiver is\
+    \ taken before `terminal_attach` is written, so with the mock emitting the attach\
+    \ history or keyframe before the result, between the result settling and source\
+    \ construction, and after construction, the pane applies that state boundary exactly\
+    \ once and before any delta in all three schedules; the same holds for a fresh\
+    \ attach after lag recovery. test: `crates/gclient/tests/frame_source_live.rs::proxy_source_decodes_cell_frames`.\n\
+    2.2.4: `workspace.rs` asserts real state at every line (no expression compared\
+    \ to itself) and its epoch-mismatch and frame-EOF tests drive the real direct\
+    \ source against the scripted daemon. test: `crates/gclient/tests/workspace.rs::direct_frame_eof_detaches_before_reattach`.\n\
+    2.2.5: When a fake host sends 257 incremental frames while the consumer is stalled,\
+    \ the source reports `FrameError::Lag`, applies no frame after the overflow boundary,\
+    \ releases the direct observer by closing the socket, and the workspace issues\
+    \ exactly one fresh proxy attach. test: `crates/gclient/tests/frame_source_live.rs::direct_frame_overflow_fails_typed_without_dropping`.\n\
+    2.2.6: A workspace holding one `PaneFrameSource::Direct` pane and one `PaneFrameSource::Proxy`\
+    \ pane simultaneously compiles and runs: each pane's `recv` yields that transport's\
+    \ frames, `transport()` reports the right variant per pane, and a fallback converts\
+    \ one pane's variant without disturbing the other. test: `crates/gclient/tests/workspace.rs::direct_and_proxy_panes_run_together`.\n\
+    2.2.7: With a stalled proxy consumer driven past the 256-entry broadcast bound,\
+    \ the source reports the lag as a frame-source failure, the workspace detaches\
+    \ and tombstones the lagged attachment id and issues exactly one fresh semantic\
+    \ proxy attach, and the first frame applied to the pane after recovery is the\
+    \ new attachment's keyframe \u2014 no delta buffered before the overflow reaches\
+    \ the new grid. test: `crates/gclient/tests/frame_source_live.rs::proxy_lag_recovers_from_a_fresh_keyframe`.\n\
+    2.2.8: `FrameSource` declares exactly `send`, `recv`, and `transport`; `UnixSocketFrameSource`,\
+    \ `ProxyFrameSource`, and `ScriptedFrameSource` all implement it and all three\
+    \ are constructible and drivable through it, with connection and handshake living\
+    \ in the direct source's own constructor and the `sent_*` observers reachable\
+    \ only on the scripted double. A `ScriptedFrameSource` constructed to emulate\
+    \ direct reports `Transport::Direct` and one constructed to emulate proxy reports\
+    \ `Transport::Proxy`. test: `crates/gclient/tests/frame_source_live.rs::all_three_sources_share_one_surface`.\n\
+    2.2.9: The async framing helpers in `wire_codec.rs` round-trip every `ServerMessage`\
+    \ and `ClientMessage` shape identically to the synchronous helpers, refuse an\
+    \ oversize frame at the same bound with the same `FramingError` variant, survive\
+    \ reads and writes delivered one byte at a time, and report EOF distinctly from\
+    \ a truncated frame \u2014 with the bincode call and the size bound written once\
+    \ and shared by both paths. Aborting the source's reader task after the length\
+    \ prefix, and aborting it inside the payload, each retire the connection: the\
+    \ source marks it unusable, attempts no later read or write on it, and surfaces\
+    \ `FrameError::Cancelled` at its own boundary, where the failure enters the reattach\
+    \ path it already uses for EOF; the helpers themselves return nothing when their\
+    \ future is dropped and are never called outside those tasks. Shutdown closes\
+    \ the whole socket by reuniting the split halves rather than dropping one direction,\
+    \ and the fake host observes the connection closed and its observer released.\
+    \ test: `crates/gterminal/tests/wire_codec_async.rs::async_framing_matches_sync_contract`.\n\
+    2.2.10: Cancelling the source-owned writer after a partial length prefix and after\
+    \ a partial payload retires the connection in both schedules, closes both socket\
+    \ halves, surfaces FrameError::Cancelled at the source boundary, and permits no\
+    \ later read or write. test: `crates/gterminal/tests/wire_codec_async.rs::async_writer_cancellation_retires_connection`."
+  labels:
+  - covers:herdr-client-completion:2.2:2.2.1
+  - covers:herdr-client-completion:2.2:2.2.2
+  - covers:herdr-client-completion:2.2:2.2.3
+  - covers:herdr-client-completion:2.2:2.2.4
+  - covers:herdr-client-completion:2.2:2.2.5
+  - covers:herdr-client-completion:2.2:2.2.6
+  - covers:herdr-client-completion:2.2:2.2.7
+  - covers:herdr-client-completion:2.2:2.2.8
+  - covers:herdr-client-completion:2.2:2.2.9
+  - covers:herdr-client-completion:2.2:2.2.10
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: fullstack
+- title: Import and carve the herdr v0.8.0 chrome, theme, and keymap
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: "3.1.1: Every keep-set module exists under `crates/gclient/src/ui/`\
+    \ with its upstream header, every dropped module is absent, and the guard fails\
+    \ when a rejected module is added, a header is removed, or a render omits the\
+    \ scripted roster data. test: `crates/gclient/tests/ui_carve_guard.rs::carve_matches_upstream_map_and_renders_data`.\n\
+    3.1.2: No file under `crates/gclient/src` reaches 1,000 lines and no `UnixStream::connect`\
+    \ exists outside `frame_source.rs`. test: `crates/gclient/tests/source_size.rs::no_src_file_at_or_above_1000_lines`,\
+    \ `crates/gclient/tests/source_size.rs::license_notice_workspace_and_frame_source`\
+    \ (the existing `UnixStream::connect` chokepoint guard lives in the latter).\n\
+    3.1.3: `gclient` links `gobby_terminal::{layout, raw_input, input, selection,\
+    \ terminal_theme}` and contains no copied `layout.rs` or `raw_input.rs`; `UPSTREAM.md`\
+    \ records the keep-set count and the keymap provenance. file: `crates/gclient/UPSTREAM.md`.\n\
+    3.1.4: `render_workspace` composes sidebar, tabs, pane surface, status bar, and\
+    \ an open dialog from the imported modules for a scripted workspace of two terminals\
+    \ and one attention prompt into a 120\xD740 `TestBackend` without panicking, and\
+    \ the keybind help lists no reserved plugin binding. test: `crates/gclient/tests/ui_carve_guard.rs::render_workspace_composes_imported_chrome`.\n\
+    3.1.5: Every herdr token resolves to a `.impeccable.md` value, state colours keep\
+    \ distinct grayscale ranks and ANSI-256 lightness order, and keyboard focus renders\
+    \ with the brand accent plus a position cue. test: `crates/gclient/tests/theme.rs::tokens_match_design_contract_and_survive_monochrome`.\n\
+    3.1.6: The default keep-set action/key pairs equal the herdr v0.8.0 map; a client-local\
+    \ override replaces exactly one known action by name and leaves every other default\
+    \ unchanged; worktree/mobile action names remain unavailable; a reserved plugin\
+    \ action remains non-dispatchable and absent from keybind help even when the override\
+    \ file names it. test: `crates/gclient/tests/keymap.rs::overrides_preserve_defaults_and_cannot_activate_deferred_actions`.\n\
+    3.1.7: An override binding an action to a chord another active action already\
+    \ owns is rejected with an error naming the chord and both actions, and the resulting\
+    \ keymap is the unmodified default; an override reusing a chord owned only by\
+    \ a `reserved: true` action is accepted; after any accepted merge every active\
+    \ chord dispatches to exactly one action. test: `crates/gclient/tests/keymap.rs::colliding_override_is_rejected_and_defaults_survive`.\n\
+    3.1.8: `gobby-client` declares `toml` as a direct dependency in `crates/gclient/Cargo.toml`,\
+    \ the `gobby-client` package entry in `Cargo.lock` lists it, and no hand-written\
+    \ TOML parsing exists under `crates/gclient/src`. file: `crates/gclient/Cargo.toml`.\n\
+    3.1.9: Representative chrome renders in both dark and light themes, and the brand-accent\
+    \ keyboard-focus ring plus its position cue meet WCAG 2.2 AA contrast against\
+    \ every surface in each theme while state colors retain distinct grayscale ranks.\
+    \ test: `crates/gclient/tests/theme.rs::tokens_match_design_contract_and_survive_monochrome`.\n\
+    3.1.10: Every rendered info, warning, destructive, success, and control-state\
+    \ indicator includes a non-color icon or positional cue and remains distinguishable\
+    \ in desaturated dark and light representative renders. test: `crates/gclient/tests/theme.rs::tokens_match_design_contract_and_survive_monochrome`."
+  labels:
+  - covers:herdr-client-completion:3.1:3.1.1
+  - covers:herdr-client-completion:3.1:3.1.2
+  - covers:herdr-client-completion:3.1:3.1.3
+  - covers:herdr-client-completion:3.1:3.1.4
+  - covers:herdr-client-completion:3.1:3.1.5
+  - covers:herdr-client-completion:3.1:3.1.6
+  - covers:herdr-client-completion:3.1:3.1.7
+  - covers:herdr-client-completion:3.1:3.1.8
+  - covers:herdr-client-completion:3.1:3.1.9
+  - covers:herdr-client-completion:3.1:3.1.10
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: frontend
+- title: Build the app shell, event loop, and terminal views
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '2.2'
+  validation_criteria: "3.2.1: Against the scripted daemon and scripted frame source\
+    \ the loop renders frames into the pane grid, routes a keystroke to `terminal_input`\
+    \ only when the client holds the lease, keeps rendering and applying events across\
+    \ idle ticks, and exits on the quit key with the already-armed `TerminalGuard`\
+    \ restored \u2014 its stage-aware successor is 3.3's to deliver. test: `crates/gclient/tests/client_loop.rs::loop_routes_input_and_frames`.\n\
+    3.2.2: Focus-follows-control: take on focus, release on focus change with the\
+    \ pane still attached, read-only with take-back on `terminal_lease_lost`, a lower-generation\
+    \ delayed grant ignored, the triggering keystroke sent exactly once on `granted:true`\
+    \ and discarded with a shown reason on every other exit. test: `crates/gclient/tests/client_loop.rs::focus_moves_control_and_settles_pending_input_once`.\n\
+    3.2.3: Direct\u2192proxy fallback: after a direct-frame failure the pane detaches\
+    \ the old id, advances on either finalization signal, attaches afresh with `frame_delivery:\
+    \ \"proxy\", encoding: \"semantic_frame\"`, notifies the viewport, installs the\
+    \ new id and generation, drops late events for the tombstoned id, holds no control\
+    \ until take-control succeeds; a swallowed finalization expires the 2 s deadline,\
+    \ reconnects, and re-attaches on generation-ready with exactly one attach per\
+    \ pane; a fresh proxy attach refused with `success: false` settles the pane `Detached`\
+    \ and read-only with the returned code and reason shown, keeps the old id tombstoned,\
+    \ and installs no frame-source, viewport, or control state; a `terminal_attachment_finalized`\
+    \ for the returned id buffered before \u2014 or arriving during \u2014 `ProxyFrameSource`\
+    \ construction produces the same terminal transition with the finalization's code\
+    \ and reason shown, and no viewport, control request, or detach is issued for\
+    \ the retired id. test: `crates/gclient/tests/client_loop.rs::proxy_fallback_uses_fresh_attachment`.\n\
+    3.2.4: `terminal_write_outcome` transitions: `delivered` writable, `indeterminate`\
+    \ uncertain read-only with no resend, refusals and seq errors clear the in-flight\
+    \ mark without a second write; a `terminal_attachment_finalized` arriving mid-reassembly\
+    \ surfaces no partial event \u2014 the reader (2.1) discards that attachment's\
+    \ partial buffer and the reducer holds no accumulator of its own. test: `crates/gclient/tests/client_loop.rs::write_outcomes_drive_pane_state`.\n\
+    3.2.5: An actionable prompt in the roster opens the imported dialog and its answer\
+    \ reaches `Daemon::respond` with the correct `attention_id`; a 409 renders the\
+    \ stale-episode notice. test: `crates/gclient/tests/attention_flow.rs::respond_reaches_daemon`.\n\
+    3.2.6: `input.rs` encodes arrows, function keys, and modifier combinations to\
+    \ the bytes crossterm's kitty and legacy protocols define, and the loop uses it\
+    \ for every keystroke. test: `crates/gclient/tests/client_loop.rs::input_encoder_covers_named_keys`.\n\
+    3.2.7: Under a paused clock the supervisor issues attempt one with no preceding\
+    \ delay, then sleeps exactly 250 ms, 500 ms, 1 s, and 2 s before attempts two\
+    \ through five, and ends the episode on the fifth failure with no trailing sleep\
+    \ \u2014 five `reconnect` calls and four sleeps for one episode, however many\
+    \ panes observed the loss; a completed `Workspace` roster handshake between attempts\
+    \ resets both counter and schedule while a bare generation-ready does not, so\
+    \ a daemon whose socket connects on every attempt but whose listing fails each\
+    \ time exhausts the same five-attempt budget instead of resetting it; an `Unavailable{retry_after}`\
+    \ from failure N replaces only the sleep before attempt N+1, clamped into `[250\
+    \ ms, 4 s]`, and one returned by the fifth failure is discarded; the fifth failure\
+    \ sets the exit latch and enters the shutdown seam once; and setting the latch\
+    \ during a backoff sleep abandons the sleep with no further `reconnect`. test:\
+    \ `crates/gclient/tests/client_loop.rs::reconnect_supervisor_counts_delays_resets_and_cancels`.\n\
+    3.2.8: After the exit latch sets, an exit injected during reconnect and an exit\
+    \ injected during direct\u2192proxy fallback each produce no replacement attachment\
+    \ and no take-control, release-control, viewport, or write request; a lifecycle\
+    \ event arriving post-latch changes no pane state. test: `crates/gclient/tests/client_loop.rs::latched_exit_issues_no_further_requests`.\n\
+    3.2.9: Three panes whose `Detaching` deadlines expire concurrently in the run\
+    \ loop each submit a recovery intent and each receive the same episode result;\
+    \ the scripted daemon observes exactly one `reconnect` per attempt and the supervisor's\
+    \ counter accounts for every call, with no pane reaching `LiveDaemon::reconnect`\
+    \ directly. test: `crates/gclient/tests/client_loop.rs::detach_deadlines_recover_through_the_supervisor`.\n\
+    3.2.10: From a selected project, the spawn action issues `Daemon::spawn`, the\
+    \ resulting row reconciles into a new pane, that pane attaches and renders its\
+    \ first frame, the terminate action issues `Daemon::terminate` for it, and on\
+    \ the lifecycle removal the pane is dropped and the roster converges while a second\
+    \ pane keeps streaming frames throughout; `create_result_refused` shows the refusal\
+    \ reason and creates no pane. The same convergence holds under every schedule:\
+    \ reply-before-event, event-before-reply, a duplicate event, and a lost event\
+    \ recovered by the next listing or by reconnect reconciliation \u2014 in each\
+    \ case exactly one pane appears or disappears and no action stays pending. test:\
+    \ `crates/gclient/tests/client_loop.rs::select_spawn_attach_terminate_loop`.\n\
+    3.2.11: On daemon reader loss `LiveDaemon` emits exactly one `DaemonEvent::Disconnected`\
+    \ for that generation after clearing readiness and failing its waiters and before\
+    \ waking any reconnect joiner; with the supervisor's first attempt paused, the\
+    \ run loop has already cleared lease and control state and discarded `pending_input`\
+    \ by the time that attempt is admitted, and for the whole backoff window a direct\
+    \ pane keeps receiving and rendering host frames while every keystroke, control\
+    \ request, and write is suppressed rather than queued; on generation-ready `Workspace`\
+    \ re-lists and replays before any pane attaches, panes stay read-only until that\
+    \ handshake succeeds, each shown pane then performs a fresh attach and reacquires\
+    \ control through take-control rather than resuming its old lease, and on budget\
+    \ exhaustion \u2014 counted across socket failures and roster-handshake failures\
+    \ alike \u2014 the exit latch sets. test: `crates/gclient/tests/client_loop.rs::daemon_loss_renders_read_only_until_recovery`.\n\
+    3.2.12: A take-control whose bytes reached the socket and then hit the control\
+    \ deadline leaves that attachment's control scope tombstoned: the pane retires\
+    \ the attachment through the bounded `Detaching` path, re-attaches, and reacquires\
+    \ control on the new `attachment_id`, and no take or release is ever retried against\
+    \ the tombstoned id. test: `crates/gclient/tests/client_loop.rs::control_tombstone_retires_the_attachment`.\n\
+    3.2.13: Under a paused clock, with a G1 episode mid-flight whose reconnect produced\
+    \ G2 and G2 dropping before `Workspace` completes the roster handshake, the supervisor\
+    \ rolls the active episode's observation forward to G2: the next attempt targets\
+    \ G2, the attempt count and delay schedule continue uninterrupted from where the\
+    \ episode stood, every G1 and G2 waiter settles from the same single episode result,\
+    \ no second budget starts, and no attempt is issued against the dead G1 socket\
+    \ after the rollover. test: `crates/gclient/tests/client_loop.rs::reconnect_episode_rolls_generation_forward`.\n\
+    3.2.14: A resize delivered while direct and proxy panes are both live re-renders\
+    \ the chrome at the new dimensions, recomputes both pane rectangles, and sends\
+    \ `terminal_set_viewport` with the new geometry through both sources; a burst\
+    \ of resize signals coalesces to one application of the latest size and a transient\
+    \ 0\xD70 observation changes nothing; the pane holding a write lease on a native\
+    \ row additionally issues exactly one `terminal_resize`, while an uncontrolled\
+    \ native pane and a tmux pane issue none \u2014 the tmux pane letterboxes instead.\
+    \ test: `crates/gclient/tests/client_loop.rs::live_resize_propagates_geometry_by_policy`."
+  labels:
+  - covers:herdr-client-completion:3.2:3.2.1
+  - covers:herdr-client-completion:3.2:3.2.2
+  - covers:herdr-client-completion:3.2:3.2.3
+  - covers:herdr-client-completion:3.2:3.2.4
+  - covers:herdr-client-completion:3.2:3.2.5
+  - covers:herdr-client-completion:3.2:3.2.6
+  - covers:herdr-client-completion:3.2:3.2.7
+  - covers:herdr-client-completion:3.2:3.2.8
+  - covers:herdr-client-completion:3.2:3.2.9
+  - covers:herdr-client-completion:3.2:3.2.10
+  - covers:herdr-client-completion:3.2:3.2.11
+  - covers:herdr-client-completion:3.2:3.2.12
+  - covers:herdr-client-completion:3.2:3.2.13
+  - covers:herdr-client-completion:3.2:3.2.14
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: fullstack
+- title: Copy mode, paste, persistence, teardown, and logging
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: "3.3.1: Copy from history: a later-joining pane seeds copy\
+    \ mode from the `AttachHistory` it received, two observers hold independent offsets,\
+    \ a native pane scrolls through `SetScrollOffset`, wide-grapheme soft-wrapped\
+    \ lines copy as one logical line and a hard newline does not, no PTY resize, input,\
+    \ or tmux mutation occurs, the selection leaves the client as the exact OSC 52\
+    \ payload, and live output arriving while an observer is scrolled away renders\
+    \ the new-output indicator without moving that observer's offset. test: `crates/gclient/tests/copy_paste.rs::scrollback_copy_is_lease_independent`.\n\
+    3.3.2: Paste with the lease arrives as one bracketed unit through `terminal_paste`;\
+    \ without the lease it is refused and nothing is sent; oversize is refused typed;\
+    \ `indeterminate` enters uncertain read-only without resend; copy-search paste\
+    \ stays local. test: `crates/gclient/tests/copy_paste.rs::paste_is_lease_gated_and_bracketed`.\n\
+    3.3.3: Workspace layout round-trips through `workspace.json`, restore drops dead\
+    \ terminals, and a corrupt file is quarantined without crashing. A reader racing\
+    \ repeated saves observes only complete old-or-new JSON, a successful save leaves\
+    \ no temp file, and an injected replacement failure preserves the previous valid\
+    \ snapshot. test: `crates/gclient/tests/persist.rs::workspace_round_trip_and_corrupt_file`,\
+    \ `crates/gclient/tests/persist.rs::workspace_write_is_atomic`.\n3.3.4: On quit\
+    \ and on `SIGTERM` the async shutdown releases every lease and detaches every\
+    \ attachment with awaited results within the deadline before the runtime drops,\
+    \ the guard restores after; a daemon that never answers does not hang the exit\
+    \ past the deadline at any stage \u2014 with a permanent stall injected in turn\
+    \ at the detach await, at `Daemon::close`'s reconnect-episode join, at reader\
+    \ shutdown, and at sink close, each run still exits within the bound with the\
+    \ terminal restored, and \u2014 because `close(deadline)`'s first poll latched\
+    \ and synchronously aborted the private handles \u2014 no reader task, sink, or\
+    \ generation-ready publication survives the exit, including the run where the\
+    \ deadline expired before `close` was polled; on panic the guard restores synchronously\
+    \ and nothing async is awaited from `Drop`. test: `crates/gclient/tests/teardown.rs::graceful_exit_releases_and_detaches_within_deadline`.\n\
+    3.3.5: Logs land in `~/.gobby/logs/gclient.log` and nothing is written to stdout\
+    \ while the TUI runs. file: `crates/gclient/src/logging.rs`.\n3.3.6: Every named\
+    \ non-panic exit cause produces the same ordered trace \u2014 latch exit, release\
+    \ held leases, detach attachments, await or hit the deadline, close the WS, restore\
+    \ the local terminal \u2014 exactly once; panic performs only synchronous guard\
+    \ restoration. test: `crates/gclient/tests/teardown.rs::every_exit_cause_uses_one_shutdown_seam`.\n\
+    3.3.7: With a failure injected after each terminal-mode entry stage in turn \u2014\
+    \ after raw mode is enabled, after the alternate screen is entered, after bracketed\
+    \ paste is enabled \u2014 `enter()` returns the error and the guard restores exactly\
+    \ the stages that completed and no others, leaving the terminal in its pre-entry\
+    \ state each time; a successful entry followed by the normal exit restores each\
+    \ stage exactly once. test: `crates/gclient/tests/teardown.rs::partial_arming_rolls_back_completed_stages`.\n\
+    3.3.8: With a failure injected at each restore stage in turn \u2014 leaving the\
+    \ alternate screen, disabling raw mode, disabling bracketed paste, showing the\
+    \ cursor \u2014 restoration continues through the remaining stages instead of\
+    \ stopping at the first error, the failed stage stays outstanding while every\
+    \ succeeding stage is cleared, a subsequent `Drop` retries only the still-outstanding\
+    \ stages, explicit restoration returns the aggregate error and it is logged, and\
+    \ `Drop` neither propagates nor panics under a failing restore during unwind.\
+    \ test: `crates/gclient/tests/teardown.rs::restore_failures_stay_outstanding_and_never_panic`.\n\
+    3.3.9: Shutdown closes the daemon through the trait: `Daemon::close` is called\
+    \ exactly once after the bounded detach phase and before the runtime drops, no\
+    \ request or reconnect is issued after it returns, and a deadline that leaves\
+    \ a detach unanswered still ends with every waiter failed and cleared by the close.\
+    \ test: `crates/gclient/tests/teardown.rs::shutdown_closes_the_daemon_through_the_trait`.\n\
+    3.3.10: Workspace layout, tab-order, and focus mutations invoke atomic persistence,\
+    \ and a racing reader observes only complete old-or-new workspace.json snapshots.\
+    \ test: `crates/gclient/tests/persist.rs::workspace_mutations_persist_atomically`."
+  labels:
+  - covers:herdr-client-completion:3.3:3.3.1
+  - covers:herdr-client-completion:3.3:3.3.2
+  - covers:herdr-client-completion:3.3:3.3.3
+  - covers:herdr-client-completion:3.3:3.3.4
+  - covers:herdr-client-completion:3.3:3.3.5
+  - covers:herdr-client-completion:3.3:3.3.6
+  - covers:herdr-client-completion:3.3:3.3.7
+  - covers:herdr-client-completion:3.3:3.3.8
+  - covers:herdr-client-completion:3.3:3.3.9
+  - covers:herdr-client-completion:3.3:3.3.10
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: fullstack
+- title: 'Startup: `--daemon-url`, `--token-file`, `--version`, and host-state diagnosis'
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '3.2'
+  validation_criteria: '3.4.1: `gclient --version` exits 0 with `gclient <version>`
+    and the installer''s version probe reads it. test: `crates/gclient/tests/startup.rs::version_flag_prints_and_exits_zero`.
+
+    3.4.2: `--daemon-url` and `--token-file` override bootstrap discovery, the bearer
+    is read from the file, and an unreachable daemon produces the actionable error
+    before raw mode; with no `--token-file` flag and a controlled home, startup reads
+    `~/.gobby/local_cli_token` as the bearer, and a default token file that is missing
+    or unreadable fails actionably before raw mode and before any daemon request.
+    test: `crates/gclient/tests/startup.rs::daemon_url_overrides_bootstrap_before_raw_mode`.
+
+    3.4.3: `gclient` derives host usability from `running` and a deserialized `protocol_version`
+    alone, with no new producer field: a host that is running at the pinned version
+    proceeds on both the local and `--daemon-url` paths **even when `last_error` is
+    set from an earlier failure**, showing a notice that carries that error rather
+    than refusing; a host that is absent, not running, or running at a mismatched
+    `protocol_version` is the same actionable refusal on both paths, naming the version
+    seen and the version expected. `last_error` never by itself makes a matching running
+    host unusable. test: `crates/gclient/tests/startup.rs::test_reports_degraded_host_state`
+    (the test exists today asserting the old blanket refusal and is rewritten to this
+    contract).
+
+    3.4.4: Startup with no flag resolves the project containing the working directory
+    and passes its UUID to the first `list_terminals`; `--project <uuid>` and `--project
+    <path>` both resolve to that same UUID and override discovery; started outside
+    any project root, and inside a root whose id is unreadable, `gclient` exits with
+    an actionable error naming the search directory before raw mode and before any
+    daemon request. test: `crates/gclient/tests/startup.rs::project_is_resolved_before_raw_mode`.
+
+    3.4.5: `run_ready` takes `Ready.project` as a `String` and selects that project
+    unconditionally, with no `Option` branch that can enter the workspace project-less.
+    test: `crates/gclient/tests/startup.rs::ready_carries_a_resolved_project`.'
+  labels:
+  - covers:herdr-client-completion:3.4:3.4.1
+  - covers:herdr-client-completion:3.4:3.4.2
+  - covers:herdr-client-completion:3.4:3.4.3
+  - covers:herdr-client-completion:3.4:3.4.4
+  - covers:herdr-client-completion:3.4:3.4.5
+  tdd: true
+  source_section: '3.4'
+  implementation_domain: backend
+- title: Port herdr's keep-set component render tests
+  category: test
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '4.1.1: Every keep-set render test exists under `crates/gclient/tests/parity/`
+    with unchanged row-text expectations and passes. test: `crates/gclient/tests/parity.rs`.
+
+    4.1.2: `parity/upstream_tests.txt` has 113 lines and SHA-256 `6d3cb09874a9c2b47a0b6982b4a1ccb920c77e435933bfada7e26d9ef116d412`,
+    the ported identity set equals it exactly, and its per-module counts equal `UPSTREAM.md`.
+    Omitting a keep-set identity fails even when the inventory and `UPSTREAM.md` are
+    edited together to match the shortened port, because the digest no longer matches
+    the pinned tree; removing, duplicating, or substituting a test fails even when
+    the total count is unchanged. test: `crates/gclient/tests/parity/mod.rs::ported_set_matches_upstream_inventory`.
+
+    4.1.3: A glyph or alignment change in an imported module fails its parity test
+    while a theme-value change does not. file: `crates/gclient/tests/parity/token_map.rs`.'
+  labels:
+  - covers:herdr-client-completion:4.1:4.1.1
+  - covers:herdr-client-completion:4.1:4.1.2
+  - covers:herdr-client-completion:4.1:4.1.3
+  tdd: false
+  source_section: '4.1'
+  assigned_agent: backend-developer
+- title: gclient screen goldens
+  category: test
+  task_type: feature
+  depends_on:
+  - '3.3'
+  - '4.1'
+  validation_criteria: '4.2.1: The four captures are produced deterministically (two
+    runs byte-identical) and any chrome change outside the terminal-content region
+    fails the test. test: `crates/gclient/tests/screens.rs::screens_match_committed_captures`.'
+  labels:
+  - covers:herdr-client-completion:4.2:4.2.1
+  tdd: false
+  source_section: '4.2'
+  assigned_agent: backend-developer
+- title: 'End-to-end: gclient against an isolated daemon and live host over three
+    transports'
+  category: test
+  task_type: feature
+  depends_on:
+  - '3.4'
+  - '3.3'
+  - '2.2'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  validation_criteria: "4.3.1: `gclient` started against the isolated daemon reaches\
+    \ the workspace screen. test: `tests/e2e/test_terminal_client_stack.py::test_gclient_reaches_workspace`.\n\
+    4.3.2: A tmux row renders through the host observer and a native row renders direct,\
+    \ with control taken and keystrokes delivered as key codes. test: `tests/e2e/test_terminal_client_stack.py::test_gclient_renders_native_row_direct_and_types`.\n\
+    4.3.3: A `--daemon-url` session against a host the daemon reports `running` at\
+    \ the pinned `protocol_version` renders through the cell-mode proxy and can type;\
+    \ the same invocation against a stopped host, and against a host reporting a mismatched\
+    \ `protocol_version`, each exit with the actionable refusal quoting the reported\
+    \ state and never reach the workspace. test: `tests/e2e/test_terminal_client_stack.py::test_gclient_remote_session_uses_proxy`,\
+    \ `tests/e2e/test_terminal_client_stack.py::test_gclient_remote_refuses_absent_host`.\n\
+    4.3.4: A direct-frame failure falls back to proxy with the old attachment finalised\
+    \ on the daemon. test: `tests/e2e/test_terminal_client_stack.py::test_gclient_direct_failure_falls_back_to_proxy`.\n\
+    4.3.5: Selecting a tmux terminal in gclient renders its output through the gterm\
+    \ host observer and reports the direct transport. test: `tests/e2e/test_terminal_client_stack.py::test_gclient_renders_tmux_row_through_host`.\n\
+    4.3.6: Against the isolated daemon, the spawn action creates a real terminal row\
+    \ that the daemon lists, gclient reconciles it into a pane and renders its first\
+    \ frame, the terminate action removes the row from the daemon's listing, and the\
+    \ pane disappears from gclient while a second pane keeps rendering. test: `tests/e2e/test_terminal_client_stack.py::test_gclient_spawns_and_terminates_a_terminal`.\n\
+    4.3.7: A running host with a mismatched protocol_version causes --daemon-url to\
+    \ exit before workspace connection and reports the expected and observed versions.\
+    \ test: `tests/e2e/test_terminal_client_stack.py::test_gclient_remote_refuses_protocol_mismatch`.\n\
+    4.3.8: Resizing the real gclient PTY after startup (via the driver's window-size\
+    \ change delivering `SIGWINCH`) re-renders the workspace at the new dimensions\
+    \ with the pane content following \u2014 the screen read after the resize reflects\
+    \ the new geometry rather than the startup 120\xD740. test: `tests/e2e/test_terminal_client_stack.py::test_gclient_follows_a_live_pty_resize`."
+  labels:
+  - covers:herdr-client-completion:4.3:4.3.1
+  - covers:herdr-client-completion:4.3:4.3.2
+  - covers:herdr-client-completion:4.3:4.3.3
+  - covers:herdr-client-completion:4.3:4.3.4
+  - covers:herdr-client-completion:4.3:4.3.5
+  - covers:herdr-client-completion:4.3:4.3.6
+  - covers:herdr-client-completion:4.3:4.3.7
+  - covers:herdr-client-completion:4.3:4.3.8
+  tdd: false
+  source_section: '4.3'
+  assigned_agent: backend-developer
+- title: 'Documentation: client status, remote use, and Guard set H'
+  category: docs
+  task_type: feature
+  depends_on:
+  - '4.3'
+  validation_criteria: '4.4.1: The guide carries "Client status" and a "Guard set
+    H" section reproducing all seven numbered checks with the `DATABASE_URL` and `GOBBY_TEST_PROTECT`
+    environment, the new-inode install rule, and the host-PID leak check, so a later
+    leaf can execute the gate from the checked-in copy alone. behavior: "Client status"
+    in `docs/guides/gterminal-development-guide.md`.
+
+    4.4.2: The protocol contract gains a daemon WS message table (none exists today)
+    documenting `encoding`, `terminal_frame`, the `direct` block, and `snapshot`.
+    behavior: "terminal_frame" in `docs/contracts/gterm-protocols.md`.'
+  labels:
+  - covers:herdr-client-completion:4.4:4.4.1
+  - covers:herdr-client-completion:4.4:4.4.2
+  tdd: false
+  source_section: '4.4'
+  assigned_agent: tech-writer
+- title: Seed the follow-on planning epics and refresh the evolution snapshot
+  category: docs
+  task_type: feature
+  depends_on:
+  - '4.1'
+  - '4.2'
+  - '4.3'
+  - '4.4'
+  validation_criteria: "5.1.1: `evolution.md` names the client as landed, lists the\
+    \ D1 and D2 epics by task ref in the remaining path, and cites this plan. behavior:\
+    \ \"Remaining path\" in `docs/architecture/evolution.md`.\n5.1.2: By the time\
+    \ this leaf runs, D1, D2, and D3 each resolve to exactly one open `planning` task\
+    \ carrying `deferred-from:herdr-client-completion:<D>` provenance, parented under\
+    \ this plan's epic as tail work, with its dependency closure recorded as `blocked-by`\
+    \ edges \u2014 one internal edge on 5.1 for each of D1, D2, and D3, plus #19600\
+    \ and #19647 for D2, and no external edge for D3, whose external prerequisite\
+    \ set is explicitly empty \u2014 so none of the three is dispatchable before this\
+    \ epic has landed; `evolution.md` names those stable refs and this leaf creates,\
+    \ adopts, and re-points nothing. behavior: \"follow-on epics\" in `docs/architecture/evolution.md`.\n\
+    5.1.3: D2 resolves to the adopted #20202, which carries `deferred-from:herdr-terminal-client:D2`\
+    \ beside the new `deferred-from:herdr-client-completion:D2`, and D3 resolves to\
+    \ the adopted #20201, which carries `deferred-from:herdr-terminal-client:D1` \u2014\
+    \ the previous plan's section id for the plugin epic, not D3 \u2014 beside the\
+    \ new `deferred-from:herdr-client-completion:D3`; no duplicate epic exists for\
+    \ either, and a lookup keyed on the current section id rather than the mapped\
+    \ legacy one stops the step instead of creating one; #20202's title, description,\
+    \ and validation criteria state the cell-mode proxy source and the daemon-addressable\
+    \ client as landed prerequisites and scope it to the hub roster, endpoint resolution,\
+    \ capability-token lifecycle, and hub\u2194node relay; D3's recorded closure is\
+    \ exactly the internal 5.1 edge with no external edge; re-running adoption resolves\
+    \ the same refs through the new provenance and mutates nothing further; an ambiguous\
+    \ or unexpected legacy candidate stops the step instead of creating or mutating;\
+    \ and each adopted task's `original_acceptance_items` match its typed deferral\
+    \ object exactly \u2014 D1 [5.1.2], D2 [5.1.2, 5.1.3], D3 [3.1.4, 5.1.3]. behavior:\
+    \ \"follow-on epics\" in `docs/architecture/evolution.md`.\n5.1.4: Adoption is\
+    \ performed by the coordinator running expansion through `gobby-tasks` MCP calls,\
+    \ and it converges rather than skipping: re-running it against a task that already\
+    \ carries the new `deferred-from:herdr-client-completion:<D>` provenance re-verifies\
+    \ every other postcondition and repairs any that is missing \u2014 so a task left\
+    \ with the label but no tail-work parent, no internal `blocked-by` edge on 5.1,\
+    \ or an unrewritten #20202 description is brought to the same final state as a\
+    \ first run, a fully converged task is mutated no further, and convergence adds\
+    \ no external edge to D3. D1's create branch is guarded by that same provenance\
+    \ lookup, so a second run adopts and converges the epic the first run made instead\
+    \ of creating a duplicate, and more than one match stops the step. behavior: \"\
+    follow-on epics\" in `docs/architecture/evolution.md`.\n5.1.5: Before expansion\
+    \ validation runs, D1's typed `deferral.task_ref` names the exact stable ref of\
+    \ the created-or-adopted epic \u2014 no `#TBD` value survives into validation\
+    \ \u2014 and the plan hash and derived manifest/coverage state are refreshed from\
+    \ the written-back bytes, so `validate_deferral` resolves every deferral ref to\
+    \ an open task. behavior: D1 `deferral.task_ref` in this plan."
+  labels:
+  - covers:herdr-client-completion:5.1:5.1.1
+  - covers:herdr-client-completion:5.1:5.1.2
+  - covers:herdr-client-completion:5.1:5.1.3
+  - covers:herdr-client-completion:5.1:5.1.4
+  - covers:herdr-client-completion:5.1:5.1.5
+  tdd: false
+  source_section: '5.1'
+  assigned_agent: tech-writer
+```
