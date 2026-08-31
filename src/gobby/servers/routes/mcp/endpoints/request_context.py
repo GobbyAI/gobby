@@ -152,6 +152,12 @@ async def _set_context_for_request(
     wrapper_request = _header_seen(headers, MCP_WRAPPER_PROTOCOL_VERSION_HEADER)
     terminal_context_seen = _header_seen(headers, TERMINAL_CONTEXT_HEADER)
     argument_session_id = _get_argument_session_id(arguments)
+    terminal_context: dict[str, Any] | None = None
+    if wrapper_request and (terminal_context_seen or not header_session_id):
+        terminal_context = _parse_terminal_context_header(
+            headers.get(TERMINAL_CONTEXT_HEADER),
+            seen=terminal_context_seen,
+        )
 
     # Header session is wrapper/caller context. Body session_id remains a
     # target-tool parameter and must not make child-session workflow
@@ -173,10 +179,7 @@ async def _set_context_for_request(
     )
 
     if wrapper_request and not header_session_id:
-        terminal_context = _parse_terminal_context_header(
-            headers.get(TERMINAL_CONTEXT_HEADER),
-            seen=terminal_context_seen,
-        )
+        assert terminal_context is not None
         if not server.session_manager:
             _raise_session_required(terminal_context_seen=terminal_context_seen)
         resolution_project_id = caller_project_id_header or project_id_header
@@ -253,6 +256,17 @@ async def _set_context_for_request(
     if wrapper_request and tokens.resolved_session_id is None:
         reset_seeded_contexts(tokens)
         _raise_session_required(terminal_context_seen=terminal_context_seen)
+    if (
+        wrapper_request
+        and header_session_id
+        and terminal_context is not None
+        and server.session_manager is not None
+    ):
+        await server.run_db(
+            server.session_manager.backfill_terminal_context,
+            tokens.resolved_session_id,
+            terminal_context,
+        )
     try:
         await _bind_agent_run_context(server, request, tokens, db=db)
     except Exception:
