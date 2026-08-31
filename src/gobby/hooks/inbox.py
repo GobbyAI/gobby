@@ -166,15 +166,19 @@ def _consume_inbox_delivery_receipt(
                 delivery_generation=generation,
             )
             if committed is not None:
-                variable_manager = None
-                if db is not None:
-                    from gobby.workflows.state_manager import SessionVariableManager
+                from gobby.workflows.state_manager import SessionVariableManager
 
-                    variable_manager = SessionVariableManager(db)
                 apply_acknowledged_receipt(
                     committed,
                     message_manager=getattr(hook_manager, "_inter_session_msg_manager", None),
-                    variable_manager=variable_manager,
+                    variable_manager=SessionVariableManager(db),
+                )
+                # The acknowledged delivery terminalizes every envelope that
+                # carried it; a retained original must never replay its hook.
+                _mark_carrying_envelopes_processed(
+                    committed,
+                    ack_envelope_id=envelope_id,
+                    processed_dir=processed_dir,
                 )
         except Exception as exc:
             logger.warning(
@@ -186,6 +190,35 @@ def _consume_inbox_delivery_receipt(
     if envelope_id:
         mark_envelope_processed(envelope_id, processed_dir=processed_dir)
     path.unlink(missing_ok=True)
+
+
+def _mark_carrying_envelopes_processed(
+    receipt: Any,
+    *,
+    ack_envelope_id: str | None,
+    processed_dir: Path,
+) -> None:
+    """Mark the receipt's original and current carrying envelopes processed."""
+    carrying: list[str] = []
+    for attribute in ("original_envelope_id", "current_envelope_id"):
+        candidate = getattr(receipt, attribute, None)
+        if (
+            isinstance(candidate, str)
+            and candidate
+            and candidate != ack_envelope_id
+            and candidate not in carrying
+        ):
+            carrying.append(candidate)
+    for carried_id in carrying:
+        try:
+            mark_envelope_processed(carried_id, processed_dir=processed_dir)
+        except Exception as exc:
+            logger.warning(
+                "Failed to terminalize carrying envelope %s for receipt %s: %s",
+                carried_id,
+                getattr(receipt, "receipt_id", None),
+                exc,
+            )
 
 
 def _terminalize_below_floor_receipts(app: Any, envelope_id: str) -> None:

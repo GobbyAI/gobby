@@ -1017,3 +1017,156 @@ def test_quarantine_prune_is_bounded(tmp_path: Path) -> None:
     result = prune(inbox_dir, now=1_700_000_000.0, max_entries=2)
     assert result.examined <= 2
     assert result.truncated is True
+
+
+def _acknowledged_receipt(*, original_envelope_id: str, current_envelope_id: str) -> Any:
+    from gobby.storage.hook_receipts import HookReceipt
+
+    return HookReceipt(
+        receipt_id="11111111-1111-1111-1111-111111111111",
+        original_envelope_id=original_envelope_id,
+        current_envelope_id=current_envelope_id,
+        session_id="recipient-session",
+        delivery_generation=1,
+        state="acknowledged",
+        staged_payload={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_drain_ack_before_original_terminalizes_the_original(tmp_path: Path) -> None:
+    """An ack drained ahead of its retained original marks that original processed."""
+    from gobby.hooks.envelope_dedupe import get_processed_envelope_dir
+
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    original_id = "n-0000000000002-orig"
+    ack = _delivery_receipt_envelope()
+    ack["original_envelope_id"] = original_id
+    (inbox_dir / "n-0000000000001-ack0.json").write_text(json.dumps(ack), encoding="utf-8")
+    original_path = inbox_dir / f"{original_id}.json"
+    original_path.write_text(json.dumps(_valid_envelope()), encoding="utf-8")
+    app = FastAPI()
+    app.state.database = object()
+
+    with (
+        patch(
+            "gobby.storage.hook_receipts.acknowledge_receipt",
+            return_value=_acknowledged_receipt(
+                original_envelope_id=original_id, current_envelope_id=original_id
+            ),
+        ),
+        patch("gobby.hooks.inbox._post_envelope", new_callable=AsyncMock) as post,
+    ):
+        first = await drain_hook_inbox_once(app, inbox_dir=inbox_dir, include_fresh=True)
+        second = await drain_hook_inbox_once(app, inbox_dir=inbox_dir, include_fresh=True)
+
+    post.assert_not_awaited()
+    assert first == 1
+    assert second == 0
+    assert not original_path.exists()
+    processed_dir = get_processed_envelope_dir(inbox_dir)
+    assert is_envelope_processed(original_id, processed_dir=processed_dir)
+    assert is_envelope_processed("n-0000000000001-ack0", processed_dir=processed_dir)
+
+
+@pytest.mark.asyncio
+async def test_drain_original_before_ack_never_replays_the_original(tmp_path: Path) -> None:
+    """The original's route marker plus the ack keep the hook from re-executing."""
+    from gobby.hooks.envelope_dedupe import get_processed_envelope_dir
+
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    processed_dir = get_processed_envelope_dir(inbox_dir)
+    original_id = "n-0000000000001-orig"
+    ack = _delivery_receipt_envelope()
+    ack["original_envelope_id"] = original_id
+    original_path = inbox_dir / f"{original_id}.json"
+    original_path.write_text(json.dumps(_valid_envelope()), encoding="utf-8")
+    (inbox_dir / "n-0000000000002-ack0.json").write_text(json.dumps(ack), encoding="utf-8")
+    mark_envelope_processed(
+        original_id,
+        response={"continue": True},
+        processed_dir=processed_dir,
+    )
+    app = FastAPI()
+    app.state.database = object()
+
+    with (
+        patch(
+            "gobby.storage.hook_receipts.acknowledge_receipt",
+            return_value=_acknowledged_receipt(
+                original_envelope_id=original_id, current_envelope_id="n-0000000000003-next"
+            ),
+        ),
+        patch("gobby.hooks.inbox._post_envelope", new_callable=AsyncMock) as post,
+    ):
+        replayed = await drain_hook_inbox_once(app, inbox_dir=inbox_dir, include_fresh=True)
+        again = await drain_hook_inbox_once(app, inbox_dir=inbox_dir, include_fresh=True)
+
+    post.assert_not_awaited()
+    assert replayed == 1
+    assert again == 0
+    assert not original_path.exists()
+    marker = read_envelope_marker(original_id, processed_dir=processed_dir)
+    assert marker is not None
+    assert marker["status"] == "processed"
+    assert marker["response"] == {"continue": True}
+    assert is_envelope_processed("n-0000000000003-next", processed_dir=processed_dir)
+
+
+def test_consume_delivery_receipt_marks_original_and_current_envelopes(tmp_path: Path) -> None:
+    from gobby.hooks.inbox import _consume_inbox_delivery_receipt
+
+    path = tmp_path / "ack.json"
+    path.write_text("{}", encoding="utf-8")
+    processed_dir = tmp_path / "processed"
+    processed_dir.mkdir()
+    app = FastAPI()
+    app.state.database = object()
+    assert claim_envelope_processing("env-processing", processed_dir=processed_dir)
+
+    with patch(
+        "gobby.storage.hook_receipts.acknowledge_receipt",
+        return_value=_acknowledged_receipt(
+            original_envelope_id="env-original", current_envelope_id="env-processing"
+        ),
+    ):
+        _consume_inbox_delivery_receipt(
+            app,
+            _delivery_receipt_envelope(),
+            path,
+            "env-ack",
+            processed_dir=processed_dir,
+        )
+
+    assert is_envelope_processed("env-original", processed_dir=processed_dir)
+    assert is_envelope_processed("env-ack", processed_dir=processed_dir)
+    active = read_envelope_marker("env-processing", processed_dir=processed_dir)
+    assert active is not None
+    assert active["status"] == "processing"
+    assert not path.exists()
+
+
+def test_consume_delivery_receipt_duplicate_ack_marks_nothing_else(tmp_path: Path) -> None:
+    from gobby.hooks.inbox import _consume_inbox_delivery_receipt
+
+    path = tmp_path / "ack.json"
+    path.write_text("{}", encoding="utf-8")
+    processed_dir = tmp_path / "processed"
+    processed_dir.mkdir()
+    app = FastAPI()
+    app.state.database = object()
+    envelope = _delivery_receipt_envelope()
+
+    with patch("gobby.storage.hook_receipts.acknowledge_receipt", return_value=None):
+        _consume_inbox_delivery_receipt(
+            app,
+            envelope,
+            path,
+            "env-dup-ack",
+            processed_dir=processed_dir,
+        )
+
+    assert not is_envelope_processed(envelope["original_envelope_id"], processed_dir=processed_dir)
+    assert is_envelope_processed("env-dup-ack", processed_dir=processed_dir)
