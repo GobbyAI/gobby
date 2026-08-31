@@ -1,8 +1,10 @@
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
 
-use super::context::project_name_suffixes;
-use super::context::resolve_project_id;
+use super::context::{resolve_project_by_name, resolve_project_id};
 use super::services::{
     resolve_code_vector_settings_from_values, resolve_embedding_config_from_fallible_values,
     resolve_embedding_config_from_values, resolve_falkordb_config_from_values,
@@ -166,11 +168,146 @@ fn adapter_env_precedence_and_json_decode() {
     });
 }
 
+fn serve_json_once(body: serde_json::Value) -> (String, thread::JoinHandle<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test daemon");
+    let daemon_url = format!(
+        "http://127.0.0.1:{}",
+        listener.local_addr().expect("test daemon address").port()
+    );
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept test daemon request");
+        let mut request = [0_u8; 4096];
+        let size = stream.read(&mut request).expect("read test daemon request");
+        let request_line = String::from_utf8_lossy(&request[..size])
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let body = serde_json::to_vec(&body).expect("serialize test daemon response");
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .expect("write test daemon response headers");
+        stream
+            .write_all(&body)
+            .expect("write test daemon response body");
+        request_line
+    });
+    (daemon_url, handle)
+}
+
 #[test]
-fn project_name_lookup_suffixes_cover_unix_and_windows_paths() {
+#[serial_test::serial(serial_db)]
+fn project_name_lookup_uses_the_calling_machine_checkout() {
+    let (daemon_url, request) = serve_json_once(serde_json::json!([{
+        "id": "00000000-0000-4000-8000-000000000001",
+        "name": "gobby",
+        "repo_path": "/legacy/repo-path",
+        "root_path": "/foreign/index-root",
+        "checkout": {
+            "machine_id": "00000000-0000-4000-8000-000000000010",
+            "root_path": "/local/checkout"
+        }
+    }]));
+
+    temp_env::with_var("GOBBY_DAEMON_URL", Some(&daemon_url), || {
+        let root = resolve_project_by_name("gobby").expect("local checkout");
+        assert_eq!(root, PathBuf::from("/local/checkout"));
+    });
     assert_eq!(
-        project_name_suffixes("api_%"),
-        ("/api_%".to_string(), r"\api_%".to_string())
+        request.join().expect("test daemon thread"),
+        "GET /api/projects HTTP/1.1"
+    );
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+fn project_name_lookup_rejects_another_machines_index_root() {
+    let (daemon_url, request) = serve_json_once(serde_json::json!([{
+        "id": "00000000-0000-4000-8000-000000000001",
+        "name": "gobby",
+        "root_path": "/foreign/index-root",
+        "checkout": null
+    }]));
+
+    temp_env::with_var("GOBBY_DAEMON_URL", Some(&daemon_url), || {
+        let error = resolve_project_by_name("gobby")
+            .expect_err("foreign index root must not resolve locally");
+        assert_eq!(
+            error
+                .downcast_ref::<crate::cli_error::CliError>()
+                .map(|error| error.code),
+            Some("project_not_found")
+        );
+    });
+    assert_eq!(
+        request.join().expect("test daemon thread"),
+        "GET /api/projects HTTP/1.1"
+    );
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+fn project_name_lookup_prefers_active_project_over_deleted_duplicate() {
+    let (daemon_url, request) = serve_json_once(serde_json::json!([
+        {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "name": "gobby",
+            "deleted_at": "2026-08-30T12:00:00Z",
+            "checkout": {
+                "machine_id": "00000000-0000-4000-8000-000000000010",
+                "root_path": "/local/deleted-checkout"
+            }
+        },
+        {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "name": "gobby",
+            "deleted_at": null,
+            "checkout": {
+                "machine_id": "00000000-0000-4000-8000-000000000010",
+                "root_path": "/local/active-checkout"
+            }
+        }
+    ]));
+
+    temp_env::with_var("GOBBY_DAEMON_URL", Some(&daemon_url), || {
+        let root = resolve_project_by_name("gobby").expect("active checkout");
+        assert_eq!(root, PathBuf::from("/local/active-checkout"));
+    });
+    assert_eq!(
+        request.join().expect("test daemon thread"),
+        "GET /api/projects HTTP/1.1"
+    );
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+fn project_name_lookup_rejects_deleted_only_name() {
+    let (daemon_url, request) = serve_json_once(serde_json::json!([{
+        "id": "00000000-0000-4000-8000-000000000001",
+        "name": "gobby",
+        "deleted_at": "2026-08-30T12:00:00Z",
+        "checkout": {
+            "machine_id": "00000000-0000-4000-8000-000000000010",
+            "root_path": "/local/deleted-checkout"
+        }
+    }]));
+
+    temp_env::with_var("GOBBY_DAEMON_URL", Some(&daemon_url), || {
+        let error =
+            resolve_project_by_name("gobby").expect_err("deleted-only name must not resolve");
+        assert_eq!(
+            error
+                .downcast_ref::<crate::cli_error::CliError>()
+                .map(|error| error.code),
+            Some("project_not_found")
+        );
+    });
+    assert_eq!(
+        request.join().expect("test daemon thread"),
+        "GET /api/projects HTTP/1.1"
     );
 }
 
@@ -372,17 +509,22 @@ fn test_resolve_project_id_requires_project_context() {
 #[test]
 fn main_repo_keeps_project_json_id() {
     let tmp = tempfile::tempdir().expect("tempdir");
+    let project_id = "00000000-0000-4000-8000-000000000042";
     write_project_json(
         tmp.path(),
         serde_json::json!({
-            "id": "main-project-id",
+            "id": project_id,
             "name": "main"
         }),
     );
 
     let identity = resolve_project_identity(tmp.path(), MissingIdentity::Error).expect("identity");
 
-    assert_eq!(identity.project_id, "main-project-id");
+    assert_eq!(identity.project_id, project_id);
+    assert_eq!(
+        resolve_project_id(tmp.path()).expect("marker id"),
+        project_id
+    );
     assert_eq!(identity.source, ProjectIdentitySource::ProjectJson);
     assert!(!identity.should_write_gcode_json);
     assert!(identity.warning.is_none());
