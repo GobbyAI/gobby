@@ -67,7 +67,7 @@ def test_set_handoff_interrupt_warning_is_shared_by_skills(
 
 
 def test_plan_skill_version(body: str) -> None:
-    assert 'version: "4.1.1"' in body
+    assert 'version: "4.1.2"' in body
 
 
 def test_plan_investigates_before_recommending_depth(body: str) -> None:
@@ -112,21 +112,18 @@ def test_elicit_is_mandatory_for_both_depths(body: str) -> None:
     assert "Do not ask the user for facts the repository can answer" in normalized
 
 
-def test_lightweight_writes_a_validated_artifact_and_skips_the_full_phases(body: str) -> None:
-    """a2b779f60 (#19368) gave Lightweight a real artifact.
-
-    It previously produced a conversational plan with no artifact and no
-    validation; it now drafts `.gobby/plans/<slug>.md` and base-validates it,
-    while still skipping enhancement and adversarial review by default.
-    """
+def test_lightweight_is_conversational_and_skips_artifact_workflow(body: str) -> None:
     section = body[body.index("## Lightweight Workflow") : body.index("## Full Workflow")]
     normalized = " ".join(section.split())
 
-    assert "Plan-Coverage Contract as formatting guidance" in normalized
-    assert "decision-complete plan to `.gobby/plans/<slug>.md`" in normalized
-    assert "uv run gobby plans validate <plan-file>" in normalized
-    assert "Lightweight skips enhancement and adversarial review by default" in normalized
-    assert "opt into either Full phase later without redrafting" in normalized
+    assert "conversational, decision-complete plan" in normalized
+    assert "Lightweight depth is artifact-free" in normalized
+    assert "Do not load `plan-draft`" in normalized
+    assert "Present the plan directly in the conversation" in normalized
+    assert "switch to Full" in normalized
+    assert "Write the decision-complete plan to" not in normalized
+    assert "uv run gobby plans validate" not in section
+    assert "build handoff" in normalized
 
 
 def test_explicit_commands_are_both_documented(body: str) -> None:

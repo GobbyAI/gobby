@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Adaptive /gobby plan workflow. Investigates first, recommends lightweight or full planning depth, requires decision elicitation, and preserves explicit human gates for artifact enhancement, adversarial review, and optional build handoff.
-version: "4.1.1"
+version: "4.1.2"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -56,7 +56,11 @@ chooses among complete solutions only.
 
 ## Common Path
 
-Select depth, elicit every decision that changes scope or architecture, and preserve one canonical plan artifact. Full plans pass through draft, checkpoint, enhancement, and adversarial review before approval. Lightweight plans stop after their compact checkpoint.
+Select depth and elicit every decision that changes scope or architecture.
+Lightweight plans stay in the conversation, remain artifact-free, and stop after
+their compact checkpoint. Full plans preserve one canonical plan artifact and
+pass through draft, checkpoint, enhancement, and adversarial review before
+approval.
 
 ## Topic Index
 
@@ -71,8 +75,11 @@ Load at most three references for one planning phase. Finish or discard the curr
 ## Boundaries
 
 - Do not create or claim tasks during plan drafting or plan review.
+- Lightweight plans never create, update, validate, or hand off files under
+  `.gobby/plans/`; those artifact operations belong exclusively to Full planning.
 - Any `.md` under `.gobby/`, `.claude/`, or `.codex/` (CLI-owned artifact
-  trees) is exempt from `require-task-before-edit`.
+  trees) is exempt from `require-task-before-edit` when Full planning creates an
+  artifact.
 - Enhancement (step 4.5) is advisory: apply only user-accepted suggestions, and
   never let it gate, approve, reject, or block the adversary review. The human
   is the scope gate.

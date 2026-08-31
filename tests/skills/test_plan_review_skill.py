@@ -91,11 +91,12 @@ def test_review_prompts_have_direct_repository_and_task_access() -> None:
     assert "never edit it" in taskless.lower()
 
 
-def test_interactive_plan_always_writes_and_validates_canonical_artifact() -> None:
+def test_interactive_plan_keeps_lightweight_artifact_free_and_full_canonical() -> None:
     body = _normalized(PLAN_SKILL_PATH)
 
-    assert "Lightweight skips enhancement and adversarial review by default" in body
-    assert "Write the decision-complete plan to `.gobby/plans/<slug>.md`" in body
+    assert "Lightweight depth is artifact-free" in body
+    assert "Present the plan directly in the conversation" in body
+    assert "Lightweight plans never create, update, validate, or hand off files" in body
     assert "Full depth is artifact-first" in body
     assert "uv run gobby plans validate <plan-file>" in body
 
