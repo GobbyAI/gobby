@@ -214,8 +214,8 @@ fn roster_follows_paginated_pending_live() {
     assert!(
         terminal_gets
             .iter()
-            .all(|p| p.contains("states=pending%7Clive") || p.contains("states=pending|live")),
-        "default pending|live filter: {terminal_gets:?}"
+            .all(|p| p.contains("states=pending,live")),
+        "default pending,live filter: {terminal_gets:?}"
     );
     assert!(
         terminal_gets.len() >= 2,

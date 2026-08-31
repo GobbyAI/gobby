@@ -175,7 +175,7 @@ impl ScriptedDaemon {
         project_id: &str,
         cursor: Option<&str>,
     ) -> Result<Value, DaemonError> {
-        let mut path = format!("GET /api/terminals?project_id={project_id}&states=pending%7Clive");
+        let mut path = format!("GET /api/terminals?project_id={project_id}&states=pending,live");
         if let Some(cursor) = cursor {
             path.push_str("&cursor=");
             path.push_str(cursor);
