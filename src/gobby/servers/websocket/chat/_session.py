@@ -29,6 +29,7 @@ from gobby.utils.machine_id import get_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 
 from ._clear_commit import rebind_live_clear_successor
+from ._reattach import redirect_terminal_web_chat_candidate
 from ._session_binding import (
     _first_configured_chat_binding,
     _normalize_runtime_chat_mode,
@@ -261,7 +262,7 @@ class ChatSessionMixin:
         # Fan out while the live wrapper still resolves to the predecessor: the
         # SESSION_END handler reads db_session_id from the wrapper.
         await self._fire_session_end(conversation_id, reason=SessionEndReason.CLEAR)
-        rebind_live_clear_successor(self, session, successor)
+        await rebind_live_clear_successor(self, session, successor)
         self._transfer_clear_claims(predecessor_id, successor.id)
         return {
             "ok": True,
@@ -309,6 +310,12 @@ class ChatSessionMixin:
             try:
                 candidate = await run_db(self, session_manager.get, session_key)
                 if candidate:
+                    candidate = await run_db(
+                        self,
+                        redirect_terminal_web_chat_candidate,
+                        candidate,
+                        session_manager,
+                    )
                     candidate_session_type = getattr(candidate, "session_type", None)
                     if candidate_session_type == "web_chat":
                         existing_db_session = candidate

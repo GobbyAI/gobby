@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 import httpx
@@ -33,6 +33,39 @@ if TYPE_CHECKING:
     from gobby.servers.websocket.chat._message_validation import ChatContent
 
 logger = logging.getLogger(__name__)
+
+
+async def send_session_info(
+    session: ChatSessionProtocol,
+    conversation_id: str,
+    transport: ChatStreamTransport,
+    *,
+    session_ref: str | None,
+) -> None:
+    """Send the authoritative identity and capability frame for a chat session."""
+    session_info_msg = transport.base_msg(
+        type="session_info",
+        conversation_id=conversation_id,
+    )
+    db_sid = getattr(session, "db_session_id", None)
+    if db_sid:
+        session_info_msg["db_session_id"] = db_sid
+    if session_ref:
+        session_info_msg["session_ref"] = session_ref
+    branch, wt_path = await _resolve_git_branch(getattr(session, "project_path", None))
+    if branch:
+        session_info_msg["current_branch"] = branch
+    if wt_path:
+        session_info_msg["worktree_path"] = wt_path
+    session_info_msg["agent_name"] = getattr(session, "_pending_agent_name", None) or "default"
+    session_info_msg["plan_auto_switch"] = bool(getattr(session, "plan_auto_switch", True))
+    session_chat_mode = getattr(session, "chat_mode", None)
+    if isinstance(session_chat_mode, str) and session_chat_mode:
+        session_info_msg["chat_mode"] = session_chat_mode
+    available_commands = getattr(session, "available_commands", None)
+    if isinstance(available_commands, list):
+        session_info_msg["available_commands"] = available_commands
+    await transport.send_direct(session_info_msg)
 
 
 class ChatStreamingMixin:
@@ -176,6 +209,7 @@ class ChatStreamingMixin:
                 )
                 if session is None:
                     return
+            cast(Any, session)._chat_stream_transport = transport
 
             if websocket is not None:
                 client_info = self.clients.get(websocket)
@@ -326,41 +360,12 @@ class ChatStreamingMixin:
                 provider=provider,
                 reasoning_effort=reasoning_effort,
             )
-            session_info_msg = transport.base_msg(
-                type="session_info",
-                conversation_id=conversation_id,
+            await send_session_info(
+                session,
+                conversation_id,
+                transport,
+                session_ref=persistence.session_ref(),
             )
-            db_sid = getattr(session, "db_session_id", None)
-            if db_sid:
-                session_info_msg["db_session_id"] = db_sid
-            ref = persistence.session_ref()
-            if ref:
-                session_info_msg["session_ref"] = ref
-            branch, wt_path = await _resolve_git_branch(getattr(session, "project_path", None))
-            if branch:
-                session_info_msg["current_branch"] = branch
-            if wt_path:
-                session_info_msg["worktree_path"] = wt_path
-            session_info_msg["agent_name"] = (
-                getattr(session, "_pending_agent_name", None) or "default"
-            )
-            # Per-CLI plan capability: native (Claude SDK) auto-switches the
-            # agent out of plan mode on approval; ACP-backed CLIs cannot at the
-            # protocol level, so the UI notes a manual switch is required.
-            session_info_msg["plan_auto_switch"] = bool(getattr(session, "plan_auto_switch", True))
-            # Carry the session's authoritative chat_mode so the UI mode radio
-            # reflects the backend truth. A session can resolve/restore a persisted
-            # mode (e.g. bypass) that differs from the UI's optimistic default
-            # (Plan); without surfacing it here the UI showed read-only Plan while
-            # the agent ran permissively and the plan-approval surface was
-            # suppressed (#15709). The frontend reconciles its radio on receipt.
-            session_chat_mode = getattr(session, "chat_mode", None)
-            if isinstance(session_chat_mode, str) and session_chat_mode:
-                session_info_msg["chat_mode"] = session_chat_mode
-            available_commands = getattr(session, "available_commands", None)
-            if isinstance(available_commands, list):
-                session_info_msg["available_commands"] = available_commands
-            await transport.send_direct(session_info_msg)
             return session
         except Exception as exc:
             logger.exception(

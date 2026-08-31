@@ -7,6 +7,8 @@ from typing import Any
 
 from gobby.servers.chat_session_base import ChatSessionProtocol
 
+from ._streaming import send_session_info
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,9 +35,29 @@ def wire_db_persist_callbacks(mixin: Any, session: ChatSessionProtocol) -> None:
     session._on_approved_tools_persist = _persist_approved_tools
 
 
-def rebind_live_clear_successor(mixin: Any, session: ChatSessionProtocol, successor: Any) -> None:
+async def rebind_live_clear_successor(
+    mixin: Any,
+    session: ChatSessionProtocol,
+    successor: Any,
+) -> None:
     """Point the live wrapper at the successor row without starting a backend."""
     session.db_session_id = successor.id
     session.seq_num = successor.seq_num
     session.message_index = 0
     wire_db_persist_callbacks(mixin, session)
+    transport = getattr(session, "_chat_stream_transport", None)
+    if transport is None:
+        return
+    try:
+        await send_session_info(
+            session,
+            session.conversation_id,
+            transport,
+            session_ref=f"#{successor.seq_num}",
+        )
+    except Exception:
+        logger.warning(
+            "Failed sending successor session_info for conversation %s",
+            session.conversation_id,
+            exc_info=True,
+        )

@@ -66,6 +66,7 @@ def _live_session(*, db_session_id: str = "pred-db") -> MagicMock:
     session.send_message.side_effect = lambda _message: _done_stream()
     session._on_mode_persist = None
     session._on_approved_tools_persist = None
+    session._chat_stream_transport = None
     return session
 
 
@@ -318,6 +319,14 @@ class TestCommitClearSuccessor:
         mixin = _CommitMixin()
         session = _live_session()
         session._on_mode_persist = MagicMock()
+        transport = MagicMock()
+        transport.base_msg.side_effect = lambda **fields: dict(fields)
+        transport.send_direct = AsyncMock()
+        session._chat_stream_transport = transport
+        session.project_path = None
+        session._pending_agent_name = "default"
+        session.plan_auto_switch = True
+        session.available_commands = []
         mixin._chat_sessions["conv-1"] = session
         successor = MagicMock()
         successor.id = "succ-db"
@@ -358,11 +367,54 @@ class TestCommitClearSuccessor:
         assert session.message_index == 0
         assert mixin._ended == [("conv-1", SessionEndReason.CLEAR, "pred-db")]
         assert mixin.web_chat_runtime_manager.create_session.call_count == 0
+        transport.send_direct.assert_awaited_once()
+        assert transport.send_direct.await_args is not None
+        assert transport.send_direct.await_args.args[0]["db_session_id"] == "succ-db"
+        assert transport.send_direct.await_args.args[0]["session_ref"] == "#99"
         session._on_mode_persist("code")
         assert persist_targets == ["succ-db"]
         claims.assert_called_once()
         assert claims.call_args.args[2] == "succ-db"
         assert claims.call_args.args[3] == "pred-db"
+
+    @pytest.mark.asyncio
+    async def test_session_info_send_failure_does_not_fail_commit(self) -> None:
+        mixin = _CommitMixin()
+        session = _live_session()
+        transport = MagicMock()
+        transport.base_msg.side_effect = lambda **fields: dict(fields)
+        transport.send_direct = AsyncMock(side_effect=RuntimeError("disconnected"))
+        session._chat_stream_transport = transport
+        session.project_path = None
+        session._pending_agent_name = "default"
+        session.plan_auto_switch = True
+        session.available_commands = []
+        mixin._chat_sessions["conv-1"] = session
+        successor = MagicMock()
+        successor.id = "succ-db"
+        successor.seq_num = 99
+
+        with (
+            patch(
+                "gobby.servers.websocket.chat._session.commit_web_chat_clear_successor",
+                return_value=successor,
+            ),
+            patch("gobby.servers.websocket.chat._session.preserve_task_claim_state"),
+            patch(
+                "gobby.servers.websocket.chat._session.SessionVariableManager",
+            ) as sv_cls,
+        ):
+            sv_cls.return_value.get_variables.return_value = {}
+            result = await mixin.commit_clear_successor(
+                conversation_id="conv-1",
+                session=session,
+                predecessor_id="pred-db",
+                attempt_id=ATTEMPT_ID,
+            )
+
+        assert result["ok"] is True
+        assert session.db_session_id == "succ-db"
+        transport.send_direct.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_commit_transaction_failure_does_not_rebind(self) -> None:
