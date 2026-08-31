@@ -44,6 +44,7 @@ steps:
         provider: "${{ inputs.provider }}"
         model: "${{ inputs.model }}"
         auto_apply: true
+        subscribe_caller: false
 
   - id: wait_run
     wait:

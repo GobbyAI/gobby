@@ -430,6 +430,21 @@ class TestSyncBundledPipelines:
     """Tests for sync_bundled_pipelines edge cases."""
 
     @pytest.mark.integration
+    def test_expand_task_lets_pipeline_own_terminal_notification(self) -> None:
+        """The child expansion stays waitable without notifying the caller twice."""
+        from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
+
+        path = get_bundled_pipelines_path() / "expand-task.yaml"
+        pipeline = PipelineDefinition(**yaml.safe_load(path.read_text(encoding="utf-8")))
+        start_run = pipeline.get_step("start_run")
+
+        assert start_run is not None
+        assert start_run.mcp is not None
+        arguments = start_run.mcp.arguments
+        assert arguments is not None
+        assert arguments["subscribe_caller"] is False
+
+    @pytest.mark.integration
     def test_expand_task_fails_run_before_validation(self) -> None:
         """Evaluate expand-task conditions with the runtime step renderer."""
         from gobby.workflows.sync_pipelines import get_bundled_pipelines_path

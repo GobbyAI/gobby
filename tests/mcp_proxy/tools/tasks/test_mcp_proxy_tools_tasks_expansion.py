@@ -70,6 +70,11 @@ def test_start_expansion_schema_accepts_reset_output(temp_db: HubDatabase) -> No
     assert tool_schema is not None
     schema = tool_schema["inputSchema"]
     assert schema["properties"]["reset_output"]["type"] == "boolean"
+    assert schema["properties"]["subscribe_caller"] == {
+        "type": "boolean",
+        "description": "When true, notify the calling session lineage when the run finishes",
+        "default": True,
+    }
     assert schema["properties"]["stage_pipeline_mode"]["type"] == ["boolean", "null"]
 
 

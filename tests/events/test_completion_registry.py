@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 import pytest
 
@@ -97,9 +98,9 @@ class TestRegisterAndNotify:
     async def test_duplicate_notify_keeps_first_result_and_wakes_once(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        woken: list[tuple[str, str, dict]] = []
+        woken: list[tuple[str, str, dict[str, Any]]] = []
 
-        async def wake(session_id: str, message: str, result: dict) -> None:
+        async def wake(session_id: str, message: str, result: dict[str, Any]) -> None:
             woken.append((session_id, message, result))
 
         registry = CompletionEventRegistry(wake_callback=wake)
@@ -113,7 +114,13 @@ class TestRegisterAndNotify:
             await registry.notify(COMPLETION_ID, {"status": "second"}, message="second")
 
         assert registry.get_result(COMPLETION_ID) == {"status": "first"}
-        assert woken == [(PRIMARY_SUBSCRIBER_ID, "first", {"status": "first"})]
+        assert woken == [
+            (
+                PRIMARY_SUBSCRIBER_ID,
+                "first",
+                {"status": "first", "completion_id": COMPLETION_ID},
+            )
+        ]
         assert (
             f"notify() called for completed ID {COMPLETION_ID} - ignoring duplicate" in caplog.text
         )
@@ -315,9 +322,9 @@ class TestWakeCallback:
     async def test_notify_calls_wake_for_each_subscriber(
         self,
     ) -> None:
-        woken: list[tuple[str, str, dict]] = []
+        woken: list[tuple[str, str, dict[str, Any]]] = []
 
-        async def wake(session_id: str, message: str, result: dict) -> None:
+        async def wake(session_id: str, message: str, result: dict[str, Any]) -> None:
             woken.append((session_id, message, result))
 
         registry = CompletionEventRegistry(wake_callback=wake)
@@ -340,14 +347,31 @@ class TestWakeCallback:
             SECONDARY_SUBSCRIBER_ID,
         }
         assert all(w[1] == "Pipeline completed" for w in woken)
-        assert all(w[2] == {"status": "completed"} for w in woken)
+        assert all(w[2] == {"status": "completed", "completion_id": COMPLETION_ID} for w in woken)
+
+    @pytest.mark.asyncio
+    async def test_wake_uses_authoritative_id_without_mutating_stored_result(self) -> None:
+        woken: list[dict[str, Any]] = []
+
+        async def wake(_session_id: str, _message: str, result: dict[str, Any]) -> None:
+            woken.append(result)
+
+        registry = CompletionEventRegistry(wake_callback=wake)
+        registry.register(COMPLETION_ID, subscribers=[PRIMARY_SUBSCRIBER_ID])
+        producer_result = {"status": "completed", "completion_id": "producer-id"}
+
+        await registry.notify(COMPLETION_ID, producer_result)
+
+        assert woken == [{"status": "completed", "completion_id": COMPLETION_ID}]
+        assert registry.get_result(COMPLETION_ID) == producer_result
+        assert await registry.wait(COMPLETION_ID) == producer_result
 
     @pytest.mark.asyncio
     async def test_wake_failure_does_not_block_notify(self) -> None:
         """If wake callback fails for one subscriber, others still get woken."""
         woken: list[str] = []
 
-        async def flaky_wake(session_id: str, message: str, result: dict) -> None:
+        async def flaky_wake(session_id: str, message: str, result: dict[str, Any]) -> None:
             if session_id == PRIMARY_SUBSCRIBER_ID:
                 raise RuntimeError("tmux session gone")
             woken.append(session_id)
@@ -369,7 +393,7 @@ class TestWakeCallback:
         woken: list[str] = []
         registry: CompletionEventRegistry
 
-        async def wake(session_id: str, message: str, result: dict) -> None:
+        async def wake(session_id: str, message: str, result: dict[str, Any]) -> None:
             woken.append(session_id)
             if session_id == PRIMARY_SUBSCRIBER_ID:
                 registry.subscribe(COMPLETION_ID, TERTIARY_SUBSCRIBER_ID)
@@ -417,7 +441,7 @@ class TestWakeCallback:
         wake_result: object,
         expected: bool,
     ) -> None:
-        async def wake(_session_id: str, _message: str, _result: dict) -> object:
+        async def wake(_session_id: str, _message: str, _result: dict[str, Any]) -> object:
             return wake_result
 
         registry = CompletionEventRegistry(wake_callback=wake)
@@ -429,7 +453,7 @@ class TestWakeCallback:
 
     @pytest.mark.asyncio
     async def test_acknowledged_delivery_marks_callback_failure_and_continues(self) -> None:
-        async def wake(session_id: str, _message: str, _result: dict) -> object:
+        async def wake(session_id: str, _message: str, _result: dict[str, Any]) -> object:
             if session_id == PRIMARY_SUBSCRIBER_ID:
                 raise RuntimeError("wake failed")
             return {"ism_persisted": True}
@@ -512,9 +536,9 @@ class TestContinuationPrompt:
 
     @pytest.mark.asyncio
     async def test_continuation_prompt_included_in_wake(self) -> None:
-        woken: list[tuple[str, str, dict]] = []
+        woken: list[tuple[str, str, dict[str, Any]]] = []
 
-        async def wake(session_id: str, message: str, result: dict) -> None:
+        async def wake(session_id: str, message: str, result: dict[str, Any]) -> None:
             woken.append((session_id, message, result))
 
         registry = CompletionEventRegistry(wake_callback=wake)
@@ -531,4 +555,14 @@ class TestContinuationPrompt:
 
         # The wake callback should receive the message - continuation prompt
         # formatting is handled by the caller (wake dispatcher), not the registry
-        assert len(woken) == 1
+        assert woken == [
+            (
+                PRIMARY_SUBSCRIBER_ID,
+                "Pipeline done",
+                {
+                    "status": "completed",
+                    "continuation_prompt": "Do the next thing",
+                    "completion_id": COMPLETION_ID,
+                },
+            )
+        ]

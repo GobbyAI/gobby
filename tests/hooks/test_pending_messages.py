@@ -17,6 +17,7 @@ class Message:
     content: str
     message_type: str = "message"
     from_session: str = "sender-12345678"
+    to_session: str = "recipient-12345678"
     priority: str = "normal"
     metadata_json: str | None = None
 
@@ -86,3 +87,44 @@ def test_mixed_types_and_priorities_keep_input_order_and_labels() -> None:
     assert "[URGENT]" in result.context
     assert "[PRIORITY: HIGH]" in result.context
     assert result.represented_message_ids == ("normal", "urgent", "high")
+
+
+def test_self_origin_completion_omits_attribution_and_keeps_metadata() -> None:
+    message = Message(
+        id="self-completion",
+        content="Expansion completed",
+        message_type="completion_notification",
+        from_session="session-self",
+        to_session="session-self",
+        metadata_json=('{"completion_id":"completion-1","run_id":"run-1","task_id":"#42"}'),
+    )
+
+    result = render_pending_messages([message], resolve_sender=_sender_label)
+
+    assert result.context is not None
+    assert result.context.startswith("[Pending completion notifications]:")
+    assert "Session session-self:" not in result.context
+    assert "from_session=" not in result.context
+    assert "type=completion_notification" in result.context
+    assert "completion_id=completion-1" in result.context
+    assert "run_id=run-1" in result.context
+    assert "task_id=#42" in result.context
+
+
+def test_child_completion_keeps_sender_and_from_session_attribution() -> None:
+    message = Message(
+        id="child-completion",
+        content="Child completed",
+        message_type="completion_notification",
+        from_session="session-child",
+        to_session="session-parent",
+        metadata_json='{"completion_id":"completion-2"}',
+    )
+
+    result = render_pending_messages([message], resolve_sender=_sender_label)
+
+    assert result.context is not None
+    assert result.context.startswith("[Pending completion notifications]:")
+    assert "Session session-child: Child completed" in result.context
+    assert "from_session=session-child" in result.context
+    assert "completion_id=completion-2" in result.context

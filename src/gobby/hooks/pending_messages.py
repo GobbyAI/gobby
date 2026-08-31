@@ -36,6 +36,11 @@ def message_metadata(message: Any) -> dict[str, Any]:
     return {}
 
 
+def _is_self_origin(message: Any) -> bool:
+    from_session = getattr(message, "from_session", None)
+    return bool(from_session and from_session == getattr(message, "to_session", None))
+
+
 def render_pending_messages(
     messages: Sequence[Any],
     *,
@@ -88,6 +93,8 @@ def message_group_header(message_type: str) -> str:
         return "[Pending messages from web chat user]:"
     if message_type == "command_result":
         return "[Pending command results]:"
+    if message_type == "completion_notification":
+        return "[Pending completion notifications]:"
     return "[Pending P2P messages from other sessions]:"
 
 
@@ -102,7 +109,9 @@ def _render_message_line(
 ) -> str:
     priority = str(getattr(message, "priority", "normal") or "normal")
     priority_label = _priority_label(priority)
-    sender = resolve_sender(getattr(message, "from_session", None))
+    sender = (
+        "" if _is_self_origin(message) else resolve_sender(getattr(message, "from_session", None))
+    )
     if len(content) <= inline_limit:
         suffix = _message_context_suffix(message, message_type)
         return f"- {priority_label}{sender}{content}{suffix}"
@@ -126,7 +135,7 @@ def _message_context_suffix(message: Any, message_type: str) -> str:
     metadata = message_metadata(message)
     bits: list[str] = [f"type={message_type}"]
     from_session = getattr(message, "from_session", None)
-    if from_session:
+    if from_session and not _is_self_origin(message):
         bits.append(f"from_session={from_session}")
     for key in ("run_id", "task_id", "completion_id"):
         value = metadata.get(key)

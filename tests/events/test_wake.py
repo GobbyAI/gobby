@@ -16,6 +16,7 @@ from gobby.agents.tmux.text_injection import (
     TmuxTargetUnavailableError,
     TmuxTextInjectionTimeout,
 )
+from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, CONTINUE_WAKE_SIGNAL, WakeDispatcher
 from tests._timing import drain_asyncio_tasks
 
@@ -430,13 +431,16 @@ class TestWakeDispatch:
             ism_manager=ism_manager,
         )
 
-        result = await dispatcher.wake(
-            WAKE_SESSION_ID,
-            "Agent interrupted",
-            {"status": "cancelled", "run_id": WAKE_RUN_ID},
+        registry = CompletionEventRegistry(wake_callback=dispatcher.wake)
+        registry.register(WAKE_RUN_ID, subscribers=[WAKE_SESSION_ID])
+        delivery = await registry.notify(
+            WAKE_RUN_ID,
+            {"status": "cancelled"},
+            message="Agent interrupted",
         )
 
-        assert result["ism_persisted"] is True
+        assert delivery == {WAKE_SESSION_ID: True}
+        assert registry.get_result(WAKE_RUN_ID) == {"status": "cancelled"}
         ism_manager.create_message.assert_not_called()
         assert ism_manager.create_message.call_count == 0
         assert not ism_manager.create_message.called

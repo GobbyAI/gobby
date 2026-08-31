@@ -142,9 +142,22 @@ def _bind_registered_plan(
     return requested_task.id, plan_file
 
 
-def _subscribe_completion(ctx: RegistryContext, run_id: str, resolved_session_id: str) -> None:
-    """Register an expansion completion event for the calling session lineage."""
+def _subscribe_completion(
+    ctx: RegistryContext,
+    run_id: str,
+    resolved_session_id: str,
+    *,
+    subscribe_caller: bool = True,
+) -> None:
+    """Register an expansion completion event and optional caller lineage."""
     if ctx.completion_registry is None:
+        return
+
+    if not subscribe_caller:
+        try:
+            ctx.completion_registry.register(run_id, subscribers=[])
+        except Exception:
+            logger.debug("Failed to register expansion completion event %s", run_id, exc_info=True)
         return
 
     lineage_ids: list[str] = [resolved_session_id]
@@ -225,6 +238,7 @@ def _register_start_tool(registry: InternalToolRegistry, ctx: RegistryContext) -
         task_id: str,
         plan_file: str | None = None,
         auto_apply: bool = True,
+        subscribe_caller: bool = True,
         force_new: bool = False,
         reset_output: bool = False,
         provider: str | None = None,
@@ -273,7 +287,12 @@ def _register_start_tool(registry: InternalToolRegistry, ctx: RegistryContext) -
             stage_pipeline_mode=stage_pipeline_mode,
         )
         if result.run_id is not None:
-            _subscribe_completion(ctx, result.run_id, resolved_session_id)
+            _subscribe_completion(
+                ctx,
+                result.run_id,
+                resolved_session_id,
+                subscribe_caller=subscribe_caller,
+            )
         return result.to_dict()
 
     registry.register(
@@ -291,6 +310,13 @@ def _register_start_tool(registry: InternalToolRegistry, ctx: RegistryContext) -
                 "auto_apply": {
                     "type": "boolean",
                     "description": "When true, apply the compiled spec after compile succeeds",
+                    "default": True,
+                },
+                "subscribe_caller": {
+                    "type": "boolean",
+                    "description": (
+                        "When true, notify the calling session lineage when the run finishes"
+                    ),
                     "default": True,
                 },
                 "force_new": {

@@ -147,13 +147,14 @@ class CompletionEventRegistry:
         self._results[completion_id] = result
         event.set()
 
+        wake_payload = {**result, "completion_id": completion_id}
         delivery: dict[str, bool] = {}
         for session_id in list(self._subscribers.get(completion_id, [])):
             delivery[session_id] = False
             if self._wake_callback is None:
                 continue
             try:
-                wake_result = await self._wake_callback(session_id, message, result)
+                wake_result = await self._wake_callback(session_id, message, wake_payload)
                 delivery[session_id] = wake_result_is_delivered(wake_result)
             except Exception:
                 logger.warning(

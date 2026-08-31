@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.mcp_proxy.tools._background_task_lifecycle import internal_tool_background_loop
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._expansion import (
@@ -447,6 +448,72 @@ class TestExpansionRuns:
         assert run.options == {"auto_apply": False}
 
     @pytest.mark.asyncio
+    async def test_start_expansion_run_subscribes_caller_by_default(
+        self,
+        task_manager: LocalTaskManager,
+        parent_task: str,
+        test_session: str,
+    ) -> None:
+        completion_registry = CompletionEventRegistry()
+        registry = create_expansion_registry(
+            RegistryContext(
+                task_manager=task_manager,
+                task_validator_resolver=None,
+                completion_registry=completion_registry,
+            )
+        )
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._expansion_runtime._execute_run_impl",
+            new=AsyncMock(return_value=None),
+        ):
+            with session_context_for_test(test_session):
+                result = await registry.call(
+                    "start_expansion_run",
+                    {"task_id": parent_task, "auto_apply": False},
+                )
+            await drain_asyncio_tasks()
+
+        assert completion_registry.get_subscribers(result["run_id"]) == [test_session]
+
+    @pytest.mark.asyncio
+    async def test_start_expansion_run_can_register_without_caller_subscribers(
+        self,
+        task_manager: LocalTaskManager,
+        parent_task: str,
+        test_session: str,
+    ) -> None:
+        completion_registry = CompletionEventRegistry()
+        registry = create_expansion_registry(
+            RegistryContext(
+                task_manager=task_manager,
+                task_validator_resolver=None,
+                completion_registry=completion_registry,
+            )
+        )
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._expansion_runtime._execute_run_impl",
+            new=AsyncMock(return_value=None),
+        ):
+            with session_context_for_test(test_session):
+                result = await registry.call(
+                    "start_expansion_run",
+                    {
+                        "task_id": parent_task,
+                        "auto_apply": False,
+                        "subscribe_caller": False,
+                    },
+                )
+            await drain_asyncio_tasks()
+
+        run_id = result["run_id"]
+        assert completion_registry.is_registered(run_id) is True
+        assert completion_registry.get_subscribers(run_id) == []
+        await completion_registry.notify(run_id, {"status": "completed"})
+        assert await completion_registry.wait(run_id) == {"status": "completed"}
+
+    @pytest.mark.asyncio
     async def test_start_expansion_run_binds_active_registered_plan(
         self,
         expansion_registry,
@@ -682,10 +749,10 @@ class TestExpansionRuns:
     @pytest.mark.asyncio
     async def test_audited_reset_allows_plan_override_on_registered_root(
         self,
-        expansion_registry,
-        task_manager,
-        parent_task,
-        test_session,
+        expansion_registry: Any,
+        task_manager: LocalTaskManager,
+        parent_task: str,
+        test_session: str,
     ) -> None:
         _register_active_plan(task_manager, parent_task)
         root = task_manager.get_task(parent_task)
@@ -729,9 +796,9 @@ class TestExpansionRuns:
     @pytest.mark.asyncio
     async def test_get_latest_expansion_run_returns_most_recent(
         self,
-        expansion_registry,
-        task_manager,
-        parent_task,
+        expansion_registry: Any,
+        task_manager: LocalTaskManager,
+        parent_task: str,
     ) -> None:
         parent = task_manager.get_task(parent_task)
         assert parent is not None
