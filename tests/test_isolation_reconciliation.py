@@ -31,7 +31,7 @@ from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.worktrees.git import WorktreeGitManager, WorktreeInfo
 from gobby.worktrees.git import _status as worktree_git_status
-from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+from tests.fixtures.isolated_checkout import insert_overlay, install_isolated_checkout_project
 
 pytestmark = pytest.mark.integration
 
@@ -77,11 +77,13 @@ async def test_reconciliation_adopts_each_stray_once_and_logs_one_summary(
 ) -> None:
     repo = tmp_path / "repo"
     worktree_path = tmp_path / "stray-worktree"
+    registered_overlay_path = tmp_path / "registered-overlay"
     clones_root = tmp_path / "clones"
     clone_path = clones_root / "reconcile-project" / "stray-clone"
     nested_clone_path = clones_root / "reconcile-project" / "group" / "nested-clone"
     _create_repository(repo)
     _create_stray_worktree(repo, worktree_path, "task/reconcile")
+    _create_stray_worktree(repo, registered_overlay_path, "task/overlay")
     _create_stray_clone(repo, clone_path, detached=True)
     _create_stray_clone(repo, nested_clone_path)
     isolated = install_isolated_checkout_project(
@@ -99,6 +101,17 @@ async def test_reconciliation_adopts_each_stray_once_and_logs_one_summary(
         "gobby.storage.clones.require_machine_id",
         lambda: isolated.machine_id,
     )
+    insert_overlay(
+        temp_db,
+        project_id=project.id,
+        machine_id=isolated.machine_id,
+        path=str(registered_overlay_path.resolve()),
+        kind="worktree",
+    )
+    registered_overlay = LocalWorktreeManager(temp_db).get_by_path(
+        str(registered_overlay_path.resolve())
+    )
+    assert registered_overlay is not None
     monkeypatch.setattr(clone_git, "CLONES_ROOT", clones_root)
     db_calls: list[str] = []
 
@@ -121,13 +134,17 @@ async def test_reconciliation_adopts_each_stray_once_and_logs_one_summary(
 
     assert first == IsolationReconciliationResult(worktrees_adopted=1, clones_adopted=1)
     assert second == IsolationReconciliationResult()
-    worktree = LocalWorktreeManager(temp_db).get_by_path(str(worktree_path.resolve()))
+    worktrees = LocalWorktreeManager(temp_db)
+    worktree = worktrees.get_by_path(str(worktree_path.resolve()))
     clone = LocalCloneManager(temp_db).get_by_path(str(clone_path.resolve()))
     assert worktree is not None
     assert worktree.project_id == project.id
     assert worktree.machine_id == isolated.machine_id
     assert worktree.branch_name == "task/reconcile"
     assert worktree.base_branch == "main"
+    preserved_overlay = worktrees.get_by_path(str(registered_overlay_path.resolve()))
+    assert preserved_overlay is not None
+    assert preserved_overlay.id == registered_overlay.id
     assert clone is not None
     assert clone.project_id == project.id
     assert clone.machine_id == isolated.machine_id
