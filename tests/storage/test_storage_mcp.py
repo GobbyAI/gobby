@@ -6,27 +6,43 @@ from typing import Any
 
 import pytest
 
-from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE
 from gobby.storage.embedding_generation_state import EmbeddingGenerationState
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp import LocalMCPManager
+from gobby.storage.mcp_models import MCPServer
 from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.unit
 
-# mcp_servers.id and tools.id are native uuid columns; synthetic row ids must
-# be valid UUID strings.
-LEGACY_PROJECT_CONTEXT7_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"
-LEGACY_CHROME_SERVER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2"
-LEGACY_CHROME_TOOL_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3"
-GLOBAL_CHROME_SERVER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa4"
-LEGACY_CONTEXT7_SERVER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa5"
-LEGACY_CONTEXT7_TOOL_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa6"
-GLOBAL_CONTEXT7_SERVER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa7"
-GLOBAL_CONTEXT7_TOOL_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa8"
-MIXED_CASE_TOOL_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa9"
 UNKNOWN_SERVER_ID = "99999999-9999-9999-9999-999999999999"
+
+
+def _template_definition(**overrides: Any) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "transport": "stdio",
+        "command": "uvx",
+        "args": ["awslabs.openapi-mcp-server"],
+        "enabled": True,
+        "runtime_hook": "chrome-devtools",
+    }
+    body.update(overrides)
+    return body
+
+
+def _expanded_fields(**overrides: Any) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "transport": "stdio",
+        "url": None,
+        "command": "uvx",
+        "args": ["refreshed"],
+        "env": {"LOG_LEVEL": "ERROR"},
+        "headers": {"X-Scope": "refreshed"},
+        "connect_timeout": 120.0,
+        "runtime_hook": "openapi",
+    }
+    body.update(overrides)
+    return body
 
 
 class TestMCPServer:
@@ -75,7 +91,12 @@ class TestMCPServer:
         assert config["args"] == ["-y", "@test/server"]
         assert config["env"] == server.env
         assert server.env is not None
-        assert SecretStore(mcp_manager.db).resolve(server.env["API_KEY"]) == "secret"
+        assert (
+            SecretStore(mcp_manager.db).resolve(
+                server.env["API_KEY"], project_id=sample_project["id"]
+            )
+            == "secret"
+        )
         assert config["requires_oauth"] is False
         assert config["connect_timeout"] == 30.0
 
@@ -123,7 +144,7 @@ class TestTool:
     ) -> None:
         """Test converting Tool to dictionary."""
         # Create server first
-        mcp_manager.upsert(
+        server = mcp_manager.upsert(
             name="tool-server",
             transport="http",
             url="http://localhost:8080",
@@ -132,7 +153,7 @@ class TestTool:
 
         # Cache a tool
         mcp_manager.cache_tools(
-            "tool-server",
+            server.id,
             [
                 {
                     "name": "my_tool",
@@ -140,10 +161,9 @@ class TestTool:
                     "inputSchema": {"type": "object"},
                 }
             ],
-            project_id=sample_project["id"],
         )
 
-        tools = mcp_manager.get_cached_tools("tool-server", project_id=sample_project["id"])
+        tools = mcp_manager.get_cached_tools(server.id)
         assert len(tools) == 1
 
         d = tools[0].to_dict()
@@ -155,7 +175,7 @@ class TestTool:
         mcp_manager: LocalMCPManager,
         sample_project: dict,
     ) -> None:
-        mcp_manager.upsert(
+        server = mcp_manager.upsert(
             name="empty-schema-server",
             transport="http",
             url="http://localhost:8080",
@@ -163,15 +183,11 @@ class TestTool:
         )
 
         mcp_manager.cache_tools(
-            "empty-schema-server",
+            server.id,
             [{"name": "empty_schema", "description": "Empty schema", "inputSchema": {}}],
-            project_id=sample_project["id"],
         )
 
-        tools = mcp_manager.get_cached_tools(
-            "empty-schema-server",
-            project_id=sample_project["id"],
-        )
+        tools = mcp_manager.get_cached_tools(server.id)
         assert tools[0].input_schema == {}
 
     def test_cache_tools_skips_empty_and_deduplicates_normalized_names(
@@ -179,7 +195,7 @@ class TestTool:
         mcp_manager: LocalMCPManager,
         sample_project: dict,
     ) -> None:
-        mcp_manager.upsert(
+        server = mcp_manager.upsert(
             name="duplicate-tools-server",
             transport="http",
             url="http://localhost:8080",
@@ -187,7 +203,7 @@ class TestTool:
         )
 
         count = mcp_manager.cache_tools(
-            "duplicate-tools-server",
+            server.id,
             [
                 {"name": "", "inputSchema": {"type": "object"}},
                 {"name": "Read_File", "description": "kept", "inputSchema": {"type": "object"}},
@@ -197,15 +213,11 @@ class TestTool:
                     "inputSchema": {"type": "object"},
                 },
             ],
-            project_id=sample_project["id"],
         )
 
-        tools = mcp_manager.get_cached_tools(
-            "duplicate-tools-server",
-            project_id=sample_project["id"],
-        )
+        tools = mcp_manager.get_cached_tools(server.id)
         assert count == 1
-        assert [tool.name for tool in tools] == ["read_file"]
+        assert [tool.name for tool in tools] == ["Read_File"]
         assert tools[0].description == "kept"
 
 
@@ -232,7 +244,10 @@ class TestLocalMCPManager:
         assert server.url == "http://localhost:8080/mcp"
         assert server.headers is not None
         assert (
-            SecretStore(mcp_manager.db).resolve(server.headers["Authorization"]) == "Bearer token"
+            SecretStore(mcp_manager.db).resolve(
+                server.headers["Authorization"], project_id=sample_project["id"]
+            )
+            == "Bearer token"
         )
 
     def test_upsert_stdio_server(
@@ -323,6 +338,56 @@ class TestLocalMCPManager:
         assert server2.oauth_provider == "github"
         assert server2.connect_timeout == 45.0
 
+    def test_upsert_with_template_id_writes_template_columns_as_a_unit(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        hooked = mcp_manager.upsert_template(
+            name="hooked",
+            project_id=GLOBAL_PROJECT_ID,
+            owner="gobby",
+            definition=_template_definition(runtime_hook="chrome_executable_path"),
+        )
+        hookless = mcp_manager.upsert_template(
+            name="hookless",
+            project_id=GLOBAL_PROJECT_ID,
+            owner="gobby",
+            definition=_template_definition(runtime_hook=None),
+        )
+        created = mcp_manager.upsert(
+            name="browser",
+            transport="stdio",
+            command="npx",
+            project_id=sample_project["id"],
+            template_id=hooked.id,
+            template_values={"channel": "stable"},
+            runtime_hook="chrome_executable_path",
+        )
+
+        manual = mcp_manager.upsert(
+            name="browser",
+            transport="stdio",
+            command="npx",
+            project_id=sample_project["id"],
+        )
+        assert manual.id == created.id
+        assert manual.template == "hooked"
+        assert manual.template_values == {"channel": "stable"}
+        assert manual.runtime_hook == "chrome_executable_path"
+
+        repointed = mcp_manager.upsert(
+            name="browser",
+            transport="stdio",
+            command="uvx",
+            project_id=sample_project["id"],
+            template_id=hookless.id,
+        )
+        assert repointed.id == created.id
+        assert repointed.template == "hookless"
+        assert repointed.template_values is None
+        assert repointed.runtime_hook is None
+
     def test_to_config_preserves_stored_zero_timeout(
         self,
         mcp_manager: LocalMCPManager,
@@ -347,34 +412,47 @@ class TestLocalMCPManager:
         assert server.connect_timeout == 0.0
         assert server.to_config()["connect_timeout"] == 0.0
 
-    def test_upsert_bundled_server_uses_global_project_and_strips_runtime_args(
+    def test_resolve_server_project_first_including_disabled(
         self,
         mcp_manager: LocalMCPManager,
         sample_project: dict,
-        temp_db: HubDatabase,
+        project_manager: LocalProjectManager,
     ) -> None:
-        """Bundled servers are stored globally and never persist runtime-only browser paths."""
-        server = mcp_manager.upsert(
-            name="chrome-devtools",
-            transport="stdio",
-            command="npx",
-            args=[
-                "-y",
-                CHROME_DEVTOOLS_NPM_PACKAGE,
-                "--executable-path=/tmp/chrome",
-                "--no-usage-statistics",
-            ],
+        other = project_manager.create(name="other-mcp-project", repo_path="/tmp/other-mcp")
+        global_server = mcp_manager.upsert(
+            name="shared",
+            transport="http",
+            url="http://global.example/mcp",
+            project_id=GLOBAL_PROJECT_ID,
+        )
+        project_server = mcp_manager.upsert(
+            name="shared",
+            transport="http",
+            url="http://project.example/mcp",
             project_id=sample_project["id"],
+            enabled=False,
+        )
+        mcp_manager.upsert(
+            name="other-only",
+            transport="http",
+            url="http://other.example/mcp",
+            project_id=other.id,
         )
 
-        assert server.project_id == GLOBAL_PROJECT_ID
-        assert server.args == ["-y", CHROME_DEVTOOLS_NPM_PACKAGE, "--no-usage-statistics"]
+        resolved = mcp_manager.resolve_server("shared", project_id=sample_project["id"])
+        assert resolved is not None
+        assert resolved.id == project_server.id
+        assert resolved.enabled is False
 
-        project_row = temp_db.fetchone(
-            "SELECT * FROM mcp_servers WHERE name = %s AND project_id = %s",
-            ("chrome-devtools", sample_project["id"]),
-        )
-        assert project_row is None
+        exact = mcp_manager.get_server("shared", project_id=sample_project["id"])
+        assert exact is not None
+        assert exact.id == project_server.id
+        assert mcp_manager.get_server("shared", project_id=other.id) is None
+
+        fallback = mcp_manager.resolve_server("shared", project_id=other.id)
+        assert fallback is not None
+        assert fallback.id == global_server.id
+        assert mcp_manager.resolve_server("other-only", project_id=sample_project["id"]) is None
 
     def test_get_server(
         self,
@@ -503,18 +581,17 @@ class TestLocalMCPManager:
         sample_project: dict,
     ) -> None:
         """Test removing a server."""
-        mcp_manager.upsert(
+        server = mcp_manager.upsert(
             name="remove-me",
             transport="http",
             url="http://localhost",
             project_id=sample_project["id"],
         )
         mcp_manager.cache_tools(
-            "remove-me",
+            server.id,
             [{"name": "removed_tool", "inputSchema": {"type": "object"}}],
-            project_id=sample_project["id"],
         )
-        tool = mcp_manager.get_cached_tools("remove-me", project_id=sample_project["id"])[0]
+        tool = mcp_manager.get_cached_tools(server.id)[0]
         generation_state = EmbeddingGenerationState(mcp_manager.db)
         watermark = generation_state.watermark()
 
@@ -541,7 +618,7 @@ class TestLocalMCPManager:
         sample_project: dict,
     ) -> None:
         """Test caching tools for a server."""
-        mcp_manager.upsert(
+        server = mcp_manager.upsert(
             name="tools-server",
             transport="http",
             url="http://localhost",
@@ -561,16 +638,16 @@ class TestLocalMCPManager:
             },
         ]
 
-        count = mcp_manager.cache_tools("tools-server", tools, project_id=sample_project["id"])
+        count = mcp_manager.cache_tools(server.id, tools)
         assert count == 2
 
-    def test_cache_tools_normalizes_name(
+    def test_cache_tools_preserves_name_casing(
         self,
         mcp_manager: LocalMCPManager,
         sample_project: dict,
     ) -> None:
-        """Test that tool names are normalized to lowercase."""
-        mcp_manager.upsert(
+        """The cached name keeps the server's exact casing (only whitespace is trimmed)."""
+        server = mcp_manager.upsert(
             name="normalize-server",
             transport="http",
             url="http://localhost",
@@ -578,13 +655,15 @@ class TestLocalMCPManager:
         )
 
         mcp_manager.cache_tools(
-            "normalize-server",
-            [{"name": "MyTool", "description": "Test"}],
-            project_id=sample_project["id"],
+            server.id,
+            [
+                {"name": " GetRetailer ", "description": "Mixed-case OpenAPI operation"},
+                {"name": "MyTool", "description": "Test"},
+            ],
         )
 
-        tools = mcp_manager.get_cached_tools("normalize-server", project_id=sample_project["id"])
-        assert tools[0].name == "mytool"
+        tools = mcp_manager.get_cached_tools(server.id)
+        assert sorted(tool.name for tool in tools) == ["GetRetailer", "MyTool"]
 
     def test_cache_tools_replaces_existing(
         self,
@@ -592,7 +671,7 @@ class TestLocalMCPManager:
         sample_project: dict,
     ) -> None:
         """Test that caching tools replaces existing tools."""
-        mcp_manager.upsert(
+        server = mcp_manager.upsert(
             name="replace-server",
             transport="http",
             url="http://localhost",
@@ -601,19 +680,17 @@ class TestLocalMCPManager:
 
         # First cache
         mcp_manager.cache_tools(
-            "replace-server",
+            server.id,
             [{"name": "old_tool", "description": "Old"}],
-            project_id=sample_project["id"],
         )
 
         # Second cache replaces
         mcp_manager.cache_tools(
-            "replace-server",
+            server.id,
             [{"name": "new_tool", "description": "New"}],
-            project_id=sample_project["id"],
         )
 
-        tools = mcp_manager.get_cached_tools("replace-server", project_id=sample_project["id"])
+        tools = mcp_manager.get_cached_tools(server.id)
         assert len(tools) == 1
         assert tools[0].name == "new_tool"
 
@@ -623,7 +700,7 @@ class TestLocalMCPManager:
         sample_project: dict,
     ) -> None:
         """Test getting cached tools for a server."""
-        mcp_manager.upsert(
+        server = mcp_manager.upsert(
             name="cached-server",
             transport="http",
             url="http://localhost",
@@ -631,15 +708,14 @@ class TestLocalMCPManager:
         )
 
         mcp_manager.cache_tools(
-            "cached-server",
+            server.id,
             [
                 {"name": "alpha", "description": "A tool"},
                 {"name": "beta", "description": "B tool"},
             ],
-            project_id=sample_project["id"],
         )
 
-        tools = mcp_manager.get_cached_tools("cached-server", project_id=sample_project["id"])
+        tools = mcp_manager.get_cached_tools(server.id)
         assert len(tools) == 2
         names = [t.name for t in tools]
         assert "alpha" in names
@@ -651,78 +727,8 @@ class TestLocalMCPManager:
         sample_project: dict,
     ) -> None:
         """Test getting tools for nonexistent server returns empty list."""
-        tools = mcp_manager.get_cached_tools("nonexistent", project_id=sample_project["id"])
+        tools = mcp_manager.get_cached_tools(UNKNOWN_SERVER_ID)
         assert tools == []
-
-    def test_import_from_mcp_json_gobby_format(
-        self,
-        mcp_manager: LocalMCPManager,
-        sample_project: dict,
-        temp_dir: Path,
-    ) -> None:
-        """Test importing servers from Gobby-format .mcp.json."""
-        mcp_json = temp_dir / ".mcp.json"
-        mcp_json.write_text(
-            json.dumps(
-                {
-                    "servers": [
-                        {
-                            "name": "gobby-server",
-                            "transport": "http",
-                            "url": "http://localhost:8080",
-                        }
-                    ]
-                }
-            )
-        )
-
-        count = mcp_manager.import_from_mcp_json(mcp_json, project_id=sample_project["id"])
-        assert count == 1
-
-        server = mcp_manager.get_server("gobby-server", project_id=sample_project["id"])
-        assert server is not None
-        assert server.url == "http://localhost:8080"
-
-    def test_import_from_mcp_json_claude_format(
-        self,
-        mcp_manager: LocalMCPManager,
-        sample_project: dict,
-        temp_dir: Path,
-    ) -> None:
-        """Test importing servers from Claude Code format .mcp.json."""
-        mcp_json = temp_dir / ".mcp.json"
-        mcp_json.write_text(
-            json.dumps(
-                {
-                    "mcpServers": {
-                        "claude-server": {
-                            "transport": "stdio",
-                            "command": "npx",
-                            "args": ["-y", "@test/server"],
-                        }
-                    }
-                }
-            )
-        )
-
-        count = mcp_manager.import_from_mcp_json(mcp_json, project_id=sample_project["id"])
-        assert count == 1
-
-        server = mcp_manager.get_server("claude-server", project_id=sample_project["id"])
-        assert server is not None
-        assert server.command == "npx"
-
-    def test_import_from_nonexistent_file(
-        self,
-        mcp_manager: LocalMCPManager,
-        sample_project: dict,
-    ) -> None:
-        """Test importing from nonexistent file returns 0."""
-        count = mcp_manager.import_from_mcp_json(
-            "/nonexistent/path.json",
-            project_id=sample_project["id"],
-        )
-        assert count == 0
 
     def test_import_tools_from_filesystem(
         self,
@@ -759,7 +765,9 @@ class TestLocalMCPManager:
         )
 
         assert count == 1
-        tools = mcp_manager.get_cached_tools("fs-server", project_id=sample_project["id"])
+        fs_server = mcp_manager.get_server("fs-server", project_id=sample_project["id"])
+        assert fs_server is not None
+        tools = mcp_manager.get_cached_tools(fs_server.id)
         assert len(tools) == 1
         assert tools[0].description == "A filesystem tool"
 
@@ -846,7 +854,9 @@ class TestLocalMCPManager:
         )
         # Only the valid tool should be imported
         assert count == 1
-        tools = mcp_manager.get_cached_tools("json-server", project_id=sample_project["id"])
+        json_server = mcp_manager.get_server("json-server", project_id=sample_project["id"])
+        assert json_server is not None
+        tools = mcp_manager.get_cached_tools(json_server.id)
         assert len(tools) == 1
         assert tools[0].name == "valid_tool"
 
@@ -876,7 +886,9 @@ class TestLocalMCPManager:
             tools_dir=temp_dir / "tools",
         )
         assert count == 1
-        tools = mcp_manager.get_cached_tools("stem-server", project_id=sample_project["id"])
+        stem_server = mcp_manager.get_server("stem-server", project_id=sample_project["id"])
+        assert stem_server is not None
+        tools = mcp_manager.get_cached_tools(stem_server.id)
         assert len(tools) == 1
         assert tools[0].name == "my_tool_name"
 
@@ -966,22 +978,29 @@ class TestLocalMCPManager:
         all_servers = mcp_manager.list_all_servers(enabled_only=False)
         assert len(all_servers) == 2
 
-    def test_list_runtime_servers_includes_global_bundled_servers(
+    def test_list_runtime_servers_shadows_disabled_project_row(
         self,
         mcp_manager: LocalMCPManager,
         sample_project: dict,
-        temp_db: HubDatabase,
     ) -> None:
-        """Runtime server listing includes bundled global servers for project contexts."""
         mcp_manager.upsert(
-            name="context7",
-            transport="stdio",
-            command="npx",
-            args=["-y", "@upstash/context7-mcp"],
+            name="shared",
+            transport="http",
+            url="http://global.example/mcp",
             project_id=GLOBAL_PROJECT_ID,
+            enabled=True,
+            description="global shared",
         )
         mcp_manager.upsert(
-            name="global-not-bundled",
+            name="shared",
+            transport="http",
+            url="http://project.example/mcp",
+            project_id=sample_project["id"],
+            enabled=False,
+            description="project shared",
+        )
+        mcp_manager.upsert(
+            name="global-only",
             transport="http",
             url="http://localhost:7000",
             project_id=GLOBAL_PROJECT_ID,
@@ -992,33 +1011,16 @@ class TestLocalMCPManager:
             url="http://localhost:9000",
             project_id=sample_project["id"],
         )
-        temp_db.execute(
-            """
-            INSERT INTO mcp_servers (
-                id, name, project_id, transport, command, args, enabled, created_at, updated_at
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            (
-                LEGACY_PROJECT_CONTEXT7_ID,
-                "context7",
-                sample_project["id"],
-                "stdio",
-                "npx",
-                json.dumps(["-y", "@upstash/context7-mcp"]),
-                True,
-            ),
+
+        runtime = mcp_manager.list_runtime_servers(
+            project_id=sample_project["id"],
+            enabled_only=False,
         )
-
-        project_servers = mcp_manager.list_servers(project_id=sample_project["id"])
-        runtime_servers = mcp_manager.list_runtime_servers(project_id=sample_project["id"])
-
-        assert {server.name for server in project_servers} == {"context7", "project-only"}
-        runtime_names = {server.name for server in runtime_servers}
-        assert runtime_names == {"context7", "project-only"}
-        context7_servers = [server for server in runtime_servers if server.name == "context7"]
-        assert len(context7_servers) == 1
-        assert context7_servers[0].project_id == GLOBAL_PROJECT_ID
+        by_name = {server.name: server for server in runtime}
+        assert set(by_name) == {"shared", "global-only", "project-only"}
+        assert by_name["shared"].project_id == sample_project["id"]
+        assert by_name["shared"].enabled is False
+        assert by_name["shared"].description == "project shared"
 
     def test_update_server_nonexistent(
         self,
@@ -1088,9 +1090,8 @@ class TestLocalMCPManager:
     ) -> None:
         """Test caching tools for nonexistent server returns 0."""
         count = mcp_manager.cache_tools(
-            "nonexistent-server",
+            UNKNOWN_SERVER_ID,
             [{"name": "tool", "description": "Test"}],
-            project_id=sample_project["id"],
         )
         assert count == 0
 
@@ -1100,7 +1101,7 @@ class TestLocalMCPManager:
         sample_project: dict,
     ) -> None:
         """Test caching tools using 'args' key instead of 'inputSchema'."""
-        mcp_manager.upsert(
+        server = mcp_manager.upsert(
             name="args-server",
             transport="http",
             url="http://localhost",
@@ -1108,7 +1109,7 @@ class TestLocalMCPManager:
         )
 
         mcp_manager.cache_tools(
-            "args-server",
+            server.id,
             [
                 {
                     "name": "args_tool",
@@ -1116,10 +1117,9 @@ class TestLocalMCPManager:
                     "args": {"type": "object", "properties": {"foo": {"type": "string"}}},
                 }
             ],
-            project_id=sample_project["id"],
         )
 
-        tools = mcp_manager.get_cached_tools("args-server", project_id=sample_project["id"])
+        tools = mcp_manager.get_cached_tools(server.id)
         assert len(tools) == 1
         assert tools[0].input_schema == {
             "type": "object",
@@ -1132,7 +1132,7 @@ class TestLocalMCPManager:
         sample_project: dict,
     ) -> None:
         """Snake-case schemas use the same canonical cache path as MCP SDK schemas."""
-        mcp_manager.upsert(
+        server = mcp_manager.upsert(
             name="snake-schema-server",
             transport="http",
             url="http://localhost",
@@ -1144,15 +1144,11 @@ class TestLocalMCPManager:
         }
 
         mcp_manager.cache_tools(
-            "snake-schema-server",
+            server.id,
             [{"name": "snake_tool", "input_schema": input_schema}],
-            project_id=sample_project["id"],
         )
 
-        tools = mcp_manager.get_cached_tools(
-            "snake-schema-server",
-            project_id=sample_project["id"],
-        )
+        tools = mcp_manager.get_cached_tools(server.id)
         assert len(tools) == 1
         assert tools[0].input_schema == input_schema
 
@@ -1162,7 +1158,7 @@ class TestLocalMCPManager:
         sample_project: dict,
     ) -> None:
         """Test caching tools without inputSchema or args."""
-        mcp_manager.upsert(
+        server = mcp_manager.upsert(
             name="no-schema-server",
             transport="http",
             url="http://localhost",
@@ -1170,78 +1166,13 @@ class TestLocalMCPManager:
         )
 
         mcp_manager.cache_tools(
-            "no-schema-server",
+            server.id,
             [{"name": "simple_tool", "description": "No schema"}],
-            project_id=sample_project["id"],
         )
 
-        tools = mcp_manager.get_cached_tools("no-schema-server", project_id=sample_project["id"])
+        tools = mcp_manager.get_cached_tools(server.id)
         assert len(tools) == 1
         assert tools[0].input_schema is None
-
-    def test_import_from_mcp_json_invalid_json(
-        self,
-        mcp_manager: LocalMCPManager,
-        sample_project: dict,
-        temp_dir: Path,
-    ) -> None:
-        """Test importing from invalid JSON file returns 0."""
-        mcp_json = temp_dir / ".mcp.json"
-        mcp_json.write_text("{ invalid json }")
-
-        count = mcp_manager.import_from_mcp_json(mcp_json, project_id=sample_project["id"])
-        assert count == 0
-
-    def test_import_from_mcp_json_non_object_payload(
-        self,
-        mcp_manager: LocalMCPManager,
-        sample_project: dict,
-        temp_dir: Path,
-    ) -> None:
-        """Test importing from non-object JSON returns 0."""
-        mcp_json = temp_dir / ".mcp.json"
-        mcp_json.write_text(json.dumps(["not", "an", "object"]))
-
-        count = mcp_manager.import_from_mcp_json(mcp_json, project_id=sample_project["id"])
-        assert count == 0
-
-    def test_import_from_mcp_json_gobby_format_skip_nameless(
-        self,
-        mcp_manager: LocalMCPManager,
-        sample_project: dict,
-        temp_dir: Path,
-    ) -> None:
-        """Test that servers without name are skipped in Gobby format."""
-        mcp_json = temp_dir / ".mcp.json"
-        mcp_json.write_text(
-            json.dumps(
-                {
-                    "servers": [
-                        {"transport": "http", "url": "http://no-name"},  # No name
-                        {"name": "named-server", "transport": "http", "url": "http://named"},
-                    ]
-                }
-            )
-        )
-
-        count = mcp_manager.import_from_mcp_json(mcp_json, project_id=sample_project["id"])
-        assert count == 1
-
-        server = mcp_manager.get_server("named-server", project_id=sample_project["id"])
-        assert server is not None
-
-    def test_import_from_mcp_json_empty_format(
-        self,
-        mcp_manager: LocalMCPManager,
-        sample_project: dict,
-        temp_dir: Path,
-    ) -> None:
-        """Test importing from JSON without servers or mcpServers returns 0."""
-        mcp_json = temp_dir / ".mcp.json"
-        mcp_json.write_text(json.dumps({"other_key": "value"}))
-
-        count = mcp_manager.import_from_mcp_json(mcp_json, project_id=sample_project["id"])
-        assert count == 0
 
     def test_remove_server_case_insensitive(
         self,
@@ -1261,187 +1192,216 @@ class TestLocalMCPManager:
         assert result is True
         assert mcp_manager.get_server("removecase", project_id=sample_project["id"]) is None
 
-    def test_normalize_bundled_servers_migrates_tools_from_legacy_project_rows(
+    def test_refresh_template_instances_preserves_instance_fields(
         self,
         mcp_manager: LocalMCPManager,
         sample_project: dict,
-        temp_db: HubDatabase,
     ) -> None:
-        """Legacy project rows are collapsed into a canonical global bundled row."""
-        temp_db.execute(
-            """
-            INSERT INTO mcp_servers (
-                id, name, project_id, transport, command, args, enabled, created_at, updated_at
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            (
-                LEGACY_CHROME_SERVER_ID,
-                "chrome-devtools",
-                sample_project["id"],
-                "stdio",
-                "npx",
-                json.dumps(
-                    [
-                        "-y",
-                        CHROME_DEVTOOLS_NPM_PACKAGE,
-                        "--executable-path=/tmp/chrome",
-                        "--no-usage-statistics",
-                    ]
-                ),
-                True,
-            ),
-        )
-        temp_db.execute(
-            """
-            INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            (
-                LEGACY_CHROME_TOOL_ID,
-                LEGACY_CHROME_SERVER_ID,
-                "inspect_page",
-                "Inspect the current page",
-                json.dumps({"type": "object"}),
-            ),
-        )
-
-        stats = mcp_manager.normalize_bundled_servers(["chrome-devtools"])
-
-        assert stats["normalized"] == 1
-        assert stats["duplicates_removed"] == 1
-        assert stats["tools_migrated"] == 1
-
-        global_server = mcp_manager.get_server("chrome-devtools", project_id=GLOBAL_PROJECT_ID)
-        assert global_server is not None
-        assert global_server.project_id == GLOBAL_PROJECT_ID
-        assert global_server.args == ["-y", CHROME_DEVTOOLS_NPM_PACKAGE, "--no-usage-statistics"]
-
-        legacy_row = temp_db.fetchone(
-            "SELECT * FROM mcp_servers WHERE id = %s",
-            (LEGACY_CHROME_SERVER_ID,),
-        )
-        assert legacy_row is None
-
-        migrated_tools = mcp_manager.get_cached_tools(
-            "chrome-devtools",
+        template = mcp_manager.upsert_template(
+            name="openapi",
             project_id=GLOBAL_PROJECT_ID,
+            owner="gobby",
+            definition=_template_definition(),
         )
-        assert len(migrated_tools) == 1
-        assert migrated_tools[0].name == "inspect_page"
-
-    def test_normalize_bundled_servers_updates_chrome_devtools_package_pin(
-        self,
-        mcp_manager: LocalMCPManager,
-        temp_db: HubDatabase,
-    ) -> None:
-        """Existing bundled chrome-devtools rows are repaired to the tested package pin."""
-        temp_db.execute(
-            """
-            INSERT INTO mcp_servers (
-                id, name, project_id, transport, command, args, enabled, created_at, updated_at
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            (
-                GLOBAL_CHROME_SERVER_ID,
-                "chrome-devtools",
-                GLOBAL_PROJECT_ID,
-                "stdio",
-                "npx",
-                json.dumps(["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"]),
-                True,
-            ),
+        instance = mcp_manager.upsert(
+            name="petstore",
+            transport="stdio",
+            command="npx",
+            args=["old"],
+            env={"KEEP": "no"},
+            project_id=sample_project["id"],
+            enabled=False,
+            description="keep me",
+            template_id=template.id,
+            template_values={"api_name": "pets"},
+            runtime_hook="chrome-devtools",
+            connect_timeout=30.0,
         )
 
-        stats = mcp_manager.normalize_bundled_servers(["chrome-devtools"])
+        result = mcp_manager.refresh_template_instances(lambda _template, _row: _expanded_fields())
 
-        assert stats["normalized"] == 1
-        global_server = mcp_manager.get_server("chrome-devtools", project_id=GLOBAL_PROJECT_ID)
-        assert global_server is not None
-        assert global_server.args == ["-y", CHROME_DEVTOOLS_NPM_PACKAGE, "--no-usage-statistics"]
+        assert result["refreshed"] == 1
+        assert result["errors"] == {}
+        refreshed = mcp_manager.get_server_by_id(instance.id)
+        assert refreshed is not None
+        assert refreshed.enabled is False
+        assert refreshed.description == "keep me"
+        assert refreshed.template_values == {"api_name": "pets"}
+        assert refreshed.command == "uvx"
+        assert refreshed.args == ["refreshed"]
+        assert refreshed.env == {"LOG_LEVEL": "ERROR"}
+        assert refreshed.headers == {"X-Scope": "refreshed"}
+        assert refreshed.connect_timeout == 120.0
+        assert refreshed.runtime_hook == "openapi"
+        assert refreshed.template == "openapi"
 
-    def test_normalize_bundled_servers_unions_disjoint_tool_sets(
+    def test_refresh_template_instances_isolates_expansion_failures(
         self,
         mcp_manager: LocalMCPManager,
         sample_project: dict,
-        temp_db: HubDatabase,
     ) -> None:
-        """Bundled normalization preserves the union of tool names across duplicates."""
-        temp_db.execute(
-            """
-            INSERT INTO mcp_servers (
-                id, name, project_id, transport, command, args, enabled, created_at, updated_at
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            (
-                LEGACY_CONTEXT7_SERVER_ID,
-                "context7",
-                sample_project["id"],
-                "stdio",
-                "npx",
-                json.dumps(["-y", "@upstash/context7-mcp"]),
-                True,
-            ),
+        template = mcp_manager.upsert_template(
+            name="openapi",
+            project_id=GLOBAL_PROJECT_ID,
+            owner="gobby",
+            definition=_template_definition(),
         )
-        temp_db.execute(
-            """
-            INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            (
-                LEGACY_CONTEXT7_TOOL_ID,
-                LEGACY_CONTEXT7_SERVER_ID,
-                "search_docs",
-                "Search docs",
-                json.dumps({"type": "object"}),
-            ),
+        stale = mcp_manager.upsert(
+            name="stale",
+            transport="stdio",
+            command="npx",
+            args=["old-stale"],
+            project_id=sample_project["id"],
+            template_id=template.id,
+            template_values={"api_name": "stale"},
+            runtime_hook="chrome-devtools",
+        )
+        healthy = mcp_manager.upsert(
+            name="healthy",
+            transport="stdio",
+            command="npx",
+            args=["old-healthy"],
+            project_id=sample_project["id"],
+            template_id=template.id,
+            template_values={"api_name": "healthy"},
+            runtime_hook="chrome-devtools",
         )
 
-        temp_db.execute(
-            """
-            INSERT INTO mcp_servers (
-                id, name, project_id, transport, command, args, enabled, created_at, updated_at
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            (
-                GLOBAL_CONTEXT7_SERVER_ID,
-                "context7",
-                GLOBAL_PROJECT_ID,
-                "stdio",
-                "npx",
-                json.dumps(["-y", "@upstash/context7-mcp"]),
-                True,
-            ),
-        )
-        temp_db.execute(
-            """
-            INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            (
-                GLOBAL_CONTEXT7_TOOL_ID,
-                GLOBAL_CONTEXT7_SERVER_ID,
-                "resolve_doc",
-                "Resolve doc",
-                json.dumps({"type": "object"}),
-            ),
-        )
+        def expand(_template: object, row: MCPServer) -> dict[str, Any]:
+            if row.name == "stale":
+                raise ValueError("required param spec_url is missing")
+            return _expanded_fields()
 
-        mcp_manager.normalize_bundled_servers(["context7"])
+        result = mcp_manager.refresh_template_instances(expand)
 
-        tools = mcp_manager.get_cached_tools("context7", project_id=GLOBAL_PROJECT_ID)
-        global_server = mcp_manager.get_server("context7", project_id=GLOBAL_PROJECT_ID)
-        assert global_server is not None
-        assert {tool.name for tool in tools} == {"resolve_doc", "search_docs"}
+        assert result["refreshed"] == 1
+        error = result["errors"][stale.id]
+        assert error["name"] == "stale"
+        assert error["project_id"] == sample_project["id"]
+        assert "spec_url" in error["error"]
+        assert "secret" not in error["error"].lower()
+        assert "$secret:" not in error["error"]
 
-        legacy_row = temp_db.fetchone(
-            "SELECT * FROM mcp_servers WHERE id = %s",
-            (LEGACY_CONTEXT7_SERVER_ID,),
+        untouched = mcp_manager.get_server_by_id(stale.id)
+        assert untouched is not None
+        assert untouched.args == ["old-stale"]
+        assert untouched.runtime_hook == "chrome-devtools"
+
+        updated = mcp_manager.get_server_by_id(healthy.id)
+        assert updated is not None
+        assert updated.args == ["refreshed"]
+        assert updated.runtime_hook == "openapi"
+
+    def test_server_reads_rehydrate_template_name_and_runtime_hook(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        bundled = mcp_manager.upsert_template(
+            name="openapi",
+            project_id=GLOBAL_PROJECT_ID,
+            owner="gobby",
+            definition=_template_definition(runtime_hook="chrome-devtools"),
         )
-        assert legacy_row is None
+        instance = mcp_manager.upsert(
+            name="petstore",
+            transport="stdio",
+            command="uvx",
+            project_id=sample_project["id"],
+            template_id=bundled.id,
+            template_values={"api_name": "pets"},
+            runtime_hook="chrome-devtools",
+        )
+        loaded = mcp_manager.get_server_by_id(instance.id)
+        assert loaded is not None
+        assert loaded.template == "openapi"
+        assert loaded.name == "petstore"
+        assert loaded.runtime_hook == "chrome-devtools"
+        config = loaded.to_config()
+        assert config["id"] == instance.id
+        assert config["template"] == "openapi"
+
+        override = mcp_manager.upsert_template(
+            name="openapi-override",
+            project_id=sample_project["id"],
+            owner="user",
+            definition={
+                "transport": "stdio",
+                "command": "uvx",
+                "enabled": True,
+            },
+        )
+        no_hook = mcp_manager.upsert(
+            name="no-hook-instance",
+            transport="stdio",
+            command="uvx",
+            project_id=sample_project["id"],
+            template_id=override.id,
+            runtime_hook=None,
+        )
+        loaded_override = mcp_manager.get_server(
+            "no-hook-instance",
+            project_id=sample_project["id"],
+        )
+        assert loaded_override is not None
+        assert loaded_override.id == no_hook.id
+        assert loaded_override.template == "openapi-override"
+        assert loaded_override.runtime_hook is None
+
+    def test_insert_server_conflict_writes_no_secret_slot(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        winner = mcp_manager.insert_server(
+            name="secure-create",
+            transport="http",
+            url="http://localhost",
+            env={"API_KEY": "credential-A-value"},
+            project_id=sample_project["id"],
+        )
+        assert winner is not None
+        assert winner.env is not None
+        api_ref = winner.env["API_KEY"]
+        store = SecretStore(mcp_manager.db)
+        assert store.resolve(api_ref, project_id=sample_project["id"]) == "credential-A-value"
+
+        loser = mcp_manager.insert_server(
+            name="secure-create",
+            transport="http",
+            url="http://localhost",
+            env={"API_KEY": "credential-B-value"},
+            project_id=sample_project["id"],
+        )
+        assert loser is None
+
+        persisted = mcp_manager.get_server("secure-create", project_id=sample_project["id"])
+        assert persisted is not None
+        assert persisted.id == winner.id
+        assert persisted.env == winner.env
+        assert store.resolve(api_ref, project_id=sample_project["id"]) == "credential-A-value"
+        assert len(store.list(project_id=sample_project["id"])) == 1
+
+    def test_cache_tools_keys_by_server_id(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        server = mcp_manager.upsert(
+            name="id-cache-server",
+            transport="http",
+            url="http://localhost",
+            project_id=sample_project["id"],
+        )
+        count = mcp_manager.cache_tools(
+            server.id,
+            [{"name": "alpha", "description": "A", "inputSchema": {"type": "object"}}],
+        )
+        tools = mcp_manager.get_cached_tools(server.id)
+        assert count == 1
+        assert [tool.name for tool in tools] == ["alpha"]
+        assert mcp_manager.get_cached_tools(UNKNOWN_SERVER_ID) == []
+        assert not hasattr(mcp_manager, "normalize_bundled_servers")
 
 
 class TestMCPServerFromRow:
@@ -1469,8 +1429,13 @@ class TestMCPServerFromRow:
         assert server.env is not None
         assert server.headers is not None
         secret_store = SecretStore(mcp_manager.db)
-        assert secret_store.resolve(server.env["API_KEY"]) == "secret"
-        assert secret_store.resolve(server.headers["X-Auth"]) == "token"
+        assert (
+            secret_store.resolve(server.env["API_KEY"], project_id=sample_project["id"]) == "secret"
+        )
+        assert (
+            secret_store.resolve(server.headers["X-Auth"], project_id=sample_project["id"])
+            == "token"
+        )
         assert server.description == "Full server"
         assert server.enabled is True
 
@@ -1550,7 +1515,7 @@ class TestToolFromRow:
         sample_project: dict,
     ) -> None:
         """Test Tool.from_row with input_schema."""
-        mcp_manager.upsert(
+        server = mcp_manager.upsert(
             name="tool-row-server",
             transport="http",
             url="http://localhost",
@@ -1559,12 +1524,11 @@ class TestToolFromRow:
 
         schema = {"type": "object", "properties": {"arg1": {"type": "string"}}}
         mcp_manager.cache_tools(
-            "tool-row-server",
+            server.id,
             [{"name": "schema_tool", "description": "Has schema", "inputSchema": schema}],
-            project_id=sample_project["id"],
         )
 
-        tools = mcp_manager.get_cached_tools("tool-row-server", project_id=sample_project["id"])
+        tools = mcp_manager.get_cached_tools(server.id)
         assert len(tools) == 1
         assert tools[0].input_schema == schema
 
@@ -1574,7 +1538,7 @@ class TestToolFromRow:
         sample_project: dict,
     ) -> None:
         """Test Tool.from_row without input_schema."""
-        mcp_manager.upsert(
+        server = mcp_manager.upsert(
             name="no-schema-row-server",
             transport="http",
             url="http://localhost",
@@ -1582,14 +1546,11 @@ class TestToolFromRow:
         )
 
         mcp_manager.cache_tools(
-            "no-schema-row-server",
+            server.id,
             [{"name": "no_schema_tool", "description": "No schema"}],
-            project_id=sample_project["id"],
         )
 
-        tools = mcp_manager.get_cached_tools(
-            "no-schema-row-server", project_id=sample_project["id"]
-        )
+        tools = mcp_manager.get_cached_tools(server.id)
         assert len(tools) == 1
         assert tools[0].input_schema is None
 
@@ -1720,8 +1681,14 @@ class TestMCPServerSecretPersistence:
         assert "database-api-plaintext" not in str(row["env"])
         assert plaintext not in str(row["headers"])
         store = SecretStore(mcp_manager.db)
-        assert store.resolve(server.env["API_KEY"]) == "database-api-plaintext"
-        assert store.resolve(server.headers["Authorization"]) == plaintext
+        assert (
+            store.resolve(server.env["API_KEY"], project_id=sample_project["id"])
+            == "database-api-plaintext"
+        )
+        assert (
+            store.resolve(server.headers["Authorization"], project_id=sample_project["id"])
+            == plaintext
+        )
 
     def test_update_reuses_slot_ref_and_cleans_removed_managed_secret(
         self,
@@ -1752,7 +1719,7 @@ class TestMCPServerSecretPersistence:
         assert updated.env == {"API_KEY": api_ref, "MODE": "safe"}
         assert updated.headers == {}
         store = SecretStore(mcp_manager.db)
-        assert store.resolve(api_ref) == "second-value"
+        assert store.resolve(api_ref, project_id=sample_project["id"]) == "second-value"
         assert store.get(removed_ref.removeprefix("$secret:")) is None
 
     def test_explicit_reference_is_preserved_without_reowning_secret(
@@ -1777,7 +1744,7 @@ class TestMCPServerSecretPersistence:
     def test_upsert_failure_rolls_back_new_secret(
         self,
         mcp_manager: LocalMCPManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         original_execute = mcp_manager.db.execute
@@ -1802,7 +1769,7 @@ class TestMCPServerSecretPersistence:
     def test_update_failure_restores_previous_secret_value(
         self,
         mcp_manager: LocalMCPManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         created = mcp_manager.upsert(
@@ -1835,12 +1802,15 @@ class TestMCPServerSecretPersistence:
         )
         assert persisted is not None
         assert persisted.env == {"API_KEY": ref}
-        assert SecretStore(mcp_manager.db).resolve(ref) == "original-secret-value"
+        assert (
+            SecretStore(mcp_manager.db).resolve(ref, project_id=sample_project["id"])
+            == "original-secret-value"
+        )
 
     def test_remove_deletes_owned_secret(
         self,
         mcp_manager: LocalMCPManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         server = mcp_manager.upsert(
             name="removed-server",

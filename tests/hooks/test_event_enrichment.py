@@ -306,6 +306,49 @@ class TestSenderResolution:
 
         assert "Session #7:" in response.context
 
+    def test_sender_in_other_project_is_project_qualified(self) -> None:
+        """A sender from another project is labeled '<project>-S#N' so it can be addressed."""
+        session_manager = MagicMock()
+        session_obj = MagicMock()
+        session_obj.seq_num = 9
+        session_obj.project_id = "proj-goblins"
+        session_manager.get.return_value = session_obj
+        session_manager.db.fetchone.return_value = {"name": "game-goblins"}
+
+        msg = _make_msg(content="msg", from_session="aaaa-bbbb")
+        enricher = _make_enricher(msgs=[msg], session_manager=session_manager)
+        event = _make_event(HookEventType.BEFORE_TOOL)
+        event.project_id = "proj-gobby"
+        response = HookResponse()
+
+        enricher.enrich(event, response)
+
+        assert response.context is not None
+        assert "Session game-goblins-S#9:" in response.context
+        session_manager.db.fetchone.assert_called_once_with(
+            "SELECT name FROM projects WHERE id = %s", ("proj-goblins",)
+        )
+
+    def test_same_project_sender_keeps_local_label(self) -> None:
+        """A same-project sender keeps the short '#N' label."""
+        session_manager = MagicMock()
+        session_obj = MagicMock()
+        session_obj.seq_num = 9
+        session_obj.project_id = "proj-gobby"
+        session_manager.get.return_value = session_obj
+
+        msg = _make_msg(content="msg", from_session="aaaa-bbbb")
+        enricher = _make_enricher(msgs=[msg], session_manager=session_manager)
+        event = _make_event(HookEventType.BEFORE_TOOL)
+        event.project_id = "proj-gobby"
+        response = HookResponse()
+
+        enricher.enrich(event, response)
+
+        assert response.context is not None
+        assert "Session #9:" in response.context
+        session_manager.db.fetchone.assert_not_called()
+
     def test_sender_lookup_failure_falls_back(self) -> None:
         """When session storage raises, fall back to truncated UUID."""
         session_manager = MagicMock()

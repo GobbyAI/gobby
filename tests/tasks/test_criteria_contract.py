@@ -101,6 +101,50 @@ def test_nominal_operational_requirements_are_detected() -> None:
     assert required_operational_actions(criteria) == ("install", "restart", "smoke")
 
 
+def test_criteria_that_rule_an_operation_out_do_not_require_it() -> None:
+    """#21233's criterion promised no restart, and the gate demanded restart evidence."""
+    criteria = (
+        "A wedged child is reaped by the supervisor and does not require a daemon restart to clear."
+    )
+
+    assert required_operational_actions(criteria) == ()
+    assert missing_operational_evidence(criteria, "Implementation and tests are complete.") == ()
+
+
+@pytest.mark.parametrize(
+    "criteria",
+    [
+        "The fix clears without a daemon restart.",
+        "Recovery involves no daemon restart.",
+        "The change avoids restarting the daemon.",
+        "Clearing the wedge should never require another daemon restart.",
+        "A daemon restart is not required to pick the change up.",
+        "A daemon restart is no longer needed.",
+        "The daemon restart must never be part of recovery.",
+    ],
+)
+def test_both_negation_forms_leave_an_operation_unrequired(criteria: str) -> None:
+    """Criteria negate before the phrase and after it, and both mean the same thing."""
+    assert required_operational_actions(criteria) == ()
+
+
+def test_ruling_one_operation_out_still_requires_the_others() -> None:
+    """Polarity is read per occurrence, so a mixed criteria block keeps its demands."""
+    criteria = (
+        "Install the release and run a live smoke check. Recovery does not require a "
+        "daemon restart."
+    )
+
+    assert required_operational_actions(criteria) == ("install", "smoke")
+
+
+def test_an_unrelated_negation_nearby_still_requires_the_operation() -> None:
+    """Only an unbroken negator-to-phrase run negates; punctuation ends the run."""
+    criteria = "The change must not regress startup; restart the daemon and confirm health."
+
+    assert required_operational_actions(criteria) == ("restart",)
+
+
 def test_target_specific_operations_reject_unrelated_evidence() -> None:
     criteria = "Release ghook installation must be complete."
 

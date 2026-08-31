@@ -31,3 +31,27 @@ def remaining_blocking_effect_seconds(
     if deadline is None:
         return maximum
     return max(0.0, min(maximum, deadline.expires_at - time.monotonic()))
+
+
+def blocking_budget_overrun(deadline: BlockingEffectDeadline | None) -> bool:
+    """Return whether the shared blocking budget is already spent.
+
+    Effects that reserve a floor run regardless, so this reports the overrun
+    rather than gating on it.
+    """
+    if deadline is None:
+        return False
+    return deadline.expires_at <= time.monotonic()
+
+
+def elapsed_blocking_effect_seconds(deadline: BlockingEffectDeadline | None) -> float:
+    """Return how much of the shared blocking budget this hook event has spent.
+
+    Time excluded by :meth:`BlockingEffectDeadline.extend` does not count, so the
+    result measures blocking-effect time rather than wall time since the event
+    began. It exceeds ``BLOCKING_EFFECT_BUDGET_SECONDS`` once the budget is gone,
+    and that overrun is what makes an exhausted deadline diagnosable.
+    """
+    if deadline is None:
+        return 0.0
+    return BLOCKING_EFFECT_BUDGET_SECONDS - (deadline.expires_at - time.monotonic())

@@ -26,6 +26,7 @@ from gobby.config.embedding_keys import (
     EMBEDDING_QUERY_PREFIX_FIELD,
     EMBEDDING_SWITCH_COMPLETED_KEY,
     EMBEDDING_SWITCH_JOURNAL_KEY,
+    MCP_SCOPED_PAYLOAD_VERSION_KEY,
     RUNTIME_EMBEDDINGS_CONFIG_PREFIX,
     runtime_embedding_key,
 )
@@ -809,6 +810,14 @@ def _supplemental_key_specs() -> tuple[ConfigKeySpec, ...]:
             (EMBEDDING_SWITCH_JOURNAL_KEY, dict[str, object]),
             (EMBEDDING_SWITCH_COMPLETED_KEY, dict[str, object]),
         )
+    ) + (
+        # Daemon-owned one-shot marker, not a secret payload; read at startup only.
+        ConfigKeySpec(
+            MCP_SCOPED_PAYLOAD_VERSION_KEY,
+            int,
+            activation=ActivationPolicy.RESTART_REQUIRED,
+            visibility=ConfigVisibility.RESTRICTED,
+        ),
     )
     return (*public, *machine, *restricted)
 

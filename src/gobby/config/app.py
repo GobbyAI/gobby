@@ -46,7 +46,7 @@ from gobby.config.features import (
     ToolResultOffloadConfig,
     ToolSummarizerConfig,
 )
-from gobby.config.hooks import HookTimeoutConfig
+from gobby.config.hooks import HOOK_TRANSPORT_WINDOW_SECONDS, HookTimeoutConfig
 from gobby.config.indexing import IndexingConfig
 from gobby.config.logging import LoggingSettings, common_log_parent
 from gobby.config.persistence import (
@@ -85,6 +85,7 @@ from gobby.config.validation_detection import (
 )
 from gobby.config.voice import VoiceConfig
 from gobby.config.wiki import WikiConfig
+from gobby.hooks.effect_deadline import BLOCKING_EFFECT_BUDGET_SECONDS
 from gobby.search.models import SearchConfig
 from gobby.telemetry.config import TelemetrySettings
 
@@ -494,15 +495,27 @@ class DaemonConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_hook_timeout_order(self) -> DaemonConfig:
-        """Require each enclosing hook layer to outlive the work it contains."""
+        """Require each enclosing hook layer to outlive the work it contains.
+
+        The ghook transport window is a fixed member of this ladder rather than a
+        configurable one: past it the client stops waiting and decides for itself,
+        so a daemon timeout above it can never produce the gated decision it exists
+        to produce. The shared blocking-effect budget anchors the bottom, and the
+        gap above it leaves room for the RTK proxy stage's reservation.
+        """
         timeouts = (
+            BLOCKING_EFFECT_BUDGET_SECONDS,
             self.workflow.timeout,
             self.hooks.adapter_timeout,
+            HOOK_TRANSPORT_WINDOW_SECONDS,
             self.hooks.provider_timeout,
         )
         if not all(inner < outer for inner, outer in zip(timeouts, timeouts[1:], strict=False)):
             raise ValueError(
-                "Hook timeouts must satisfy workflow.timeout < hooks.adapter_timeout "
+                "Hook timeouts must satisfy "
+                f"blocking-effect budget ({BLOCKING_EFFECT_BUDGET_SECONDS:g}s) "
+                "< workflow.timeout < hooks.adapter_timeout "
+                f"< ghook transport window ({HOOK_TRANSPORT_WINDOW_SECONDS:g}s) "
                 "< hooks.provider_timeout"
             )
         return self

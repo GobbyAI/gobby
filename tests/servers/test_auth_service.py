@@ -13,7 +13,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 if TYPE_CHECKING:
-    from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.storage.sessions import SessionManager
 from starlette.requests import Request
 
@@ -22,6 +21,7 @@ import gobby.servers.http as http_module
 from gobby.app_context import ServiceContainer
 from gobby.identity import hash_password, verify_password_hash
 from gobby.servers.auth_service import AuthService
+from gobby.servers.http import HTTPServer
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
@@ -687,8 +687,11 @@ async def test_agent_listing_redaction() -> None:
 
     config = SimpleNamespace(
         name="github",
+        id="github",
         transport="stdio",
         project_id="project-123",
+        template=None,
+        template_values=None,
         description="external server",
         url=None,
         command="gh-mcp",
@@ -704,12 +707,17 @@ async def test_agent_listing_redaction() -> None:
         server_configs=[config],
         health={},
         is_connected=lambda name: False,
+        _configs={},
     )
+    server = SimpleNamespace(
+        mcp_manager=mcp_manager,
+        _internal_manager=None,
+        session_manager=None,
+        services=SimpleNamespace(database=None),
+    )
+    request = SimpleNamespace(headers={}, query_params=SimpleNamespace(multi_items=lambda: []))
 
-    result = await list_mcp_servers(
-        internal_manager=None,
-        mcp_manager=cast("MCPClientManager", mcp_manager),
-    )
+    result = await list_mcp_servers(cast(Request, request), cast(HTTPServer, server))
 
     assert result["success"] is True
     (entry,) = [item for item in result["servers"] if item["name"] == "github"]

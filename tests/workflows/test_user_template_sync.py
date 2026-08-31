@@ -9,7 +9,9 @@ Covers:
 
 import json
 from pathlib import Path
-from typing import Literal
+from types import SimpleNamespace
+from typing import Any, Literal
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -24,6 +26,16 @@ pytestmark = pytest.mark.unit
 def manager(temp_db):
     """Create a workflow definition manager."""
     return RuleDefinitionManager(temp_db)
+
+
+def _stub_mcp_dirs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import gobby.paths
+
+    empty = tmp_path / "no-mcp"
+    monkeypatch.setattr(gobby.paths, "get_project_mcp_templates_dir", lambda _path: empty)
+    monkeypatch.setattr(gobby.paths, "get_global_mcp_templates_dir", lambda: empty)
+    monkeypatch.setattr(gobby.paths, "get_project_mcp_servers_dir", lambda _path: empty)
+    monkeypatch.setattr(gobby.paths, "get_global_mcp_servers_dir", lambda: empty)
 
 
 def _create_rule(
@@ -250,6 +262,7 @@ class TestMultiRootUserSync:
             gobby.paths, "get_project_variables_dir", lambda _path: project_variables
         )
         monkeypatch.setattr(gobby.paths, "get_global_variables_dir", lambda: global_variables)
+        _stub_mcp_dirs(monkeypatch, tmp_path)
 
         sync_counts = [_sync_user_templates_to_db(temp_db) for _ in range(2)]
         assert sync_counts == [4, 0]
@@ -519,6 +532,7 @@ class TestProjectScopedUserSync:
             "get_project_context",
             lambda cwd=None: {"id": project_id, "project_path": str(cwd)},
         )
+        _stub_mcp_dirs(monkeypatch, tmp_path)
 
         assert _sync_user_templates_to_db(temp_db) == 2
         assert _rule_scope(temp_db, "project-rule") == project_id
@@ -546,6 +560,146 @@ class TestProjectScopedUserSync:
             "get_project_context",
             lambda cwd=None: {"id": "7e2b0f41-9c6d-4a15-8b3e-5d0a9f2c6e71"},
         )
+        _stub_mcp_dirs(monkeypatch, tmp_path)
 
         assert _sync_user_templates_to_db(temp_db) == 1
         assert _rule_scope(temp_db, "project-rule") == "global"
+
+
+class TestMCPUserTemplateSync:
+    def test_installer_syncs_user_mcp_templates_and_servers(
+        self, temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import gobby.paths
+        import gobby.utils.project_context
+        from gobby.cli.installers.shared import _sync_user_templates_to_db
+        from gobby.storage.mcp import LocalMCPManager
+        from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+        templates = tmp_path / "mcp-templates"
+        servers = tmp_path / "mcp-servers"
+        templates.mkdir()
+        servers.mkdir()
+        (templates / "demo.yaml").write_text(
+            "name: demo\ndescription: Demo\nversion: 1\nenabled: true\n"
+            'transport: stdio\ncommand: npx\nargs: ["-y", "demo-pkg"]\n',
+            encoding="utf-8",
+        )
+        (servers / "demo.yaml").write_text(
+            "name: demo-instance\ntemplate: demo\nenabled: true\nvalues: {}\n",
+            encoding="utf-8",
+        )
+        empty = tmp_path / "empty"
+        monkeypatch.setattr(gobby.paths, "get_project_mcp_templates_dir", lambda _path: empty)
+        monkeypatch.setattr(gobby.paths, "get_global_mcp_templates_dir", lambda: templates)
+        monkeypatch.setattr(gobby.paths, "get_project_mcp_servers_dir", lambda _path: empty)
+        monkeypatch.setattr(gobby.paths, "get_global_mcp_servers_dir", lambda: servers)
+        monkeypatch.setattr(gobby.paths, "get_project_rules_dir", lambda _path: empty)
+        monkeypatch.setattr(gobby.paths, "get_global_rules_dir", lambda: empty)
+        monkeypatch.setattr(gobby.paths, "get_project_variables_dir", lambda _path: empty)
+        monkeypatch.setattr(gobby.paths, "get_global_variables_dir", lambda: empty)
+        monkeypatch.setattr(
+            gobby.utils.project_context, "get_project_context", lambda cwd=None: None
+        )
+
+        assert _sync_user_templates_to_db(temp_db) == 2
+        manager = LocalMCPManager(temp_db)
+        template = manager.get_template("demo", project_id=GLOBAL_PROJECT_ID)
+        server = manager.get_server("demo-instance", project_id=GLOBAL_PROJECT_ID)
+        assert template is not None
+        assert template.owner == "user"
+        assert server is not None
+        assert server.template == "demo"
+
+
+@pytest.mark.asyncio
+async def test_synced_instance_is_reconciled_into_live_manager(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import gobby.paths
+    import gobby.utils.project_context
+    from gobby.cli.installers.shared import (
+        _reconcile_synced_mcp_instances,
+        _sync_user_templates_to_db,
+    )
+    from gobby.mcp_proxy.manager import MCPClientManager
+    from gobby.storage.mcp import LocalMCPManager
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+    templates = tmp_path / "mcp-templates"
+    servers = tmp_path / "mcp-servers"
+    templates.mkdir()
+    servers.mkdir()
+    (templates / "demo.yaml").write_text(
+        "name: demo\ndescription: Demo\nversion: 1\nenabled: true\n"
+        'transport: stdio\ncommand: npx\nargs: ["-y", "demo-pkg"]\n',
+        encoding="utf-8",
+    )
+    (servers / "demo.yaml").write_text(
+        "name: live-instance\ntemplate: demo\nenabled: true\nvalues: {}\n",
+        encoding="utf-8",
+    )
+    empty = tmp_path / "empty"
+    monkeypatch.setattr(gobby.paths, "get_project_mcp_templates_dir", lambda _path: empty)
+    monkeypatch.setattr(gobby.paths, "get_global_mcp_templates_dir", lambda: templates)
+    monkeypatch.setattr(gobby.paths, "get_project_mcp_servers_dir", lambda _path: empty)
+    monkeypatch.setattr(gobby.paths, "get_global_mcp_servers_dir", lambda: servers)
+    monkeypatch.setattr(gobby.paths, "get_project_rules_dir", lambda _path: empty)
+    monkeypatch.setattr(gobby.paths, "get_global_rules_dir", lambda: empty)
+    monkeypatch.setattr(gobby.paths, "get_project_variables_dir", lambda _path: empty)
+    monkeypatch.setattr(gobby.paths, "get_global_variables_dir", lambda: empty)
+    monkeypatch.setattr(gobby.utils.project_context, "get_project_context", lambda cwd=None: None)
+
+    calls: list[dict[str, object]] = []
+
+    def fake_call_mcp_api(
+        client: Any,
+        endpoint: str,
+        method: str = "POST",
+        json_data: dict[str, Any] | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        calls.append({"endpoint": endpoint, "method": method, "json": dict(json_data or {})})
+        return {"success": True}
+
+    import importlib
+
+    mcp_proxy_mod = importlib.import_module("gobby.cli.mcp_proxy")
+    monkeypatch.setattr(mcp_proxy_mod, "call_mcp_api", fake_call_mcp_api)
+    monkeypatch.setattr(mcp_proxy_mod, "check_daemon_running", lambda _client: True)
+    monkeypatch.setattr(mcp_proxy_mod, "get_daemon_client", lambda _ctx=None: MagicMock())
+    synced = _sync_user_templates_to_db(temp_db)
+    assert synced >= 1
+    manager = LocalMCPManager(temp_db)
+    row = manager.get_server("live-instance", project_id=GLOBAL_PROJECT_ID)
+    assert row is not None
+    refresh = [item for item in calls if item["endpoint"] == "/api/mcp/refresh"]
+    assert refresh
+    body = refresh[0]["json"]
+    assert isinstance(body, dict)
+    assert body.get("server_id") == row.id
+    assert body.get("scope") == "global" or body.get("project_id") == str(row.project_id)
+
+    live = MCPClientManager(
+        server_configs=[],
+        project_id=GLOBAL_PROJECT_ID,
+        mcp_db_manager=LocalMCPManager(temp_db),
+        lazy_connect=True,
+    )
+    assert live.get_server_config(str(row.id)) is None
+    session = MagicMock()
+    session.list_tools = AsyncMock(return_value=SimpleNamespace(tools=[]))
+    with patch(
+        "gobby.mcp_proxy.client_manager.connections._connect_with_retries",
+        AsyncMock(return_value=session),
+    ):
+        await live.refresh_server(str(row.id))
+    loaded = live.get_server_config(str(row.id))
+    assert loaded is not None
+    assert loaded.name == "live-instance"
+    assert live.has_server(str(row.id))
+
+    monkeypatch.setattr(mcp_proxy_mod, "call_mcp_api", lambda *args, **kwargs: None)
+    with patch("click.echo") as echo:
+        _reconcile_synced_mcp_instances(temp_db, [row.id])
+    echo.assert_called_with("MCP live reconcile skipped: daemon not reachable")

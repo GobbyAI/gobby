@@ -78,7 +78,7 @@ def register_proxy_tools(
         List all MCP servers configured in the daemon.
 
         Use this for unknown-server discovery or explicit registry inspection.
-        Returns connection status, available tools, and resources.
+        Returns connection status, templates, available tools, and resources.
 
         Returns:
             Dict with servers list, total count, and connected count
@@ -243,18 +243,23 @@ def register_proxy_tools(
     @mcp.tool()
     async def add_mcp_server(
         name: str,
-        transport: str,
+        transport: str | None = None,
         url: str | None = None,
         headers: dict[str, str] | None = None,
         command: str | None = None,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
         enabled: bool = True,
+        template: str | None = None,
+        values: dict[str, str] | None = None,
+        scope: str = "project",
+        description: str | None = None,
     ) -> dict[str, Any]:
         """
         Add an MCP server to the daemon. transport is "http", "stdio", or
         "websocket"; http/websocket require url, stdio requires command
-        (args/env optional).
+        (args/env optional). Pass template/values/scope to instantiate
+        from a template.
         """
         return await proxy.add_mcp_server(
             name=name,
@@ -265,20 +270,25 @@ def register_proxy_tools(
             args=args,
             env=env,
             enabled=enabled,
+            template=template,
+            values=values,
+            scope=scope,
+            description=description,
         )
 
     @mcp.tool()
-    async def remove_mcp_server(name: str) -> dict[str, Any]:
+    async def remove_mcp_server(name: str, scope: str = "project") -> dict[str, Any]:
         """
         Remove an MCP server from the daemon's configuration.
 
         Args:
             name: Server name to remove
+            scope: project or global
 
         Returns:
             Result dict with success status
         """
-        return await proxy.remove_mcp_server(name)
+        return await proxy.remove_mcp_server(name, scope=scope)
 
     @mcp.tool()
     async def import_mcp_server(

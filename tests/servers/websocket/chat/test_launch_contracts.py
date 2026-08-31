@@ -529,7 +529,7 @@ async def _seam_start(owner: Any, session: Any, context: Any) -> Any:
 
 class TestAcpSubprocessesAreSessionOwned:
     @pytest.fixture
-    def acp(self) -> Any:
+    def acp(self, monkeypatch: pytest.MonkeyPatch) -> Any:
         from gobby.servers.websocket.chat.backends.base import ProviderBackendHealth
 
         manager = WebChatRuntimeManager(daemon_config=DaemonConfig())
@@ -541,7 +541,7 @@ class TestAcpSubprocessesAreSessionOwned:
             fail = failures.pop(0) if failures else False
             return _SeamACPClient(clients, fail_start=fail, **kwargs)
 
-        backend.acp_client_cls = factory  # type: ignore[assignment]
+        monkeypatch.setattr(backend, "acp_client_cls", factory)
         backend._health = ProviderBackendHealth(provider="qwen", available=True)
         return SimpleNamespace(manager=manager, backend=backend, clients=clients, failures=failures)
 

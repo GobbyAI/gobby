@@ -22,7 +22,6 @@ from gobby.mcp_proxy._call_tool_wrapper import (
 )
 from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.manager import MCPClientManager
-from gobby.mcp_proxy.server_list import compact_mcp_server_list
 from gobby.mcp_proxy.services.recommendation import RecommendationService, SearchMode
 from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
@@ -143,7 +142,9 @@ class GobbyDaemonTools:
         if project_id:
             return str(project_id)
         manager_project_id = getattr(self._mcp_manager, "project_id", None)
-        return str(manager_project_id) if manager_project_id else None
+        if isinstance(manager_project_id, str) and manager_project_id:
+            return manager_project_id
+        return None
 
     # --- System Tools ---
 
@@ -165,55 +166,44 @@ class GobbyDaemonTools:
         self,
         name_filter: str | None = None,
         session_id: str | None = None,
+        scope: str | None = None,
+        project_id: str | None = None,
     ) -> dict[str, Any]:
-        """List configured MCP servers.
+        """List configured MCP servers visible to the caller."""
+        from gobby.mcp_proxy.services.server_resolution import caller_project_id
 
-        Args:
-            name_filter: Optional glob pattern to filter server names (e.g., "gobby-*").
-        """
-        import fnmatch
-
-        server_list: list[dict[str, Any]] = []
-        connected_count = 0
-
-        # Internal servers (always connected)
-        if self.internal_manager:
-            for registry in self.internal_manager.get_all_registries():
-                server_list.append(
-                    {"name": registry.name, "state": "connected", "transport": "internal"}
-                )
-                connected_count += 1
-
-        # External servers
-        mgr = self._mcp_manager
-        for config in mgr.server_configs:
-            health = mgr.health.get(config.name)
-            state = health.state.value if health else "unknown"
-            is_connected = mgr.is_connected(config.name)
-            if is_connected:
-                connected_count += 1
-            entry: dict[str, Any] = {
-                "name": config.name,
-                "state": state,
-                "transport": config.transport,
-            }
-            if not config.enabled:
-                entry["enabled"] = False
-            server_list.append(entry)
-
-        # Apply name filter if provided
-        if name_filter:
-            server_list = [s for s in server_list if fnmatch.fnmatch(s["name"], name_filter)]
-            connected_count = sum(1 for s in server_list if s.get("state") == "connected")
-
-        result = compact_mcp_server_list(
-            {
-                "success": True,
-                "servers": server_list,
-                "total": len(server_list),
-                "connected": connected_count,
-            }
+        scope_project = caller_project_id(
+            self.tool_proxy,
+            project_id=project_id or self._caller_project_ref(),
+            scope=scope,
         )
+        result = await self.tool_proxy.list_servers(name_filter, project_id=scope_project)
+        db = getattr(self._mcp_manager, "mcp_db_manager", None)
+        if db is not None and hasattr(db, "list_templates"):
+            templates = []
+            for row in db.list_templates(project_id=scope_project, enabled_only=False):
+                definition = dict(row.definition or {})
+                params = []
+                for raw in definition.get("params") or []:
+                    if not isinstance(raw, dict):
+                        continue
+                    params.append(
+                        {
+                            "name": raw.get("name"),
+                            "required": bool(raw.get("required")),
+                            "secret": bool(raw.get("secret")),
+                            "choices": raw.get("choices") or [],
+                            "default": raw.get("default"),
+                        }
+                    )
+                templates.append(
+                    {
+                        "name": row.name,
+                        "description": definition.get("description", ""),
+                        "params": params,
+                    }
+                )
+            result["templates"] = templates
         await asyncio.to_thread(self.tool_proxy.record_servers_listed, session_id)
         return result
 
@@ -335,6 +325,7 @@ class GobbyDaemonTools:
                     effective_session_id,
                     wrapper_originated=True,
                     intent=intent,
+                    project_id=project_id or self._caller_project_ref(),
                 ),
                 ctx=None,
                 tool_name=tool_name,
@@ -388,7 +379,11 @@ class GobbyDaemonTools:
 
     async def list_tools(self, server_name: str, session_id: str | None = None) -> dict[str, Any]:
         """List tools for a specific server, optionally filtered by workflow phase restrictions."""
-        return await self.tool_proxy.list_tools(server_name, session_id=session_id)
+        return await self.tool_proxy.list_tools(
+            server_name,
+            session_id=session_id,
+            project_id=self._caller_project_ref(),
+        )
 
     async def get_tool_schema(
         self,
@@ -397,33 +392,55 @@ class GobbyDaemonTools:
         session_id: str | None = None,
     ) -> dict[str, Any]:
         """Get tool schema."""
-        return await self.tool_proxy.get_tool_schema(server_name, tool_name)
+        return await self.tool_proxy.get_tool_schema(
+            server_name, tool_name, project_id=self._caller_project_ref()
+        )
 
     async def read_mcp_resource(self, server_name: str, resource_uri: str) -> Any:
         """Read resource."""
-        return await self.tool_proxy.read_resource(server_name, resource_uri)
+        return await self.tool_proxy.read_resource(
+            server_name, resource_uri, project_id=self._caller_project_ref()
+        )
 
     # --- Server Management ---
 
     async def add_mcp_server(
         self,
         name: str,
-        transport: str,
+        transport: str | None = None,
         url: str | None = None,
         headers: dict[str, str] | None = None,
         command: str | None = None,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
         enabled: bool = True,
+        template: str | None = None,
+        values: dict[str, str] | None = None,
+        scope: str = "project",
+        description: str | None = None,
     ) -> dict[str, Any]:
-        """Add server."""
+        """Add server, optionally from a template."""
         return await self.server_mgmt.add_server(
-            name, transport, url, command, args, env, headers, enabled
+            name,
+            transport,
+            url,
+            command,
+            args,
+            env,
+            headers,
+            enabled,
+            project_id=self._caller_project_ref(),
+            template=template,
+            values=values,
+            scope=scope,
+            description=description,
         )
 
-    async def remove_mcp_server(self, name: str) -> dict[str, Any]:
-        """Remove server."""
-        return await self.server_mgmt.remove_server(name)
+    async def remove_mcp_server(self, name: str, scope: str = "project") -> dict[str, Any]:
+        """Remove server in the requested scope."""
+        return await self.server_mgmt.remove_server(
+            name, scope=scope, project_id=self._caller_project_ref()
+        )
 
     async def import_mcp_server(
         self,

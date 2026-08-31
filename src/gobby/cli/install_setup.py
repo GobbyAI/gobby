@@ -46,6 +46,11 @@ from .utils import get_install_dir
 
 logger = logging.getLogger(__name__)
 _HELPER_RELEASE_REPOSITORY = "GobbyAI/gobby"
+_MCP_ADD_SERVER_COMMAND = "gobby mcp-proxy add-server <name> --template <template> [--global]"
+_MCP_SERVERS_JSON_RETIRED = (
+    "`~/.gobby/mcp-servers.json` is no longer used; instances live in the hub "
+    "— delete it when convenient"
+)
 # Helper modules resolve these names dynamically from this module to preserve
 # existing patch targets in tests and callers.
 _HELPER_EXPORTS = (os, platform, shutil, tempfile, UTC, datetime)
@@ -335,18 +340,41 @@ def ensure_daemon_config(*, files_home: str | Path | None = None) -> dict[str, A
     return {"created": True, "path": str(bootstrap_path), "source": source}
 
 
+def _echo_available_mcp_templates(db: object) -> None:
+    """Print bundled MCP templates and the add-server command. Instantiates nothing."""
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+    names: list[str] = []
+    list_templates = getattr(db, "list_templates", None)
+    if callable(list_templates):
+        listed = list_templates(project_id=GLOBAL_PROJECT_ID)
+        rows = listed if isinstance(listed, (list, tuple)) else ()
+        for row in rows:
+            name = getattr(row, "name", None)
+            if name:
+                names.append(str(name))
+    click.echo("MCP templates (not instantiated):")
+    if names:
+        click.echo(f"  {', '.join(names)}")
+    click.echo(f"  {_MCP_ADD_SERVER_COMMAND}")
+
+
+def _warn_retired_mcp_servers_file() -> None:
+    """Log the retirement warning when ~/.gobby/mcp-servers.json still exists."""
+    if (Path.home() / ".gobby" / "mcp-servers.json").exists():
+        click.echo(_MCP_SERVERS_JSON_RETIRED)
+
+
 def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> None:
-    """Run install setup: DB init, bundled content sync, MCP servers, IDE config.
+    """Run install setup: DB init, bundled content sync, MCP templates, IDE config.
 
     Called after ensure_daemon_config(). Handles database initialization,
-    bundled content sync, default MCP server installation, and IDE config.
+    bundled content sync, MCP template listing, and IDE config.
 
     Args:
         project_path: The project directory path (used for context only).
         configure_ide_settings: Whether to mutate detected VS Code-family settings.
     """
-    from .installers import install_default_mcp_servers
-
     try:
         gdaemon_result = ensure_gdaemon()
     except (GdaemonInstallError, OSError, ValueError) as exc:
@@ -355,8 +383,8 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
     click.echo(f"{action} gdaemon {gdaemon_result['version']} via {gdaemon_result['method']}")
 
     try:
+        from gobby.cli.installers.shared import sync_bundled_content_to_db
         from gobby.storage.hub.runtime import runtime_hub_database
-        from gobby.sync_registry import sync_bundled_content_to_db
 
         with runtime_hub_database() as db:
             click.echo("PostgreSQL hub initialized")
@@ -366,21 +394,13 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
             if sync_result["errors"]:
                 for err in sync_result["errors"]:
                     click.echo(f"  Warning: {err}")
+            _echo_available_mcp_templates(db)
     except (OSError, PermissionError, RuntimeError, ValueError) as exc:
         raise click.ClickException(
             f"Database initialization failed ({type(exc).__name__}): {exc}"
         ) from exc
 
-    mcp_result = install_default_mcp_servers()
-    if mcp_result["success"]:
-        if mcp_result["servers_added"]:
-            click.echo(f"Added MCP servers to proxy: {', '.join(mcp_result['servers_added'])}")
-        if mcp_result["servers_skipped"]:
-            click.echo(
-                f"MCP servers already configured: {', '.join(mcp_result['servers_skipped'])}"
-            )
-    else:
-        click.echo(f"Warning: Failed to configure MCP servers: {mcp_result['error']}")
+    _warn_retired_mcp_servers_file()
 
     from gobby.agents.srt_runtime import SrtRuntimeError
 

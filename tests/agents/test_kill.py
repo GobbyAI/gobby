@@ -24,7 +24,11 @@ from gobby.storage.agents import AgentRun
 
 pytestmark = pytest.mark.unit
 
-configure_tmux(TmuxConfig())
+
+@pytest.fixture(autouse=True)
+def _configured_tmux() -> None:
+    """(Re)configure daemon tmux helpers; earlier runner-shutdown tests reset them."""
+    configure_tmux(TmuxConfig())
 
 
 class TestRunSubprocess:

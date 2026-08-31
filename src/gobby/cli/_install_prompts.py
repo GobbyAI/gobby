@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -19,14 +18,12 @@ from ._install_embedding_prompts import (
 )
 
 __all__ = (
-    "_API_KEY_PROMPTS",
     "_echo_install_details",
     "_echo_install_summary",
     "_echo_uninstall_details",
     "_echo_uninstall_summary",
     "_ensure_db_and_secrets",
     "_infer_embedding_provider_from_url",
-    "_prompt_api_keys",
     "_prompt_hub_api_keys",
     "_run_embedding_install",
     "_run_git_hooks_install",
@@ -126,38 +123,6 @@ def _echo_uninstall_details(
         click.echo(f"Removed {len(result['files_removed'])} files")
     if not result["hooks_removed"] and not result["files_removed"]:
         click.echo("  (no hooks found to remove)")
-
-
-_API_KEY_PROMPTS = [
-    {
-        "secret_name": "github_personal_access_token",
-        "env_var": "GITHUB_PERSONAL_ACCESS_TOKEN",
-        "label": "GitHub Personal Access Token",
-        "category": "mcp_server",
-        "description": "GitHub MCP server authentication",
-    },
-    {
-        "secret_name": "linear_api_key",
-        "env_var": "LINEAR_API_KEY",
-        "label": "Linear API Key",
-        "category": "mcp_server",
-        "description": "Linear MCP server authentication",
-    },
-    {
-        "secret_name": "brave_api_key",
-        "env_var": "BRAVE_API_KEY",
-        "label": "Brave Search API Key",
-        "category": "mcp_server",
-        "description": "Brave Search MCP server authentication",
-    },
-    {
-        "secret_name": "context7_api_key",
-        "env_var": "CONTEXT7_API_KEY",
-        "label": "Context7 API Key",
-        "category": "mcp_server",
-        "description": "Context7 library docs (private repos)",
-    },
-]
 
 
 def _prompt_hub_api_keys(
@@ -263,83 +228,6 @@ def _prompt_hub_api_keys(
     except Exception as e:
         logger.debug("Could not initialize hub key prompt", exc_info=e)
         click.echo("  Warning: Could not initialize hub key prompt")
-        return result
-
-
-def _prompt_api_keys(
-    no_interactive: bool = False,
-    *,
-    db: HubDatabase | None = None,
-    secret_store: SecretStore | None = None,
-) -> dict[str, Any]:
-    """Prompt for API keys and store them in the secret store.
-
-    Skips keys that are already stored or found in environment variables.
-    In non-interactive mode, skips all prompts.
-
-    Returns:
-        Dict with stored, skipped, env_found counts.
-    """
-    result: dict[str, Any] = {"stored": 0, "skipped": 0, "env_found": 0, "already_configured": 0}
-
-    if no_interactive:
-        return result
-
-    try:
-        with _ensure_db_and_secrets(db, secret_store) as (_db, resolved_store):
-            click.echo("")
-            click.echo("-" * 40)
-            click.echo("API Keys (optional)")
-            click.echo("-" * 40)
-            click.echo("These enable external integrations. Press Enter to skip any.")
-            click.echo("")
-
-            for key_info in _API_KEY_PROMPTS:
-                secret_name = key_info["secret_name"]
-                env_var = key_info["env_var"]
-                label = key_info["label"]
-
-                # Check if already stored in secret store
-                if resolved_store.exists(secret_name):
-                    click.echo(f"  {label}: (already configured)")
-                    result["already_configured"] += 1
-                    continue
-
-                # Check if set in environment
-                if os.environ.get(env_var):
-                    click.echo(f"  {label}: (found in environment)")
-                    result["env_found"] += 1
-                    continue
-
-                # Prompt for value
-                try:
-                    value = click.prompt(
-                        f"  {label}", default="", hide_input=True, show_default=False
-                    )
-                except (click.Abort, EOFError):
-                    click.echo("")
-                    break
-
-                if value.strip():
-                    try:
-                        resolved_store.set(
-                            name=secret_name,
-                            plaintext_value=value.strip(),
-                            category=key_info["category"],
-                            description=key_info["description"],
-                        )
-                        click.echo("    Stored credential")
-                        result["stored"] += 1
-                    except Exception as e:
-                        logger.warning("Failed to store prompted credential", exc_info=e)
-                        click.echo("    Warning: Failed to store credential")
-                else:
-                    result["skipped"] += 1
-
-            return result
-    except Exception as e:
-        logger.debug("Could not initialize secret store prompt", exc_info=e)
-        click.echo("  Warning: Could not initialize secret store")
         return result
 
 
@@ -585,7 +473,10 @@ def _echo_install_summary(
     db: HubDatabase | None = None,
     secret_store: SecretStore | None = None,
 ) -> bool:
-    """Print install summary, next steps, and API key prompts. Returns True if all succeeded."""
+    """Print install summary, next steps, and MCP template guidance.
+
+    Returns True if all succeeded.
+    """
     click.echo("=" * 60)
     click.echo("  Summary")
     click.echo("=" * 60)
@@ -604,30 +495,16 @@ def _echo_install_summary(
     click.echo("  2. Start a new session in your AI coding CLI")
     click.echo("  3. Your sessions will now be tracked locally")
 
-    api_key_result = _prompt_api_keys(
-        no_interactive=no_interactive_flag,
-        db=db,
-        secret_store=secret_store,
-    )
     hub_key_result = _prompt_hub_api_keys(
         no_interactive=no_interactive_flag,
         db=db,
         secret_store=secret_store,
     )
 
-    mcp_nothing_configured = (
-        api_key_result["stored"] == 0
-        and api_key_result["already_configured"] == 0
-        and api_key_result["env_found"] == 0
-    )
-    if no_interactive_flag or mcp_nothing_configured:
-        click.echo("\nMCP Servers (via Gobby proxy):")
-        click.echo("  Configure API keys to enable external integrations:")
-        click.echo("    gobby secrets set github_personal_access_token")
-        click.echo("    gobby secrets set linear_api_key")
-        click.echo("    gobby secrets set context7_api_key")
-        click.echo("  Or set environment variables (GITHUB_PERSONAL_ACCESS_TOKEN, etc.)")
-        click.echo("  Restart the daemon after setting: gobby restart")
+    from .install_setup import _echo_available_mcp_templates
+
+    click.echo("")
+    _echo_available_mcp_templates(db)
 
     if hub_key_result["unresolved"]:
         click.echo("\nSkill hubs with missing API keys:")

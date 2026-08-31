@@ -16,7 +16,10 @@ from gobby.cli.installers.hook_commands import (
 pytestmark = pytest.mark.unit
 
 
-def test_build_hook_command_prefers_local_ghook(temp_dir: Path) -> None:
+def test_build_hook_command_prefers_local_ghook(
+    temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GOBBY_NATIVE_BIN_DIR", raising=False)
     ghook_bin = temp_dir / ".gobby" / "bin" / "ghook"
     ghook_bin.parent.mkdir(parents=True)
     ghook_bin.write_text("")

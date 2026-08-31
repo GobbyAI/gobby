@@ -41,11 +41,11 @@ def _manager(session: SimpleNamespace, updated: SimpleNamespace | None) -> Magic
     return manager
 
 
-def _event(data: dict[str, object]) -> HookEvent:
+def _event(data: dict[str, object], *, source: SessionSource = SessionSource.GROK) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_AGENT,
         session_id="grok-external",
-        source=SessionSource.GROK,
+        source=source,
         timestamp=datetime.now(UTC),
         data=data,
         machine_id="machine-1",
@@ -254,3 +254,101 @@ def test_startup_source_with_clear_resolution_binds_without_prompt(
     assert consumed is not None
     assert consumed.session_id == predecessor_id
     mock_schedule.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("cli", "session_start_types_prompt"),
+    [(SessionSource.GROK, True), (SessionSource.CODEX, False)],
+)
+def test_clear_session_start_types_pull_prompt_only_when_none_is_in_flight(
+    cli: SessionSource,
+    session_start_types_prompt: bool,
+    temp_db: HubDatabase,
+) -> None:
+    """Codex SessionStart fires on the successor's first submitted prompt, so one is already in flight."""
+    machine_id = require_machine_id()
+    project = LocalProjectManager(temp_db).create(
+        name=f"clear-{cli.value}", repo_path=f"/tmp/clear-{cli.value}"
+    )
+    sessions = SessionManager(temp_db)
+    term = {
+        "tmux_pane": "%101",
+        "tmux_socket_path": "/tmp/tmux",
+        "parent_pid": 10323,
+        "parent_create_time": 1.0,
+    }
+    predecessor_id = sessions.register_session(
+        external_id="pred-ext",
+        machine_id=machine_id,
+        source=cli.value,
+        project_id=project.id,
+        terminal_context=term,
+    )
+    stage_clear_attempt(
+        temp_db,
+        predecessor_id,
+        attempt_id="attempt-1",
+        handoff_markdown=render_handoff_markdown(current_state="Ready.", next_steps=["Continue."]),
+        observations=[],
+        terminal_context=term,
+        chat_context=None,
+    )
+    successor_id = sessions.register_session(
+        external_id="succ-ext",
+        machine_id=machine_id,
+        source=cli.value,
+        project_id=project.id,
+        terminal_context=term,
+    )
+    predecessor = sessions.get(predecessor_id)
+    successor = sessions.get(successor_id)
+    assert predecessor is not None
+    assert successor is not None
+
+    handler = MagicMock()
+    handler.terminal_manager = None
+    handler._session_manager = sessions
+    handler._session_coordinator = None
+    handler._resolve_message_processor.return_value = None
+    handler._build_claimed_task_context.return_value = None
+    event = _event(
+        {
+            "source": "clear",
+            "skip_default_agent_activation": True,
+            "cwd": f"/tmp/clear-{cli.value}",
+        },
+        source=cli,
+    )
+    event.task_id = None
+    resolution = SessionStartResolution(
+        session=None,
+        session_source="clear",
+        clear_predecessor=predecessor,
+        clear_attempt_id="attempt-1",
+    )
+    materialize = "gobby.hooks.event_handlers._session_start.materialize"
+
+    with (
+        patch(f"{materialize}._seed_parent_turn_seq"),
+        patch(f"{materialize}._seed_wiki_overview_var"),
+        patch(f"{materialize}.seed_user_profile_content"),
+        patch(f"{materialize}.prepare_compact_continuation_variables"),
+        patch(f"{materialize}._schedule_tmux_window_rename_for_session"),
+        patch(f"{materialize}.classify_session_start_context"),
+        patch(f"{materialize}.expire_stale_terminal_sessions_for_context"),
+        patch(f"{materialize}.schedule_handoff_continuation") as mock_schedule,
+    ):
+        activate_materialized_session(
+            handler,
+            event,
+            successor_id,
+            resolution=resolution,
+            session_obj=successor,
+            project_id=project.id,
+            transcript_path=None,
+        )
+
+    rebound = sessions.get(successor_id)
+    assert rebound is not None
+    assert rebound.parent_session_id == predecessor_id
+    assert mock_schedule.called is session_start_types_prompt

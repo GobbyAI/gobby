@@ -1,4 +1,5 @@
 import json
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import click
@@ -32,6 +33,28 @@ def mock_config() -> MagicMock:
     return MagicMock(spec=DaemonConfig, daemon_port=60887)
 
 
+@pytest.fixture(autouse=True)
+def cwd_project_id() -> Iterator[MagicMock]:
+    """Keep CLI tests off the real hub when resolving the cwd project."""
+    with patch("gobby.cli.mcp_proxy._cwd_project_id", return_value=None) as mock_scope:
+        yield mock_scope
+
+
+@pytest.fixture(autouse=True)
+def cli_mcp_project() -> Iterator[MagicMock]:
+    """Keep scoped write commands off the real hub project registry."""
+
+    def fake_resolve(*, global_scope: bool) -> tuple[str | None, str]:
+        if global_scope:
+            return None, "global"
+        return "proj-other", "project"
+
+    with patch(
+        "gobby.cli.mcp_proxy.resolve_cli_mcp_project", side_effect=fake_resolve
+    ) as mock_resolve:
+        yield mock_resolve
+
+
 def test_get_daemon_client_rejects_non_mapping_context_obj() -> None:
     ctx = click.Context(mcp_proxy, obj=object())
 
@@ -55,8 +78,11 @@ def test_list_servers_success(cli_runner, mock_daemon_client, mock_config) -> No
 
         assert result.exit_code == 0
         assert "MCP Servers (1/2 connected):" in result.output
-        assert "● server1 (connected)" in result.output
-        assert "○ server2 (disconnected)" in result.output
+        assert "server1" in result.output
+        assert "connected" in result.output
+        assert "server2" in result.output
+        assert "disconnected" in result.output
+        assert "NAME  SCOPE  TEMPLATE  STATE" in result.output
 
 
 def test_list_servers_json(cli_runner, mock_daemon_client, mock_config) -> None:
@@ -165,7 +191,15 @@ def test_add_server_http(cli_runner, mock_daemon_client, mock_config) -> None:
 
         result = cli_runner.invoke(
             mcp_proxy,
-            ["add-server", "my-http-server", "-t", "http", "-u", "https://api.example.com/mcp"],
+            [
+                "add-server",
+                "my-http-server",
+                "-t",
+                "http",
+                "-u",
+                "https://api.example.com/mcp",
+                "--global",
+            ],
             obj={"config": mock_config},
         )
 
@@ -185,6 +219,7 @@ def test_add_server_http(cli_runner, mock_daemon_client, mock_config) -> None:
                 "env": None,
                 "headers": None,
                 "enabled": True,
+                "scope": "global",
             },
             timeout=30.0,
         )
@@ -207,6 +242,7 @@ def test_add_server_stdio(cli_runner, mock_daemon_client, mock_config) -> None:
                 "npx",
                 "--args",
                 '["mcp-server"]',
+                "--global",
             ],
             obj={"config": mock_config},
         )
@@ -258,6 +294,7 @@ def test_add_server_with_env(cli_runner, mock_daemon_client, mock_config) -> Non
                 "node",
                 "-e",
                 '{"API_KEY": "secret123"}',
+                "--global",
             ],
             obj={"config": mock_config},
         )
@@ -273,7 +310,16 @@ def test_add_server_disabled(cli_runner, mock_daemon_client, mock_config) -> Non
 
         result = cli_runner.invoke(
             mcp_proxy,
-            ["add-server", "my-server", "-t", "http", "-u", "http://example.com", "--disabled"],
+            [
+                "add-server",
+                "my-server",
+                "-t",
+                "http",
+                "-u",
+                "http://example.com",
+                "--disabled",
+                "--global",
+            ],
             obj={"config": mock_config},
         )
 
@@ -335,6 +381,44 @@ def test_remove_server_failure(cli_runner, mock_daemon_client, mock_config) -> N
 
         assert result.exit_code == 1
         assert "Server not found" in result.output
+
+
+def test_remove_server_sends_cwd_project_scope(
+    cli_runner: CliRunner, mock_daemon_client: MagicMock, mock_config: MagicMock
+) -> None:
+    """Inside a project, remove-server targets the exact project row."""
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {"success": True}
+
+        result = cli_runner.invoke(
+            mcp_proxy,
+            ["remove-server", "old-server", "--yes"],
+            obj={"config": mock_config},
+        )
+
+        assert result.exit_code == 0
+        endpoint = mock_daemon_client.call_http_api.call_args[0][0]
+        assert endpoint == "/api/mcp/servers/old-server?scope=project&project_id=proj-other"
+
+
+def test_remove_server_global_scope(
+    cli_runner: CliRunner, mock_daemon_client: MagicMock, mock_config: MagicMock
+) -> None:
+    """--global removes the machine-wide row without a project id."""
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {"success": True}
+
+        result = cli_runner.invoke(
+            mcp_proxy,
+            ["remove-server", "old-server", "--global", "--yes"],
+            obj={"config": mock_config},
+        )
+
+        assert result.exit_code == 0
+        endpoint = mock_daemon_client.call_http_api.call_args[0][0]
+        assert endpoint == "/api/mcp/servers/old-server?scope=global"
 
 
 # ==============================================================================
@@ -607,6 +691,56 @@ def test_import_server_with_specific_servers(cli_runner, mock_daemon_client, moc
         )
 
         assert result.exit_code == 0
+
+
+def test_import_server_sends_cwd_project_scope(
+    cli_runner: CliRunner, mock_daemon_client: MagicMock, mock_config: MagicMock
+) -> None:
+    """Inside a project, import-server imports into that project."""
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {
+            "success": True,
+            "imported": ["server1"],
+            "skipped": [],
+            "failed": [],
+        }
+
+        result = cli_runner.invoke(
+            mcp_proxy,
+            ["import-server", "--from-project", "prod"],
+            obj={"config": mock_config},
+        )
+
+        assert result.exit_code == 0
+        payload = mock_daemon_client.call_http_api.call_args[1]["json_data"]
+        assert payload["project_id"] == "proj-other"
+        assert payload["scope"] == "project"
+
+
+def test_import_server_global_scope(
+    cli_runner: CliRunner, mock_daemon_client: MagicMock, mock_config: MagicMock
+) -> None:
+    """--global imports machine-wide rows without a project id."""
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {
+            "success": True,
+            "imported": ["server1"],
+            "skipped": [],
+            "failed": [],
+        }
+
+        result = cli_runner.invoke(
+            mcp_proxy,
+            ["import-server", "--from-project", "prod", "--global"],
+            obj={"config": mock_config},
+        )
+
+        assert result.exit_code == 0
+        payload = mock_daemon_client.call_http_api.call_args[1]["json_data"]
+        assert payload["project_id"] is None
+        assert payload["scope"] == "global"
 
 
 # ==============================================================================
@@ -920,3 +1054,263 @@ def test_api_error_response(cli_runner, mock_daemon_client, mock_config) -> None
 
         assert result.exit_code == 1
         assert "Internal Server Error" in result.output
+
+
+def test_add_server_from_template_prompts_for_missing_secrets(
+    cli_runner: CliRunner,
+    mock_daemon_client: MagicMock,
+    mock_config: MagicMock,
+    cli_mcp_project: MagicMock,
+) -> None:
+    project_id = "11111111-1111-4111-8111-111111111111"
+    cli_mcp_project.side_effect = lambda *, global_scope: (project_id, "project")
+    add_payload = {
+        "success": True,
+        "name": "demo-instance",
+        "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "scope": "project",
+        "template": "demo",
+        "missing_secrets": ["demo_token"],
+        "needs_configuration": True,
+        "configure": ["gobby secrets set demo_token"],
+    }
+    refresh_payload = {"success": True, "stats": {}}
+    mock_daemon_client.call_http_api.return_value.status_code = 200
+    mock_daemon_client.call_http_api.return_value.json.side_effect = [
+        add_payload,
+        refresh_payload,
+        {"success": True, "templates": [{"name": "demo", "params": [{"name": "region"}]}]},
+        {
+            "success": True,
+            "template": {
+                "name": "demo",
+                "params": [{"name": "region", "required": True}],
+            },
+        },
+    ]
+    store = MagicMock()
+    with (
+        patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client),
+        patch("gobby.cli.mcp_proxy.require_cli_database", return_value=MagicMock()),
+        patch(
+            "gobby.cli.installers.shared.registered_project_id",
+            return_value=project_id,
+        ),
+        patch("gobby.cli.mcp_proxy.click.prompt", return_value="secret-value"),
+        patch("gobby.cli.mcp_proxy._stdin_is_tty", return_value=True),
+        patch("gobby.cli.mcp_proxy.store_cli_secret", store),
+    ):
+        result = cli_runner.invoke(
+            mcp_proxy,
+            [
+                "add-server",
+                "demo-instance",
+                "--template",
+                "demo",
+                "--set",
+                "region=us",
+            ],
+            obj={"config": mock_config},
+        )
+    assert result.exit_code == 0
+    add_call = mock_daemon_client.call_http_api.call_args_list[0]
+    assert add_call.args[0] == "/api/mcp/servers"
+    posted = add_call.kwargs["json_data"]
+    assert posted["template"] == "demo"
+    assert posted["values"]["region"] == "us"
+    assert posted["project_id"] == project_id
+    store.assert_called()
+    refresh_call = mock_daemon_client.call_http_api.call_args_list[1]
+    assert refresh_call.args[0] == "/api/mcp/refresh"
+
+    mock_daemon_client.call_http_api.return_value.json.side_effect = None
+    mock_daemon_client.call_http_api.return_value.json.return_value = add_payload
+    with (
+        patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client),
+        patch("gobby.cli.mcp_proxy.require_cli_database", return_value=MagicMock()),
+        patch(
+            "gobby.cli.installers.shared.registered_project_id",
+            return_value=project_id,
+        ),
+        patch("gobby.cli.mcp_proxy._stdin_is_tty", return_value=False),
+    ):
+        non_interactive = cli_runner.invoke(
+            mcp_proxy,
+            ["add-server", "demo-instance", "--template", "demo", "--set", "region=us"],
+            obj={"config": mock_config},
+        )
+    assert non_interactive.exit_code == 0
+    assert "gobby secrets set demo_token" in non_interactive.output
+    assert "needs_configuration" in non_interactive.output or "demo_token" in non_interactive.output
+
+    templates_payload = {
+        "success": True,
+        "templates": [
+            {
+                "name": "demo",
+                "scope": "project",
+                "owner": "gobby",
+                "params": [{"name": "region", "required": True}],
+            }
+        ],
+    }
+    mock_daemon_client.call_http_api.return_value.json.return_value = templates_payload
+    with (
+        patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client),
+        patch("gobby.cli.mcp_proxy.require_cli_database", return_value=MagicMock()),
+        patch(
+            "gobby.cli.installers.shared.registered_project_id",
+            return_value=project_id,
+        ),
+    ):
+        listed = cli_runner.invoke(mcp_proxy, ["list-templates"], obj={"config": mock_config})
+        shown = cli_runner.invoke(mcp_proxy, ["show-template", "demo"], obj={"config": mock_config})
+    assert listed.exit_code == 0
+    assert shown.exit_code == 0
+    assert "demo" in listed.output
+    assert "region" in shown.output
+
+
+def test_refresh_sends_cwd_project_scope(
+    cli_runner: CliRunner,
+    mock_daemon_client: MagicMock,
+    mock_config: MagicMock,
+    cwd_project_id: MagicMock,
+) -> None:
+    """refresh passes the registered cwd project id to the daemon."""
+    cwd_project_id.return_value = "proj-other"
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {
+            "success": True,
+            "stats": {"servers_processed": 1},
+        }
+
+        result = cli_runner.invoke(
+            mcp_proxy,
+            ["refresh", "--server", "lightspeed"],
+            obj={"config": mock_config},
+        )
+
+        assert result.exit_code == 0
+        json_data = mock_daemon_client.call_http_api.call_args[1]["json_data"]
+        assert json_data["server"] == "lightspeed"
+        assert json_data["project_id"] == "proj-other"
+
+
+def test_refresh_omits_project_scope_outside_a_project(
+    cli_runner: CliRunner, mock_daemon_client: MagicMock, mock_config: MagicMock
+) -> None:
+    """refresh outside a registered project sends no project_id."""
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {
+            "success": True,
+            "stats": {"servers_processed": 0},
+        }
+
+        result = cli_runner.invoke(mcp_proxy, ["refresh"], obj={"config": mock_config})
+
+        assert result.exit_code == 0
+        json_data = mock_daemon_client.call_http_api.call_args[1]["json_data"]
+        assert "project_id" not in json_data
+
+
+def test_list_servers_sends_cwd_project_scope(
+    cli_runner: CliRunner,
+    mock_daemon_client: MagicMock,
+    mock_config: MagicMock,
+    cwd_project_id: MagicMock,
+) -> None:
+    """list-servers scopes the listing to the registered cwd project."""
+    cwd_project_id.return_value = "proj-other"
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {
+            "servers": [{"name": "lightspeed", "state": "pending", "scope": "project"}],
+            "connected": 0,
+            "total": 1,
+        }
+
+        result = cli_runner.invoke(mcp_proxy, ["list-servers"], obj={"config": mock_config})
+
+        assert result.exit_code == 0
+        endpoint = mock_daemon_client.call_http_api.call_args[0][0]
+        assert endpoint == "/api/mcp/servers?project_id=proj-other"
+        assert "lightspeed" in result.output
+
+
+def test_list_tools_sends_cwd_project_scope(
+    cli_runner: CliRunner,
+    mock_daemon_client: MagicMock,
+    mock_config: MagicMock,
+    cwd_project_id: MagicMock,
+) -> None:
+    """list-tools scopes the query to the registered cwd project."""
+    cwd_project_id.return_value = "proj-other"
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {
+            "tools": {"lightspeed": [{"name": "listPets", "brief": "List pets"}]}
+        }
+
+        result = cli_runner.invoke(
+            mcp_proxy, ["list-tools", "--server", "lightspeed"], obj={"config": mock_config}
+        )
+
+        assert result.exit_code == 0
+        endpoint = mock_daemon_client.call_http_api.call_args[0][0]
+        assert endpoint == "/api/mcp/tools?server_filter=lightspeed&project_id=proj-other"
+        assert "listPets" in result.output
+
+
+def test_get_schema_sends_cwd_project_scope(
+    cli_runner: CliRunner,
+    mock_daemon_client: MagicMock,
+    mock_config: MagicMock,
+    cwd_project_id: MagicMock,
+) -> None:
+    """get-schema passes the registered cwd project id in the payload."""
+    cwd_project_id.return_value = "proj-other"
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {
+            "success": True,
+            "schema": {"type": "object"},
+        }
+
+        result = cli_runner.invoke(
+            mcp_proxy, ["get-schema", "lightspeed", "listPets"], obj={"config": mock_config}
+        )
+
+        assert result.exit_code == 0
+        json_data = mock_daemon_client.call_http_api.call_args[1]["json_data"]
+        assert json_data["server_name"] == "lightspeed"
+        assert json_data["project_id"] == "proj-other"
+
+
+def test_call_tool_sends_cwd_project_scope(
+    cli_runner: CliRunner,
+    mock_daemon_client: MagicMock,
+    mock_config: MagicMock,
+    cwd_project_id: MagicMock,
+) -> None:
+    """call-tool passes the registered cwd project id in the payload."""
+    cwd_project_id.return_value = "proj-other"
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {
+            "success": True,
+            "result": {"pets": [{"id": 1, "name": "rex"}]},
+        }
+
+        result = cli_runner.invoke(
+            mcp_proxy, ["call-tool", "lightspeed", "listPets"], obj={"config": mock_config}
+        )
+
+        assert result.exit_code == 0
+        json_data = mock_daemon_client.call_http_api.call_args[1]["json_data"]
+        assert json_data["server_name"] == "lightspeed"
+        assert json_data["tool_name"] == "listPets"
+        assert json_data["project_id"] == "proj-other"
+        assert "rex" in result.output

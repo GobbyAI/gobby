@@ -19,6 +19,18 @@ from gobby.tasks.transcript_evidence import (
     TranscriptValidationRun,
 )
 
+_ASSERTION_DETAIL_RE = re.compile(
+    r"AssertionError|assertion failed|\bassert\b|panicked at",
+    re.IGNORECASE,
+)
+_PASS_STATUS_RE = re.compile(r"\b(?:PASSED|SKIPPED|XFAIL|XPASS)\b", re.IGNORECASE)
+_FAILURE_SECTION_BOUNDARY_RE = re.compile(
+    r"^(?:_{2,}\s+\S.*\s+_{2,}|(?:FAILED|ERROR|PASSED|SKIPPED)\s+\S.*|"
+    r".*::\S+\s+(?:PASSED|FAILED|ERROR|SKIPPED)\b)",
+    re.IGNORECASE,
+)
+_NON_EXECUTION_TEST_MATCHERS = frozenset({"gobby-test-quality-audit"})
+
 
 def is_test_convention_path(path: str) -> bool:
     """A test module in any language or any file under a test directory."""
@@ -99,13 +111,12 @@ def evaluate_tdd_evidence(
     tests: tuple[AcceptanceTest, ...],
     evidence: TranscriptEvidence,
 ) -> TddEvidenceResult:
-    """Require assertion-backed red before implementation and a later pass."""
+    """Require one assertion-backed cycle and later coverage of every named test."""
     if not tests:
         return TddEvidenceResult(True, True, ())
 
     findings: list[str] = []
-    red_commands: list[str] = []
-    green_commands: list[str] = []
+    cycle: tuple[TranscriptValidationRun, TranscriptEdit] | None = None
     for test in tests:
         test_edits = sorted(
             (edit for edit in evidence.edits if edit.path == test.path),
@@ -143,7 +154,10 @@ def evaluate_tdd_evidence(
             )
             if green is not None:
                 red = window_red
+                cycle = (red, first_production_edit)
                 break
+        if cycle is not None:
+            break
         if not production_edit_seen:
             findings.append(f"{test.reference}: no production edit follows the test edit")
             continue
@@ -153,10 +167,28 @@ def evaluate_tdd_evidence(
                 "and before the first production edit"
             )
             continue
-        red_commands.append(red.command)
         if green is None:
             findings.append(
                 f"{test.reference}: assertion-backed red has no later production edit and pass"
+            )
+
+    if cycle is None:
+        return TddEvidenceResult(False, False, tuple(findings))
+
+    red, production_edit = cycle
+    findings = []
+    green_commands: list[str] = []
+    for test in tests:
+        green = _find_green_run(
+            test,
+            evidence,
+            red,
+            after_order=production_edit.order,
+        )
+        if green is None:
+            findings.append(
+                f"{test.reference}: no pass after the production edit that completed "
+                "the task-level TDD cycle"
             )
             continue
         green_commands.append(green.command)
@@ -165,7 +197,7 @@ def evaluate_tdd_evidence(
         passed=not findings,
         skipped=False,
         findings=tuple(findings),
-        red_runs=tuple(red_commands),
+        red_runs=(red.command,),
         green_runs=tuple(green_commands),
     )
 
@@ -177,15 +209,59 @@ def _find_red_run(
     first_non_test_edit: TranscriptEdit | None,
 ) -> TranscriptValidationRun | None:
     for run in sorted(evidence.validation_runs, key=lambda item: item.order):
-        if run.outcome != "failure" or run.order <= test_edit_order:
+        if (
+            run.outcome != "failure"
+            or not _is_test_execution_run(run)
+            or run.order <= test_edit_order
+        ):
             continue
         if first_non_test_edit is not None and run.order >= first_non_test_edit.order:
             continue
         if not validation_run_names_test(run.command, run.output, test):
             continue
-        if is_assertion_failure(run.output):
+        if _has_named_assertion_failure(run.output, test):
             return run
     return None
+
+
+def _has_named_assertion_failure(output: str | None, test: AcceptanceTest) -> bool:
+    if not output:
+        return False
+    symbols = (
+        test.symbol,
+        test.symbol.replace(".", "::"),
+        test.symbol.replace("::", "."),
+    )
+    symbol_patterns = tuple(
+        re.compile(rf"(?<![A-Za-z0-9_]){re.escape(symbol)}(?![A-Za-z0-9_])") for symbol in symbols
+    )
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        if not any(pattern.search(line) for pattern in symbol_patterns):
+            continue
+        if _PASS_STATUS_RE.search(line):
+            continue
+        end = min(len(lines), index + 120)
+        for boundary in range(index + 1, end):
+            if _FAILURE_SECTION_BOUNDARY_RE.match(lines[boundary]):
+                end = boundary
+                break
+        section = "\n".join(lines[index:end])
+        if _ASSERTION_DETAIL_RE.search(section) and is_assertion_failure(section):
+            return True
+    return False
+
+
+def _is_test_execution_run(run: TranscriptValidationRun) -> bool:
+    if run.matcher_id in _NON_EXECUTION_TEST_MATCHERS:
+        return False
+    if run.validation_segments:
+        return any(
+            "test" in segment.categories
+            and not segment.command.startswith("gobby test-quality audit")
+            for segment in run.validation_segments
+        )
+    return "test" in run.categories
 
 
 def _find_green_run(
@@ -196,7 +272,11 @@ def _find_green_run(
     after_order: int,
 ) -> TranscriptValidationRun | None:
     for run in sorted(evidence.validation_runs, key=lambda item: item.order):
-        if run.outcome != "success" or run.order <= max(red.order, after_order):
+        if (
+            run.outcome != "success"
+            or not _is_test_execution_run(run)
+            or run.order <= max(red.order, after_order)
+        ):
             continue
         if validation_run_covers_test(run.command, run.output, test):
             return run

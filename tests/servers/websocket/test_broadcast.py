@@ -413,6 +413,20 @@ class TestBroadcastEventMethods:
         msg = _sent_message(ws)
         assert msg["type"] == "terminal_output"
         assert msg["terminal_id"] == "term-1"
+        assert msg["attachment_id"] is None
+        assert msg["data"] == "hello world"
+
+    @pytest.mark.asyncio
+    async def test_broadcast_terminal_output_includes_attachment_id(self) -> None:
+        b = FakeBroadcaster()
+        ws = _make_ws(subscriptions={"terminal_output"})
+        b.clients[ws] = {}
+
+        await b.broadcast_terminal_output("term-1", "hello world", "att-1")
+        msg = _sent_message(ws)
+        assert msg["type"] == "terminal_output"
+        assert msg["terminal_id"] == "term-1"
+        assert msg["attachment_id"] == "att-1"
         assert msg["data"] == "hello world"
 
     @pytest.mark.asyncio

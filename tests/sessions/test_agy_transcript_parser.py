@@ -297,7 +297,9 @@ def test_malformed_line_between_valid_lines_yields_positioned_event() -> None:
     assert all(event.parser_safe for event in events)
     assert [message.content for message in _messages(events[0].records)] == ["hello"]
     assert [message.content for message in _messages(events[2].records)] == ["hi back"]
-    assert events[2].records[0].index == events[2].parsed_index
+    reply = events[2].records[0]
+    assert isinstance(reply, ParsedMessage)
+    assert reply.index == events[2].parsed_index
 
     resumed = list(_agy_parser().iter_parse_events(raws[2:], start_index=events[2].parsed_index))
     assert [message.index for message in _messages(resumed[0].records)] == [2]

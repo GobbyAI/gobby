@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from gobby.agents.terminal_delivery import (
+    TerminalDeliveryAdmissionClosedError,
+    shielded_terminal_delivery,
+)
 from gobby.mcp_proxy.tools.sessions._terminal import (
     _authorize_send_keys_target,
     _backfill_tmux_context_from_sibling,
+    _capture_pane_snapshot,
     _resolve_session_for_compaction,
     _resolve_tmux_target,
     _send_terminal_compaction_command,
@@ -17,7 +23,12 @@ from gobby.mcp_proxy.tools.sessions._terminal_webchat import (
     _clear_live_web_chat_fallback,
     _find_live_web_chat_session,
 )
-from gobby.sessions.clear_continuation import clear_failed_attempt, stage_clear_attempt
+from gobby.sessions.clear_continuation import (
+    CLEAR_ATTEMPT_VARIABLE,
+    clear_failed_attempt,
+    schedule_handoff_continuation,
+    stage_clear_attempt,
+)
 from gobby.sessions.compact_continuation import (
     CodexRolloutCursor,
     CodexRolloutObservationError,
@@ -31,15 +42,31 @@ from gobby.terminal_context import (
     parse_terminal_context_value,
     terminal_context_has_tmux_target,
 )
+from gobby.terminal_ownership import terminal_session_identity
 from gobby.utils.session_context import get_current_session_id
+from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
+    from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
+
+# Successor binding lands 2-3s after staging on an idle daemon (production
+# markers: claude 2.59s, grok 2.18s). A missed deadline reverts the staged
+# handoff and leaves a late-binding successor unbound, so the window must
+# cover a loaded daemon while still bounding the Codex reclaim case.
+_CLEAR_ACK_TIMEOUT_SECONDS = 30.0
+_CLEAR_ACK_POLL_SECONDS = 0.05
+# Codex prints ``codex resume <thread id>`` when the /clear'd thread ends; the
+# successor's rollout only appears once its first prompt is typed.
+_CODEX_CLEAR_BANNER_TIMEOUT_SECONDS = 10.0
+_CODEX_CLEAR_BANNER_POLL_SECONDS = 0.25
+_CODEX_CLEAR_BANNER_CAPTURE_LINES = 300
+_CODEX_CLEAR_CONTINUE_DELAY_SECONDS = 0.5
 
 CLEAR_COMMAND = "/clear"
 
@@ -48,6 +75,134 @@ __all__ = ["CLEAR_COMMAND", "execute_clear_session"]
 
 def _error(message: str, error_code: str) -> dict[str, Any]:
     return {"success": False, "error": message, "error_code": error_code}
+
+
+def _clear_pane_baseline(
+    session_manager: SessionManager,
+    predecessor: Any,
+) -> tuple[Any | None, frozenset[str]]:
+    """Capture the terminal identity and rows that predate clear dispatch."""
+    identity = terminal_session_identity(predecessor)
+    session_ids = {predecessor.id}
+    if identity is None:
+        return None, frozenset(session_ids)
+    try:
+        session_ids.update(
+            session.id for session in session_manager.find_by_terminal_identity(identity)
+        )
+    except Exception:
+        logger.warning(
+            "Failed capturing terminal-clear pane baseline for session %s",
+            predecessor.id,
+            exc_info=True,
+        )
+    return identity, frozenset(session_ids)
+
+
+def _find_new_provider_session(
+    session_manager: SessionManager,
+    predecessor: Any,
+    identity: Any | None,
+    baseline_ids: frozenset[str],
+) -> str | None:
+    """Return a fresh provider-native row observed on the clear target pane."""
+    if identity is None:
+        return None
+    try:
+        candidates = session_manager.find_by_terminal_identity(identity)
+    except Exception:
+        logger.warning(
+            "Failed observing terminal-clear pane for session %s",
+            predecessor.id,
+            exc_info=True,
+        )
+        return None
+    for candidate in reversed(candidates):
+        if candidate.id in baseline_ids or candidate.source != predecessor.source:
+            continue
+        external_changed = bool(
+            candidate.external_id and candidate.external_id != predecessor.external_id
+        )
+        rollout_changed = bool(
+            predecessor.source == "codex"
+            and candidate.transcript_path
+            and candidate.transcript_path != predecessor.transcript_path
+        )
+        if external_changed or rollout_changed:
+            return candidate.id
+    return None
+
+
+async def _codex_thread_end_banner_count(
+    tmux: TmuxSessionManager,
+    target: str,
+    *,
+    thread_id: str,
+) -> int:
+    """Count ``codex resume <thread_id>`` on the pane; Codex prints it when that thread ends."""
+    snapshot = await _capture_pane_snapshot(tmux, target, lines=_CODEX_CLEAR_BANNER_CAPTURE_LINES)
+    return (snapshot or "").count(f"codex resume {thread_id}")
+
+
+async def _wait_for_codex_thread_end(
+    tmux: TmuxSessionManager,
+    target: str,
+    *,
+    thread_id: str,
+    baseline: int,
+) -> bool:
+    """Poll the pane until Codex prints the predecessor's thread-end banner after /clear."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _CODEX_CLEAR_BANNER_TIMEOUT_SECONDS
+    while True:
+        if await _codex_thread_end_banner_count(tmux, target, thread_id=thread_id) > baseline:
+            return True
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(_CODEX_CLEAR_BANNER_POLL_SECONDS, remaining))
+
+
+async def _wait_for_clear_acknowledgment(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    predecessor: Any,
+    *,
+    attempt_id: str,
+    identity: Any | None,
+    baseline_ids: frozenset[str],
+) -> tuple[str, str] | None:
+    """Wait for marker consumption or a fresh provider session on the pane."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _CLEAR_ACK_TIMEOUT_SECONDS
+    variables_manager = SessionVariableManager(db)
+    while True:
+        try:
+            variables = variables_manager.get_variables(predecessor.id)
+        except Exception:
+            logger.debug(
+                "Clear acknowledgment marker observation failed for session %s",
+                predecessor.id,
+                exc_info=True,
+            )
+            variables = {}
+        marker = variables.get(CLEAR_ATTEMPT_VARIABLE)
+        successor_id = marker.get("consumed_by") if isinstance(marker, dict) else None
+        marker_attempt_id = marker.get("attempt_id") if isinstance(marker, dict) else None
+        if isinstance(successor_id, str) and successor_id and marker_attempt_id == attempt_id:
+            return successor_id, "successor_binding"
+        observed_id = _find_new_provider_session(
+            session_manager,
+            predecessor,
+            identity,
+            baseline_ids,
+        )
+        if observed_id is not None:
+            return observed_id, "provider_session"
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return None
+        await asyncio.sleep(min(_CLEAR_ACK_POLL_SECONDS, remaining))
 
 
 async def execute_clear_session(
@@ -194,6 +349,7 @@ async def execute_clear_session(
             "codex_interrupt_observation_unavailable",
         )
 
+    pane_identity, pane_baseline_ids = _clear_pane_baseline(session_manager, session)
     attempt_id = uuid4().hex
     staged = False
     attempt_state: HandoffAttemptState | None = None
@@ -234,43 +390,144 @@ async def execute_clear_session(
             attempt_state=attempt_state,
         )
 
+    async def deliver_clear() -> dict[str, Any]:
+        def failed(message: str, error_code: str, *, command_sent: bool) -> dict[str, Any]:
+            failure = _error(message, error_code)
+            failure.update(
+                {
+                    "session_id": resolved_session_id,
+                    "attempt_id": attempt_id,
+                    "command_sent": command_sent,
+                    "attempt_restored": restore_failed_attempt(),
+                }
+            )
+            return failure
+
+        codex_thread_id: str | None = None
+        banner_baseline = 0
+        if source == "codex":
+            thread_id = getattr(session, "external_id", None)
+            if not isinstance(thread_id, str) or not thread_id:
+                return failed(
+                    "Codex session has no thread id to confirm /clear",
+                    "codex_thread_id_unavailable",
+                    command_sent=False,
+                )
+            codex_thread_id = thread_id
+            # Snapshot before /clear: only a thread-end banner beyond this count is new.
+            banner_baseline = await _codex_thread_end_banner_count(
+                tmux, target, thread_id=thread_id
+            )
+        try:
+            ok, reason, _pending, failure_detail = await _send_terminal_compaction_command(
+                tmux,
+                target,
+                CLEAR_COMMAND,
+                resolved_session_id,
+                cli_source=source if isinstance(source, str) else None,
+                mark_continuation_pending=lambda: True,
+                clear_continuation_pending=restore_failed_attempt,
+                observe_codex_interrupt=observe_codex_interrupt,
+            )
+        except Exception as exc:
+            restore_failed_attempt()
+            logger.warning(
+                "Failed sending /clear for session %s",
+                resolved_session_id,
+                exc_info=True,
+            )
+            return _error(f"failed to send /clear: {exc}", "clear_send_failed")
+
+        if not ok:
+            restore_failed_attempt()
+            failure: dict[str, Any] = _error(
+                reason or "failed to send /clear",
+                "clear_send_failed",
+            )
+            if failure_detail is not None:
+                failure.update(failure_detail)
+            return failure
+
+        if codex_thread_id is not None:
+            # Codex never emits SessionStart for the post-/clear thread and writes its
+            # rollout only on the first prompt, so the successor registers only once a
+            # prompt is typed. Type the continuation ourselves as soon as the pane shows
+            # the predecessor's thread-end banner; that prompt's UserPromptSubmit
+            # materializes the successor and consumes the marker.
+            if not await _wait_for_codex_thread_end(
+                tmux, target, thread_id=codex_thread_id, baseline=banner_baseline
+            ):
+                return failed(
+                    "timed out waiting for Codex to end the thread after /clear",
+                    "clear_successor_not_observed",
+                    command_sent=True,
+                )
+            if not schedule_handoff_continuation(
+                session,
+                build_handoff_continue_prompt(),
+                delay_seconds=_CODEX_CLEAR_CONTINUE_DELAY_SECONDS,
+            ):
+                return failed(
+                    "failed to schedule the Codex clear continuation prompt",
+                    "clear_continuation_unscheduled",
+                    command_sent=True,
+                )
+            logger.info(
+                "Scheduled Codex clear continuation for session %s after thread %s ended",
+                resolved_session_id,
+                codex_thread_id,
+            )
+
+        acknowledgment = await _wait_for_clear_acknowledgment(
+            db,
+            session_manager,
+            session,
+            attempt_id=attempt_id,
+            identity=pane_identity,
+            baseline_ids=pane_baseline_ids,
+        )
+        if acknowledgment is None:
+            restored = restore_failed_attempt()
+            failure = _error(
+                "timed out waiting for clear-session acknowledgment",
+                "clear_acknowledgment_timeout",
+            )
+            failure.update(
+                {
+                    "session_id": resolved_session_id,
+                    "attempt_id": attempt_id,
+                    "command_sent": True,
+                    "attempt_restored": restored,
+                }
+            )
+            return failure
+
+        acknowledged_session_id, acknowledged_by = acknowledgment
+        success = {
+            "success": True,
+            "session_id": resolved_session_id,
+            "attempt_id": attempt_id,
+            "handoff_staged": True,
+            "command_sent": True,
+            "acknowledged_by": acknowledged_by,
+        }
+        if acknowledged_by == "successor_binding":
+            success["successor_id"] = acknowledged_session_id
+        else:
+            success["observed_session_id"] = acknowledged_session_id
+        return success
+
     try:
-        ok, reason, _pending, failure_detail = await _send_terminal_compaction_command(
-            tmux,
-            target,
-            CLEAR_COMMAND,
-            resolved_session_id,
-            cli_source=source if isinstance(source, str) else None,
-            mark_continuation_pending=lambda: True,
-            clear_continuation_pending=restore_failed_attempt,
-            observe_codex_interrupt=observe_codex_interrupt,
+        result = await shielded_terminal_delivery(
+            f"clear-session:{resolved_session_id}",
+            deliver_clear,
+            raise_if_closed=True,
         )
-    except Exception as exc:
+    except TerminalDeliveryAdmissionClosedError as exc:
         restore_failed_attempt()
-        logger.warning(
-            "Failed sending /clear for session %s",
-            resolved_session_id,
-            exc_info=True,
-        )
-        return _error(f"failed to send /clear: {exc}", "clear_send_failed")
-
-    if not ok:
-        restore_failed_attempt()
-        failure: dict[str, Any] = _error(
-            reason or "failed to send /clear",
-            "clear_send_failed",
-        )
-        if failure_detail is not None:
-            failure.update(failure_detail)
-        return failure
-
-    return {
-        "success": True,
-        "session_id": resolved_session_id,
-        "attempt_id": attempt_id,
-        "handoff_staged": True,
-        "command_sent": True,
-    }
+        return _error(str(exc), "clear_delivery_unavailable")
+    assert result is not None
+    return result
 
 
 async def _clear_web_chat_session(

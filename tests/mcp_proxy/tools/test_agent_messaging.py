@@ -938,10 +938,10 @@ class TestSendMessage:
         mock_message_manager.mark_delivered_batch.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_send_message_different_project_rejected(
+    async def test_send_message_different_project_delivered(
         self, messaging_registry, mock_session_manager
     ) -> None:
-        """Reject messages between sessions in different projects."""
+        """Deliver direct session messages across projects."""
         mock_session_manager.get.side_effect = lambda sid: {
             "s-from": MockSession(id="s-from", project_id="11111111-1111-4111-8111-111111110001"),
             "s-to": MockSession(id="s-to", project_id="11111111-1111-4111-8111-111111110002"),
@@ -957,8 +957,8 @@ class TestSendMessage:
             },
         )
 
-        assert result["success"] is False
-        assert "project" in result["error"].lower()
+        assert result["success"] is True
+        assert result["recipient_session_ids"] == ["s-to"]
 
     @pytest.mark.asyncio
     async def test_send_message_auto_writes_agent_runs_result(

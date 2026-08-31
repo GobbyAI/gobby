@@ -180,4 +180,3 @@ def test_agent_worker_inherits_spawning_agent_provider_not_coordinator() -> None
     )
 
     assert resolved == "codex"
-

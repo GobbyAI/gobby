@@ -39,12 +39,13 @@ class TestServerManagementServicePersistence:
         )
 
         assert added["success"] is True
-        assert storage.get_server("durable-server", project_id) is not None
+        stored = storage.get_server("durable-server", project_id)
+        assert stored is not None
         restarted = MCPClientManager(
             project_id=project_id,
             mcp_db_manager=storage,
         )
-        assert restarted.has_server("durable-server")
+        assert restarted.has_server(stored.id)
 
         removed = await ServerManagementService(
             restarted,
@@ -79,8 +80,9 @@ class TestServerManagementServicePersistence:
         }
         await service.add_server("duplicate-server", "http", **kwargs)
 
-        with pytest.raises(ValueError, match="already exists"):
-            await service.add_server("duplicate-server", "http", **kwargs)
+        duplicate = await service.add_server("duplicate-server", "http", **kwargs)
+        assert duplicate["success"] is False
+        assert duplicate["error"] == "duplicate"
 
     async def test_add_rolls_back_runtime_state_when_persistence_fails(
         self,
@@ -88,7 +90,8 @@ class TestServerManagementServicePersistence:
     ) -> None:
         project_id = sample_project["id"]
         storage = MagicMock()
-        storage.upsert.side_effect = RuntimeError("database unavailable")
+        storage.insert_server.side_effect = RuntimeError("database unavailable")
+        storage.get_template.return_value = None
         manager = MCPClientManager(
             server_configs=[],
             project_id=project_id,
@@ -392,3 +395,111 @@ class TestServerManagementServiceImport:
         mock_importer.import_from_query.assert_not_called()
         assert mock_importer.import_from_query.call_count == 0
         assert not mock_importer.import_from_query.called
+
+
+async def test_add_disabled_template_returns_template_disabled_without_persisting(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project_id = sample_project["id"]
+    storage = LocalMCPManager(temp_db)
+    storage.upsert_template(
+        name="disabled-tmpl",
+        project_id=project_id,
+        owner="user",
+        definition={
+            "name": "disabled-tmpl",
+            "description": "Disabled",
+            "version": 1,
+            "transport": "stdio",
+            "command": "uvx",
+            "args": ["demo"],
+            "enabled": False,
+        },
+        enabled=False,
+    )
+    manager = MCPClientManager(
+        server_configs=[],
+        project_id=project_id,
+        mcp_db_manager=storage,
+        lazy_connect=True,
+    )
+    service = ServerManagementService(manager, config_manager=MagicMock())
+
+    result = await service.add_server(
+        "disabled-instance",
+        template="disabled-tmpl",
+        values={},
+        scope="project",
+        project_id=project_id,
+    )
+
+    assert result["success"] is False
+    assert result["error"] == "template_disabled"
+    assert storage.get_server("disabled-instance", project_id) is None
+    assert manager.server_configs == []
+
+
+async def test_concurrent_add_same_name_and_scope_has_one_winner(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    import asyncio
+
+    project_id = sample_project["id"]
+    storage = LocalMCPManager(temp_db)
+    manager = MCPClientManager(
+        server_configs=[],
+        project_id=project_id,
+        mcp_db_manager=storage,
+        lazy_connect=True,
+    )
+    service = ServerManagementService(manager, config_manager=MagicMock())
+
+    async def add(env: dict[str, str]) -> dict[str, Any]:
+        return await service.add_server(
+            "shared-name",
+            "http",
+            url="https://mcp.example.test",
+            env=env,
+            enabled=False,
+            project_id=project_id,
+        )
+
+    first, second = await asyncio.gather(
+        add({"TOKEN": "winner-token", "WINNER_TOKEN": "keep"}),
+        add({"TOKEN": "loser-token", "LOSER_TOKEN": "drop"}),
+    )
+    results = [first, second]
+    winners = [item for item in results if item.get("success") is True]
+    losers = [item for item in results if item.get("error") == "duplicate"]
+    assert len(winners) == 1
+    assert len(losers) == 1
+    rows = temp_db.fetchall(
+        "SELECT id, name FROM mcp_servers WHERE name = %s AND project_id = %s",
+        ("shared-name", project_id),
+    )
+    assert len(rows) == 1
+    assert len(manager.server_configs) == 1
+    stored = storage.get_server("shared-name", project_id)
+    assert stored is not None
+    stored_env = stored.env or {}
+    from gobby.storage.secrets import SecretStore
+
+    store = SecretStore(temp_db)
+    secret_rows = temp_db.fetchall(
+        "SELECT name, description FROM secrets WHERE project_id = %s",
+        (project_id,),
+    )
+    managed = [
+        row
+        for row in secret_rows
+        if str(row.get("description") or "").startswith("Gobby-managed MCP secret:")
+    ]
+    plain_values = {store.get(str(row["name"]), project_id=project_id) for row in managed}
+    winner_kept_extra = "WINNER_TOKEN" in str(stored_env)
+    assert winner_kept_extra != ("LOSER_TOKEN" in str(stored_env))
+    if winner_kept_extra:
+        assert plain_values == {"winner-token", "keep"}
+    else:
+        assert plain_values == {"loser-token", "drop"}

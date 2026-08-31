@@ -200,7 +200,9 @@ async def test_timeout_while_waiting_for_session_lock_never_executes_queued_even
     second_event = _event(tmp_path)
     second_event.data["name"] = "second"
     adapter = MagicMock()
-    adapter.handle_native.side_effect = lambda payload, _manager: handler.evaluate(payload["event"])
+    adapter.handle_native.side_effect = lambda payload, _manager: {
+        "decision": handler.evaluate(payload["event"]).decision
+    }
 
     try:
         first = asyncio.create_task(
@@ -224,7 +226,7 @@ async def test_timeout_while_waiting_for_session_lock_never_executes_queued_even
 
         assert entered == ["first"]
         release_first.set()
-        assert (await first).decision == "allow"
+        assert (await first)["decision"] == "allow"
     finally:
         release_first.set()
         handler.shutdown()

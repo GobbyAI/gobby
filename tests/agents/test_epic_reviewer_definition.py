@@ -124,7 +124,10 @@ def test_loads_required_skills_before_review() -> None:
         "tasks",
         "proportionality",
     ]
-    assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
+    assert load_step["allowed_mcp_tools"] == [
+        "gobby-skills:get_skill",
+        "gobby-skills:get_skill_file",
+    ]
     for skill_name in agent["step_workflow"]["variables"]["required_skills"]:
         assert f'get_skill(name="{skill_name}")' in load_step["status_message"]
     assert load_step["transitions"] == [

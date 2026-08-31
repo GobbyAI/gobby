@@ -149,6 +149,45 @@ def test_optional_handoff_and_feedback_entries_reject_blanks() -> None:
         )
 
 
+def _observation(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "source": "agent",
+        "kind": "friction",
+        "evidence": "evidence",
+        "impact": "impact",
+        "frequency": "once",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_feedback_enums_reject_unlisted_values() -> None:
+    with pytest.raises(ValueError, match=r"kind must be one of"):
+        normalize_feedback_observations([_observation(kind="tool-defect")])
+    with pytest.raises(ValueError, match=r"frequency must be one of"):
+        normalize_feedback_observations([_observation(frequency="sometimes")])
+    with pytest.raises(ValueError, match=r"disposition must be one of"):
+        normalize_feedback_observations([_observation(disposition="observed")])
+
+
+def test_feedback_other_kind_requires_a_novel_label() -> None:
+    with pytest.raises(ValueError, match=r"kind_other_label \(required"):
+        normalize_feedback_observations([_observation(kind="other")])
+    with pytest.raises(ValueError, match=r"restates the 'friction' kind"):
+        normalize_feedback_observations([_observation(kind="other", kind_other_label="Friction")])
+    with pytest.raises(ValueError, match=r"restates the 'missing-affordance' kind"):
+        normalize_feedback_observations(
+            [_observation(kind="other", kind_other_label="missing_affordance")]
+        )
+    with pytest.raises(ValueError, match=r"only allowed when kind is 'other'"):
+        normalize_feedback_observations([_observation(kind="bug", kind_other_label="latency")])
+    [labeled] = normalize_feedback_observations(
+        [_observation(kind="other", kind_other_label="doc-drift")]
+    )
+    assert labeled.kind == "other"
+    assert labeled.kind_other_label == "doc-drift"
+
+
 def test_feedback_batch_writes_one_row_per_observation_and_empty_is_noop(
     temp_db: HubDatabase,
     session_manager: SessionManager,
@@ -170,7 +209,15 @@ def test_feedback_batch_writes_one_row_per_observation_and_empty_is_noop(
                 "impact": "Prevented a malformed call.",
                 "frequency": "once",
                 "suggestion": "Keep the repair hint.",
-                "disposition": "observed",
+                "disposition": "noted",
+            },
+            {
+                "source": "agent",
+                "kind": "other",
+                "kind_other_label": "doc-drift",
+                "evidence": "The guide contradicted the tool schema.",
+                "impact": "Cost one wrong call.",
+                "frequency": "repeated",
             },
         ]
     )
@@ -181,9 +228,11 @@ def test_feedback_batch_writes_one_row_per_observation_and_empty_is_noop(
         "SELECT * FROM session_feedback WHERE session_id = %s ORDER BY created_at, id",
         (session.id,),
     )
-    assert len(ids) == len(rows) == 2
+    assert len(ids) == len(rows) == 3
     assert all(row["reviewed"] is False for row in rows)
     assert all(row["created_at"].utcoffset().total_seconds() == 0 for row in rows)
+    labels = {row["kind"]: row["kind_other_label"] for row in rows}
+    assert labels == {"friction": None, "useful": None, "other": "doc-drift"}
 
 
 def test_handoff_consumes_once_for_compact_and_clear_successor(
@@ -289,6 +338,18 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
         "impact",
         "frequency",
     ]
+    item_properties = schema.input_schema["properties"]["gobby_feedback"]["items"]["properties"]
+    assert item_properties["kind"]["enum"] == [
+        "friction",
+        "bug",
+        "noise",
+        "surprise",
+        "missing-affordance",
+        "useful",
+        "other",
+    ]
+    assert item_properties["frequency"]["enum"] == ["once", "repeated", "always"]
+    assert "kind_other_label" in item_properties
 
     with session_context_for_test(session.id):
         assert await registry.call("feedback", {"observations": []}) == {

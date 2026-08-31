@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.sandbox_resolvers import CodexSandboxResolver
 from gobby.config.app import DaemonConfig
@@ -132,7 +134,8 @@ class TestCodexSubprocessesAreSessionOwned:
 
         manager = WebChatRuntimeManager(
             codex_client=None,
-            codex_client_factory=factory,
+            # The seam fake stands in for the real client at the injection boundary.
+            codex_client_factory=cast(Callable[..., CodexAppServerClient], factory),
             daemon_config=DaemonConfig(),
         )
         backend = manager._codex_backend
@@ -280,8 +283,10 @@ class TestCodexSubprocessesAreSessionOwned:
         assert set(owner._chat_sessions) == {"conv-a", "conv-b"}
         assert len(codex.clients) == 2
         assert session_a._app_client is not session_b._app_client
-        thread_a = session_a._app_client.started_threads[0]
-        thread_b = session_b._app_client.started_threads[0]
+        client_a = next(client for client in codex.clients if client is session_a._app_client)
+        client_b = next(client for client in codex.clients if client is session_b._app_client)
+        thread_a = client_a.started_threads[0]
+        thread_b = client_b.started_threads[0]
         assert thread_a["cwd"] == str(worktree_a)
         assert thread_b["cwd"] == str(worktree_b)
         assert thread_a["cwd"] != thread_b["cwd"]

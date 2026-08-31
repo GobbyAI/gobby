@@ -1,6 +1,7 @@
 import { GhosttyCore } from "@wterm/ghostty";
 
 import { withGobbyAnsiPalette } from "./ghosttyAnsiPalette";
+import { withAnyMotionMouseTracking } from "./terminalMouseTracking";
 
 const WASM_PATH = "/wasm/ghostty-vt.wasm";
 
@@ -17,5 +18,7 @@ export function loadGhosttyCore(): Promise<GhosttyCore> {
   return GhosttyCore.load({
     wasmPath: WASM_PATH,
     scrollbackLimit: SCROLLBACK_LIMIT_BYTES,
-  }).then(withGobbyAnsiPalette);
+  })
+    .then(withGobbyAnsiPalette)
+    .then(withAnyMotionMouseTracking);
 }

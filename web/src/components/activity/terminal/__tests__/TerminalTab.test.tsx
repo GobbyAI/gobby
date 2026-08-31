@@ -42,8 +42,8 @@ vi.mock("../TerminalSessionList", () => ({
       >
         {sessions.map((session) => (
           <option
-            key={`${session.tmux.socket}:${session.tmux.name}`}
-            value={`${session.tmux.socket}:${session.tmux.name}`}
+            key={session.tmux.terminal_id}
+            value={session.tmux.terminal_id}
             data-external={session.external}
           >
             {session.label}
@@ -52,7 +52,7 @@ vi.mock("../TerminalSessionList", () => ({
       </select>
       {sessions.map((session) => (
         <button
-          key={`terminate-${session.tmux.socket}:${session.tmux.name}`}
+          key={`terminate-${session.tmux.terminal_id}`}
           type="button"
           onClick={() => onTerminate(session)}
         >
@@ -240,9 +240,12 @@ describe("attach lifecycle", () => {
 
   it("restores the exact selected target after a component remount", async () => {
     const user = userEvent.setup();
+    // A row-id that is NOT derived from socket:name — restore must match on
+    // the terminals-row identity, not the legacy socket-qualified key.
+    const rowId = "22222222-3333-4444-8555-666666666666";
     const sessions = [
       makeTmuxSession({ name: "one", socket: "default" }),
-      makeTmuxSession({ name: "two", socket: "gobby" }),
+      makeTmuxSession({ name: "two", socket: "gobby", terminal_id: rowId }),
     ];
     hookState = makeHookState({ sessionsLoaded: true, sessions });
     const firstRender = render(<TerminalTab />);
@@ -255,19 +258,16 @@ describe("attach lifecycle", () => {
     });
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Terminal session" }),
-      "gobby:two",
+      rowId,
     );
     await waitFor(() => {
-      expect(hookState.attachSession).toHaveBeenCalledWith(
-        "gobby:two",
-        "gobby",
-      );
+      expect(hookState.attachSession).toHaveBeenCalledWith(rowId, "gobby");
       expect(
         JSON.parse(
           window.sessionStorage.getItem("gobby:terminal:selected-target") ??
             "null",
         ),
-      ).toEqual({ socket: "gobby", sessionName: "two" });
+      ).toEqual({ terminal_id: rowId });
     });
 
     firstRender.unmount();
@@ -276,14 +276,11 @@ describe("attach lifecycle", () => {
 
     await waitFor(() => {
       expect(hookState.attachSession).toHaveBeenCalledTimes(1);
-      expect(hookState.attachSession).toHaveBeenCalledWith(
-        "gobby:two",
-        "gobby",
-      );
+      expect(hookState.attachSession).toHaveBeenCalledWith(rowId, "gobby");
     });
     expect(
       screen.getByRole("combobox", { name: "Terminal session" }),
-    ).toHaveValue("gobby:two");
+    ).toHaveValue(rowId);
   });
 
   it("selects the first row when every pane is dead and hides the keys bar", async () => {

@@ -863,6 +863,116 @@ async def test_grok_uses_terminal_tool_status(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_grok_search_replace_is_a_tdd_edit(tmp_path: Path) -> None:
+    transcript = tmp_path / "grok.jsonl"
+    named_test = tmp_path / "tests" / "test_named.py"
+    other_test = tmp_path / "tests" / "other_named.py"
+    _write_jsonl(
+        transcript,
+        [
+            {
+                "timestamp": BASE_TIME.isoformat(),
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "grok-edit-path",
+                    "title": "search_replace",
+                    "rawInput": {
+                        "file_path": str(named_test),
+                        "old_string": "old",
+                        "new_string": "new",
+                    },
+                },
+            },
+            {
+                "timestamp": (BASE_TIME + timedelta(seconds=1)).isoformat(),
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "grok-edit-target",
+                    "title": "search_replace",
+                    "rawInput": {
+                        "target_file": str(other_test),
+                        "old_string": "old",
+                        "new_string": "new",
+                    },
+                },
+            },
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("grok", transcript),
+        None,
+        default_validation_detection_config(),
+        {"tests/test_named.py", "tests/other_named.py"},
+        str(tmp_path),
+    )
+
+    assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [
+        ("tests/test_named.py", "search_replace"),
+        ("tests/other_named.py", "search_replace"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_grok_completed_status_with_runner_failures_is_failure(tmp_path: Path) -> None:
+    transcript = tmp_path / "grok.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            {
+                "timestamp": BASE_TIME.isoformat(),
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "grok-pytest",
+                    "title": "run_terminal_command",
+                    "rawInput": {
+                        "command": (
+                            "uv run pytest tests/storage/"
+                            "test_postgres_agent_authorization.py::"
+                            "test_project_checkouts_are_machine_isolated_lock_only_and_daemon_writable"
+                        )
+                    },
+                },
+            },
+            {
+                "timestamp": (BASE_TIME + timedelta(seconds=1)).isoformat(),
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "grok-pytest",
+                    "status": "completed",
+                    "content": [
+                        {
+                            "type": "content",
+                            "content": {
+                                "type": "text",
+                                "text": (
+                                    "Pytest: 1 passed, 1 failed\n\n"
+                                    "Failures:\n"
+                                    "     tests/storage/test_postgres_agent_authorization.py:614: "
+                                    "in test_project_checkouts_are_machine_isolated_lock_only_and_daemon_writable\n"
+                                    "     assert locked == rows\n"
+                                    "     E   AssertionError: assert [] == [(UUID('4b0d7'))]\n"
+                                ),
+                            },
+                        }
+                    ],
+                },
+            },
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("grok", transcript),
+        None,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [run.outcome for run in evidence.validation_runs] == ["failure"]
+
+
+@pytest.mark.asyncio
 async def test_qwen_uses_tool_call_result_status(tmp_path: Path) -> None:
     transcript = tmp_path / "qwen.jsonl"
     _write_jsonl(

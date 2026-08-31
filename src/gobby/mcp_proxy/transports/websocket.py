@@ -18,7 +18,7 @@ from websockets.typing import Subprotocol
 from gobby.mcp_proxy.transports.base import OwnerTaskTransportConnection
 
 if TYPE_CHECKING:
-    from gobby.config.mcp import MCPServerConfig
+    from gobby.mcp_proxy.models import MCPServerConfig
 
 logger = logging.getLogger("gobby.mcp.client")
 

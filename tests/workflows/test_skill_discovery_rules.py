@@ -3741,7 +3741,7 @@ class TestCodeIndexNavigationRules:
         allowed = (
             "git log --oneline | grep handoff",
             "grep -n '^#' .gobby/plans/herdr-terminal-client.md",
-            "grep needle docs/research/gobby-feedback/inbox/2026-08-27T183821-claude.md",
+            "grep needle docs/research/agent-feedback-loops.md",
         )
 
         for loaded in (False, True):

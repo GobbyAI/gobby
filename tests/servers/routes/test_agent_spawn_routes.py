@@ -21,6 +21,7 @@ from gobby.servers.http import HTTPServer
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions._title_defaults import format_provisional_session_title
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.state_semantics import current_stage_state
 from gobby.utils.machine_id import require_machine_id
@@ -287,7 +288,10 @@ class TestSpawnAgent:
         assert updated.claimed_by_session_id == data["conversation_id"]
         conversation = session_manager.get(data["conversation_id"])
         assert conversation is not None
-        assert conversation.title == "Claude"
+        assert conversation.seq_num is not None
+        assert conversation.title == format_provisional_session_title(
+            test_project.name, conversation.seq_num, "claude"
+        )
         assert conversation.title_source == "provisional"
 
     def test_spawn_web_chat_preserves_review_status(

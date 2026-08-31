@@ -379,6 +379,8 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         except Exception as exc:
             handler.logger.warning("Explicit session resume failed: %s", exc)
             return HookResponse(decision="block", reason=str(exc))
+        if resumed is None:
+            return HookResponse(decision="allow")
         session_id = resumed.id
         external_id = resumed.external_id
         event.session_id = external_id

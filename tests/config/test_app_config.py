@@ -40,10 +40,11 @@ from gobby.config.features import (
     RecommendToolsConfig,
     ToolSummarizerConfig,
 )
-from gobby.config.hooks import HookTimeoutConfig
+from gobby.config.hooks import HOOK_TRANSPORT_WINDOW_SECONDS, HookTimeoutConfig
 from gobby.config.persistence import MemoryBackupConfig, MemoryConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
+    FeedbackReviewConfig,
     MessageTrackingConfig,
     SessionFeedbackConfig,
     SessionLifecycleConfig,
@@ -58,6 +59,7 @@ from gobby.config.tasks import (
 )
 from gobby.config.ui import UIConfig
 from gobby.config.wiki import WikiConfig
+from gobby.hooks.effect_deadline import BLOCKING_EFFECT_BUDGET_SECONDS
 from gobby.telemetry.config import TelemetrySettings
 
 pytestmark = pytest.mark.unit
@@ -410,6 +412,36 @@ class TestSessionFeedbackConfig:
             DaemonConfig(session_feedback={"survey": "nope"})
 
 
+class TestFeedbackReviewConfig:
+    """Tests for FeedbackReviewConfig and SessionFeedbackConfig.review."""
+
+    def test_default_values(self) -> None:
+        config = FeedbackReviewConfig()
+        assert config.enabled is True
+        assert config.schedule_cron == "0 3 * * *"
+        assert config.prompt_path == "feedback/review"
+        assert config.max_tokens == 8192
+        assert config.max_rows_per_run == 200
+        assert config.max_tasks_per_run == 10
+        assert config.profile == FeatureProfile.MID
+        assert DaemonConfig().session_feedback.review == config
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"max_tokens": 0},
+            {"max_rows_per_run": 0},
+            {"max_tasks_per_run": -1},
+            {"profile": "ultra"},
+        ],
+    )
+    def test_rejects_invalid_values(self, kwargs: dict[str, object]) -> None:
+        with pytest.raises(ValidationError):
+            FeedbackReviewConfig(**kwargs)
+        with pytest.raises(ValidationError):
+            DaemonConfig(session_feedback={"review": kwargs})
+
+
 class TestMCPClientProxyConfig:
     """Tests for MCPClientProxyConfig."""
 
@@ -494,17 +526,33 @@ class TestDaemonConfig:
     def test_coordinated_hook_timeout_defaults(self) -> None:
         config = DaemonConfig()
 
-        assert config.workflow.timeout == 90
-        assert config.hooks.adapter_timeout == 105
+        assert config.workflow.timeout == 24
+        assert config.hooks.adapter_timeout == 26
         assert config.hooks.provider_timeout == 120
         assert config.hooks.additional_context_limit == 9_950
         assert config.hooks.additional_context_limits == {}
+
+    @pytest.mark.unit
+    def test_default_hook_timeouts_expire_inside_the_transport_window(self) -> None:
+        """Past ghook's window the client decides alone, so the daemon must answer first."""
+        config = DaemonConfig()
+
+        assert BLOCKING_EFFECT_BUDGET_SECONDS < config.workflow.timeout
+        assert config.workflow.timeout < config.hooks.adapter_timeout
+        assert config.hooks.adapter_timeout < HOOK_TRANSPORT_WINDOW_SECONDS
 
     @pytest.mark.parametrize(
         ("overrides", "message"),
         [
             ({"workflow": {"timeout": 105}}, "workflow.timeout"),
             ({"hooks": {"adapter_timeout": 120}}, "hooks.adapter_timeout"),
+            # An adapter timeout at or past the transport window can never
+            # produce a gated decision: ghook has already stopped waiting.
+            ({"hooks": {"adapter_timeout": 30.0}}, "transport window"),
+            ({"hooks": {"adapter_timeout": 45.0}}, "transport window"),
+            # Evaluation must outlive the blocking effects it contains.
+            ({"workflow": {"timeout": 20.0}}, "blocking-effect budget"),
+            ({"workflow": {"timeout": 5.0}}, "blocking-effect budget"),
         ],
     )
     @pytest.mark.unit
@@ -1079,7 +1127,7 @@ class TestWorkflowConfig:
         """Test default workflow config."""
         config = WorkflowConfig()
         assert config.enabled is True
-        assert config.timeout == 90.0
+        assert config.timeout == 24.0
 
     def test_timeout_validation(self) -> None:
         """Test the bundled zero sentinel resolves to the default timeout."""

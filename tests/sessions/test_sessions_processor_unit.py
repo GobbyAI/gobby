@@ -695,6 +695,7 @@ class TestProcessSession:
 
         processor.register_session("session-1", str(transcript))
         mock_parser = MagicMock()
+        mock_parser.supports_incremental_state = False
         mock_parser.parse_lines = MagicMock(return_value=[])
         processor._parsers["session-1"] = mock_parser
 
@@ -1026,6 +1027,7 @@ class TestProcessSession:
 
         # Mock parser to return empty list
         mock_parser = MagicMock()
+        mock_parser.supports_incremental_state = False
         mock_parser.parse_lines = MagicMock(return_value=[])
         processor._parsers["session-1"] = mock_parser
 
@@ -1174,6 +1176,7 @@ class TestProcessSession:
 
         # Mock parser
         mock_parser = MagicMock()
+        mock_parser.supports_incremental_state = False
         parsed_msg = ParsedMessage(
             index=1,
             role="user",
@@ -1292,6 +1295,7 @@ class TestProcessSession:
             raw_json={},
         )
         mock_parser = MagicMock()
+        mock_parser.supports_incremental_state = False
         mock_parser.parse_lines = MagicMock(return_value=[parsed_msg])
         processor._parsers["session-1"] = mock_parser
         with patch.object(
@@ -1345,6 +1349,7 @@ class TestProcessSession:
             ]
 
         parser = MagicMock()
+        parser.supports_incremental_state = False
         parser.parse_lines.side_effect = parse_lines
         processor._parsers["session-1"] = parser
         persist_patcher = patch.object(processor, "_persist_usage_events", new_callable=AsyncMock)
@@ -1555,6 +1560,7 @@ class TestWebSocketBroadcast:
             raw_json={},
         )
         mock_parser = MagicMock()
+        mock_parser.supports_incremental_state = False
         mock_parser.parse_lines = MagicMock(return_value=[parsed_msg])
         processor._parsers["session-1"] = mock_parser
 
@@ -1597,6 +1603,7 @@ class TestWebSocketBroadcast:
             raw_json={},
         )
         mock_parser = MagicMock()
+        mock_parser.supports_incremental_state = False
         mock_parser.parse_lines = MagicMock(return_value=[parsed_msg])
         processor._parsers["session-1"] = mock_parser
 
@@ -1636,6 +1643,7 @@ class TestWebSocketBroadcast:
             raw_json={},
         )
         mock_parser = MagicMock()
+        mock_parser.supports_incremental_state = False
         mock_parser.parse_lines = MagicMock(return_value=[parsed_msg])
         processor._parsers["session-1"] = mock_parser
 
@@ -1681,6 +1689,7 @@ class TestMultipleMessages:
             for i in range(3)
         ]
         mock_parser = MagicMock()
+        mock_parser.supports_incremental_state = False
         mock_parser.parse_lines = MagicMock(return_value=parsed_messages)
         processor._parsers["session-1"] = mock_parser
 
@@ -1723,6 +1732,7 @@ class TestModelExtraction:
             model="claude-opus-4-5-20251101",
         )
         mock_parser = MagicMock()
+        mock_parser.supports_incremental_state = False
         mock_parser.parse_lines = MagicMock(return_value=[parsed_msg])
         processor._parsers["session-1"] = mock_parser
 
@@ -1879,6 +1889,7 @@ class TestModelExtraction:
             message_id="token-count-1",
         )
         mock_parser = MagicMock()
+        mock_parser.supports_incremental_state = False
         mock_parser.parse_lines.return_value = [parsed_msg]
         processor._active_sessions["session-1"] = str(transcript)
         processor._parsers["session-1"] = mock_parser
@@ -2266,6 +2277,7 @@ class TestModelExtraction:
             message_id="grok-window",
         )
         mock_parser = MagicMock()
+        mock_parser.supports_incremental_state = False
         mock_parser.parse_lines.return_value = [parsed_msg]
         processor._active_sessions["session-1"] = str(transcript)
         processor._parsers["session-1"] = mock_parser
@@ -2358,6 +2370,7 @@ class TestModelExtraction:
             message_id="grok-token",
         )
         mock_parser = MagicMock()
+        mock_parser.supports_incremental_state = False
         mock_parser.parse_lines.return_value = [parsed_msg]
         processor._active_sessions["session-1"] = str(transcript)
         processor._parsers["session-1"] = mock_parser
@@ -2406,6 +2419,7 @@ class TestModelExtraction:
             model=None,
         )
         mock_parser = MagicMock()
+        mock_parser.supports_incremental_state = False
         mock_parser.parse_lines = MagicMock(return_value=[parsed_msg])
         processor._parsers["session-1"] = mock_parser
 

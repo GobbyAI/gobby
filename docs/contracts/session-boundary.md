@@ -30,7 +30,12 @@ Rendered Markdown lives in `sessions.handoff_markdown` with sections in this ord
 
 Feedback is excluded from Markdown. Each observation becomes one `session_feedback` row
 with session, source, kind, evidence, impact, frequency, optional suggestion and
-disposition, `reviewed=false`, and a UTC creation timestamp. Empty feedback writes no
+disposition, `reviewed=false`, and a UTC creation timestamp. `kind` is an enum
+(`friction`, `bug`, `noise`, `surprise`, `missing-affordance`, `useful`, `other`);
+`frequency` is `once`, `repeated`, or `always`; `disposition`, when present, is
+`worked-around`, `filed-task`, `fixed`, `escalated`, or `noted`. `kind` `other`
+requires `kind_other_label` (a short label naming the unlisted kind, rejected when
+it restates a listed kind); every other kind forbids it. Empty feedback writes no
 rows. Both feedback entry points use the same transactional batch writer.
 
 Bundled ask-once survey gates prompt in-scope sessions to call

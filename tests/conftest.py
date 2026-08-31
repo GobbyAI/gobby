@@ -293,9 +293,23 @@ def safe_db_dir() -> Iterator[Path]:
 
 @pytest.fixture(scope="session")
 def safe_gobby_home_dir() -> Iterator[Path]:
-    """Session-scoped temp directory for safe Gobby home."""
+    """Session-scoped temp directory for safe Gobby home.
+
+    The home is seeded with the machine identity the process resolved before
+    home isolation. Collection-time ``require_machine_id()`` calls and the
+    schema seed's machines row both use that identity; without the file, any
+    ``clear_cache()`` (e.g. tests/adapters/test_codex_machine_id.py) makes the
+    next derivation mint a fresh uuid under this empty home, orphaning every
+    machine-scoped row for the rest of the session.
+    """
+    from gobby.utils.machine_id import get_machine_id
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
+        home = Path(tmpdir)
+        machine_id = get_machine_id()
+        if machine_id:
+            (home / "machine_id").write_text(f"{machine_id}\n")
+        yield home
 
 
 @pytest.fixture
@@ -522,6 +536,49 @@ def mock_daemon_config() -> "MagicMock":
     config.web_chat_sandbox.enabled = False
     config.databases.falkordb.password = None
     return config
+
+
+@pytest.fixture(scope="session")
+def _session_machine_identity() -> str | None:
+    """The machine identity resolved once for the whole test session."""
+    from gobby.utils.machine_id import get_machine_id
+
+    return get_machine_id()
+
+
+@pytest.fixture(autouse=True)
+def _stable_machine_identity(_session_machine_identity: str | None) -> Iterator[None]:
+    """Re-pin the process machine-id cache after every test.
+
+    Tests may clear or repoint the cache (tests/adapters/test_codex_machine_id.py)
+    and tests may redirect GOBBY_HOME to homes with no machine_id file; the first
+    identity derivation after such a clear would otherwise mint a fresh uuid that
+    no schema seed has enrolled, cascading MachineNotRegistered / FK failures
+    through every DB-backed test that follows.
+    """
+    yield
+    if _session_machine_identity is not None:
+        from gobby.utils import machine_id as machine_id_module
+
+        with machine_id_module._cache_lock:
+            machine_id_module._cached_machine_id = _session_machine_identity
+
+
+@pytest.fixture(autouse=True)
+def _clear_worker_staging() -> Iterator[None]:
+    """Clear thread-local receipt staging around every test.
+
+    Production brackets hook handling with take_worker_staging() on the adapter
+    worker thread (adapter_execution.run_adapter); tests that call
+    RuleEngine.evaluate or hook handlers directly bypass that bracket, so
+    staged one-shot payloads would otherwise accumulate on the pytest thread
+    and leak into later tests' staged-effects metadata.
+    """
+    from gobby.hooks.receipt_effects import take_worker_staging
+
+    take_worker_staging()
+    yield
+    take_worker_staging()
 
 
 @pytest.fixture(autouse=True)

@@ -543,6 +543,7 @@ async def test_init_stateful_services_starts_listener(
     monkeypatch.setattr(services, "_register_stateful_services", noop_register)
     monkeypatch.setattr(services, "_apply_stateful_services", lambda _runner: None)
     monkeypatch.setattr(services, "_init_project_context", lambda _runner: None)
+    monkeypatch.setattr(services, "_schedule_scoped_tool_backfill", lambda _runner: None)
 
     await services.init_stateful_services(cast(Any, runner))
     assert started["count"] == 1

@@ -1,17 +1,48 @@
 """Server management service."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
+from gobby.mcp_proxy.client_manager.server_registry import config_from_server
 from gobby.mcp_proxy.manager import MCPClientManager
-from gobby.mcp_proxy.models import MCPServerConfig
+from gobby.mcp_proxy.models import MCPError, MCPServerConfig
+from gobby.mcp_proxy.templates import MCPServerTemplate, expand_template
+from gobby.storage.projects import GLOBAL_PROJECT_ID
+from gobby.storage.secrets import SecretStore
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
     from gobby.llm.service import LLMService
 
 logger = logging.getLogger("gobby.mcp.server")
+
+
+def _scope_project(scope: str | None, project_id: str | None) -> str | None:
+    if scope == "global":
+        return GLOBAL_PROJECT_ID
+    return project_id
+
+
+def _scope_label(project_id: str | None) -> str:
+    return "global" if project_id == GLOBAL_PROJECT_ID else "project"
+
+
+def _duplicate_envelope(existing: Any, name: str, scope_project: str) -> dict[str, Any]:
+    template = getattr(existing, "template", None)
+    return {
+        "success": False,
+        "error": "duplicate",
+        "name": name,
+        "id": getattr(existing, "id", None),
+        "scope": _scope_label(str(getattr(existing, "project_id", scope_project))),
+        "template": template,
+    }
+
+
+def _configure_commands(missing_secrets: list[str], *, global_scope: bool) -> list[str]:
+    flag = " --global" if global_scope else ""
+    return [f"gobby secrets set {secret}{flag}" for secret in missing_secrets]
 
 
 class ServerManagementService:
@@ -41,7 +72,7 @@ class ServerManagementService:
     async def add_server(
         self,
         name: str,
-        transport: str,
+        transport: str | None = None,
         url: str | None = None,
         command: str | None = None,
         args: list[str] | None = None,
@@ -49,10 +80,13 @@ class ServerManagementService:
         headers: dict[str, str] | None = None,
         enabled: bool = True,
         project_id: str | None = None,
+        template: str | None = None,
+        values: Mapping[str, str] | None = None,
+        scope: str = "project",
+        description: str | None = None,
     ) -> dict[str, Any]:
-        """Add a new MCP server."""
+        """Add a new MCP server, optionally expanded from a template."""
         try:
-            # Resolve project ID
             if not project_id:
                 from gobby.utils.project_context import get_project_context
 
@@ -60,41 +94,129 @@ class ServerManagementService:
                 if ctx and ctx.get("id"):
                     project_id = ctx["id"]
 
-            if not project_id:
+            scope_project = _scope_project(scope, project_id)
+            if not scope_project:
                 return {
                     "success": False,
                     "error": "project_id is required. Run 'gobby init' or provide project_id.",
                 }
 
-            # Create config object
-            server_config = MCPServerConfig(
-                name=name,
-                project_id=project_id,
-                transport=transport,
-                url=url,
-                command=command,
-                args=args,
-                env=env,
-                headers=headers,
-                enabled=enabled,
-            )
-            # Validate - catch validation errors separately for clear error messages
+            db = getattr(self._mcp_manager, "mcp_db_manager", None)
+            missing_secrets: list[str] = []
+            template_name: str | None = None
+            server_config: MCPServerConfig
+            if template:
+                if db is None:
+                    return {"success": False, "error": "MCP database unavailable for templates"}
+                row = db.get_template(template, project_id=scope_project)
+                if row is None:
+                    return {"success": False, "error": f"template '{template}' not found"}
+                if not row.enabled:
+                    return {
+                        "success": False,
+                        "error": "template_disabled",
+                        "template": row.name,
+                        "scope": _scope_label(str(row.project_id)),
+                    }
+                definition = dict(row.definition)
+                definition.setdefault("name", row.name)
+                tmpl = MCPServerTemplate.from_definition(definition)
+                template_name = tmpl.name
+                secret_store = SecretStore(db.db) if getattr(db, "db", None) is not None else None
+
+                def secret_exists(secret_name: str) -> bool:
+                    if secret_store is None:
+                        return False
+                    return bool(secret_store.exists(secret_name, project_id=scope_project))
+
+                expanded = expand_template(
+                    tmpl,
+                    name=name,
+                    project_id=scope_project,
+                    values=dict(values or {}),
+                    description=description,
+                    secret_exists=secret_exists,
+                )
+                server_config = expanded.config
+                server_config.template_id = row.id
+                server_config.enabled = enabled
+                missing_secrets = list(expanded.missing_secrets)
+            else:
+                if not transport:
+                    return {"success": False, "error": "transport is required without a template"}
+                server_config = MCPServerConfig(
+                    name=name,
+                    project_id=scope_project,
+                    transport=transport,
+                    url=url,
+                    command=command,
+                    args=args,
+                    env=env,
+                    headers=headers,
+                    enabled=enabled,
+                    description=description,
+                )
             try:
                 server_config.validate()
             except ValueError as e:
                 return {"success": False, "error": f"Validation error: {e}"}
 
             try:
-                add_result = await self._mcp_manager.add_server(server_config)
+                if missing_secrets and db is not None:
+                    inserted = db.insert_server(
+                        name=server_config.name,
+                        transport=server_config.transport,
+                        project_id=server_config.project_id,
+                        url=server_config.url,
+                        command=server_config.command,
+                        args=server_config.args,
+                        env=server_config.env,
+                        headers=server_config.headers,
+                        enabled=server_config.enabled,
+                        description=server_config.description,
+                        requires_oauth=server_config.requires_oauth,
+                        oauth_provider=server_config.oauth_provider,
+                        connect_timeout=server_config.connect_timeout,
+                        template_id=server_config.template_id,
+                        template_values=server_config.template_values,
+                        runtime_hook=server_config.runtime_hook,
+                    )
+                    if inserted is None:
+                        existing = db.get_server(server_config.name, scope_project)
+                        return _duplicate_envelope(existing, name, scope_project)
+                    adopted = config_from_server(inserted)
+                    self._mcp_manager.add_server_config(adopted)
+                    add_result = {
+                        "success": True,
+                        "connected": False,
+                        "id": adopted.id,
+                        "name": adopted.name,
+                    }
+                    server_config = adopted
+                else:
+                    add_result = await self._mcp_manager.add_server(server_config)
+                    if not isinstance(add_result, Mapping):
+                        add_result = {}
+                    if add_result.get("id"):
+                        loaded = self._mcp_manager.get_server_config(str(add_result["id"]))
+                        if loaded is not None:
+                            server_config = loaded
+            except MCPError as exc:
+                if "already exists" in str(exc).lower() and db is not None:
+                    existing = db.get_server(name.lower(), scope_project)
+                    return _duplicate_envelope(existing, name, scope_project)
+                raise
             except ValueError:
                 raise
             except Exception as e:
-                if self._mcp_manager.has_server(name):
+                if self._mcp_manager.has_server(getattr(server_config, "id", name)):
                     logger.warning("Added server %s but connection failed: %s", name, e)
                     return {
                         "success": True,
                         "message": f"Server added but connection failed: {str(e)}",
                         "connected": False,
+                        "id": getattr(server_config, "id", None),
+                        "name": name,
                     }
                 raise
 
@@ -102,6 +224,15 @@ class ServerManagementService:
                 "success": True,
                 "message": f"Server {name} added successfully",
                 "connected": bool(add_result.get("connected")),
+                "name": server_config.name,
+                "id": add_result.get("id") or server_config.id,
+                "scope": _scope_label(scope_project),
+                "template": template_name,
+                "missing_secrets": missing_secrets,
+                "needs_configuration": bool(missing_secrets),
+                "configure": _configure_commands(
+                    missing_secrets, global_scope=scope_project == GLOBAL_PROJECT_ID
+                ),
             }
             if add_result.get("error") is not None:
                 response["error"] = add_result["error"]
@@ -114,12 +245,35 @@ class ServerManagementService:
             logger.exception("Unexpected error adding server %s", name)
             return {"success": False, "error": str(e)}
 
-    async def remove_server(self, name: str) -> dict[str, Any]:
-        """Remove an MCP server.
-
-        Disconnects the server first if connected, then removes the configuration.
-        """
+    async def remove_server(
+        self, name: str, *, scope: str = "project", project_id: str | None = None
+    ) -> dict[str, Any]:
+        """Remove the exact `(name, scope)` MCP server row."""
         try:
+            if not project_id:
+                from gobby.mcp_proxy.services.server_resolution import as_project_id
+
+                manager_project = as_project_id(
+                    getattr(self._mcp_manager, "project_id", None), default=""
+                )
+                project_id = manager_project or None
+                if not project_id:
+                    from gobby.utils.project_context import get_project_context
+
+                    ctx = get_project_context()
+                    if ctx and ctx.get("id"):
+                        project_id = ctx["id"]
+            scope_project = _scope_project(scope, project_id)
+            db = getattr(self._mcp_manager, "mcp_db_manager", None)
+            if db is not None and scope_project:
+                row = db.get_server(name, scope_project)
+                if row is None:
+                    return {
+                        "success": False,
+                        "error": f"Server '{name}' not found",
+                    }
+                await self._mcp_manager.remove_server(row.id, project_id=scope_project)
+                return {"success": True, "message": f"Server {name} removed", "id": row.id}
             await self._mcp_manager.remove_server(name)
             return {"success": True, "message": f"Server {name} removed"}
         except Exception as e:

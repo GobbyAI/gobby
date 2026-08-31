@@ -17,10 +17,10 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 415);
+    assert_eq!(identity.latest_asset.version, 417);
     assert_eq!(
         identity.latest_asset.filename,
-        "415_provider_capacity_snapshots.sql"
+        "417_provider_capacity_snapshots.sql"
     );
     assert_eq!(
         identity.latest_asset.checksum,
@@ -28,10 +28,20 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     );
     assert_eq!(
         identity.root_hash,
-        "9869680a58ced8397dd3b22ef3d408b03c444e044b3fde371f965172c4498e64"
+        "fe0eedd22434cddd08f1ed930c787c729e7a8a9c02cf6c1b587e09b7d0b4c32e"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
+}
+
+#[test]
+fn latest_asset_is_provider_capacity_snapshots_hop() {
+    let identity = schema_identity();
+    assert_eq!(identity.latest_asset.version, 417);
+    assert_eq!(
+        identity.latest_asset.filename,
+        "417_provider_capacity_snapshots.sql"
+    );
 }
 
 #[test]

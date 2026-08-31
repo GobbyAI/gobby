@@ -1498,6 +1498,7 @@ class TestTmuxSpawner:
         """tmux receives PATH explicitly so ~/.gobby/bin is visible in the child shell."""
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
         monkeypatch.setenv("PATH", "/usr/bin")
+        monkeypatch.delenv("GOBBY_NATIVE_BIN_DIR", raising=False)
         spawner = TmuxSpawner(TmuxConfig())
         with (
             patch.object(

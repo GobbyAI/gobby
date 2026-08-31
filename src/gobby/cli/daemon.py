@@ -76,6 +76,17 @@ __all__ = ["kill_all_gobby_daemons"]
 
 SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
 
+DAEMON_HEALTH_TIMEOUT_SECONDS = 120.0
+
+# Readiness subsumes health: serving /api/health is one early step of subsystem
+# init, so this budget must never be smaller than the health budget above.
+# Subsystem startup is fail-soft and progress-terminal — a failed init records an
+# error and still finishes the tracker — so an unfinished poll only ever means
+# "still initializing", never "broken". Sized against measured time-to-ready,
+# which reached 168s on a loaded machine while the previous 60s budget reported
+# that healthy daemon as a failed start.
+STARTUP_READINESS_TIMEOUT_SECONDS = 300.0
+
 
 def _start_dependency_errors() -> list[str]:
     if platform_error := unsupported_platform_error():
@@ -137,7 +148,9 @@ def _show_runtime_output_tail(runtime_log_file: Path, n: int = 15) -> None:
         click.echo(f"  Check runtime output: {runtime_log_file}", err=True)
 
 
-def _poll_startup_progress(http_port: int, max_wait: float = 60.0) -> bool:
+def _poll_startup_progress(
+    http_port: int, max_wait: float = STARTUP_READINESS_TIMEOUT_SECONDS
+) -> bool:
     """Poll the daemon's startup progress endpoint and display steps."""
     displayed_steps: set[str] = set()
     displayed_errors: set[str] = set()
@@ -208,7 +221,7 @@ def _poll_startup_progress(http_port: int, max_wait: float = 60.0) -> bool:
 def _wait_for_daemon_health(
     http_port: int,
     *,
-    timeout: float = 120.0,
+    timeout: float = DAEMON_HEALTH_TIMEOUT_SECONDS,
     interval: float = 0.5,
 ) -> float | None:
     """Wait for the daemon health endpoint to respond successfully."""

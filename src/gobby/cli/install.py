@@ -57,10 +57,8 @@ from ._install_project import (
     _should_initialize_project,
 )
 from ._install_prompts import (
-    _API_KEY_PROMPTS,
     _echo_install_details,
     _echo_install_summary,
-    _prompt_api_keys,
     _run_embedding_install,
     _run_falkordb_install,
     _run_git_hooks_install,
@@ -111,8 +109,6 @@ __all__ = [
     "_is_qwen_cli_installed",
     "_is_agy_cli_installed",
     "_echo_install_details",
-    "_API_KEY_PROMPTS",
-    "_prompt_api_keys",
     "_ensure_daemon_config",
     "install",
 ]

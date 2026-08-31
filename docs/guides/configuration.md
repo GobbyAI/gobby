@@ -23,7 +23,9 @@ committed when local live activation fails and reports the failed-live keys.
 | --- | --- | --- |
 | `~/.gobby/bootstrap.yaml` | Machine | Startup values needed before the PostgreSQL hub is open |
 | `config_store` table in the PostgreSQL hub | Machine | Revisioned desired runtime overrides |
-| `~/.gobby/mcp-servers.json` | Machine | Persistent downstream MCP server registry |
+| Bundled MCP templates (`mcp/templates/*.yaml`) synced to `mcp_server_templates` | Hub | Template catalog; nothing is instantiated by `gobby install` |
+| `.gobby/mcp/servers/*.yaml` / `~/.gobby/mcp/servers/*.yaml` | Project / machine | Instance YAML synced into `mcp_servers` |
+| `secrets` table (`project_id` scoped) | Project then machine | MCP template secrets referenced as `$secret:<name>` |
 | `.gobby/project.json` | Project | Project identity, verification commands, and project hook settings |
 | `~/.gobby/build.yaml` | Machine | Build lifecycle defaults |
 | `<project>/.gobby/build.yaml` | Project | Build lifecycle defaults for one repository |
@@ -553,41 +555,38 @@ chat:
 Tool approval policies use glob-style `server_pattern` and `tool_pattern`
 entries with policy values `auto`, `approve_once`, or `always_ask`.
 
-## MCP Server Registry
+## Downstream MCP servers
 
-Downstream MCP servers are stored in `~/.gobby/mcp-servers.json` and synchronized into
-daemon state by the MCP manager. The file has a top-level `servers` array:
+MCP servers are **templates** plus **instances**. Bundled templates live under
+`src/gobby/install/shared/mcp/templates/` and sync into `mcp_server_templates`.
+`gobby install` instantiates none of them; it prints the catalog and:
 
-```json
-{
-  "servers": [
-    {
-      "name": "filesystem",
-      "enabled": true,
-      "transport": "stdio",
-      "command": "npx",
-      "args": ["@anthropic-ai/filesystem-mcp"],
-      "env": null
-    },
-    {
-      "name": "api-server",
-      "enabled": true,
-      "transport": "http",
-      "url": "https://api.example.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${API_TOKEN}"
-      },
-      "requires_oauth": false
-    }
-  ]
-}
+```text
+gobby mcp-proxy add-server <name> --template <template> [--global]
 ```
 
-Supported transports are `stdio`, `http`, and `websocket` (`sse` entries are
-accepted by registry validation but have no transport implementation and cannot
-connect). `stdio` servers use `command`, `args`, and `env`. Network transports
-use `url` and optional `headers`. `project_id` may be omitted; it defaults to
-the global project UUID.
+Instances are `mcp_servers` rows. Declare them as YAML and let sync expand the
+template:
+
+```yaml
+# .gobby/mcp/servers/github.yaml  (project) or ~/.gobby/mcp/servers/github.yaml (machine)
+name: github
+template: github
+enabled: true
+values:
+  token: $secret:github_personal_access_token
+```
+
+Project files instantiate into that project's scope; files under
+`~/.gobby/mcp/servers/` instantiate as global. Name resolution is project first,
+then global. Secret parameters accept a `$secret:<name>` reference only — never
+a raw value. `gobby secrets set NAME` writes the current project's scope
+(or `--global` for machine scope). After setting a secret, run
+`gobby mcp-proxy refresh --server NAME`.
+
+`~/.gobby/mcp-servers.json` is not live configuration. If the file is still on
+disk, `gobby install` warns once and leaves it untouched; delete it when
+convenient.
 
 ## Project Configuration
 
@@ -723,9 +722,12 @@ secret-like key.
 
 ### MCP Server Does Not Connect
 
-Check `~/.gobby/mcp-servers.json` for the server entry, transport-specific fields, and
-`enabled: true`. For generated or imported servers, refresh the MCP registry
-after changing server definitions.
+List templates with `gobby mcp-proxy list-templates` and instances with
+`gobby mcp-proxy list-servers`. Confirm the instance is in the caller's project
+or global scope, `enabled: true`, and that secret parameters resolve
+(`gobby secrets set NAME` in the same scope, then
+`gobby mcp-proxy refresh --server NAME`). Instance YAML lives at
+`.gobby/mcp/servers/<name>.yaml` or `~/.gobby/mcp/servers/<name>.yaml`.
 
 ## See Also
 

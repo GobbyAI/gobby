@@ -1016,7 +1016,9 @@ async def test_stream_tool_name_is_adapted_exactly_once() -> None:
 
     def counting_adapter(raw_tool_name: str, tool_input: Any = None) -> str:
         calls.append(raw_tool_name)
-        return real_adapter(raw_tool_name, tool_input)
+        adapted = real_adapter(raw_tool_name, tool_input)
+        assert isinstance(adapted, str)
+        return adapted
 
     process = _FakeProcess([_init(), _tool_start(step_index=3), _result(usage=_usage())])
     backend, session = _session(process)

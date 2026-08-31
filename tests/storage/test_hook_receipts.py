@@ -22,7 +22,7 @@ pytestmark = pytest.mark.unit
 
 _RECEIPT_MIGRATION = (
     Path(__file__).resolve().parents[2]
-    / "crates/gcore/assets/schema/migrations/414_hook_receipt_effects.sql"
+    / "crates/gcore/assets/schema/migrations/416_hook_receipt_effects.sql"
 )
 
 
@@ -330,7 +330,9 @@ def _budget_updated_at(db: HubDatabase, session_id: str, execution_num: int) -> 
             (session_id, execution_num),
         ).fetchone()
     assert row is not None
-    return row["updated_at"]
+    updated_at = row["updated_at"]
+    assert isinstance(updated_at, datetime)
+    return updated_at
 
 
 def _budget_count(db: HubDatabase, session_id: str, execution_num: int) -> int | None:

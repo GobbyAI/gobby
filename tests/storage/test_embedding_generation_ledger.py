@@ -118,16 +118,15 @@ def test_project_purge_tombstones_embedded_artifacts(
     )
 
     mcp_manager = LocalMCPManager(temp_db)
-    mcp_manager.upsert(
+    server = mcp_manager.upsert(
         name="purge-ledger-server",
         transport="http",
         url="http://localhost:8080",
         project_id=project.id,
     )
     mcp_manager.cache_tools(
-        "purge-ledger-server",
+        server.id,
         [{"name": "purge_tool", "description": "doomed", "inputSchema": {}}],
-        project_id=project.id,
     )
     tool_row = temp_db.fetchone(
         "SELECT tools.id AS id FROM tools JOIN mcp_servers "
@@ -158,11 +157,10 @@ def test_replace_tools_appends_tombstones_and_content_events(
         project_id=project.id,
     )
     mcp_manager.cache_tools(
-        "mcp-ledger-server",
+        server.id,
         [{"name": "old_tool", "description": "stale", "inputSchema": {}}],
-        project_id=project.id,
     )
-    old_tools = mcp_manager.get_cached_tools("mcp-ledger-server", project_id=project.id)
+    old_tools = mcp_manager.get_cached_tools(server.id)
     assert len(old_tools) == 1
     old_tool_id = old_tools[0].id
 
@@ -170,7 +168,7 @@ def test_replace_tools_appends_tombstones_and_content_events(
         mcp_manager._replace_tools_for_server_id(conn, server.id, old_tools)
 
     assert _events(temp_db, old_tool_id)[-1] == ("tool", True)
-    replacements = mcp_manager.get_cached_tools("mcp-ledger-server", project_id=project.id)
+    replacements = mcp_manager.get_cached_tools(server.id)
     assert len(replacements) == 1
     assert replacements[0].id != old_tool_id
     assert _events(temp_db, replacements[0].id)[-1] == ("tool", False)

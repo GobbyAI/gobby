@@ -875,4 +875,3 @@ async def test_agy_resume_refuses_unsupported_record_before_spawn(
     assert result.success is False
     assert result.error == record.reason
     assert runner._test_runtime.last_request is None
-

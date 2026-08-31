@@ -115,7 +115,7 @@ async def test_token_usage_aggregation(
     session = session_manager.register(
         external_id="ext-123",
         machine_id="21000000-0000-4000-8000-00000000001a",
-        source="claude_code",
+        source="claude",
         project_id=PROJECT_ID,
         title="Test Session",
         transcript_path=str(transcript_path),
@@ -197,7 +197,7 @@ async def test_batched_transcript_recording_matches_sequential_record_semantics(
     session = session_manager.register(
         external_id="ext-batch",
         machine_id=LOCAL_MACHINE_ID,
-        source="claude_code",
+        source="claude",
         project_id=PROJECT_ID,
         title="Batched Session",
         transcript_path=str(transcript_path),
@@ -205,7 +205,7 @@ async def test_batched_transcript_recording_matches_sequential_record_semantics(
     reference = session_manager.register(
         external_id="ext-sequential",
         machine_id=LOCAL_MACHINE_ID,
-        source="claude_code",
+        source="claude",
         project_id=PROJECT_ID,
         title="Sequential Reference",
     )

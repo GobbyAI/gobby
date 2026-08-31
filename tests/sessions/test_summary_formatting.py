@@ -239,7 +239,7 @@ class TestFormatTurnsForLlm:
         assert "[Turn 1 - user]: [Result: File contents here]" in result
 
     def test_format_tool_result_references_long_content(self) -> None:
-        """Long tool results keep a bounded head and name the retrieval operation."""
+        """Long tool results keep a bounded head and a truncation marker."""
         long_content = "x" * 500  # 500 characters
         turns = [
             {
@@ -257,7 +257,7 @@ class TestFormatTurnsForLlm:
         ]
         result = format_turns_for_llm(turns)
         assert "[Result: " + "x" * 200 in result
-        assert "get_handoff (gobby-sessions)" in result
+        assert "... [truncated]" in result
         assert "x" * 500 not in result
 
 

@@ -269,6 +269,7 @@ class TestAddMcpServer:
         mock_mcp_manager.add_server.return_value = {
             "success": True,
             "name": "test-server",
+            "id": "server-uuid-1",
             "full_tool_schemas": [
                 {"name": "tool1", "description": "First tool"},
                 {"name": "tool2", "description": "Second tool"},
@@ -297,7 +298,7 @@ class TestAddMcpServer:
                 ],
             )
             mock_mcp_manager.set_server_description.assert_awaited_once_with(
-                "test-server", "Generated description"
+                "server-uuid-1", "Generated description"
             )
             assert result["description"] == "Generated description"
 
@@ -345,7 +346,8 @@ class TestAddMcpServer:
             )
 
         assert result["description"] == "Generated description"
-        server_config = manager.get_server_config("described-server")
+        server_id = result["id"]
+        server_config = manager.get_server_config(server_id)
         assert server_config is not None
         assert server_config.description == "Generated description"
         stored_server = storage.get_server("described-server", project_id)
@@ -356,7 +358,7 @@ class TestAddMcpServer:
             project_id=project_id,
             mcp_db_manager=storage,
         )
-        restarted_config = restarted_manager.get_server_config("described-server")
+        restarted_config = restarted_manager.get_server_config(server_id)
         assert restarted_config is not None
         assert restarted_config.description == "Generated description"
 

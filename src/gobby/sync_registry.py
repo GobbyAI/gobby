@@ -1,8 +1,10 @@
 """Canonical bundled-content sync fan-out.
 
-Install, ``reload_cache``, and CLI sync all call
-:func:`sync_bundled_content_to_db`. User-template import stays in
-``gobby.cli.installers.shared``.
+``reload_cache``, daemon dev-mode startup, and the bundled-reinstall path call
+:func:`sync_bundled_content_to_db` directly. ``gobby install`` and ``gobby
+sync`` go through ``gobby.cli.installers.shared.sync_bundled_content_to_db``,
+which wraps this fan-out and adds user-content import (rules, variables, MCP
+templates, and instance YAML) outside dev mode.
 """
 
 from __future__ import annotations
@@ -29,6 +31,11 @@ SYNC_TARGETS: tuple[tuple[str, str, str], ...] = (
         "detection_manifests",
         "gobby.agents.detection.registry",
         "sync_bundled_detection_manifests",
+    ),
+    (
+        "mcp_templates",
+        "gobby.mcp_proxy.sync_templates",
+        "sync_bundled_mcp_templates",
     ),
 )
 

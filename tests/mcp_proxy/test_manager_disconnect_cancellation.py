@@ -88,12 +88,13 @@ async def test_disconnect_all_cleans_state_when_cancelled_during_disconnect() ->
     manager = MCPClientManager(server_configs=[config])
 
     connection = BlockingConnection()
-    manager._connections["slow-server"] = connection
-    manager.health["slow-server"] = MCPConnectionHealth(
+    manager._connections[config.id] = connection
+    manager.health[config.id] = MCPConnectionHealth(
         name="slow-server",
         state=ConnectionState.CONNECTED,
+        project_id=config.project_id,
     )
-    manager._lazy_connector.mark_connected("slow-server")
+    manager._lazy_connector.mark_connected(config.id)
 
     async def slow_reconnect() -> None:
         await wait_forever()
@@ -107,12 +108,54 @@ async def test_disconnect_all_cleans_state_when_cancelled_during_disconnect() ->
     disconnect_task.cancel()
     await disconnect_task
 
-    lazy_state = manager._lazy_connector.get_state("slow-server")
+    lazy_state = manager._lazy_connector.get_state(config.id)
 
     assert connection.disconnect_cancelled is True
     assert manager._connections == {}
     assert manager._reconnect_tasks == set()
     assert reconnect_task.done()
-    assert manager.health["slow-server"].state is ConnectionState.DISCONNECTED
+    assert manager.health[config.id].state is ConnectionState.DISCONNECTED
     assert lazy_state is not None
     assert lazy_state.connected_at is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_cancelled_during_old_disconnect_finishes_teardown() -> None:
+    config = MCPServerConfig(
+        name="slow-server",
+        project_id="test-project",
+        transport="http",
+        url="http://localhost:8001",
+    )
+    manager = MCPClientManager(server_configs=[config])
+
+    class TrackedBlockingConnection(BlockingConnection):
+        def __init__(self) -> None:
+            super().__init__()
+            self.disconnect_finished = asyncio.Event()
+
+        async def disconnect(self) -> None:
+            try:
+                await super().disconnect()
+            finally:
+                self.disconnect_finished.set()
+
+    connection = TrackedBlockingConnection()
+    manager._connections[config.id] = cast(BaseTransportConnection, connection)
+    manager.health[config.id] = MCPConnectionHealth(
+        name="slow-server",
+        state=ConnectionState.CONNECTED,
+    )
+    manager._lazy_connector.mark_connected(config.id)
+
+    refresh_task = asyncio.create_task(manager.refresh_server(config.id))
+    await asyncio.wait_for(connection.disconnect_started.wait(), timeout=1.0)
+    refresh_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await refresh_task
+
+    assert connection.disconnect_cancelled is True
+    assert connection.disconnect_finished.is_set()
+    assert config.id not in manager._connections
+    lock = manager._lazy_connector.get_connection_lock(config.id)
+    assert not lock.locked()

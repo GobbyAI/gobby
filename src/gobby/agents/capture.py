@@ -616,6 +616,14 @@ class _SnapshotCaptureStorage:
         )
 
 
+async def backend_session_present(runtime: TerminalRuntime, terminal: Terminal) -> bool:
+    """True if the backend still holds the session, including remain-on-exit dead panes."""
+    present = getattr(runtime, "session_present", None)
+    if callable(present):
+        return bool(await present(terminal))
+    return await runtime.is_live(terminal)
+
+
 async def terminate_managed_runtime_async(
     *,
     storage: CaptureStorage,
@@ -633,14 +641,14 @@ async def terminate_managed_runtime_async(
     wrapped = _SnapshotCaptureStorage(storage, snapshot)
 
     async def session_alive() -> bool:
-        return await runtime.is_live(terminal)
+        return await backend_session_present(runtime, terminal)
 
     async def capture() -> str:
         return snapshot.text
 
     async def kill() -> bool:
         await runtime.terminate(terminal, grace_seconds=5.0)
-        return not await runtime.is_live(terminal)
+        return not await backend_session_present(runtime, terminal)
 
     return await capture_then_kill_async(
         storage=wrapped,

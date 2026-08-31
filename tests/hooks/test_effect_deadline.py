@@ -38,6 +38,29 @@ def test_remaining_blocking_effect_seconds_preserves_per_effect_cap(
         )
 
 
+@pytest.mark.parametrize(
+    ("deadline", "expected"),
+    [
+        (None, False),
+        (105.0, False),
+        (100.0, True),
+        (99.0, True),
+    ],
+)
+def test_blocking_budget_overrun_reports_a_spent_budget(
+    deadline: float | None,
+    expected: bool,
+) -> None:
+    """Effects that reserve a floor run regardless, so this reports rather than gates."""
+    with patch("gobby.hooks.effect_deadline.time.monotonic", return_value=100.0):
+        assert (
+            effect_deadline.blocking_budget_overrun(
+                None if deadline is None else effect_deadline.BlockingEffectDeadline(deadline)
+            )
+            is expected
+        )
+
+
 def test_blocking_effect_deadline_extends_by_exact_queue_wait() -> None:
     deadline = effect_deadline.BlockingEffectDeadline(101.0)
 

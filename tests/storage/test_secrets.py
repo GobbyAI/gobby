@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.secrets import (
     _AES_GCM_MIN_TOKEN_LEN,
     _SEAL_HKDF_INFO,
@@ -87,3 +88,29 @@ def test_set_kek_posture_rebinds_cached_dek(
     assert store._cached_dek() == first
     token = store.seal(b"after-rebind", aad=b"aad")
     assert store.open_sealed(token, aad=b"aad") == b"after-rebind"
+
+
+def test_secret_get_reads_project_row_then_global_fallback(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_machine_id: str,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    store = SecretStore(temp_db, gobby_home=tmp_path)
+    project_id = LocalProjectManager(temp_db).create(name="secret-scope-get").id
+    other_id = LocalProjectManager(temp_db).create(name="secret-scope-other").id
+
+    store.set("SHARED_KEY", "global-value")
+    store.set("SHARED_KEY", "project-value", project_id=project_id)
+
+    assert store.get("SHARED_KEY") == "global-value"
+    assert store.get("SHARED_KEY", project_id=None) == "global-value"
+    assert store.get("SHARED_KEY", project_id=project_id) == "project-value"
+    assert store.get("SHARED_KEY", project_id=other_id) == "global-value"
+    row = temp_db.fetchone(
+        "SELECT project_id FROM secrets WHERE name = %s AND project_id = %s",
+        ("shared_key", GLOBAL_PROJECT_ID),
+    )
+    assert row is not None
+    assert str(row["project_id"]) == GLOBAL_PROJECT_ID

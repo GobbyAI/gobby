@@ -700,6 +700,76 @@ class TestCreateChatSessionInner:
         assert mixin.web_chat_runtime_manager.create_session.call_args is not None
 
     @pytest.mark.asyncio
+    async def test_cleared_web_chat_reattaches_live_successor(self, mixin: DummyMixin) -> None:
+        predecessor = MagicMock()
+        predecessor.id = "pred-db"
+        predecessor.seq_num = 88
+        predecessor.session_type = "web_chat"
+        predecessor.status = "expired"
+        predecessor.source = "claude"
+        predecessor.project_id = "project-old"
+        predecessor.external_id = None
+        predecessor.usage_output_tokens = 0
+        predecessor.chat_mode = None
+        predecessor.approved_tools_json = None
+        predecessor.sandbox_policy_hash = None
+
+        successor = MagicMock()
+        successor.id = "succ-db"
+        successor.seq_num = 89
+        successor.session_type = "web_chat"
+        successor.status = "active"
+        successor.source = "codex"
+        successor.project_id = "project-new"
+        successor.external_id = None
+        successor.usage_output_tokens = 0
+        successor.chat_mode = "code"
+        successor.approved_tools_json = None
+        successor.sandbox_policy_hash = None
+
+        mock_session = AsyncMock()
+        mock_session.provider = "codex"
+        mock_session.chat_mode = "plan"
+        mock_session.db_session_id = None
+        mock_session.resume_session_id = None
+        mock_session.project_path = None
+        mock_session.project_id = None
+        mock_session.system_prompt_override = None
+        mock_session.model = None
+        mock_session.sandbox_metadata = {}
+
+        mixin.web_chat_runtime_manager = MagicMock()
+        mixin.web_chat_runtime_manager.create_session.return_value = mock_session
+        mixin.session_manager = MagicMock()
+        mixin.session_manager.db = MagicMock()
+        mixin.session_manager.db.fetchone.side_effect = [
+            {
+                "status": "expired",
+                "variables": {"clear_attempt": {"consumed_by": "succ-db"}},
+            },
+            {"status": "active", "variables": {}},
+        ]
+        mixin.session_manager.get.side_effect = [predecessor, successor]
+        activated_predecessor = MagicMock()
+        activated_predecessor.status = "active"
+        mixin.session_manager.activate_web_chat_session.return_value = activated_predecessor
+
+        session = await mixin._create_chat_session_inner("pred-db", provider="claude")
+
+        assert session is mock_session
+        assert session.db_session_id == "succ-db"
+        assert session.seq_num == 89
+        assert session.project_id == "project-new"
+        assert session.chat_mode == "code"
+        mixin.web_chat_runtime_manager.create_session.assert_called_once_with(
+            provider="codex",
+            conversation_id="pred-db",
+            model=None,
+            reasoning_effort=None,
+        )
+        mixin.session_manager.activate_web_chat_session.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_project_switch_starts_fresh_and_persists_project(
         self, mixin: DummyMixin
     ) -> None:

@@ -1,10 +1,12 @@
 """Focused tests for session storage behavior."""
 
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from tests.fixtures.postgres import TEST_USER_ID
@@ -183,6 +185,68 @@ class TestProjectScopedSeqNum:
         """Test ValueError raised when session not found."""
         with pytest.raises(ValueError, match="not found"):
             session_manager.resolve_session_reference("#999", project_id=sample_project["id"])
+
+
+class TestProjectQualifiedSeqNum:
+    """'<project>-S#N' resolves a seq_num inside a named project."""
+
+    @pytest.fixture
+    def two_projects(self, session_manager: SessionManager, temp_db: HubDatabase) -> dict[str, Any]:
+        from gobby.storage.projects import LocalProjectManager
+
+        proj_manager = LocalProjectManager(temp_db)
+        gobby = proj_manager.create(name="gobby-main", repo_path="/tmp/gobby-main")
+        goblins = proj_manager.create(name="game-goblins", repo_path="/tmp/game-goblins")
+        gobby_s1 = session_manager.register(
+            external_id="gobby-1",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=gobby.id,
+        )
+        goblins_s1 = session_manager.register(
+            external_id="goblins-1",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=goblins.id,
+        )
+        return {
+            "gobby": gobby,
+            "goblins": goblins,
+            "gobby_s1": gobby_s1,
+            "goblins_s1": goblins_s1,
+        }
+
+    def test_resolves_by_project_name_ignoring_caller_project(
+        self, session_manager: SessionManager, two_projects: dict[str, Any]
+    ) -> None:
+        resolved = session_manager.resolve_session_reference(
+            "game-goblins-S#1", project_id=two_projects["gobby"].id
+        )
+        assert resolved == two_projects["goblins_s1"].id
+
+    def test_resolves_by_project_uuid(
+        self, session_manager: SessionManager, two_projects: dict[str, Any]
+    ) -> None:
+        ref = f"{two_projects['gobby'].id}-S#1"
+        assert session_manager.resolve_session_reference(ref) == two_projects["gobby_s1"].id
+
+    def test_unknown_project_raises(
+        self, session_manager: SessionManager, two_projects: dict[str, Any]
+    ) -> None:
+        with pytest.raises(ValueError, match="project 'nope' not found"):
+            session_manager.resolve_session_reference("nope-S#1")
+
+    def test_unknown_seq_num_raises_with_project(
+        self, session_manager: SessionManager, two_projects: dict[str, Any]
+    ) -> None:
+        with pytest.raises(ValueError, match="Session #99 not found in project 'game-goblins'"):
+            session_manager.resolve_session_reference("game-goblins-S#99")
+
+    def test_bare_seq_num_miss_hints_qualified_form(
+        self, session_manager: SessionManager, two_projects: dict[str, Any]
+    ) -> None:
+        with pytest.raises(ValueError, match=r"<project>-S#N"):
+            session_manager.resolve_session_reference("#99", project_id=two_projects["gobby"].id)
 
 
 class TestResolveReferenceExternalId:

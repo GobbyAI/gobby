@@ -19,6 +19,7 @@ from gobby.agents.sandbox import (
     SandboxCredentialEnv,
     compute_sandbox_paths,
 )
+from gobby.agents.sandbox_policy import _nearest_package_root, previous_run_write_paths
 from gobby.agents.sandbox_resolvers import (
     ClaudeSandboxResolver,
     CodexSandboxResolver,
@@ -26,7 +27,6 @@ from gobby.agents.sandbox_resolvers import (
     QwenSandboxResolver,
     SandboxResolver,
 )
-from gobby.agents.sandbox_policy import _nearest_package_root, previous_run_write_paths
 from gobby.agents.srt_runtime import (
     SandboxLaunch,
     SrtInstallation,

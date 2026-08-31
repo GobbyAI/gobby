@@ -345,7 +345,11 @@ class _AgentRunQueryMixin:
         )
 
     def list_terminal_with_tmux(self: _AgentRunQueryHost, limit: int = 100) -> list[AgentRun]:
-        """List terminal agent runs whose terminal row is still pending or live."""
+        """List terminal agent runs whose terminal row is not yet settled as exited.
+
+        Orphaned rows stay eligible so a failed or interrupted kill is retried;
+        exited rows are settled and stay out so the sweep stays bounded.
+        """
         status_placeholders = ", ".join("%s" for _ in TERMINAL_AGENT_RUN_STATUSES)
         return self._fetch_runs_with_live_stats(
             f"""
@@ -353,7 +357,7 @@ class _AgentRunQueryMixin:
             AND EXISTS (
                 SELECT 1 FROM terminals t
                 WHERE t.id = ar.terminal_id
-                  AND t.state IN ('pending', 'live')
+                  AND t.state IN ('pending', 'live', 'orphaned')
             )
             """,
             TERMINAL_AGENT_RUN_STATUSES,

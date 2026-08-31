@@ -6,6 +6,7 @@ import asyncio
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.session_resolution import resolve_session_reference
@@ -169,12 +170,35 @@ def register_memory_review_tools(
             )
 
         query = f"{task.title}\n\n{summary}"
+        # Joinable correlation id, minted per call as memory.py does for
+        # search_memories. Without it insert_signal_event drops the event before
+        # the INSERT, which is why this caller had never produced a single
+        # recall_signal_requests row despite being listed in
+        # SHADOW_ELIGIBLE_CALLERS (#21412).
+        recall_request_id = str(uuid4())
         try:
             candidates = await memory_manager().search_memories(
                 query=query,
+                # Embed the summary verbatim instead of letting the search
+                # service run YAKE over it (#21402). YAKE strips conversational
+                # noise from short prompts by keeping the terms a text repeats,
+                # which inverts on a changes_summary: the repeated terms are
+                # boilerplate ("src", "gobby", "config", "tests", "Added") and
+                # the rare ones are the identifiers a memory records. Measured
+                # on #21394's 461-word summary, YAKE's ten keywords dropped
+                # `adapter_timeout`, `workflow.timeout`, and
+                # `validate_hook_timeout_order`, and raising its cap to fifty
+                # still never reached them. Embedding verbatim scored the two
+                # memories that change invalidated at 0.8436/0.7058 against
+                # 0.7192/0.5976 for the YAKE query, and widened the margin over
+                # an unrelated memory rather than trading recall for noise.
+                # Length is not the risk dilution arguments assume: the same
+                # target holds 0.8423 -> 0.8321 from 887 to 6991 tokens.
+                embed_text=query,
                 project_id=project_id,
                 limit=_CANDIDATE_LIMIT,
                 session_id=resolved_session_id,
+                recall_request_id=recall_request_id,
                 caller="mcp_proxy.memory.review_task_memories",
                 include_global=True,
             )

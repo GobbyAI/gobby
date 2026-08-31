@@ -74,7 +74,9 @@ def _effect(**overrides: Any) -> RuleEffect:
 
 async def _apply(effect: RuleEffect, event: HookEvent) -> list[str]:
     context_parts: list[str] = []
-    await EffectsMixin()._apply_effect(effect, _ROW, {}, {"event": event}, {}, context_parts, [])
+    await EffectsMixin()._apply_effect(
+        effect, _ROW, {}, {"event": event}, {}, context_parts, [], {}
+    )
     return context_parts
 
 
@@ -133,6 +135,7 @@ async def test_skill_command_uses_materialized_script_from_event_cwd(tmp_path: P
         {},
         context_parts,
         [],
+        {},
     )
 
     assert context_parts == [f"{event_cwd}|Edit|{tmp_path / 'browser-cache'}"]
@@ -183,6 +186,7 @@ async def test_skill_command_revalidates_script_while_spawn_guard_is_held(
             {},
             [],
             [],
+            {},
         )
 
     assert validation_states == [False, True]
@@ -223,6 +227,7 @@ async def test_background_skill_command_uses_event_cwd_without_agents_tree(tmp_p
         {},
         [],
         [],
+        {},
     )
     task = next(iter(mixin._background_run_command_registry().values()))
     await task
@@ -267,7 +272,7 @@ class TestRunCommandInline:
 
     async def test_missing_event_is_noop(self) -> None:
         context_parts: list[str] = []
-        await EffectsMixin()._apply_effect(_effect(), _ROW, {}, {}, {}, context_parts, [])
+        await EffectsMixin()._apply_effect(_effect(), _ROW, {}, {}, {}, context_parts, [], {})
         assert context_parts == []
 
 
@@ -278,7 +283,7 @@ class TestRunCommandBackground:
         context_parts: list[str] = []
         with patch("gobby.workflows.engine.effects.create_background_task") as mock_create:
             await EffectsMixin()._apply_effect(
-                effect, _ROW, {}, {"event": _event()}, {}, context_parts, []
+                effect, _ROW, {}, {"event": _event()}, {}, context_parts, [], {}
             )
         assert mock_create.call_count == 1
         assert context_parts == []
@@ -362,7 +367,7 @@ class TestRunCommandBackground:
         event = _event()
         with patch.object(mixin, "_run_command_then_deliver", run), caplog.at_level("INFO"):
             await mixin._apply_effect(
-                _effect(background=True), _ROW, {}, {"event": event}, {}, [], []
+                _effect(background=True), _ROW, {}, {"event": event}, {}, [], [], {}
             )
             await asyncio.wait_for(started.wait(), timeout=1)
             registry = mixin._background_run_command_registry()
@@ -372,7 +377,7 @@ class TestRunCommandBackground:
             first_task.add_done_callback(lambda _task: cleanup_observed.set())
 
             await mixin._apply_effect(
-                _effect(background=True), _ROW, {}, {"event": event}, {}, [], []
+                _effect(background=True), _ROW, {}, {"event": event}, {}, [], [], {}
             )
             assert run.await_count == 1
             assert "suppressed duplicate background run" in caplog.text
@@ -383,7 +388,7 @@ class TestRunCommandBackground:
             assert registry == {}
 
             await mixin._apply_effect(
-                _effect(background=True), _ROW, {}, {"event": event}, {}, [], []
+                _effect(background=True), _ROW, {}, {"event": event}, {}, [], [], {}
             )
             assert registry
             second_task = next(iter(registry.values()))
@@ -422,6 +427,7 @@ class TestRunCommandDeadlines:
                 {},
                 context_parts,
                 [],
+                {},
             )
 
         await_args = execute.await_args
@@ -449,6 +455,7 @@ class TestRunCommandDeadlines:
                 {},
                 context_parts,
                 [],
+                {},
             )
 
         run.assert_not_awaited()
@@ -486,6 +493,7 @@ class TestRunCommandDeadlines:
                 {},
                 [],
                 [],
+                {},
             )
 
         run.assert_not_awaited()

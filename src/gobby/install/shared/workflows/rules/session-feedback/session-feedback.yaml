@@ -61,16 +61,24 @@ rules:
         reason: |
           Before compacting, perform one bounded Gobby-experience survey using
           only first-hand evidence from this context epoch. Call
-          `gobby-sessions:feedback` with at most 3 observations about Gobby
-          friction, noise, surprises, missing affordances, or especially useful
-          behavior. Required observation fields: source, kind, evidence, impact,
-          frequency. Optional: suggestion, disposition. Most epochs should send
-          `observations: []`; that is valid and writes no rows.
+          `gobby-sessions:feedback` with at most 3 observations. Required
+          fields: source, kind (friction | bug | noise | surprise |
+          missing-affordance | useful | other), evidence, impact, frequency
+          (once | repeated | always). Optional: suggestion, disposition
+          (worked-around | filed-task | fixed | escalated | noted). kind
+          'other' requires kind_other_label and is only for observations no
+          listed kind fits. Most epochs should send `observations: []`; that
+          is valid and writes no rows.
 
           This survey is about Gobby (the daemon, rules, tools, and harness),
           not the current repository's product. Concrete defects in the current
-          repo remain Found Work. Then retry `gobby-sessions:set_handoff`
-          without duplicating the same observations in `gobby_feedback`.
+          repo remain Found Work — and so is an actionable Gobby defect you
+          observed: file its task in-line per the found-work ladder before
+          surveying, record disposition 'filed-task', and put the ref in
+          evidence. Defects surveyed as 'worked-around'/'noted' are flagged as
+          shirked found work in the nightly digest. Then retry
+          `gobby-sessions:set_handoff` without duplicating the same
+          observations in `gobby_feedback`.
 
   review-gobby-session-feedback-on-stop:
     description: "Request one bounded Gobby-experience survey after completed work"
@@ -88,10 +96,17 @@ rules:
         reason: |
           Perform one bounded Gobby-experience survey using only first-hand
           evidence from this session. Call `gobby-sessions:feedback` with at
-          most 3 observations (source, kind, evidence, impact, frequency;
-          optional suggestion and disposition). Most sessions should send
+          most 3 observations: source, kind (friction | bug | noise | surprise
+          | missing-affordance | useful | other; 'other' needs
+          kind_other_label), evidence, impact, frequency (once | repeated |
+          always); optional suggestion and disposition (worked-around |
+          filed-task | fixed | escalated | noted). Most sessions should send
           `observations: []`; that is valid and writes no rows.
 
           This survey is about Gobby, not the current repository's product.
-          Concrete defects in the current repo remain Found Work. Omit secrets,
-          private user content, and transcript dumps.
+          Concrete defects in the current repo remain Found Work — and so is an
+          actionable Gobby defect you observed: file its task in-line per the
+          found-work ladder before surveying, record disposition 'filed-task',
+          and put the ref in evidence. Defects surveyed as 'worked-around' or
+          'noted' are flagged as shirked found work in the nightly digest. Omit
+          secrets, private user content, and transcript dumps.

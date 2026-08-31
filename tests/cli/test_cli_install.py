@@ -135,10 +135,6 @@ def _mock_ext_services_and_prompts() -> Iterator[None]:
             "gobby.cli.install.ensure_install_identity",
             return_value=MagicMock(email="owner@example.com"),
         ),
-        patch(
-            "gobby.cli._install_prompts._prompt_api_keys",
-            return_value={"stored": 0, "already_configured": 0, "env_found": 0},
-        ),
     ):
         yield
 

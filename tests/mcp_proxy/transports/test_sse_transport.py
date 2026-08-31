@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.config.mcp import MCPConfigManager
 from gobby.mcp_proxy.models import ConnectionState, MCPServerConfig
 from gobby.mcp_proxy.transports.factory import create_transport_connection
 from gobby.mcp_proxy.transports.sse import SSETransportConnection
@@ -15,9 +14,8 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-async def test_persisted_sse_config_connects_after_reload(tmp_path) -> None:
-    """A saved SSE config remains connectable after recreating the config manager."""
-    config_path = tmp_path / "mcp-servers.json"
+async def test_sse_config_connects_with_explicit_timeout() -> None:
+    """An SSE config connects using its own timeout without a file-backed registry."""
     original = MCPServerConfig(
         name="events",
         project_id="global",
@@ -26,11 +24,7 @@ async def test_persisted_sse_config_connects_after_reload(tmp_path) -> None:
         headers={"X-Tenant": "example"},
         connect_timeout=4.0,
     )
-    MCPConfigManager(str(config_path)).save_servers([original])
-
-    reloaded = MCPConfigManager(str(config_path)).load_servers()
-    assert len(reloaded) == 1
-    connection = create_transport_connection(reloaded[0])
+    connection = create_transport_connection(original)
     assert isinstance(connection, SSETransportConnection)
 
     lifecycle: list[str] = []
@@ -65,10 +59,8 @@ async def test_persisted_sse_config_connects_after_reload(tmp_path) -> None:
         "streams-closed",
         "transport-exit",
     ]
-    # connect_timeout is not persisted, so the reloaded config carries the
-    # default 30s; the SSE client's 300s read timeout is the SDK default.
     assert captured == {
         "url": "https://example.test/sse",
         "headers": {"X-Tenant": "example"},
-        "timeout": 30.0,
+        "timeout": 4.0,
     }

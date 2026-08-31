@@ -10,7 +10,9 @@ import httpx
 import pytest
 from click.testing import CliRunner
 
+from gobby.cli.installers.shared import _sync_user_templates_to_db as real_user_content_sync
 from gobby.cli.sync import sync
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.sync.integrity import BUNDLED_SYNC_CONTENT_TYPES, IntegrityResult
 
 pytestmark = pytest.mark.unit
@@ -34,6 +36,15 @@ def no_running_daemon() -> Iterator[MagicMock]:
     """Default every test to "no daemon answered" so the checkout gate stays out of the way."""
     with patch("gobby.cli.sync._running_daemon_install_dir", return_value=None) as probe:
         yield probe
+
+
+@pytest.fixture(autouse=True)
+def user_content_sync() -> Iterator[MagicMock]:
+    """Stub the user-content import the sync wrapper runs outside dev mode."""
+    with patch(
+        "gobby.cli.installers.shared._sync_user_templates_to_db", return_value=0
+    ) as mock_user_sync:
+        yield mock_user_sync
 
 
 # All lazy imports in sync() need to be patched at the source module:
@@ -610,3 +621,164 @@ class TestRunningDaemonInstallDir:
         from gobby.cli.sync import _running_daemon_install_dir
 
         assert _running_daemon_install_dir() is None
+
+
+# ---------------------------------------------------------------------------
+# User-content wiring — gobby sync must go through the installers.shared wrapper
+# ---------------------------------------------------------------------------
+class TestSyncUserContentWiring:
+    @patch("gobby.sync_registry.sync_bundled_content_to_db")
+    @patch("gobby.cli.runtime.require_cli_database")
+    @patch("gobby.sync.integrity.get_dirty_content_types", return_value=set())
+    @patch("gobby.sync.integrity.verify_bundled_integrity")
+    @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
+    @patch("gobby.utils.dev.is_dev_mode", return_value=False)
+    def test_prod_sync_imports_user_content(
+        self,
+        _dev: MagicMock,
+        _install: MagicMock,
+        mock_verify: MagicMock,
+        _dirty: MagicMock,
+        mock_load: MagicMock,
+        mock_sync: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+        user_content_sync: MagicMock,
+    ) -> None:
+        integrity_result = MagicMock()
+        integrity_result.git_available = True
+        integrity_result.all_clean = True
+        integrity_result.dirty_files = []
+        integrity_result.untracked_files = []
+        mock_verify.return_value = integrity_result
+
+        mock_config = MagicMock()
+        mock_config.database_url = str(tmp_path / "test.db")
+        mock_load.return_value = mock_config
+        (tmp_path / "test.db").write_text("")
+
+        mock_sync.return_value = {"total_synced": 0, "errors": [], "details": {}}
+        user_content_sync.return_value = 3
+
+        result = runner.invoke(sync, [], catch_exceptions=False)
+
+        assert result.exit_code == 0
+        user_content_sync.assert_called_once()
+        assert "Synced 3 bundled items to database" in result.output
+
+    @patch("gobby.sync_registry.sync_bundled_content_to_db")
+    @patch("gobby.sync.integrity.verify_bundled_integrity")
+    @patch("gobby.cli.runtime.require_cli_database")
+    def test_dev_mode_sync_skips_user_content(
+        self,
+        mock_db: MagicMock,
+        mock_verify: MagicMock,
+        mock_sync: MagicMock,
+        runner: CliRunner,
+        user_content_sync: MagicMock,
+    ) -> None:
+        mock_db.return_value = MagicMock()
+        mock_sync.return_value = {"total_synced": 0, "errors": [], "details": {}}
+
+        result = runner.invoke(sync, [], catch_exceptions=False)
+
+        assert result.exit_code == 0
+        mock_sync.assert_called_once()
+        assert "No changes to sync" in result.output
+        user_content_sync.assert_not_called()
+
+
+class TestSyncInstanceYamlEndToEnd:
+    @patch("gobby.cli.mcp_proxy.check_daemon_running", return_value=False)
+    @patch("gobby.sync_registry.sync_bundled_content_to_db")
+    @patch("gobby.sync.integrity.get_dirty_content_types", return_value=set())
+    @patch("gobby.sync.integrity.verify_bundled_integrity")
+    @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
+    @patch("gobby.utils.dev.is_dev_mode", return_value=False)
+    def test_prod_sync_upserts_instance_yaml_rows(
+        self,
+        _dev: MagicMock,
+        _install: MagicMock,
+        mock_verify: MagicMock,
+        _dirty: MagicMock,
+        mock_bundled: MagicMock,
+        _daemon: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        temp_db: HubDatabase,
+        mock_runtime_hub_database: MagicMock,
+        user_content_sync: MagicMock,
+    ) -> None:
+        """gobby sync from a registered project persists .gobby/mcp/servers YAML rows."""
+        import gobby.paths
+        import gobby.utils.project_context
+        from gobby.mcp_proxy.sync_templates import sync_bundled_mcp_templates
+        from gobby.storage.mcp import LocalMCPManager
+        from gobby.storage.projects import LocalProjectManager
+
+        integrity_result = MagicMock()
+        integrity_result.git_available = True
+        integrity_result.all_clean = True
+        integrity_result.dirty_files = []
+        integrity_result.untracked_files = []
+        mock_verify.return_value = integrity_result
+        mock_bundled.return_value = {"total_synced": 0, "errors": [], "details": {}}
+        mock_runtime_hub_database.return_value = temp_db
+        user_content_sync.side_effect = real_user_content_sync
+
+        project_id = LocalProjectManager(temp_db).create("sync-e2e").id
+        monkeypatch.setattr(
+            gobby.utils.project_context,
+            "get_project_context",
+            lambda cwd=None: {"id": project_id, "project_path": str(cwd)},
+        )
+
+        templates = tmp_path / "templates"
+        templates.mkdir()
+        (templates / "demo.yaml").write_text(
+            "name: demo\n"
+            "description: Template demo\n"
+            "version: 1\n"
+            "enabled: true\n"
+            "transport: stdio\n"
+            "command: npx\n"
+            'args: ["-y", "demo-pkg"]\n'
+            "params:\n"
+            "  - name: token\n"
+            "    env: DEMO_TOKEN\n"
+            "    required: true\n"
+            "    secret: true\n"
+            "    default_secret: demo_token\n",
+            encoding="utf-8",
+        )
+        sync_bundled_mcp_templates(temp_db, templates, tag="gobby")
+
+        project_servers = tmp_path / "project-servers"
+        project_servers.mkdir()
+        (project_servers / "lightspeed.yaml").write_text(
+            "template: demo\nvalues:\n  token: $secret:lightspeed_api_token\n",
+            encoding="utf-8",
+        )
+        empty = tmp_path / "empty"
+        monkeypatch.setattr(gobby.paths, "get_project_rules_dir", lambda _path: empty)
+        monkeypatch.setattr(gobby.paths, "get_global_rules_dir", lambda: empty)
+        monkeypatch.setattr(gobby.paths, "get_project_variables_dir", lambda _path: empty)
+        monkeypatch.setattr(gobby.paths, "get_global_variables_dir", lambda: empty)
+        monkeypatch.setattr(gobby.paths, "get_project_mcp_templates_dir", lambda _path: empty)
+        monkeypatch.setattr(gobby.paths, "get_global_mcp_templates_dir", lambda: empty)
+        monkeypatch.setattr(
+            gobby.paths, "get_project_mcp_servers_dir", lambda _path: project_servers
+        )
+        monkeypatch.setattr(gobby.paths, "get_global_mcp_servers_dir", lambda: empty)
+
+        result = runner.invoke(sync, [], catch_exceptions=False)
+
+        assert result.exit_code == 0
+        assert "Synced 1 bundled items to database" in result.output
+        row = LocalMCPManager(temp_db).get_server("lightspeed", project_id=project_id)
+        assert row is not None
+        assert row.template == "demo"
+        assert row.project_id == project_id
+        assert row.env is not None
+        assert row.env["DEMO_TOKEN"] == "$secret:lightspeed_api_token"

@@ -434,3 +434,19 @@ class TestGetDirtyContentTypes:
         explicit_file_targets = {"build_profiles"}
         assert set(CONTENT_TYPE_DIRS.values()) | explicit_file_targets == expected
         assert "build_profiles" not in set(CONTENT_TYPE_DIRS.values())
+
+    def test_every_synced_content_type_maps_a_protected_path(self, tmp_path: Path) -> None:
+        from gobby.sync.integrity import _GIT_PROTECTED_PATHS
+
+        mapped = set(CONTENT_TYPE_DIRS.values()) | {"build_profiles"}
+        assert mapped == BUNDLED_SYNC_CONTENT_TYPES
+        for relative_path, content_type in CONTENT_TYPE_DIRS.items():
+            root = relative_path.split("/", 1)[0]
+            assert root in _GIT_PROTECTED_PATHS or relative_path in _GIT_PROTECTED_PATHS
+            assert content_type in BUNDLED_SYNC_CONTENT_TYPES
+        assert "registry/build_profiles.yaml" in _GIT_PROTECTED_PATHS
+        assert "mcp" in _GIT_PROTECTED_PATHS
+        assert CONTENT_TYPE_DIRS["mcp"] == "mcp_templates"
+        assert get_dirty_content_types(["shared/mcp/templates/openapi.yaml"], tmp_path) == {
+            "mcp_templates"
+        }

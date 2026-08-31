@@ -627,16 +627,29 @@ class TestHookManagerBeforeAgent:
             machine_id=LOCAL_MACHINE_ID,
         )
 
-        with patch(
-            "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
-        ) as schedule_rename:
+        # Parent identity is read from the live process table, so pin it rather than
+        # depending on this machine having PID 30769 running codex.
+        with (
+            patch(
+                "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
+            ) as schedule_rename,
+            patch(
+                "gobby.hooks.terminal_context.psutil.Process",
+                return_value=SimpleNamespace(
+                    create_time=lambda: 1784592177.0,
+                    name=lambda: "codex",
+                ),
+            ),
+        ):
             response = manager.handle(first_prompt)
 
         assert response.decision == "allow"
         session_id = first_prompt.metadata["_platform_session_id"]
         session = manager._session_manager.get(session_id)
         assert session is not None
-        assert session.title == "Codex"
+        # An automatic title carries the project-scoped session ref so it reads as
+        # generated rather than human-authored (#21151).
+        assert session.title == f"(test-project-S#{session.seq_num}): Codex"
         assert session.title_source == "provisional"
         assert session.terminal_context is not None
         for key, value in {**terminal_context, "cwd": str(temp_dir)}.items():
@@ -647,7 +660,9 @@ class TestHookManagerBeforeAgent:
         scheduled_session, scheduled_title = schedule_rename.call_args.args
         assert scheduled_session.id == session_id
         assert scheduled_session.ref == session.ref
-        assert scheduled_title == "Codex"
+        # The tmux window carries the persisted title verbatim, prefix included, so the
+        # pane is identifiable as this session.
+        assert scheduled_title == session.title
 
     def test_before_agent_allows(
         self,
@@ -2465,8 +2480,17 @@ def _deferred_start_event(
     )
 
 
+# Subagent events are absent from ``NON_MATERIALIZING_EVENTS`` because they can still
+# materialize by binding to a parent session. This matrix only ever sends orphans, and
+# a second guard in ``SessionLookupService`` refuses to auto-register those, so here
+# they behave as non-materializing without belonging to the production frozenset.
+_ORPHAN_NON_MATERIALIZING_EVENTS = NON_MATERIALIZING_EVENTS | {
+    HookEventType.SUBAGENT_START,
+    HookEventType.SUBAGENT_STOP,
+}
+
 _FIRST_HOOK_CASES = tuple(
-    (event_type, event_type not in NON_MATERIALIZING_EVENTS)
+    (event_type, event_type not in _ORPHAN_NON_MATERIALIZING_EVENTS)
     for event_type in HookEventType
     if event_type is not HookEventType.SESSION_START
 )

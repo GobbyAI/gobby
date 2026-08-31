@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 from gobby.mcp_proxy.tools.tasks import create_task_registry as _create_task_registry
 from gobby.storage.tasks import Task
 from gobby.tasks.close_verdict import CloseVerdict
@@ -15,6 +16,12 @@ from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 TEST_REPO_PATH = str(Path(__file__).resolve().parents[3])
+
+
+@pytest.fixture(autouse=True)
+def _committed_manifest_is_current() -> Iterator[None]:
+    with patch.object(lifecycle, "check_linked_committed_bundled_manifest", return_value=None):
+        yield
 
 
 def _contract_task() -> Any:

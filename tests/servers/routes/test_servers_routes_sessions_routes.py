@@ -1571,16 +1571,10 @@ class TestGenerateSummary:
         updated_session = _make_session(summary_markdown="# Summary\nDid stuff.")
         mock_server.session_manager.get.side_effect = [session, updated_session]
 
-        with (
-            patch(
-                "gobby.sessions.transcripts.get_parser",
-                return_value=MagicMock(),
-            ),
-            patch(
-                "gobby.sessions.summary_generation.generate_summary",
-                new_callable=AsyncMock,
-                return_value={"status": "ok"},
-            ),
+        with patch(
+            "gobby.sessions.summarize.generate_session_summaries",
+            new_callable=AsyncMock,
+            return_value={"status": "ok"},
         ):
             response = client.post("/api/sessions/sess-abc123/generate-summary")
 
@@ -1615,20 +1609,14 @@ class TestGenerateSummary:
         assert response.status_code == 404
 
     def test_generate_summary_with_error(self, client, mock_server) -> None:
-        """Returns 422 when generate_summary returns an error."""
+        """Returns 422 when generate_session_summaries returns an error."""
         session = _make_session()
         mock_server.session_manager.get.return_value = session
 
-        with (
-            patch(
-                "gobby.sessions.transcripts.get_parser",
-                return_value=MagicMock(),
-            ),
-            patch(
-                "gobby.sessions.summary_generation.generate_summary",
-                new_callable=AsyncMock,
-                return_value={"error": "No transcript data available"},
-            ),
+        with patch(
+            "gobby.sessions.summarize.generate_session_summaries",
+            new_callable=AsyncMock,
+            return_value={"error": "No transcript data available"},
         ):
             response = client.post("/api/sessions/sess-abc123/generate-summary")
 

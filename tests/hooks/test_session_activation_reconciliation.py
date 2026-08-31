@@ -1132,6 +1132,98 @@ def test_spawned_flag_clears_after_agent_run_lookup_finds_no_run(
     assert _variables(db, session_id)["is_spawned_agent"] is False
 
 
+def test_clear_successor_lineage_is_not_stamped_spawned(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path: Path,
+) -> None:
+    predecessor_id = _register_session(
+        session_manager,
+        project_id,
+        tmp_path,
+        external_id="clear-predecessor",
+    )
+    successor_id = _register_session(
+        session_manager,
+        project_id,
+        tmp_path,
+        external_id="clear-successor",
+        parent_session_id=predecessor_id,
+    )
+    SessionVariableManager(db).merge_variables(
+        successor_id,
+        {
+            MARKER_COMPLETED: True,
+            MARKER_VERSION: SESSION_ACTIVATION_CONTRACT_VERSION,
+            MARKER_HASH: SESSION_ACTIVATION_CONTRACT_HASH,
+            "_agent_type": "default",
+            "_active_rule_names": [],
+            "_active_skill_names": None,
+            "_skill_format": None,
+            "_agent_blocked_tools": [],
+            "_agent_blocked_mcp_tools": [],
+            "is_spawned_agent": False,
+            "baseline_dirty_files": [],
+            "session_edited_files": [],
+        },
+    )
+
+    reconcile_session_activation(
+        _event(HookEventType.BEFORE_TOOL, successor_id, tmp_path),
+        handlers,
+    )
+
+    assert _variables(db, successor_id)["is_spawned_agent"] is False
+
+
+def test_clear_successor_wrongly_stamped_spawned_is_repaired(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path: Path,
+) -> None:
+    predecessor_id = _register_session(
+        session_manager,
+        project_id,
+        tmp_path,
+        external_id="clear-predecessor-stale",
+    )
+    successor_id = _register_session(
+        session_manager,
+        project_id,
+        tmp_path,
+        external_id="clear-successor-stale",
+        parent_session_id=predecessor_id,
+    )
+    SessionVariableManager(db).merge_variables(
+        successor_id,
+        {
+            MARKER_COMPLETED: True,
+            MARKER_VERSION: SESSION_ACTIVATION_CONTRACT_VERSION,
+            MARKER_HASH: SESSION_ACTIVATION_CONTRACT_HASH,
+            "_agent_type": "default",
+            "_active_rule_names": [],
+            "_active_skill_names": None,
+            "_skill_format": None,
+            "_agent_blocked_tools": [],
+            "_agent_blocked_mcp_tools": [],
+            "is_spawned_agent": True,
+            "baseline_dirty_files": [],
+            "session_edited_files": [],
+        },
+    )
+
+    reconcile_session_activation(
+        _event(HookEventType.BEFORE_TOOL, successor_id, tmp_path),
+        handlers,
+    )
+
+    assert _variables(db, successor_id)["is_spawned_agent"] is False
+
+
 def test_baseline_dirty_initializes_once_and_preserves_session_edits(
     db: HubDatabase,
     session_manager: SessionManager,

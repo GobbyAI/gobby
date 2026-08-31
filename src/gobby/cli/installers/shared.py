@@ -303,12 +303,19 @@ def _sync_user_templates_to_db(db: "HubDatabase") -> int:
     Returns:
         Total number of items synced or updated.
     """
+    from gobby.mcp_proxy.sync_servers import sync_mcp_server_files
+    from gobby.mcp_proxy.sync_templates import sync_bundled_mcp_templates
     from gobby.paths import (
+        get_global_mcp_servers_dir,
+        get_global_mcp_templates_dir,
         get_global_rules_dir,
         get_global_variables_dir,
+        get_project_mcp_servers_dir,
+        get_project_mcp_templates_dir,
         get_project_rules_dir,
         get_project_variables_dir,
     )
+    from gobby.storage.secrets import SecretStore
 
     total = 0
     project_path = Path.cwd()
@@ -359,10 +366,90 @@ def _sync_user_templates_to_db(db: "HubDatabase") -> int:
         except Exception as e:
             logger.warning("Failed to sync user %s from %s: %s", content_type, paths, e)
 
-    # User templates are now created as installed rows directly by the
-    # sync functions above — no separate install step needed.
+    template_roots = [
+        get_project_mcp_templates_dir(project_path),
+        get_global_mcp_templates_dir(),
+    ]
+    if any(path.exists() for path in template_roots):
+        try:
+            sync_result = sync_bundled_mcp_templates(
+                db,
+                template_roots,
+                tag="user",
+                project_id=project_id,
+                project_root=template_roots[0],
+            )
+            synced = sync_result.get("synced", 0) + sync_result.get("updated", 0)
+            total += synced
+            if synced > 0:
+                logger.info("Synced %s user mcp_templates from %s", synced, template_roots)
+            if sync_result.get("orphaned_global"):
+                bundled = sync_bundled_mcp_templates(db)
+                total += bundled.get("synced", 0) + bundled.get("updated", 0)
+        except Exception as e:
+            logger.warning("Failed to sync user mcp_templates from %s: %s", template_roots, e)
+
+    server_roots = [
+        get_project_mcp_servers_dir(project_path),
+        get_global_mcp_servers_dir(),
+    ]
+    if any(path.exists() for path in server_roots):
+        try:
+            sync_result = sync_mcp_server_files(
+                db,
+                server_roots,
+                project_id=project_id,
+                project_root=server_roots[0],
+                secret_store=SecretStore(db),
+            )
+            synced = sync_result.get("synced", 0) + sync_result.get("updated", 0)
+            total += synced
+            if synced > 0:
+                logger.info("Synced %s user mcp_servers from %s", synced, server_roots)
+            _reconcile_synced_mcp_instances(db, sync_result.get("affected_ids") or [])
+        except Exception as e:
+            logger.warning("Failed to sync user mcp_servers from %s: %s", server_roots, e)
 
     return total
+
+
+def _reconcile_synced_mcp_instances(db: "HubDatabase", affected_ids: list[Any]) -> None:
+    """Refresh each synced instance in the running daemon, or skip if unreachable."""
+    if not affected_ids:
+        return
+    import importlib
+
+    import click
+
+    mcp_mod = importlib.import_module("gobby.cli.mcp_proxy")
+    call_mcp_api = mcp_mod.call_mcp_api
+    check_daemon_running = mcp_mod.check_daemon_running
+    get_daemon_client = mcp_mod.get_daemon_client
+    from gobby.storage.mcp import LocalMCPManager
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+    try:
+        client = get_daemon_client(None)
+    except Exception:
+        click.echo("MCP live reconcile skipped: daemon client unavailable")
+        return
+    if not check_daemon_running(client):
+        click.echo("MCP live reconcile skipped: daemon not running")
+        return
+    manager = LocalMCPManager(db)
+    for server_id in affected_ids:
+        row = manager.get_server_by_id(str(server_id))
+        if row is None:
+            continue
+        payload: dict[str, Any] = {"server_id": str(row.id)}
+        if str(row.project_id) == GLOBAL_PROJECT_ID:
+            payload["scope"] = "global"
+        else:
+            payload["project_id"] = str(row.project_id)
+        result = call_mcp_api(client, "/api/mcp/refresh", method="POST", json_data=payload)
+        if result is None:
+            click.echo("MCP live reconcile skipped: daemon not reachable")
+            return
 
 
 def install_cli_content(cli_name: str, target_path: Path) -> dict[str, list[str]]:

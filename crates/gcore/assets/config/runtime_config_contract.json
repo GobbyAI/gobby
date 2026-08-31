@@ -2053,8 +2053,8 @@
     },
     {
       "activation": "live",
-      "default": 105.0,
-      "description": "Daemon endpoint timeout in seconds for synchronous hook execution.",
+      "default": 26.0,
+      "description": "Daemon endpoint timeout in seconds for synchronous hook execution. Must expire inside the ghook transport window so the daemon answers before the client stops waiting.",
       "key": "hooks.adapter_timeout",
       "machineExport": false,
       "namespace": "hooks",
@@ -3537,6 +3537,105 @@
       "namespace": "search",
       "secrecy": "none",
       "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "codex/gpt-5.6-terra",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "claude/sonnet",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "session_feedback.review.candidates",
+      "machineExport": false,
+      "namespace": "session_feedback",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable the scheduled session-feedback review job",
+      "key": "session_feedback.review.enabled",
+      "machineExport": false,
+      "namespace": "session_feedback",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 200,
+      "description": "Maximum unreviewed feedback rows batched into one run",
+      "key": "session_feedback.review.max_rows_per_run",
+      "machineExport": false,
+      "namespace": "session_feedback",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10,
+      "description": "Maximum tasks one run may file into the gobby project",
+      "key": "session_feedback.review.max_tasks_per_run",
+      "machineExport": false,
+      "namespace": "session_feedback",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 8192,
+      "description": "Maximum tokens for feedback distill responses",
+      "key": "session_feedback.review.max_tokens",
+      "machineExport": false,
+      "namespace": "session_feedback",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_mid",
+      "description": "Provider-agnostic capability profile for feedback review",
+      "key": "session_feedback.review.profile",
+      "machineExport": false,
+      "namespace": "session_feedback",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feedback/review",
+      "description": "Prompt template path for the feedback distill pass",
+      "key": "session_feedback.review.prompt_path",
+      "machineExport": false,
+      "namespace": "session_feedback",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "0 3 * * *",
+      "description": "Cron expression for the system feedback-review job",
+      "key": "session_feedback.review.schedule_cron",
+      "machineExport": false,
+      "namespace": "session_feedback",
+      "secrecy": "none",
+      "type": "string",
       "visibility": "public"
     },
     {
@@ -5844,7 +5943,7 @@
     },
     {
       "activation": "live",
-      "default": 90.0,
+      "default": 24.0,
       "description": "Finite workflow timeout in seconds; zero selects the default",
       "key": "workflow.timeout",
       "machineExport": false,

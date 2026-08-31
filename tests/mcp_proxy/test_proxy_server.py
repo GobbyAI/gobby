@@ -6,7 +6,9 @@ import pytest
 from gobby.config.app import DaemonConfig
 from gobby.hooks.tool_outcomes import classify_raw_tool_result
 from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.mcp_proxy.server import GobbyDaemonTools
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
 
@@ -66,11 +68,17 @@ def mock_mcp_manager():
     manager.call_tool = AsyncMock()
     manager.read_resource = AsyncMock()
 
-    mock_config = MagicMock()
-    mock_config.name = "downstream"
-    mock_config.project_id = "p1"
-    mock_config.tools = [{"name": "dt1", "brief": "desc"}]
+    mock_config = MCPServerConfig(
+        name="downstream",
+        project_id=GLOBAL_PROJECT_ID,
+        url="https://downstream.example.test",
+        id="downstream",
+        tools=[{"name": "dt1", "brief": "desc"}],
+    )
     manager.server_configs = [mock_config]
+    manager._configs = {mock_config.id: mock_config}
+    manager.get_server_config.side_effect = lambda sid: manager._configs.get(sid)
+    manager.has_server.return_value = True
 
     manager.mcp_db_manager = MagicMock()
     manager.mcp_db_manager.get_cached_tools.return_value = []
@@ -141,20 +149,26 @@ async def test_list_mcp_servers(daemon_tools, mock_mcp_manager):
     # Set up server config and health for direct access
     config = MagicMock()
     config.name = "server1"
+    config.id = "server1"
+    config.project_id = "test-project"
     config.transport = "http"
     config.enabled = True
+    config.template = None
     mock_mcp_manager.server_configs = [config]
+    mock_mcp_manager._configs = {"server1": config}
+    mock_mcp_manager.project_id = "test-project"
 
     health = MagicMock()
     health.state.value = "connected"
     mock_mcp_manager.health = {"server1": health}
     mock_mcp_manager.connections = {"server1": MagicMock()}
+    mock_mcp_manager.is_connected.return_value = True
 
     # Internal manager returns no registries
     daemon_tools.internal_manager.get_all_registries.return_value = []
 
     result = await daemon_tools.list_mcp_servers()
-    assert result["servers"] == ["server1"]
+    assert [row["name"] for row in result["servers"]] == ["server1"]
     assert result["connected"] == 1
 
 
@@ -174,7 +188,7 @@ async def test_call_tool_downstream(daemon_tools, mock_mcp_manager):
     daemon_tools.internal_manager.is_internal.return_value = False
     mock_mcp_manager.call_tool.return_value = {"data": "downstream_result"}
 
-    result = await daemon_tools.call_tool("server1", "tool1", {})
+    result = await daemon_tools.call_tool("downstream", "tool1", {})
     assert result == {"data": "downstream_result"}
 
 
@@ -186,7 +200,7 @@ async def test_read_mcp_resource(daemon_tools, mock_mcp_manager):
     mock_resource.contents = [mock_content]
     mock_mcp_manager.read_resource.return_value = mock_resource
 
-    result = await daemon_tools.read_mcp_resource("server1", "uri1")
+    result = await daemon_tools.read_mcp_resource("downstream", "uri1")
     # read_resource returns raw result from mcp_manager
     assert result == mock_resource
 
@@ -210,9 +224,13 @@ async def test_add_mcp_server(daemon_tools, mock_mcp_manager):
 async def test_remove_mcp_server(daemon_tools, mock_mcp_manager):
     mock_mcp_manager.remove_server = AsyncMock(return_value={"success": True, "name": "s1"})
 
+    row = MagicMock()
+    row.id = "s1"
+    row.name = "s1"
+    mock_mcp_manager.mcp_db_manager.get_server.return_value = row
     result = await daemon_tools.remove_mcp_server(name="s1")
     assert result["success"] is True
-    mock_mcp_manager.remove_server.assert_awaited_once_with("s1")
+    mock_mcp_manager.remove_server.assert_awaited_once_with("s1", project_id="test-project-id")
 
 
 @pytest.mark.asyncio

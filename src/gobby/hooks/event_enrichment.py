@@ -10,6 +10,7 @@ Extracted from HookManager.handle() as part of the Strangler Fig decomposition.
 from __future__ import annotations
 
 import logging
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
@@ -172,16 +173,17 @@ class EventEnricher:
         if not undelivered:
             return
 
+        resolve_sender = partial(self._resolve_sender_label, recipient_project_id=event.project_id)
         rendered = render_pending_messages(
             undelivered,
-            resolve_sender=self._resolve_sender_label,
+            resolve_sender=resolve_sender,
         )
         if event.source == SessionSource.GROK:
             grok_pending_context.enqueue_pending_messages(
                 self._session_manager,
                 platform_session_id,
                 undelivered,
-                self._resolve_sender_label,
+                resolve_sender,
             )
             self._stage_pending_messages(response, rendered, platform_session_id)
             return
@@ -229,11 +231,14 @@ class EventEnricher:
             and capability.context_channel is not ContextChannel.NONE
         )
 
-    def _resolve_sender_label(self, from_session: str | None) -> str:
+    def _resolve_sender_label(
+        self, from_session: str | None, *, recipient_project_id: str | None = None
+    ) -> str:
         """Resolve a session ID to a human-readable sender label.
 
-        Returns 'Session #N: ' if seq_num lookup succeeds, falls back to
-        truncated UUID, or empty string if no sender.
+        Returns 'Session #N: ' for a same-project sender, 'Session <project>-S#N: '
+        for a sender in another project (so the recipient can address it back),
+        a truncated UUID when the seq_num lookup fails, or '' with no sender.
         """
         if not from_session:
             return ""
@@ -241,7 +246,25 @@ class EventEnricher:
             try:
                 session_obj = self._session_manager.get(from_session)
                 if session_obj and session_obj.seq_num:
+                    sender_project_id = getattr(session_obj, "project_id", None)
+                    if (
+                        isinstance(sender_project_id, str)
+                        and isinstance(recipient_project_id, str)
+                        and sender_project_id != recipient_project_id
+                    ):
+                        project_ref = self._project_ref(sender_project_id)
+                        return f"Session {project_ref}-S#{session_obj.seq_num}: "
                     return f"Session #{session_obj.seq_num}: "
             except Exception:
                 pass
         return f"Session {from_session[:8]}: "
+
+    def _project_ref(self, project_id: str) -> str:
+        """Return the project name for a '<project>-S#N' ref, else the project UUID."""
+        db = getattr(self._session_manager, "db", None)
+        if db is not None:
+            row = db.fetchone("SELECT name FROM projects WHERE id = %s", (project_id,))
+            name = row["name"] if row else None
+            if isinstance(name, str) and name:
+                return name
+        return project_id

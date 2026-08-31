@@ -256,14 +256,19 @@ class TestSetContextForRequest:
         assert tokens.session_token is None
         assert tokens.resolved_session_id is None
 
-    async def test_wrapper_session_header_wins_without_parsing_terminal_context(self) -> None:
-        """An explicit wrapper header is authoritative even if ambient context is malformed."""
+    async def test_wrapper_session_header_backfills_terminal_context(self) -> None:
+        """An explicit wrapper session receives the wrapper's current terminal identity."""
         server = _make_server()
+        terminal_context = {
+            "parent_pid": 4242,
+            "tmux_pane": "%142",
+            "tmux_socket_path": "/tmp/tmux/default",
+        }
         request = _make_request(
             project_id=PROJECT_ID,
             session_id="#7",
             wrapper=True,
-            terminal_context="{",
+            terminal_context=json.dumps(terminal_context),
         )
 
         with patch(
@@ -278,7 +283,34 @@ class TestSetContextForRequest:
 
         assert tokens.resolved_session_id == SESSION_UUID
         assert mock_helper.call_args.kwargs["session_ref"] == "#7"
+        server.session_manager.backfill_terminal_context.assert_called_once_with(
+            SESSION_UUID,
+            terminal_context,
+        )
         server.session_manager.resolve_current_terminal_session.assert_not_called()
+
+    async def test_wrapper_session_header_rejects_malformed_terminal_context(self) -> None:
+        """An explicit session header does not bypass wrapper identity validation."""
+        server = _make_server()
+        request = _make_request(
+            project_id=PROJECT_ID,
+            session_id="#7",
+            wrapper=True,
+            terminal_context="{",
+        )
+
+        with (
+            patch(
+                "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
+                new_callable=AsyncMock,
+            ) as mock_helper,
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await _set_context_for_request(server, {}, request)
+
+        assert exc_info.value.status_code == 409
+        assert _exception_detail(exc_info.value)["error_code"] == "SESSION_REQUIRED"
+        mock_helper.assert_not_awaited()
 
     async def test_wrapper_target_session_does_not_bootstrap_caller_project(self) -> None:
         """A body session_id cannot seed wrapper caller enforcement context."""

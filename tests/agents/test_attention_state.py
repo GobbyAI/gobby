@@ -22,8 +22,8 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
 from gobby.terminals.discovery import seed_external_terminal
 from tests.agents.test_lifecycle_monitor import LifecycleRuntime
-from tests.terminals.fakes import runtime_registry
 from tests.agents.test_lifecycle_monitor_extra import _memory_terminal_services
+from tests.terminals.fakes import runtime_registry
 
 from .detection_test_support import BundledDetectionRegistry
 

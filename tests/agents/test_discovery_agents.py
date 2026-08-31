@@ -49,6 +49,7 @@ REQUIRED_STAGE_MCP_TOOLS = {
     "gobby-tasks:get_task",
     "gobby-tasks:update_task",
     "gobby-skills:get_skill",
+    "gobby-skills:get_skill_file",
     "gobby-agents:end_agent_run",
     "gobby-tasks:escalate_task",
 }
@@ -116,7 +117,10 @@ def test_discovery_agent_loads_expected_methodology_skill(
 
     load_step = find_step(agent.step_workflow.steps, "load_skill")
     assert load_step is not None
-    assert load_step.allowed_mcp_tools == ["gobby-skills:get_skill"]
+    assert load_step.allowed_mcp_tools == [
+        "gobby-skills:get_skill",
+        "gobby-skills:get_skill_file",
+    ]
     assert spec["skill"] in (load_step.status_message or "")
 
     mcp_success = getattr(load_step, "on_mcp_success", []) or []

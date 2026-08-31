@@ -35,6 +35,7 @@ from gobby.storage.hub.protocol import (
     WebChatSessionBootstrap,
 )
 from gobby.storage.session_models import Session
+from gobby.storage.sessions import TERMINAL_SESSION_STATUSES
 from gobby.storage.sessions._lineage_guard import sanitize_parent_session_id
 from gobby.utils.datetime import utc_now
 
@@ -226,6 +227,10 @@ def take_clear_handoff_marker(
                 "UPDATE sessions SET parent_session_id = %s, updated_at = %s WHERE id = %s",
                 (sanitized, now, successor_id),
             )
+            conn.execute(
+                "UPDATE agent_runs SET parent_session_id = %s WHERE parent_session_id = %s",
+                (successor_id, predecessor_id),
+            )
             return True
     except Exception:
         logger.warning(
@@ -235,6 +240,40 @@ def take_clear_handoff_marker(
             exc_info=True,
         )
         return False
+
+
+def resolve_clear_successor(db: HubDatabase, session_id: str) -> str | None:
+    """Follow a terminal session's consumed clear marker to its live successor."""
+    current_id = session_id
+    try:
+        for hop_count in range(6):
+            row = db.fetchone(
+                """
+                SELECT s.status, sv.variables
+                  FROM sessions s
+                  LEFT JOIN session_variables sv ON sv.session_id = s.id
+                 WHERE s.id = %s
+                """,
+                (current_id,),
+            )
+            if row is None:
+                return None
+            if row["status"] not in TERMINAL_SESSION_STATUSES:
+                return current_id
+            if hop_count == 5:
+                return None
+            marker = _marker_from_variables(_load_variables(row["variables"]))
+            consumed_by = marker.get("consumed_by") if marker is not None else None
+            if not isinstance(consumed_by, str) or not consumed_by or consumed_by == current_id:
+                return None
+            current_id = consumed_by
+    except Exception:
+        logger.warning(
+            "Failed resolving clear successor for session %s",
+            session_id,
+            exc_info=True,
+        )
+    return None
 
 
 def clear_failed_attempt(
@@ -457,6 +496,10 @@ def _commit_web_chat_clear_successor_rows(
         VALUES (%s, %s, %s)
         """,
         (successor_id, json.dumps({}), now.isoformat()),
+    )
+    conn.execute(
+        "UPDATE agent_runs SET parent_session_id = %s WHERE parent_session_id = %s",
+        (successor_id, predecessor_id),
     )
     succ_row = conn.execute(
         "SELECT * FROM sessions WHERE id = %s",

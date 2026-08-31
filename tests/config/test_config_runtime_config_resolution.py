@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
-from gobby.mcp_proxy.tools.sessions._terminal_handoff import _capture_handoff_configs
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
@@ -434,25 +433,6 @@ async def test_results_schema_stays_pinned_and_live_bound_error_is_visible() -> 
         "error": f"limit exceeds current live maximum of {live_limit}",
     }
     store.get_slice.assert_not_called()
-
-
-def test_compact_handoff_uses_supplied_epoch_config() -> None:
-    configs = [DaemonConfig(), DaemonConfig()]
-    reads: list[int] = []
-
-    def resolve_config() -> DaemonConfig:
-        reads.append(0)
-        return configs[0]
-
-    summary, compact = _capture_handoff_configs(
-        resolve_config,
-        session_summary_config=None,
-        compact_handoff_config=None,
-    )
-
-    assert reads == [0]
-    assert summary is configs[0].session_summary
-    assert compact is configs[0].compact_handoff
 
 
 @pytest.mark.asyncio

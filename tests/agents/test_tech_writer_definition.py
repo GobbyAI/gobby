@@ -30,7 +30,10 @@ def test_loads_required_skills_before_implementation() -> None:
         "tasks",
     ]
     assert steps["claim"]["transitions"] == [{"to": "load_skills", "when": "vars.task_claimed"}]
-    assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
+    assert load_step["allowed_mcp_tools"] == [
+        "gobby-skills:get_skill",
+        "gobby-skills:get_skill_file",
+    ]
     assert 'get_skill(name="tech-writer")' in load_step["status_message"]
     assert 'get_skill(name="tasks")' in load_step["status_message"]
     assert load_step["transitions"] == [

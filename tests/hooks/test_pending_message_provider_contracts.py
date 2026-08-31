@@ -25,7 +25,7 @@ STAGED_EFFECTS_KEY = "_gobby_staged_effects"
 RECIPIENT_SESSION_ID = "11111111-1111-4111-8111-111111111111"
 _RECEIPT_MIGRATION = (
     Path(__file__).resolve().parents[2]
-    / "crates/gcore/assets/schema/migrations/414_hook_receipt_effects.sql"
+    / "crates/gcore/assets/schema/migrations/416_hook_receipt_effects.sql"
 )
 
 CONTEXT_PROVIDER_CASES: tuple[tuple[type[Any], str], ...] = (

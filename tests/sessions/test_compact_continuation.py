@@ -861,6 +861,7 @@ async def test_load_skill_effect_flows_to_persisted_resume_prompt(
         {},
         context_parts,
         [],
+        {},
     )
 
     assert block_reason is None

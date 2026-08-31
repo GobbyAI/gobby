@@ -14,6 +14,7 @@ import psycopg
 
 from gobby.plans.manifest_emitter import emit_stub_manifest
 from gobby.plans.parser import (
+    ArtifactKind,
     Kind,
     ManifestEntry,
     PlanDocument,
@@ -24,6 +25,7 @@ from gobby.plans.parser import (
 from gobby.storage.expansion_runs import ExpansionRun
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.tasks import Task
+from gobby.tasks.acceptance_artifacts import parse_test_reference
 from gobby.tasks.categories import AGENT_BY_IMPLEMENTATION_DOMAIN
 from gobby.tasks.expansion._common import (
     _CONTRACT_PHASE_ID_RE,
@@ -148,6 +150,15 @@ def _validate_contract_manifest(
                 f"manifest entry source_section={entry.source_section!r} "
                 "does not resolve to a kind: deliverable section"
             )
+        for item in section.acceptance_items:
+            if (
+                item.artifact_kind is ArtifactKind.test
+                and parse_test_reference(item.artifact_ref) is None
+            ):
+                raise ValueError(
+                    f"acceptance item {item.item_id!r} test artifact "
+                    f"{item.artifact_ref!r} must use path::test_symbol"
+                )
 
     deliverable_ids = {
         section.section_id for section in plan_doc.sections if section.kind is Kind.deliverable

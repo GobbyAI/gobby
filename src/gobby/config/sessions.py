@@ -14,7 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from gobby.config.feature_base import FeatureDefaultConfig
+from gobby.config.feature_base import FeatureDefaultConfig, FeatureProfile
 
 __all__ = [
     "ChatHistoryConfig",
@@ -22,6 +22,7 @@ __all__ = [
     "MessageTrackingConfig",
     "SessionLifecycleConfig",
     "SessionFeedbackConfig",
+    "FeedbackReviewConfig",
 ]
 
 
@@ -192,6 +193,42 @@ class SessionLifecycleConfig(BaseModel):
         return v
 
 
+class FeedbackReviewConfig(FeatureDefaultConfig):
+    """Nightly review loop over unreviewed session_feedback rows."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable the scheduled session-feedback review job",
+    )
+    schedule_cron: str = Field(
+        default="0 3 * * *",
+        description="Cron expression for the system feedback-review job",
+    )
+    prompt_path: str = Field(
+        default="feedback/review",
+        description="Prompt template path for the feedback distill pass",
+    )
+    max_tokens: int = Field(
+        default=8192,
+        ge=1,
+        description="Maximum tokens for feedback distill responses",
+    )
+    max_rows_per_run: int = Field(
+        default=200,
+        ge=1,
+        description="Maximum unreviewed feedback rows batched into one run",
+    )
+    max_tasks_per_run: int = Field(
+        default=10,
+        ge=0,
+        description="Maximum tasks one run may file into the gobby project",
+    )
+    profile: FeatureProfile = Field(
+        default=FeatureProfile.MID,
+        description="Provider-agnostic capability profile for feedback review",
+    )
+
+
 class SessionFeedbackConfig(BaseModel):
     """Gobby-experience survey capture (session_feedback table)."""
 
@@ -203,4 +240,8 @@ class SessionFeedbackConfig(BaseModel):
             "gobby: only projects named gobby. "
             "off: no prompts; gobby-sessions:feedback remains callable."
         ),
+    )
+    review: FeedbackReviewConfig = Field(
+        default_factory=FeedbackReviewConfig,
+        description="Scheduled review loop that distills unreviewed feedback rows",
     )

@@ -22,6 +22,15 @@ pytestmark = pytest.mark.unit
 MACHINE = "21000000-0000-4000-8000-000000000001"
 
 
+@pytest.fixture(autouse=True)
+def _confined_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the fake session's workspace inside the confinement roots."""
+    monkeypatch.setattr(
+        "gobby.sessions.acp_lifecycle.session_confinement_roots",
+        lambda _manager, _session: ("/tmp/acp-workspace",),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
@@ -209,6 +218,10 @@ class _RM:
     def __init__(self, backends: dict[str, _Backend]) -> None:
         self._backends = backends
         self.cache: dict[tuple[str, str], dict[str, Any]] = {}
+        self.sandbox_config = SimpleNamespace()
+
+    def policy_mismatch_reason(self, _session: Any) -> str | None:
+        return None
 
     def acp_backends(self) -> dict[str, _Backend]:
         return dict(self._backends)

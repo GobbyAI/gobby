@@ -6,8 +6,11 @@ import os
 import re
 import subprocess
 import tarfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 from urllib.parse import urlparse
@@ -48,11 +51,17 @@ from gobby.cli.installers.hook_commands import build_hook_command
 from gobby.install.checksums import parse_sha256_digest
 from gobby.install.distribution import HomebrewHelperStatus
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
 GCODE_PIN: str = MANAGED_BIN_VERSION_PINS["gcode"]
 GWIKI_PIN: str = MANAGED_BIN_VERSION_PINS["gwiki"]
 _BUNDLED_INSTALL_ROOT = Path(__file__).parents[2] / "src" / "gobby" / "install"
+_MCP_ADD_SERVER_COMMAND = "gobby mcp-proxy add-server <name> --template <template> [--global]"
+_MCP_SERVERS_JSON_RETIRED = (
+    "`~/.gobby/mcp-servers.json` is no longer used; instances live in the hub "
+    "— delete it when convenient"
+)
 
 
 def _assert_fresh_local_dsn(bootstrap_text: str) -> None:
@@ -177,7 +186,6 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup_srt.install_srt_runtime")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.sync_registry.sync_bundled_content_to_db")
-    @patch("gobby.cli.installers.install_default_mcp_servers")
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
@@ -194,7 +202,6 @@ class TestRunDaemonSetup:
         mock_ghook,
         mock_gcode,
         mock_run,
-        mock_mcp,
         mock_sync,
         mock_init,
         mock_srt,
@@ -204,6 +211,7 @@ class TestRunDaemonSetup:
         capsys: pytest.CaptureFixture[str],
     ):
         mock_db = MagicMock()
+        mock_db.list_templates.return_value = []
         mock_context = MagicMock()
         mock_context.__enter__.return_value = mock_db
         mock_init.return_value = mock_context
@@ -218,7 +226,6 @@ class TestRunDaemonSetup:
             path=tmp_path / ".gobby" / "tools" / "impeccable" / "3.5.0",
         )
         mock_sync.return_value = {"total_synced": 5, "errors": []}
-        mock_mcp.return_value = {"success": True, "servers_added": ["gh"], "servers_skipped": []}
         mock_gcode.return_value = {"installed": True, "version": "1.0", "method": "github"}
         mock_ghook.return_value = {"installed": True, "version": "1.0", "method": "github"}
         mock_ide.return_value = {
@@ -241,9 +248,6 @@ class TestRunDaemonSetup:
         assert mock_sync.call_args is not None
         mock_context.__exit__.assert_called_once()
         mock_db.close.assert_not_called()
-        mock_mcp.assert_called_once()
-        assert mock_mcp.call_count == 1
-        assert mock_mcp.call_args is not None
         mock_srt.assert_called_once_with()
         mock_impeccable.assert_called_once_with()
         mock_reconcile.assert_called_once_with(tmp_path)
@@ -271,7 +275,6 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup_srt.install_srt_runtime")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.sync_registry.sync_bundled_content_to_db")
-    @patch("gobby.cli.installers.install_default_mcp_servers")
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
@@ -288,7 +291,6 @@ class TestRunDaemonSetup:
         mock_ghook: MagicMock,
         mock_gcode: MagicMock,
         mock_run: MagicMock,
-        mock_mcp: MagicMock,
         mock_sync: MagicMock,
         mock_init: MagicMock,
         mock_srt: MagicMock,
@@ -301,9 +303,10 @@ class TestRunDaemonSetup:
             version="3.5.0",
             path=tmp_path / ".gobby" / "tools" / "impeccable" / "3.5.0",
         )
-        mock_init.return_value = MagicMock()
+        mock_db = MagicMock()
+        mock_db.list_templates.return_value = []
+        mock_init.return_value = mock_db
         mock_sync.return_value = {"total_synced": 0, "errors": []}
-        mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
         mock_gcode.return_value = {"skipped": True}
         mock_ghook.return_value = {"skipped": True}
         mock_ide.return_value = {"Code": {"added": False}}
@@ -328,14 +331,12 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup_srt.install_srt_runtime")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.sync_registry.sync_bundled_content_to_db")
-    @patch("gobby.cli.installers.install_default_mcp_servers")
     @patch("gobby.cli.install_setup._run_npm_install")
     @patch("gobby.cli.install_setup._run_managed_native_binary_installs")
     def test_run_daemon_setup_fails_when_impeccable_install_fails(
         self,
         mock_native: MagicMock,
         mock_npm: MagicMock,
-        mock_mcp: MagicMock,
         mock_sync: MagicMock,
         mock_init: MagicMock,
         mock_srt: MagicMock,
@@ -344,9 +345,10 @@ class TestRunDaemonSetup:
     ) -> None:
         from gobby.cli.install_setup_impeccable import ImpeccableInstallError
 
-        mock_init.return_value = MagicMock()
+        mock_db = MagicMock()
+        mock_db.list_templates.return_value = []
+        mock_init.return_value = mock_db
         mock_sync.return_value = {"total_synced": 0, "errors": []}
-        mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
         mock_srt.return_value = MagicMock(
             installed=False,
             version="0.0.66",
@@ -361,7 +363,6 @@ class TestRunDaemonSetup:
             run_daemon_setup(tmp_path, configure_ide_settings=False)
 
         assert str(exc_info.value) == "Failed to provision managed Impeccable CLI: npm failed"
-        mock_mcp.assert_called_once_with()
         mock_srt.assert_called_once_with()
         mock_impeccable.assert_called_once_with()
         mock_npm.assert_not_called()
@@ -371,7 +372,6 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup_srt.install_srt_runtime")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.sync_registry.sync_bundled_content_to_db")
-    @patch("gobby.cli.installers.install_default_mcp_servers")
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
@@ -388,7 +388,6 @@ class TestRunDaemonSetup:
         mock_ghook,
         mock_gcode,
         mock_run,
-        mock_mcp,
         mock_sync,
         mock_init,
         mock_srt,
@@ -396,6 +395,7 @@ class TestRunDaemonSetup:
         tmp_path,
     ):
         mock_db = MagicMock()
+        mock_db.list_templates.return_value = []
         mock_init.return_value = mock_db
         mock_srt.return_value = MagicMock(
             installed=False,
@@ -408,7 +408,6 @@ class TestRunDaemonSetup:
             path=tmp_path / ".gobby" / "tools" / "impeccable" / "3.5.0",
         )
         mock_sync.return_value = {"total_synced": 0, "errors": []}
-        mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
         mock_gcode.return_value = {"skipped": True}
         mock_ide.return_value = {"Code": {"added": False}}
         mock_run.return_value = MagicMock(returncode=0)
@@ -441,7 +440,6 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup_srt.install_srt_runtime")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.sync_registry.sync_bundled_content_to_db")
-    @patch("gobby.cli.installers.install_default_mcp_servers")
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
@@ -454,16 +452,17 @@ class TestRunDaemonSetup:
         mock_ghook: MagicMock,
         mock_gcode: MagicMock,
         mock_run: MagicMock,
-        mock_mcp: MagicMock,
         mock_sync: MagicMock,
         mock_init: MagicMock,
         mock_srt: MagicMock,
         mock_impeccable: MagicMock,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setenv("GOBBY_DISTRIBUTION", "homebrew")
         mock_db = MagicMock()
+        mock_db.list_templates.return_value = []
         mock_init.return_value = mock_db
         mock_srt.return_value = MagicMock(
             installed=True,
@@ -476,7 +475,6 @@ class TestRunDaemonSetup:
             path=tmp_path / ".gobby" / "tools" / "impeccable" / "3.5.0",
         )
         mock_sync.return_value = {"total_synced": 0, "errors": []}
-        mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
         mock_ide.return_value = {"Code": {"added": False}}
         mock_verify.return_value = [
             HomebrewHelperStatus(
@@ -494,16 +492,120 @@ class TestRunDaemonSetup:
             mock_tmux.return_value = {"success": True, "updated": False}
             run_daemon_setup(tmp_path, configure_ide_settings=False)
 
-        assert mock_sync.return_value == {"total_synced": 0, "errors": []}
-        assert mock_mcp.return_value["success"] is True
-        mock_srt.assert_called_once_with()
-        mock_impeccable.assert_called_once_with()
-        mock_verify.assert_called_once_with()
+        output = capsys.readouterr().out
+        assert "Skipping global npm installs in Homebrew distribution mode" in output
+        assert "Verified Homebrew helper binaries: gcode 1.0.0" in output
+        assert _MCP_ADD_SERVER_COMMAND in output
+        assert "Added MCP servers to proxy" not in output
         mock_run.assert_not_called()
         mock_gcode.assert_not_called()
         mock_ghook.assert_not_called()
         mock_ide.assert_not_called()
-        mock_tmux.assert_called_once_with()
+
+
+def _stub_post_hub_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from gobby.cli import install_setup, install_setup_impeccable, install_setup_srt
+    from gobby.cli.installers import ide_config, tmux_config
+
+    monkeypatch.setattr(
+        "gobby.sync_registry.sync_bundled_content_to_db",
+        lambda db: {"total_synced": 0, "errors": []},
+    )
+    monkeypatch.setattr(
+        install_setup_srt,
+        "install_srt_runtime",
+        lambda: SimpleNamespace(installed=False, version="test", path=tmp_path),
+    )
+    monkeypatch.setattr(
+        install_setup_impeccable,
+        "install_impeccable_cli",
+        lambda: SimpleNamespace(installed=False, version="test", path=tmp_path),
+    )
+    monkeypatch.setattr(
+        install_setup_impeccable,
+        "reconcile_impeccable_installation",
+        lambda _project_path: None,
+    )
+    monkeypatch.setattr(tmux_config, "configure_tmux_clipboard", lambda: {"success": True})
+    monkeypatch.setattr(
+        ide_config,
+        "configure_vscode_family_terminal_integration",
+        lambda: {},
+    )
+    monkeypatch.setattr(install_setup, "_run_npm_install", lambda *_args: None)
+    monkeypatch.setattr(install_setup, "_run_managed_native_binary_installs", lambda: None)
+    monkeypatch.setattr(install_setup, "is_homebrew_distribution", lambda: False)
+
+
+def test_daemon_setup_lists_mcp_templates_without_installing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from gobby.storage.hub import runtime
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    mock_db = MagicMock()
+    mock_db.list_templates.return_value = [
+        SimpleNamespace(name="github"),
+        SimpleNamespace(name="openapi"),
+    ]
+
+    @contextmanager
+    def database(**_kwargs: object) -> Iterator[MagicMock]:
+        yield mock_db
+
+    monkeypatch.setattr(runtime, "runtime_hub_database", database)
+    _stub_post_hub_setup(monkeypatch, tmp_path)
+
+    run_daemon_setup(tmp_path, configure_ide_settings=False)
+
+    output = capsys.readouterr().out
+    assert "github" in output
+    assert "openapi" in output
+    assert _MCP_ADD_SERVER_COMMAND in output
+    assert "Added MCP servers to proxy" not in output
+    assert _MCP_SERVERS_JSON_RETIRED not in output
+    mock_db.list_templates.assert_called_once_with(project_id=GLOBAL_PROJECT_ID)
+    assert mock_db.list_templates.call_count == 1
+    assert not (tmp_path / ".gobby" / "mcp-servers.json").exists()
+
+
+def test_daemon_setup_warns_about_retired_mcp_servers_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from gobby.storage.hub import runtime
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    retired = tmp_path / ".gobby" / "mcp-servers.json"
+    retired.parent.mkdir(parents=True)
+    original = b'{"servers": [{"name": "keep-me"}]}\n'
+    retired.write_bytes(original)
+    retired.chmod(0o600)
+    before_stat = retired.stat()
+
+    mock_db = MagicMock()
+    mock_db.list_templates.return_value = [SimpleNamespace(name="github")]
+
+    @contextmanager
+    def database(**_kwargs: object) -> Iterator[MagicMock]:
+        yield mock_db
+
+    monkeypatch.setattr(runtime, "runtime_hub_database", database)
+    _stub_post_hub_setup(monkeypatch, tmp_path)
+
+    run_daemon_setup(tmp_path, configure_ide_settings=False)
+
+    output = capsys.readouterr().out
+    assert _MCP_SERVERS_JSON_RETIRED in output
+    assert _MCP_ADD_SERVER_COMMAND in output
+    assert "github" in output
+    assert retired.read_bytes() == original
+    after_stat = retired.stat()
+    assert after_stat.st_mtime_ns == before_stat.st_mtime_ns
+    assert after_stat.st_size == before_stat.st_size
 
 
 class TestRunNpmInstall:

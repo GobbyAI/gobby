@@ -140,7 +140,16 @@ class TerminalResourceCleaner:
                 os.close(fd)
             except OSError:
                 pass
-        await self._close_tmux_session(run)
+        try:
+            await self._close_tmux_session(run)
+        except Exception:
+            # Finalisation must survive a tmux or storage error here; the
+            # sweep retries any row left unsettled.
+            logger.warning(
+                "Failed to close tmux session for terminal agent %s",
+                run.id,
+                exc_info=True,
+            )
         if not parking:
             try:
                 await reap_srt_runner_process_tree(run.id)
@@ -218,6 +227,7 @@ class TerminalResourceCleaner:
                 )
 
     async def _close_tmux_session(self, run: AgentRun) -> bool:
+        from gobby.agents.capture import backend_session_present
         from gobby.storage.terminals import TerminalManager
 
         if not run.terminal_id:
@@ -227,18 +237,23 @@ class TerminalResourceCleaner:
             return False
         manager = TerminalManager(self._agent_run_manager.db)
         terminal = manager.get(run.terminal_id)
-        if terminal is None or terminal.state not in {"pending", "live"}:
+        if terminal is None:
             return False
+        killed = False
         if self._terminal_services is not None:
             try:
                 runtime = self._terminal_services.runtime_for(terminal)
-                await runtime.terminate(terminal, grace_seconds=5.0)
-                if await runtime.is_live(terminal):
-                    logger.warning(
-                        "Terminal %s for agent %s was not closed",
-                        run.terminal_id,
-                        run.id,
-                    )
+                if await backend_session_present(runtime, terminal):
+                    await runtime.terminate(terminal, grace_seconds=5.0)
+                    if await backend_session_present(runtime, terminal):
+                        logger.warning(
+                            "Terminal %s for agent %s was not closed",
+                            run.terminal_id,
+                            run.id,
+                        )
+                        return False
+                    killed = True
+                elif terminal.state not in {"pending", "live", "orphaned"}:
                     return False
             except Exception:
                 logger.warning(
@@ -248,15 +263,35 @@ class TerminalResourceCleaner:
                     exc_info=True,
                 )
                 return False
-        manager.mark_exited(run.terminal_id)
-        # The stored pid is the pane pid of the terminal just closed; keeping it
-        # would offer a stale signal target to later recovery.
-        await self._run_db(self._agent_run_manager.update_runtime, run.id, pid=None)
-        logger.info(
-            "Closed lingering terminal %s for agent %s",
-            run.terminal_id,
-            run.id,
-        )
+        elif terminal.state not in {"pending", "live", "orphaned"}:
+            return False
+        try:
+            current = manager.get(run.terminal_id)
+            if current is not None and current.state in {"pending", "live", "orphaned"}:
+                manager.mark_exited(run.terminal_id)
+            # The stored pid is the pane pid of the terminal just closed; keeping it
+            # would offer a stale signal target to later recovery.
+            await self._run_db(self._agent_run_manager.update_runtime, run.id, pid=None)
+        except Exception:
+            logger.warning(
+                "Failed to settle terminal row %s for agent %s after close",
+                run.terminal_id,
+                run.id,
+                exc_info=True,
+            )
+            return False
+        if killed:
+            logger.info(
+                "Closed lingering terminal %s for agent %s",
+                run.terminal_id,
+                run.id,
+            )
+        else:
+            logger.info(
+                "Settled already-closed terminal row %s for agent %s",
+                run.terminal_id,
+                run.id,
+            )
         return True
 
     async def cleanup_terminal_tmux_sessions(self) -> int:

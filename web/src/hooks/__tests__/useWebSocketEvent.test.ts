@@ -130,6 +130,7 @@ describe("useWebSocketEvent", () => {
 
   it("reconnects on close with exponential backoff", async () => {
     await loadModule();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
     const handler = vi.fn();
     renderHook(() => useWebSocketEvent("task_event", handler));
 
@@ -146,6 +147,50 @@ describe("useWebSocketEvent", () => {
     act(() => vi.advanceTimersByTime(2000));
 
     expect(mockWs.instances).toHaveLength(2);
+  });
+
+  it("does not reset backoff when a socket opens then closes immediately", async () => {
+    await loadModule();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    renderHook(() => useWebSocketEvent("task_event", vi.fn()));
+
+    act(() => mockWs.instances[0].simulateOpen());
+    act(() => mockWs.instances[0].simulateClose());
+    act(() => vi.advanceTimersByTime(1000));
+    expect(mockWs.instances).toHaveLength(2);
+
+    act(() => mockWs.instances[1].simulateOpen());
+    act(() => mockWs.instances[1].simulateClose());
+    act(() => vi.advanceTimersByTime(1000));
+    expect(mockWs.instances).toHaveLength(2);
+    act(() => vi.advanceTimersByTime(1000));
+    expect(mockWs.instances).toHaveLength(3);
+  });
+
+  it("does not tight-loop reconnects while /ws never stays open", async () => {
+    await loadModule();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    renderHook(() => useWebSocketEvent("task_event", vi.fn()));
+
+    const closeLatest = () => {
+      const socket = mockWs.instances[mockWs.instances.length - 1];
+      if (socket && socket.readyState !== WebSocket.CLOSED) {
+        socket.simulateClose(4401, "unauthorized");
+      }
+    };
+
+    act(() => {
+      mockWs.instances[0].simulateOpen();
+      closeLatest();
+    });
+    for (let second = 0; second < 60; second += 1) {
+      act(() => {
+        vi.advanceTimersByTime(1000);
+        closeLatest();
+      });
+    }
+
+    expect(mockWs.instances.length).toBeLessThan(12);
   });
 
   it("ignores callbacks from a socket retired by an event type change", async () => {
@@ -165,6 +210,8 @@ describe("useWebSocketEvent", () => {
     rerender({ eventType: "session_event" });
     const current = mockWs.instances[1];
     act(() => current.simulateOpen());
+    // Stable-open backoff reset is not a reconnect timer.
+    act(() => vi.advanceTimersByTime(1000));
 
     act(() => {
       retired.simulateError();

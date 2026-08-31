@@ -21,6 +21,14 @@ const DEFAULT_WAIT_LOCK_TIMEOUT: Duration = Duration::from_secs(1800);
 /// Poll cadence for the bounded [`IndexLockPolicy::Wait`] acquisition.
 const WAIT_LOCK_POLL: Duration = Duration::from_millis(250);
 
+/// Separates a connection's own application name from the epoch second at which
+/// it took the gcode index lock. See [`stamp_lock_acquisition`].
+const LOCK_ACQUIRED_TAG: &str = " gcode-index-lock@";
+/// PostgreSQL truncates `application_name` at `NAMEDATALEN - 1` bytes.
+const APPLICATION_NAME_MAX: usize = 63;
+/// Digits held in reserve for the stamped epoch second; ten carry it past 2286.
+const LOCK_ACQUIRED_EPOCH_DIGITS: usize = 11;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IndexLockPolicy {
     Wait {
@@ -192,16 +200,15 @@ fn try_acquire_project_key(
                     holder_detail(conn, key),
                 );
             }
-            Ok(IndexLockResult::Acquired(()))
         }
         IndexLockPolicy::BriefTry { total_wait, poll } => {
-            if try_advisory_lock_until(conn, key, total_wait, poll, None)? {
-                Ok(IndexLockResult::Acquired(()))
-            } else {
-                Ok(IndexLockResult::Busy(diagnostics.describe(conn, key)))
+            if !try_advisory_lock_until(conn, key, total_wait, poll, None)? {
+                return Ok(IndexLockResult::Busy(diagnostics.describe(conn, key)));
             }
         }
     }
+    stamp_lock_acquisition(conn);
+    Ok(IndexLockResult::Acquired(()))
 }
 
 fn acquire_project_lock(
@@ -288,14 +295,65 @@ fn try_advisory_lock(conn: &mut Client, key: i64) -> anyhow::Result<bool> {
     row.try_get(0).map_err(Into::into)
 }
 
-/// Best-effort one-line identity of the backend holding `key`.
+/// Publish, on this connection, the epoch second at which it took the lock.
 ///
-/// `pg_locks` records no grant timestamp, so the age reported is the holder's
-/// connection age. Every one-shot gcode lock opens its connection immediately
-/// before acquiring ([`lock_project_by_id`]), which makes the two the same
-/// number in practice; a lease on a caller-owned connection
-/// ([`lease_project_lock`]) reports an upper bound, which is why the text says
-/// "connection age" rather than claiming a hold time it cannot know.
+/// `pg_locks` records no grant timestamp and no backend can read another's
+/// session state, so `application_name` — the one per-backend field
+/// `pg_stat_activity` exposes to every other session — is where a holder leaves
+/// the fact contention diagnostics actually need. The instant comes from the
+/// server clock, so a reader comparing it against its own `now()` measures one
+/// timeline rather than two.
+///
+/// Advertising a hold time must never fail an acquisition that already
+/// succeeded, so failures here are logged and dropped.
+fn stamp_lock_acquisition(conn: &mut Client) {
+    // `floor`, not a bare `::bigint` cast: casting numeric to bigint rounds to
+    // nearest, so an acquisition in the second half of a second would stamp
+    // itself in the future and read back as a negative hold.
+    //
+    // Strip any prior stamp before appending: `lease_project_lock` reuses one
+    // caller-owned connection across a backlog of projects, and stamps must not
+    // stack. The base name is capped so PostgreSQL's truncation can only eat
+    // the caller's own name and never the digits after it — a half-eaten epoch
+    // would read as a hold of decades.
+    let base_max = i32::try_from(
+        APPLICATION_NAME_MAX
+            .saturating_sub(LOCK_ACQUIRED_TAG.len())
+            .saturating_sub(LOCK_ACQUIRED_EPOCH_DIGITS),
+    )
+    .unwrap_or(i32::MAX);
+    if let Err(error) = conn.execute(
+        "SELECT set_config(
+                    'application_name',
+                    left(split_part(current_setting('application_name'), $1, 1), $2)
+                        || $1 || floor(extract(epoch FROM now()))::bigint,
+                    false)",
+        &[&LOCK_ACQUIRED_TAG, &base_max],
+    ) {
+        log::debug!("failed to publish the gcode index lock acquisition time: {error}");
+    }
+}
+
+/// Remove the stamp [`stamp_lock_acquisition`] left, restoring the base name.
+fn clear_lock_acquisition_stamp(conn: &mut Client) {
+    if let Err(error) = conn.execute(
+        "SELECT set_config(
+                    'application_name',
+                    split_part(current_setting('application_name'), $1, 1),
+                    false)",
+        &[&LOCK_ACQUIRED_TAG],
+    ) {
+        log::debug!("failed to clear the gcode index lock acquisition stamp: {error}");
+    }
+}
+
+/// Best-effort one-line identity of the backend holding `key`, and how long it
+/// has held it.
+///
+/// The hold time is the holder's own stamp ([`stamp_lock_acquisition`]). A
+/// holder that never stamped — anything taking the advisory key outside this
+/// module — leaves only its connection age, an upper bound the text labels as
+/// such rather than passing off as a hold time.
 ///
 /// Diagnostics must never mask the contention they describe, so every failure
 /// here returns `None` and the caller falls back to reporting bare contention.
@@ -309,9 +367,11 @@ fn describe_lock_holder(conn: &mut Client, key: i64) -> Option<String> {
     let row = conn
         .query_opt(
             "SELECT activity.pid,
-                    coalesce(nullif(activity.application_name, ''), '<unnamed>'),
+                    coalesce(nullif(split_part(activity.application_name, $3, 1), ''), '<unnamed>'),
                     coalesce(activity.state, '<unknown>'),
-                    extract(epoch FROM (now() - activity.backend_start))::float8
+                    extract(epoch FROM (now() - activity.backend_start))::float8,
+                    nullif(split_part(activity.application_name, $3, 2), ''),
+                    extract(epoch FROM now())::float8
                FROM pg_locks locks
                JOIN pg_stat_activity activity ON activity.pid = locks.pid
               WHERE locks.locktype = 'advisory'
@@ -321,16 +381,27 @@ fn describe_lock_holder(conn: &mut Client, key: i64) -> Option<String> {
                 AND locks.objsubid = 1
                 AND activity.datname = current_database()
               LIMIT 1",
-            &[&classid, &objid],
+            &[&classid, &objid, &LOCK_ACQUIRED_TAG],
         )
         .ok()??;
     let pid: i32 = row.try_get(0).ok()?;
     let application_name: String = row.try_get(1).ok()?;
     let state: String = row.try_get(2).ok()?;
     let connection_age: f64 = row.try_get(3).ok()?;
+    let stamp: Option<String> = row.try_get(4).ok()?;
+    let server_now: f64 = row.try_get(5).ok()?;
+    // Parse the stamp in Rust rather than casting it in SQL: a malformed value
+    // would abort the whole query and cost the caller every other field too.
+    let held_for = stamp
+        .and_then(|stamp| stamp.parse::<i64>().ok())
+        .map(|acquired| server_now - acquired as f64)
+        .filter(|held| *held >= 0.0);
+    let age = match held_for {
+        Some(held) => format!("held for {held:.0}s"),
+        None => format!("connection age {connection_age:.0}s (acquisition time not recorded)"),
+    };
     Some(format!(
-        "holder: backend pid {pid}, application_name {application_name:?}, state {state:?}, \
-         connection age {connection_age:.0}s"
+        "holder: backend pid {pid}, application_name {application_name:?}, state {state:?}, {age}"
     ))
 }
 
@@ -384,11 +455,17 @@ impl Drop for ProjectIndexLease<'_> {
             Ok(_) => log::debug!("leased gcode index lock was not held during unlock"),
             Err(error) => log::debug!("failed to release leased gcode index lock: {error}"),
         }
+        // The borrowed connection outlives this lease, so a stale stamp on it
+        // would age into a fictitious hold on whatever it locks next.
+        clear_lock_acquisition_stamp(self.conn);
     }
 }
 
 impl Drop for ProjectIndexLock {
     fn drop(&mut self) {
+        // No stamp to clear, unlike `ProjectIndexLease`: this guard owns its
+        // `Client` and the connection closes with it, taking the session
+        // setting along. Untagging first would only buy a round trip.
         let result = self
             .conn
             .query_one("SELECT pg_advisory_unlock($1)", &[&self.key]);

@@ -295,6 +295,10 @@ async def test_pre_spawn_snapshot_transport(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
+    monkeypatch.setattr(
+        "gobby.dispatch.spawn.inspect_skill_composition",
+        lambda *_args, **_kwargs: SimpleNamespace(failure_reason=None, allowed_tools=()),
+    )
     action = SpawnAgentAction(
         task_id=stage_review_setup.task_id,
         task_ref="#1",

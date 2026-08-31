@@ -107,6 +107,8 @@ class _FakeConnection:
             return _FakeCursor([(self.counts[_table_from_count_sql(sql)],)])
         if "current_database()" in lowered:
             return _FakeCursor([("gobby",)])
+        if "current_schema()" in lowered:
+            return _FakeCursor([("public",)])
         raise AssertionError(f"unexpected SQL: {sql}")
 
 

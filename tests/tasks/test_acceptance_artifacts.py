@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -488,6 +489,258 @@ def test_tdd_evidence_accepts_later_repair_cycle() -> None:
         ),
     )
     assert evaluate_tdd_evidence((test,), test_only_green).passed is False
+
+
+def test_tdd_evidence_accepts_one_cycle_with_multiple_green_artifacts() -> None:
+    started = datetime(2026, 8, 30, tzinfo=UTC)
+    driving = AcceptanceTest(
+        reference="tests/test_feature.py::test_driving_behavior",
+        path="tests/test_feature.py",
+        symbol="test_driving_behavior",
+        body="def test_driving_behavior(): assert feature() == 1",
+    )
+    supporting = AcceptanceTest(
+        reference="tests/test_support.py::test_supporting_behavior",
+        path="tests/test_support.py",
+        symbol="test_supporting_behavior",
+        body="def test_supporting_behavior(): assert feature() != 2",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit("tests/test_feature.py", started, 1),
+            _edit("tests/test_support.py", started + timedelta(seconds=30), 2),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            _run(
+                driving,
+                started + timedelta(minutes=1),
+                "failure",
+                "FAILED tests/test_feature.py::test_driving_behavior\nE assert 0 == 1",
+                2,
+            ),
+            _run(
+                driving,
+                started + timedelta(minutes=3),
+                "success",
+                "tests/test_feature.py::test_driving_behavior PASSED",
+                4,
+            ),
+            _run(
+                supporting,
+                started + timedelta(minutes=4),
+                "success",
+                "tests/test_support.py::test_supporting_behavior PASSED",
+                5,
+            ),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((driving, supporting), evidence)
+
+    assert result.passed is True
+    assert result.red_runs == (f"pytest {driving.reference}",)
+    assert result.green_runs == (
+        f"pytest {driving.reference}",
+        f"pytest {supporting.reference}",
+    )
+
+    missing_supporting_green = TranscriptEvidence(
+        edits=evidence.edits,
+        validation_runs=evidence.validation_runs[:-1],
+    )
+    incomplete = evaluate_tdd_evidence(
+        (driving, supporting),
+        missing_supporting_green,
+    )
+    assert incomplete.passed is False
+    assert any(supporting.reference in finding for finding in incomplete.findings)
+
+
+def test_tdd_evidence_rejects_non_test_green_run() -> None:
+    started = datetime(2026, 8, 30, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    lint_green = replace(
+        _run(test, started + timedelta(minutes=3), "success", "All checks passed!", 4),
+        command="ruff check tests/test_feature.py",
+        categories=("lint",),
+        matcher_id="ruff",
+        label="ruff",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit("tests/test_feature.py", started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            _run(
+                test,
+                started + timedelta(minutes=1),
+                "failure",
+                "FAILED tests/test_feature.py::test_feature\nE assert 0 == 1",
+                2,
+            ),
+            lint_green,
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is False
+    assert result.green_runs == ()
+
+
+def test_tdd_evidence_rejects_test_quality_audit_as_green() -> None:
+    started = datetime(2026, 8, 30, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    audit_green = replace(
+        _run(test, started + timedelta(minutes=3), "success", "Issues: 0", 4),
+        command="gobby test-quality audit tests/test_feature.py --fail-on-new",
+        categories=("test",),
+        matcher_id="gobby-test-quality-audit",
+        label="Gobby test-quality audit",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit("tests/test_feature.py", started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            _run(
+                test,
+                started + timedelta(minutes=1),
+                "failure",
+                "FAILED tests/test_feature.py::test_feature\nE assert 0 == 1",
+                2,
+            ),
+            audit_green,
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is False
+    assert result.green_runs == ()
+
+
+def test_tdd_evidence_does_not_borrow_assertion_from_other_test() -> None:
+    started = datetime(2026, 8, 30, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    broad_output = """\
+tests/test_feature.py::test_feature PASSED
+tests/test_other.py::test_other FAILED
+E   AssertionError: assert 0 == 1
+"""
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit("tests/test_feature.py", started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            _run(test, started + timedelta(minutes=1), "failure", broad_output, 2),
+            _run(
+                test,
+                started + timedelta(minutes=3),
+                "success",
+                "tests/test_feature.py::test_feature PASSED",
+                4,
+            ),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is False
+    assert result.red_runs == ()
+
+    named_failure = TranscriptEvidence(
+        edits=evidence.edits,
+        validation_runs=(
+            _run(
+                test,
+                started + timedelta(minutes=1),
+                "failure",
+                "tests/test_feature.py::test_feature FAILED\nE assert 0 == 1",
+                2,
+            ),
+            evidence.validation_runs[1],
+        ),
+    )
+    assert evaluate_tdd_evidence((test,), named_failure).passed is True
+
+
+def test_tdd_evidence_accepts_rtk_class_dot_failure() -> None:
+    started = datetime(2026, 8, 30, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::TestFeature::test_behavior",
+        path="tests/test_feature.py",
+        symbol="TestFeature::test_behavior",
+        body="def test_behavior(): assert feature() == 1",
+    )
+    edits = (
+        _edit("tests/test_feature.py", started, 1),
+        _edit("src/feature.py", started + timedelta(minutes=2), 3),
+    )
+    green = _run(
+        test,
+        started + timedelta(minutes=3),
+        "success",
+        "tests/test_feature.py::TestFeature::test_behavior PASSED",
+        4,
+    )
+    rtk_failure = """\
+1. [FAIL] TestFeature.test_behavior
+    raise AssertionError(msg)
+    E   AssertionError: assert 0 == 1
+"""
+
+    accepted = evaluate_tdd_evidence(
+        (test,),
+        TranscriptEvidence(
+            edits=edits,
+            validation_runs=(
+                _run(test, started + timedelta(minutes=1), "failure", rtk_failure, 2),
+                green,
+            ),
+        ),
+    )
+
+    assert accepted.passed is True
+    assert accepted.red_runs
+
+    non_assertion = evaluate_tdd_evidence(
+        (test,),
+        TranscriptEvidence(
+            edits=edits,
+            validation_runs=(
+                _run(
+                    test,
+                    started + timedelta(minutes=1),
+                    "failure",
+                    "1. [FAIL] TestFeature.test_behavior\nE RuntimeError: broken fixture",
+                    2,
+                ),
+                green,
+            ),
+        ),
+    )
+    assert non_assertion.passed is False
+    assert non_assertion.red_runs == ()
 
 
 def test_tdd_evidence_merges_handoff_sessions_by_position() -> None:

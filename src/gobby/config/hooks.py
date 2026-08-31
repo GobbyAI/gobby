@@ -2,14 +2,25 @@
 
 from pydantic import BaseModel, Field, field_validator
 
+# Mirrors ``POST_TIMEOUT`` in ``crates/ghook/src/transport.rs``. This is the only
+# hook deadline the daemon does not own: once it passes, ghook stops waiting and
+# decides on its own, and no CLI treats a before-tool hook as critical, so the
+# command runs entirely ungated. Every daemon-side hook timeout must therefore
+# expire inside this window, or the daemon's own degradation never runs.
+HOOK_TRANSPORT_WINDOW_SECONDS = 30.0
+
 
 class HookTimeoutConfig(BaseModel):
     """Timeouts and additionalContext budgets for hook execution."""
 
     adapter_timeout: float = Field(
-        default=105.0,
+        default=26.0,
         gt=0,
-        description="Daemon endpoint timeout in seconds for synchronous hook execution.",
+        description=(
+            "Daemon endpoint timeout in seconds for synchronous hook execution. "
+            "Must expire inside the ghook transport window so the daemon answers "
+            "before the client stops waiting."
+        ),
     )
     provider_timeout: int = Field(
         default=120,

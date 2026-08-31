@@ -438,6 +438,7 @@ class TestInitSubsystems:
         runner.memory_backup_manager = None
         runner.memory_manager = None
         runner.memory_dream_coordinator = None
+        runner.feedback_review_service = None
         runner.llm_service = None
         runner.vector_store = None
         runner.mcp_proxy = None

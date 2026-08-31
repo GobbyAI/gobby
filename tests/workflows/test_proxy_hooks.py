@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sys
 import time
 from datetime import UTC, datetime
@@ -13,9 +14,12 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
-from gobby.hooks.effect_deadline import BlockingEffectDeadline
+from gobby.hooks.effect_deadline import (
+    BLOCKING_EFFECT_BUDGET_SECONDS,
+    BlockingEffectDeadline,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.integrations.rtk import RTK_RULE_NAME, clear_probe_cache
+from gobby.integrations.rtk import RTK_RULE_NAME, RtkProbe, clear_probe_cache, resolve_rtk
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
@@ -142,6 +146,47 @@ def _create_rule(
 
 def _proxy_effect(**kwargs: Any) -> RuleEffect:
     return RuleEffect(type="proxy_hook", handler="rtk", **kwargs)
+
+
+def _record_rtk_outcomes(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    """Capture every _run_rtk_proxy return value so skip behavior stays assertable."""
+    outcomes: list[bool] = []
+    original = proxy_hooks.ProxyHooksMixin._run_rtk_proxy
+
+    async def _record(
+        mixin: proxy_hooks.ProxyHooksMixin,
+        invocation: proxy_hooks.ProxyHookInvocation,
+        event: HookEvent,
+        *,
+        blocking_deadline: BlockingEffectDeadline | None,
+    ) -> bool:
+        outcome = await original(mixin, invocation, event, blocking_deadline=blocking_deadline)
+        outcomes.append(outcome)
+        return outcome
+
+    monkeypatch.setattr(proxy_hooks.ProxyHooksMixin, "_run_rtk_proxy", _record)
+    return outcomes
+
+
+def _parse_overrun_warning(
+    caplog: pytest.LogCaptureFixture,
+    *,
+    rule_name: str,
+    stage: str,
+    floor: float,
+) -> float:
+    """Return the spent-budget figure from the one overrun warning emitted."""
+    pattern = re.compile(
+        rf"proxy_hook\[{re.escape(rule_name)}\]: blocking budget spent "
+        rf"{re.escape(stage)}, running on the {floor:.1f}s floor "
+        rf"\(shared budget (?P<spent>\d+\.\d)s of "
+        rf"{BLOCKING_EFFECT_BUDGET_SECONDS:.1f}s spent\)"
+    )
+    matches = [
+        match for message in caplog.messages if (match := pattern.fullmatch(message)) is not None
+    ]
+    assert len(matches) == 1, caplog.messages
+    return float(matches[0].group("spent"))
 
 
 @pytest.mark.parametrize(
@@ -571,12 +616,21 @@ async def test_rtk_timeout_passes_through(
     ] == ["proxy_hook[proxy-timeout]: RTK timed out"]
 
 
-async def test_exhausted_shared_deadline_skips_rtk(
+async def test_spent_shared_budget_still_runs_rtk_on_its_floor(
     db: HubDatabase,
     manager: RuleDefinitionManager,
+    fake_rtk: Path,
+    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """The proxy stage runs last, so a shared budget with a zero floor starves it alone.
+
+    Its declared timeout is a reservation: the rewrite still applies, and the
+    spent budget is reported instead of silently dropping it.
+    """
+    del fake_rtk
     _create_rule(manager, "proxy-deadline", [_proxy_effect()], priority=10)
+    outcomes = _record_rtk_outcomes(monkeypatch)
 
     with caplog.at_level(logging.WARNING, logger=proxy_hooks.logger.name):
         response = await RuleEngine(db).evaluate(
@@ -586,8 +640,88 @@ async def test_exhausted_shared_deadline_skips_rtk(
             blocking_deadline=BlockingEffectDeadline(time.monotonic() - 1.0),
         )
 
-    assert response.modified_input is None
-    assert "proxy_hook[proxy-deadline]: blocking deadline exhausted" in caplog.messages
+    assert outcomes == [True]
+    assert response.modified_input == {"command": "rtk git status"}
+    spent = _parse_overrun_warning(
+        caplog,
+        rule_name="proxy-deadline",
+        stage="before the RTK probe",
+        floor=2.0,
+    )
+    assert spent > BLOCKING_EFFECT_BUDGET_SECONDS
+
+
+async def test_deadline_exhausted_after_the_probe_names_that_site(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The probe itself can spend the last of the budget, and that reads differently.
+
+    Both sites used to emit one indistinguishable message, so a log full of them
+    said nothing about where the budget went.
+    """
+    del fake_rtk
+    _create_rule(manager, "proxy-late-deadline", [_proxy_effect()], priority=10)
+    deadline = BlockingEffectDeadline(time.monotonic() + BLOCKING_EFFECT_BUDGET_SECONDS)
+
+    def _resolve_then_exhaust(*, timeout: float) -> RtkProbe | None:
+        """Spend the rest of the budget inside the probe, as a slow probe would."""
+        probe = resolve_rtk(timeout=timeout)
+        deadline.expires_at = time.monotonic() - 1.0
+        return probe
+
+    monkeypatch.setattr(proxy_hooks, "resolve_rtk", _resolve_then_exhaust)
+    outcomes = _record_rtk_outcomes(monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger=proxy_hooks.logger.name):
+        response = await RuleEngine(db).evaluate(
+            _event(),
+            SESSION_ID,
+            {},
+            blocking_deadline=deadline,
+        )
+
+    assert outcomes == [True]
+    assert response.modified_input == {"command": "rtk git status"}
+    spent = _parse_overrun_warning(
+        caplog,
+        rule_name="proxy-late-deadline",
+        stage="after the RTK probe",
+        floor=2.0,
+    )
+    assert spent > BLOCKING_EFFECT_BUDGET_SECONDS
+
+
+async def test_spent_budget_warns_once_for_the_whole_event(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A budget spent before the probe is still spent after it.
+
+    Both sites observe the same overrun, so reporting at each would double every
+    line in the log for one event.
+    """
+    del fake_rtk
+    _create_rule(manager, "proxy-once", [_proxy_effect()], priority=10)
+
+    with caplog.at_level(logging.WARNING, logger=proxy_hooks.logger.name):
+        await RuleEngine(db).evaluate(
+            _event(),
+            SESSION_ID,
+            {},
+            blocking_deadline=BlockingEffectDeadline(time.monotonic() - 1.0),
+        )
+
+    warnings = [
+        record.getMessage() for record in caplog.records if record.name == proxy_hooks.logger.name
+    ]
+    assert len(warnings) == 1, warnings
+    assert "before the RTK probe" in warnings[0]
 
 
 async def test_rtk_runs_after_same_session_queue_wait(

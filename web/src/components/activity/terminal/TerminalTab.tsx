@@ -81,23 +81,18 @@ function loadStoredTerminalTargetKey(): string | null {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return null;
     const target = parsed as Record<string, unknown>;
-    if (
-      typeof target.socket !== "string" ||
-      target.socket.length === 0 ||
-      typeof target.sessionName !== "string" ||
-      target.sessionName.length === 0
-    ) {
-      return null;
-    }
-    return `${target.socket}:${target.sessionName}`;
+    // Selection identity is the terminals-row id (sessionKey). Entries in any
+    // other shape restore nothing rather than faking a vanished session.
+    return typeof target.terminal_id === "string" &&
+      target.terminal_id.length > 0
+      ? target.terminal_id
+      : null;
   } catch {
     return null;
   }
 }
 
-function storeTerminalTarget(
-  target: { name: string; socket: string } | null,
-): void {
+function storeTerminalTarget(target: { terminal_id: string } | null): void {
   try {
     if (target === null) {
       window.sessionStorage.removeItem(TERMINAL_TARGET_STORAGE_KEY);
@@ -105,7 +100,7 @@ function storeTerminalTarget(
     }
     window.sessionStorage.setItem(
       TERMINAL_TARGET_STORAGE_KEY,
-      JSON.stringify({ socket: target.socket, sessionName: target.name }),
+      JSON.stringify({ terminal_id: target.terminal_id }),
     );
   } catch {
     // Terminal access remains usable when browser storage is unavailable.

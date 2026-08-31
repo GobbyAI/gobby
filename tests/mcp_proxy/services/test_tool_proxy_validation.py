@@ -23,10 +23,24 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def mock_mcp_manager():
     """Create a mock MCP manager."""
+    from gobby.mcp_proxy.models import MCPServerConfig
+
     manager = MagicMock()
     manager.project_id = "test-project-id"
     manager.call_tool = AsyncMock()
     manager.get_tool_schema = AsyncMock()
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+    config = MCPServerConfig(
+        name="test-server",
+        project_id=GLOBAL_PROJECT_ID,
+        url="https://example.test",
+        id="test-server",
+    )
+    manager.server_configs = [config]
+    manager._configs = {config.id: config}
+    manager.get_server_config.side_effect = lambda sid: manager._configs.get(sid)
+    manager.has_server.return_value = True
     return manager
 
 
@@ -518,7 +532,7 @@ class TestCallToolPreValidation:
 
         assert result == {"success": True}
         mock_mcp_manager.call_tool.assert_awaited_once_with(
-            "test-server", "test_tool", {}, session_id=None
+            "test-server", tool_name="test_tool", arguments={}, session_id=None
         )
 
     async def test_empty_arguments_reject_missing_required_params(
@@ -569,8 +583,8 @@ class TestCallToolPreValidation:
         assert result == {"success": True}
         mock_mcp_manager.call_tool.assert_awaited_once_with(
             "test-server",
-            "test_tool",
-            {"some_param": "test"},
+            tool_name="test_tool",
+            arguments={"some_param": "test"},
             session_id=None,
         )
 
@@ -1093,6 +1107,7 @@ class TestCallToolBlockedToolsEnforcement:
             "Tool 'Write' is not in allowed list for step 'fetch_changes'",
         )
 
+        tool_proxy_with_filter._internal_manager.is_internal.return_value = True
         result = await tool_proxy_with_filter.call_tool(
             server_name="gobby-internal",
             tool_name="Write",
@@ -1615,7 +1630,7 @@ class TestStripUnknownParameters:
 
         assert result["success"] is True
         # prompt_text should have been stripped before the call
-        actual_args = mock_mcp_manager.call_tool.call_args[0][2]
+        actual_args = mock_mcp_manager.call_tool.call_args.kwargs["arguments"]
         assert "prompt_text" not in actual_args
         assert actual_args["session_id"] == "s1"
         assert actual_args["limit"] == 5

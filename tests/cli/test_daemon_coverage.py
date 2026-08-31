@@ -479,8 +479,10 @@ class TestStatusCommand:
     @patch("gobby.cli.daemon.os.kill")
     @patch("gobby.cli.daemon.probe_daemon_lock")
     @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.daemon.get_port_listener_pid", return_value=None)
     def test_status_timeout_with_healthy_fallback_keeps_daemon_running(
         self,
+        _listener: MagicMock,
         mock_home: MagicMock,
         mock_probe: MagicMock,
         mock_kill: MagicMock,

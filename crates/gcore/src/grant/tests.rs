@@ -1172,7 +1172,12 @@ fn hmac_sha256_rejects_empty_key() {
 
 #[test]
 fn expected_schema_identity_tracks_catalog_head() {
-    assert_eq!(expected_schema_identity().latest_version, 415);
+    // With the postgres feature the identity is the live embedded catalog;
+    // without it, the frozen golden fixture identity.
+    #[cfg(feature = "postgres")]
+    assert_eq!(expected_schema_identity().latest_version, 417);
+    #[cfg(not(feature = "postgres"))]
+    assert_eq!(expected_schema_identity().latest_version, 403);
 }
 
 #[test]

@@ -21,7 +21,7 @@ import pytest
 import yaml
 
 from gobby.workflows.definitions import AgentDefinitionBody
-from tests.agents._yaml_helpers import _field, find_step
+from tests.agents._yaml_helpers import _field, find_step, flat
 
 pytestmark = pytest.mark.unit
 
@@ -57,9 +57,10 @@ class TestPlannerSkillLoading:
             in load_step.status_message
         )
         assert "mcp__gobby__call_tool" in load_step.status_message
-        assert "native Skill" in load_step.status_message
-        assert "GitHub/app connector" in load_step.status_message
-        assert "Computer Use tools" in load_step.status_message
+        status = flat(load_step.status_message)
+        assert "native Skill" in status
+        assert "GitHub/app connector" in status
+        assert "Computer Use tools" in status
 
     def test_load_skill_only_permits_get_skill(self, agent: AgentDefinitionBody) -> None:
         """Tight allow-list prevents the agent from wandering during skill
@@ -68,7 +69,10 @@ class TestPlannerSkillLoading:
             (agent.step_workflow.steps if agent.step_workflow else []), "load_skill"
         )
         assert load_step is not None
-        assert load_step.allowed_mcp_tools == ["gobby-skills:get_skill"]
+        assert load_step.allowed_mcp_tools == [
+            "gobby-skills:get_skill",
+            "gobby-skills:get_skill_file",
+        ]
 
     def test_load_skill_sets_skill_loaded_variable(self, agent: AgentDefinitionBody) -> None:
         """on_mcp_success contract: a successful get_skill flips skill_loaded,
@@ -103,7 +107,7 @@ class TestPlannerInstructionsPreserveContracts:
     def test_instructions_reference_plan_draft(self, agent: AgentDefinitionBody) -> None:
         """Inline instructions must explicitly direct the agent to load
         plan-draft via get_skill — not generically 'follow the methodology'."""
-        instructions = agent.prompts.agent or ""
+        instructions = flat(agent.prompts.agent)
         assert "plan-draft" in instructions
         assert "get_skill" in instructions
         assert "native Skill" in instructions

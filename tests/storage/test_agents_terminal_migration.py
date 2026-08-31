@@ -80,3 +80,41 @@ def test_storage_readers_use_terminal_rows(
     pending_row = terminals.get(pending.id)
     assert pending_row is not None
     assert pending_row.state == "pending"
+
+
+def test_orphaned_terminal_rows_stay_eligible_for_the_sweep(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    """A failed kill leaves the row orphaned; the sweep must retry it, not drop it."""
+    from gobby.storage.terminals import TerminalManager
+
+    session = session_manager.register(
+        external_id="terminal-orphan-sweep-session",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    manager = LocalAgentRunManager(temp_db)
+    run = manager.create(
+        parent_session_id=session.id,
+        provider="claude",
+        prompt="orphaned",
+    )
+    manager.start(run.id)
+    terminal = make_live_terminal(run, backend="tmux", db=temp_db)
+    temp_db.execute(
+        """
+        UPDATE agent_runs
+        SET status = 'success', completed_at = now(), updated_at = now()
+        WHERE id = %s
+        """,
+        (run.id,),
+    )
+    terminals = TerminalManager(temp_db)
+    terminals.mark_orphaned(terminal.id)
+    assert run.id in {row.id for row in manager.list_terminal_with_tmux()}
+
+    terminals.mark_exited(terminal.id)
+    assert run.id not in {row.id for row in manager.list_terminal_with_tmux()}

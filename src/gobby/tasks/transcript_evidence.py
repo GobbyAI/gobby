@@ -79,9 +79,17 @@ _SHELL_TOOLS = {
     "shell",
     "terminal",
 }
-_EDIT_TOOLS = {"edit", "multiedit", "notebookedit", "write", "apply_patch", "exec"}
+_EDIT_TOOLS = {
+    "edit",
+    "multiedit",
+    "notebookedit",
+    "write",
+    "apply_patch",
+    "exec",
+    "search_replace",
+}
 _COMMAND_KEYS = ("cmd", "command", "script")
-_PATH_KEYS = ("file_path", "path", "notebook_path")
+_PATH_KEYS = ("file_path", "target_file", "path", "notebook_path", "TargetFile")
 
 
 @dataclass(frozen=True)

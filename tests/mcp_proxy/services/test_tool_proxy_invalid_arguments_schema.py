@@ -24,6 +24,25 @@ LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000016"
 ProxyParts = tuple[ToolProxyService, MagicMock, HubDatabase, str]
 
 
+def _attach_named_servers(manager: MagicMock, *names: str) -> None:
+    from gobby.mcp_proxy.models import MCPServerConfig
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+    configs = [
+        MCPServerConfig(
+            name=name,
+            project_id=GLOBAL_PROJECT_ID,
+            url="https://example.test",
+            id=name,
+        )
+        for name in names
+    ]
+    manager.server_configs = configs
+    manager._configs = {config.id: config for config in configs}
+    manager.get_server_config.side_effect = lambda sid: manager._configs.get(sid)
+    manager.has_server.side_effect = lambda sid: sid in manager._configs
+
+
 @pytest.fixture(autouse=True)
 def _local_machine_identity() -> Iterator[None]:
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
@@ -46,9 +65,9 @@ def proxy_parts(temp_db: HubDatabase) -> ProxyParts:
     )
     mcp_manager = MagicMock()
     mcp_manager.project_id = "test-project"
-    mcp_manager.has_server.return_value = True
     mcp_manager.call_tool = AsyncMock(return_value={"success": True})
     mcp_manager.get_tool_input_schema = AsyncMock()
+    _attach_named_servers(mcp_manager, "test-server", "gobby-tasks", "gobby-sessions")
 
     internal_manager = MagicMock()
     internal_manager.is_internal.return_value = False
@@ -183,8 +202,8 @@ async def test_required_session_id_injected_from_wrapper_context(
     assert result["success"] is True
     mcp_manager.call_tool.assert_awaited_once_with(
         "gobby-sessions",
-        "needs_session",
-        {"session_id": session_id},
+        tool_name="needs_session",
+        arguments={"session_id": session_id},
         session_id=session_id,
     )
 

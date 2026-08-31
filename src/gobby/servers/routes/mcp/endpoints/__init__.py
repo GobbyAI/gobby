@@ -36,10 +36,12 @@ from gobby.servers.routes.mcp.endpoints.server import (
     add_mcp_server,
     import_mcp_server,
     list_mcp_servers,
+    patch_mcp_server,
     remove_mcp_server,
     set_mcp_server_enabled,
     update_mcp_server,
 )
+from gobby.servers.routes.mcp.endpoints.templates import list_mcp_templates
 
 __all__ = [
     # Discovery
@@ -62,4 +64,6 @@ __all__ = [
     "remove_mcp_server",
     "set_mcp_server_enabled",
     "update_mcp_server",
+    "patch_mcp_server",
+    "list_mcp_templates",
 ]

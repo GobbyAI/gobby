@@ -336,15 +336,15 @@ class _HandshakeProcess:
 
 class _LaunchMixin(ChatStreamingMixin, ChatSessionMixin):
     def __init__(self) -> None:
-        self.clients: dict = {}
-        self._chat_sessions: dict = {}
-        self._active_chat_tasks: dict = {}
-        self._pending_modes: dict = {}
-        self._pending_worktree_paths: dict = {}
-        self._pending_agents: dict = {}
-        self._pending_projects: dict = {}
-        self._pending_providers: dict = {}
-        self._session_create_locks: dict = {}
+        self.clients = {}
+        self._chat_sessions = {}
+        self._active_chat_tasks = {}
+        self._pending_modes = {}
+        self._pending_worktree_paths = {}
+        self._pending_agents = {}
+        self._pending_projects = {}
+        self._pending_providers = {}
+        self._session_create_locks = {}
         self.session_manager: Any = None
         self.daemon_config: Any = None
         self.web_chat_runtime_manager: Any = None

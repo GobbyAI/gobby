@@ -6,11 +6,15 @@ import pytest
 
 from gobby.paths import (
     get_global_agents_dir,
+    get_global_mcp_servers_dir,
+    get_global_mcp_templates_dir,
     get_global_pipelines_dir,
     get_global_rules_dir,
     get_global_variables_dir,
     get_global_workflows_dir,
     get_gobby_home,
+    get_project_mcp_servers_dir,
+    get_project_mcp_templates_dir,
 )
 
 pytestmark = pytest.mark.unit
@@ -42,6 +46,12 @@ def test_unset_or_blank_gobby_home_uses_user_home(
     assert get_global_pipelines_dir() == workflows_dir / "pipelines"
     assert get_global_agents_dir() == workflows_dir / "agents"
     assert get_global_variables_dir() == workflows_dir / "variables"
+    assert get_global_mcp_templates_dir() == expected_home / "mcp" / "templates"
+    assert get_global_mcp_servers_dir() == expected_home / "mcp" / "servers"
+    assert (
+        get_project_mcp_templates_dir(working_dir) == working_dir / ".gobby" / "mcp" / "templates"
+    )
+    assert get_project_mcp_servers_dir(working_dir) == working_dir / ".gobby" / "mcp" / "servers"
     assert all(
         not path.is_relative_to(working_dir)
         for path in (
@@ -51,6 +61,8 @@ def test_unset_or_blank_gobby_home_uses_user_home(
             get_global_pipelines_dir(),
             get_global_agents_dir(),
             get_global_variables_dir(),
+            get_global_mcp_templates_dir(),
+            get_global_mcp_servers_dir(),
         )
     )
 

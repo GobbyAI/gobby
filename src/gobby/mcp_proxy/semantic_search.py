@@ -221,6 +221,7 @@ class SemanticToolSearch:
         embedding: list[float],
         tool_name: str = "",
         description: str | None = None,
+        server_id: str | None = None,
     ) -> None:
         """Store a tool embedding while holding project writer admission."""
         async with project_write_context(self._vector_store, project_id):
@@ -231,6 +232,7 @@ class SemanticToolSearch:
                 embedding=embedding,
                 tool_name=tool_name,
                 description=description,
+                server_id=server_id,
             )
 
     async def _store_embedding_admitted(
@@ -241,6 +243,7 @@ class SemanticToolSearch:
         embedding: list[float],
         tool_name: str = "",
         description: str | None = None,
+        server_id: str | None = None,
     ) -> None:
         """
         Store a tool embedding in Qdrant.
@@ -272,6 +275,8 @@ class SemanticToolSearch:
             "embedding_model": self.embedding_model,
             "updated_at": now,
         }
+        if server_id:
+            payload["server_id"] = server_id
 
         async def _upsert() -> None:
             await vector_store.upsert(
@@ -387,6 +392,7 @@ class SemanticToolSearch:
         input_schema: dict[str, Any] | None,
         server_name: str,
         project_id: str,
+        server_id: str | None = None,
     ) -> bool:
         """Generate and store one tool embedding under project admission."""
         async with project_write_context(self._vector_store, project_id):
@@ -397,6 +403,7 @@ class SemanticToolSearch:
                 input_schema=input_schema,
                 server_name=server_name,
                 project_id=project_id,
+                server_id=server_id,
             )
 
     async def _embed_tool_admitted(
@@ -407,6 +414,7 @@ class SemanticToolSearch:
         input_schema: dict[str, Any] | None,
         server_name: str,
         project_id: str,
+        server_id: str | None = None,
     ) -> bool:
         """
         Generate and store embedding for a tool.
@@ -428,13 +436,14 @@ class SemanticToolSearch:
         text = _build_tool_text(name, description, input_schema)
         embedding = await self.embed_text(text)
 
-        await self.store_embedding(
+        await self._store_embedding_admitted(
             tool_id=tool_id,
             server_name=server_name,
             project_id=project_id,
             embedding=embedding,
             tool_name=name,
             description=description,
+            server_id=server_id,
         )
         return True
 
@@ -474,11 +483,6 @@ class SemanticToolSearch:
         """
         import uuid
 
-        from gobby.storage.mcp import LocalMCPManager
-
-        if not isinstance(mcp_manager, LocalMCPManager):
-            raise TypeError("mcp_manager must be a LocalMCPManager instance")
-
         stats: dict[str, Any] = {
             "embedded": 0,
             "skipped": 0,
@@ -501,13 +505,14 @@ class SemanticToolSearch:
                     tool_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{registry.name}/{tool_name}"))
 
                     try:
-                        await self.embed_tool(
+                        await self._embed_tool_admitted(
                             tool_id=tool_id,
                             name=tool_name,
                             description=description,
                             input_schema=input_schema,
                             server_name=registry.name,
                             project_id=project_id,
+                            server_id=registry.name,
                         )
 
                         server_stats["embedded"] += 1
@@ -523,22 +528,51 @@ class SemanticToolSearch:
                 stats["by_server"][registry.name] = server_stats
 
         # Embed external MCP server tools
-        servers = mcp_manager.list_runtime_servers(project_id=project_id, enabled_only=False)
+        configs_attr = getattr(mcp_manager, "server_configs", None)
+        configs = configs_attr() if callable(configs_attr) else configs_attr
+        if not isinstance(configs, list):
+            list_runtime = getattr(mcp_manager, "list_runtime_servers", None)
+            configs = (
+                list_runtime(project_id=project_id, enabled_only=False)
+                if callable(list_runtime)
+                else []
+            )
 
-        for server in servers:
+        for server in configs:
             server_stats = {"embedded": 0, "skipped": 0, "failed": 0}
-
-            tools = mcp_manager.get_cached_tools(server.name, project_id=project_id)
+            server_name = getattr(server, "name", "")
+            server_id = str(getattr(server, "id", "") or "")
+            server_project = str(getattr(server, "project_id", project_id) or project_id)
+            await self._delete_legacy_points(server_name, server_project)
+            getter = getattr(mcp_manager, "get_cached_tools", None)
+            tools = getter(server_id) if callable(getter) and server_id else None
+            if not tools:
+                tools = getattr(server, "tools", None) or []
 
             for tool in tools:
                 try:
-                    await self.embed_tool(
-                        tool_id=tool.id,
-                        name=tool.name,
-                        description=tool.description,
-                        input_schema=tool.input_schema,
-                        server_name=server.name,
-                        project_id=project_id,
+                    raw_id = getattr(tool, "id", None)
+                    if raw_id is None and isinstance(tool, dict):
+                        raw_id = tool.get("id")
+                    raw_name = getattr(tool, "name", None)
+                    if raw_name is None and isinstance(tool, dict):
+                        raw_name = tool.get("name")
+                    tool_name = str(raw_name or "")
+                    tool_id = str(raw_id or tool_name)
+                    description = getattr(tool, "description", None)
+                    if description is None and isinstance(tool, dict):
+                        description = tool.get("description")
+                    input_schema = getattr(tool, "input_schema", None)
+                    if input_schema is None and isinstance(tool, dict):
+                        input_schema = tool.get("input_schema")
+                    await self._embed_tool_admitted(
+                        tool_id=str(tool_id or tool_name),
+                        name=str(tool_name),
+                        description=description,
+                        input_schema=input_schema if isinstance(input_schema, dict) else None,
+                        server_name=str(server_name),
+                        project_id=server_project,
+                        server_id=server_id or None,
                     )
 
                     server_stats["embedded"] += 1
@@ -547,13 +581,46 @@ class SemanticToolSearch:
                 except Exception as e:
                     server_stats["failed"] += 1
                     stats["failed"] += 1
-                    error_msg = f"{server.name}/{tool.name}: {e}"
+                    error_msg = f"{server_name}/{getattr(tool, 'name', tool)}: {e}"
                     stats["errors"].append(error_msg)
                     logger.error("Failed to embed tool %s", error_msg)
 
-            stats["by_server"][server.name] = server_stats
+            stats["by_server"][str(server_name)] = server_stats
 
         return stats
+
+    async def _delete_legacy_points(self, server_name: str, project_id: str) -> None:
+        """Remove superseded embeddings that lack server_id for one server."""
+        if not self._vector_store:
+            return
+        search = getattr(self._vector_store, "search_with_payload", None)
+        if not callable(search):
+            return
+        try:
+            results = await search(
+                query_embedding=[0.0] * self.embedding_dim,
+                limit=1000,
+                filters={"server_name": server_name, "project_id": project_id},
+                collection_name=self._collection_name,
+            )
+        except Exception:
+            logger.debug("Failed to scan legacy tool embeddings for %s", server_name, exc_info=True)
+            return
+        legacy_ids = [
+            str(tool_id)
+            for tool_id, _score, payload in results
+            if isinstance(payload, dict) and not payload.get("server_id")
+        ]
+        if not legacy_ids:
+            return
+        delete_many = getattr(self._vector_store, "delete_many", None)
+        if callable(delete_many):
+            await delete_many(legacy_ids, collection_name=self._collection_name)
+            return
+        deleter = getattr(self._vector_store, "delete", None)
+        if callable(deleter):
+            for memory_id in legacy_ids:
+                await deleter(memory_id, collection_name=self._collection_name)
 
     async def search_tools(
         self,
@@ -562,6 +629,7 @@ class SemanticToolSearch:
         top_k: int = 10,
         min_similarity: float = 0.0,
         server_filter: str | None = None,
+        mcp_manager: Any | None = None,
     ) -> list[SearchResult]:
         """
         Search for tools semantically similar to a query.
@@ -588,15 +656,17 @@ class SemanticToolSearch:
         # Embed the query
         query_embedding = await self.embed_text(query, is_query=True)
 
-        filters: dict[str, str] = {"project_id": project_id}
+        filters: dict[str, str] = {}
+        if mcp_manager is None:
+            filters["project_id"] = project_id
         if server_filter:
             filters["server_name"] = server_filter
 
         async def _search() -> list[tuple[str, float, dict[str, Any]]]:
             return await vector_store.search_with_payload(
                 query_embedding=query_embedding,
-                limit=top_k,
-                filters=filters,
+                limit=max(top_k * 4, top_k),
+                filters=filters or None,
                 collection_name=self._collection_name,
             )
 
@@ -610,17 +680,45 @@ class SemanticToolSearch:
                 _search,
             )
 
+        visible_ids: set[str] | None = None
+        if mcp_manager is not None:
+            from gobby.mcp_proxy.services.server_resolution import iter_manager_configs
+            from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+            configs = iter_manager_configs(mcp_manager)
+            project_names = {
+                str(getattr(config, "name", ""))
+                for config in configs
+                if str(getattr(config, "project_id", "") or "") == project_id
+            }
+            visible_ids = set()
+            for config in configs:
+                config_id = str(getattr(config, "id", "") or "")
+                name = str(getattr(config, "name", ""))
+                config_project = str(getattr(config, "project_id", "") or "")
+                if config_project == project_id:
+                    visible_ids.add(config_id)
+                elif config_project == GLOBAL_PROJECT_ID and name not in project_names:
+                    visible_ids.add(config_id)
+
         results: list[SearchResult] = []
         for tool_id, score, payload in qdrant_results:
-            if score >= min_similarity:
-                results.append(
-                    SearchResult(
-                        tool_id=tool_id,
-                        server_name=payload.get("server_name", "unknown"),
-                        tool_name=payload.get("tool_name", "unknown"),
-                        description=payload.get("description"),
-                        similarity=score,
-                        embedding_id=0,
-                    )
+            if score < min_similarity:
+                continue
+            if visible_ids is not None:
+                payload_server_id = str(payload.get("server_id") or "")
+                if payload_server_id not in visible_ids:
+                    continue
+            results.append(
+                SearchResult(
+                    tool_id=tool_id,
+                    server_name=payload.get("server_name", "unknown"),
+                    tool_name=payload.get("tool_name", "unknown"),
+                    description=payload.get("description"),
+                    similarity=score,
+                    embedding_id=0,
                 )
+            )
+            if len(results) >= top_k:
+                break
         return results

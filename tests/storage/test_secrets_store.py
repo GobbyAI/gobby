@@ -6,6 +6,7 @@ import multiprocessing
 import os
 import stat
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,8 @@ from cryptography.fernet import Fernet
 
 from gobby.storage import secrets as secrets_module
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.mcp_secrets import MCPSecretSlot, protect_mcp_mapping
+from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.secret_names import SECRET_NAME_PATTERN
 from gobby.storage.secrets import (
     POSTURE_KEY_FILE,
@@ -106,6 +109,10 @@ def _synchronize_empty_key_material_loads(
         monkeypatch.setattr(store, "_load_key_material", synchronized_load)
 
 
+def _new_project_id(store: SecretStore) -> str:
+    return LocalProjectManager(store.db).create(name=f"sec-{uuid.uuid4().hex[:8]}").id
+
+
 # =============================================================================
 # SecretInfo
 # =============================================================================
@@ -140,6 +147,34 @@ class TestSecretInfo:
         )
         d = info.to_dict()
         assert d["description"] is None
+
+    def test_to_dict_includes_project_scope(self) -> None:
+        info = SecretInfo(
+            id="uuid3",
+            name="TOKEN",
+            category="general",
+            description=None,
+            created_at="2024-01-01T00:00:00",
+            updated_at="2024-01-01T00:00:00",
+            project_id="proj-1",
+        )
+        d = info.to_dict()
+        assert d["project_id"] == "proj-1"
+        assert d["scope"] == "project"
+
+    def test_to_dict_marks_global_scope(self) -> None:
+        info = SecretInfo(
+            id="uuid4",
+            name="TOKEN",
+            category="general",
+            description=None,
+            created_at="2024-01-01T00:00:00",
+            updated_at="2024-01-01T00:00:00",
+            project_id=GLOBAL_PROJECT_ID,
+        )
+        d = info.to_dict()
+        assert d["project_id"] == GLOBAL_PROJECT_ID
+        assert d["scope"] == "global"
 
     def test_slots(self) -> None:
         """SecretInfo uses __slots__ for memory efficiency."""
@@ -356,6 +391,18 @@ class TestSecretStoreSet:
         # Value actually changed
         assert store.get("KEY") == "new-value"
 
+    def test_set_project_scope_does_not_overwrite_global(self, store: SecretStore) -> None:
+        project_id = _new_project_id(store)
+        global_info = store.set("SCOPED_KEY", "global-value")
+        project_info = store.set("SCOPED_KEY", "project-value", project_id=project_id)
+        assert global_info.id != project_info.id
+        assert store.get("SCOPED_KEY") == "global-value"
+        assert store.get("SCOPED_KEY", project_id=project_id) == "project-value"
+        assert project_info.project_id == project_id
+        assert project_info.scope == "project"
+        assert global_info.scope == "global"
+        assert global_info.project_id == GLOBAL_PROJECT_ID
+
     def test_set_invalid_category(self, store: SecretStore) -> None:
         with pytest.raises(ValueError, match="Invalid category"):
             store.set("KEY", "value", category="invalid")
@@ -460,6 +507,12 @@ class TestSecretStoreGet:
 
         assert exc_info.value.secret_identifier.startswith("sha256:")
         assert "KEY" not in str(exc_info.value)
+
+    def test_get_project_falls_back_to_global(self, store: SecretStore) -> None:
+        project_id = _new_project_id(store)
+        store.set("FALLBACK_KEY", "global-only")
+        assert store.get("FALLBACK_KEY", project_id=project_id) == "global-only"
+        assert store.get("FALLBACK_KEY") == "global-only"
 
     def test_get_various_value_types(self, store: SecretStore) -> None:
         """Encrypt/decrypt handles various string content."""
@@ -630,6 +683,23 @@ class TestSecretStoreDelete:
     def test_delete_not_found(self, store: SecretStore) -> None:
         assert store.delete("NONEXISTENT") is False
 
+    def test_delete_is_exact_scope_and_reveals_global_fallback(self, store: SecretStore) -> None:
+        project_id = _new_project_id(store)
+        other_id = _new_project_id(store)
+        store.set("SHARED_DELETE", "global-value")
+        store.set("SHARED_DELETE", "project-value", project_id=project_id)
+        store.set("SHARED_DELETE", "other-value", project_id=other_id)
+
+        assert store.delete("SHARED_DELETE", project_id=project_id) is True
+        assert store.get("SHARED_DELETE", project_id=project_id) == "global-value"
+        assert store.get("SHARED_DELETE", project_id=other_id) == "other-value"
+        assert store.get("SHARED_DELETE") == "global-value"
+
+        assert store.delete("SHARED_DELETE") is True
+        assert store.get("SHARED_DELETE") is None
+        assert store.get("SHARED_DELETE", project_id=project_id) is None
+        assert store.get("SHARED_DELETE", project_id=other_id) == "other-value"
+
     def test_delete_then_recreate(self, store: SecretStore) -> None:
         store.set("KEY", "value1")
         store.delete("KEY")
@@ -672,6 +742,23 @@ class TestSecretStoreList:
         results = store.list()
         assert isinstance(results[0], SecretInfo)
 
+    def test_list_project_includes_unshadowed_global_rows(self, store: SecretStore) -> None:
+        project_id = _new_project_id(store)
+        store.set("GLOBAL_ONLY", "g")
+        store.set("SHARED_LIST", "global-shared")
+        store.set("SHARED_LIST", "project-shared", project_id=project_id)
+        store.set("PROJECT_ONLY", "p", project_id=project_id)
+
+        global_rows = {item.name: item for item in store.list()}
+        assert set(global_rows) == {"global_only", "shared_list"}
+        assert global_rows["shared_list"].scope == "global"
+
+        project_rows = {item.name: item for item in store.list(project_id=project_id)}
+        assert set(project_rows) == {"global_only", "shared_list", "project_only"}
+        assert project_rows["shared_list"].scope == "project"
+        assert project_rows["shared_list"].project_id == project_id
+        assert project_rows["global_only"].scope == "global"
+
 
 # =============================================================================
 # SecretStore.exists
@@ -685,6 +772,13 @@ class TestSecretStoreExists:
 
     def test_exists_false(self, store: SecretStore) -> None:
         assert store.exists("NONEXISTENT") is False
+
+    def test_exists_project_falls_back_to_global(self, store: SecretStore) -> None:
+        project_id = _new_project_id(store)
+        store.set("EXISTS_GLOBAL", "value")
+        assert store.exists("EXISTS_GLOBAL", project_id=project_id) is True
+        assert store.exists("EXISTS_GLOBAL") is True
+        assert store.exists("missing", project_id=project_id) is False
 
     def test_exists_after_delete(self, store: SecretStore) -> None:
         store.set("KEY", "value")
@@ -791,6 +885,20 @@ class TestSecretStoreResolveDict:
         store.set("B", "val_b")
         result = store.resolve_dict({"x": "$secret:A", "y": "$secret:B"})
         assert result == {"x": "val_a", "y": "val_b"}
+
+    def test_resolve_uses_project_scope(self, store: SecretStore) -> None:
+        project_id = _new_project_id(store)
+        store.set("RESOLVE_KEY", "global-token")
+        store.set("RESOLVE_KEY", "project-token", project_id=project_id)
+        assert store.resolve("Bearer $secret:resolve_key") == "Bearer global-token"
+        assert (
+            store.resolve("Bearer $secret:resolve_key", project_id=project_id)
+            == "Bearer project-token"
+        )
+        assert store.resolve_dict(
+            {"TOKEN": "$secret:resolve_key"},
+            project_id=project_id,
+        ) == {"TOKEN": "project-token"}
 
     def test_resolve_dict_never_forwards_missing_refs(self, store: SecretStore) -> None:
         result = store.resolve_dict(
@@ -899,3 +1007,27 @@ class TestNameNormalization:
         store.set("  MY_KEY  ", "value")
         assert store.get("my_key") == "value"
         assert store.exists("MY_KEY") is True
+
+
+class TestProtectMcpMappingScope:
+    def test_protect_mcp_mapping_writes_instance_scope(self, store: SecretStore) -> None:
+        project_id = _new_project_id(store)
+        protected = protect_mcp_mapping(
+            {"API_TOKEN": "sk-project-secret"},
+            secret_store=store,
+            persistence="database",
+            scope=project_id,
+            server_name="github",
+            field="env",
+        )
+        assert protected is not None
+        slot = MCPSecretSlot("database", project_id, "github", "env", "API_TOKEN")
+        assert protected["API_TOKEN"] == f"$secret:{slot.name}"
+        assert store.get(slot.name, project_id=project_id) == "sk-project-secret"
+        assert store.get(slot.name) is None
+        row = store.db.fetchone(
+            "SELECT project_id FROM secrets WHERE name = %s AND project_id = %s",
+            (slot.name, project_id),
+        )
+        assert row is not None
+        assert str(row["project_id"]) == project_id

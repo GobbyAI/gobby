@@ -80,12 +80,12 @@ class _InternalRegistryInventory(Protocol):
 
 
 class _ExternalMCPInventory(Protocol):
-    def get_available_servers(self) -> list[str]:
-        """Return external MCP server names."""
+    def get_available_servers(self, *, project_id: str) -> list[str]:
+        """Return external MCP server names visible to ``project_id``."""
         ...
 
-    async def list_tools(self) -> dict[str, list[dict[str, Any]]]:
-        """Return external MCP tool inventory."""
+    async def list_tools(self, *, project_id: str) -> dict[str, list[dict[str, Any]]]:
+        """Return external MCP tool inventory visible to ``project_id``."""
         ...
 
 
@@ -95,6 +95,7 @@ def create_workflows_registry(
     db: HubDatabase | None = None,
     internal_manager: _InternalRegistryInventory | None = None,
     mcp_manager_resolver: Callable[[], _ExternalMCPInventory | None] | None = None,
+    project_id_resolver: Callable[[], str | None] | None = None,
     # Pipeline dependencies (resolved lazily at call time)
     executor_getter: Callable[[], Any | None] | None = None,
     execution_manager_getter: Callable[[], Any | None] | None = None,
@@ -169,7 +170,9 @@ def create_workflows_registry(
     async def _evaluate_pipeline(name: str) -> dict[str, Any]:
         from gobby.workflows.dry_run import evaluate_pipeline_definition
 
-        mcp_inventory = workflow_mcp_inventory(internal_manager, mcp_manager_resolver)
+        mcp_inventory = workflow_mcp_inventory(
+            internal_manager, mcp_manager_resolver, project_id_resolver
+        )
         project_ctx = get_project_context()
         project_id = project_ctx.get("id") if project_ctx else None
         eval_result = await evaluate_pipeline_definition(
@@ -197,7 +200,9 @@ def create_workflows_registry(
 
         if _db is None:
             return {"error": "Agent evaluation requires a database connection"}
-        mcp_inventory = workflow_mcp_inventory(internal_manager, mcp_manager_resolver)
+        mcp_inventory = workflow_mcp_inventory(
+            internal_manager, mcp_manager_resolver, project_id_resolver
+        )
         project_ctx = get_project_context()
         project_id = project_ctx.get("id") if project_ctx else None
         agent = resolve_agent(name, _db, project_id=project_id)
@@ -608,14 +613,26 @@ def create_workflows_registry(
     return registry
 
 
+def _session_project_id() -> str:
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+    ctx = get_project_context()
+    if isinstance(ctx, dict) and ctx.get("id"):
+        return str(ctx["id"])
+    return GLOBAL_PROJECT_ID
+
+
 def workflow_mcp_inventory(
     internal_manager: _InternalRegistryInventory | None,
     mcp_manager_resolver: Callable[[], _ExternalMCPInventory | None] | None,
+    project_id_resolver: Callable[[], str | None] | None = None,
 ) -> "_WorkflowMCPInventory | None":
     if internal_manager is None and mcp_manager_resolver is None:
         return None
     return _WorkflowMCPInventory(
-        internal_manager=internal_manager, mcp_manager_resolver=mcp_manager_resolver
+        internal_manager=internal_manager,
+        mcp_manager_resolver=mcp_manager_resolver,
+        project_id_resolver=project_id_resolver,
     )
 
 
@@ -627,26 +644,36 @@ class _WorkflowMCPInventory:
         *,
         internal_manager: _InternalRegistryInventory | None,
         mcp_manager_resolver: Callable[[], _ExternalMCPInventory | None] | None,
+        project_id_resolver: Callable[[], str | None] | None = None,
     ) -> None:
         self._internal_manager = internal_manager
         self._mcp_manager_resolver = mcp_manager_resolver
+        self._project_id_resolver = project_id_resolver
 
     def _current_mcp_manager(self) -> _ExternalMCPInventory | None:
         resolver = self._mcp_manager_resolver
         return resolver() if resolver is not None else None
 
+    def _project_id(self) -> str:
+        resolver = self._project_id_resolver
+        if resolver is not None:
+            resolved = resolver()
+            if resolved:
+                return resolved
+        return _session_project_id()
+
     def get_available_servers(self) -> list[str]:
         servers = set(self._internal_server_names())
         mcp_manager = self._current_mcp_manager()
         if mcp_manager is not None:
-            servers.update(mcp_manager.get_available_servers())
+            servers.update(mcp_manager.get_available_servers(project_id=self._project_id()))
         return sorted(servers)
 
     async def list_tools(self) -> dict[str, list[dict[str, Any]]]:
         tools: dict[str, list[dict[str, Any]]] = {}
         mcp_manager = self._current_mcp_manager()
         if mcp_manager is not None:
-            tools.update(await mcp_manager.list_tools())
+            tools.update(await mcp_manager.list_tools(project_id=self._project_id()))
         internal_tools = self._internal_tools()
         collisions = sorted(set(tools) & set(internal_tools))
         if collisions:

@@ -259,29 +259,41 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 412,
-        filename: "412_sessions_workspace_path.sql",
-        checksum: "db1bbb0381f3a0f1e2effdec66475e5a22b59e3930ba37d8145ba7c5ccedba58",
-        sql: include_str!("../../assets/schema/migrations/412_sessions_workspace_path.sql"),
+        filename: "412_mcp_templates_project_secrets.sql",
+        checksum: "f126ac50673377e92ef8a157410ed6fce1c5f386f7c1b733dca1e9f6121cf5c9",
+        sql: include_str!("../../assets/schema/migrations/412_mcp_templates_project_secrets.sql"),
     },
     EmbeddedMigration {
         version: 413,
-        filename: "413_sessions_startup_claim_generation.sql",
-        checksum: "f5e3623d0907ecc5dba6ccc79be0f3ad6e9ff96dbee406f747bf79e48958a8fa",
-        sql: include_str!(
-            "../../assets/schema/migrations/413_sessions_startup_claim_generation.sql"
-        ),
+        filename: "413_session_feedback_review.sql",
+        checksum: "1656e75273f931a4aa2aabef4bf5c280022c5f124d90315a1e1089601211c67a",
+        sql: include_str!("../../assets/schema/migrations/413_session_feedback_review.sql"),
     },
     EmbeddedMigration {
         version: 414,
-        filename: "414_hook_receipt_effects.sql",
-        checksum: "1eb825f0cdefb3b3fcc88d33388748260fe0f91ad7ec6156026fbf6bc00fd185",
-        sql: include_str!("../../assets/schema/migrations/414_hook_receipt_effects.sql"),
+        filename: "414_sessions_workspace_path.sql",
+        checksum: "db1bbb0381f3a0f1e2effdec66475e5a22b59e3930ba37d8145ba7c5ccedba58",
+        sql: include_str!("../../assets/schema/migrations/414_sessions_workspace_path.sql"),
     },
     EmbeddedMigration {
         version: 415,
-        filename: "415_provider_capacity_snapshots.sql",
+        filename: "415_sessions_startup_claim_generation.sql",
+        checksum: "f5e3623d0907ecc5dba6ccc79be0f3ad6e9ff96dbee406f747bf79e48958a8fa",
+        sql: include_str!(
+            "../../assets/schema/migrations/415_sessions_startup_claim_generation.sql"
+        ),
+    },
+    EmbeddedMigration {
+        version: 416,
+        filename: "416_hook_receipt_effects.sql",
+        checksum: "1eb825f0cdefb3b3fcc88d33388748260fe0f91ad7ec6156026fbf6bc00fd185",
+        sql: include_str!("../../assets/schema/migrations/416_hook_receipt_effects.sql"),
+    },
+    EmbeddedMigration {
+        version: 417,
+        filename: "417_provider_capacity_snapshots.sql",
         checksum: "7397e2d9f59cc4d4573d58d546c430abf34b2f6614afe3f5ac7bd2e9a7a0fea9",
-        sql: include_str!("../../assets/schema/migrations/415_provider_capacity_snapshots.sql"),
+        sql: include_str!("../../assets/schema/migrations/417_provider_capacity_snapshots.sql"),
     },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

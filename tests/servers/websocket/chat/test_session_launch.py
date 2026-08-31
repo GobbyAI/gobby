@@ -108,32 +108,38 @@ class TestFailedStartCleanup:
         assert order == ["shim", "stop"]
 
 
-def _fake_launching_session(conversation_id: str, gate: asyncio.Event | None) -> Any:
-    session = DroidManagedChatSession(conversation_id=conversation_id)
-    launches: list[dict[str, Any]] = []
+class _LaunchingDroidSession(DroidManagedChatSession):
+    """Droid session that records launches instead of spawning droid."""
 
-    async def _start(model: str | None = None) -> None:
-        if gate is not None:
-            await gate.wait()
-        launches.append(
+    def __init__(self, conversation_id: str, gate: asyncio.Event | None) -> None:
+        super().__init__(conversation_id=conversation_id)
+        self._launch_gate = gate
+        self._launches: list[dict[str, Any]] = []
+
+    async def start(self, model: str | None = None) -> None:
+        if self._launch_gate is not None:
+            await self._launch_gate.wait()
+        self._launches.append(
             {
                 "model": model,
-                "project_path": session.project_path,
-                "allowed_domains": list(session.sandbox_config.allowed_domains),
-                "policy_hash": session.sandbox_policy_hash,
+                "project_path": self.project_path,
+                "allowed_domains": list(self.sandbox_config.allowed_domains),
+                "policy_hash": self.sandbox_policy_hash,
             }
         )
-        session.sandbox_metadata = {
+        self.sandbox_metadata = {
             "backend": "srt",
             "enforced": True,
-            "policy_hash": session.sandbox_policy_hash,
+            "policy_hash": self.sandbox_policy_hash,
         }
-        session._connected = True
+        self._connected = True
 
-    session.start = _start  # type: ignore[method-assign]
-    session.stop = AsyncMock()  # type: ignore[method-assign]
-    session._launches = launches
-    return session
+    async def stop(self) -> None:
+        return None
+
+
+def _fake_launching_session(conversation_id: str, gate: asyncio.Event | None) -> Any:
+    return _LaunchingDroidSession(conversation_id, gate)
 
 
 def _launch(

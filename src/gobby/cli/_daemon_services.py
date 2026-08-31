@@ -115,6 +115,16 @@ def _start_managed_services_locked(
     if postgres_result.outcome != "success":
         return postgres_result
 
+    # The full-profile resolve below reads config_store and SecretStore with
+    # current-contract queries; a schema-advancing upgrade reaches this point
+    # with an older hub, so apply the contract before reading it.
+    try:
+        from gobby.cli.datastores import apply_hub_schema_contract
+
+        apply_hub_schema_contract(gobby_home)
+    except Exception as exc:
+        return ServiceStartResult("failed", f"Could not apply the hub schema contract: {exc}")
+
     try:
         runtime = resolve_runtime(gobby_home)
     except ComposeEnvironmentError as exc:

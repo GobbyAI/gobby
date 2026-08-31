@@ -450,3 +450,52 @@ def test_stdio_constructs_no_terminal_service_set() -> None:
     assert "TerminalRuntimeRegistry(" not in source
     assert "session_manager = None" in source
     del create_stdio_mcp_server
+
+
+@pytest.mark.asyncio
+async def test_add_mcp_server_forwards_template_fields() -> None:
+    captured: dict[str, Any] = {}
+
+    async def add_mcp_server(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return {"success": True, "template": kwargs.get("template")}
+
+    proxy = MagicMock()
+    proxy.add_mcp_server = add_mcp_server
+    tools = _capture_stdio_tools(proxy)
+    result = await tools["add_mcp_server"](
+        name="demo-instance",
+        template="demo",
+        values={"region": "us"},
+        scope="global",
+        description="from template",
+    )
+    assert result["success"] is True
+    assert captured["template"] == "demo"
+    assert captured["values"] == {"region": "us"}
+    assert captured["scope"] == "global"
+
+    httpx_client = MagicMock()
+    httpx_client.request = AsyncMock(
+        return_value=_response(200, {"success": True, "servers": [{"template": "demo"}]})
+    )
+    daemon = DaemonProxy(60887)
+    daemon._project_id = "11111111-1111-4111-8111-111111111111"
+    with patch("gobby.mcp_proxy.stdio_proxy.httpx.AsyncClient", return_value=httpx_client):
+        await daemon.add_mcp_server(
+            name="demo-instance",
+            template="demo",
+            values={"region": "us"},
+            scope="project",
+            description="from template",
+        )
+        await daemon.remove_mcp_server("demo-instance", scope="project")
+    posted = httpx_client.request.await_args_list[0].kwargs["json"]
+    assert posted["template"] == "demo"
+    assert posted["values"] == {"region": "us"}
+    assert posted["scope"] == "project"
+    assert posted.get("project_id") == "11111111-1111-4111-8111-111111111111"
+    delete_call = httpx_client.request.await_args_list[-1]
+    delete_json = delete_call.kwargs.get("json") or {}
+    delete_params = delete_call.kwargs.get("params") or {}
+    assert delete_json.get("scope") == "project" or delete_params.get("scope") == "project"

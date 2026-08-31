@@ -9,6 +9,9 @@ export {
 import { createTerminalWsReducer } from "./terminalWsFragments";
 
 export const TMUX_REQUEST_TIMEOUT_MS = 10_000;
+export const TMUX_RECONNECT_BASE_MS = 2_000;
+export const TMUX_RECONNECT_MAX_MS = 30_000;
+export const TMUX_STABLE_OPEN_MS = 1_000;
 
 function asSession(
   row: Partial<TmuxSession> & { terminal_id?: string },
@@ -143,6 +146,14 @@ export function useTmuxSessions(
     useState<CreatedTmuxSession | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const stableOpenTimeoutRef = useRef<number | null>(null);
+  // Cursor state is keyed to one walk (a fresh init/refresh listing plus its
+  // continuation pages); a superseded walk's pages must not merge rows or
+  // steer the cursor, or a refresh started mid-pagination under-fetches.
+  const listWalkRef = useRef<{ id: string; cursor: string | null } | null>(
+    null,
+  );
   const outputCallbackRef = useRef<
     ((runId: string, data: string) => void) | null
   >(null);
@@ -233,7 +244,7 @@ export function useTmuxSessions(
 
   const refreshSessions = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(listRequest(`refresh-${Date.now()}`));
+    wsRef.current.send(listRequest(`refresh-${++requestCounterRef.current}`));
   }, [listRequest]);
 
   const beginAttachRequest = useCallback(
@@ -331,15 +342,28 @@ export function useTmuxSessions(
       }
       switch (data.type) {
         case "terminal_list": {
+          const requestId =
+            typeof data.request_id === "string" ? data.request_id : "";
+          const isFreshWalk =
+            requestId === "init" || requestId.startsWith("refresh");
+          const walk = isFreshWalk
+            ? { id: requestId, cursor: null as string | null }
+            : listWalkRef.current;
+          // A superseded walk's page: merging would resurrect rows the
+          // fresh listing dropped, and its cursor would truncate the
+          // fresh walk.
+          if (
+            walk === null ||
+            (!isFreshWalk && requestId !== `page:${walk.id}`)
+          )
+            break;
+          if (isFreshWalk) listWalkRef.current = walk;
           const pageItems = (
             (data.items as TmuxSession[] | undefined) ?? []
           ).map(asSession);
-          const generation = connectionGenerationRef.current;
-          const requestId =
-            typeof data.request_id === "string" ? data.request_id : "";
           // A fresh listing replaces the table so terminals that vanished
           // drop out; only continuation pages merge.
-          if (requestId === "init" || requestId.startsWith("refresh")) {
+          if (isFreshWalk) {
             setSessions(pageItems);
           } else {
             setSessions((current) => {
@@ -363,9 +387,14 @@ export function useTmuxSessions(
           ) {
             setSessionEnded(true);
           }
-          if (typeof data.next_cursor === "string" && data.next_cursor) {
+          if (
+            typeof data.next_cursor === "string" &&
+            data.next_cursor &&
+            data.next_cursor !== walk.cursor
+          ) {
+            walk.cursor = data.next_cursor;
             wsRef.current?.send(
-              listRequest(`page-${generation}`, data.next_cursor),
+              listRequest(`page:${walk.id}`, data.next_cursor),
             );
           }
           if (pendingRequestRef.current === null) setIsLoading(false);
@@ -382,14 +411,22 @@ export function useTmuxSessions(
           )
             break;
 
-          if (data.success || typeof data.attachment_id === "string") {
-            const attachedId = data.attachment_id as string;
+          // Failure frames also carry attachment_id (the finalized lease), so
+          // only an explicit success verdict may mark the attach live.
+          if (data.success === true && typeof data.attachment_id === "string") {
+            const attachedId = data.attachment_id;
             fragmentReducerRef.current.markLive(attachedId);
             updateAttachment(pending.target, attachedId);
           } else {
-            setAttachError(
-              typeof data.message === "string" ? data.message : "Attach failed",
-            );
+            const reason =
+              typeof data.reason === "string"
+                ? data.reason
+                : typeof data.message === "string"
+                  ? data.message
+                  : typeof data.code === "string"
+                    ? `Attach failed: ${data.code}`
+                    : "Attach failed";
+            setAttachError(reason);
           }
           clearPendingRequest();
           break;
@@ -503,14 +540,13 @@ export function useTmuxSessions(
           break;
         }
 
-        case "terminal_output":
-          if (outputCallbackRef.current) {
-            outputCallbackRef.current(
-              (data.attachment_id as string) || (data.terminal_id as string),
-              data.data as string,
-            );
+        case "terminal_output": {
+          const attachmentId = data.attachment_id;
+          if (outputCallbackRef.current && typeof attachmentId === "string") {
+            outputCallbackRef.current(attachmentId, data.data as string);
           }
           break;
+        }
       }
     },
     [
@@ -521,6 +557,15 @@ export function useTmuxSessions(
       updateAttachment,
     ],
   );
+
+  const handleMessageRef = useRef(handleMessage);
+  const listRequestRef = useRef(listRequest);
+  const updateAttachmentRef = useRef(updateAttachment);
+  useEffect(() => {
+    handleMessageRef.current = handleMessage;
+    listRequestRef.current = listRequest;
+    updateAttachmentRef.current = updateAttachment;
+  }, [handleMessage, listRequest, updateAttachment]);
 
   const connect = useCallback(() => {
     if (
@@ -543,6 +588,16 @@ export function useTmuxSessions(
 
     ws.onopen = () => {
       if (!isCurrentConnection()) return;
+      // Accept-then-close (e.g. 4401 after accept) must not reset backoff;
+      // only a socket that stays open counts as a recovered connection.
+      if (stableOpenTimeoutRef.current !== null) {
+        clearTimeout(stableOpenTimeoutRef.current);
+      }
+      stableOpenTimeoutRef.current = window.setTimeout(() => {
+        stableOpenTimeoutRef.current = null;
+        if (!isCurrentConnection()) return;
+        reconnectAttemptsRef.current = 0;
+      }, TMUX_STABLE_OPEN_MS);
       setConnected(true);
       ws.send(
         JSON.stringify({
@@ -551,16 +606,21 @@ export function useTmuxSessions(
         }),
       );
       // Fetch session list on connect
-      ws.send(listRequest("init"));
+      ws.send(listRequestRef.current("init"));
     };
 
     ws.onclose = () => {
       if (!isCurrentConnection()) return;
+      if (stableOpenTimeoutRef.current !== null) {
+        clearTimeout(stableOpenTimeoutRef.current);
+        stableOpenTimeoutRef.current = null;
+      }
       setConnected(false);
       setSessionsLoaded(false);
+      listWalkRef.current = null;
       fragmentReducerRef.current.disconnect();
       fragmentReducerRef.current = createTerminalWsReducer();
-      updateAttachment(null, null);
+      updateAttachmentRef.current(null, null);
       if (pendingRequestTimeoutRef.current !== null) {
         clearTimeout(pendingRequestTimeoutRef.current);
         pendingRequestTimeoutRef.current = null;
@@ -570,11 +630,20 @@ export function useTmuxSessions(
       setIsLoading(false);
       setAttachError(null);
       setCreatedSession(null);
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      const attempt = reconnectAttemptsRef.current;
+      reconnectAttemptsRef.current = attempt + 1;
+      const delay = Math.min(
+        TMUX_RECONNECT_BASE_MS * 2 ** attempt,
+        TMUX_RECONNECT_MAX_MS,
+      );
       reconnectTimeoutRef.current = window.setTimeout(() => {
         if (!isCurrentConnection()) return;
         reconnectTimeoutRef.current = null;
         connectRef.current();
-      }, 2000);
+      }, delay);
     };
 
     ws.onerror = (error) => {
@@ -592,16 +661,16 @@ export function useTmuxSessions(
           const reducer = fragmentReducerRef.current;
           reducer.push(data);
           for (const applied of reducer.applied.splice(0)) {
-            handleMessage(applied);
+            handleMessageRef.current(applied);
           }
           return;
         }
-        handleMessage(data);
+        handleMessageRef.current(data);
       } catch (e) {
         console.error("Failed to parse tmux message:", e);
       }
     };
-  }, [handleMessage, listRequest, updateAttachment]);
+  }, []);
 
   useEffect(() => {
     connectRef.current = connect;
@@ -744,12 +813,17 @@ export function useTmuxSessions(
   );
 
   useEffect(() => {
-    connect();
+    connectRef.current();
     return () => {
       connectionGenerationRef.current += 1;
+      reconnectAttemptsRef.current = 0;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
+      }
+      if (stableOpenTimeoutRef.current !== null) {
+        clearTimeout(stableOpenTimeoutRef.current);
+        stableOpenTimeoutRef.current = null;
       }
       if (pendingRequestTimeoutRef.current !== null) {
         clearTimeout(pendingRequestTimeoutRef.current);
@@ -760,7 +834,7 @@ export function useTmuxSessions(
       wsRef.current = null;
       ws?.close();
     };
-  }, [connect]);
+  }, []);
 
   // The project picker changed: list again under the new scope.
   useEffect(() => {

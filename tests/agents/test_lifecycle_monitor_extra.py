@@ -39,7 +39,13 @@ from tests.workflows.step_instance_fixtures import make_step_instance
 from .detection_test_support import BundledDetectionRegistry
 
 DETECTION_REGISTRY = BundledDetectionRegistry()
-configure_tmux(ConfiguredTmuxConfig())
+
+
+@pytest.fixture(autouse=True)
+def _configured_tmux() -> None:
+    """(Re)configure daemon tmux helpers; earlier runner-shutdown tests reset them."""
+    configure_tmux(ConfiguredTmuxConfig())
+
 
 pytestmark = pytest.mark.unit
 

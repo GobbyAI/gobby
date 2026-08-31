@@ -8,8 +8,10 @@ from dataclasses import dataclass
 
 from gobby.adapters.capabilities import get_provider_capabilities
 from gobby.hooks.effect_deadline import (
+    BLOCKING_EFFECT_BUDGET_SECONDS,
     BlockingEffectDeadline,
-    remaining_blocking_effect_seconds,
+    blocking_budget_overrun,
+    elapsed_blocking_effect_seconds,
 )
 from gobby.hooks.events import HookEvent
 from gobby.integrations.rtk import resolve_rtk
@@ -100,6 +102,25 @@ async def _terminate_process(process: asyncio.subprocess.Process) -> None:
         logger.warning("proxy_hook: failed to reap terminated handler process")
 
 
+def _warn_budget_overrun(
+    rule_name: str,
+    deadline: BlockingEffectDeadline | None,
+    *,
+    stage: str,
+    floor: float,
+) -> None:
+    """Report a spent shared budget so the log alone identifies the cause."""
+    logger.warning(
+        "proxy_hook[%s]: blocking budget spent %s, running on the %.1fs floor "
+        "(shared budget %.1fs of %.1fs spent)",
+        rule_name,
+        stage,
+        floor,
+        elapsed_blocking_effect_seconds(deadline),
+        BLOCKING_EFFECT_BUDGET_SECONDS,
+    )
+
+
 class ProxyHooksMixin:
     """Execute an internal registry of trusted command transformers."""
 
@@ -156,11 +177,20 @@ class ProxyHooksMixin:
         if not isinstance(command, str):
             return False
 
-        maximum = invocation.effect.timeout_seconds or _DEFAULT_PROXY_TIMEOUT_SECONDS
-        timeout = remaining_blocking_effect_seconds(blocking_deadline, maximum=maximum)
-        if timeout <= 0:
-            logger.warning("proxy_hook[%s]: blocking deadline exhausted", invocation.row.name)
-            return False
+        # This stage runs last (``core.py`` defers proxy transformations until
+        # every original-input denial has passed), so a shared budget with a
+        # zero floor would starve it alone and drop the rewrite exactly under
+        # the load that makes rewriting matter. Its declared timeout is a
+        # reservation here, and an overrun is reported rather than obeyed.
+        timeout = invocation.effect.timeout_seconds or _DEFAULT_PROXY_TIMEOUT_SECONDS
+        overran = blocking_budget_overrun(blocking_deadline)
+        if overran:
+            _warn_budget_overrun(
+                invocation.row.name,
+                blocking_deadline,
+                stage="before the RTK probe",
+                floor=timeout,
+            )
 
         probe_timeout = min(0.5, max(timeout / 4, 0.05))
         probe = await offload(resolve_rtk, timeout=probe_timeout)
@@ -169,10 +199,15 @@ class ProxyHooksMixin:
             return False
         _note_rtk_available()
 
-        timeout = remaining_blocking_effect_seconds(blocking_deadline, maximum=maximum)
-        if timeout <= 0:
-            logger.warning("proxy_hook[%s]: blocking deadline exhausted", invocation.row.name)
-            return False
+        # One warning per event: the budget stays spent once it is spent, so
+        # only the stage that first observed the overrun reports it.
+        if not overran and blocking_budget_overrun(blocking_deadline):
+            _warn_budget_overrun(
+                invocation.row.name,
+                blocking_deadline,
+                stage="after the RTK probe",
+                floor=timeout,
+            )
 
         # ``rewrite`` is the contract stock RTK host hooks use, so its heredoc,
         # substitution, and redirect gates apply. ``--`` keeps a command that

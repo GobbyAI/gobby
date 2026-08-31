@@ -476,4 +476,3 @@ class TestBuildCliCommand:
             config_overrides=['mcp_servers.gobby.command="uv"'],
         )
         assert cmd == expected
-

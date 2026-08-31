@@ -1,13 +1,18 @@
 /// <reference types="vitest/config" />
-import { defineConfig } from "vite";
+import { createLogger, defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+import { proxyAwareErrorLogger } from "./src/lib/devProxyLogger";
+
 const GOBBY_HTTP_PORT = process.env.GOBBY_DAEMON_PORT || "60887";
 const GOBBY_UI_HOST = process.env.GOBBY_UI_HOST || "localhost";
+const logger = createLogger();
+logger.error = proxyAwareErrorLogger(logger);
 
 // https://vite.dev/config/
 export default defineConfig({
+  customLogger: logger,
   plugins: [react(), tailwindcss()],
   resolve: {
     dedupe: ["@codemirror/state", "@codemirror/view", "@codemirror/language"],

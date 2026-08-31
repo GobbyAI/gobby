@@ -412,7 +412,7 @@ class TestWorkflowConfigDefaults:
 
         config = WorkflowConfig()
         assert config.enabled is True
-        assert config.timeout == 90.0
+        assert config.timeout == 24.0
 
 
 class TestWorkflowConfigCustom:
@@ -524,7 +524,7 @@ class TestWorkflowConfigFromAppPy:
 
         config = WorkflowConfig()
         assert config.enabled is True
-        assert config.timeout == 90.0
+        assert config.timeout == 24.0
 
     def test_validation_via_app_py(self) -> None:
         """Test validation works when imported from app.py."""

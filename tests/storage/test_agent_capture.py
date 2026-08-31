@@ -27,6 +27,7 @@ def _create_run(
     *,
     suffix: str,
     child_status: str = "active",
+    pane_id: str = "%1",
 ) -> tuple[LocalAgentRunManager, str, str]:
     parent = session_manager.register(
         external_id=f"capture-parent-{suffix}",
@@ -54,7 +55,7 @@ def _create_run(
     manager.update_runtime(run.id)
     _live_run = manager.get(run.id)
     assert _live_run is not None
-    make_live_terminal(_live_run, db=manager.db, session_name=f"gobby-{suffix}")
+    make_live_terminal(_live_run, db=manager.db, session_name=f"gobby-{suffix}", pane_id=pane_id)
 
     return manager, run.id, child.id
 
@@ -152,6 +153,7 @@ def test_termination_candidates_include_intent_and_terminal_child_only(
         session_manager,
         sample_project,
         suffix="intent",
+        pane_id="%2",
     )
     manager.record_termination_intent(intended_id, action="timeout", reason="deadline")
 
@@ -160,6 +162,7 @@ def test_termination_candidates_include_intent_and_terminal_child_only(
         session_manager,
         sample_project,
         suffix="terminal-child",
+        pane_id="%3",
         child_status="expired",
     )
     _manager, active_child_id, _ = _create_run(
@@ -167,6 +170,7 @@ def test_termination_candidates_include_intent_and_terminal_child_only(
         session_manager,
         sample_project,
         suffix="active-child",
+        pane_id="%4",
     )
 
     no_tmux_manager, no_tmux_id, no_tmux_child = _create_run(
@@ -174,9 +178,13 @@ def test_termination_candidates_include_intent_and_terminal_child_only(
         session_manager,
         sample_project,
         suffix="no-tmux",
+        pane_id="%5",
         child_status="expired",
     )
-    no_tmux_manager.clear_live_terminal(no_tmux_id, "gobby-no-tmux")
+    no_tmux_run = no_tmux_manager.get(no_tmux_id)
+    assert no_tmux_run is not None
+    assert no_tmux_run.terminal_id is not None
+    no_tmux_manager.clear_live_terminal(no_tmux_id, no_tmux_run.terminal_id)
 
     candidate_ids = {
         run.id for run in manager.list_termination_candidates(machine_id=require_machine_id())
@@ -217,4 +225,11 @@ def test_terminal_transition_clears_intent_and_preserves_capture_result(
     assert failed.pending_terminal_action is None
     assert failed.pending_terminal_reason is None
     assert failed.termination_requested_at is None
-    assert failed.terminal_id is None
+    # Terminal transitions keep the terminal link; the terminals row is marked
+    # exited and reaped later by terminal cleanup (storage/agents/_cleanup.py).
+    assert failed.terminal_id is not None
+    terminal_row = temp_db.fetchone(
+        "SELECT state FROM terminals WHERE id = %s", (failed.terminal_id,)
+    )
+    assert terminal_row is not None
+    assert terminal_row["state"] == "exited"

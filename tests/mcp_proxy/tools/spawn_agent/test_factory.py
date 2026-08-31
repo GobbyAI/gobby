@@ -356,11 +356,22 @@ class TestSpawnAgentDefaults:
         project_dir = tmp_path / "worktree"
         project_dir.mkdir()
         (project_dir / ".gobby").mkdir()
+        # Tracked project.json parent keys are stale by contract (#21193); the
+        # gitignored isolation.json sidecar is the only parent-identity source.
         (project_dir / ".gobby" / "project.json").write_text(
             json.dumps(
                 {
                     "id": "isolated-project",
                     "name": "isolated",
+                    "parent_project_id": "stale-tracked-parent",
+                    "parent_project_path": "/stale/tracked/path",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (project_dir / ".gobby" / "isolation.json").write_text(
+            json.dumps(
+                {
                     "parent_project_id": "parent-project",
                     "parent_project_path": "/repo/main",
                 }

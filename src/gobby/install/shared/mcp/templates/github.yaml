@@ -1,0 +1,13 @@
+name: github
+description: GitHub API integration for issues, PRs, repos, and code search
+version: 1
+enabled: true
+transport: stdio
+command: npx
+args: ["-y", "@modelcontextprotocol/server-github"]
+params:
+  - name: token
+    env: GITHUB_PERSONAL_ACCESS_TOKEN
+    required: true
+    secret: true
+    default_secret: github_personal_access_token

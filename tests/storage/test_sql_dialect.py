@@ -92,11 +92,11 @@ def test_task_list_label_filter_uses_postgres_jsonb_contains() -> None:
     )
 
     task_query_index = next(
-        index for index, query in enumerate(db.queries) if query.startswith("SELECT * FROM tasks")
+        index
+        for index, query in enumerate(db.queries)
+        if "FROM tasks WHERE" in query and "tasks.labels @> %s::jsonb" in query
     )
-    task_query = db.queries[task_query_index]
 
-    assert "tasks.labels @> %s::jsonb" in task_query
     assert db.params[task_query_index] == (
         "proj1",
         '["interactive:planning-in-progress:sess"]',

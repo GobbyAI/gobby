@@ -8,6 +8,7 @@ import pytest
 
 from gobby.adapters.agy_contract import AGY_HOOK_TIMEOUT_SECONDS
 from gobby.config.app import DaemonConfig
+from gobby.config.hooks import HOOK_TRANSPORT_WINDOW_SECONDS
 from gobby.config.tasks import DEFAULT_WORKFLOW_TIMEOUT_SECONDS
 
 
@@ -28,10 +29,14 @@ def _timeout_values(value: Any) -> list[int]:
 def test_hook_timeout_layers_leave_ordered_cleanup_windows() -> None:
     config = DaemonConfig()
 
-    assert DEFAULT_WORKFLOW_TIMEOUT_SECONDS == 90
-    assert config.hooks.adapter_timeout == 105
+    assert DEFAULT_WORKFLOW_TIMEOUT_SECONDS == 24
+    assert config.hooks.adapter_timeout == 26
     assert config.hooks.provider_timeout == 120
     assert AGY_HOOK_TIMEOUT_SECONDS == 45
+    # The staged provider timeouts sit outside ghook's own window, which is the
+    # deadline that actually decides whether the daemon's answer is used.
+    assert config.hooks.adapter_timeout < HOOK_TRANSPORT_WINDOW_SECONDS
+    assert HOOK_TRANSPORT_WINDOW_SECONDS < AGY_HOOK_TIMEOUT_SECONDS
 
 
 @pytest.mark.parametrize(

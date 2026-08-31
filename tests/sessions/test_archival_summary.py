@@ -55,10 +55,14 @@ async def test_missing_transcript_leaves_archival_summary_empty(temp_db: HubData
 
 
 @pytest.mark.asyncio
-async def test_transcript_fallback_persists_summary_revision(temp_db: HubDatabase) -> None:
+async def test_transcript_fallback_persists_summary_revision(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
     root = Path(__file__).resolve().parents[2]
     transcript = root / "tests/sessions/transcripts/fixtures/golden_path/claude.jsonl"
-    project = LocalProjectManager(temp_db).create(name="summary-test", repo_path=str(root))
+    # repo_path must not point at this checkout: running the suite from a linked
+    # worktree would trip the isolation-path repo_path guard.
+    project = LocalProjectManager(temp_db).create(name="summary-test", repo_path=str(tmp_path))
     manager = SessionManager(temp_db)
     session_id = manager.register_session(
         external_id="archival-summary",

@@ -27,7 +27,7 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSo
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
-from gobby.workflows.git_utils import DirtyFiles
+from gobby.workflows.git_utils import DEFAULT_GIT_STATUS_TIMEOUT_SECONDS, DirtyFiles
 from gobby.workflows.hooks import WorkflowHookHandler
 from tests._timing import wait_forever
 
@@ -518,7 +518,12 @@ class TestCancelledErrorHandling:
     """Tests that CancelledError fails closed for STOP events and open for others."""
 
     @staticmethod
-    def _raise_cancelled(coroutine: Coroutine[object, object, HookResponse]) -> NoReturn:
+    def _raise_cancelled(
+        coroutine: Coroutine[object, object, HookResponse],
+        *,
+        timeout: float | None = None,
+    ) -> NoReturn:
+        del timeout
         coroutine.close()
         raise concurrent.futures.CancelledError
 
@@ -1875,7 +1880,10 @@ class TestProjectPathResolution:
             response = await handler._evaluate_rules(event)
 
         assert response.decision == "allow"
-        mock_get_dirty.assert_called_once_with("/tmp/codex-project")
+        mock_get_dirty.assert_called_once_with(
+            "/tmp/codex-project",
+            timeout=DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
+        )
         assert event.metadata["project_path"] == "/tmp/codex-project"
         assert "no project_path resolved" not in caplog.text
 
@@ -1930,7 +1938,12 @@ class TestHookBlockingWorkOffload:
         handler._resolve_project_path = MagicMock(side_effect=resolve_project)
         handler._run_observers = MagicMock(side_effect=run_observers)
 
-        def dirty_files(_project_path: str | None) -> DirtyFiles:
+        def dirty_files(
+            _project_path: str | None,
+            *,
+            timeout: float = DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
+        ) -> DirtyFiles:
+            del timeout
             collaborator_threads["git_status"] = threading.get_ident()
             return DirtyFiles(set(), set())
 

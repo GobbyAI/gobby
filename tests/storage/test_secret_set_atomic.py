@@ -13,6 +13,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.unit
@@ -28,6 +29,7 @@ def test_set_uses_one_upsert_and_returns_its_row() -> None:
         "description": "returned description",
         "created_at": returned_at,
         "updated_at": returned_at,
+        "project_id": GLOBAL_PROJECT_ID,
     }
     store = SecretStore(db)
     store._fernet = Fernet(Fernet.generate_key())
@@ -43,15 +45,18 @@ def test_set_uses_one_upsert_and_returns_its_row() -> None:
     db.execute.assert_not_called()
     sql, params = db.fetchone.call_args.args
     assert "INSERT INTO secrets" in sql
-    assert "ON CONFLICT (name) DO UPDATE" in sql
-    assert "RETURNING id, name, category, description, created_at, updated_at" in sql
+    assert "ON CONFLICT (name, project_id) DO UPDATE" in sql
+    assert "RETURNING id, name, category, description, created_at, updated_at, project_id" in sql
     assert "plaintext-value" not in params
+    assert GLOBAL_PROJECT_ID in params
     assert info.id == "returned-id"
     assert info.name == "atomic_key"
     assert info.category == "integration"
     assert info.description == "returned description"
     assert info.created_at == returned_at
     assert info.updated_at == returned_at
+    assert info.project_id == GLOBAL_PROJECT_ID
+    assert info.scope == "global"
 
 
 def test_concurrent_first_writes_both_succeed(

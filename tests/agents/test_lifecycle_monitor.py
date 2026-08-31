@@ -63,7 +63,12 @@ if TYPE_CHECKING:
 DETECTION_REGISTRY = cast("DetectionManifestRegistry", BundledDetectionRegistry())
 pytestmark = pytest.mark.unit
 
-configure_tmux(TmuxConfig())
+
+@pytest.fixture(autouse=True)
+def _configured_tmux() -> None:
+    """(Re)configure daemon tmux helpers; earlier runner-shutdown tests reset them."""
+    configure_tmux(TmuxConfig())
+
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 REMOTE_MACHINE_ID = "21000000-0000-4000-8000-000000000002"

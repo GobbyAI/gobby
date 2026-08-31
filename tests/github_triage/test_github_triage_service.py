@@ -21,7 +21,7 @@ from gobby.github_triage.service import (
 )
 from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore, TriageVerdict
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -29,21 +29,47 @@ pytestmark = pytest.mark.unit
 
 class FakeGitHubMCP:
     def __init__(self, responses: dict[str, Any] | None = None) -> None:
+        from gobby.mcp_proxy.models import MCPServerConfig
+        from gobby.storage.projects import GLOBAL_PROJECT_ID
+
         self.responses = responses or {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        config = MCPServerConfig(
+            name="github",
+            project_id=GLOBAL_PROJECT_ID,
+            url="https://github.example.test",
+            id="github",
+        )
+        self.server_configs = [config]
+        self._configs = {config.id: config}
+        self.project_id = None
+        self.health = {config.id: SimpleNamespace(state="connected")}
+        self.lazy_connect = True
+
+    def get_server_config(self, server_id: str) -> Any:
+        return self._configs.get(server_id)
+
+    def has_server(self, server_id: str) -> bool:
+        return server_id in self._configs
 
     async def call_tool(
         self,
+        server_id: str = "github",
+        tool_name: str | None = None,
+        arguments: dict[str, Any] | None = None,
         *,
-        server_name: str,
-        tool_name: str,
-        arguments: dict[str, Any],
+        server_name: str | None = None,
+        **kwargs: Any,
     ) -> Any:
-        assert server_name == "github"
-        self.calls.append((tool_name, arguments))
-        value = self.responses.get(tool_name, {})
+        name = server_name or server_id
+        assert name == "github"
+        tool = tool_name or kwargs.get("tool_name")
+        args = arguments if arguments is not None else kwargs.get("arguments") or {}
+        assert isinstance(tool, str)
+        self.calls.append((tool, args))
+        value = self.responses.get(tool, {})
         if callable(value):
-            return value(arguments)
+            return value(args)
         return value
 
     def called(self, tool_name: str) -> list[dict[str, Any]]:
@@ -698,7 +724,7 @@ async def test_github_mcp_error_preserves_only_safe_rate_limit_metadata(
     service = GitHubIssueTriageService(db=temp_db, mcp_manager=github)
 
     with pytest.raises(service_module.GitHubMCPError) as exc_info:
-        await service._github_call("list_issues", {})
+        await service._github_call("list_issues", {}, project_id=GLOBAL_PROJECT_ID)
 
     error = exc_info.value
     assert error.rate_limit_metadata == {
@@ -735,11 +761,20 @@ async def test_github_call_retries_once_with_bounded_rate_limit_delay(
         max_rate_limit_delay=5.0,
     )
 
-    result = await service._github_call("list_issues", {})
+    result = await service._github_call("list_issues", {}, project_id=GLOBAL_PROJECT_ID)
 
     assert result == {"issues": []}
     sleep.assert_awaited_once_with(expected_delay)
     assert len(github.called("list_issues")) == 2
+
+
+async def test_github_call_rejects_missing_project_scope(temp_db: HubDatabase) -> None:
+    github = FakeGitHubMCP()
+    service = GitHubIssueTriageService(db=temp_db, mcp_manager=github)
+
+    with pytest.raises(ValueError, match="explicit project_id"):
+        await service._github_call("list_issues", {}, project_id="")
+    assert github.calls == []
 
 
 async def test_webhook_without_judge_escalates_and_never_builds(

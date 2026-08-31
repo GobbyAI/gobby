@@ -491,7 +491,12 @@ fn isolated_marker_rejects_missing_parent_path() {
     write_project_json(
         tmp.path(),
         serde_json::json!({
-            "id": "parent-id",
+            "id": "parent-id"
+        }),
+    );
+    write_isolation_json(
+        tmp.path(),
+        serde_json::json!({
             "parent_project_id": "0f1f5df6-7f37-4a7f-9115-5b473f22934e"
         }),
     );

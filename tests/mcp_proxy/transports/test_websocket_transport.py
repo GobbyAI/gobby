@@ -33,7 +33,7 @@ pytestmark = pytest.mark.unit
 
 def _make_config(**overrides: Any) -> MCPServerConfig:
     """Create a real MCPServerConfig for WebSocket transport."""
-    defaults = {
+    defaults: dict[str, Any] = {
         "name": "test-ws",
         "project_id": "proj-003",
         "transport": "websocket",

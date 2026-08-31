@@ -1,4 +1,5 @@
 import subprocess
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -8,14 +9,17 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.config.tasks import DEFAULT_WORKFLOW_TIMEOUT_SECONDS
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
-from gobby.workflows.git_utils import DirtyFiles
+from gobby.workflows.git_utils import DEFAULT_GIT_STATUS_TIMEOUT_SECONDS, DirtyFiles
 from gobby.workflows.hooks import (
+    _GIT_STATUS_FLOOR_SECONDS,
     _NO_REPO_SYSTEM_PROJECTS,
     WorkflowHookHandler,
+    _git_status_timeout,
     _is_known_no_repo_project,
 )
 
@@ -322,7 +326,10 @@ class TestProjectPathResolution:
             assert bool(eval_context["has_target_task_dirty_files"])
 
         assert response.decision == "allow"
-        mock_dirty.assert_called_once_with("/repo")
+        mock_dirty.assert_called_once_with(
+            "/repo",
+            timeout=DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
+        )
 
     @pytest.mark.asyncio
     async def test_dirty_files_uses_event_cwd_for_worktree(self, tmp_path: Path) -> None:
@@ -410,6 +417,62 @@ class TestProjectPathResolution:
 
         assert not dirty
         mock_run.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("expires_in", "expected"),
+        [
+            (30.0, DEFAULT_GIT_STATUS_TIMEOUT_SECONDS),
+            (3.0, 3.0),
+            # A spent budget floors rather than reaching zero: a zero-second scan
+            # would time out, report a clean tree, and stop the gates from gating.
+            (0.0, _GIT_STATUS_FLOOR_SECONDS),
+            (-5.0, _GIT_STATUS_FLOOR_SECONDS),
+        ],
+    )
+    def test_git_status_timeout_caps_on_the_budget_and_floors_when_spent(
+        self,
+        expires_in: float,
+        expected: float,
+    ) -> None:
+        deadline = BlockingEffectDeadline(time.monotonic() + expires_in)
+
+        assert _git_status_timeout(deadline) == pytest.approx(expected, abs=0.05)
+
+    def test_git_status_timeout_without_a_deadline_uses_the_default(self) -> None:
+        assert _git_status_timeout(None) == DEFAULT_GIT_STATUS_TIMEOUT_SECONDS
+
+    @pytest.mark.asyncio
+    async def test_hook_path_bounds_the_dirty_scan_by_the_shared_budget(
+        self, tmp_path: Path
+    ) -> None:
+        """The scan spends the same budget the blocking effects do, so it answers to it."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+        handler = WorkflowHookHandler()
+        mock_engine = MagicMock()
+        mock_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
+        mock_engine.db = MagicMock()
+        handler.rule_engine = mock_engine
+
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=MOCK_EXTERNAL_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=MOCK_TIMESTAMP,
+            data={"tool_name": "Edit"},
+            cwd=str(repo),
+            metadata={},
+        )
+        deadline = BlockingEffectDeadline(time.monotonic() + 2.0)
+
+        with patch("gobby.workflows.git_utils.get_dirty_files_categorized") as mock_dirty:
+            mock_dirty.return_value = DirtyFiles(set(), set())
+            await handler._evaluate_rules(event, blocking_deadline=deadline)
+
+        assert mock_dirty.call_args_list
+        for call in mock_dirty.call_args_list:
+            assert call.kwargs["timeout"] == pytest.approx(2.0, abs=0.2)
 
     @pytest.mark.asyncio
     async def test_personal_no_repo_project_does_not_warn_or_shell_out(

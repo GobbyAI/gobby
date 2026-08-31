@@ -41,6 +41,7 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
             self.auth_service = SimpleNamespace(
                 verify_ws_token=auth_callback,
                 bind_runtime=lambda **_kwargs: None,
+                local_token=lambda: "operator-token",
             )
             self._internal_manager = object()
             self.broadcaster = SimpleNamespace(websocket_server=None)
@@ -52,6 +53,9 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
         def __init__(self, **kwargs: object) -> None:
             websocket_init.update(kwargs)
 
+        def configure_terminals(self, *args: object, **kwargs: object) -> None:
+            pass
+
         async def broadcast_config_event(self, _event: object) -> None:
             pass
 
@@ -59,6 +63,7 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
     runner.config = DaemonConfig(websocket={"enabled": True})
     runner.bootstrap_config = BootstrapConfig()
     runner.codex_client = None
+    runner.machine_id = "8f000000-0000-4000-8000-000000000001"
     runner.wake_dispatcher = MagicMock()
     runner.cron_scheduler = None
     runner.system_automation_loop = None

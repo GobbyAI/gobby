@@ -72,7 +72,12 @@ async def test_lease_request_result_and_lost_events(
     await _send(
         server,
         observer,
-        {"type": "terminal_attach", "request_id": "a1", "terminal_id": terminal_id},
+        {
+            "type": "terminal_attach",
+            "request_id": "a1",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
     )
     attach = observer.messages_of_type("terminal_attach_result")[0]
     assert "mode" not in attach
@@ -93,7 +98,12 @@ async def test_lease_request_result_and_lost_events(
     await _send(
         server,
         holder,
-        {"type": "terminal_attach", "request_id": "a2", "terminal_id": terminal_id},
+        {
+            "type": "terminal_attach",
+            "request_id": "a2",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
     )
     other = holder.messages_of_type("terminal_attach_result")[0]["attachment_id"]
     await _send(
@@ -154,7 +164,12 @@ async def test_attach_result_supplies_attachment_identity(
     await _send(
         server,
         ws,
-        {"type": "terminal_attach", "request_id": "ok", "terminal_id": terminal_id},
+        {
+            "type": "terminal_attach",
+            "request_id": "ok",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
     )
     result = ws.messages_of_type("terminal_attach_result")[-1]
     assert result["attachment_id"]
@@ -232,7 +247,14 @@ async def test_paste_is_lease_gated_and_size_capped(
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
     await _send(
-        server, ws, {"type": "terminal_attach", "request_id": "p", "terminal_id": terminal_id}
+        server,
+        ws,
+        {
+            "type": "terminal_attach",
+            "request_id": "p",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
     )
     attachment = ws.messages_of_type("terminal_attach_result")[-1]["attachment_id"]
     await _send(
@@ -285,7 +307,14 @@ async def test_disconnect_releases_direct_and_proxy_leases(
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
     await _send(
-        server, ws, {"type": "terminal_attach", "request_id": "x", "terminal_id": terminal_id}
+        server,
+        ws,
+        {
+            "type": "terminal_attach",
+            "request_id": "x",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
     )
     attachment = ws.messages_of_type("terminal_attach_result")[-1]["attachment_id"]
     await _send(
@@ -302,7 +331,14 @@ async def test_disconnect_releases_direct_and_proxy_leases(
     ws2 = MockWebSocket()
     server.clients[ws2] = {"subscriptions": {"*"}}
     await _send(
-        server, ws2, {"type": "terminal_attach", "request_id": "y", "terminal_id": terminal_id}
+        server,
+        ws2,
+        {
+            "type": "terminal_attach",
+            "request_id": "y",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
     )
     other = ws2.messages_of_type("terminal_attach_result")[-1]["attachment_id"]
     await _send(
@@ -328,7 +364,14 @@ async def test_release_control_is_idempotent_and_races_takeover(
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
     await _send(
-        server, ws, {"type": "terminal_attach", "request_id": "r", "terminal_id": terminal_id}
+        server,
+        ws,
+        {
+            "type": "terminal_attach",
+            "request_id": "r",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
     )
     attachment = ws.messages_of_type("terminal_attach_result")[-1]["attachment_id"]
     await _send(

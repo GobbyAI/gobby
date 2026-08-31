@@ -283,6 +283,10 @@ class NativeTerminalRuntime:
                 return True
         return False
 
+    async def session_present(self, terminal: Terminal) -> bool:
+        # Native terminals have no remain-on-exit: presence is liveness.
+        return await self.is_live(terminal)
+
     async def snapshot(self, terminal: Terminal, lines: int = 50) -> SnapshotResult:
         return await self._snapshot(terminal, max_lines=lines)
 

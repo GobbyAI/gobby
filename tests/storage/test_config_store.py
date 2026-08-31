@@ -245,7 +245,9 @@ class TestConfigPersistence:
         values = {
             "ui.enabled": True,
             "ui_settings.fontSize": 14,
-            "workflow.timeout": 90.5,
+            # Must satisfy the hook-timeout ladder: 20s budget < workflow.timeout
+            # < hooks.adapter_timeout (26s).
+            "workflow.timeout": 22.5,
             "tool_approvals.global_rules": ["Read(*)"],
             "launch_defaults.123": {"provider": "codex"},
         }

@@ -333,8 +333,29 @@ def rebind_resumed_session_start(
     cli_source: str,
     terminal_context: dict[str, Any] | None,
     transcript_path: str | None,
-) -> tuple[Any, str | None]:
+) -> tuple[Any | None, str | None]:
     """Bind an explicit resume to its persisted row and fresh runtime context."""
+    pending_clear = resolve_matching_clear_continuation(
+        handler,
+        machine_id=machine_id,
+        project_id=project_id,
+        cli_source=cli_source,
+        terminal_context=terminal_context,
+    )
+    if (
+        pending_clear is not None
+        and getattr(pending_clear.clear_predecessor, "id", None) == session.id
+    ):
+        handler.logger.info(
+            "clear_resume_parked",
+            extra={
+                "session_id": session.id,
+                "attempt_id": pending_clear.clear_attempt_id,
+                "external_id": session.external_id,
+            },
+        )
+        return None, transcript_path
+
     transcript_path = handler._derive_transcript_path(
         cli_source,
         input_data,
