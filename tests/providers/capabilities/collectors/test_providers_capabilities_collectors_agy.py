@@ -104,9 +104,51 @@ async def test_collects_record_1_1_20_model_rows() -> None:
     assert all(
         model.provenance["context_length"].source_key == "bundled" for model in snapshot.models
     )
-    assert snapshot.models[0].aliases == ("gemini-3.7-flash",)
+    assert snapshot.models[0].aliases == ()
     assert snapshot.models[0].supported_efforts == ("high",)
     assert snapshot.models[0].routes[0].selector == "gemini-3.7-flash-high"
+    assert snapshot.models[1].canonical_model == "gemini-3.7-flash-medium"
+    assert snapshot.models[1].aliases == ("gemini-3.7-flash",)
+
+
+@pytest.mark.asyncio
+async def test_base_model_alias_lands_on_the_bundled_default_effort_variant_only() -> None:
+    capture = _capture("1.1.20 models JSON (global flag before subcommand)")
+
+    async def run_command(command: tuple[str, ...]) -> tuple[int, str, str]:
+        return (0, json.dumps(capture["stdout"]), "")
+
+    collector = AgyCollector(
+        run_command=run_command,
+        support_record=lambda: _SUPPORTED,
+        clock=lambda: _OBSERVED_AT,
+    )
+    snapshot = validate_snapshot(await collector.collect(), collector.sources)
+
+    alias_owners: dict[str, list[str]] = {}
+    for model in snapshot.models:
+        for alias in model.aliases:
+            alias_owners.setdefault(alias, []).append(model.canonical_model)
+    assert {alias: len(owners) for alias, owners in alias_owners.items()} == {
+        "gemini-3.7-flash": 1,
+        "gemini-3.6-flash": 1,
+        "gemini-3.5-flash": 1,
+        "gemini-3.1-pro": 1,
+        "gpt-oss-120b": 1,
+    }
+    for alias, owners in alias_owners.items():
+        default_effort = AGY_MODELS[alias]["reasoning"]["default_effort"]
+        assert owners == [f"{alias}-{default_effort}"]
+    effort_variants = [model for model in snapshot.models if model.supported_efforts]
+    assert len(effort_variants) == 12
+    assert all(model.provenance["aliases"].source_key == "bundled" for model in effort_variants)
+    bare_models = [model for model in snapshot.models if not model.supported_efforts]
+    assert [model.canonical_model for model in bare_models] == [
+        "claude-sonnet-4-6",
+        "claude-opus-4-6-thinking",
+    ]
+    assert all(model.aliases == () for model in bare_models)
+    assert all(model.provenance["aliases"].source_key == "agy_models_cli" for model in bare_models)
 
 
 def test_default_collectors_register_agy() -> None:

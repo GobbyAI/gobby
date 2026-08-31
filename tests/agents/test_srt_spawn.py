@@ -163,7 +163,7 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
 
     with (
         patch("gobby.agents.spawn_executor.shutil.which", return_value="/usr/local/bin/droid"),
-        patch("gobby.agents.spawn_executor.prepare_terminal_spawn", return_value=spawn_context),
+        patch("gobby.agents.spawn.prepare_terminal_spawn", return_value=spawn_context),
         patch(
             "gobby.agents.spawn_executor_providers.prepare_sandbox_launch",
             return_value=launch,
@@ -225,7 +225,7 @@ async def test_srt_preflight_failure_prevents_tmux_spawn() -> None:
 
     with (
         patch("gobby.agents.spawn_executor.shutil.which", return_value="/usr/local/bin/droid"),
-        patch("gobby.agents.spawn_executor.prepare_terminal_spawn", return_value=spawn_context),
+        patch("gobby.agents.spawn.prepare_terminal_spawn", return_value=spawn_context),
         patch(
             "gobby.agents.spawn_executor_providers.prepare_sandbox_launch",
             side_effect=SrtRuntimeError("invalid policy"),

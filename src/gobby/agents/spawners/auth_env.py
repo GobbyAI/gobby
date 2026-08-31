@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 
+from gobby.agents.credential_inventory import CLI_DENIED_AMBIENT_KEYS
 from gobby.ai.codex_endpoint import CODEX_ENDPOINT_API_KEY_ENV
 from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV
 
@@ -108,16 +109,6 @@ CLI_CREDENTIAL_KEYS: dict[str, frozenset[str]] = {
     "agy": frozenset(),
 }
 
-CLI_DENIED_AMBIENT_KEYS: dict[str, frozenset[str]] = {
-    "agy": frozenset(
-        {
-            "GOOGLE_API_KEY",
-            "GEMINI_API_KEY",
-            "GOOGLE_APPLICATION_CREDENTIALS",
-        }
-    ),
-}
-
 ALL_CREDENTIAL_KEYS: frozenset[str] = frozenset(
     {GOBBY_AGENT_API_TOKEN_ENV, CODEX_ENDPOINT_API_KEY_ENV}
     | {key for keys in CLI_CREDENTIAL_KEYS.values() for key in keys}
@@ -161,3 +152,15 @@ def has_auth_env(
     credential_keys = set(CLI_CREDENTIAL_KEYS.get(normalized_cli, frozenset()))
 
     return any(bool(env.get(key)) for key in credential_keys)
+
+
+__all__ = [
+    "ALL_CREDENTIAL_KEYS",
+    "CLI_CREDENTIAL_KEYS",
+    "CLI_DENIED_AMBIENT_KEYS",
+    "CLI_ENV_ALLOWLIST",
+    "UNIVERSAL_ALLOWLIST",
+    "has_auth_env",
+    "split_credential_env",
+    "terminal_env_passthrough",
+]

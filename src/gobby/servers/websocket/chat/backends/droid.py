@@ -22,7 +22,6 @@ from gobby.adapters.acp_client import (
     _resolve_timeout,
 )
 from gobby.agents.reasoning import resolve_spawn_reasoning
-from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.srt_runtime import prepare_sandbox_launch
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.llm.claude_models import (
@@ -436,11 +435,9 @@ class DroidWebChatBackend:
     def __init__(
         self,
         *,
-        sandbox_config: SandboxConfig | None = None,
         default_model: str | None = None,
         prompt_timeout: float | None = None,
     ) -> None:
-        self._sandbox_config = sandbox_config
         self._default_model = default_model
         self._prompt_timeout = _resolve_timeout(
             prompt_timeout,
@@ -450,9 +447,6 @@ class DroidWebChatBackend:
         self._health = ProviderBackendHealth(provider=self.provider, available=False)
         self._handles: dict[str, _DroidProcessHandle] = {}
         self._permission_resolver = DroidPermissionResolver(droid_tool_name_adapter)
-
-    def set_sandbox_config(self, config: SandboxConfig) -> None:
-        self._sandbox_config = config.model_copy(deep=True)
 
     async def start(self, *, background: bool = False) -> None:
         del background
@@ -530,9 +524,7 @@ class DroidWebChatBackend:
         env = os.environ.copy()
         env["GOBBY_HOOKS_DISABLED"] = "1"
         env["GOBBY_WEB_CHAT_CHILD"] = "1"
-        sandbox_config = launch_sandbox_config(session, self._sandbox_config) or SandboxConfig(
-            enabled=False
-        )
+        sandbox_config = launch_sandbox_config(session)
         if sandbox_config.enabled:
             daemon_cfg = getattr(session, "_config", None)
             websocket = getattr(daemon_cfg, "websocket", None)

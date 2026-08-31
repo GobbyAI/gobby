@@ -1623,7 +1623,7 @@ class TestAgySandboxResolver:
         assert caps.reasoning_flag == "claude-effort"
         assert provider_supports_sandbox("agy") is True
 
-    def test_agy_sandbox_policy_uses_probe_recorded_domains_roots_and_empty_credential_env(
+    def test_agy_sandbox_policy_uses_probe_recorded_domains_roots_and_masks_ambient_keys(
         self,
     ) -> None:
         domains = sandbox_policy._PROVIDER_DOMAINS.get("agy")
@@ -1641,24 +1641,42 @@ class TestAgySandboxResolver:
         assert "~/Library/Keychains/login.keychain-db" in read_only
 
         assert "agy" in sandbox_policy._PROVIDER_CREDENTIAL_ENV
-        assert sandbox_policy._PROVIDER_CREDENTIAL_ENV["agy"] == ()
+        assert sandbox_policy._PROVIDER_CREDENTIAL_ENV["agy"] == (
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+        )
 
+        ambient_env = {
+            "PATH": "",
+            "GOOGLE_API_KEY": "google-secret",
+            "GEMINI_API_KEY": "gemini-secret",
+            "GOOGLE_APPLICATION_CREDENTIALS": "/tmp/creds.json",
+            "UNRELATED_SECRET": "nope",
+        }
         paths = compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path="/project",
             provider="agy",
-            env={"PATH": ""},
+            env=ambient_env,
         )
         for domain in _AGY_PROBE_DOMAINS:
             assert domain in paths.allowed_domains
         write_roots = sandbox_policy.provider_write_exceptions("agy")
-        read_roots = sandbox_policy.provider_read_exceptions("agy", {"PATH": ""})
+        read_roots = sandbox_policy.provider_read_exceptions("agy", ambient_env)
         for root in write_roots:
             assert root in paths.write_paths
             assert root in paths.read_paths
         for root in read_roots:
             assert root in paths.read_paths
-        assert paths.credential_env_vars == []
+        assert [entry.name for entry in paths.credential_env_vars] == [
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+        ]
+        for entry in paths.credential_env_vars:
+            assert entry.mode == "mask"
+            assert set(_AGY_PROBE_DOMAINS) <= set(entry.inject_hosts)
 
     async def test_create_session_admits_agy_under_srt_and_rejects_provider_native(self) -> None:
         caps = provider_capabilities("agy")

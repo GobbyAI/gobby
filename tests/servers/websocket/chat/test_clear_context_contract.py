@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents.sandbox import SandboxConfig
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat.backends.acp import ACPWebChatBackend
@@ -292,7 +293,11 @@ async def test_codex_clear_context_archives_and_starts_fresh_thread() -> None:
     )
     backend = CodexWebChatBackend(client=fake_client)  # type: ignore[arg-type]
     backend._health = ProviderBackendHealth(provider="codex", available=True)
-    session = CodexManagedChatSession(conversation_id="codex-clear", _backend=backend)
+    session = CodexManagedChatSession(
+        conversation_id="codex-clear",
+        _backend=backend,
+        sandbox_config=SandboxConfig(enabled=False),
+    )
     session._model = "gpt-5.6-sol"
     session.chat_mode = "normal"
     session._thread_id = "codex-old"
@@ -377,7 +382,11 @@ async def test_droid_clear_context_starts_process_without_old_session_id(
         _FakeDroidProcess("droid-new"),
     ]
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="droid-clear", _backend=backend)
+    session = DroidManagedChatSession(
+        conversation_id="droid-clear",
+        _backend=backend,
+        sandbox_config=SandboxConfig(enabled=False),
+    )
     session.project_path = str(tmp_path)
     session.chat_mode = "normal"
 

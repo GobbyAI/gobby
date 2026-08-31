@@ -10,18 +10,12 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from gobby.agents.sandbox_resolvers import get_sandbox_resolver as get_sandbox_resolver
-from gobby.agents.spawn import (
-    prepare_terminal_spawn as prepare_terminal_spawn,
-)
-from gobby.agents.spawn_cache_policy import (
-    sandbox_config_for_spawn as _sandbox_config_for_spawn,
-)
 from gobby.agents.spawn_executor_providers import (
     _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS,
     _NATIVE_SUBAGENT_RESEARCH_AGENTS,
     ProviderSpawnPlan,
     _prepare_managed_code_index,
+    agy_support_refusal,
     prepare_agy_spawn,
     prepare_claude_spawn,
     prepare_codex_spawn,
@@ -39,7 +33,6 @@ from gobby.agents.spawn_executor_support import (
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.srt_runtime import SandboxLaunch
-from gobby.agents.trust import pre_approve_directory as pre_approve_directory
 from gobby.config.terminals import TerminalConfig
 from gobby.providers.capabilities.apply import speed_result
 from gobby.storage.terminals import Terminal, TerminalManager, mint_terminal_id
@@ -73,7 +66,6 @@ __all__ = [
     "_apply_extra_env",
     "_prepare_managed_code_index",
     "_record_resume_launch_details",
-    "_sandbox_config_for_spawn",
 ]
 
 _COMPAT_PRIVATE_EXPORTS = (
@@ -83,7 +75,6 @@ _COMPAT_PRIVATE_EXPORTS = (
     _prepare_managed_code_index,
     _apply_extra_env,
     _record_resume_launch_details,
-    _sandbox_config_for_spawn,
 )
 
 
@@ -251,7 +242,7 @@ async def _spawn_agy_terminal(request: SpawnRequest) -> SpawnResult:
             run_id=request.run_id,
             child_session_id=None,
             status="failed",
-            error=record.reason,
+            error=agy_support_refusal(record),
         )
     plan = await prepare_agy_spawn(request)
     if isinstance(plan, SpawnResult):

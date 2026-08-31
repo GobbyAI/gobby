@@ -21,7 +21,12 @@ from gobby.agents import spawn_executor_support
 from gobby.agents.constants import CARGO_HOME, UV_CACHE_DIR
 from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig
 from gobby.agents.spawn import PreparedSpawn
-from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, hook_inbox_dir, managed_tool_bin_dir
+from gobby.agents.spawn_cache_policy import (
+    PATH_ENV_VAR,
+    hook_inbox_dir,
+    managed_tool_bin_dir,
+    sandbox_config_for_spawn,
+)
 from gobby.agents.spawn_executor import (
     _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS,
     _CODEX_PREAPPROVED_GOBBY_TOOLS,
@@ -30,7 +35,6 @@ from gobby.agents.spawn_executor import (
     _apply_extra_env,
     _prepare_managed_code_index,
     _record_resume_launch_details,
-    _sandbox_config_for_spawn,
     execute_spawn,
 )
 from gobby.agents.spawn_executor_support import (
@@ -584,7 +588,7 @@ class TestExecuteSpawn:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 return_value=mock_spawn_context,
             ),
         ):
@@ -665,7 +669,7 @@ class TestExecuteSpawn:
         context.agent_run_id = "run-123"
         context.env_vars = {"GOBBY_SESSION_ID": "child-session-id"}
         with patch(
-            "gobby.agents.spawn_executor.prepare_terminal_spawn",
+            "gobby.agents.spawn.prepare_terminal_spawn",
             return_value=context,
         ):
             request.prepared_spawn = context
@@ -711,7 +715,7 @@ class TestExecuteSpawn:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 return_value=mock_spawn_context,
             ),
         ):
@@ -759,7 +763,7 @@ class TestExecuteSpawn:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 return_value=mock_spawn_context,
             ) as mock_prepare,
         ):
@@ -806,7 +810,7 @@ class TestExecuteSpawn:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 mock_prepare,
             ),
             patch(
@@ -906,7 +910,7 @@ class TestExecuteSpawn:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 mock_prepare,
             ),
             patch("gobby.agents.spawn_executor_providers.pre_approve_directory") as mock_preapprove,
@@ -1070,7 +1074,7 @@ class TestExecuteSpawn:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 return_value=spawn_context,
             ) as mock_prepare,
             patch("gobby.agents.spawn_executor_providers.pre_approve_directory"),
@@ -1123,7 +1127,7 @@ class TestExecuteSpawn:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 side_effect=lambda **_kwargs: call_order.append("prepare") or spawn_context,
             ),
             patch(
@@ -1185,7 +1189,7 @@ class TestExecuteSpawn:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 mock_prepare,
             ),
             patch("gobby.agents.spawn_executor_providers.pre_approve_directory") as mock_preapprove,
@@ -1277,7 +1281,7 @@ class TestExecuteSpawn:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 mock_prepare,
             ),
             patch(
@@ -1328,7 +1332,7 @@ class TestExecuteSpawn:
         )
 
         with (
-            patch("gobby.agents.spawn_executor.prepare_terminal_spawn", mock_prepare),
+            patch("gobby.agents.spawn.prepare_terminal_spawn", mock_prepare),
             patch("gobby.agents.spawn_executor_providers.pre_approve_directory") as mock_preapprove,
         ):
             request.prepared_spawn = mock_prepare.return_value
@@ -1386,7 +1390,7 @@ class TestExecuteSpawn:
         mock_spawner.spawn.return_value = MagicMock(success=True, pid=12345, terminal_type="tmux")
 
         with (
-            patch("gobby.agents.spawn_executor.prepare_terminal_spawn", mock_prepare),
+            patch("gobby.agents.spawn.prepare_terminal_spawn", mock_prepare),
             patch("gobby.agents.spawn_executor_providers.pre_approve_directory"),
         ):
             request.prepared_spawn = mock_prepare.return_value
@@ -1753,7 +1757,7 @@ class TestExecuteSpawnSandbox:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 return_value=mock_spawn_context,
             ),
             patch(
@@ -1817,7 +1821,7 @@ class TestExecuteSpawnSandbox:
         }
         config = SandboxConfig(enabled=True, extra_write_paths=["/already-allowed"])
 
-        resolved = _sandbox_config_for_spawn(config, env_vars)
+        resolved = sandbox_config_for_spawn(config, env_vars)
 
         assert resolved is not None
         assert resolved.enabled is True
@@ -1865,7 +1869,7 @@ class TestExecuteSpawnSandbox:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 return_value=mock_spawn_context,
             ),
         ):
@@ -1916,7 +1920,7 @@ class TestExecuteSpawnSandbox:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 return_value=mock_spawn_context,
             ),
         ):
@@ -1987,7 +1991,7 @@ class TestExecuteSpawnSandbox:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 mock_prepare,
             ),
         ):
@@ -2033,7 +2037,7 @@ class TestExecuteSpawnSandbox:
         )
 
         with (
-            patch("gobby.agents.spawn_executor.prepare_terminal_spawn", mock_prepare),
+            patch("gobby.agents.spawn.prepare_terminal_spawn", mock_prepare),
             patch(
                 "gobby.agents.spawn_executor_providers.get_sandbox_resolver",
                 return_value=mock_resolver,
@@ -2107,7 +2111,7 @@ class TestExecuteSpawnErrorPaths:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 mock_prepare,
             ),
             patch("gobby.agents.spawn_executor_providers.pre_approve_directory") as mock_preapprove,
@@ -2154,7 +2158,7 @@ class TestExecuteSpawnErrorPaths:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 return_value=mock_spawn_context,
             ),
         ):
@@ -2199,7 +2203,7 @@ class TestExecuteSpawnErrorPaths:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 return_value=mock_spawn_context,
             ),
         ):
@@ -2246,7 +2250,7 @@ class TestExecuteSpawnErrorPaths:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 return_value=mock_spawn_context,
             ),
         ):
@@ -2295,7 +2299,7 @@ class TestExecuteSpawnErrorPaths:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                "gobby.agents.spawn.prepare_terminal_spawn",
                 return_value=mock_spawn_context,
             ),
         ):

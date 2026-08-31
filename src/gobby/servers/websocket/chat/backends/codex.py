@@ -320,12 +320,10 @@ class CodexWebChatBackend:
         generation_endpoint: GenerationEndpointConfig | None = None,
         transcript_retry_attempts: int = _CODEX_TRANSCRIPT_RETRY_ATTEMPTS,
         transcript_retry_delay_seconds: float = _CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS,
-        sandbox_config: SandboxConfig | None = None,
     ) -> None:
         self._client = client
         self._client_factory = client_factory
         self._generation_endpoint = generation_endpoint
-        self._sandbox_config = sandbox_config
         self._health = ProviderBackendHealth(
             provider=self.provider,
             available=False,
@@ -336,13 +334,10 @@ class CodexWebChatBackend:
         self.transcript_retry_attempts = transcript_retry_attempts
         self.transcript_retry_delay_seconds = transcript_retry_delay_seconds
 
-    def set_sandbox_config(self, config: SandboxConfig) -> None:
-        self._sandbox_config = config.model_copy(deep=True)
-
     @staticmethod
-    def native_sandbox_pin(config: SandboxConfig | None) -> str | None:
+    def native_sandbox_pin(config: SandboxConfig) -> str | None:
         """Return the Codex thread sandbox when SRT is the outer boundary."""
-        if config is None or not config.enabled:
+        if not config.enabled:
             return None
         if config.backend == "srt":
             return "danger-full-access"
@@ -446,9 +441,7 @@ class CodexWebChatBackend:
                 cwd=session.project_path or ".",
                 model=session._model,
                 approval_policy=_CODEX_WEB_CHAT_APPROVAL_POLICY,
-                sandbox=self.native_sandbox_pin(
-                    launch_sandbox_config(session, self._sandbox_config)
-                ),
+                sandbox=self.native_sandbox_pin(launch_sandbox_config(session)),
                 terminal_context=terminal_context,
             )
 

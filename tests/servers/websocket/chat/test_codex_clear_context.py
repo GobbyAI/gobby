@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from gobby.agents.sandbox import SandboxConfig
 from gobby.servers.websocket.chat.backends.base import ProviderBackendHealth
 from gobby.servers.websocket.chat.backends.codex import (
     CodexManagedChatSession,
@@ -67,7 +68,11 @@ async def test_clear_context_does_not_resume_prior_thread() -> None:
     )
     backend = CodexWebChatBackend(client=fake_client)  # type: ignore[arg-type]
     backend._health = ProviderBackendHealth(provider="codex", available=True)
-    session = CodexManagedChatSession(conversation_id="c", _backend=backend)
+    session = CodexManagedChatSession(
+        conversation_id="c",
+        _backend=backend,
+        sandbox_config=SandboxConfig(enabled=False),
+    )
     session._model = "gpt-5.6-sol"
     session.chat_mode = "normal"
     session._thread_id = "old-thread"

@@ -76,14 +76,14 @@ class TestWebChatRuntimeManager:
         assert session.sandbox_config.enabled is True
         assert session.sandbox_config.extra_read_paths == ["/tmp/live"]
 
-    def test_live_sandbox_refresh_uses_backend_public_setters(self) -> None:
+    @pytest.mark.asyncio
+    async def test_live_sandbox_refresh_never_touches_backend_state(self) -> None:
         current = [DaemonConfig(web_chat_sandbox={"enabled": False})]
         manager = WebChatRuntimeManager(
             codex_client=None,
             daemon_config=current[0],
             config_resolver=lambda: current[0],
         )
-        assert hasattr(manager, "_agy_backend")
         backends = (
             manager._claude_backend,
             manager._codex_backend,
@@ -92,19 +92,23 @@ class TestWebChatRuntimeManager:
             manager._droid_backend,
             manager._agy_backend,
         )
-        setters = [
-            patch.object(backend, "set_sandbox_config", wraps=backend.set_sandbox_config)
-            for backend in backends
-        ]
-        mocks = [setter.start() for setter in setters]
-        try:
-            current[0] = DaemonConfig(web_chat_sandbox={"enabled": True})
-            assert manager.sandbox_config.enabled is True
-        finally:
-            for setter in setters:
-                setter.stop()
+        for backend in backends:
+            assert not hasattr(backend, "set_sandbox_config")
+            assert not hasattr(backend, "_sandbox_config")
 
-        assert all(mock.call_count == 1 for mock in mocks)
+        current[0] = DaemonConfig(web_chat_sandbox={"enabled": True})
+        snapshot = manager._refresh_sandbox_config()
+        assert snapshot.config.enabled is True
+        assert manager.sandbox_config.enabled is True
+        for backend in backends:
+            assert not hasattr(backend, "_sandbox_config")
+
+        session = await manager.create_session(provider="droid", conversation_id="conv-live")
+        assert isinstance(session, DroidManagedChatSession)
+        assert session.sandbox_config is not None
+        assert session.sandbox_config.enabled is True
+        assert session.sandbox_config is not snapshot.config
+        assert session.sandbox_policy_hash == snapshot.policy_hash
 
     async def test_create_session_routes_by_provider(self) -> None:
         manager = WebChatRuntimeManager(
@@ -405,21 +409,22 @@ class TestWebChatRuntimeManager:
             ),
         )
 
-        assert manager._claude_backend._sandbox_config is not None
-        assert manager._claude_backend._sandbox_config.enabled is False
-        assert manager._claude_backend._sandbox_config.mode == "restrictive"
-        assert manager._claude_backend._sandbox_config.allow_network is False
-        assert manager._codex_backend._sandbox_config is not None
-        assert manager._codex_backend._sandbox_config.enabled is False
-        assert manager._codex_backend._sandbox_config.mode == "restrictive"
-        assert manager._codex_backend._sandbox_config.allow_network is False
-        assert manager._grok_backend._sandbox_config is not None
-        assert manager._grok_backend._sandbox_config.extra_read_paths == ["/tmp/web-read"]
-        assert manager._qwen_backend._sandbox_config is not None
-        assert manager._qwen_backend._sandbox_config.extra_write_paths == ["/tmp/web-write"]
-        assert manager._droid_backend._sandbox_config is not None
-        assert manager._droid_backend._sandbox_config.enabled is False
-        assert manager._droid_backend._sandbox_config.extra_read_paths == ["/tmp/web-read"]
+        snapshot = manager._refresh_sandbox_config()
+        assert snapshot.config.enabled is False
+        assert snapshot.config.mode == "restrictive"
+        assert snapshot.config.allow_network is False
+        assert snapshot.config.extra_read_paths == ["/tmp/web-read"]
+        assert snapshot.config.extra_write_paths == ["/tmp/web-write"]
+        assert manager.sandbox_config == snapshot.config
+        for backend in (
+            manager._claude_backend,
+            manager._codex_backend,
+            manager._grok_backend,
+            manager._qwen_backend,
+            manager._droid_backend,
+            manager._agy_backend,
+        ):
+            assert not hasattr(backend, "_sandbox_config")
 
     def test_manager_defaults_web_chat_sandbox_to_enabled(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None, daemon_config=DaemonConfig())
@@ -465,7 +470,7 @@ class TestWebChatRuntimeManager:
 class TestGrokBackend:
     def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
         with patch.object(GrokWebChatBackend, "acp_client_cls") as mock_client:
-            GrokWebChatBackend(sandbox_config=SandboxConfig(enabled=True, allow_network=False))
+            GrokWebChatBackend()
 
         # Provider/display_name now come from class attributes on the ACP client;
         # the backend should not pass any sandbox-leaking process args.
@@ -722,7 +727,7 @@ class TestGrokBackend:
 class TestQwenBackend:
     def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
         with patch.object(QwenWebChatBackend, "acp_client_cls") as mock_client:
-            QwenWebChatBackend(sandbox_config=SandboxConfig(enabled=True, allow_network=False))
+            QwenWebChatBackend()
 
         # cli_name / display_name / prompt_timeout_env are now class attributes
         # on QwenACPClient; the backend should not pass sandbox-leaking process args.
@@ -935,6 +940,27 @@ async def _collect_codex_backend_events(
 
 class TestCodexBackend:
     @pytest.mark.asyncio
+    async def test_attach_session_refuses_without_launch_snapshot(self) -> None:
+        client = MagicMock()
+        client.is_connected = True
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        client.start_thread = AsyncMock()
+
+        backend = CodexWebChatBackend(client=client)
+        await backend.start()
+
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session.project_path = "/tmp/project"
+        assert session.sandbox_config is None
+
+        with pytest.raises(RuntimeError, match="no sandbox policy snapshot"):
+            await session.start(model="gpt-5.4")
+
+        client.start_thread.assert_not_awaited()
+        assert session.is_connected is False
+
+    @pytest.mark.asyncio
     async def test_attach_session_reuses_shared_client(self) -> None:
         client = MagicMock()
         client.is_connected = True
@@ -947,7 +973,11 @@ class TestCodexBackend:
         backend = CodexWebChatBackend(client=client)
         await backend.start()
 
-        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session = CodexManagedChatSession(
+            conversation_id="conv-codex",
+            _backend=backend,
+            sandbox_config=SandboxConfig(enabled=False),
+        )
         session.project_path = "/tmp/project"
         await session.start(model="gpt-5.4")
 
@@ -1053,13 +1083,14 @@ class TestCodexBackend:
             return_value=SimpleNamespace(id="thread-1", path="/tmp/codex.jsonl")
         )
 
-        backend = CodexWebChatBackend(
-            client=client,
-            sandbox_config=SandboxConfig(enabled=True, mode="restrictive"),
-        )
+        backend = CodexWebChatBackend(client=client)
         await backend.start()
 
-        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session = CodexManagedChatSession(
+            conversation_id="conv-codex",
+            _backend=backend,
+            sandbox_config=SandboxConfig(enabled=True, mode="restrictive"),
+        )
         session.project_path = "/tmp/project"
         await session.start(model="gpt-5.4")
 
@@ -1091,7 +1122,11 @@ class TestCodexBackend:
         backend = CodexWebChatBackend(client=client, generation_endpoint=endpoint)
         await backend.start()
 
-        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session = CodexManagedChatSession(
+            conversation_id="conv-codex",
+            _backend=backend,
+            sandbox_config=SandboxConfig(enabled=False),
+        )
         session.project_path = "/tmp/project"
         with patch(
             "gobby.servers.websocket.chat.backends.codex.ensure_local_model",
@@ -1131,7 +1166,11 @@ class TestCodexBackend:
         )
         backend = CodexWebChatBackend(client=client, generation_endpoint=endpoint)
         await backend.start()
-        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session = CodexManagedChatSession(
+            conversation_id="conv-codex",
+            _backend=backend,
+            sandbox_config=SandboxConfig(enabled=False),
+        )
         session.project_path = "/tmp/project"
         failure = LocalModelError("model not loaded")
 
@@ -1772,7 +1811,11 @@ class TestCodexBackend:
     @pytest.mark.asyncio
     async def test_handle_approval_request_accepts_decision_dict(self) -> None:
         backend = CodexWebChatBackend(client=MagicMock())
-        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session = CodexManagedChatSession(
+            conversation_id="conv-codex",
+            _backend=backend,
+            sandbox_config=SandboxConfig(enabled=False),
+        )
         session.project_path = "/tmp/project"
         session.chat_mode = "accept_edits"
         session._thread_id = "thread-1"
@@ -1802,7 +1845,11 @@ class TestCodexBackend:
     @pytest.mark.asyncio
     async def test_handle_approval_request_respects_managed_pre_tool_block(self) -> None:
         backend = CodexWebChatBackend(client=MagicMock())
-        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session = CodexManagedChatSession(
+            conversation_id="conv-codex",
+            _backend=backend,
+            sandbox_config=SandboxConfig(enabled=False),
+        )
         session.project_path = "/tmp/project"
         session.chat_mode = "accept_edits"
         session._thread_id = "thread-1"
@@ -1842,7 +1889,11 @@ class TestCodexBackend:
     @pytest.mark.asyncio
     async def test_handle_approval_request_allows_gcode_in_plan_mode(self) -> None:
         backend = CodexWebChatBackend(client=MagicMock())
-        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session = CodexManagedChatSession(
+            conversation_id="conv-codex",
+            _backend=backend,
+            sandbox_config=SandboxConfig(enabled=False),
+        )
         session.project_path = "/tmp/project"
         session.chat_mode = "plan"
         session._thread_id = "thread-1"
@@ -1858,7 +1909,11 @@ class TestCodexBackend:
     @pytest.mark.asyncio
     async def test_handle_approval_request_blocks_gcode_redirection_in_plan_mode(self) -> None:
         backend = CodexWebChatBackend(client=MagicMock())
-        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session = CodexManagedChatSession(
+            conversation_id="conv-codex",
+            _backend=backend,
+            sandbox_config=SandboxConfig(enabled=False),
+        )
         session.project_path = "/tmp/project"
         session.chat_mode = "plan"
         session._thread_id = "thread-1"
@@ -2200,7 +2255,11 @@ class TestCodexBackend:
     @pytest.mark.asyncio
     async def test_mcp_elicitation_preserves_nested_gobby_target(self) -> None:
         backend = CodexWebChatBackend(client=MagicMock())
-        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session = CodexManagedChatSession(
+            conversation_id="conv-codex",
+            _backend=backend,
+            sandbox_config=SandboxConfig(enabled=False),
+        )
         session.project_path = "/tmp/project"
         session.chat_mode = "accept_edits"
         session._thread_id = "thread-1"

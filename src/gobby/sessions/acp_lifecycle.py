@@ -12,7 +12,8 @@ own would double-fire.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import psycopg
@@ -26,13 +27,22 @@ from gobby.sessions.acp_session_mapping import (
     normalize_additional_directories,
     status_for_close,
 )
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.worktrees import LocalWorktreeManager
 
 if TYPE_CHECKING:
+    from gobby.agents.sandbox import SandboxConfig
     from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
     from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
+
+type ConfinementRoots = Callable[["Session"], Sequence[str]]
+
+# Every worktree row of the project participates in confinement; the storage
+# default of 50 would silently drop older registrations.
+_CONFINEMENT_WORKTREE_LIMIT = 10_000
 
 
 class ACPLifecycleError(Exception):
@@ -60,7 +70,32 @@ class ACPCapabilityUnsupportedError(ACPLifecycleError):
 
 
 class ACPWorkspaceIdentityError(ACPLifecycleError):
-    """Persisted workspace identity is absent, tombstoned, or stale (fail closed)."""
+    """Persisted workspace identity or launch policy is absent, unconfined, or stale.
+
+    Raised whenever the lifecycle operation cannot prove it would run under the
+    identity recorded for the session: no workspace, a workspace outside the
+    project and its registered worktrees, a generation that moved during the
+    launch, or a sandbox policy that changed since the session was created.
+    Always fails closed; never falls back to the repository root.
+    """
+
+
+def _realpath(path: str) -> Path:
+    return Path(path).expanduser().resolve(strict=False)
+
+
+def session_confinement_roots(session_manager: SessionManager, session: Session) -> tuple[str, ...]:
+    """Return the project root plus every worktree registered for the session's project."""
+    db = session_manager.db
+    roots: list[str] = []
+    project = LocalProjectManager(db).get(session.project_id)
+    if project is not None and project.repo_path:
+        roots.append(project.repo_path)
+    worktrees = LocalWorktreeManager(db).list_worktrees(
+        project_id=session.project_id, limit=_CONFINEMENT_WORKTREE_LIMIT
+    )
+    roots.extend(worktree.worktree_path for worktree in worktrees if worktree.worktree_path)
+    return tuple(roots)
 
 
 def _acp_provider_names(runtime_manager: WebChatRuntimeManager | None) -> frozenset[str]:
@@ -120,9 +155,13 @@ class ACPSessionLifecycleService:
         *,
         session_manager: SessionManager,
         runtime_manager: WebChatRuntimeManager | None,
+        confinement_roots: ConfinementRoots | None = None,
     ) -> None:
         self._session_manager = session_manager
         self._runtime_manager = runtime_manager
+        self._confinement_roots: ConfinementRoots = confinement_roots or (
+            lambda session: session_confinement_roots(session_manager, session)
+        )
 
     # -- close / delete ----------------------------------------------------
 
@@ -193,11 +232,34 @@ class ACPSessionLifecycleService:
         return session.source, external_id
 
     def _require_workspace(self, session: Session) -> tuple[str, int]:
+        """Return the persisted workspace path and generation once confinement holds.
+
+        Confinement compares realpaths so a symlink cannot escape the project
+        root or a registered worktree; the launch still uses the persisted
+        identity verbatim, never a re-derived path.
+        """
         path = getattr(session, "workspace_path", None)
         if not isinstance(path, str) or not path.strip():
             raise ACPWorkspaceIdentityError("session workspace identity is absent")
+        workspace = _realpath(path)
+        roots = [_realpath(root) for root in self._confinement_roots(session)]
+        if not any(workspace == root or workspace.is_relative_to(root) for root in roots):
+            raise ACPWorkspaceIdentityError(
+                f"session workspace {path!r} is outside the project root and its "
+                "registered worktrees"
+            )
         generation = int(getattr(session, "workspace_generation", 0) or 0)
         return path, generation
+
+    def _require_sandbox_policy(self, session: Session) -> SandboxConfig:
+        """Return the launch policy snapshot the session was created under."""
+        runtime_manager = self._runtime_manager
+        if runtime_manager is None:
+            raise ACPProviderUnavailableError(session.source)
+        mismatch = runtime_manager.policy_mismatch_reason(session)
+        if mismatch is not None:
+            raise ACPWorkspaceIdentityError(mismatch)
+        return runtime_manager.sandbox_config
 
     async def _with_operation_client(
         self,
@@ -209,12 +271,13 @@ class ACPSessionLifecycleService:
     ) -> Any:
         backend = self._require_available_backend(provider)
         path, generation = self._require_workspace(session)
+        sandbox_config = self._require_sandbox_policy(session)
         current = self._session_manager.get(session.id)
         if current is None or int(getattr(current, "workspace_generation", 0) or 0) != generation:
             raise ACPWorkspaceIdentityError("session workspace identity changed before launch")
         client = backend.acp_client_cls(
             cwd=path,
-            sandbox_config=getattr(backend, "_sandbox_config", None),
+            sandbox_config=sandbox_config,
             sandbox_run_id=str(session.id),
         )
 
@@ -285,4 +348,5 @@ __all__ = [
     "ACPWorkspaceIdentityError",
     "attach_acp_block",
     "is_acp_session",
+    "session_confinement_roots",
 ]

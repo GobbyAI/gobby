@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import shutil
 
-from gobby.agents.sandbox import SandboxConfig
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat.backends.base import ProviderBackendHealth
 
@@ -14,14 +13,8 @@ class ClaudeWebChatBackend:
 
     provider = "claude"
 
-    def __init__(self, *, sandbox_config: SandboxConfig | None = None) -> None:
-        self._sandbox_config = sandbox_config
-
-    def set_sandbox_config(self, config: SandboxConfig) -> None:
-        self._sandbox_config = config.model_copy(deep=True)
-
     def create_session(self, conversation_id: str) -> ChatSession:
-        return ChatSession(conversation_id=conversation_id, sandbox_config=self._sandbox_config)
+        return ChatSession(conversation_id=conversation_id)
 
     @staticmethod
     def health() -> ProviderBackendHealth:

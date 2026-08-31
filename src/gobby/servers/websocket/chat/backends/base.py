@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.sandbox import SandboxConfig
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.llm.context_windows import resolve_context_window
 
@@ -26,12 +27,20 @@ def _error_message(exc: BaseException) -> str:
     return message or exc.__class__.__name__
 
 
-def launch_sandbox_config(session: Any, backend_config: Any) -> Any:
-    """Prefer the per-session launch snapshot over shared backend policy."""
-    session_config = getattr(session, "sandbox_config", None)
-    if session_config is not None:
-        return session_config
-    return backend_config
+def launch_sandbox_config(session: Any) -> SandboxConfig:
+    """Return the per-session launch snapshot; a session without one cannot launch.
+
+    Policy reaches a backend only through the ``SessionLaunchContext`` applied to
+    the session before ``start`` (plan row 3.1.20). There is no shared backend
+    policy to fall back to, so an absent snapshot is a launch refusal.
+    """
+    config = getattr(session, "sandbox_config", None)
+    if not isinstance(config, SandboxConfig):
+        conversation_id = getattr(session, "conversation_id", None)
+        raise RuntimeError(
+            f"web-chat session {conversation_id!r} has no sandbox policy snapshot; launch refused"
+        )
+    return config
 
 
 def _extract_text(content: str | list[dict[str, Any]]) -> str:

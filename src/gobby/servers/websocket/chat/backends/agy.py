@@ -22,7 +22,6 @@ from gobby.adapters.acp_client import (
 )
 from gobby.adapters.acp_stream import StreamEvent
 from gobby.agents.constants import GOBBY_PROJECT_ID, GOBBY_SESSION_ID
-from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.srt_runtime import prepare_sandbox_launch
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.llm.claude_models import (
@@ -360,11 +359,9 @@ class AgyWebChatBackend:
     def __init__(
         self,
         *,
-        sandbox_config: SandboxConfig | None = None,
         default_model: str | None = None,
         prompt_timeout: float | None = None,
     ) -> None:
-        self._sandbox_config = sandbox_config
         self._default_model = default_model
         self._prompt_timeout = _resolve_timeout(
             prompt_timeout,
@@ -373,9 +370,6 @@ class AgyWebChatBackend:
         )
         self._health = ProviderBackendHealth(provider=self.provider, available=False)
         self._handles: dict[str, _AgyProcessHandle] = {}
-
-    def set_sandbox_config(self, config: SandboxConfig) -> None:
-        self._sandbox_config = config.model_copy(deep=True)
 
     async def start(self, *, background: bool = False) -> None:
         del background
@@ -414,12 +408,8 @@ class AgyWebChatBackend:
             "--print-timeout",
             AGY_PRINT_TIMEOUT,
         ]
-        sandbox_config = launch_sandbox_config(session, self._sandbox_config)
-        if (
-            sandbox_config is not None
-            and sandbox_config.enabled
-            and sandbox_config.backend == "srt"
-        ):
+        sandbox_config = launch_sandbox_config(session)
+        if sandbox_config.enabled and sandbox_config.backend == "srt":
             cmd.append("--sandbox=false")
         if session._model:
             session._model = _validated_agy_option(session._model, "model")
@@ -468,9 +458,7 @@ class AgyWebChatBackend:
         cwd = await asyncio.to_thread(_resolve_agy_cwd, session.project_path)
         cmd = self._build_argv(session, cwd, agy_path)
         env = self._identity_env(session)
-        sandbox_config = launch_sandbox_config(session, self._sandbox_config) or SandboxConfig(
-            enabled=False
-        )
+        sandbox_config = launch_sandbox_config(session)
         if sandbox_config.enabled:
             daemon_cfg = getattr(session, "_config", None)
             websocket = getattr(daemon_cfg, "websocket", None)

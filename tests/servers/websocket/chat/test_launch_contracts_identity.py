@@ -25,6 +25,9 @@ pytestmark = pytest.mark.unit
 
 WORKTREE_A = "/tmp/identity-worktree-a"
 WORKTREE_B = "/tmp/identity-worktree-b"
+# Both worktrees are registered for the project, so confinement admits either
+# persisted path and every failure below is an identity failure, not confinement.
+CONFINEMENT_ROOTS = (WORKTREE_A, WORKTREE_B)
 
 
 @dataclass
@@ -145,6 +148,9 @@ def _runtime(backend: _Backend) -> SimpleNamespace:
         acp_backend=lambda provider: backend if provider == "qwen" else None,
         acp_session_capabilities=lambda provider: {"close": True, "delete": True},
         get_acp_session_info=lambda _p, _s: None,
+        sandbox_config=SandboxConfig(enabled=False),
+        sandbox_policy_hash="hash",
+        policy_mismatch_reason=lambda _session: None,
     )
 
 
@@ -154,6 +160,7 @@ def _service(store: _RowStore) -> tuple[ACPSessionLifecycleService, list[_Record
     service = ACPSessionLifecycleService(
         session_manager=cast(Any, store),
         runtime_manager=cast(Any, _runtime(backend)),
+        confinement_roots=lambda _session: CONFINEMENT_ROOTS,
     )
     return service, clients
 
@@ -246,6 +253,7 @@ class TestForcedRacesPerWriter:
         service = ACPSessionLifecycleService(
             session_manager=cast(Any, store),
             runtime_manager=cast(Any, _runtime(backend)),
+            confinement_roots=lambda _session: CONFINEMENT_ROOTS,
         )
 
         with pytest.raises(ACPWorkspaceIdentityError, match="during launch"):

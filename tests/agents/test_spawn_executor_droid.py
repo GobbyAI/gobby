@@ -76,7 +76,7 @@ class TestExecuteSpawnDroid:
 
         with (
             patch("gobby.agents.spawn_executor.shutil.which", return_value=None),
-            patch("gobby.agents.spawn_executor.prepare_terminal_spawn") as mock_prepare,
+            patch("gobby.agents.spawn.prepare_terminal_spawn") as mock_prepare,
         ):
             result = await execute_spawn(request)
 
@@ -94,7 +94,7 @@ class TestExecuteSpawnDroid:
 
         with (
             patch("gobby.agents.spawn_executor.shutil.which") as mock_which,
-            patch("gobby.agents.spawn_executor.prepare_terminal_spawn") as mock_prepare,
+            patch("gobby.agents.spawn.prepare_terminal_spawn") as mock_prepare,
         ):
             result = await execute_spawn(request)
 
@@ -137,7 +137,7 @@ class TestExecuteSpawnDroid:
 
         with (
             patch("gobby.agents.spawn_executor.shutil.which", return_value="/usr/bin/droid"),
-            patch("gobby.agents.spawn_executor.prepare_terminal_spawn", mock_prepare),
+            patch("gobby.agents.spawn.prepare_terminal_spawn", mock_prepare),
             patch(
                 "gobby.agents.spawn_executor_providers.pre_approve_directory"
             ) as mock_pre_approve,
@@ -200,7 +200,7 @@ class TestExecuteSpawnDroid:
 
         with (
             patch("gobby.agents.spawn_executor.shutil.which", return_value="/usr/bin/droid"),
-            patch("gobby.agents.spawn_executor.prepare_terminal_spawn", mock_prepare),
+            patch("gobby.agents.spawn.prepare_terminal_spawn", mock_prepare),
             patch("gobby.agents.spawn_executor_providers.pre_approve_directory"),
         ):
             request.prepared_spawn = mock_prepare.return_value

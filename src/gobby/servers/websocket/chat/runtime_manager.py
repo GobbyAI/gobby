@@ -85,15 +85,12 @@ class WebChatRuntimeManager:
             endpoints = getattr(generation, "endpoints", {})
             if isinstance(endpoints, dict):
                 self._generation_endpoints = endpoints
-        self._claude_backend = ClaudeWebChatBackend(
-            sandbox_config=self._sandbox_config.model_copy(deep=True)
-        )
+        self._claude_backend = ClaudeWebChatBackend()
         self._codex_backend = CodexWebChatBackend(
             client=codex_client,
             client_factory=self._codex_client_factory,
             transcript_retry_attempts=codex_transcript_retry_attempts,
             transcript_retry_delay_seconds=codex_transcript_retry_delay_seconds,
-            sandbox_config=self._sandbox_config.model_copy(deep=True),
         )
         self._codex_endpoint_backends: dict[str, CodexWebChatBackend] = {}
         for endpoint_name, endpoint in self._generation_endpoints.items():
@@ -122,25 +119,17 @@ class WebChatRuntimeManager:
                 generation_endpoint=endpoint,
                 transcript_retry_attempts=codex_transcript_retry_attempts,
                 transcript_retry_delay_seconds=codex_transcript_retry_delay_seconds,
-                sandbox_config=self._sandbox_config.model_copy(deep=True),
             )
-        self._grok_backend = GrokWebChatBackend(
-            sandbox_config=self._sandbox_config.model_copy(deep=True)
-        )
+        self._grok_backend = GrokWebChatBackend()
         self._qwen_backend = QwenWebChatBackend(
-            sandbox_config=self._sandbox_config.model_copy(deep=True),
             local_generation_endpoints={
                 name: endpoint
                 for name, endpoint in self._generation_endpoints.items()
                 if endpoint.wire_api == "chat-completions"
             },
         )
-        self._droid_backend = DroidWebChatBackend(
-            sandbox_config=self._sandbox_config.model_copy(deep=True)
-        )
-        self._agy_backend = AgyWebChatBackend(
-            sandbox_config=self._sandbox_config.model_copy(deep=True)
-        )
+        self._droid_backend = DroidWebChatBackend()
+        self._agy_backend = AgyWebChatBackend()
         # Discovered ACP SessionInfo payloads keyed by (provider, sessionId).
         # The ACP lifecycle service (discovery) populates this; readers use it to
         # reconcile agent-side sessions against canonical rows.
@@ -377,6 +366,7 @@ class WebChatRuntimeManager:
             session.sandbox_config = snapshot.config.model_copy(deep=True)
 
     def _refresh_sandbox_config(self) -> SandboxPolicySnapshot:
+        """Resolve the per-creation policy snapshot; backends never hold policy state."""
         if self._config_resolver is None:
             return SandboxPolicySnapshot(
                 config=self._sandbox_config, policy_hash=self._sandbox_policy_hash
@@ -392,14 +382,6 @@ class WebChatRuntimeManager:
         )
         self._sandbox_config = snapshot.config
         self._sandbox_policy_hash = snapshot.policy_hash
-        self._claude_backend.set_sandbox_config(self._sandbox_config)
-        self._codex_backend.set_sandbox_config(self._sandbox_config)
-        for backend in self._codex_endpoint_backends.values():
-            backend.set_sandbox_config(self._sandbox_config)
-        self._grok_backend.set_sandbox_config(self._sandbox_config)
-        self._qwen_backend.set_sandbox_config(self._sandbox_config)
-        self._droid_backend.set_sandbox_config(self._sandbox_config)
-        self._agy_backend.set_sandbox_config(self._sandbox_config)
         return snapshot
 
     def _codex_backend_for_model(self, model: str | None) -> tuple[CodexWebChatBackend, str | None]:

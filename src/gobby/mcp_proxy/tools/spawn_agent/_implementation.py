@@ -26,9 +26,11 @@ from gobby.agents.resume_metadata import build_resume_metadata
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn import cleanup_unlaunched_spawn, prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
+from gobby.agents.spawn_executor_providers import agy_support_refusal
 from gobby.agents.spawn_models import SpawnRequest, resolve_terminal_backend
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.providers.capabilities.apply import SpeedUnavailableError, apply_speed, speed_result
+from gobby.providers.version_gate import peek_agy_support
 from gobby.tasks.state_semantics import (
     get_claimed_session_id,
     is_task_actionable,
@@ -168,6 +170,12 @@ async def spawn_agent_impl(
         )
     except ValueError as e:
         return {"success": False, "error": str(e)}
+    if effective_provider == "agy":
+        # Gate on the published support record before any isolation, slot,
+        # session, or agent-run side effect exists to clean up.
+        agy_record = peek_agy_support()
+        if not agy_record.supported:
+            return {"success": False, "error": agy_support_refusal(agy_record)}
     provider_was_overridden = explicit_provider is not None
 
     provider_differs_from_agent = False

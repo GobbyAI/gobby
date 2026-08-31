@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from gobby.agents.constants import (
     GOBBY_AGENT_API_TOKEN,
@@ -37,6 +38,9 @@ from gobby.agents.srt_runtime import (
     prepare_sandbox_launch,
 )
 from gobby.agents.trust import pre_approve_directory
+
+if TYPE_CHECKING:
+    from gobby.providers.version_gate import AgySupportRecord
 
 logger = logging.getLogger(__name__)
 
@@ -488,6 +492,16 @@ async def prepare_droid_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         agent_run_id=spawn_context.agent_run_id,
         title=f"gobby-droid-d{request.agent_depth}",
     )
+
+
+def agy_support_refusal(record: AgySupportRecord) -> str:
+    """Return the one refusal message every AGY spawn path emits for an unsupported record.
+
+    The record's reason already names the installed and required versions (or
+    the absent, unparseable, unpublished, or revalidating state), so the spawn
+    gate and the terminal executor surface it verbatim.
+    """
+    return record.reason
 
 
 async def prepare_agy_spawn(request: SpawnRequest) -> ProviderSpawnPlan | SpawnResult:

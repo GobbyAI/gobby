@@ -92,7 +92,6 @@ def test_claude_oauth_token_is_never_forwarded() -> None:
 
 
 def test_agy_allowlist_and_credentials_are_explicitly_empty() -> None:
-    from gobby.agents.sandbox_policy import _PROVIDER_CREDENTIAL_ENV
     from gobby.agents.spawners.auth_env import CLI_CREDENTIAL_KEYS, CLI_ENV_ALLOWLIST
     from gobby.agents.tmux.spawner import _SUPPORTED_AUTH_CLIS
 
@@ -100,8 +99,23 @@ def test_agy_allowlist_and_credentials_are_explicitly_empty() -> None:
     assert CLI_ENV_ALLOWLIST["agy"] == frozenset()
     assert "agy" in CLI_CREDENTIAL_KEYS
     assert CLI_CREDENTIAL_KEYS["agy"] == frozenset()
-    assert frozenset(_PROVIDER_CREDENTIAL_ENV["agy"]) == CLI_CREDENTIAL_KEYS["agy"]
     assert "agy" not in _SUPPORTED_AUTH_CLIS
+
+
+def test_terminal_stripping_and_sandbox_masking_share_the_agy_denied_inventory() -> None:
+    from gobby.agents.credential_inventory import CLI_DENIED_AMBIENT_KEYS as SHARED_DENIED
+    from gobby.agents.sandbox_policy import _PROVIDER_CREDENTIAL_ENV, credential_env_vars
+    from gobby.agents.spawners.auth_env import CLI_DENIED_AMBIENT_KEYS
+
+    expected = frozenset({"GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS"})
+    assert CLI_DENIED_AMBIENT_KEYS is SHARED_DENIED
+    assert CLI_DENIED_AMBIENT_KEYS["agy"] == expected
+    assert frozenset(_PROVIDER_CREDENTIAL_ENV["agy"]) == expected
+    assert _PROVIDER_CREDENTIAL_ENV["agy"] == tuple(sorted(expected))
+
+    masked = credential_env_vars("agy", None)
+    assert {entry.name for entry in masked} == expected
+    assert {entry.mode for entry in masked} == {"mask"}
 
 
 def test_agy_passthrough_strips_ignored_google_ambient_keys() -> None:
@@ -131,8 +145,9 @@ def test_agy_passthrough_strips_ignored_google_ambient_keys() -> None:
         "agy",
     )
     unset_clause = shell_cmd.split(";", 1)[0]
-    assert "GOOGLE_API_KEY" not in extra_env or extra_env["GOOGLE_API_KEY"] == ""
+    assert "GOOGLE_API_KEY" not in extra_env
+    assert "GEMINI_API_KEY" not in extra_env
+    assert "GOOGLE_APPLICATION_CREDENTIALS" not in extra_env
     assert "GOOGLE_API_KEY" in unset_clause
     assert "GEMINI_API_KEY" in unset_clause
     assert "GOOGLE_APPLICATION_CREDENTIALS" in unset_clause
-

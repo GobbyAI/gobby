@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from gobby.adapters.acp_client import ACP_STREAM_READER_LIMIT_BYTES, StreamEvent
+from gobby.agents.sandbox import SandboxConfig
 from gobby.llm.claude_models import (
     DoneEvent,
     TextChunk,
@@ -137,13 +138,22 @@ class _PrefixThenTrickleStdout:
         return (self._trickle + "\n").encode("utf-8")
 
 
+def _droid_session(backend: DroidWebChatBackend) -> DroidManagedChatSession:
+    """Session carrying the unsandboxed launch snapshot every backend launch requires."""
+    return DroidManagedChatSession(
+        conversation_id="conv-droid",
+        _backend=backend,
+        sandbox_config=SandboxConfig(enabled=False),
+    )
+
+
 def _attached_session(
     process: _FakeProcess,
     *,
     prompt_timeout: float | None = None,
 ) -> tuple[DroidWebChatBackend, DroidManagedChatSession]:
     backend = DroidWebChatBackend(prompt_timeout=prompt_timeout)
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session.project_path = str(Path.cwd())
     return backend, session
 
@@ -370,7 +380,7 @@ def test_parse_stream_json_skips_record_conversion_errors(
 @pytest.mark.asyncio
 async def test_managed_session_translates_text_thinking_and_done() -> None:
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session._connected = True
     session._model = "gpt-5.4"
     session._context_window_overrides = {"gpt-5.4": 200_000}
@@ -399,7 +409,7 @@ async def test_managed_session_propagates_stream_errors(
     error_type: type[BaseException],
 ) -> None:
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session._connected = True
 
     async def failing_send_message(_session: Any, _prompt: str) -> AsyncIterator[StreamEvent]:
@@ -415,7 +425,7 @@ async def test_managed_session_propagates_stream_errors(
 @pytest.mark.asyncio
 async def test_managed_session_translates_structured_tool_events() -> None:
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session._connected = True
 
     async def fake_send_message(_session: Any, _prompt: str) -> AsyncIterator[StreamEvent]:
@@ -440,7 +450,7 @@ async def test_managed_session_translates_structured_tool_events() -> None:
 @pytest.mark.asyncio
 async def test_managed_session_leaves_ambiguous_tool_outcome_unknown() -> None:
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session._connected = True
     session._on_post_tool = AsyncMock(return_value=None)
 
@@ -476,7 +486,7 @@ async def test_managed_session_leaves_ambiguous_tool_outcome_unknown() -> None:
 async def test_managed_session_preserves_live_droid_command_outcomes() -> None:
     payload = json.loads(DROID_COMMAND_OUTCOMES_FIXTURE.read_text())
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session._connected = True
     session._on_post_tool = AsyncMock(return_value=None)
 
@@ -507,7 +517,7 @@ async def test_managed_session_preserves_live_droid_command_outcomes() -> None:
 async def test_send_message_streams_fixture_and_writes_prompt() -> None:
     process = _FakeProcess(_fixture_lines("text_response.jsonl"))
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session.project_path = str(Path.cwd())
 
     with (
@@ -556,7 +566,7 @@ async def test_send_message_answers_auto_allowed_permission_request() -> None:
         ]
     )
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session.project_path = str(Path.cwd())
 
     with (
@@ -596,7 +606,7 @@ async def test_send_message_cancels_permission_when_pre_tool_blocks() -> None:
         ]
     )
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session.project_path = str(Path.cwd())
     pre_tool_calls: list[dict[str, Any]] = []
 
@@ -644,7 +654,7 @@ async def test_send_message_waits_for_user_permission_approval() -> None:
         ]
     )
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session.project_path = str(Path.cwd())
     session.chat_mode = "auto"
     approval_calls: list[tuple[str, dict[str, Any]]] = []
@@ -698,7 +708,7 @@ async def test_plan_mode_cancels_unapproved_tool_and_broadcasts_plan() -> None:
         ]
     )
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session.project_path = str(Path.cwd())
     session.chat_mode = "plan"
 
@@ -780,7 +790,7 @@ def _exit_spec_session(
     backend: DroidWebChatBackend,
 ) -> tuple[DroidManagedChatSession, list[str | None]]:
     """A plan-mode Droid session wired to capture plan broadcasts."""
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session.project_path = str(Path.cwd())
     session.chat_mode = "plan"
     broadcasts: list[str | None] = []
@@ -1029,7 +1039,7 @@ async def test_send_message_supports_multiple_turns_on_same_process() -> None:
         [_session_init_line()] + _turn_response_lines("First") + _turn_response_lines("Second")
     )
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session.project_path = str(Path.cwd())
 
     with (
@@ -1063,7 +1073,7 @@ async def test_send_message_reattaches_dead_process_before_next_turn() -> None:
         _FakeProcess([_session_init_line()] + _turn_response_lines("Second")),
     ]
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session.project_path = str(Path.cwd())
 
     with (
@@ -1100,7 +1110,7 @@ async def test_send_message_reattaches_dead_process_before_next_turn() -> None:
 async def test_eof_before_result_yields_error_event() -> None:
     process = _FakeProcess(_fixture_lines("session_init.jsonl") + _fixture_lines("eof.jsonl"))
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
 
     with (
         patch(
@@ -1127,7 +1137,7 @@ async def test_switch_model_respawns_session_object_first() -> None:
         _FakeProcess([_session_init_line("gpt-5.4-mini")]),
     ]
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
 
     with (
         patch(
@@ -1170,7 +1180,7 @@ async def test_health_reports_missing_droid() -> None:
 @pytest.mark.asyncio
 async def test_attach_session_rejects_missing_cwd(tmp_path: Path) -> None:
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session.project_path = str(tmp_path / "missing")
 
     with (
@@ -1197,7 +1207,7 @@ async def test_attach_session_rejects_invalid_option_values(
     message: str,
 ) -> None:
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session.project_path = str(tmp_path)
     session.reasoning_effort = reasoning_effort
 
@@ -1380,7 +1390,7 @@ async def test_real_droid_exec_binary_starts(
     monkeypatch.setenv("HOME", str(tmp_path))
 
     backend = DroidWebChatBackend()
-    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session = _droid_session(backend)
     session.project_path = str(tmp_path)
 
     await backend.attach_session(session)

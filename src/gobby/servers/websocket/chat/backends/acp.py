@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from gobby.adapters.acp_client import ACPClient, StreamEvent
 from gobby.adapters.acp_commands import normalize_available_commands
-from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.trust import pre_approve_directory
 from gobby.config.ai import GenerationEndpointConfig
 from gobby.servers.websocket.chat.backends.base import (
@@ -47,7 +46,6 @@ class ACPWebChatBackend:
         *,
         client: ACPClient | None = None,
         default_model: str | None = None,
-        sandbox_config: SandboxConfig | None = None,
         local_generation_endpoints: dict[str, GenerationEndpointConfig] | None = None,
     ) -> None:
         if not self.provider or not self.display_name:
@@ -55,7 +53,6 @@ class ACPWebChatBackend:
                 f"{type(self).__name__} must set provider and display_name class attributes"
             )
 
-        self._sandbox_config = sandbox_config
         self._local_generation_endpoints = dict(local_generation_endpoints or {})
         # ACP CLI bootstrap currently hangs on macOS when launched
         # with daemon-wide Seatbelt flags. Keep daemon-owned ACP startup unsandboxed
@@ -64,9 +61,6 @@ class ACPWebChatBackend:
         self._health = ProviderBackendHealth(provider=self.provider, available=False)
         self._default_model = default_model
         self._startup_task: asyncio.Task[None] | None = None
-
-    def set_sandbox_config(self, config: SandboxConfig) -> None:
-        self._sandbox_config = config.model_copy(deep=True)
 
     async def _start_inner(self) -> None:
         if self._client.is_started:
@@ -183,7 +177,7 @@ class ACPWebChatBackend:
         else:
             client = self.acp_client_cls(
                 cwd=cwd,
-                sandbox_config=launch_sandbox_config(session, self._sandbox_config),
+                sandbox_config=launch_sandbox_config(session),
                 sandbox_run_id=session.db_session_id or session.conversation_id,
             )
         session._acp_client = client

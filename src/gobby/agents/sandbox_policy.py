@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from gobby.agents.credential_inventory import denied_ambient_keys
 from gobby.paths import get_gobby_home
 
 if TYPE_CHECKING:
@@ -63,7 +64,8 @@ _PROVIDER_CREDENTIAL_ENV: dict[str, tuple[str, ...]] = {
     "qwen": ("DASHSCOPE_API_KEY", "QWEN_API_KEY"),
     "droid": ("FACTORY_API_KEY",),
     "grok": ("XAI_API_KEY",),
-    "agy": (),
+    # AGY never accepts env auth; the tmux spawner strips these same keys.
+    "agy": denied_ambient_keys("agy"),
 }
 
 _RUN_CACHE_ENV_VARS = (

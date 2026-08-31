@@ -20,6 +20,7 @@ from gobby.providers.capabilities.models import (
     SpeedMode,
 )
 from gobby.providers.version_gate import AgySupportRecord, peek_agy_support
+from gobby.servers.provider_model_defaults import AGY_MODELS
 
 _SOURCE_KEY = "agy_models_cli"
 _BUNDLED_SOURCE_KEY = "bundled"
@@ -186,15 +187,17 @@ def _build_model(raw: _AgyModel, observed_at: datetime) -> ModelCapability:
 
     provenance = _live_provenance(model_facts, observed_at)
     if context_length is not None:
-        provenance["context_length"] = FactProvenance(
-            source_key=_BUNDLED_SOURCE_KEY,
-            source_url=None,
-            observed_at=observed_at,
-        )
+        provenance["context_length"] = _bundled_provenance(observed_at)
+    aliases: tuple[str, ...] = ()
+    if effort is not None:
+        # The bare base name resolves to exactly one variant: the one carrying
+        # the bundled table's default effort for that base model.
+        aliases = (base_model,) if effort == _bundled_default_effort(base_model) else ()
+        provenance["aliases"] = _bundled_provenance(observed_at)
     return ModelCapability(
         canonical_model=raw.model_id,
         display_name=raw.label,
-        aliases=(base_model,) if base_model != raw.model_id else (),
+        aliases=aliases,
         available=True,
         hidden=False,
         is_default=False,
@@ -209,6 +212,20 @@ def _build_model(raw: _AgyModel, observed_at: datetime) -> ModelCapability:
         routes=(_standard_route(raw.model_id, observed_at),),
         provenance=provenance,
     )
+
+
+def _bundled_default_effort(base_model: str) -> str | None:
+    """Return the bundled default effort for a base model, or None when unbundled."""
+    entry = AGY_MODELS.get(base_model)
+    if entry is None:
+        return None
+    reasoning = entry.get("reasoning")
+    default = reasoning.get("default_effort") if isinstance(reasoning, dict) else None
+    return default.strip().lower() if isinstance(default, str) and default.strip() else None
+
+
+def _bundled_provenance(observed_at: datetime) -> FactProvenance:
+    return FactProvenance(source_key=_BUNDLED_SOURCE_KEY, source_url=None, observed_at=observed_at)
 
 
 def _split_effort(model_id: str) -> tuple[str, str | None]:
