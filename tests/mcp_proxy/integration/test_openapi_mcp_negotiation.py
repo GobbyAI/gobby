@@ -3,10 +3,9 @@
 Skip-by-default (`uvx` missing or `GOBBY_OPENAPI_SMOKE` unset) so CI never
 spawns the pinned AWS OpenAPI server.
 
-Observed negotiation path against `awslabs.openapi-mcp-server@1.1.5`
-(FastMCP 3 / mcp 1.x stdio): gobby's mcp 2.x `Client` probes
-`server/discover`, then falls back to the legacy `initialize` handshake
-before `list_tools` and `call_tool` succeed.
+The bundled `openapi` template selects the legacy `initialize` handshake for
+`awslabs.openapi-mcp-server@1.1.5` (FastMCP 3 / mcp 1.x stdio), avoiding a
+noisy unsupported `server/discover` probe before `list_tools` and `call_tool`.
 """
 
 from __future__ import annotations
@@ -127,6 +126,7 @@ def _petstore_config(base: str) -> MCPServerConfig:
             "ALLOW_PRIVATE_NETWORKS": "true",
         },
         connect_timeout=120.0,
+        template="openapi",
     )
 
 
@@ -165,13 +165,15 @@ async def _run_connected_session(
 async def test_openapi_server_negotiates_and_serves_tools(petstore_http: _PetstoreHttp) -> None:
     """Initialize → list_tools → call_tool through StdioTransportConnection.
 
-    Negotiation observed: `server/discover` probe, then legacy `initialize`
-    fallback (OpenAPI server is mcp 1.x; gobby Client is mcp 2.x).
+    OpenAPI server 1.1.5 is mcp 1.x, so the bundled template selects legacy
+    initialization without probing `server/discover`.
     """
 
     async def _exercise(connection: StdioTransportConnection) -> None:
         session = connection.session
         assert session is not None
+        assert session.discover_result is None
+        assert session.initialize_result is not None
         tools = await list_tools_from_session(session)
         list_pets = next(tool for tool in tools if tool["name"] == "listPets")
         assert isinstance(list_pets["inputSchema"], dict)

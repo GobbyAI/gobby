@@ -4,7 +4,7 @@ import asyncio
 import logging
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from mcp.client import Client, ClientSession, Transport
 
@@ -13,6 +13,12 @@ from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
 logger = logging.getLogger("gobby.mcp.client")
 
 _HEALTH_ERROR_MAX_LENGTH = 500
+_LEGACY_CLIENT_TEMPLATES = frozenset({"openapi"})
+
+
+def _client_mode_for_config(config: MCPServerConfig) -> Literal["auto", "legacy"]:
+    """Skip modern discovery for bundled servers known to implement legacy MCP."""
+    return "legacy" if config.template in _LEGACY_CLIENT_TEMPLATES else "auto"
 
 
 def _format_health_error(error: Exception) -> str:
@@ -202,7 +208,7 @@ class OwnerTaskTransportConnection(BaseTransportConnection):
                 transport = await self._open_transport(stack)
                 # Client negotiates the protocol era (server/discover with an
                 # initialize fallback) before publishing the session.
-                self._client_context = Client(transport)
+                self._client_context = Client(transport, mode=_client_mode_for_config(self.config))
                 async with self._client_context as client:
                     self._session = client.session
 
