@@ -165,6 +165,8 @@ class TestReleaseAndReprepareForSession:
             envelope_id="env-lost-2",
             staged_payload={"session_variables": {"newest": True}},
         )
+        _backdate_past_redelivery_grace(receipts_db, older.receipt_id)
+        _backdate_past_redelivery_grace(receipts_db, newest.receipt_id)
         carried = receipts.release_and_reprepare_for_session(
             receipts_db,
             session_id=session_id,
@@ -216,10 +218,37 @@ class TestReleaseAndReprepareForSession:
         assert carried.delivery_generation == 2
         assert carried.staged_payload == {"context": "startup"}
 
+    def test_fresh_prepared_row_is_not_presumed_lost_until_grace_expires(
+        self, receipts_db: HubDatabase
+    ) -> None:
+        receipts = _receipts()
+        session_id = str(uuid4())
+        receipt = receipts.prepare_receipt(
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-in-flight",
+            staged_payload={"context": "startup"},
+        )
+        assert (
+            receipts.release_and_reprepare_for_session(
+                receipts_db, session_id=session_id, envelope_id="env-next"
+            )
+            is None
+        )
+        assert _receipt_state(receipts_db, receipt.receipt_id) == "prepared"
+        _backdate_past_redelivery_grace(receipts_db, receipt.receipt_id)
+        carried = receipts.release_and_reprepare_for_session(
+            receipts_db, session_id=session_id, envelope_id="env-next"
+        )
+        assert carried is not None
+        assert carried.receipt_id == receipt.receipt_id
+        assert carried.delivery_generation == 2
+
     def test_ignores_same_envelope_and_terminal_rows(self, receipts_db: HubDatabase) -> None:
         receipts = _receipts()
         session_id = str(uuid4())
         same = receipts.prepare_receipt(receipts_db, session_id=session_id, envelope_id="env-same")
+        _backdate_past_redelivery_grace(receipts_db, same.receipt_id)
         acked = receipts.prepare_receipt(
             receipts_db, session_id=session_id, envelope_id="env-acked"
         )
@@ -256,6 +285,7 @@ class TestReleaseAndReprepareForSession:
             envelope_id="env-lost",
             staged_payload={"session_variables": {"lost": True}},
         )
+        _backdate_past_redelivery_grace(receipts_db, lost.receipt_id)
         receipts.release_and_reprepare_for_session(
             receipts_db, session_id=session_id, envelope_id="env-live"
         )
@@ -752,6 +782,16 @@ def _receipt_state(db: HubDatabase, receipt_id: str) -> str | None:
             (receipt_id,),
         ).fetchone()
     return None if row is None else str(row["state"])
+
+
+def _backdate_past_redelivery_grace(db: HubDatabase, receipt_id: str) -> None:
+    """Age a receipt past HOOK_RECEIPT_REDELIVERY_GRACE so it is presumed lost."""
+    cutoff = utc_now() - _receipts().HOOK_RECEIPT_REDELIVERY_GRACE - timedelta(seconds=1)
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE hook_receipt_effects SET transition_at = %s WHERE receipt_id = %s",
+            (cutoff, receipt_id),
+        )
 
 
 def _receipt_exists(db: HubDatabase, receipt_id: str) -> bool:

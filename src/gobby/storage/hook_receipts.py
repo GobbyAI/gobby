@@ -15,6 +15,11 @@ from gobby.utils.datetime import utc_now
 
 HOOK_RECEIPT_IDEMPOTENCY_WINDOW = timedelta(hours=24)
 HOOK_RECEIPT_PRUNE_MAX_ENTRIES = 100_000
+# A 'prepared' receipt is presumed lost (and re-prepared onto a newer envelope)
+# only after this window; pipelined hooks otherwise outrun the client ack and
+# every generation goes stale before its receipt file lands. 'released' rows are
+# known lost and re-prepare immediately.
+HOOK_RECEIPT_REDELIVERY_GRACE = timedelta(seconds=15)
 
 ReceiptState = Literal["prepared", "acknowledged", "released", "terminal-undelivered"]
 
@@ -210,21 +215,25 @@ def release_and_reprepare_for_session(
 ) -> HookReceipt | None:
     """Carry the newest undelivered receipt for a session onto a new envelope.
 
-    One transaction: the newest ``prepared`` or ``released`` row whose current
-    envelope is not ``envelope_id`` is compare-and-set prepared->released (when
-    still prepared) and then released->prepared onto ``envelope_id`` with the
-    delivery generation incremented and ``staged_payload`` preserved. Returns
-    ``None`` when the session has nothing to re-deliver.
+    One transaction: the newest ``released`` row — or ``prepared`` row older
+    than ``HOOK_RECEIPT_REDELIVERY_GRACE`` — whose current envelope is not
+    ``envelope_id`` is compare-and-set prepared->released (when still prepared)
+    and then released->prepared onto ``envelope_id`` with the delivery
+    generation incremented and ``staged_payload`` preserved. Returns ``None``
+    when the session has nothing to re-deliver. The grace keeps a fresh
+    ``prepared`` delivery (its ack still in flight) from being presumed lost
+    by the next pipelined hook.
     """
 
     now = utc_now()
     with db.transaction() as conn:
         candidate = conn.execute(
             "SELECT receipt_id, state FROM hook_receipt_effects "
-            "WHERE session_id = %s AND state IN ('prepared', 'released') "
+            "WHERE session_id = %s "
+            "AND (state = 'released' OR (state = 'prepared' AND transition_at < %s)) "
             "AND current_envelope_id <> %s "
             "ORDER BY created_at DESC, receipt_id DESC LIMIT 1 FOR UPDATE SKIP LOCKED",
-            (session_id, envelope_id),
+            (session_id, now - HOOK_RECEIPT_REDELIVERY_GRACE, envelope_id),
         ).fetchone()
         if candidate is None:
             return None
