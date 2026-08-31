@@ -343,12 +343,17 @@ def test_factory_create_supplies_registry_and_does_not_build_claude_parser(
     from gobby.sessions.transcripts.droid import DroidTranscriptParser
 
     workflow_components, autonomous_components = _patched_subsystems()
+    claude_cls = MagicMock(wraps=ClaudeTranscriptParser)
+    droid_cls = MagicMock(wraps=DroidTranscriptParser)
 
+    # Route through the shared registry seam: a parser built by module
+    # reference would bypass PARSER_REGISTRY and leave these spies inert.
     with (
-        patch(
-            "gobby.sessions.transcripts.claude.ClaudeTranscriptParser",
-            wraps=ClaudeTranscriptParser,
-        ) as claude_cls,
+        patch.dict(
+            "gobby.sessions.transcripts.PARSER_REGISTRY",
+            {"claude": claude_cls, "droid": droid_cls},
+            clear=True,
+        ),
         patch.object(HookManagerFactory, "_create_autonomous", return_value=autonomous_components),
         patch.object(HookManagerFactory, "_create_memory", return_value=MagicMock()),
         patch.object(
@@ -357,9 +362,11 @@ def test_factory_create_supplies_registry_and_does_not_build_claude_parser(
         patch.object(HookManagerFactory, "_create_webhooks", return_value=MagicMock()),
     ):
         components = HookManagerFactory.create(**_create_kwargs(session_manager, default_config))
+        assert components.transcript_processor is get_parser
+        claude_cls.assert_not_called()
+        parser = components.transcript_processor("droid", session_id="s1")
 
-    assert components.transcript_processor is get_parser
+    droid_cls.assert_called_once_with(session_id="s1", transcript_path=None)
     claude_cls.assert_not_called()
-    parser = components.transcript_processor("droid")
     assert isinstance(parser, DroidTranscriptParser)
     assert not isinstance(parser, ClaudeTranscriptParser)

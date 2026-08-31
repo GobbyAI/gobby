@@ -10,7 +10,12 @@ import pytest
 
 from gobby.sessions.transcripts import PARSER_REGISTRY, get_parser
 from gobby.sessions.transcripts.agy import AgyTranscriptParser
-from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent
+from gobby.sessions.transcripts.base import (
+    UNMODELED_RECORD_CONTENT_TYPE,
+    ParsedMessage,
+    ParsedToolEvent,
+    RawLine,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -213,7 +218,7 @@ def test_legacy_and_unknown_model_types_are_tool_results(result_type: str) -> No
         parser,
         [
             _planner(2, tool_calls=[{"name": "view_file", "args": {"AbsolutePath": "/tmp/a"}}]),
-            _record(3, "MODEL", result_type, content="file body", exit_code=0),
+            _record(3, "MODEL", result_type, content="file body"),
         ],
     )
     events = _tool_events(records)
@@ -266,8 +271,64 @@ def test_malformed_and_unknown_records_preserve_order() -> None:
     ]
     records = parser.parse_lines(lines)
     messages = _messages(records)
-    assert [message.content for message in messages] == ["hello", "hi back"]
-    assert messages[0].index < messages[1].index
+    conversation = [m for m in messages if m.content_type != UNMODELED_RECORD_CONTENT_TYPE]
+    unmodeled = [m for m in messages if m.content_type == UNMODELED_RECORD_CONTENT_TYPE]
+    assert [message.content for message in conversation] == ["hello", "hi back"]
+    assert [message.content for message in unmodeled] == ["ALIEN/WEIRD"]
+    assert unmodeled[0].role == "system"
+    assert conversation[0].index < unmodeled[0].index < conversation[1].index
+
+
+def test_malformed_line_between_valid_lines_yields_positioned_event() -> None:
+    parser = _agy_parser()
+    texts = [_line(_user(1, "hello")), "{not json", _line(_planner(2, content="hi back"))]
+    raws: list[RawLine] = []
+    offset = 0
+    for line_no, text in enumerate(texts):
+        raws.append(RawLine(byte_offset=offset, raw_line_no=line_no, text=text))
+        offset += len(text.encode("utf-8")) + 1
+
+    events = list(parser.iter_parse_events(raws, start_index=0))
+
+    assert [event.raw_line_no for event in events] == [0, 1, 2]
+    assert [event.byte_offset for event in events] == [raw.byte_offset for raw in raws]
+    assert [event.parsed_index for event in events] == [0, 1, 2]
+    assert events[1].records == []
+    assert all(event.parser_safe for event in events)
+    assert [message.content for message in _messages(events[0].records)] == ["hello"]
+    assert [message.content for message in _messages(events[2].records)] == ["hi back"]
+    assert events[2].records[0].index == events[2].parsed_index
+
+    resumed = list(_agy_parser().iter_parse_events(raws[2:], start_index=events[2].parsed_index))
+    assert [message.index for message in _messages(resumed[0].records)] == [2]
+
+
+def test_structured_exit_code_field_is_never_read() -> None:
+    parser = _agy_parser()
+    unstructured = _tool_events(
+        _parse(
+            parser,
+            [
+                _planner(2, tool_calls=[_run_command_call("uv run pytest tests/x.py")]),
+                _generic(3, "Output:\nno exit sentence", exit_code=0),
+            ],
+        )
+    )
+    assert unstructured[-1].result is not None
+    assert "exit_code" not in unstructured[-1].result
+    assert unstructured[-1].result.get("unknown_reason") == "unstructured"
+
+    sentence = _tool_events(
+        _parse(
+            _agy_parser(),
+            [
+                _planner(4, tool_calls=[_run_command_call("uv run pytest tests/y.py")]),
+                _generic(5, "The command exited with code 7.\nOutput:\nboom", exit_code=0),
+            ],
+        )
+    )
+    assert sentence[-1].result is not None
+    assert sentence[-1].result["exit_code"] == 7
 
 
 def test_two_calls_in_one_planner_response_get_distinct_ids() -> None:

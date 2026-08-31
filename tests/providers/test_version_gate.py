@@ -12,7 +12,9 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
+from fastapi import FastAPI
 
 from gobby.ai import (
     AICapability,
@@ -33,8 +35,7 @@ from gobby.providers.version_gate import (
     reset_agy_support_for_tests,
 )
 from gobby.servers.provider_model_discovery import get_cli_version
-from gobby.servers.routes.providers import _agy_snapshot_payload
-from tests.agents.prepared_spawn import prepared_spawn
+from gobby.servers.routes.providers import create_providers_router
 
 pytestmark = pytest.mark.unit
 
@@ -70,6 +71,18 @@ async def _yield_loop() -> None:
     resumed = asyncio.Event()
     asyncio.get_running_loop().call_soon(resumed.set)
     await resumed.wait()
+
+
+async def _agy_provider_entry() -> dict[str, Any]:
+    """Return the AGY row of ``GET /api/providers`` served against the live record."""
+    app = FastAPI()
+    app.include_router(create_providers_router(None))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://providers") as client:
+        response = await client.get("/api/providers")
+    assert response.status_code == 200
+    entries = {entry["name"]: entry for entry in response.json()["providers"]}
+    return cast(dict[str, Any], entries["agy"])
 
 
 def _identity_tuple(path: Path) -> tuple[str, int, int, int, int]:
@@ -127,11 +140,15 @@ async def test_sub_floor_and_unparseable_records_name_installed_and_required(
     )
 
     record = await probe_and_publish_agy_support()
+    entry = await _agy_provider_entry()
 
     assert record.supported is False
     assert AGY_REQUIRED_VERSION in record.reason
     assert installed_label in record.reason
     assert record.required_version == AGY_REQUIRED_VERSION
+    assert entry["installed"] is True
+    assert entry["available"] is False
+    assert entry["unavailable_reason"] == record.reason
 
 
 @pytest.mark.asyncio
@@ -174,8 +191,9 @@ async def test_sync_consumers_do_not_reprobe_when_identity_is_unchanged(
         web_chat = bindings.binding(AICapability.WEB_CHAT, "agy")
         assert web_chat is not None
         assert web_chat.available is True
-        payload = _agy_snapshot_payload()
-        assert payload["support"]["supported"] is True
+        entry = await _agy_provider_entry()
+        assert entry["available"] is True
+        assert entry["unavailable_reason"] is None
         await ensure_agy_support()
 
     version.assert_awaited_once()
@@ -394,7 +412,7 @@ async def test_agy_capability_registry_uses_published_support_record_without_sec
     spawn = service.registry.binding(AICapability.AGENT_SPAWN, "agy")
     tool_chat = service.registry.binding(AICapability.TOOL_CHAT, "agy")
     vision = service.registry.binding(AICapability.VISION_EXTRACT, "agy")
-    payload = _agy_snapshot_payload()
+    entry = await _agy_provider_entry()
 
     assert web_chat is not None
     assert spawn is not None
@@ -414,9 +432,10 @@ async def test_agy_capability_registry_uses_published_support_record_without_sec
     assert web_chat.metadata["agy_supported"] is True
     assert web_chat.metadata["agy_installed_version"] == "1.1.18"
     assert spawn.metadata["agy_supported"] is True
-    assert payload["support"]["supported"] is True
-    assert payload["support"]["installed_version"] == "1.1.18"
-    assert payload["refresh"]["sources"] == [{"source_key": "version_gate", "state": "ok"}]
+    assert entry["installed"] is True
+    assert entry["available"] is True
+    assert entry["startup_error"] is None
+    assert entry["unavailable_reason"] is None
     version.assert_awaited_once()
 
 

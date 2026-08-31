@@ -6,14 +6,19 @@ import asyncio
 import importlib
 import threading
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.hooks import hook_manager as hook_manager_module
+from gobby.hooks.event_handlers._session_start.transcripts import (
+    MAX_PENDING_TRANSCRIPT_RECHECKS,
+)
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.receipt_effects import apply_acknowledged_receipt, take_worker_staging
 from gobby.storage.hub.protocol import HubDatabase
@@ -624,3 +629,144 @@ class TestDedupSkillResults:
         result = self._manager()._dedup_skill_results(original, SESSION_ID)
         assert result is original
         assert take_worker_staging() == {}
+
+
+_RECHECK_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+_DERIVE_PATCH = "gobby.hooks.event_handlers._session_start.transcripts.derive_transcript_path"
+
+
+def _recheck_event(
+    event_type: HookEventType,
+    *,
+    platform_session_id: str | None = "platform-1",
+) -> HookEvent:
+    event = HookEvent(
+        event_type=event_type,
+        session_id="conv-1",
+        source=SessionSource.AGY,
+        timestamp=datetime.now(UTC),
+        data={"transcript_path": "/nonexistent/transcript_full.jsonl"},
+        project_id="proj-1",
+        machine_id=_RECHECK_MACHINE_ID,
+    )
+    if platform_session_id is not None:
+        event.metadata["_platform_session_id"] = platform_session_id
+    return event
+
+
+def _seam_manager(manager: HookManager, *, session: SimpleNamespace) -> HookManager:
+    """Mock everything around the shared hook seam so events reach the recheck."""
+    mocks = cast(Any, manager)
+    mocks._session_manager.get.return_value = session
+    mocks._record_machine_ingress = MagicMock()
+    mocks._record_session_activity_pulse = MagicMock()
+    mocks._evaluate_workflow_rules = MagicMock(return_value=(None, None))
+    mocks._evaluate_blocking_webhooks = MagicMock(return_value=None)
+
+    def handler(event: HookEvent) -> HookResponse:
+        event.metadata["_platform_session_id"] = session.id
+        return HookResponse(decision="allow")
+
+    mocks._event_handlers.get_handler.return_value = handler
+
+    def resolve(event: HookEvent, *, apply_session_mutations: bool = True) -> str:
+        del apply_session_mutations
+        event.metadata["_platform_session_id"] = session.id
+        return str(session.id)
+
+    mocks._session_lookup.resolve.side_effect = resolve
+    return manager
+
+
+class TestPendingTranscriptRecheckBudget:
+    """The per-session recheck budget is dropped when its session starts or ends."""
+
+    @pytest.fixture(autouse=True)
+    def _local_machine(
+        self, manager_with_mocks: HookManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(manager_with_mocks, "get_machine_id", lambda: _RECHECK_MACHINE_ID)
+
+    def test_session_end_discards_only_that_sessions_budget(
+        self, manager_with_mocks: HookManager
+    ) -> None:
+        manager_with_mocks._pending_transcript_rechecks.update({"platform-1": 3, "platform-2": 1})
+
+        manager_with_mocks._recheck_pending_transcript(_recheck_event(HookEventType.SESSION_END))
+
+        assert manager_with_mocks._pending_transcript_rechecks == {"platform-2": 1}
+
+    def test_session_end_without_resolved_session_leaves_budgets_alone(
+        self, manager_with_mocks: HookManager
+    ) -> None:
+        manager_with_mocks._pending_transcript_rechecks["platform-1"] = 2
+
+        manager_with_mocks._recheck_pending_transcript(
+            _recheck_event(HookEventType.SESSION_END, platform_session_id=None)
+        )
+
+        assert manager_with_mocks._pending_transcript_rechecks == {"platform-1": 2}
+
+    @pytest.mark.parametrize("event_type", [HookEventType.SESSION_END, HookEventType.SESSION_START])
+    def test_hook_seam_discards_budget_for_ending_and_starting_sessions(
+        self, manager_with_mocks: HookManager, event_type: HookEventType
+    ) -> None:
+        session = SimpleNamespace(
+            id="platform-1",
+            transcript_path=None,
+            source="agy",
+            external_id="conv-1",
+            machine_id=_RECHECK_MACHINE_ID,
+            status="active",
+        )
+        manager = _seam_manager(manager_with_mocks, session=session)
+        manager._pending_transcript_rechecks["platform-1"] = MAX_PENDING_TRANSCRIPT_RECHECKS
+
+        with (
+            patch("gobby.hooks.hook_manager.reconcile_session_activation"),
+            patch(_DERIVE_PATCH, return_value=None),
+        ):
+            response = manager._handle_after_daemon_ready(
+                _recheck_event(event_type, platform_session_id=None)
+            )
+
+        assert response.decision == "allow"
+        assert manager._pending_transcript_rechecks == {}
+
+    def test_budget_exhaustion_stops_derivation_until_the_session_ends(
+        self, manager_with_mocks: HookManager
+    ) -> None:
+        session = SimpleNamespace(
+            id="platform-1",
+            transcript_path=None,
+            source="agy",
+            external_id="conv-1",
+            machine_id=_RECHECK_MACHINE_ID,
+        )
+        manager = cast(Any, manager_with_mocks)
+        manager._session_manager.get.return_value = session
+        budgets = manager_with_mocks._pending_transcript_rechecks
+
+        with patch(_DERIVE_PATCH, return_value=None) as derive:
+            for _ in range(MAX_PENDING_TRANSCRIPT_RECHECKS + 2):
+                manager_with_mocks._recheck_pending_transcript(_recheck_event(HookEventType.STOP))
+        assert derive.call_count == MAX_PENDING_TRANSCRIPT_RECHECKS
+        assert budgets == {"platform-1": MAX_PENDING_TRANSCRIPT_RECHECKS}
+
+        # The path appearing later is refused once the budget is spent.
+        with patch(_DERIVE_PATCH, return_value="/tmp/appeared.jsonl") as derive:
+            manager_with_mocks._recheck_pending_transcript(_recheck_event(HookEventType.STOP))
+        derive.assert_not_called()
+        manager._session_manager.update.assert_not_called()
+
+        manager_with_mocks._recheck_pending_transcript(_recheck_event(HookEventType.SESSION_END))
+        assert budgets == {}
+
+        # The same platform session id gets a fresh window after the end.
+        with patch(_DERIVE_PATCH, return_value="/tmp/appeared.jsonl") as derive:
+            manager_with_mocks._recheck_pending_transcript(_recheck_event(HookEventType.STOP))
+        derive.assert_called_once()
+        manager._session_manager.update.assert_called_once_with(
+            "platform-1", transcript_path="/tmp/appeared.jsonl"
+        )
+        assert budgets == {}

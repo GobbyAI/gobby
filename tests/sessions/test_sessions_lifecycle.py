@@ -1586,6 +1586,7 @@ class TestProcessSessionTranscriptParsers:
         self, tmp_path: Path, manager: SessionLifecycleManager
     ) -> None:
         from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
+        from gobby.sessions.transcripts.droid import DroidTranscriptParser
 
         transcript_path = tmp_path / "transcript.jsonl"
         transcript_path.write_text('{"type": "message"}\n')
@@ -1593,16 +1594,22 @@ class TestProcessSessionTranscriptParsers:
         session.source = "droid"
         session.transcript_path = str(transcript_path)
         manager.session_manager.get.return_value = session
+        claude_cls = MagicMock(wraps=ClaudeTranscriptParser)
+        droid_cls = MagicMock(wraps=DroidTranscriptParser)
 
-        with patch(
-            "gobby.sessions.transcripts.claude.ClaudeTranscriptParser",
-            wraps=ClaudeTranscriptParser,
-        ) as claude_cls:
+        # Route through the shared registry seam: a parser built by module
+        # reference would bypass PARSER_REGISTRY and leave these spies inert.
+        with patch.dict(
+            "gobby.sessions.transcripts.PARSER_REGISTRY",
+            {"claude": claude_cls, "droid": droid_cls},
+            clear=True,
+        ):
             await manager._process_session_transcript("s1", str(transcript_path))
 
+        droid_cls.assert_called_once_with(session_id="s1", transcript_path=str(transcript_path))
+        claude_cls.assert_not_called()
         assert session.source == "droid"
         assert transcript_path.read_text(encoding="utf-8") == '{"type": "message"}\n'
-        claude_cls.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_unknown_source_raises(

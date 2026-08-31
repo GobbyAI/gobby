@@ -17,6 +17,7 @@ from gobby.adapters.agy_contract import (
     parse_agy_command_exit,
 )
 from gobby.sessions.transcripts.base import (
+    UNMODELED_RECORD_CONTENT_TYPE,
     BaseTranscriptParser,
     ParsedMessage,
     ParsedToolEvent,
@@ -42,6 +43,10 @@ def _basename(path: Path | str | None) -> str:
     if path is None:
         return ""
     return Path(path).name
+
+
+def _label(value: Any) -> str:
+    return value if isinstance(value, str) and value else "<missing>"
 
 
 @dataclass
@@ -116,23 +121,30 @@ class AgyTranscriptParser(BaseTranscriptParser):
             if not raw.text.strip():
                 continue
             start_idx = current_index
-            expanded = self._expand_line(raw.text, current_index)
-            for record in expanded:
-                if isinstance(record, ParsedMessage):
-                    record.index = current_index
+            record = self._decode_line(raw.text, current_index)
+            expanded = [] if record is None else self._expand_record(record, current_index)
+            for item in expanded:
+                if isinstance(item, ParsedMessage):
+                    item.index = current_index
                 current_index += 1
-            if expanded:
-                yield ParseEvent(
-                    byte_offset=raw.byte_offset,
+            if record is None:
+                # An undecodable line still occupies one position and yields an
+                # event, as the base parser does, so byte offsets and parsed
+                # indices stay monotonic across the emitted stream.
+                current_index += 1
+            elif not expanded:
+                continue
+            yield ParseEvent(
+                byte_offset=raw.byte_offset,
+                raw_line_no=raw.raw_line_no,
+                parsed_index=start_idx,
+                records=annotate_record_source(
+                    expanded,
+                    source=self.cli_name,
                     raw_line_no=raw.raw_line_no,
-                    parsed_index=start_idx,
-                    records=annotate_record_source(
-                        expanded,
-                        source=self.cli_name,
-                        raw_line_no=raw.raw_line_no,
-                    ),
-                    parser_safe=True,
-                )
+                ),
+                parser_safe=True,
+            )
 
     def extract_last_messages(
         self,
@@ -178,33 +190,64 @@ class AgyTranscriptParser(BaseTranscriptParser):
         del turn
         return False
 
-    def _expand_line(self, line: str, index: int) -> list[ParsedMessage | ParsedToolEvent]:
+    def _decode_line(self, line: str, index: int) -> dict[str, Any] | None:
+        """Return the JSON object on ``line``, or ``None`` for an undecodable line."""
         try:
             record = json.loads(line)
         except json.JSONDecodeError as exc:
             self.error_log.log_decode_failure(index, self.session_id, line, exc)
-            return []
+            return None
         if not isinstance(record, dict):
             self.error_log.log_decode_failure(index, self.session_id, line, None)
-            return []
+            return None
+        return record
 
+    def _expand_line(self, line: str, index: int) -> list[ParsedMessage | ParsedToolEvent]:
+        record = self._decode_line(line, index)
+        return [] if record is None else self._expand_record(record, index)
+
+    def _expand_record(
+        self, record: dict[str, Any], index: int
+    ) -> list[ParsedMessage | ParsedToolEvent]:
         source = record.get("source")
         record_type = record.get("type")
+        timestamp = _parse_timestamp(record.get("created_at"))
         if not isinstance(source, str) or not isinstance(record_type, str):
-            return []
+            return [self._unmodeled(index, source, record_type, record, timestamp)]
         if source in _SYSTEM_SOURCES:
             return []
-        timestamp = _parse_timestamp(record.get("created_at"))
-        if source == "USER_EXPLICIT" and record_type == "USER_INPUT":
+        if source == "USER_EXPLICIT":
+            if record_type != "USER_INPUT":
+                return [self._unmodeled(index, source, record_type, record, timestamp)]
             content = record.get("content")
             if not isinstance(content, str) or not content:
                 return []
             return [self._message(index, "user", content, "text", timestamp, record)]
         if source != "MODEL":
-            return []
+            return [self._unmodeled(index, source, record_type, record, timestamp)]
         if record_type == "PLANNER_RESPONSE":
             return self._expand_planner(record, index, timestamp)
         return self._expand_tool_result(record, index, timestamp, record_type)
+
+    def _unmodeled(
+        self,
+        index: int,
+        source: Any,
+        record_type: Any,
+        record: dict[str, Any],
+        timestamp: datetime,
+    ) -> ParsedMessage:
+        """Build the non-rendering sentinel for an unknown ``source``/``type`` pair.
+
+        Mirrors the Claude parser: the record is logged, keeps its position in
+        the stream, and reaches the unmodeled-observation worklist instead of
+        vanishing silently.
+        """
+        label = f"{_label(source)}/{_label(record_type)}"
+        self.error_log.log_unknown_block(index, self.session_id, label, record)
+        return self._message(
+            index, "system", label, UNMODELED_RECORD_CONTENT_TYPE, timestamp, record
+        )
 
     def _expand_planner(
         self,
@@ -265,13 +308,7 @@ class AgyTranscriptParser(BaseTranscriptParser):
             "agy_status": status_text,
             "result_type": record_type,
         }
-        structured_exit = record.get("exit_code")
-        parsed_exit = parse_agy_command_exit(content_text)
-        exit_code = (
-            structured_exit
-            if isinstance(structured_exit, int) and not isinstance(structured_exit, bool)
-            else parsed_exit
-        )
+        exit_code = parse_agy_command_exit(content_text)
         if status_text == "RUNNING":
             result["status"] = "RUNNING"
             result["unknown_reason"] = "nonterminal"

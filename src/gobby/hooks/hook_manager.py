@@ -487,6 +487,7 @@ class HookManager(HookManagerDispatchMixin):
                     suppress_webhooks=True,
                 )
 
+            self._discard_pending_transcript_recheck(event)
             self._record_session_activity_pulse(event)
             reconcile_session_activation(event, self._event_handlers, logger=self.logger)
 
@@ -611,6 +612,9 @@ class HookManager(HookManagerDispatchMixin):
 
     def _recheck_pending_transcript(self, event: HookEvent) -> None:
         """Complete a pending transcript association after canonical session resolve."""
+        if event.event_type == HookEventType.SESSION_END:
+            self._discard_pending_transcript_recheck(event)
+            return
         if event.event_type not in {
             HookEventType.BEFORE_TOOL,
             HookEventType.AFTER_TOOL,
@@ -628,6 +632,18 @@ class HookManager(HookManagerDispatchMixin):
             budgets=self._pending_transcript_rechecks,
             local_machine_id=self.get_machine_id(),
         )
+
+    def _discard_pending_transcript_recheck(self, event: HookEvent) -> None:
+        """Drop the resolved session's bounded recheck budget.
+
+        A session start opens a fresh recheck window for that platform session
+        (a resumed or revived row must not inherit an exhausted budget), and a
+        session end closes the hook stream that could still complete the
+        association, so the entry would otherwise outlive the session.
+        """
+        platform_session_id = event.metadata.get("_platform_session_id")
+        if isinstance(platform_session_id, str) and platform_session_id:
+            self._pending_transcript_rechecks.pop(platform_session_id, None)
 
     @staticmethod
     def _record_session_activity_pulse(event: HookEvent) -> None:
