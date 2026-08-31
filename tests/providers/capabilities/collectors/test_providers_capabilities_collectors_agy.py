@@ -9,7 +9,12 @@ from typing import TypedDict, cast
 import pytest
 
 from gobby.providers.capabilities.collectors import CapabilityCollector, validate_snapshot
-from gobby.providers.capabilities.collectors.agy import AgyCollector, AgySourceError
+from gobby.providers.capabilities.collectors.agy import (
+    _COMMAND,
+    AgyCollector,
+    AgySourceError,
+    _run_agy_models,
+)
 from gobby.providers.capabilities.models import SourceState
 from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator, _default_collectors
 from gobby.providers.capabilities.seed import apply_seed
@@ -326,13 +331,27 @@ async def test_failed_agy_refresh_retains_seeded_snapshot(postgres_db: HubDataba
 )
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_installed_agy_model_catalog_matches_record_1_1_20() -> None:
+async def test_collector_parses_the_installed_agy_catalog() -> None:
+    """The collector must parse whatever catalog the installed AGY CLI emits.
+
+    Which rows the catalog carries is the vendor's to change - records
+    ``1.1.20 models JSON`` and ``1.1.22 models JSON`` in ``command-captures.json``
+    show 1.1.22 dropping the three ``gemini-3.5-flash`` variants - so this asserts
+    the parse contract against the installed binary. Equality against a recorded
+    catalog is covered offline by ``test_collects_record_1_1_20_model_rows``.
+    """
     support = await ensure_agy_support()
-    expected = _capture("1.1.20 models JSON (global flag before subcommand)")
-    expected_rows = expected["stdout"]["command"]["data"]["models"]
+    exit_code, stdout, stderr = await _run_agy_models(_COMMAND)
+    assert exit_code == 0, f"`{' '.join(_COMMAND)}` exited {exit_code}: {stderr}"
 
-    snapshot = await AgyCollector(support_record=lambda: support).collect()
+    async def replay(command: tuple[str, ...]) -> tuple[int, str, str]:
+        assert command == _COMMAND
+        return (exit_code, stdout, stderr)
 
+    collector = AgyCollector(run_command=replay, support_record=lambda: support)
+    snapshot = validate_snapshot(await collector.collect(), collector.sources)
+
+    rows = cast(_CaptureStdout, json.loads(stdout))["command"]["data"]["models"]
     assert [(model.canonical_model, model.display_name) for model in snapshot.models] == [
-        (row["id"], row["label"]) for row in expected_rows
+        (row["id"], row["label"]) for row in rows
     ]
