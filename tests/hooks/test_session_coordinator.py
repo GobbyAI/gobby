@@ -485,7 +485,16 @@ class TestAgentRunCompletion:
         mock_agent_run_manager.record_termination_intent.return_value = running
         mock_agent_run_manager.replace_capture_slot.return_value = persisted
         mock_agent_run_manager.complete.return_value = SimpleNamespace(status="completed")
-        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+        # Since #20271 the coordinator resolves terminal_id -> session name through the
+        # terminal manager; without one it terminalizes directly and never captures.
+        from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
+
+        coordinator = SessionCoordinator(
+            agent_run_manager=mock_agent_run_manager,
+            terminal_manager=MemoryTerminalStore(
+                make_memory_terminal(terminal_id="agent-run", session_name="gobby-agent-run")
+            ),
+        )
         session = SimpleNamespace(
             id="session-id",
             agent_run_id="run-id",
@@ -1397,8 +1406,18 @@ class TestInlineTerminalizationAlreadyTerminal:
             terminal_id="gobby-test-inline",
         )
         storage = _AlreadyTerminalRunStorage(run)
+        # Since #20271 the terminal manager resolves terminal_id -> session name. Without
+        # one the coordinator takes its no-session_name branch and terminalizes directly,
+        # which is what this test exists to prove does not happen for a terminal run.
+        from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
+
         coordinator = SessionCoordinator(
             agent_run_manager=cast(LocalAgentRunManager, storage),
+            terminal_manager=MemoryTerminalStore(
+                make_memory_terminal(
+                    terminal_id="gobby-test-inline", session_name="gobby-test-inline"
+                )
+            ),
             logger=logging.getLogger("test.inline_terminalization"),
         )
 
