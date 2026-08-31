@@ -69,6 +69,11 @@ async def test_clear_delivery_survives_caller_cancellation() -> None:
         patch.object(_terminal_clear, "stage_clear_attempt", return_value=MagicMock()),
         patch.object(_terminal_clear, "clear_failed_attempt", restore_failed_attempt),
         patch.object(_terminal_clear, "_send_terminal_compaction_command", send_command),
+        patch.object(
+            _terminal_clear,
+            "_wait_for_clear_acknowledgment",
+            new=AsyncMock(return_value=("successor-1", "successor_binding")),
+        ),
     ):
         caller = asyncio.create_task(
             _terminal_clear.execute_clear_session(

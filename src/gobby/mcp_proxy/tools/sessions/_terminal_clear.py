@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -21,7 +22,11 @@ from gobby.mcp_proxy.tools.sessions._terminal_webchat import (
     _clear_live_web_chat_fallback,
     _find_live_web_chat_session,
 )
-from gobby.sessions.clear_continuation import clear_failed_attempt, stage_clear_attempt
+from gobby.sessions.clear_continuation import (
+    CLEAR_ATTEMPT_VARIABLE,
+    clear_failed_attempt,
+    stage_clear_attempt,
+)
 from gobby.sessions.compact_continuation import (
     CodexRolloutCursor,
     CodexRolloutObservationError,
@@ -35,7 +40,9 @@ from gobby.terminal_context import (
     parse_terminal_context_value,
     terminal_context_has_tmux_target,
 )
+from gobby.terminal_ownership import terminal_session_identity
 from gobby.utils.session_context import get_current_session_id
+from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
     from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
@@ -45,6 +52,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_CLEAR_ACK_TIMEOUT_SECONDS = 5.0
+_CLEAR_ACK_POLL_SECONDS = 0.05
+
 CLEAR_COMMAND = "/clear"
 
 __all__ = ["CLEAR_COMMAND", "execute_clear_session"]
@@ -52,6 +62,104 @@ __all__ = ["CLEAR_COMMAND", "execute_clear_session"]
 
 def _error(message: str, error_code: str) -> dict[str, Any]:
     return {"success": False, "error": message, "error_code": error_code}
+
+
+def _clear_pane_baseline(
+    session_manager: SessionManager,
+    predecessor: Any,
+) -> tuple[Any | None, frozenset[str]]:
+    """Capture the terminal identity and rows that predate clear dispatch."""
+    identity = terminal_session_identity(predecessor)
+    session_ids = {predecessor.id}
+    if identity is None:
+        return None, frozenset(session_ids)
+    try:
+        session_ids.update(
+            session.id for session in session_manager.find_by_terminal_identity(identity)
+        )
+    except Exception:
+        logger.warning(
+            "Failed capturing terminal-clear pane baseline for session %s",
+            predecessor.id,
+            exc_info=True,
+        )
+    return identity, frozenset(session_ids)
+
+
+def _find_new_provider_session(
+    session_manager: SessionManager,
+    predecessor: Any,
+    identity: Any | None,
+    baseline_ids: frozenset[str],
+) -> str | None:
+    """Return a fresh provider-native row observed on the clear target pane."""
+    if identity is None:
+        return None
+    try:
+        candidates = session_manager.find_by_terminal_identity(identity)
+    except Exception:
+        logger.warning(
+            "Failed observing terminal-clear pane for session %s",
+            predecessor.id,
+            exc_info=True,
+        )
+        return None
+    for candidate in reversed(candidates):
+        if candidate.id in baseline_ids or candidate.source != predecessor.source:
+            continue
+        external_changed = bool(
+            candidate.external_id and candidate.external_id != predecessor.external_id
+        )
+        rollout_changed = bool(
+            predecessor.source == "codex"
+            and candidate.transcript_path
+            and candidate.transcript_path != predecessor.transcript_path
+        )
+        if external_changed or rollout_changed:
+            return candidate.id
+    return None
+
+
+async def _wait_for_clear_acknowledgment(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    predecessor: Any,
+    *,
+    attempt_id: str,
+    identity: Any | None,
+    baseline_ids: frozenset[str],
+) -> tuple[str, str] | None:
+    """Wait for marker consumption or a fresh provider session on the pane."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _CLEAR_ACK_TIMEOUT_SECONDS
+    variables_manager = SessionVariableManager(db)
+    while True:
+        try:
+            variables = variables_manager.get_variables(predecessor.id)
+        except Exception:
+            logger.debug(
+                "Clear acknowledgment marker observation failed for session %s",
+                predecessor.id,
+                exc_info=True,
+            )
+            variables = {}
+        marker = variables.get(CLEAR_ATTEMPT_VARIABLE)
+        successor_id = marker.get("consumed_by") if isinstance(marker, dict) else None
+        marker_attempt_id = marker.get("attempt_id") if isinstance(marker, dict) else None
+        if isinstance(successor_id, str) and successor_id and marker_attempt_id == attempt_id:
+            return successor_id, "successor_binding"
+        observed_id = _find_new_provider_session(
+            session_manager,
+            predecessor,
+            identity,
+            baseline_ids,
+        )
+        if observed_id is not None:
+            return observed_id, "provider_session"
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return None
+        await asyncio.sleep(min(_CLEAR_ACK_POLL_SECONDS, remaining))
 
 
 async def execute_clear_session(
@@ -198,6 +306,7 @@ async def execute_clear_session(
             "codex_interrupt_observation_unavailable",
         )
 
+    pane_identity, pane_baseline_ids = _clear_pane_baseline(session_manager, session)
     attempt_id = uuid4().hex
     staged = False
     attempt_state: HandoffAttemptState | None = None
@@ -269,13 +378,44 @@ async def execute_clear_session(
                 failure.update(failure_detail)
             return failure
 
-        return {
+        acknowledgment = await _wait_for_clear_acknowledgment(
+            db,
+            session_manager,
+            session,
+            attempt_id=attempt_id,
+            identity=pane_identity,
+            baseline_ids=pane_baseline_ids,
+        )
+        if acknowledgment is None:
+            restored = restore_failed_attempt()
+            failure = _error(
+                "timed out waiting for clear-session acknowledgment",
+                "clear_acknowledgment_timeout",
+            )
+            failure.update(
+                {
+                    "session_id": resolved_session_id,
+                    "attempt_id": attempt_id,
+                    "command_sent": True,
+                    "attempt_restored": restored,
+                }
+            )
+            return failure
+
+        acknowledged_session_id, acknowledged_by = acknowledgment
+        success = {
             "success": True,
             "session_id": resolved_session_id,
             "attempt_id": attempt_id,
             "handoff_staged": True,
             "command_sent": True,
+            "acknowledged_by": acknowledged_by,
         }
+        if acknowledged_by == "successor_binding":
+            success["successor_id"] = acknowledged_session_id
+        else:
+            success["observed_session_id"] = acknowledged_session_id
+        return success
 
     try:
         result = await shielded_terminal_delivery(
