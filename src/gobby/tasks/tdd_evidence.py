@@ -19,6 +19,17 @@ from gobby.tasks.transcript_evidence import (
     TranscriptValidationRun,
 )
 
+_ASSERTION_DETAIL_RE = re.compile(
+    r"AssertionError|assertion failed|\bassert\b|panicked at",
+    re.IGNORECASE,
+)
+_PASS_STATUS_RE = re.compile(r"\b(?:PASSED|SKIPPED|XFAIL|XPASS)\b", re.IGNORECASE)
+_FAILURE_SECTION_BOUNDARY_RE = re.compile(
+    r"^(?:_{2,}\s+\S.*\s+_{2,}|(?:FAILED|ERROR|PASSED|SKIPPED)\s+\S.*|"
+    r".*::\S+\s+(?:PASSED|FAILED|ERROR|SKIPPED)\b)",
+    re.IGNORECASE,
+)
+
 
 def is_test_convention_path(path: str) -> bool:
     """A test module in any language or any file under a test directory."""
@@ -203,9 +214,33 @@ def _find_red_run(
             continue
         if not validation_run_names_test(run.command, run.output, test):
             continue
-        if is_assertion_failure(run.output):
+        if _has_named_assertion_failure(run.output, test):
             return run
     return None
+
+
+def _has_named_assertion_failure(output: str | None, test: AcceptanceTest) -> bool:
+    if not output:
+        return False
+    symbols = (test.symbol, test.symbol.replace(".", "::"))
+    symbol_patterns = tuple(
+        re.compile(rf"(?<![A-Za-z0-9_]){re.escape(symbol)}(?![A-Za-z0-9_])") for symbol in symbols
+    )
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        if not any(pattern.search(line) for pattern in symbol_patterns):
+            continue
+        if _PASS_STATUS_RE.search(line):
+            continue
+        end = min(len(lines), index + 120)
+        for boundary in range(index + 1, end):
+            if _FAILURE_SECTION_BOUNDARY_RE.match(lines[boundary]):
+                end = boundary
+                break
+        section = "\n".join(lines[index:end])
+        if _ASSERTION_DETAIL_RE.search(section) and is_assertion_failure(section):
+            return True
+    return False
 
 
 def _find_green_run(

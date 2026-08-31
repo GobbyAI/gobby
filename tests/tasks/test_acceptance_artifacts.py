@@ -595,6 +595,57 @@ def test_tdd_evidence_rejects_non_test_green_run() -> None:
     assert result.green_runs == ()
 
 
+def test_tdd_evidence_does_not_borrow_assertion_from_other_test() -> None:
+    started = datetime(2026, 8, 30, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    broad_output = """\
+tests/test_feature.py::test_feature PASSED
+tests/test_other.py::test_other FAILED
+E   AssertionError: assert 0 == 1
+"""
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit("tests/test_feature.py", started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            _run(test, started + timedelta(minutes=1), "failure", broad_output, 2),
+            _run(
+                test,
+                started + timedelta(minutes=3),
+                "success",
+                "tests/test_feature.py::test_feature PASSED",
+                4,
+            ),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is False
+    assert result.red_runs == ()
+
+    named_failure = TranscriptEvidence(
+        edits=evidence.edits,
+        validation_runs=(
+            _run(
+                test,
+                started + timedelta(minutes=1),
+                "failure",
+                "tests/test_feature.py::test_feature FAILED\nE assert 0 == 1",
+                2,
+            ),
+            evidence.validation_runs[1],
+        ),
+    )
+    assert evaluate_tdd_evidence((test,), named_failure).passed is True
+
+
 def test_tdd_evidence_merges_handoff_sessions_by_position() -> None:
     """Owner red and closer green form one cycle once merged order is global."""
     started = datetime(2026, 8, 21, tzinfo=UTC)
