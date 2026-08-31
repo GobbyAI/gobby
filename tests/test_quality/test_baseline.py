@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -111,3 +112,142 @@ def test_load_baseline_rejects_non_positive_occurrences(
         ValueError, match="audit baseline issue occurrences must be positive integers"
     ):
         load_baseline(baseline)
+
+
+def _scoped_report(
+    *, root: Path, paths: tuple[str, ...], issues: tuple[AuditIssue, ...]
+) -> AuditReport:
+    return AuditReport(
+        root=str(root),
+        paths=paths,
+        issues=issues,
+        files_scanned=len(issues),
+        tests_scanned=len(issues),
+    )
+
+
+def _issue(path: str, *, test_name: str = "test_one", message: str = "no assertion") -> AuditIssue:
+    return AuditIssue(
+        path=path,
+        test_name=test_name,
+        issue_code="NO_ASSERTION",
+        severity="high",
+        line=3,
+        message=message,
+    )
+
+
+def _fingerprints(baseline: Path) -> set[str]:
+    return {entry["fingerprint"] for entry in json.loads(baseline.read_text())["issues"]}
+
+
+def test_narrow_write_keeps_entries_for_files_it_never_scanned(tmp_path: Path) -> None:
+    """A scoped --write-baseline must not disarm the ratchet for the rest of the repo.
+
+    A single-file audit only carries that file's issues, so writing the report
+    verbatim deleted every other file's entries: auditing one path once took
+    the repository baseline from 1,238 issues to 1.
+    """
+    baseline = tmp_path / "baseline.json"
+    write_baseline(
+        _scoped_report(
+            root=tmp_path,
+            paths=("tests",),
+            issues=(_issue("tests/a/test_a.py"), _issue("tests/b/test_b.py")),
+        ),
+        baseline,
+    )
+
+    write_baseline(
+        _scoped_report(
+            root=tmp_path,
+            paths=("tests/a/test_a.py",),
+            issues=(_issue("tests/a/test_a.py", test_name="test_two"),),
+        ),
+        baseline,
+    )
+
+    assert _fingerprints(baseline) == {
+        "tests/b/test_b.py::test_one::NO_ASSERTION",
+        "tests/a/test_a.py::test_two::NO_ASSERTION",
+    }
+
+
+def test_narrow_write_drops_retired_entries_for_the_file_it_scanned(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.json"
+    write_baseline(
+        _scoped_report(
+            root=tmp_path,
+            paths=("tests",),
+            issues=(_issue("tests/a/test_a.py"), _issue("tests/b/test_b.py")),
+        ),
+        baseline,
+    )
+
+    write_baseline(
+        _scoped_report(root=tmp_path, paths=("tests/a/test_a.py",), issues=()),
+        baseline,
+    )
+
+    assert _fingerprints(baseline) == {"tests/b/test_b.py::test_one::NO_ASSERTION"}
+
+
+def test_directory_scope_covers_every_entry_beneath_it(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.json"
+    write_baseline(
+        _scoped_report(
+            root=tmp_path,
+            paths=("tests",),
+            issues=(_issue("tests/a/test_a.py"), _issue("tests/b/test_b.py")),
+        ),
+        baseline,
+    )
+
+    write_baseline(
+        _scoped_report(root=tmp_path, paths=("tests/a",), issues=()),
+        baseline,
+    )
+
+    assert _fingerprints(baseline) == {"tests/b/test_b.py::test_one::NO_ASSERTION"}
+
+
+def test_whole_root_audit_still_replaces_the_document(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.json"
+    write_baseline(
+        _scoped_report(
+            root=tmp_path,
+            paths=("tests",),
+            issues=(_issue("tests/a/test_a.py"), _issue("tests/b/test_b.py")),
+        ),
+        baseline,
+    )
+
+    write_baseline(
+        _scoped_report(root=tmp_path, paths=(".",), issues=(_issue("tests/c/test_c.py"),)),
+        baseline,
+    )
+
+    assert _fingerprints(baseline) == {"tests/c/test_c.py::test_one::NO_ASSERTION"}
+
+
+def test_absolute_audit_path_matches_relative_baseline_entries(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.json"
+    write_baseline(
+        _scoped_report(
+            root=tmp_path,
+            paths=("tests",),
+            issues=(_issue("tests/a/test_a.py"), _issue("tests/b/test_b.py")),
+        ),
+        baseline,
+    )
+
+    write_baseline(
+        _scoped_report(
+            root=tmp_path,
+            paths=(str(tmp_path / "tests" / "a" / "test_a.py"),),
+            issues=(),
+        ),
+        baseline,
+    )
+
+    assert _fingerprints(baseline) == {"tests/b/test_b.py::test_one::NO_ASSERTION"}

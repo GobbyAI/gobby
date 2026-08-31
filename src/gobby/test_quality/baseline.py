@@ -89,6 +89,54 @@ def load_baseline(path: str | Path) -> AuditBaseline:
     return AuditBaseline(path=str(baseline_path), issue_counts=dict(issue_counts))
 
 
+def _audited_scope(report: AuditReport) -> tuple[Path, ...]:
+    """The report's requested paths, expressed the way issue paths are."""
+    root = Path(report.root)
+    scope: list[Path] = []
+    for requested in report.paths:
+        resolved = Path(requested)
+        if not resolved.is_absolute():
+            resolved = root / resolved
+        try:
+            scope.append(Path(os.path.relpath(resolved.resolve(), root)))
+        except ValueError:
+            # A path on another drive cannot describe an entry under root.
+            continue
+    return tuple(scope)
+
+
+def _covers(scope: tuple[Path, ...], entry_path: str) -> bool:
+    candidate = Path(entry_path)
+    return any(
+        scoped == Path() or scoped == candidate or scoped in candidate.parents for scoped in scope
+    )
+
+
+def _retained_entries(baseline_path: Path, report: AuditReport) -> list[dict[str, Any]]:
+    """Baseline entries for files this audit never scanned.
+
+    ``report`` only carries issues from the audited paths, so writing it
+    verbatim would delete every other file's entries and silently disarm the
+    ratchet for the rest of the repository.
+    """
+    try:
+        data = json.loads(baseline_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if data.get("schema_version") != BASELINE_SCHEMA_VERSION:
+        return []
+    scope = _audited_scope(report)
+    retained: list[dict[str, Any]] = []
+    for item in data.get("issues", []):
+        if not isinstance(item, dict):
+            continue
+        entry_path = item.get("path")
+        if not isinstance(entry_path, str) or _covers(scope, entry_path):
+            continue
+        retained.append(item)
+    return retained
+
+
 def write_baseline(report: AuditReport, path: str | Path) -> None:
     baseline_path = Path(path)
     baseline_path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,9 +146,11 @@ def write_baseline(report: AuditReport, path: str | Path) -> None:
             entries[issue.fingerprint]["occurrences"] += 1
             continue
         entries[issue.fingerprint] = {**issue.to_dict(), "occurrences": 1}
+    merged = _retained_entries(baseline_path, report) + list(entries.values())
+    merged.sort(key=lambda entry: str(entry.get("fingerprint", "")))
     payload = {
         "schema_version": BASELINE_SCHEMA_VERSION,
-        "issues": list(entries.values()),
+        "issues": merged,
     }
     serialized = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     current_umask = os.umask(0)
