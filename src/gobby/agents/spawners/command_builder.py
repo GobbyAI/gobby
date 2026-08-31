@@ -76,6 +76,7 @@ def build_cli_command(
     env: dict[str, str] = {}
     reasoning_flag = provider_reasoning_flag(cli)
     sandbox_args_consumed = False
+    prompt_consumed = False
     if env_overrides:
         env.update(env_overrides)
 
@@ -191,6 +192,12 @@ def build_cli_command(
             command.extend(["--model", model])
         if reasoning_effort and reasoning_effort != "auto" and reasoning_flag == "claude-effort":
             command.extend(["--effort", reasoning_effort])
+        # AGY's TUI rejects positional prompts; only -p/--print,
+        # -i/--prompt-interactive, or stdin deliver one. Terminal spawns stay
+        # interactive after the initial prompt, so use --prompt-interactive.
+        if prompt and mode != "interactive":
+            command.extend(["--prompt-interactive", prompt])
+            prompt_consumed = True
 
     # Add sandbox args before prompt (prompt must be last)
     if sandbox_args and not sandbox_args_consumed:
@@ -200,7 +207,7 @@ def build_cli_command(
         command.append(resume_session_id)
 
     # Prompt only in agent/headless mode (interactive mode uses stdin)
-    if prompt and mode != "interactive":
+    if prompt and mode != "interactive" and not prompt_consumed:
         command.append(prompt)
 
     return command, env

@@ -241,8 +241,9 @@ class TestBuildCliCommand:
             "gemini-2.5-flash",
             "--effort",
             "high",
-            "--sandbox=false",
+            "--prompt-interactive",
             "implement the task",
+            "--sandbox=false",
         ]
         assert "--mode" not in cmd
         assert "-p" not in cmd
@@ -457,8 +458,9 @@ class TestBuildCliCommand:
                     "model-x",
                     "--effort",
                     "high",
-                    "--sandbox",
+                    "--prompt-interactive",
                     "continue",
+                    "--sandbox",
                 ],
             ),
         ],
