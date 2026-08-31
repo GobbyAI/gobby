@@ -733,6 +733,41 @@ class TestPendingTranscriptRecheckBudget:
         assert response.decision == "allow"
         assert manager._pending_transcript_rechecks == {}
 
+    def test_hook_seam_keeps_the_budget_across_ordinary_events(
+        self, manager_with_mocks: HookManager
+    ) -> None:
+        """Only a start or an end discards; ordinary events spend the budget.
+
+        The discard lives inside the SESSION_START branch of
+        ``_handle_after_daemon_ready`` and behind the SESSION_END guard in
+        ``_recheck_pending_transcript``. Moving it out would clear the budget
+        after every hook and make MAX_PENDING_TRANSCRIPT_RECHECKS unreachable
+        in the real dispatch path.
+        """
+        session = SimpleNamespace(
+            id="platform-1",
+            transcript_path=None,
+            source="agy",
+            external_id="conv-1",
+            machine_id=_RECHECK_MACHINE_ID,
+            status="active",
+        )
+        manager = _seam_manager(manager_with_mocks, session=session)
+
+        with (
+            patch("gobby.hooks.hook_manager.reconcile_session_activation"),
+            patch(_DERIVE_PATCH, return_value=None) as derive,
+        ):
+            for _ in range(MAX_PENDING_TRANSCRIPT_RECHECKS + 2):
+                manager._handle_after_daemon_ready(
+                    _recheck_event(HookEventType.STOP, platform_session_id=None)
+                )
+
+        assert derive.call_count == MAX_PENDING_TRANSCRIPT_RECHECKS
+        assert manager._pending_transcript_rechecks == {
+            "platform-1": MAX_PENDING_TRANSCRIPT_RECHECKS
+        }
+
     def test_budget_exhaustion_stops_derivation_until_the_session_ends(
         self, manager_with_mocks: HookManager
     ) -> None:
