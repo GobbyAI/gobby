@@ -497,7 +497,7 @@ fn resolve_override_root(project_override: &str) -> anyhow::Result<PathBuf> {
     if path.is_dir() {
         return Ok(path.canonicalize()?);
     }
-    Ok(daemon::lookup_project_by_name(project_override)?.root)
+    resolve_project_by_name(project_override)
 }
 
 pub fn resolve_project_identity(
@@ -664,39 +664,9 @@ pub fn warn_project_identity(identity: &ProjectIdentity, quiet: bool) {
     }
 }
 
-/// Resolve a `--project` name to a root registered on this machine.
-///
-/// Matches against the basename of `root_path` in the PostgreSQL hub.
-fn resolve_project_by_name(name: &str, database_url: &str) -> anyhow::Result<PathBuf> {
-    let mut conn = db::connect_readonly(database_url)?;
-    let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
-    let (slash_suffix, backslash_suffix) = project_name_suffixes(name);
-    let rows = conn.query(
-        "SELECT root_path FROM code_indexed_project_states
-         WHERE machine_id = $1
-           AND (root_path = $2
-             OR right(root_path, length($3)) = $3
-             OR right(root_path, length($4)) = $4)
-         ORDER BY last_indexed_at DESC NULLS LAST",
-        &[&machine_id, &name, &slash_suffix, &backslash_suffix],
-    )?;
-
-    for row in rows {
-        let root_path: String = row.try_get("root_path")?;
-        let path = PathBuf::from(&root_path);
-        if path.is_dir() {
-            return Ok(path);
-        }
-    }
-
-    anyhow::bail!(
-        "Project '{}' not found. Run `gcode projects` to see indexed projects.",
-        name
-    )
-}
-
-pub(super) fn project_name_suffixes(name: &str) -> (String, String) {
-    (format!("/{name}"), format!("\\{name}"))
+/// Resolve a `--project` name through the calling daemon's local checkout view.
+pub(super) fn resolve_project_by_name(name: &str) -> anyhow::Result<PathBuf> {
+    Ok(daemon::lookup_project_by_name(name)?.root)
 }
 
 /// Detect project root by walking up the directory tree.
