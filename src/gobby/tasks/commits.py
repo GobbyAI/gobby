@@ -637,10 +637,10 @@ def resolve_task_tagged_commits(
     task_filter = _resolve_task_filter(task_manager, task_id, project_id)
     if task_filter is None:
         return []
-    accepted_refs, _task = task_filter
+    accepted_refs, task = task_filter
     history = _task_tagged_git_history(
         task_manager,
-        task_id=task_id,
+        task_id=task.id,
         since=since,
         cwd=cwd,
         project_name=project_name,
@@ -688,7 +688,7 @@ def auto_link_commits(
         existing_commits = list(task.commits or [])
         history = _task_tagged_git_history(
             task_manager,
-            task_id=task_id,
+            task_id=task.id,
             since=since,
             cwd=cwd,
             project_name=project_name,
