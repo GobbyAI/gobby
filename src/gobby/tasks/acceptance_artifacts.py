@@ -16,6 +16,12 @@ _ARTIFACT_REF_RE = re.compile(
     r"\b(?P<kind>test|file):(?:\s*`(?P<quoted>[^`]+)`|\s+(?P<bare>[^\s,;]+))",
     re.IGNORECASE,
 )
+# An unbackticked token only counts as a reference when it is shaped like one.
+# Backticks are an unconditional statement of intent, so they skip this filter and a
+# malformed backticked reference still fails loudly.
+_BARE_REF_SHAPE_RE = re.compile(
+    r"::|/|\.(?:py|rs|ts|tsx|js|mjs|cjs|sh|md|ya?ml|json|toml|sql)$",
+)
 _FIELD_RE = re.compile(
     r"^\s*-\s*(?P<key>workflow_name|run_url|commit_sha|utc_timestamp):\s*(?P<value>.+?)\s*$",
     re.MULTILINE,
@@ -70,6 +76,8 @@ def extract_artifact_references(criteria: str, kind: str) -> tuple[str, ...]:
         if match.group("kind").casefold() != kind.casefold():
             continue
         value = (match.group("quoted") or match.group("bare") or "").strip().rstrip(".")
+        if match.group("quoted") is None and not _BARE_REF_SHAPE_RE.search(value):
+            continue
         if value and value not in references:
             references.append(value)
     return tuple(references)

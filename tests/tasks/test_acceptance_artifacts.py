@@ -35,6 +35,49 @@ def test_artifact_references_ignore_prose_file_line_token() -> None:
     assert artifacts_module.extract_artifact_references(criteria, "file") == ("docs/evidence.md",)
 
 
+def test_artifact_references_ignore_bare_prose_words() -> None:
+    criteria = (
+        "3) Dispatch test: an openapi-template server registers. "
+        "The file: config is regenerated. Test: select the newest row."
+    )
+
+    assert artifacts_module.extract_artifact_references(criteria, "test") == ()
+    assert artifacts_module.extract_artifact_references(criteria, "file") == ()
+
+
+def test_artifact_references_keep_pathlike_bare_tokens() -> None:
+    criteria = (
+        "Covered by test: tests/tasks/test_validation.py::test_gate. "
+        "Evidence file: docs/evidence.md, and file: .gobby/plans/x.yaml."
+    )
+
+    assert artifacts_module.extract_artifact_references(criteria, "test") == (
+        "tests/tasks/test_validation.py::test_gate",
+    )
+    assert artifacts_module.extract_artifact_references(criteria, "file") == (
+        "docs/evidence.md",
+        ".gobby/plans/x.yaml",
+    )
+
+
+def test_backticked_references_bypass_the_bare_token_shape_filter() -> None:
+    criteria = "Covered by test: `oops` and evidence file: `notes`."
+
+    assert artifacts_module.extract_artifact_references(criteria, "test") == ("oops",)
+    assert artifacts_module.extract_artifact_references(criteria, "file") == ("notes",)
+
+
+def test_backticked_test_reference_without_symbol_still_fails(tmp_path: Path) -> None:
+    result = evaluate_acceptance_artifacts(
+        criteria="Covered by test: `tests/tasks/test_validation.py`.",
+        repo_path=str(tmp_path),
+        commit_shas=[],
+    )
+
+    assert result.findings
+    assert "malformed test reference" in result.findings[0]
+
+
 def test_deliberate_missing_file_reference_keeps_actionable_diagnostic(tmp_path: Path) -> None:
     result = evaluate_acceptance_artifacts(
         criteria="Required evidence file: `docs/missing.md`.",
