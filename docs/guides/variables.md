@@ -386,7 +386,6 @@ These are the bundled default variables (from `gobby-default-variables.yaml`):
 | `brevity_last_violation` | `""` | string | Last response fragment that violated brevity rules |
 | `brevity_last_violation_rule` | `""` | string | Brevity rule matched by the last violation |
 | `_agent_context_injected` | `false` | bool | Whether agent identity was injected on first pre-turn event |
-| `_startup_context_injected` | `false` | bool | True after full SessionStart startup context has been sent |
 | `_agent_identity_reinject` | `false` | bool | Whether persona identity should be reinjected |
 | `edit_write_pending` | `false` | bool | Whether a write-like tool call is pending |
 | `edit_write_stop_blocks` | `0` | int | Circuit breaker for write-pending stop gate |
