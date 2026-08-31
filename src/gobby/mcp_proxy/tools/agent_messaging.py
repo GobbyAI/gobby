@@ -1,7 +1,7 @@
 """Inter-agent messaging and command tools for the gobby-agents MCP server.
 
 Provides P2P messaging and command coordination between sessions:
-- send_message: target-based messaging with same-project validation for sessions
+- send_message: target-based messaging; session targets accept UUID, #N, or <project>-S#N
 - get_inter_session_message: Retrieve one complete message for a participant
 - get_inter_session_messages: Read-only query of message history
 """
@@ -105,12 +105,13 @@ def add_messaging_tools(
         name="send_message",
         description=(
             "Send a message to an explicit target selector: session, agent, "
-            "project, build, or all. Session targets validate same-project "
-            "delivery. Messages are automatically injected "
+            "project, build, or all. Session targets accept a full session UUID, "
+            "#N (caller project), or <project>-S#N (e.g. gobby-S#11265) for a "
+            "session in another project. Messages are automatically injected "
             "into the recipient's context on their next tool call via hook "
             "rules — no polling or mailbox fetch needed. Also auto-writes "
             "to agent_runs.result when sending to parent. Pass target_id for "
-            "target='session' (session ref), target='agent' (agent run id), "
+            "target='session' (session ref, forms above), target='agent' (agent run id), "
             "target='project' (project id/name), and target='build' (build run id, "
             "build input ref, or root task ref). target='project' fans out to active agent runs. "
             "target='all' reaches every deliverable session in the project. "

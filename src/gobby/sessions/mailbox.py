@@ -266,10 +266,13 @@ class MailboxService:
             raise ValueError(f"target_id is required when target='{normalized_target}'")
 
         if normalized_target == "session":
+            # Direct session targets are addressed unambiguously (full UUID or
+            # '<project>-S#N'), so delivery crosses project boundaries.
             recipient_id = self._validate_direct_recipient(
                 from_session_id=from_session_id,
                 to_session_id=clean_target_id,
                 project_id=project_id,
+                allow_cross_project=True,
             )
             return MailboxTargetResolution(
                 target=normalized_target,

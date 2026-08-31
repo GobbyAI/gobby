@@ -56,7 +56,8 @@ call_tool("gobby-tasks", "create_task", {"title": "Fix bug", "category": "code"}
 `call_tool` session_id is wrapper context: it accepts #N, N, UUID, or prefix, propagates to the
 daemon for context/workflow resolution, and is auto-supplied to target arguments when the target
 schema requires it. Use arguments.session_id only to target a DIFFERENT session; local #N refs
-resolve in the caller project, cross-project targets need UUIDs plus project_id. Prefer
+resolve in the caller project; address a session in another project as `<project>-S#N`
+(e.g. `gobby-S#11265`, project name or UUID) or by its full session UUID. Prefer
 `arguments` over its `args` alias (both accept dict or JSON string).
 </call_context>
 

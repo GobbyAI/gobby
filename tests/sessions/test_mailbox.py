@@ -491,6 +491,51 @@ class TestMailboxDirectSend:
             )
 
     @pytest.mark.asyncio
+    async def test_session_target_delivers_across_projects(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        other_project = LocalProjectManager(temp_db).create(
+            name="game-goblins", repo_path="/tmp/game-goblins"
+        )
+        sender = _register_session(session_manager, other_project.id, "goblins-sender")
+        recipient = _register_session(session_manager, sample_project["id"], "recipient")
+
+        result = await _mailbox(temp_db, session_manager).send(
+            from_session_id=sender.id,
+            target="session",
+            target_id=recipient.id,
+            content="Cross-project hello",
+        )
+
+        assert result.success
+        assert result.recipient_session_ids == [recipient.id]
+
+    @pytest.mark.asyncio
+    async def test_session_target_rejects_explicit_project_scope_mismatch(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        other_project = LocalProjectManager(temp_db).create(
+            name="game-goblins", repo_path="/tmp/game-goblins"
+        )
+        sender = _register_session(session_manager, other_project.id, "goblins-sender")
+        recipient = _register_session(session_manager, sample_project["id"], "recipient")
+
+        with pytest.raises(ValueError, match="outside the target project"):
+            await _mailbox(temp_db, session_manager).send(
+                from_session_id=sender.id,
+                target="session",
+                target_id=recipient.id,
+                content="Wrong scope",
+                project_id=other_project.id,
+            )
+
+    @pytest.mark.asyncio
     async def test_wake_unavailable_preserves_delivery_shape(
         self,
         temp_db: HubDatabase,

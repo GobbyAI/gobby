@@ -1,14 +1,38 @@
 """Session reference resolution.
 
-Resolves session references (#N, N, UUID, prefix) to UUIDs.
+Resolves session references (#N, <project>-S#N, N, UUID, prefix) to UUIDs.
 Extracted from SessionManager.resolve_session_reference()
 as part of the Strangler Fig decomposition.
 """
 
 from __future__ import annotations
 
+import re
+
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.uuid_validation import parse_uuid_reference
+
+# '<project>-S#<seq>': project name or UUID, then that project's seq_num.
+_PROJECT_QUALIFIED_SEQ_NUM_RE = re.compile(r"^(?P<project>.+)-S#(?P<seq>\d+)$")
+
+
+def is_project_qualified_session_ref(value: str | None) -> bool:
+    """Return whether a value uses the '<project>-S#N' cross-project session form."""
+    return isinstance(value, str) and _PROJECT_QUALIFIED_SEQ_NUM_RE.match(value) is not None
+
+
+def _resolve_project_id(db: HubDatabase, project_ref: str) -> str | None:
+    """Resolve an active project by UUID, then by name."""
+    row = None
+    if parse_uuid_reference(project_ref) is not None:
+        row = db.fetchone(
+            "SELECT id FROM projects WHERE id = %s AND deleted_at IS NULL", (project_ref,)
+        )
+    if row is None:
+        row = db.fetchone(
+            "SELECT id FROM projects WHERE name = %s AND deleted_at IS NULL", (project_ref,)
+        )
+    return str(row["id"]) if row else None
 
 
 def _escape_like_prefix(prefix: str) -> str:
@@ -27,6 +51,8 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
 
     Supports:
     - #N: Project-scoped Sequence Number (e.g., #1) - requires project_id
+    - <project>-S#N: Sequence Number inside a named project (e.g., gobby-S#11265);
+      the project part is an active project name or UUID and ignores project_id
     - N: Integer string treated as #N (e.g., "1")
     - UUID: Full UUID — matches on sessions.id, then sessions.external_id
     - Prefix: UUID prefix — matches on sessions.id, then sessions.external_id
@@ -58,6 +84,21 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
     if not ref:
         raise ValueError("Empty session reference")
 
+    qualified = _PROJECT_QUALIFIED_SEQ_NUM_RE.match(ref)
+    if qualified is not None:
+        project_ref = qualified.group("project")
+        seq_num = int(qualified.group("seq"))
+        qualified_project_id = _resolve_project_id(db, project_ref)
+        if qualified_project_id is None:
+            raise ValueError(f"Cannot resolve session '{ref}': project '{project_ref}' not found")
+        row = db.fetchone(
+            "SELECT id FROM sessions WHERE project_id = %s AND seq_num = %s",
+            (qualified_project_id, seq_num),
+        )
+        if not row:
+            raise ValueError(f"Session #{seq_num} not found in project '{project_ref}'")
+        return str(row["id"])
+
     # #N is always a seq_num lookup. Plain numeric refs are treated as seq_num
     # only when they do not uniquely identify a session UUID prefix.
     seq_num_ref = ref[1:] if ref.startswith("#") else ref
@@ -86,7 +127,11 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
             (project_id, seq_num),
         )
         if not row:
-            raise ValueError(f"Session #{seq_num} not found in project")
+            raise ValueError(
+                f"Session #{seq_num} not found in project. #N refs are project-scoped; "
+                "address a session in another project as '<project>-S#N' "
+                "(project name or UUID) or by its full session UUID."
+            )
         return str(row["id"])
 
     # Full UUID check
