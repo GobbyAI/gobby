@@ -311,7 +311,9 @@ def test_register_and_rebind_reject_machine_overlays(
 
 
 def test_rebind_insert_clears_mismatched_local_project_state(
-    temp_db: HubDatabase, sample_project: dict[str, Any]
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An absent checkout invalidates stale local state in its insert transaction."""
     machine_id = str(uuid.uuid4())
@@ -355,6 +357,126 @@ def test_rebind_insert_clears_mismatched_local_project_state(
         "SELECT id FROM code_indexed_files WHERE id = %s",
         (file_id,),
     ) == {"id": file_id}
+
+    no_state_machine = str(uuid.uuid4())
+    _insert_machine(temp_db, no_state_machine)
+    no_state = manager.rebind(no_state_machine, project_id, "/no/state")
+    assert no_state.root_path == "/no/state"
+    assert (
+        temp_db.fetchone(
+            """
+        SELECT root_path FROM code_indexed_project_states
+        WHERE machine_id = %s AND project_id = %s
+        """,
+            (no_state_machine, project_id),
+        )
+        is None
+    )
+
+    matching_machine = str(uuid.uuid4())
+    _insert_machine(temp_db, matching_machine)
+    _seed_index_state(temp_db, matching_machine, project_id, "/matching/root")
+    matching = manager.rebind(matching_machine, project_id, "/matching/root")
+    assert matching.root_path == "/matching/root"
+    assert temp_db.fetchone(
+        """
+        SELECT root_path FROM code_indexed_project_states
+        WHERE machine_id = %s AND project_id = %s
+        """,
+        (matching_machine, project_id),
+    ) == {"root_path": "/matching/root"}
+
+    same_root_machine = str(uuid.uuid4())
+    _insert_machine(temp_db, same_root_machine)
+    inserted = manager.rebind(same_root_machine, project_id, "/same/root")
+    _seed_index_state(temp_db, same_root_machine, project_id, "/same/root")
+    same = manager.rebind(same_root_machine, project_id, "/same/root")
+    assert same.updated_at == inserted.updated_at
+    assert temp_db.fetchone(
+        """
+        SELECT root_path FROM code_indexed_project_states
+        WHERE machine_id = %s AND project_id = %s
+        """,
+        (same_root_machine, project_id),
+    ) == {"root_path": "/same/root"}
+
+    moved_machine = str(uuid.uuid4())
+    _insert_machine(temp_db, moved_machine)
+    manager.register(moved_machine, project_id, "/move/old")
+    _seed_index_state(temp_db, moved_machine, project_id, "/move/old")
+    moved = manager.rebind(moved_machine, project_id, "/move/new")
+    assert moved.root_path == "/move/new"
+    assert (
+        temp_db.fetchone(
+            """
+        SELECT root_path FROM code_indexed_project_states
+        WHERE machine_id = %s AND project_id = %s
+        """,
+            (moved_machine, project_id),
+        )
+        is None
+    )
+
+    rollback_machine = str(uuid.uuid4())
+    _insert_machine(temp_db, rollback_machine)
+    manager.register(rollback_machine, project_id, "/rollback/old")
+    _seed_index_state(temp_db, rollback_machine, project_id, "/rollback/old")
+    clear_index_state = manager._clear_index_state
+
+    def _abort_after_clear(conn: Any, scoped_machine_id: str, scoped_project_id: str) -> None:
+        clear_index_state(conn, scoped_machine_id, scoped_project_id)
+        raise RuntimeError("abort rebind")
+
+    monkeypatch.setattr(manager, "_clear_index_state", _abort_after_clear)
+    with pytest.raises(RuntimeError, match="abort rebind"):
+        manager.rebind(rollback_machine, project_id, "/rollback/new")
+    rolled_back = manager.get(rollback_machine, project_id)
+    assert rolled_back is not None
+    assert rolled_back.root_path == "/rollback/old"
+    assert temp_db.fetchone(
+        """
+        SELECT root_path FROM code_indexed_project_states
+        WHERE machine_id = %s AND project_id = %s
+        """,
+        (rollback_machine, project_id),
+    ) == {"root_path": "/rollback/old"}
+    monkeypatch.setattr(manager, "_clear_index_state", clear_index_state)
+    assert manager.rebind(rollback_machine, project_id, "/rollback/new").root_path == (
+        "/rollback/new"
+    )
+
+    concurrent_machine = str(uuid.uuid4())
+    _insert_machine(temp_db, concurrent_machine)
+    second = PostgresHubDatabase(temp_db.conninfo)
+    barrier = threading.Barrier(2)
+    roots = ("/concurrent/a", "/concurrent/b")
+    results: list[str] = []
+    errors: list[Exception] = []
+
+    def _concurrent_rebind(db: HubDatabase, root: str) -> None:
+        try:
+            barrier.wait(timeout=10)
+            checkout = LocalProjectCheckoutManager(db).rebind(concurrent_machine, project_id, root)
+            results.append(checkout.root_path)
+        except Exception as exc:
+            errors.append(exc)
+
+    try:
+        threads = [
+            threading.Thread(target=_concurrent_rebind, args=(temp_db, roots[0])),
+            threading.Thread(target=_concurrent_rebind, args=(second, roots[1])),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=20)
+        assert errors == []
+        assert set(results) == set(roots)
+        listed = manager.list_for_machine(concurrent_machine)
+        assert len(listed) == 1
+        assert listed[0].root_path in roots
+    finally:
+        second.close()
 
 
 def test_rebind_insert_preserves_matching_local_index_state(

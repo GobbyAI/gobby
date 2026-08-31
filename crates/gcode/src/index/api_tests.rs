@@ -644,7 +644,7 @@ fn project_seed_modes_require_primary_checkout_and_allow_overlay() {
         project_id: project_id.clone(),
     };
     let _overlay_cleanup = ProjectCleanup {
-        database_url,
+        database_url: database_url.clone(),
         project_id: overlay_id.clone(),
     };
     let machine_id = gobby_core::machine::read_local_machine_id().expect("machine id");
@@ -706,6 +706,88 @@ fn project_seed_modes_require_primary_checkout_and_allow_overlay() {
         api::IndexWriteMode::Primary,
     )
     .expect_err("stale primary stats");
+
+    let mut rebind_conn =
+        gobby_core::postgres::connect_readwrite(&database_url).expect("connect rebind");
+    rebind_conn
+        .batch_execute("SET statement_timeout = '250ms'")
+        .expect("set bounded rebind wait");
+    {
+        let mut seed_tx = conn.transaction().expect("begin primary seed writer");
+        api::upsert_project_seed(
+            &mut seed_tx,
+            &machine_id,
+            &project_id,
+            root,
+            api::IndexWriteMode::Primary,
+        )
+        .expect("seed writer holds checkout lock");
+        let blocked = rebind_conn
+            .execute(
+                "UPDATE project_checkouts SET root_path = $3
+                 WHERE machine_id = $1 AND project_id = $2",
+                &[
+                    &machine_uuid,
+                    &project_uuid,
+                    &"/tmp/primary-checkout-rebound",
+                ],
+            )
+            .expect_err("rebind must wait for seed writer");
+        assert_eq!(blocked.code().map(|code| code.code()), Some("57014"));
+        seed_tx.commit().expect("commit primary seed writer");
+    }
+    {
+        let mut stats_tx = conn.transaction().expect("begin primary stats writer");
+        api::upsert_project_stats(
+            &mut stats_tx,
+            &machine_id,
+            &matching_stats,
+            api::IndexWriteMode::Primary,
+        )
+        .expect("stats writer holds checkout lock");
+        let blocked = rebind_conn
+            .execute(
+                "UPDATE project_checkouts SET root_path = $3
+                 WHERE machine_id = $1 AND project_id = $2",
+                &[
+                    &machine_uuid,
+                    &project_uuid,
+                    &"/tmp/primary-checkout-rebound",
+                ],
+            )
+            .expect_err("rebind must wait for stats writer");
+        assert_eq!(blocked.code().map(|code| code.code()), Some("57014"));
+        stats_tx.commit().expect("commit primary stats writer");
+    }
+    rebind_conn
+        .batch_execute("RESET statement_timeout")
+        .expect("reset bounded rebind wait");
+    rebind_conn
+        .execute(
+            "UPDATE project_checkouts SET root_path = $3
+             WHERE machine_id = $1 AND project_id = $2",
+            &[
+                &machine_uuid,
+                &project_uuid,
+                &"/tmp/primary-checkout-rebound",
+            ],
+        )
+        .expect("rebind after project writers commit");
+    api::upsert_project_seed(
+        &mut conn,
+        &machine_id,
+        &project_id,
+        root,
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("old-root seed cannot write after rebind");
+    api::upsert_project_stats(
+        &mut conn,
+        &machine_id,
+        &matching_stats,
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("old-root stats cannot write after rebind");
     api::upsert_project_seed(
         &mut conn,
         &machine_id,
@@ -729,7 +811,7 @@ fn file_state_modes_require_primary_checkout_and_allow_overlay() {
         project_id: project_id.clone(),
     };
     let _overlay_cleanup = ProjectCleanup {
-        database_url,
+        database_url: database_url.clone(),
         project_id: overlay_id.clone(),
     };
     let machine_id = gobby_core::machine::read_local_machine_id().expect("machine id");
@@ -822,6 +904,103 @@ fn file_state_modes_require_primary_checkout_and_allow_overlay() {
         api::IndexWriteMode::Primary,
     )
     .expect_err("stale primary adoption");
+
+    let mut rebind_conn =
+        gobby_core::postgres::connect_readwrite(&database_url).expect("connect file rebind");
+    rebind_conn
+        .batch_execute("SET statement_timeout = '250ms'")
+        .expect("set bounded file rebind wait");
+    for writer in ["upsert", "adopt", "delete"] {
+        let mut writer_tx = conn.transaction().expect("begin primary file writer");
+        match writer {
+            "upsert" => api::upsert_file_state(
+                &mut writer_tx,
+                &machine_id,
+                &file,
+                root,
+                api::IndexWriteMode::Primary,
+            ),
+            "adopt" => api::adopt_file_state(
+                &mut writer_tx,
+                &machine_id,
+                &project_id,
+                &file.file_path,
+                &file.content_hash,
+                root,
+                api::IndexWriteMode::Primary,
+            )
+            .map(|_| ()),
+            "delete" => api::delete_file_state(
+                &mut writer_tx,
+                &machine_id,
+                &project_id,
+                &file.file_path,
+                root,
+                api::IndexWriteMode::Primary,
+            )
+            .map(|_| ()),
+            _ => unreachable!("closed writer table"),
+        }
+        .expect("matching file writer holds checkout lock");
+        let blocked = rebind_conn
+            .execute(
+                "UPDATE project_checkouts SET root_path = $3
+                 WHERE machine_id = $1 AND project_id = $2",
+                &[
+                    &machine_uuid,
+                    &project_uuid,
+                    &"/tmp/primary-file-checkout-rebound",
+                ],
+            )
+            .expect_err("rebind must wait for file writer");
+        assert_eq!(
+            blocked.code().map(|code| code.code()),
+            Some("57014"),
+            "{writer} must hold the checkout lock"
+        );
+        writer_tx.commit().expect("commit primary file writer");
+    }
+    rebind_conn
+        .batch_execute("RESET statement_timeout")
+        .expect("reset bounded file rebind wait");
+    rebind_conn
+        .execute(
+            "UPDATE project_checkouts SET root_path = $3
+             WHERE machine_id = $1 AND project_id = $2",
+            &[
+                &machine_uuid,
+                &project_uuid,
+                &"/tmp/primary-file-checkout-rebound",
+            ],
+        )
+        .expect("rebind after file writers commit");
+    api::upsert_file_state(
+        &mut conn,
+        &machine_id,
+        &file,
+        root,
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("old-root file upsert cannot write after rebind");
+    api::adopt_file_state(
+        &mut conn,
+        &machine_id,
+        &project_id,
+        &file.file_path,
+        &file.content_hash,
+        root,
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("old-root adoption cannot write after rebind");
+    api::delete_file_state(
+        &mut conn,
+        &machine_id,
+        &project_id,
+        &file.file_path,
+        root,
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("old-root delete cannot write after rebind");
 
     let overlay_file = indexed_file(&overlay_id, "src/overlay.rs", "hash-overlay", 1, 10);
     api::upsert_project_seed(
