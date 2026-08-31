@@ -1,0 +1,128 @@
+header:
+  plan_id: clear-successor-pointer-fixes
+  plan_hash: afb569f0f5d1b38b4a6e368a91be1928af583f9e9c6576a5a2dfd820519aa9a7
+  root_task_ref: '21364'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-08-31T01:51:25Z'
+  task_tree_source: db
+  task_tree_source_hash: 9514603414e3fb425bc516bc935e37216f31c402aa4eb191c617e0f5b314dfb2
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: e1c05540aed966132567853979e0fca03e6e47ec5fb891f7ce6f7a9016a90873
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21368'
+    validation_criteria_snippet: '1.1.1: Both clear-commit transactions retarget `agent_runs.parent_session_id`
+      from predecessor to successor atomically with the marker take. symbol: `take_clea...'
+    matched_artifact_ref: take_clear_handoff_marker
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 28820f37818c11ee69454f47d7b1be17502c1bf5de558d9ae6bc1c56492f0f27
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21368'
+    validation_criteria_snippet: '1.1.1: Both clear-commit transactions retarget `agent_runs.parent_session_id`
+      from predecessor to successor atomically with the marker take. symbol: `take_clea...'
+    matched_artifact_ref: MailboxService._validate_direct_recipient
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 18ad5d9ae6b8f982c4837ffb13d40b72b47e4cf7e7bbd86c7d75bd4e5e25bccf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21368'
+    validation_criteria_snippet: '1.1.1: Both clear-commit transactions retarget `agent_runs.parent_session_id`
+      from predecessor to successor atomically with the marker take. symbol: `take_clea...'
+    matched_artifact_ref: resolve_clear_successor
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 4665c8804da9695d48f9b24b54f10b56da298763b147d78b634c85cf9c989f62
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21368'
+    validation_criteria_snippet: '1.1.1: Both clear-commit transactions retarget `agent_runs.parent_session_id`
+      from predecessor to successor atomically with the marker take. symbol: `take_clea...'
+    matched_artifact_ref: tests/sessions/test_mailbox.py
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 4ae9fd13953e89a3dd45a1244d54f4c132dc4480bc3f37df9f8bcf7e33bd08fa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21369'
+    validation_criteria_snippet: '2.1.1: A successful web-chat clear pushes one `session_info`
+      frame carrying the successor `db_session_id` and `session_ref`; frame failure
+      never fails the comm...'
+    matched_artifact_ref: src/gobby/servers/websocket/chat/_clear_commit.py
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 7c2cf4bb2bf4f7bf6eb439272a84d1545b460661bdb9379dcb49542b9c18bf79
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21369'
+    validation_criteria_snippet: '2.1.1: A successful web-chat clear pushes one `session_info`
+      frame carrying the successor `db_session_id` and `session_ref`; frame failure
+      never fails the comm...'
+    matched_artifact_ref: ChatSessionMixin._create_chat_session_inner
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 6eeac477b6c375cec5a7cd8bc48f7d7ed527ce43685e2326bb46835ad92d942c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21369'
+    validation_criteria_snippet: '2.1.1: A successful web-chat clear pushes one `session_info`
+      frame carrying the successor `db_session_id` and `session_ref`; frame failure
+      never fails the comm...'
+    matched_artifact_ref: tests/servers/websocket/chat/test_clear_session.py
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: 0cfd3ffdf64b7096f7aa6bdcbb086f861f1130b80c6d36c730a72ec9bf2558c6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21370'
+    validation_criteria_snippet: '3.1.1: Clear success is reported only on positive
+      acknowledgment (marker consumed or new provider session); tmux dispatch alone
+      never reports success. symbol: ...'
+    matched_artifact_ref: execute_clear_session
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: bff3a62fcba8a66e62d27d351ba6172adca779cb030725f4f2fa116fd1f4d7a9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21370'
+    validation_criteria_snippet: '3.1.1: Clear success is reported only on positive
+      acknowledgment (marker consumed or new provider session); tmux dispatch alone
+      never reports success. symbol: ...'
+    matched_artifact_ref: execute_clear_session
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: 639ec54474986faa64add069fbf678c1f5d9061562b9ce2df036464441848b7c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21370'
+    validation_criteria_snippet: '3.1.1: Clear success is reported only on positive
+      acknowledgment (marker consumed or new provider session); tmux dispatch alone
+      never reports success. symbol: ...'
+    matched_artifact_ref: rebind_resumed_session_start
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.4
+  plan_node_hash: 823b2a0bc79df17e716ba58000a4341a8c1e30fa473eecd76d038d5390b49a85
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21370'
+    validation_criteria_snippet: '3.1.1: Clear success is reported only on positive
+      acknowledgment (marker consumed or new provider session); tmux dispatch alone
+      never reports success. symbol: ...'
+    matched_artifact_ref: tests/sessions/test_clear_acknowledgment.py
+  deferral_target: null
