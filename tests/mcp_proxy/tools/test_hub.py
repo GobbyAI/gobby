@@ -182,14 +182,14 @@ class TestListAllProjects:
         INSERT INTO projects (id, name, github_url, created_at, updated_at)
         VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        (REAL_PROJECT, "my-app", None),
+            (REAL_PROJECT, "my-app", None),
         )
         db.execute(
             """
         INSERT INTO projects (id, name, github_url, created_at, updated_at)
         VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        ("99999999-9999-4999-8999-9999999999b1", "_orphaned_test", None),
+            ("99999999-9999-4999-8999-9999999999b1", "_orphaned_test", None),
         )
 
         registry = create_hub_registry(db=db)

@@ -14,8 +14,8 @@ from psycopg.rows import dict_row
 
 import gobby.storage.project_checkout_cutover as cutover
 from gobby.storage.hub.postgres import PostgresHubDatabase
-from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.project_checkout_cutover import preflight_project_checkout_cutover
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.schema_contract import apply_schema
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
@@ -352,15 +352,18 @@ def test_apply_registers_exact_checkout_then_replaces_legacy_identity(
             "project_id": project_id,
             "root_path": str(root),
         }
-        assert connection.execute(
-            """
+        assert (
+            connection.execute(
+                """
             SELECT 1
             FROM information_schema.columns
             WHERE table_schema = current_schema()
               AND table_name = 'projects'
               AND column_name = 'repo_path'
             """
-        ).fetchone() is None
+            ).fetchone()
+            is None
+        )
         assert connection.execute(
             "SELECT checksum FROM schema_migrations WHERE version = 375"
         ).fetchone() == {"checksum": target_checksum}
@@ -441,7 +444,9 @@ def test_preflight_records_foreign_machine_refusal_before_filesystem_access(
 
     assert preflight.blocked
     assert preflight.projects[0].resolution_status == "foreign_machine"
-    assert "belongs to machine" in preflight.projects[0].resolution_reason
+    reason = preflight.projects[0].resolution_reason
+    assert reason is not None
+    assert "belongs to machine" in reason
 
 
 def test_two_authoritative_checkouts_require_no_insert_and_preserve_index_state(
@@ -474,9 +479,7 @@ def test_two_authoritative_checkouts_require_no_insert_and_preserve_index_state(
             )
     finally:
         db.close()
-    with psycopg.connect(
-        predecessor_database, autocommit=True, row_factory=dict_row
-    ) as connection:
+    with psycopg.connect(predecessor_database, autocommit=True, row_factory=dict_row) as connection:
         _install_predecessor_resolver(connection)
         _admit_batch(connection, epoch_id=epoch_id, batch_id=batch_id)
 
@@ -491,9 +494,7 @@ def test_two_authoritative_checkouts_require_no_insert_and_preserve_index_state(
         preflight=preflight,
         target_checksum="c" * 64,
     )
-    with psycopg.connect(
-        predecessor_database, autocommit=True, row_factory=dict_row
-    ) as connection:
+    with psycopg.connect(predecessor_database, autocommit=True, row_factory=dict_row) as connection:
         assert connection.execute(
             """
             SELECT machine_id, root_path, total_files, total_symbols
@@ -508,9 +509,7 @@ def test_two_authoritative_checkouts_require_no_insert_and_preserve_index_state(
                 "total_files": ordinal,
                 "total_symbols": ordinal * 10,
             }
-            for ordinal, (machine_id, root) in enumerate(
-                zip(machine_ids, roots, strict=True), 1
-            )
+            for ordinal, (machine_id, root) in enumerate(zip(machine_ids, roots, strict=True), 1)
         ]
 
 
@@ -586,9 +585,7 @@ def test_abort_rebind_then_rerun_uses_authoritative_checkout(
                 "authoritative checkout required local authorization"
             ),
         )
-    with psycopg.connect(
-        predecessor_database, autocommit=True, row_factory=dict_row
-    ) as connection:
+    with psycopg.connect(predecessor_database, autocommit=True, row_factory=dict_row) as connection:
         _install_predecessor_resolver(connection)
         _admit_batch(connection, epoch_id=epoch_id, batch_id=batch_id)
 
@@ -632,9 +629,7 @@ def test_resolver_recreation_failure_rolls_back_every_cutover_write(
     finally:
         db.close()
     patch_local_machine_id(monkeypatch, str(machine_id))
-    with psycopg.connect(
-        predecessor_database, autocommit=True, row_factory=dict_row
-    ) as connection:
+    with psycopg.connect(predecessor_database, autocommit=True, row_factory=dict_row) as connection:
         _install_predecessor_resolver(connection)
         _admit_batch(connection, epoch_id=epoch_id, batch_id=batch_id)
     preflight = cutover.preflight_project_checkout_cutover(predecessor_database)
@@ -653,9 +648,7 @@ def test_resolver_recreation_failure_rolls_back_every_cutover_write(
             target_checksum="e" * 64,
         )
 
-    with psycopg.connect(
-        predecessor_database, autocommit=True, row_factory=dict_row
-    ) as connection:
+    with psycopg.connect(predecessor_database, autocommit=True, row_factory=dict_row) as connection:
         assert connection.execute(
             """
             SELECT 1 FROM information_schema.columns
@@ -663,10 +656,13 @@ def test_resolver_recreation_failure_rolls_back_every_cutover_write(
               AND table_name = 'projects' AND column_name = 'repo_path'
             """
         ).fetchone() == {"?column?": 1}
-        assert connection.execute(
-            "SELECT 1 FROM project_checkouts WHERE project_id = %s",
-            (project_id,),
-        ).fetchone() is None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM project_checkouts WHERE project_id = %s",
+                (project_id,),
+            ).fetchone()
+            is None
+        )
         assert connection.execute(
             "SELECT checksum FROM schema_migrations WHERE version = 375"
         ).fetchone() == {"checksum": cutover.PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM}
@@ -707,9 +703,7 @@ def test_soft_deleted_project_and_sentinel_have_explicit_preflight_outcomes(
     assert by_id[personal_id].resolution_status == "excluded"
     assert by_id[personal_id].exclusion_reason == "checkout_free_sentinel"
     assert preflight.expected_inserts == ()
-    with psycopg.connect(
-        predecessor_database, autocommit=True, row_factory=dict_row
-    ) as connection:
+    with psycopg.connect(predecessor_database, autocommit=True, row_factory=dict_row) as connection:
         _install_predecessor_resolver(connection)
         _admit_batch(connection, epoch_id=epoch_id, batch_id=batch_id)
 
@@ -720,23 +714,24 @@ def test_soft_deleted_project_and_sentinel_have_explicit_preflight_outcomes(
         preflight=preflight,
         target_checksum="f" * 64,
     )
-    with psycopg.connect(
-        predecessor_database, autocommit=True, row_factory=dict_row
-    ) as connection:
+    with psycopg.connect(predecessor_database, autocommit=True, row_factory=dict_row) as connection:
         assert connection.execute(
             "SELECT deleted_at IS NOT NULL AS preserved FROM projects WHERE id = %s",
             (project_id,),
         ).fetchone() == {"preserved": True}
-        assert connection.execute(
-            "SELECT 1 FROM project_checkouts WHERE project_id = %s",
-            (PERSONAL_PROJECT_ID,),
-        ).fetchone() is None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM project_checkouts WHERE project_id = %s",
+                (PERSONAL_PROJECT_ID,),
+            ).fetchone()
+            is None
+        )
 
 
 def test_target_schema_assets_are_checkout_only() -> None:
     baseline = (_REPO_ROOT / "crates/gcore/assets/schema/baseline.sql").read_text()
     migration = (
-        _REPO_ROOT / "crates/gcore/assets/schema/migrations/414_project_checkouts.sql"
+        _REPO_ROOT / "crates/gcore/assets/schema/migrations/418_project_checkouts.sql"
     ).read_text()
     privileges = json.loads(
         (_REPO_ROOT / "crates/gcode/security/managed_postgres_privileges.json").read_text()
@@ -749,16 +744,12 @@ def test_target_schema_assets_are_checkout_only() -> None:
     assert "'project-checkout-cutover'::text" in baseline
     assert "LEFT JOIN public.project_checkouts AS checkout" in baseline
     assert "SELECT (repo_path) ON TABLE projects" not in migration
-    projects = next(
-        item for item in privileges["relations"] if item["relation"] == "projects"
-    )
+    projects = next(item for item in privileges["relations"] if item["relation"] == "projects")
     assert projects["columns"] == ["id", "name", "deleted_at"]
 
 
 def test_agent_spawn_resolves_machine_checkout_instead_of_logical_project_path() -> None:
-    source = (
-        Path(__file__).parents[2] / "src/gobby/servers/routes/agent_spawn.py"
-    ).read_text()
+    source = (Path(__file__).parents[2] / "src/gobby/servers/routes/agent_spawn.py").read_text()
 
     assert "project.repo_path" not in source
     assert "require_root(task_manager.db, effective_project_id, require_machine_id())" in source
@@ -779,7 +770,7 @@ def test_identity_repo_path_residue_allowlist() -> None:
         "src/gobby/storage/project_checkout_cutover.py",
         "tests/storage/test_project_checkout_cutover.py",
     }
-    literal_queries = (
+    literal_queries: tuple[tuple[str, str, set[str]], ...] = (
         (
             "gcode grep -F 'projects.repo_path' src/gobby crates/gcore/src "
             "crates/gcore/tests crates/gcode/src tests -m 500",
@@ -793,7 +784,7 @@ def test_identity_repo_path_residue_allowlist() -> None:
             set(),
         ),
         (
-            "gcode grep -F \"project's repo_path\" src/gobby -m 50",
+            'gcode grep -F "project\'s repo_path" src/gobby -m 50',
             "project's repo_path",
             set(),
         ),
@@ -894,7 +885,7 @@ def test_identity_repo_path_residue_allowlist() -> None:
     projects = next(item for item in privileges["relations"] if item["relation"] == "projects")
     if projects["columns"] != ["id", "name", "deleted_at"]:
         violations.setdefault(
-            "gcode grep -F '\"relation\": \"projects\"' "
+            'gcode grep -F \'"relation": "projects"\' '
             "crates/gcode/security/managed_postgres_privileges.json -A 12 -m 20",
             [],
         ).append(str(projects["columns"]))

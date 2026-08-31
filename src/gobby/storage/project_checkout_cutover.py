@@ -6,7 +6,7 @@ import json
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import psycopg
 from psycopg import sql
@@ -22,7 +22,7 @@ from gobby.storage.workspace_machine_scope import (
 )
 from gobby.utils.checkout_root import validate_checkout_root
 
-PROJECT_CHECKOUT_CUTOVER_CAMPAIGN = "project-checkout-cutover"
+PROJECT_CHECKOUT_CUTOVER_CAMPAIGN: Literal["project-checkout-cutover"] = "project-checkout-cutover"
 PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM = (
     "a40068605d886d0d0ec4ae71152602266c510be5514dd3d440b54a8b658491e3"
 )
@@ -98,41 +98,41 @@ class ProjectCheckoutCutoverEvidence:
 def _preflight_json(preflight: ProjectCheckoutCutoverPreflight) -> dict[str, object]:
     return {
         "projects": [
-                {
-                    "project_id": str(project.project_id),
-                    "name": project.name,
-                    "legacy_root": project.legacy_root,
-                    "candidate_machine_ids": [
-                        str(machine_id) for machine_id in project.candidate_machine_ids
-                    ],
-                    "evidence_sources": [
-                        {
-                            "machine_id": str(candidate.machine_id),
-                            "sources": list(candidate.sources),
-                        }
-                        for candidate in project.evidence_sources
-                    ],
-                    "existing_checkouts": [
-                        {
-                            "machine_id": str(checkout.machine_id),
-                            "root_path": checkout.root_path,
-                        }
-                        for checkout in project.existing_checkouts
-                    ],
-                    "exclusion_reason": project.exclusion_reason,
-                    "resolution_status": project.resolution_status,
-                    "resolution_reason": project.resolution_reason,
-                }
-                for project in preflight.projects
-            ],
-            "expected_inserts": [
-                {
-                    "machine_id": str(insert.machine_id),
-                    "project_id": str(insert.project_id),
-                    "root_path": insert.root_path,
-                }
-                for insert in preflight.expected_inserts
-            ],
+            {
+                "project_id": str(project.project_id),
+                "name": project.name,
+                "legacy_root": project.legacy_root,
+                "candidate_machine_ids": [
+                    str(machine_id) for machine_id in project.candidate_machine_ids
+                ],
+                "evidence_sources": [
+                    {
+                        "machine_id": str(candidate.machine_id),
+                        "sources": list(candidate.sources),
+                    }
+                    for candidate in project.evidence_sources
+                ],
+                "existing_checkouts": [
+                    {
+                        "machine_id": str(checkout.machine_id),
+                        "root_path": checkout.root_path,
+                    }
+                    for checkout in project.existing_checkouts
+                ],
+                "exclusion_reason": project.exclusion_reason,
+                "resolution_status": project.resolution_status,
+                "resolution_reason": project.resolution_reason,
+            }
+            for project in preflight.projects
+        ],
+        "expected_inserts": [
+            {
+                "machine_id": str(insert.machine_id),
+                "project_id": str(insert.project_id),
+                "root_path": insert.root_path,
+            }
+            for insert in preflight.expected_inserts
+        ],
     }
 
 
@@ -237,7 +237,7 @@ def _bootstrap_project_checkouts(connection: psycopg.Connection[Any]) -> None:
     )
 
 
-def _verify_project_checkouts_shape(connection: psycopg.Connection[Any]) -> None:
+def _verify_project_checkouts_shape(connection: Any) -> None:
     relation = connection.execute(
         """
         SELECT relrowsecurity, relforcerowsecurity
@@ -258,8 +258,7 @@ def _verify_project_checkouts_shape(connection: psycopg.Connection[Any]) -> None
         """
     ).fetchall()
     observed_columns = tuple(
-        (str(row["attname"]), str(row["data_type"]), bool(row["attnotnull"]))
-        for row in columns
+        (str(row["attname"]), str(row["data_type"]), bool(row["attnotnull"])) for row in columns
     )
     expected_columns = (
         ("machine_id", "uuid", True),
@@ -380,9 +379,9 @@ def _collect_preflight(db: PostgresHubDatabase) -> ProjectCheckoutCutoverPreflig
 
 def _build_preflight(
     db: PostgresHubDatabase,
-    projects: list[dict[str, object]],
-    candidates: list[dict[str, object]],
-    checkouts: list[dict[str, object]],
+    projects: list[Mapping[str, Any]],
+    candidates: list[Mapping[str, Any]],
+    checkouts: list[Mapping[str, Any]],
 ) -> ProjectCheckoutCutoverPreflight:
     candidate_sources: dict[uuid.UUID, dict[uuid.UUID, set[str]]] = {}
     for row in candidates:
@@ -821,7 +820,11 @@ def _verify_checkout_coverage(
         "SELECT machine_id, project_id, root_path FROM project_checkouts"
     ).fetchall()
     observed = {
-        (uuid.UUID(str(row["machine_id"])), uuid.UUID(str(row["project_id"])), str(row["root_path"]))
+        (
+            uuid.UUID(str(row["machine_id"])),
+            uuid.UUID(str(row["project_id"])),
+            str(row["root_path"]),
+        )
         for row in rows
     }
     missing = (expected | authoritative) - observed
@@ -829,7 +832,7 @@ def _verify_checkout_coverage(
         raise ProjectCheckoutCutoverError(f"Checkout coverage is incomplete: {sorted(missing)!r}")
 
 
-def _replace_resolve_tool_session(connection: psycopg.Connection[Any]) -> None:
+def _replace_resolve_tool_session(connection: Any) -> None:
     schema_row = connection.execute("SELECT current_schema() AS schema_name").fetchone()
     if schema_row is None:
         raise ProjectCheckoutCutoverError("Could not resolve the cutover schema")

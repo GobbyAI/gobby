@@ -4,7 +4,6 @@ These tests verify the hub query tools work correctly against real databases
 with data from multiple projects.
 """
 
-import tempfile
 import uuid
 
 import pytest
@@ -41,15 +40,13 @@ def multi_project_hub(hub_db):
     for i, (project_name, project_id) in enumerate(
         [("project-frontend", PROJECT_FRONTEND), ("project-backend", PROJECT_BACKEND)]
     ):
-        project_dir = tempfile.mkdtemp()
-
         # Insert project
         hub_db.execute(
             """
         INSERT INTO projects (id, name, created_at, updated_at)
         VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        (project_id, project_name.replace("-", " ").title()),
+            (project_id, project_name.replace("-", " ").title()),
         )
 
         task_manager = LocalTaskManager(hub_db)
@@ -318,7 +315,7 @@ class TestHubQueryEdgeCases:
         INSERT INTO projects (id, name, created_at, updated_at)
         VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        (tasks_only_project, "Tasks Only"),
+            (tasks_only_project, "Tasks Only"),
         )
         hub_db.execute(
             """
@@ -358,7 +355,7 @@ class TestHubQueryEdgeCases:
         INSERT INTO projects (id, name, created_at, updated_at)
         VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        (sessions_only_project, "Sessions Only"),
+            (sessions_only_project, "Sessions Only"),
         )
         hub_db.execute(
             """

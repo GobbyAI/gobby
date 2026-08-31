@@ -571,13 +571,16 @@ def test_project_checkouts_are_machine_isolated_lock_only_and_daemon_writable(
         assert grants["capability_select"] is True
         assert grants["capability_update"] is True
         assert grants["deleted_at_select"] is True
-        assert admin.execute(
-            """
+        assert (
+            admin.execute(
+                """
             SELECT 1 FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = 'projects'
               AND column_name = 'repo_path'
             """
-        ).fetchone() is None
+            ).fetchone()
+            is None
+        )
 
     extra_root = f"/tmp/daemon-checkout-{uuid4()}"
     with psycopg.connect(fixture.database_url, autocommit=True) as admin:

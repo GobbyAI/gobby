@@ -40,7 +40,6 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
     # 1. Setup managers
     session_manager = SessionManager(temp_db)
     task_manager = LocalTaskManager(temp_db)
-    project_manager = LocalProjectManager(temp_db)
     session_var_manager = SessionVariableManager(temp_db)
 
     # Create project to satisfy FK
@@ -130,7 +129,6 @@ def test_shell_edit_history_tracks_task_files(temp_db, tmp_path) -> None:
     repo_root.mkdir()
     session_manager = SessionManager(temp_db)
     task_manager = LocalTaskManager(temp_db)
-    project_manager = LocalProjectManager(temp_db)
     session_var_manager = SessionVariableManager(temp_db)
 
     project = install_isolated_checkout_project(
@@ -187,7 +185,6 @@ def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
 
     session_manager = SessionManager(temp_db)
     task_manager = LocalTaskManager(temp_db)
-    project_manager = LocalProjectManager(temp_db)
     session_var_manager = SessionVariableManager(temp_db)
 
     project = install_isolated_checkout_project(
@@ -277,7 +274,6 @@ def test_edit_history_without_claim_records_no_task_scoped_edits(temp_db, tmp_pa
 
     session_manager = SessionManager(temp_db)
     task_manager = LocalTaskManager(temp_db)
-    project_manager = LocalProjectManager(temp_db)
     session_var_manager = SessionVariableManager(temp_db)
     handlers = EventHandlers(session_storage=session_manager, task_manager=task_manager)
 
@@ -317,7 +313,6 @@ def test_edit_history_multiple_claims_use_active_task_id(temp_db, tmp_path) -> N
 
     session_manager = SessionManager(temp_db)
     task_manager = LocalTaskManager(temp_db)
-    project_manager = LocalProjectManager(temp_db)
     session_var_manager = SessionVariableManager(temp_db)
     handlers = EventHandlers(session_storage=session_manager, task_manager=task_manager)
 

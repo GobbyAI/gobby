@@ -337,13 +337,9 @@ async def test_deleted_worktree_leaves_workspace_unconfined(tmp_path: Path) -> N
 def test_default_confinement_roots_come_from_project_and_worktree_storage() -> None:
     calls: list[tuple[str, Any]] = []
 
-    class _Projects:
-        def __init__(self, db: object) -> None:
-            calls.append(("projects", db))
-
-        def get(self, project_id: str) -> SimpleNamespace:
-            calls.append(("get", project_id))
-            return SimpleNamespace(repo_path="/repo/main")
+    def _require_root(db: object, project_id: str, machine_id: str) -> str:
+        calls.append(("root", (db, project_id, machine_id)))
+        return "/repo/main"
 
     class _Worktrees:
         def __init__(self, db: object) -> None:
@@ -360,7 +356,7 @@ def test_default_confinement_roots_come_from_project_and_worktree_storage() -> N
     db = object()
     session_manager = SimpleNamespace(db=db)
     with (
-        patch.object(acp_lifecycle, "LocalProjectManager", _Projects),
+        patch.object(acp_lifecycle, "require_root", _require_root),
         patch.object(acp_lifecycle, "LocalWorktreeManager", _Worktrees),
     ):
         roots = session_confinement_roots(
@@ -368,9 +364,11 @@ def test_default_confinement_roots_come_from_project_and_worktree_storage() -> N
         )
 
     assert roots == ("/repo/main", "/repo/worktrees/a", "/repo/worktrees/b")
-    assert ("projects", db) in calls
     assert ("worktrees", db) in calls
-    assert ("get", "proj-9") in calls
+    assert (
+        "root",
+        (db, "proj-9", "21000000-0000-4000-8000-000000000001"),
+    ) in calls
     (list_kwargs,) = [call[1] for call in calls if call[0] == "list"]
     assert list_kwargs["project_id"] == "proj-9"
     assert list_kwargs["limit"] >= 1000

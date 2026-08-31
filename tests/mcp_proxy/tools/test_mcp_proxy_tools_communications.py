@@ -10,7 +10,6 @@ import pytest
 
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
 from gobby.mcp_proxy.tools.communications import create_communications_registry
-from gobby.storage.projects import LocalProjectManager
 
 pytestmark = pytest.mark.unit
 

@@ -1,8 +1,8 @@
 #![cfg(feature = "postgres")]
 
 use gobby_core::schema::{
-    BASELINE_CHECKSUM, BASELINE_VERSION, RUNNER_PROTOCOL_VERSION, SEED_MANIFEST_JSON, SchemaRunner,
-    parse_backup_manifest, schema_identity, split_sql_statements,
+    BASELINE_CHECKSUM, BASELINE_VERSION, CATALOG_MANIFEST_JSON, RUNNER_PROTOCOL_VERSION,
+    SEED_MANIFEST_JSON, SchemaRunner, parse_backup_manifest, schema_identity, split_sql_statements,
 };
 
 #[test]
@@ -33,13 +33,10 @@ fn embedded_assets_publish_a_complete_schema_identity() {
 }
 
 #[test]
-fn latest_asset_is_provider_capacity_snapshots_hop() {
+fn latest_asset_is_project_checkouts_hop() {
     let identity = schema_identity();
-    assert_eq!(identity.latest_asset.version, 417);
-    assert_eq!(
-        identity.latest_asset.filename,
-        "417_provider_capacity_snapshots.sql"
-    );
+    assert_eq!(identity.latest_asset.version, 418);
+    assert_eq!(identity.latest_asset.filename, "418_project_checkouts.sql");
 }
 
 #[test]

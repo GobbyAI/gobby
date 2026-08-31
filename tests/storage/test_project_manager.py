@@ -177,10 +177,13 @@ class TestPersonalProjectEnsure:
         assert project.id == PERSONAL_PROJECT_ID
         assert project.name == "_personal"
         assert second.id == project.id
-        assert project_manager.db.fetchone(
-            "SELECT 1 FROM project_checkouts WHERE project_id = %s",
-            (PERSONAL_PROJECT_ID,),
-        ) is None
+        assert (
+            project_manager.db.fetchone(
+                "SELECT 1 FROM project_checkouts WHERE project_id = %s",
+                (PERSONAL_PROJECT_ID,),
+            )
+            is None
+        )
         assert not (get_gobby_home() / "personal").exists()
 
     def test_ensure_personal_project_remains_checkout_free(
@@ -199,10 +202,13 @@ class TestPersonalProjectEnsure:
             claim.release()
 
         assert project.id == PERSONAL_PROJECT_ID
-        assert project_manager.db.fetchone(
-            "SELECT 1 FROM project_checkouts WHERE project_id = %s",
-            (PERSONAL_PROJECT_ID,),
-        ) is None
+        assert (
+            project_manager.db.fetchone(
+                "SELECT 1 FROM project_checkouts WHERE project_id = %s",
+                (PERSONAL_PROJECT_ID,),
+            )
+            is None
+        )
 
     def test_ensure_personal_project_repairs_name_and_deleted_at(
         self,
@@ -225,10 +231,13 @@ class TestPersonalProjectEnsure:
 
         assert project.name == "_personal"
         assert project.deleted_at is None
-        assert project_manager.db.fetchone(
-            "SELECT 1 FROM project_checkouts WHERE project_id = %s",
-            (PERSONAL_PROJECT_ID,),
-        ) is None
+        assert (
+            project_manager.db.fetchone(
+                "SELECT 1 FROM project_checkouts WHERE project_id = %s",
+                (PERSONAL_PROJECT_ID,),
+            )
+            is None
+        )
 
     def test_ensure_personal_project_materializes_on_disk_identity(
         self,

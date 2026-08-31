@@ -201,7 +201,7 @@ def test_subtree_cascade_serializes_overlapping_subtrees(
                 VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (id) DO NOTHING
                 """,
-                (project_id, "Project 1"),
+            (project_id, "Project 1"),
         )
         db.executemany(
             """

@@ -22,9 +22,9 @@ use super::gate::{
     BackupGateContext, SourceIdentity, VerifiedBackupManifest, parse_backup_manifest,
 };
 use super::runner::{
-    ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM, PARENT_BASELINE_CHECKSUM,
-    PREDECESSOR_BASELINE_CHECKSUM, PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM, SchemaRunner,
-    WORKTREE_BASELINE_CHECKSUM, auth_schema_for, render_sql_for_schema,
+    ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM, PARENT_BASELINE_CHECKSUM, PREDECESSOR_BASELINE_CHECKSUM,
+    PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM, SchemaRunner, WORKTREE_BASELINE_CHECKSUM,
+    auth_schema_for, render_sql_for_schema,
 };
 use super::sql_splitter::split_sql_statements;
 use super::verify::catalog_manifest;

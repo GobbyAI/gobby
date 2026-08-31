@@ -402,7 +402,7 @@ def _seed_e2e_runtime_state(postgres_db: Any, project_dir: Path) -> Path:
         postgres_db,
         project_id=project_id,
         machine_id=machine_id,
-        candidate_path=project_dir,
+        candidate_path=str(project_dir),
         expected_marker_id=project_id,
     )
     LocalProjectCheckoutManager(postgres_db).register(machine_id, project_id, root)

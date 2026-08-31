@@ -979,12 +979,12 @@ class TestCreateChatSessionInner:
         mixin.session_manager = MagicMock()
         mixin.session_manager.db = temp_db
         mixin.session_manager.get.return_value = existing
-        setattr(mixin, "_fire_lifecycle", AsyncMock())
 
-        session = await mixin._create_chat_session_inner(
-            "conv-checkout",
-            project_id=isolated.project.id,
-        )
+        with patch.object(mixin, "_fire_lifecycle", AsyncMock()):
+            session = await mixin._create_chat_session_inner(
+                "conv-checkout",
+                project_id=isolated.project.id,
+            )
 
         assert session is mock_session
         assert session.project_path == isolated.root_path

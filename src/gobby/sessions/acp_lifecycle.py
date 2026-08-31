@@ -27,7 +27,7 @@ from gobby.sessions.acp_session_mapping import (
     normalize_additional_directories,
     status_for_close,
 )
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.project_checkouts import require_root
 from gobby.storage.worktrees import LocalWorktreeManager
 
 if TYPE_CHECKING:
@@ -87,10 +87,7 @@ def _realpath(path: str) -> Path:
 def session_confinement_roots(session_manager: SessionManager, session: Session) -> tuple[str, ...]:
     """Return the project root plus every worktree registered for the session's project."""
     db = session_manager.db
-    roots: list[str] = []
-    project = LocalProjectManager(db).get(session.project_id)
-    if project is not None and project.repo_path:
-        roots.append(project.repo_path)
+    roots = [require_root(db, session.project_id, session.machine_id)]
     worktrees = LocalWorktreeManager(db).list_worktrees(
         project_id=session.project_id, limit=_CONFINEMENT_WORKTREE_LIMIT
     )

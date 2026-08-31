@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import APIRouter, HTTPException, Query
 
 from gobby.servers.routes import source_control_github as _source_control_github
-from gobby.integrations.github import GitHubIntegration
 from gobby.servers.routes.projects import _checkout_http_error
 from gobby.storage.project_checkouts import (
     CheckoutNotFoundError,
