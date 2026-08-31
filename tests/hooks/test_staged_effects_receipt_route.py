@@ -248,6 +248,61 @@ def test_delivered_gate_clears_itself_once_its_receipt_is_acknowledged(
     second = _post_set_handoff(hook_client, session_id, f"n-{uuid4()}")
     assert not _blocked(second), second
 
+    # And it stages the acknowledge_variable only once. The first delivery's
+    # staging used to survive on the shared runtime thread and be re-staged
+    # here (#21427).
+    second_receipt = second.get(DELIVERY_RECEIPT_FIELD)
+    assert isinstance(second_receipt, dict)
+    assert _staged_variables(receipts_db, second_receipt["receipt_id"]) == {}
+
+
+def test_one_sessions_staged_gate_never_reaches_another_session(
+    receipts_db: HubDatabase,
+    hook_client: TestClient,
+) -> None:
+    """Staged effects stay inside the delivery that produced them (#21427).
+
+    Both deliveries run through one HookManager, so they share the workflow
+    runtime thread and its rule-engine executor. While staging lived in a
+    thread-local those shared threads accumulated it, and the next delivery to
+    land there copied the previous session's variables onto its own response
+    under its own session id — committing them on acknowledgment.
+    """
+    variables = SessionVariableManager(receipts_db)
+
+    blocked_session = str(uuid4())
+    _create_session(receipts_db, blocked_session)
+    variables.merge_variables(
+        blocked_session,
+        {"_gobby_feedback_survey_active": True, "task_claimed": True},
+    )
+
+    # This one already acknowledged the survey, so the gate cannot fire for it
+    # and it must stage nothing of its own. (The survey-active flag itself is
+    # re-injected per event from daemon config, so a session variable cannot
+    # switch the gate off — see engine.core.inject_survey_active.)
+    quiet_session = str(uuid4())
+    _create_session(receipts_db, quiet_session)
+    variables.merge_variables(
+        quiet_session,
+        {"task_claimed": True, ACK_VARIABLE: True},
+    )
+
+    first = _post_set_handoff(hook_client, blocked_session, f"n-{uuid4()}")
+    assert _blocked(first), first
+    first_receipt = first.get(DELIVERY_RECEIPT_FIELD)
+    assert isinstance(first_receipt, dict)
+    assert _staged_variables(receipts_db, first_receipt["receipt_id"]) == {ACK_VARIABLE: True}
+
+    second = _post_set_handoff(hook_client, quiet_session, f"n-{uuid4()}")
+    assert not _blocked(second), second
+    second_receipt = second.get(DELIVERY_RECEIPT_FIELD)
+    assert isinstance(second_receipt, dict)
+
+    # This is where the borrowed payload used to land: re-attributed to this
+    # session id and ready to commit on acknowledgment.
+    assert _staged_variables(receipts_db, second_receipt["receipt_id"]) == {}
+
 
 def test_route_stages_nothing_when_the_gate_does_not_fire(
     receipts_db: HubDatabase,

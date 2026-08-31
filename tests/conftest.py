@@ -566,13 +566,14 @@ def _stable_machine_identity(_session_machine_identity: str | None) -> Iterator[
 
 @pytest.fixture(autouse=True)
 def _clear_worker_staging() -> Iterator[None]:
-    """Clear thread-local receipt staging around every test.
+    """Clear receipt staging around every test.
 
-    Production brackets hook handling with take_worker_staging() on the adapter
-    worker thread (adapter_execution.run_adapter); tests that call
-    RuleEngine.evaluate or hook handlers directly bypass that bracket, so
-    staged one-shot payloads would otherwise accumulate on the pytest thread
-    and leak into later tests' staged-effects metadata.
+    Production scopes hook handling to one delivery with worker_staging_scope()
+    on the adapter worker thread (adapter_execution.run_adapter); tests that
+    call RuleEngine.evaluate or hook handlers directly bypass that scope and
+    bind a buffer into the pytest thread's own context, so staged one-shot
+    payloads would otherwise accumulate there and leak into later tests'
+    staged-effects metadata.
     """
     from gobby.hooks.receipt_effects import take_worker_staging
 

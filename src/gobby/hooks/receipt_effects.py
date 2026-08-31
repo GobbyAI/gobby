@@ -4,13 +4,46 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 STAGED_EFFECTS_FIELD = "_gobby_staged_effects"
 
-_WORKER_STAGING = threading.local()
+# One hook delivery stages effects from three threads: the adapter worker that
+# runs the handler, the single workflow runtime thread that evaluates its rules,
+# and the rule-engine executor threads that run offloaded work. A
+# ``threading.local`` gave each of them a private buffer that only the adapter
+# worker ever drained, so staged effects were invisible across a hop (#21424)
+# and piled up on the shared runtime and executor threads until an unrelated
+# delivery read them back out (#21427).
+#
+# A ContextVar holding a mutable buffer scopes staging to one logical delivery
+# instead. ``asyncio.run_coroutine_threadsafe`` and ``offload`` both copy the
+# calling context, and a copy carries the same buffer object, so every thread
+# working on this delivery shares one buffer while concurrent deliveries never
+# see each other's — even when they land on the same runtime or executor thread.
+_WORKER_STAGING: ContextVar[dict[str, Any] | None] = ContextVar(
+    "gobby_worker_staging", default=None
+)
+
+# That buffer is shared across threads by design, so its read-modify-write needs
+# a guard.
+_STAGING_LOCK = threading.Lock()
+
+
+@contextmanager
+def worker_staging_scope() -> Iterator[None]:
+    """Bind a fresh staging buffer for one logical hook delivery."""
+
+    token = _WORKER_STAGING.set({})
+    try:
+        yield
+    finally:
+        _WORKER_STAGING.reset(token)
 
 
 def _string_list(value: Any) -> list[str]:
@@ -62,30 +95,46 @@ def merge_staged_payloads(current: dict[str, Any], incoming: dict[str, Any]) -> 
 
 
 def record_worker_staging(payload: dict[str, Any]) -> None:
-    """Merge staged effects onto the current adapter worker."""
+    """Merge staged effects onto the current hook delivery."""
 
-    current = getattr(_WORKER_STAGING, "payload", None)
-    base = dict(current) if isinstance(current, dict) else {}
-    _WORKER_STAGING.payload = merge_staged_payloads(base, payload)
+    buffer = _WORKER_STAGING.get()
+    if buffer is None:
+        # Callers outside a scope — a test driving a handler directly, say —
+        # get a buffer bound into their own context, which behaves like the
+        # thread-local this replaced.
+        buffer = {}
+        _WORKER_STAGING.set(buffer)
+    with _STAGING_LOCK:
+        merged = merge_staged_payloads(dict(buffer), payload)
+        buffer.clear()
+        buffer.update(merged)
 
 
 def peek_worker_staging() -> dict[str, Any]:
-    """Return staged effects recorded on this worker thread without clearing."""
+    """Return staged effects for this hook delivery without clearing."""
 
-    payload = getattr(_WORKER_STAGING, "payload", None)
-    return dict(payload) if isinstance(payload, dict) else {}
+    buffer = _WORKER_STAGING.get()
+    if buffer is None:
+        return {}
+    with _STAGING_LOCK:
+        return dict(buffer)
 
 
 def take_worker_staging() -> dict[str, Any]:
-    """Return and clear staged effects recorded on this worker thread."""
+    """Return and clear staged effects for this hook delivery."""
 
-    payload = getattr(_WORKER_STAGING, "payload", None)
-    _WORKER_STAGING.payload = {}
-    return dict(payload) if isinstance(payload, dict) else {}
+    buffer = _WORKER_STAGING.get()
+    if buffer is None:
+        return {}
+    with _STAGING_LOCK:
+        staged = dict(buffer)
+        # Cleared in place so every thread sharing this buffer sees the drain.
+        buffer.clear()
+    return staged
 
 
 def staged_append_set_values(name: str) -> set[str]:
-    """Return already-staged set-union values for this worker turn."""
+    """Return already-staged set-union values for this hook delivery."""
 
     staged = peek_worker_staging().get("append_set_variables")
     if not isinstance(staged, dict):

@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any
 
 from gobby.hooks.receipt_effects import (
     apply_acknowledged_receipt,
+    peek_worker_staging,
     record_worker_staging,
     take_worker_staging,
+    worker_staging_scope,
 )
+from gobby.workflows.engine._offload import offload
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 
@@ -132,6 +138,98 @@ def test_record_worker_staging_deep_merges_session_and_append_sets() -> None:
     }
     assert staged["append_set_variables"]["injected_memory_ids"] == ["a", "b"]
     assert staged["pending_message_ids"] == ["msg-1"]
+
+
+OTHER_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+
+
+async def _stage_one_delivery(session_id: str, barrier: threading.Barrier) -> dict[str, Any]:
+    """Stage from the runtime thread and from an offloaded worker thread."""
+
+    def stage_from_offload() -> None:
+        record_worker_staging(
+            {
+                "session_id": session_id,
+                "append_set_variables": {"injected_memory_ids": [f"{session_id}-offloaded"]},
+            }
+        )
+
+    # Rule effects stage from inside offload(), which copies the context onto a
+    # shared rule-engine executor thread.
+    await offload(stage_from_offload)
+    record_worker_staging({"session_id": session_id, "session_variables": {session_id: True}})
+    # Hold both deliveries here so each one peeks only after the other staged.
+    await asyncio.to_thread(barrier.wait, 10)
+    return peek_worker_staging()
+
+
+async def _peek_shared_threads() -> dict[str, dict[str, Any]]:
+    """What a fresh delivery finds on the runtime and executor threads."""
+
+    return {"runtime": peek_worker_staging(), "offloaded": await offload(peek_worker_staging)}
+
+
+def test_worker_staging_scope_isolates_concurrent_deliveries() -> None:
+    """Deliveries sharing the runtime and executor threads never mix (#21427).
+
+    Production topology: adapter worker threads submit rule evaluation to one
+    long-lived "gobby-workflow-runtime" loop thread, which offloads blocking
+    work to a shared rule-engine executor. A thread-local staging buffer let
+    those shared threads carry one delivery's staged effects into the next.
+    """
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(
+        target=loop.run_forever, name="gobby-workflow-runtime-test", daemon=True
+    )
+    loop_thread.start()
+    barrier = threading.Barrier(2)
+
+    def deliver(session_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        with worker_staging_scope():
+            runtime_view = asyncio.run_coroutine_threadsafe(
+                _stage_one_delivery(session_id, barrier), loop
+            ).result(timeout=30)
+            return runtime_view, take_worker_staging()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="gobby-hook-adapter") as pool:
+            first = pool.submit(deliver, SESSION_ID)
+            second = pool.submit(deliver, OTHER_SESSION_ID)
+            first_runtime, first_staged = first.result(timeout=30)
+            second_runtime, second_staged = second.result(timeout=30)
+
+        # What the runtime thread sees mid-evaluation is this delivery's staging
+        # only — that view is what _apply_staged_effects_metadata copies onto the
+        # hook response, and it used to carry the other session's variables.
+        for session_id, runtime_view in (
+            (SESSION_ID, first_runtime),
+            (OTHER_SESSION_ID, second_runtime),
+        ):
+            assert runtime_view["session_id"] == session_id
+            assert runtime_view["session_variables"] == {session_id: True}
+            assert runtime_view["append_set_variables"] == {
+                "injected_memory_ids": [f"{session_id}-offloaded"]
+            }
+
+        # The adapter thread drains exactly what its own delivery staged,
+        # including the write made on the offloaded worker thread.
+        assert first_staged == first_runtime
+        assert second_staged == second_runtime
+
+        # A later delivery on those same shared threads starts clean. Under the
+        # thread-local buffer it inherited everything staged above.
+        def probe() -> dict[str, dict[str, Any]]:
+            with worker_staging_scope():
+                return asyncio.run_coroutine_threadsafe(_peek_shared_threads(), loop).result(
+                    timeout=30
+                )
+
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="gobby-hook-adapter") as pool:
+            assert pool.submit(probe).result(timeout=30) == {"runtime": {}, "offloaded": {}}
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        loop_thread.join(timeout=10)
+        loop.close()
 
 
 def test_apply_acknowledged_receipt_appends_set_variables_without_replacing() -> None:

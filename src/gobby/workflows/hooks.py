@@ -884,12 +884,13 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     self.evaluate_async(event, blocking_deadline=blocking_deadline),
                     timeout=runtime_wait,
                 )
-                # The runtime evaluates on its own "gobby-workflow-runtime" thread,
-                # so the ``record_worker_staging`` call inside ``_evaluate_rules``
-                # landed on that thread's ``threading.local``. ``take_worker_staging``
-                # runs on this adapter thread, so re-record the staged payload here
-                # or the receipt is prepared without it and every on_receipt
-                # ``acknowledge_variable`` is lost.
+                # The runtime evaluates on its own "gobby-workflow-runtime"
+                # thread while ``take_worker_staging`` runs on this adapter
+                # thread, so the staged payload travels back in the response and
+                # is re-recorded here. Without it the receipt is prepared empty
+                # and every on_receipt ``acknowledge_variable`` is lost (#21424).
+                # Re-recording is an idempotent merge, so it stays correct when
+                # the staging buffer already crossed the hop by context.
                 staged = response.metadata.get(STAGED_EFFECTS_FIELD)
                 if isinstance(staged, dict) and staged:
                     record_worker_staging(staged)

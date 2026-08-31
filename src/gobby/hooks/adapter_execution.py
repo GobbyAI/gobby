@@ -15,7 +15,11 @@ from gobby.hooks.envelope_dedupe import (
     release_envelope_processing_claim,
     renew_envelope_processing_lease,
 )
-from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, take_worker_staging
+from gobby.hooks.receipt_effects import (
+    STAGED_EFFECTS_FIELD,
+    take_worker_staging,
+    worker_staging_scope,
+)
 from gobby.workflows.hooks import WorkflowEvaluationTimeout
 
 logger = logging.getLogger(__name__)
@@ -97,17 +101,22 @@ async def run_adapter_hook(
     def run_adapter() -> dict[str, Any]:
         nonlocal started_at, finished_at
         started_at = time.perf_counter()
-        take_worker_staging()
-        try:
-            result = cast(dict[str, Any], adapter.handle_native(payload, hook_manager))
-            staged = take_worker_staging()
-            if not staged:
-                return result
-            attached = dict(result) if isinstance(result, dict) else {}
-            attached[STAGED_EFFECTS_FIELD] = staged
-            return attached
-        finally:
-            finished_at = time.perf_counter()
+        # This scope is the boundary of one logical delivery. Rule evaluation
+        # hops to the workflow runtime thread and offloads to the rule-engine
+        # executor; both inherit this context, so they share this delivery's
+        # staging buffer and nothing they stage survives into the next delivery
+        # that lands on those shared threads (#21427).
+        with worker_staging_scope():
+            try:
+                result = cast(dict[str, Any], adapter.handle_native(payload, hook_manager))
+                staged = take_worker_staging()
+                if not staged:
+                    return result
+                attached = dict(result) if isinstance(result, dict) else {}
+                attached[STAGED_EFFECTS_FIELD] = staged
+                return attached
+            finally:
+                finished_at = time.perf_counter()
 
     executor_future = _HOOK_ADAPTER_EXECUTOR.submit(run_adapter)
     pending = asyncio.wrap_future(executor_future, loop=loop)
