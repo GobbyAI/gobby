@@ -11,6 +11,32 @@ const CONVERSATION_ID = "test-epic-10452";
 const STORAGE_KEY = `gobby-chat-${CONVERSATION_ID}`;
 const CONVERSATION_ID_KEY = "gobby-conversation-id";
 
+const currentSession = {
+  id: CONVERSATION_ID,
+  ref: "#10452",
+  external_id: CONVERSATION_ID,
+  source: "codex",
+  project_id: "proj-gobby",
+  title: "Epic 10452 Verification",
+  status: "active",
+  model: "gpt-5.4",
+  message_count: 0,
+  created_at: "2026-08-31T08:00:00Z",
+  updated_at: "2026-08-31T08:00:00Z",
+  seq_num: 10452,
+  summary_markdown: null,
+  git_branch: "main",
+  usage_input_tokens: 0,
+  usage_output_tokens: 0,
+  had_edits: false,
+  agent_depth: 0,
+  chat_mode: "plan",
+  agent_run_id: null,
+  parent_session_id: null,
+  session_type: "web_chat",
+  terminal_context: null,
+};
+
 const mockProjects = [
   {
     id: "proj-personal",
@@ -33,6 +59,7 @@ function setupMockWebSocket(page: import("@playwright/test").Page) {
   return page.addInitScript(
     ({ convId, storageKey, convIdKey }) => {
       localStorage.setItem(convIdKey, convId);
+      localStorage.setItem("gobby-db-session-id", convId);
       localStorage.setItem(storageKey, "[]");
 
       (window as any).__sentMessages = [] as string[];
@@ -125,34 +152,19 @@ function setupMockWebSocket(page: import("@playwright/test").Page) {
   );
 }
 
-async function serverSend(
-  page: import("@playwright/test").Page,
-  msg: Record<string, unknown>,
-) {
-  await page.evaluate((data) => {
-    const chatWs = (window as any).__chatWs;
-    if (chatWs?.onmessage) {
-      chatWs.onmessage({ data: JSON.stringify(data) });
-      return;
-    }
-    for (const ws of (window as any).__allMockWs || []) {
-      if (ws.onmessage) {
-        ws.onmessage({ data: JSON.stringify(data) });
-      }
-    }
-  }, msg);
-}
-
 async function broadcastSend(
   page: import("@playwright/test").Page,
   msg: Record<string, unknown>,
 ) {
-  await page.evaluate((data) => {
+  return page.evaluate((data) => {
+    let delivered = 0;
     for (const ws of (window as any).__allMockWs || []) {
       if (ws.onmessage) {
         ws.onmessage({ data: JSON.stringify(data) });
+        delivered += 1;
       }
     }
+    return delivered;
   }, msg);
 }
 
@@ -189,7 +201,6 @@ async function waitForConnection(page: import("@playwright/test").Page) {
   await page.waitForFunction(() => (window as any).__chatWs !== null, null, {
     timeout: 3000,
   });
-  await expect(page.locator("text=Connected")).toBeVisible({ timeout: 3000 });
 }
 
 /** Read the actual conversation_id the app is using from its sent messages. */
@@ -198,7 +209,7 @@ async function getAppConversationId(
 ): Promise<string | null> {
   const msgs = await getClientMessages(page);
   // The subscribe message or any message with conversation_id reveals the app's actual ID
-  for (const m of msgs) {
+  for (const m of [...msgs].reverse()) {
     if (m.conversation_id && typeof m.conversation_id === "string") {
       return m.conversation_id;
     }
@@ -207,6 +218,41 @@ async function getAppConversationId(
 }
 
 function setupApiMocks(page: import("@playwright/test").Page) {
+  page.route("**/api/auth/status", (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ authenticated: true }),
+    });
+  });
+
+  page.route("**/api/projects", (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(mockProjects),
+    });
+  });
+
+  page.route("**/api/config/values", (route) => {
+    const uiSettings = {
+      selectedProjectId: "proj-gobby",
+      selectedProvider: "claude",
+    };
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        revision: 1,
+        desired: { ui_settings: uiSettings },
+        active: { ui_settings: uiSettings },
+        secret_set: {},
+        pending_restart_keys: [],
+        failed_live_keys: {},
+      }),
+    });
+  });
+
   page.route("**/api/files/projects", (route) => {
     route.fulfill({
       status: 200,
@@ -216,7 +262,17 @@ function setupApiMocks(page: import("@playwright/test").Page) {
   });
 
   page.route("**/api/sessions*", (route) => {
-    route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    const path = new URL(route.request().url()).pathname;
+    const body = path.endsWith("/messages")
+      ? { messages: [] }
+      : path === `/api/sessions/${CONVERSATION_ID}`
+        ? { session: currentSession }
+        : { sessions: [currentSession], total: 1, next_cursor: null };
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(body),
+    });
   });
   page.route("**/api/files/tree*", (route) => {
     route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
@@ -229,9 +285,6 @@ function setupApiMocks(page: import("@playwright/test").Page) {
     });
   });
 }
-
-/** The ProjectSelector's dropdown button — has aria-haspopup="listbox". */
-const PROJECT_SELECTOR_BTN = "button[aria-haspopup='listbox']";
 
 // ============================================================
 // #10455: Auto-send feedback on plan_changes_requested
@@ -247,31 +300,30 @@ test.describe("#10455: Plan feedback auto-send", () => {
 
     // Read the app's actual conversation_id from its sent messages
     const appConvId = await getAppConversationId(page);
+    expect(appConvId).toBeTruthy();
 
     // 1. Server sends plan_pending_approval to show PlanApprovalBar
-    await serverSend(page, {
+    const pendingRecipients = await broadcastSend(page, {
       type: "plan_pending_approval",
+      conversation_id: appConvId,
       plan_content: "## Plan\n\n1. Refactor the auth module\n2. Add tests",
     });
+    expect(pendingRecipients).toBeGreaterThan(0);
 
     // 2. Wait for PlanApprovalBar to appear
-    const requestChangesBtn = page.locator("button", {
-      hasText: "Request Changes",
-    });
+    const requestChangesBtn = page.getByTestId("plan-strip-reject");
     await expect(requestChangesBtn).toBeVisible({ timeout: 3000 });
 
     // 3. Click Request Changes to show feedback form
     await requestChangesBtn.click();
 
     // 4. Enter feedback
-    const feedbackInput = page.locator("textarea[placeholder*='changed']");
+    const feedbackInput = page.getByTestId("plan-strip-feedback");
     await expect(feedbackInput).toBeVisible({ timeout: 2000 });
     await feedbackInput.fill("Please add error handling to the auth module");
 
     // 5. Click Send Feedback
-    const sendFeedbackBtn = page.locator("button", {
-      hasText: "Send Feedback",
-    });
+    const sendFeedbackBtn = page.getByTestId("plan-strip-send");
     await sendFeedbackBtn.click();
 
     // 6. Verify plan_approval_response was sent with request_changes decision
@@ -294,7 +346,7 @@ test.describe("#10455: Plan feedback auto-send", () => {
 
     // 8. Server sends mode_changed with reason plan_changes_requested
     //    Use the app's actual conversation_id so the handler's ID check passes
-    await serverSend(page, {
+    await broadcastSend(page, {
       type: "mode_changed",
       mode: "plan",
       reason: "plan_changes_requested",
@@ -325,7 +377,15 @@ test.describe("#10456: fetchProjects retry with backoff", () => {
     let fetchAttempt = 0;
 
     // Mock projects endpoint to fail first 2 attempts, succeed on 3rd
-    await page.route("**/api/files/projects", (route) => {
+    await page.route("**/api/auth/status", (route) => {
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ authenticated: true }),
+      });
+    });
+
+    await page.route("**/api/projects", (route) => {
       fetchAttempt++;
       if (fetchAttempt <= 2) {
         route.fulfill({ status: 500, body: "Internal Server Error" });
@@ -364,10 +424,15 @@ test.describe("#10456: fetchProjects retry with backoff", () => {
     await page.goto("/");
     await waitForConnection(page);
 
-    // Wait for the project selector (aria-haspopup) to appear — means retries succeeded
+    // Wait for the project selector to appear — means retries succeeded.
     // Backoff: 2s + 4s = 6s total wait before 3rd attempt
-    const projectSelector = page.locator(PROJECT_SELECTOR_BTN);
+    const projectSelector = page.getByRole("group", {
+      name: "Project selector",
+    });
     await expect(projectSelector).toBeVisible({ timeout: 15000 });
+    await expect(
+      projectSelector.getByRole("radio", { name: "gobby" }),
+    ).toBeChecked();
 
     // Verify all 3 attempts were made
     expect(fetchAttempt).toBe(3);
@@ -378,7 +443,7 @@ test.describe("#10456: fetchProjects retry with backoff", () => {
 // #10458: Wire sendProjectChange in App.tsx via useEffect
 // ============================================================
 test.describe("#10458: sendProjectChange on project switch", () => {
-  test("switching projects sends set_project WebSocket message", async ({
+  test("switching projects starts a fresh chat without rebinding the previous conversation", async ({
     page,
   }) => {
     setupApiMocks(page);
@@ -387,28 +452,40 @@ test.describe("#10458: sendProjectChange on project switch", () => {
     await waitForConnection(page);
 
     // Wait for project selector to appear (projects loaded, default selected)
-    const projectSelector = page.locator(PROJECT_SELECTOR_BTN);
+    const projectSelector = page.getByRole("group", {
+      name: "Project selector",
+    });
     await expect(projectSelector).toBeVisible({ timeout: 5000 });
 
-    // Default project is "gobby" — the selector button shows "gobby"
-    await expect(projectSelector).toHaveText("gobby", { timeout: 2000 });
+    // Default project is "gobby".
+    await expect(
+      projectSelector.getByRole("radio", { name: "gobby" }),
+    ).toBeChecked({ timeout: 2000 });
 
     // Clear messages to isolate the project change
     await clearClientMessages(page);
 
     // Switch to Personal project by clicking "Personal" button in the selector
-    const personalBtn = page.locator("button", { hasText: "Personal" }).first();
+    const personalBtn = projectSelector.getByRole("radio", {
+      name: "Personal",
+    });
     await personalBtn.click();
 
     // Wait for the useEffect to fire
     await page.waitForTimeout(300);
 
-    // Verify set_project message was sent for the Personal project
+    await expect(personalBtn).toBeChecked();
+    await expect(
+      page.getByRole("button", { name: "New Session" }),
+    ).toBeVisible();
+
+    // Project changes start a fresh chat. The old conversation must not be
+    // rebound to the new project before that fresh session exists.
     const msgs = await getClientMessages(page);
     const setProjectMsg = msgs.find(
       (m) => m.type === "set_project" && m.project_id === "proj-personal",
     );
-    expect(setProjectMsg).toBeTruthy();
+    expect(setProjectMsg).toBeUndefined();
   });
 
   test("initial project load sends set_project for default project", async ({
@@ -420,7 +497,9 @@ test.describe("#10458: sendProjectChange on project switch", () => {
     await waitForConnection(page);
 
     // Wait for project selector to appear — means projects loaded and default set
-    const projectSelector = page.locator(PROJECT_SELECTOR_BTN);
+    const projectSelector = page.getByRole("group", {
+      name: "Project selector",
+    });
     await expect(projectSelector).toBeVisible({ timeout: 5000 });
 
     // Allow time for the useEffect to fire after effectiveProjectId is set
