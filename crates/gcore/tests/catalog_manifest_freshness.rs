@@ -58,7 +58,7 @@ impl Drop for ScratchDatabase {
     }
 }
 
-fn test_database() -> anyhow::Result<Option<(ScratchDatabase, Client)>> {
+fn scratch_database() -> anyhow::Result<Option<(ScratchDatabase, Client)>> {
     let Ok(database_url) = env::var("GOBBY_SCHEMA_TEST_DATABASE_URL") else {
         eprintln!("GOBBY_SCHEMA_TEST_DATABASE_URL is unset; skipping PostgreSQL schema test");
         return Ok(None);
@@ -71,7 +71,7 @@ fn embedded_runner_applies_fresh_and_idempotently() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
 
@@ -90,7 +90,7 @@ fn named_schema_apply_and_verify_are_isolated() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
 
@@ -118,7 +118,7 @@ fn login_trigger_allows_connections_after_its_relation_is_dropped() -> anyhow::R
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((database, mut client)) = test_database()? else {
+    let Some((database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
@@ -159,7 +159,7 @@ fn login_trigger_preserves_active_epoch_fencing() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((database, mut client)) = test_database()? else {
+    let Some((database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
@@ -194,7 +194,7 @@ fn named_schema_applies_never_install_database_login_triggers() -> anyhow::Resul
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((database, mut client)) = test_database()? else {
+    let Some((database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     for schema in ["login_trigger_schema_a", "login_trigger_schema_b"] {
@@ -221,7 +221,7 @@ fn catalog_identity_ignores_column_ordinals() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     client.batch_execute(
@@ -259,7 +259,7 @@ fn verify_accepts_runtime_mutation_of_seed_fields() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
@@ -281,7 +281,7 @@ fn catalog_manifest_is_fresh_for_embedded_assets() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
@@ -347,7 +347,7 @@ fn verify_contract_detects_workspace_constraint_drift() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
@@ -377,7 +377,7 @@ fn verify_contract_detects_catalog_seed_and_bookkeeping_drift() -> anyhow::Resul
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
@@ -426,7 +426,7 @@ fn guard_test_rejects_a_database_newer_than_the_embedded_runner() -> anyhow::Res
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
@@ -447,7 +447,7 @@ fn task_delete_foreign_key_lookup_uses_the_dispatch_task_index() -> anyhow::Resu
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
@@ -475,7 +475,7 @@ fn baseline_supports_machine_owned_attachments_and_prune_rows() -> anyhow::Resul
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;

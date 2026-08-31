@@ -137,7 +137,7 @@ impl Drop for ScratchPath {
     }
 }
 
-fn test_database() -> anyhow::Result<Option<(ScratchDatabase, Client)>> {
+fn scratch_database() -> anyhow::Result<Option<(ScratchDatabase, Client)>> {
     let Ok(database_url) = env::var("GOBBY_SCHEMA_TEST_DATABASE_URL") else {
         eprintln!("GOBBY_SCHEMA_TEST_DATABASE_URL is unset; skipping PostgreSQL schema test");
         return Ok(None);
@@ -293,7 +293,7 @@ fn fresh_baseline_creates_config_revision_state() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
 
@@ -318,7 +318,7 @@ fn fresh_baseline_creates_embedding_coordination_state() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
 
@@ -377,7 +377,7 @@ fn fresh_baseline_grants_terminals_to_daemon_runtime() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
 
@@ -398,7 +398,7 @@ fn obsolete_baseline_receipt_is_rejected_without_mutation() -> anyhow::Result<()
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
@@ -441,7 +441,7 @@ fn project_checkout_predecessor_requires_campaign_without_mutation() -> anyhow::
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
 
@@ -667,7 +667,7 @@ fn receipt_chain_advances_from_19645_and_lineage_checksums() -> anyhow::Result<(
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
 
@@ -745,7 +745,7 @@ fn parent_only_lineage_refreshes_runtime_objects() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     install_parent_baseline(&mut client)?;
@@ -795,7 +795,7 @@ fn prior_current_baseline_refreshes_tool_chat_overlay_issuer() -> anyhow::Result
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     install_parent_baseline(&mut client)?;
@@ -842,7 +842,7 @@ fn worktree_only_lineage_adds_typed_domain_then_copy_migrations() -> anyhow::Res
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     install_worktree_baseline(&mut client)?;
@@ -876,7 +876,7 @@ fn interactive_principal_binds_only_registered_worktree_overlays() -> anyhow::Re
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((database, mut client)) = test_database()? else {
+    let Some((database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     install_baseline(&mut client)?;
@@ -1168,7 +1168,7 @@ fn tool_chat_principal_reads_parent_and_writes_only_its_worktree_overlay() -> an
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((database, mut client)) = test_database()? else {
+    let Some((database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     install_baseline(&mut client)?;
@@ -1356,7 +1356,7 @@ fn tool_chat_principal_binding_handles_clone_parent_and_ambiguous_workspaces() -
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     install_baseline(&mut client)?;
@@ -1504,7 +1504,7 @@ fn config_revision_baseline_is_nondestructive() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
@@ -1533,7 +1533,7 @@ fn unrecognized_receipt_still_rejects() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     install_baseline(&mut client)?;
@@ -1571,7 +1571,7 @@ fn lock_and_recovery_tests_repair_an_invalid_concurrent_index() -> anyhow::Resul
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
@@ -1614,7 +1614,7 @@ fn lock_and_recovery_tests_database_apply_lock_serializes_schemas() -> anyhow::R
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((database, mut lock_client)) = test_database()? else {
+    let Some((database, mut lock_client)) = scratch_database()? else {
         return Ok(());
     };
     let mut apply_client = database.connect()?;
@@ -1660,7 +1660,7 @@ fn lock_and_recovery_tests_failed_apply_releases_database_apply_lock() -> anyhow
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((database, mut client)) = test_database()? else {
+    let Some((database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     install_baseline(&mut client)?;
@@ -1704,7 +1704,7 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
@@ -1932,7 +1932,7 @@ fn fresh_destructive_migration_is_receipt_stamped_without_executing() -> anyhow:
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
 
@@ -1970,7 +1970,7 @@ fn existing_lineage_still_refuses_unauthorized_destructive_migration() -> anyhow
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
@@ -1992,7 +1992,7 @@ fn unauthorized_destructive_in_pending_batch_applies_nothing() -> anyhow::Result
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
@@ -2036,7 +2036,7 @@ fn guarded_nondestructive_migration_applies_on_fresh_and_predecessor() -> anyhow
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
 
@@ -2059,7 +2059,7 @@ fn guarded_nondestructive_migration_applies_on_fresh_and_predecessor() -> anyhow
     assert!(!fresh_replay.baseline_applied);
     assert_eq!(fresh_replay.migrations_applied, 0);
 
-    let Some((_predecessor_database, mut predecessor_client)) = test_database()? else {
+    let Some((_predecessor_database, mut predecessor_client)) = scratch_database()? else {
         return Ok(());
     };
     install_predecessor(&mut predecessor_client)?;
@@ -2099,7 +2099,7 @@ fn copy_migrations_receipt_noop_on_fresh_final_baseline() -> anyhow::Result<()> 
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
 
@@ -2147,7 +2147,7 @@ fn drop_migration_refused_on_predecessor_until_verified_backup() -> anyhow::Resu
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     install_predecessor(&mut client)?;
@@ -2214,7 +2214,7 @@ fn code_inheritance_has_gcode_project_policies() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((database, mut client)) = test_database()? else {
+    let Some((database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
@@ -2365,7 +2365,7 @@ fn code_inheritance_heritage_kind_check_rejects_unknown() -> anyhow::Result<()> 
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
@@ -2423,7 +2423,7 @@ fn code_inheritance_adoption_preserves_pre_inheritance_and_skips_existing() -> a
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
 
@@ -2443,7 +2443,7 @@ fn code_inheritance_adoption_preserves_pre_inheritance_and_skips_existing() -> a
         .get(0);
     assert!(after, "adoption must apply the code_inheritance hop");
 
-    let Some((_database2, mut existing)) = test_database()? else {
+    let Some((_database2, mut existing)) = scratch_database()? else {
         return Ok(());
     };
     for object in gcode_postgres_objects("public")? {
@@ -2482,7 +2482,7 @@ fn migration_411_on_a_410_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
 
@@ -2533,7 +2533,7 @@ fn migration_412_on_a_411_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
 
@@ -2670,7 +2670,7 @@ fn migration_413_on_a_412_hub_remaps_feedback_and_matches_a_fresh_apply() -> any
         through_413.last().map(|migration| migration.filename),
         Some("413_session_feedback_review.sql")
     );
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
 
@@ -2833,7 +2833,7 @@ fn migrations_414_through_417_on_a_413_hub_match_a_fresh_apply() -> anyhow::Resu
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = test_database()? else {
+    let Some((_database, mut client)) = scratch_database()? else {
         return Ok(());
     };
 
