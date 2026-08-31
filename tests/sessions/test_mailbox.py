@@ -9,6 +9,11 @@ from typing import Any, Protocol
 import pytest
 
 import gobby.sessions.mailbox as mailbox_module
+from gobby.sessions.clear_continuation import (
+    resolve_clear_successor,
+    stage_clear_attempt,
+    take_clear_handoff_marker,
+)
 from gobby.sessions.mailbox import MailboxSendResult, MailboxService
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.build_history import BuildHistoryStorage
@@ -68,6 +73,32 @@ def _mailbox(
         session_manager=session_manager,
         wake_dispatcher=wake_dispatcher,
     )
+
+
+def _consume_clear(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    predecessor: Session,
+    successor: Session,
+    *,
+    attempt_id: str,
+) -> None:
+    stage_clear_attempt(
+        db,
+        predecessor.id,
+        attempt_id=attempt_id,
+        handoff_markdown="handoff",
+        observations=[],
+        terminal_context=None,
+        chat_context=None,
+    )
+    assert take_clear_handoff_marker(
+        db,
+        predecessor.id,
+        attempt_id=attempt_id,
+        successor_id=successor.id,
+    )
+    session_manager.update_status(predecessor.id, "expired")
 
 
 def _setup_broadcast_scenario(
@@ -171,6 +202,152 @@ async def _send_project_broadcast(
 
 
 class TestMailboxDirectSend:
+    def test_clear_take_retargets_agent_runs(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        predecessor = _register_session(session_manager, sample_project["id"], "predecessor")
+        successor = _register_session(session_manager, sample_project["id"], "successor")
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=predecessor.id,
+            provider="codex",
+            prompt="retarget me",
+        )
+
+        _consume_clear(
+            temp_db,
+            session_manager,
+            predecessor,
+            successor,
+            attempt_id="retarget-agent-run",
+        )
+
+        row = temp_db.fetchone("SELECT parent_session_id FROM agent_runs WHERE id = %s", (run.id,))
+        assert row is not None
+        assert row["parent_session_id"] == successor.id
+
+    @pytest.mark.asyncio
+    async def test_direct_send_redirects_to_clear_successor(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        sender = _register_session(session_manager, sample_project["id"], "sender")
+        predecessor = _register_session(session_manager, sample_project["id"], "predecessor")
+        successor = _register_session(session_manager, sample_project["id"], "successor")
+        _consume_clear(
+            temp_db,
+            session_manager,
+            predecessor,
+            successor,
+            attempt_id="redirect-direct-message",
+        )
+
+        result = await _mailbox(temp_db, session_manager).send(
+            from_session_id=sender.id,
+            target="session",
+            target_id=predecessor.id,
+            content="follow the clear",
+            metadata={"purpose": "regression"},
+        )
+
+        assert result.recipient_session_ids == [successor.id]
+        row = temp_db.fetchone(
+            "SELECT to_session, metadata_json FROM inter_session_messages WHERE id = %s",
+            (result.message_ids[0],),
+        )
+        assert row is not None
+        assert row["to_session"] == successor.id
+        assert json.loads(row["metadata_json"]) == {
+            "purpose": "regression",
+            "redirected_from": predecessor.id,
+        }
+
+    @pytest.mark.asyncio
+    async def test_direct_send_follows_chained_clear_successors(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        sender = _register_session(session_manager, sample_project["id"], "sender")
+        first = _register_session(session_manager, sample_project["id"], "first")
+        second = _register_session(session_manager, sample_project["id"], "second")
+        live = _register_session(session_manager, sample_project["id"], "live")
+        _consume_clear(temp_db, session_manager, first, second, attempt_id="chain-one")
+        _consume_clear(temp_db, session_manager, second, live, attempt_id="chain-two")
+
+        result = await _mailbox(temp_db, session_manager).send(
+            from_session_id=sender.id,
+            target="session",
+            target_id=first.id,
+            content="follow the chain",
+        )
+
+        assert result.recipient_session_ids == [live.id]
+        assert resolve_clear_successor(temp_db, first.id) == live.id
+
+    @pytest.mark.asyncio
+    async def test_direct_send_keeps_live_and_non_clear_terminal_recipients(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        sender = _register_session(session_manager, sample_project["id"], "sender")
+        live = _register_session(session_manager, sample_project["id"], "live")
+        terminal = _register_session(session_manager, sample_project["id"], "terminal")
+        session_manager.update_status(terminal.id, "expired")
+        mailbox = _mailbox(temp_db, session_manager)
+
+        live_result = await mailbox.send(
+            from_session_id=sender.id,
+            target="session",
+            target_id=live.id,
+            content="live",
+        )
+        terminal_result = await mailbox.send(
+            from_session_id=sender.id,
+            target="session",
+            target_id=terminal.id,
+            content="terminal",
+        )
+
+        assert live_result.recipient_session_ids == [live.id]
+        assert terminal_result.recipient_session_ids == [terminal.id]
+        rows = temp_db.fetchall(
+            "SELECT metadata_json FROM inter_session_messages WHERE id = ANY(%s)",
+            ([live_result.message_ids[0], terminal_result.message_ids[0]],),
+        )
+        assert all(
+            "redirected_from" not in json.loads(row["metadata_json"] or "{}") for row in rows
+        )
+
+    def test_clear_successor_resolution_is_capped_at_five_hops(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        chain = [
+            _register_session(session_manager, sample_project["id"], f"hop-{index}")
+            for index in range(7)
+        ]
+        for index, (predecessor, successor) in enumerate(zip(chain, chain[1:], strict=False)):
+            _consume_clear(
+                temp_db,
+                session_manager,
+                predecessor,
+                successor,
+                attempt_id=f"hop-{index}",
+            )
+
+        assert resolve_clear_successor(temp_db, chain[0].id) is None
+        assert resolve_clear_successor(temp_db, chain[1].id) == chain[-1].id
+
     @pytest.mark.asyncio
     async def test_direct_send_creates_durable_row_and_wakes(
         self,

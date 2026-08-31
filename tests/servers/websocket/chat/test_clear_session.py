@@ -26,6 +26,7 @@ from gobby.sessions.clear_continuation import (
     commit_web_chat_clear_successor,
     stage_clear_attempt,
 )
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_tasks import SessionTaskManager
@@ -407,6 +408,11 @@ class TestCommitWebChatClearSuccessorTransaction:
         )
         sessions = SessionManager(hub_db)
         predecessor = _web_chat_row(sessions, project.id, "predecessor")
+        run = LocalAgentRunManager(hub_db).create(
+            parent_session_id=predecessor.id,
+            provider="claude",
+            prompt="retarget web-chat child",
+        )
         hub_db.execute(
             "UPDATE sessions SET handoff_markdown = %s WHERE id = %s",
             (HANDOFF, predecessor.id),
@@ -441,6 +447,12 @@ class TestCommitWebChatClearSuccessorTransaction:
         assert refreshed_succ.session_type == "web_chat"
         assert refreshed_succ.external_id != predecessor.external_id
         assert refreshed_succ.external_id != predecessor.id
+        run_row = hub_db.fetchone(
+            "SELECT parent_session_id FROM agent_runs WHERE id = %s",
+            (run.id,),
+        )
+        assert run_row is not None
+        assert run_row["parent_session_id"] == successor.id
         marker = SessionVariableManager(hub_db).get_variables(predecessor.id)
         assert marker[CLEAR_ATTEMPT_VARIABLE]["consumed_by"] == successor.id
         seeded = SessionVariableManager(hub_db).get_variables(successor.id)

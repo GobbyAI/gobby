@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.build.coordinator import summary_allows_cross_project_coordinator
+from gobby.sessions.clear_continuation import resolve_clear_successor
 from gobby.storage.build_history import BuildHistoryStorage
 from gobby.storage.sessions import (
     SYSTEM_SESSION_SOURCE,
@@ -25,10 +26,13 @@ from gobby.utils.uuid_validation import parse_uuid_reference
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
-    from gobby.storage.inter_session_messages import (
-        InterSessionMessage,
-        InterSessionMessageManager,
-    )
+from gobby.storage.inter_session_messages import (
+    InterSessionMessage,
+    InterSessionMessageManager,
+)
+from gobby.storage.sessions import TERMINAL_SESSION_STATUSES
+
+if TYPE_CHECKING:
     from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
 
@@ -178,8 +182,18 @@ class MailboxService:
         messages = []
         with self._db.transaction():
             for recipient_id in recipient_ids:
+                message_metadata = metadata
+                if (
+                    resolution.target == "session"
+                    and resolution.target_id is not None
+                    and resolution.target_id != recipient_id
+                ):
+                    message_metadata = {
+                        **(metadata or {}),
+                        "redirected_from": resolution.target_id,
+                    }
                 metadata_json = self._metadata_json(
-                    metadata=metadata,
+                    metadata=message_metadata,
                     broadcast_id=broadcast_id,
                     resolution=resolution,
                 )
@@ -373,6 +387,14 @@ class MailboxService:
         recipient: Session | None = self._session_manager.get(to_session_id)
         if recipient is None:
             raise ValueError(f"Recipient session not found: {to_session_id}")
+        if recipient.status in TERMINAL_SESSION_STATUSES:
+            successor_id = resolve_clear_successor(self._db, to_session_id)
+            successor = (
+                self._session_manager.get(successor_id) if successor_id is not None else None
+            )
+            if successor is not None:
+                recipient = successor
+                to_session_id = successor.id
 
         if project_id and recipient.project_id != self._resolve_project_ref(project_id):
             raise ValueError("Recipient session is outside the target project")
