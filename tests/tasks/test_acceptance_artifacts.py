@@ -595,6 +595,44 @@ def test_tdd_evidence_rejects_non_test_green_run() -> None:
     assert result.green_runs == ()
 
 
+def test_tdd_evidence_rejects_test_quality_audit_as_green() -> None:
+    started = datetime(2026, 8, 30, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    audit_green = replace(
+        _run(test, started + timedelta(minutes=3), "success", "Issues: 0", 4),
+        command="gobby test-quality audit tests/test_feature.py --fail-on-new",
+        categories=("test",),
+        matcher_id="gobby-test-quality-audit",
+        label="Gobby test-quality audit",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit("tests/test_feature.py", started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            _run(
+                test,
+                started + timedelta(minutes=1),
+                "failure",
+                "FAILED tests/test_feature.py::test_feature\nE assert 0 == 1",
+                2,
+            ),
+            audit_green,
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is False
+    assert result.green_runs == ()
+
+
 def test_tdd_evidence_does_not_borrow_assertion_from_other_test() -> None:
     started = datetime(2026, 8, 30, tzinfo=UTC)
     test = AcceptanceTest(

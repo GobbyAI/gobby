@@ -29,6 +29,7 @@ _FAILURE_SECTION_BOUNDARY_RE = re.compile(
     r".*::\S+\s+(?:PASSED|FAILED|ERROR|SKIPPED)\b)",
     re.IGNORECASE,
 )
+_NON_EXECUTION_TEST_MATCHERS = frozenset({"gobby-test-quality-audit"})
 
 
 def is_test_convention_path(path: str) -> bool:
@@ -208,7 +209,11 @@ def _find_red_run(
     first_non_test_edit: TranscriptEdit | None,
 ) -> TranscriptValidationRun | None:
     for run in sorted(evidence.validation_runs, key=lambda item: item.order):
-        if run.outcome != "failure" or run.order <= test_edit_order:
+        if (
+            run.outcome != "failure"
+            or not _is_test_execution_run(run)
+            or run.order <= test_edit_order
+        ):
             continue
         if first_non_test_edit is not None and run.order >= first_non_test_edit.order:
             continue
@@ -243,6 +248,18 @@ def _has_named_assertion_failure(output: str | None, test: AcceptanceTest) -> bo
     return False
 
 
+def _is_test_execution_run(run: TranscriptValidationRun) -> bool:
+    if run.matcher_id in _NON_EXECUTION_TEST_MATCHERS:
+        return False
+    if run.validation_segments:
+        return any(
+            "test" in segment.categories
+            and not segment.command.startswith("gobby test-quality audit")
+            for segment in run.validation_segments
+        )
+    return "test" in run.categories
+
+
 def _find_green_run(
     test: AcceptanceTest,
     evidence: TranscriptEvidence,
@@ -253,7 +270,7 @@ def _find_green_run(
     for run in sorted(evidence.validation_runs, key=lambda item: item.order):
         if (
             run.outcome != "success"
-            or "test" not in run.categories
+            or not _is_test_execution_run(run)
             or run.order <= max(red.order, after_order)
         ):
             continue
