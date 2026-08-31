@@ -216,7 +216,11 @@ def _find_green_run(
     after_order: int,
 ) -> TranscriptValidationRun | None:
     for run in sorted(evidence.validation_runs, key=lambda item: item.order):
-        if run.outcome != "success" or run.order <= max(red.order, after_order):
+        if (
+            run.outcome != "success"
+            or "test" not in run.categories
+            or run.order <= max(red.order, after_order)
+        ):
             continue
         if validation_run_covers_test(run.command, run.output, test):
             return run

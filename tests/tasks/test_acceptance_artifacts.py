@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -554,6 +555,44 @@ def test_tdd_evidence_accepts_one_cycle_with_multiple_green_artifacts() -> None:
     )
     assert incomplete.passed is False
     assert any(supporting.reference in finding for finding in incomplete.findings)
+
+
+def test_tdd_evidence_rejects_non_test_green_run() -> None:
+    started = datetime(2026, 8, 30, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    lint_green = replace(
+        _run(test, started + timedelta(minutes=3), "success", "All checks passed!", 4),
+        command="ruff check tests/test_feature.py",
+        categories=("lint",),
+        matcher_id="ruff",
+        label="ruff",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit("tests/test_feature.py", started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            _run(
+                test,
+                started + timedelta(minutes=1),
+                "failure",
+                "FAILED tests/test_feature.py::test_feature\nE assert 0 == 1",
+                2,
+            ),
+            lint_green,
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is False
+    assert result.green_runs == ()
 
 
 def test_tdd_evidence_merges_handoff_sessions_by_position() -> None:
