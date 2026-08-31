@@ -321,20 +321,19 @@ class _TerminalMixin:
         session_id: str,
         workflow_name: str | None = None,
         agent_run_id: str | None = None,
-        context_injected: bool | None = None,
         original_prompt: str | None = None,
     ) -> Session | None:
         """
         Update terminal pickup metadata for a session.
 
         These fields are used when a terminal-mode agent picks up its
-        prepared state via hooks on session start.
+        prepared state via hooks on session start. ``context_injected`` is
+        not settable here: it is derived by the startup-context claim commit.
 
         Args:
             session_id: Session ID to update.
             workflow_name: Workflow to activate on terminal pickup.
             agent_run_id: Link back to the agent run record.
-            context_injected: Whether context was injected into prompt.
             original_prompt: Original prompt for the agent.
 
         Returns:
@@ -346,8 +345,6 @@ class _TerminalMixin:
             values["workflow_name"] = workflow_name
         if agent_run_id is not None:
             values["agent_run_id"] = agent_run_id
-        if context_injected is not None:
-            values["context_injected"] = bool(context_injected)
         if original_prompt is not None:
             values["original_prompt"] = original_prompt
 

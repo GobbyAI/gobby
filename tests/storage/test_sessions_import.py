@@ -128,7 +128,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "workflow_name: 'str | None' = None, session_type: 'str' = 'terminal', "
     "is_local: 'bool' = False, sandbox_enabled: 'bool | None' = None, "
     "sandbox_policy_hash: 'str | None' = None, "
-    "title_source: 'str | None | UnsetType' = UNSET) -> 'Session'",
+    "title_source: 'str | None | UnsetType' = UNSET, workspace_path: 'str | None' = None) "
+    "-> 'Session'",
     "register_session": "(self, external_id: 'str', machine_id: 'str | None', source: 'str', "
     "project_id: 'str | None', parent_session_id: 'str | None | UnsetType' = UNSET, "
     "transcript_path: 'str | None' = None, title: 'str | None' = None, "
@@ -162,7 +163,9 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "git_branch: 'str | None | UnsetType' = UNSET, "
     "terminal_context: 'dict[str, Any] | None' = None, "
     "project_id: 'str | None' = None, sandbox_enabled: 'bool | None' = None, "
-    "sandbox_policy_hash: 'str | None' = None) -> 'Session | None'",
+    "sandbox_policy_hash: 'str | None' = None, "
+    "workspace_path: 'str | None | UnsetType' = UNSET, "
+    "workspace_generation: 'int | None' = None) -> 'Session | None'",
     "update_approved_tools": "(self, session_id: 'str', tools: 'set[str]') -> 'None'",
     "update_chat_mode": "(self, session_id: 'str', chat_mode: 'str') -> 'None'",
     "update_context_usage": "(self, session_id: 'str', snapshot: 'ContextUsageSnapshot') -> 'bool'",
@@ -182,8 +185,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "summary_markdown: 'str | None | UnsetType' = UNSET) -> 'Session | None'",
     "update_terminal_pickup_metadata": "(self, session_id: 'str', "
     "workflow_name: 'str | None' = None, agent_run_id: 'str | None' = None, "
-    "context_injected: 'bool | None' = None, original_prompt: 'str | None' = None) "
-    "-> 'Session | None'",
+    "original_prompt: 'str | None' = None) -> 'Session | None'",
     "update_title": "(self, session_id: 'str', title: 'str', *, "
     "title_source: 'str | None' = 'manual') -> 'Session | None'",
     "update_usage": "(self, session_id: 'str', input_tokens: 'int', "

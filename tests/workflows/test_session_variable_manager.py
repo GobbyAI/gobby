@@ -154,27 +154,6 @@ def test_append_to_set_variable_accepts_jsonb_dict_payload() -> None:
     assert fake_db.connection.written_variables == {"session_edited_files": ["a.py", "b.py"]}
 
 
-def test_claim_startup_context_accepts_jsonb_dict_payload() -> None:
-    """Startup-context claims use the same JSONB session variable payload."""
-    from gobby.workflows.state_manager import SessionVariableManager
-
-    fake_db = _DictVariablesDB({"_startup_context_injected": False})
-    mgr = SessionVariableManager(fake_db)  # type: ignore[arg-type]
-
-    result = mgr.claim_startup_context(S1, owner_token="owner-1")
-
-    assert result.mode == "full"
-    assert result.generation == 1
-    assert result.state == "claimed"
-    assert fake_db.connection.written_variables == {
-        "_startup_context_claim": {
-            "generation": 1,
-            "owner": "owner-1",
-            "state": "claimed",
-        }
-    }
-
-
 def test_set_variable(db: Any) -> None:
     """Test set_variable writes a single variable."""
     from gobby.workflows.state_manager import SessionVariableManager
@@ -1025,24 +1004,31 @@ def test_record_edited_file_persists_installed_default_entries(db: Any) -> None:
     assert _stored_variables(db, S1)["session_edited_files"] == ["seed.py", "src/app.py"]
 
 
-def test_claim_startup_context_persists_installed_defaults(db: Any) -> None:
+def test_claim_startup_context_lives_on_the_sessions_row(db: Any) -> None:
+    """The claim generation is a sessions column, never a session variable."""
     from gobby.workflows.state_manager import SessionVariableManager
 
-    _install_variable_default(db, "listed_servers", ["gobby-tasks"])
     mgr = SessionVariableManager(db)
 
     claim = mgr.claim_startup_context(S1, owner_token="owner-1")
     assert claim.mode == "full"
     assert claim.generation == 1
+    assert claim.owner_token == "owner-1"
+    assert claim.state == "claimed"
 
-    stored = _stored_variables(db, S1)
-    assert stored["listed_servers"] == ["gobby-tasks"]
-    assert stored["_startup_context_claim"] == {
-        "generation": 1,
-        "owner": "owner-1",
-        "state": "claimed",
-    }
-    assert "_startup_context_injected" not in stored
+    row = db.fetchone(
+        "SELECT startup_claim_generation, startup_claim_owner, startup_claim_state, "
+        "context_injected FROM sessions WHERE id = %s",
+        (S1,),
+    )
+    assert row is not None
+    assert int(row["startup_claim_generation"]) == 1
+    assert row["startup_claim_owner"] == "owner-1"
+    assert row["startup_claim_state"] == "claimed"
+    assert row["context_injected"] is False
+    assert (
+        db.fetchone("SELECT variables FROM session_variables WHERE session_id = %s", (S1,)) is None
+    )
 
 
 def test_record_edited_file_without_claim_has_no_task_scoped_entry(db: Any) -> None:
@@ -1187,3 +1173,66 @@ class TestStartupContextClaimGeneration:
         later = mgr.claim_startup_context(S1, owner_token="owner-b")
         assert later.mode == "full"
         assert later.generation == claim.generation + 1
+
+    def test_commit_derives_context_injected_and_nothing_else_does(self, db: Any) -> None:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        mgr = SessionVariableManager(db)
+        claim = mgr.claim_startup_context(S1, owner_token="owner-a")
+        assert _session_columns(db, S1)["context_injected"] is False
+
+        assert mgr.rollback_startup_context(S1, claim.generation, "owner-a") is True
+        rolled = _session_columns(db, S1)
+        assert rolled["startup_claim_state"] == "idle"
+        assert rolled["startup_claim_owner"] is None
+        assert rolled["context_injected"] is False
+
+        again = mgr.claim_startup_context(S1, owner_token="owner-b")
+        assert mgr.commit_startup_context(S1, again.generation, "owner-b") is True
+        committed = _session_columns(db, S1)
+        assert committed["startup_claim_state"] == "committed"
+        assert committed["startup_claim_owner"] == "owner-b"
+        assert committed["context_injected"] is True
+        assert mgr.rollback_startup_context(S1, again.generation, "owner-b") is False
+        assert mgr.invalidate_startup_context(S1, again.generation, "owner-b") is False
+        assert _session_columns(db, S1)["context_injected"] is True
+
+    def test_missing_session_claim_is_not_durable(self, db: Any) -> None:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        mgr = SessionVariableManager(db)
+        claim = mgr.claim_startup_context(NONEXISTENT_SESSION_ID, owner_token="owner-a")
+        assert claim.mode == "full"
+        assert claim.state == "idle"
+        assert claim.generation == 0
+        assert claim.owner_token is None
+        assert mgr.commit_startup_context(NONEXISTENT_SESSION_ID, 0, "owner-a") is False
+
+    def test_concurrent_claims_allocate_exactly_one_generation(self, db: Any) -> None:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        mgr = SessionVariableManager(db)
+        barrier = threading.Barrier(8)
+
+        def claim(index: int) -> Any:
+            barrier.wait()
+            return mgr.claim_startup_context(S1, owner_token=f"owner-{index}")
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(claim, range(8)))
+
+        winners = [result for result in results if result.mode == "full"]
+        assert len(winners) == 1
+        assert all(result.generation == 1 for result in results)
+        assert all(result.owner_token == winners[0].owner_token for result in results)
+        assert _session_columns(db, S1)["startup_claim_state"] == "claimed"
+
+
+def _session_columns(db: HubDatabase, session_id: str) -> dict[str, Any]:
+    row = db.fetchone(
+        "SELECT startup_claim_generation, startup_claim_owner, startup_claim_state, "
+        "context_injected FROM sessions WHERE id = %s",
+        (session_id,),
+    )
+    assert row is not None
+    return dict(row)

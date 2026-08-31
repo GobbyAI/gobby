@@ -5,9 +5,8 @@ import time
 import weakref
 from collections.abc import Callable, Mapping
 from copy import deepcopy
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal, TypeVar
+from typing import Any, TypeVar
 from uuid import uuid4
 
 from gobby.storage.definitions.revisions import (
@@ -18,35 +17,22 @@ from gobby.storage.hub.protocol import (
     HubDatabase,
     SessionVariableMutation,
 )
+from gobby.storage.sessions import startup_claim as _startup_claim
+from gobby.storage.sessions.startup_claim import StartupClaimState, StartupContextClaim
 from gobby.workflows.variable_defaults import (
     load_variable_defaults,
     resolve_session_project_id,
 )
 
+__all__ = [
+    "SessionVariableManager",
+    "StartupClaimState",
+    "StartupContextClaim",
+]
+
 logger = logging.getLogger(__name__)
 
 _MutationResult = TypeVar("_MutationResult")
-
-StartupClaimState = Literal["idle", "claimed", "committed", "invalidated"]
-
-
-@dataclass(frozen=True)
-class StartupContextClaim:
-    """Token-bearing startup-context claim generation."""
-
-    mode: Literal["full", "live"]
-    generation: int
-    owner_token: str | None
-    state: StartupClaimState
-
-
-def _startup_claim_record(variables: dict[str, Any]) -> dict[str, Any] | None:
-    claim = variables.get("_startup_context_claim")
-    if isinstance(claim, dict) and "generation" in claim and "state" in claim:
-        return claim
-    if variables.get("_startup_context_injected") is True:
-        return {"generation": 1, "owner": None, "state": "committed"}
-    return None
 
 
 def _decode_variables_payload(variables: Any) -> dict[str, Any]:
@@ -721,39 +707,13 @@ class SessionVariableManager:
         session_id: str,
         owner_token: str | None = None,
     ) -> StartupContextClaim:
-        """Atomically claim the startup context generation for this session."""
+        """Atomically claim the startup context generation on the sessions row."""
 
-        token = owner_token or str(uuid4())
-
-        def mutate(variables: dict[str, Any]) -> tuple[StartupContextClaim, bool]:
-            claim = _startup_claim_record(variables)
-            if claim is not None and claim["state"] == "committed":
-                return (
-                    StartupContextClaim(
-                        "live",
-                        int(claim["generation"]),
-                        str(claim["owner"]) if claim["owner"] else None,
-                        "committed",
-                    ),
-                    False,
-                )
-            if claim is not None and claim["state"] == "claimed":
-                owner = str(claim["owner"]) if claim["owner"] else None
-                generation = int(claim["generation"])
-                if owner == token:
-                    return StartupContextClaim("full", generation, token, "claimed"), False
-                return StartupContextClaim("live", generation, owner, "claimed"), False
-            generation = 1 if claim is None else int(claim["generation"]) + 1
-            variables["_startup_context_claim"] = {
-                "generation": generation,
-                "owner": token,
-                "state": "claimed",
-            }
-            if variables.get("_startup_context_injected") is not True:
-                variables.pop("_startup_context_injected", None)
-            return StartupContextClaim("full", generation, token, "claimed"), True
-
-        return self._mutate_variables(session_id, mutate, apply_defaults=True)
+        return _startup_claim.claim_startup_context(
+            self.db,
+            session_id,
+            owner_token=owner_token or str(uuid4()),
+        )
 
     def commit_startup_context(
         self,
@@ -763,24 +723,7 @@ class SessionVariableManager:
     ) -> bool:
         """CAS a matching claimed generation to committed."""
 
-        def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
-            claim = _startup_claim_record(variables)
-            if (
-                claim is None
-                or int(claim["generation"]) != generation
-                or claim["owner"] != owner_token
-                or claim["state"] != "claimed"
-            ):
-                return False, False
-            variables["_startup_context_claim"] = {
-                "generation": generation,
-                "owner": owner_token,
-                "state": "committed",
-            }
-            variables["_startup_context_injected"] = True
-            return True, True
-
-        return self._mutate_variables(session_id, mutate, apply_defaults=True)
+        return _startup_claim.commit_startup_context(self.db, session_id, generation, owner_token)
 
     def rollback_startup_context(
         self,
@@ -790,24 +733,7 @@ class SessionVariableManager:
     ) -> bool:
         """CAS a matching claimed generation back to idle."""
 
-        def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
-            claim = _startup_claim_record(variables)
-            if (
-                claim is None
-                or int(claim["generation"]) != generation
-                or claim["owner"] != owner_token
-                or claim["state"] != "claimed"
-            ):
-                return False, False
-            variables["_startup_context_claim"] = {
-                "generation": generation,
-                "owner": None,
-                "state": "idle",
-            }
-            variables.pop("_startup_context_injected", None)
-            return True, True
-
-        return self._mutate_variables(session_id, mutate, apply_defaults=True)
+        return _startup_claim.rollback_startup_context(self.db, session_id, generation, owner_token)
 
     def invalidate_startup_context(
         self,
@@ -817,20 +743,6 @@ class SessionVariableManager:
     ) -> bool:
         """CAS a matching claimed generation to invalidated."""
 
-        def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
-            claim = _startup_claim_record(variables)
-            if (
-                claim is None
-                or int(claim["generation"]) != generation
-                or claim["owner"] != owner_token
-                or claim["state"] != "claimed"
-            ):
-                return False, False
-            variables["_startup_context_claim"] = {
-                "generation": generation,
-                "owner": owner_token,
-                "state": "invalidated",
-            }
-            return True, True
-
-        return self._mutate_variables(session_id, mutate, apply_defaults=True)
+        return _startup_claim.invalidate_startup_context(
+            self.db, session_id, generation, owner_token
+        )

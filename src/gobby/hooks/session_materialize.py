@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
-from gobby.hooks.event_handlers._session_start.context import mark_startup_context_injected
+from gobby.hooks.event_handlers._session_start.context import commit_stashed_startup_claim
 from gobby.hooks.event_handlers._session_start.handoff import (
     resolve_matching_clear_continuation,
 )
@@ -171,5 +171,5 @@ def activate_deferred_session(
     event.metadata["_startup_context"] = startup_response.context
     event.metadata["_startup_system_message"] = startup_response.system_message
     if context_mode == "full":
-        mark_startup_context_injected(handlers, session_id)
+        commit_stashed_startup_claim(handlers, session_id, event.metadata)
     return None

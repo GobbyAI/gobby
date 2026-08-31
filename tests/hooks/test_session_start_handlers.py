@@ -27,7 +27,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.utils.machine_id import require_machine_id
-from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.state_manager import SessionVariableManager, StartupContextClaim
 
 from ._event_handler_helpers import make_event
 
@@ -347,9 +347,18 @@ class TestSessionStartContextClaim:
         )
 
         assert first.mode == "full"
+        assert first.claim is not None
+        assert first.claim.state == "claimed"
+        assert first.commits_on_emit is True
         assert second.mode == "live"
-        variables = SessionVariableManager(temp_db).get_variables(session_id)
-        assert variables["_startup_context_claim"]["state"] == "claimed"
+        assert second.claim is None
+        session = SessionManager(temp_db).get(session_id)
+        assert session is not None
+        assert session.startup_claim_state == "claimed"
+        assert session.startup_claim_owner == first.claim.owner_token
+        assert "_startup_context_claim" not in SessionVariableManager(temp_db).get_variables(
+            session_id
+        )
 
     def test_concurrent_duplicate_session_start_claims_full_context_once(
         self, temp_db: Any
@@ -376,8 +385,10 @@ class TestSessionStartContextClaim:
 
         assert modes.count("full") == 1
         assert modes.count("live") == 7
-        variables = SessionVariableManager(temp_db).get_variables(session_id)
-        assert variables["_startup_context_claim"]["state"] == "claimed"
+        session = SessionManager(temp_db).get(session_id)
+        assert session is not None
+        assert session.startup_claim_state == "claimed"
+        assert session.startup_claim_generation == 1
 
     def test_explicit_context_loss_bypasses_existing_startup_claim(self, temp_db: Any) -> None:
         handler = _session_variable_handler(temp_db)
@@ -385,23 +396,77 @@ class TestSessionStartContextClaim:
             temp_db,
             external_id="context-claim-explicit-loss",
         )
-        SessionVariableManager(temp_db).merge_variables(
-            session_id,
-            {"_startup_context_injected": True},
+        first = SessionVariableManager(temp_db).claim_startup_context(
+            session_id, owner_token="owner-first"
+        )
+        assert SessionVariableManager(temp_db).commit_startup_context(
+            session_id, first.generation, "owner-first"
         )
 
         decision = classify_session_start_context(
             handler,
             session_id=session_id,
-            session=None,
+            session=SessionManager(temp_db).get(session_id),
             session_source="clear",
             is_existing_session=True,
         )
 
         assert decision.mode == "full"
         assert decision.explicit_context_loss is True
-        variables = SessionVariableManager(temp_db).get_variables(session_id)
-        assert variables["_startup_context_injected"] is True
+        assert decision.claim is None
+        session = SessionManager(temp_db).get(session_id)
+        assert session is not None
+        assert session.startup_claim_state == "committed"
+        assert session.context_injected is True
+
+    def test_committed_claim_is_prior_context_evidence(self, temp_db: Any) -> None:
+        handler = _session_variable_handler(temp_db)
+        session_id = _register_context_claim_session(
+            temp_db,
+            external_id="context-claim-committed-evidence",
+        )
+        claim = SessionVariableManager(temp_db).claim_startup_context(
+            session_id, owner_token="owner-evidence"
+        )
+        assert SessionVariableManager(temp_db).commit_startup_context(
+            session_id, claim.generation, "owner-evidence"
+        )
+
+        decision = classify_session_start_context(
+            handler,
+            session_id=session_id,
+            session=SessionManager(temp_db).get(session_id),
+            session_source="resume",
+            is_existing_session=True,
+        )
+
+        assert decision.mode == "live"
+        assert decision.claim is None
+
+    def test_external_owner_claim_never_commits_on_emit(self, temp_db: Any) -> None:
+        handler = _session_variable_handler(temp_db)
+        session_id = _register_context_claim_session(
+            temp_db,
+            external_id="context-claim-external-owner",
+        )
+        preflight = SessionVariableManager(temp_db).claim_startup_context(
+            session_id, owner_token="owner-preflight"
+        )
+
+        decision = classify_session_start_context(
+            handler,
+            session_id=session_id,
+            session=None,
+            session_source="startup",
+            is_existing_session=False,
+            owner_token="owner-preflight",
+        )
+
+        assert decision.mode == "full"
+        assert decision.claim is not None
+        assert decision.claim.generation == preflight.generation
+        assert decision.owner_external is True
+        assert decision.commits_on_emit is False
 
 
 class TestSessionStartPreCreatedSession:
@@ -820,7 +885,6 @@ class TestSessionStartPreCreatedSession:
 
         mock_svm = MagicMock()
         mock_svm.get_variables.return_value = {
-            "_startup_context_injected": True,
             "task_claimed": True,
             "claimed_tasks": {"task-uuid": "#15237"},
         }
@@ -878,7 +942,9 @@ class TestSessionStartPreCreatedSession:
 
         mock_svm = MagicMock()
         mock_svm.get_variables.return_value = {}
-        mock_svm.claim_startup_context.return_value = SimpleNamespace(mode="full")
+        mock_svm.claim_startup_context.return_value = StartupContextClaim(
+            "full", 1, "owner-first", "claimed"
+        )
         mock_svm_cls.return_value = mock_svm
         mock_dependencies["session_storage"].get.return_value = mock_session
         mock_dependencies["session_manager"].update.return_value = mock_session
@@ -916,13 +982,9 @@ class TestSessionStartPreCreatedSession:
             )
             in mock_svm.merge_variables.call_args_list
         )
-        mock_dependencies[
-            "session_manager"
-        ].update_terminal_pickup_metadata.assert_called_once_with(
-            "sess-first-123",
-            context_injected=True,
-        )
+        mock_dependencies["session_manager"].update_terminal_pickup_metadata.assert_not_called()
         mock_svm.claim_startup_context.assert_called_once_with("sess-first-123")
+        mock_svm.commit_startup_context.assert_called_once_with("sess-first-123", 1, "owner-first")
 
     @pytest.mark.parametrize(
         ("source", "pending_reset"),
@@ -952,7 +1014,6 @@ class TestSessionStartPreCreatedSession:
 
         mock_svm = MagicMock()
         mock_svm.get_variables.return_value = {
-            "_startup_context_injected": True,
             "pending_context_reset": pending_reset,
         }
         mock_svm_cls.return_value = mock_svm

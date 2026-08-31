@@ -26,6 +26,7 @@ from .agents import _seed_parent_turn_seq, _seed_wiki_overview_var
 from .claims import preserve_task_claim_state
 from .context import (
     classify_session_start_context,
+    stash_startup_claim,
 )
 from .context import (
     startup_claim_owner_token as _startup_claim_owner_token,
@@ -350,6 +351,7 @@ def activate_materialized_session(
         owner_token=_startup_claim_owner_token(event),
     )
     event.metadata[_CONTEXT_MODE_METADATA_KEY] = context_decision.mode
+    stash_startup_claim(event.metadata, context_decision)
 
     if not input_data.get("skip_default_agent_activation"):
         try:

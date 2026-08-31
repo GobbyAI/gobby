@@ -9,6 +9,10 @@ import pytest
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions.startup_claim import (
+    claim_startup_context,
+    commit_startup_context,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -210,8 +214,12 @@ class TestSessionManagerModelFields:
         session_manager.update_terminal_pickup_metadata(
             session.id,
             workflow_name="plan-execute",
-            context_injected=True,
             original_prompt="Test prompt",
+        )
+        # context_injected is derived by committing the startup-context claim.
+        claim = claim_startup_context(session_manager.db, session.id, owner_token="dict-owner")
+        assert commit_startup_context(
+            session_manager.db, session.id, claim.generation, "dict-owner"
         )
 
         # Update other fields

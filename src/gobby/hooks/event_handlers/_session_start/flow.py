@@ -23,7 +23,8 @@ from gobby.storage.sessions._update_sentinel import UNSET
 from .agents import _seed_parent_turn_seq, _seed_wiki_overview_var
 from .context import (
     classify_session_start_context,
-    mark_startup_context_injected,
+    commit_startup_context_claim,
+    commit_stashed_startup_claim,
 )
 from .context import (
     startup_claim_owner_token as _startup_claim_owner_token,
@@ -515,7 +516,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         ),
     )
     if context_mode == "full":
-        mark_startup_context_injected(handler, session_id)
+        commit_stashed_startup_claim(handler, session_id, event.metadata)
     return response
 
 
@@ -707,7 +708,7 @@ def handle_pre_created_session(
         ),
     )
     if context_decision.mode == "full":
-        mark_startup_context_injected(handler, session_id)
+        commit_startup_context_claim(handler, session_id, context_decision)
     return response
 
 
