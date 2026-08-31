@@ -14,7 +14,7 @@ from gobby.providers.capabilities.models import (
     SourceState,
     SpeedMode,
 )
-from gobby.providers.capabilities.seed import apply_seed
+from gobby.providers.capabilities.seed import _agy_snapshot, apply_seed
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -100,6 +100,51 @@ def test_seed_only_when_empty(postgres_db: HubDatabase) -> None:
     ]
     standalone_fast = models["claude-opus-4-6-fast"]
     assert [route.speed_mode for route in standalone_fast.routes] == [SpeedMode.STANDARD]
+
+
+def test_seed_includes_agy_floor_catalog(postgres_db: HubDatabase) -> None:
+    store = ProviderCapabilityStore(postgres_db)
+
+    apply_seed(store)
+
+    snapshot = store.get_provider_snapshot("agy")
+    assert snapshot is not None
+    assert {model.canonical_model for model in snapshot.models} == {
+        "gemini-3.7-flash-high",
+        "gemini-3.7-flash-medium",
+        "gemini-3.7-flash-low",
+        "gemini-3.6-flash-high",
+        "gemini-3.6-flash-medium",
+        "gemini-3.6-flash-low",
+        "gemini-3.5-flash-high",
+        "gemini-3.5-flash-medium",
+        "gemini-3.5-flash-low",
+        "gemini-3.1-pro-high",
+        "gemini-3.1-pro-low",
+        "claude-sonnet-4-6",
+        "claude-opus-4-6-thinking",
+        "gpt-oss-120b-medium",
+    }
+    assert [(source.source_key, source.state) for source in snapshot.sources] == [
+        ("bundled", SourceState.STALE)
+    ]
+    models = {model.canonical_model: model for model in snapshot.models}
+    assert models["gemini-3.5-flash-high"].aliases == ("gemini-3.5-flash",)
+    assert models["gemini-3.5-flash-high"].context_length == 1_048_576
+    assert all(
+        provenance.source_key == "bundled"
+        for model in snapshot.models
+        for provenance in model.provenance.values()
+    )
+
+
+def test_agy_seed_snapshot_is_fixture_derived() -> None:
+    snapshot = _agy_snapshot(datetime(2026, 8, 20, 12, 0, tzinfo=UTC))
+
+    assert len(snapshot.models) == 14
+    assert snapshot.models[0].canonical_model == "gemini-3.7-flash-high"
+    assert snapshot.models[-1].canonical_model == "gpt-oss-120b-medium"
+    assert snapshot.models[0].routes[0].selector == "gemini-3.7-flash-high"
 
 
 def test_refresh_replaces_seed(postgres_db: HubDatabase) -> None:

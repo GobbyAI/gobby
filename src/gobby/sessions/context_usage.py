@@ -20,9 +20,6 @@ _SOURCES: frozenset[str] = frozenset(
 )
 logger = logging.getLogger(__name__)
 _AGY_LABEL_SUFFIX_RE = re.compile(r"\s*\([^)]*\)\s*$")
-_AGY_MODEL_ALIASES: dict[str, str] = {
-    "gemini-3.1-pro": "gemini-3.1-pro-preview",
-}
 _GPT_OSS_CONTEXT_WINDOW = 131_072
 
 
@@ -186,7 +183,7 @@ def _normalize_agy_model_lookup_id(model: str | None) -> str | None:
     normalized = re.sub(r"[^a-z0-9.]+", "-", normalize_model_lookup_id(without_suffix)).strip("-")
     if not normalized:
         return None
-    return _AGY_MODEL_ALIASES.get(normalized, normalized)
+    return normalized
 
 
 def resolve_context_window_overrides(config: object | None) -> dict[str, int] | None:

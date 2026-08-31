@@ -1744,8 +1744,8 @@ async def test_text_generation_service_accepts_valid_effort_for_reasoning_provid
 @pytest.mark.parametrize(
     ("model", "effort", "expected"),
     [
-        ("gemini-3.5-flash", None, "low"),
-        ("gemini-3.5-flash", "auto", "low"),
+        ("gemini-3.5-flash", None, "medium"),
+        ("gemini-3.5-flash", "auto", "medium"),
         ("gemini-3.5-flash", "medium", "medium"),
         ("gemini-3.1-pro", None, "high"),
         ("gemini-3.1-pro", "auto", "high"),
@@ -4180,8 +4180,8 @@ def test_agy_cli_text_generate_adapter_omits_model_when_not_requested() -> None:
         ("gemini-3.5-flash", "low", "Gemini 3.5 Flash (Low)"),
         ("gemini-3.5-flash", "medium", "Gemini 3.5 Flash (Medium)"),
         ("gemini-3.5-flash", "high", "Gemini 3.5 Flash (High)"),
-        ("gemini-3.5-flash", None, "Gemini 3.5 Flash (Low)"),
-        ("gemini-3.5-flash", "auto", "Gemini 3.5 Flash (Low)"),
+        ("gemini-3.5-flash", None, "Gemini 3.5 Flash (Medium)"),
+        ("gemini-3.5-flash", "auto", "Gemini 3.5 Flash (Medium)"),
         ("gemini-3.1-pro", "low", "Gemini 3.1 Pro (Low)"),
         ("gemini-3.1-pro", "high", "Gemini 3.1 Pro (High)"),
         ("gemini-3.1-pro", None, "Gemini 3.1 Pro (High)"),

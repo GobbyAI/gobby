@@ -21,7 +21,11 @@ from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
 from gobby.llm.service import LLMService
 from gobby.providers import ProviderMetadata
-from gobby.providers.version_gate import AGY_UNPUBLISHED_REASON
+from gobby.providers.version_gate import (
+    AGY_REQUIRED_VERSION,
+    AGY_UNPUBLISHED_REASON,
+    AgySupportRecord,
+)
 from gobby.servers.provider_model_defaults import AGY_MODELS
 
 pytestmark = pytest.mark.unit
@@ -264,7 +268,7 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
     assert agy.adapter_style == AIAdapterStyle.CLI
     assert agy.strict_models is True
     assert agy.models == tuple(AGY_MODELS)
-    assert agy.metadata["model_catalog_source"] == "agy-1.0.10-static"
+    assert agy.metadata["model_catalog_source"] == "bundled"
     assert (
         registry.select(
             AICapability.TEXT_GENERATE,
@@ -453,7 +457,20 @@ def test_daemon_registry_reports_only_proven_vision_extract_bindings_available()
         assert "proven image payload support" in binding.reason
 
 
-def test_daemon_registry_scopes_agy_to_strict_text_generation_when_installed() -> None:
+def test_daemon_registry_scopes_agy_to_strict_text_generation_when_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    support = AgySupportRecord(
+        installed_version=None,
+        required_version=AGY_REQUIRED_VERSION,
+        supported=False,
+        reason=AGY_UNPUBLISHED_REASON,
+        identity=None,
+    )
+    monkeypatch.setattr(
+        "gobby.providers.version_gate.peek_agy_support",
+        lambda: support,
+    )
     registry = build_daemon_ai_capability_registry(
         DaemonConfig(),
         provider_installed=lambda _entry: True,

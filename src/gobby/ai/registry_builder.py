@@ -310,7 +310,7 @@ def _text_generate_binding(
     metadata = _metadata_for_generation_binding(entry)
     if entry.provider == "agy":
         models = tuple(AGY_MODELS)
-        metadata["model_catalog_source"] = "agy-1.0.10-static"
+        metadata["model_catalog_source"] = "bundled"
         strict_models = True
     else:
         models = feature_models_by_provider.get(_normalize_provider(entry.provider), ())
@@ -520,8 +520,8 @@ def _tool_chat_adapter_style(provider: str) -> AIAdapterStyle | None:
     # tool_chat is an agentic capability, so it mirrors vision_extract's
     # transport classification, NOT text_generate's. grok/qwen drive their own
     # loop over ACP; droid via its CLI; codex via the app-server daemon; claude
-    # via the Agent SDK. agy has no documented agentic/spawn transport yet (its
-    # agent_spawn binding is unavailable), so it gets no tool_chat binding.
+    # via the Agent SDK. AGY can spawn agents, but its global-only MCP config
+    # cannot confine a tool set to one request, so it gets no tool_chat binding.
     if provider == "claude":
         return AIAdapterStyle.LLM_PROVIDER
     if provider == "codex":

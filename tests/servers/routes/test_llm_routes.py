@@ -989,14 +989,14 @@ def test_generate_explicit_agy_model_succeeds(
         "capability": "text_generate",
         "provider": "agy",
         "model": "gemini-3.5-flash",
-        "applied_reasoning_effort": "low",
+        "applied_reasoning_effort": "medium",
     }
     assert adapter.requests == [
         TextGenerationRequest(
             prompt="Summarize this",
             provider="agy",
             model="gemini-3.5-flash",
-            reasoning_effort="low",
+            reasoning_effort="medium",
             caller="llm-generate-route",
         )
     ]

@@ -24,7 +24,6 @@ from gobby.servers.local_provider_models import (
     discover_local_endpoint_model_group,
     local_provider_display_label,
 )
-from gobby.servers.provider_model_defaults import AGY_MODELS
 
 if TYPE_CHECKING:
     from gobby.providers.version_gate import AgySupportRecord
@@ -137,34 +136,6 @@ def _pending_snapshot_payload() -> dict[str, Any]:
         "refresh": {
             "generation": 0,
             "sources": [{"source_key": "local", "state": "pending"}],
-        },
-    }
-
-
-def _agy_snapshot_payload(record: AgySupportRecord | None = None) -> dict[str, Any]:
-    if record is None:
-        from gobby.providers.version_gate import peek_agy_support
-
-        record = peek_agy_support()
-    return {
-        "models": [
-            {key: value for key, value in model.items() if key != "effort_display"}
-            for model in AGY_MODELS.values()
-        ],
-        "refresh": {
-            "generation": 0,
-            "sources": [
-                {
-                    "source_key": "version_gate",
-                    "state": "ok" if record.supported else "unsupported",
-                }
-            ],
-        },
-        "support": {
-            "installed_version": record.installed_version,
-            "required_version": record.required_version,
-            "supported": record.supported,
-            "reason": record.reason,
         },
     }
 
@@ -413,19 +384,16 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
         for name, path in probed:
             agy_support = _agy_support_record(name)
             available, startup_error = _provider_health(server, name, path, agy_support)
-            if name == "agy":
-                capability_payload = _agy_snapshot_payload(agy_support)
-            else:
-                snapshot = (
-                    capability_service.get_provider_snapshot(name)
-                    if capability_service is not None
-                    else None
-                )
-                capability_payload = (
-                    _matrix_snapshot_payload(snapshot, capability_resolver)
-                    if snapshot is not None
-                    else _pending_snapshot_payload()
-                )
+            snapshot = (
+                capability_service.get_provider_snapshot(name)
+                if capability_service is not None
+                else None
+            )
+            capability_payload = (
+                _matrix_snapshot_payload(snapshot, capability_resolver)
+                if snapshot is not None
+                else _pending_snapshot_payload()
+            )
             entry = {
                 "provider": name,
                 "available": available,

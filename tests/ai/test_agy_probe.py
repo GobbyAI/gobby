@@ -42,7 +42,7 @@ pytestmark = [
 
 # tier -> (base model id, exact AGY --model display, resolved auto effort)
 _CASES = [
-    ("feature_low", "gemini-3.5-flash", "Gemini 3.5 Flash (Low)", "low"),
+    ("feature_low", "gemini-3.5-flash", "Gemini 3.5 Flash (Medium)", "medium"),
     ("feature_mid", "gemini-3.1-pro", "Gemini 3.1 Pro (High)", "high"),
 ]
 

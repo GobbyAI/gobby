@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -26,9 +27,9 @@ from gobby.providers.capabilities.models import (
     SpeedMode,
 )
 from gobby.providers.capabilities.resolve import CapabilityResolver
+from gobby.providers.capabilities.seed import _agy_snapshot
 from gobby.servers.http import HTTPServer
 from gobby.servers.local_provider_models import LocalEndpointModelGroup
-from gobby.servers.provider_model_defaults import AGY_MODELS
 from gobby.servers.routes.providers import _configured_endpoints, create_providers_router
 
 pytestmark = pytest.mark.unit
@@ -261,12 +262,8 @@ class TestProviderRoutes:
             assert provider["supports_web_chat"] is True
             assert provider["supports_agent_spawn"] is True
             assert provider["unavailable_reason"] == reason
-        assert model_providers["agy"]["support"] == {
-            "installed_version": "1.1.17",
-            "required_version": "1.1.18",
-            "supported": False,
-            "reason": reason,
-        }
+        assert model_providers["agy"]["models"] == []
+        assert model_providers["agy"]["refresh"]["sources"][0]["state"] == "pending"
 
     def test_agy_support_record_changes_are_visible_without_router_restart(
         self,
@@ -304,7 +301,8 @@ class TestProviderRoutes:
         assert second["agy"]["available"] is False
         assert second["agy"]["unavailable_reason"] == unsupported.reason
         assert models["agy"]["available"] is False
-        assert models["agy"]["support"]["installed_version"] == "1.1.17"
+        assert models["agy"]["unavailable_reason"] == unsupported.reason
+        assert models["agy"]["refresh"]["sources"][0]["state"] == "pending"
 
     def test_runtime_health_does_not_disable_lazy_acp_provider(self) -> None:
         app = FastAPI()
@@ -475,7 +473,8 @@ class TestProviderModelsRoute:
 
     def test_returns_all_providers_with_models(self, client: TestClient) -> None:
         """Endpoint returns supported providers with model lists."""
-        response = client.get("/api/providers/models")
+        with patch("gobby.servers.routes.providers.shutil.which", return_value=None):
+            response = client.get("/api/providers/models")
         assert response.status_code == 200
         data = response.json()
         assert "providers" in data
@@ -489,36 +488,12 @@ class TestProviderModelsRoute:
             "agy",
         }
         agy_models = providers["agy"]["models"]
-        assert [model["value"] for model in agy_models] == list(AGY_MODELS)
-        assert providers["agy"]["refresh"] == {
-            "generation": 0,
-            "sources": [{"source_key": "version_gate", "state": "unsupported"}],
-        }
-        assert providers["agy"]["support"]["supported"] is False
-        assert providers["agy"]["support"]["required_version"] == "1.1.18"
+        assert agy_models == []
+        assert providers["agy"]["refresh"]["sources"][0]["state"] == "pending"
         assert providers["agy"]["supports_web_chat"] is True
         assert providers["agy"]["supports_agent_spawn"] is True
         assert providers["agy"]["available"] is False
-        agy_by_id = {model["value"]: model for model in agy_models}
-        assert "gemini-3.5-flash-low" not in agy_by_id
-        assert "effort_display" not in agy_by_id["gemini-3.5-flash"]
-        assert agy_by_id["gemini-3.5-flash"]["reasoning"] == {
-            "supported_efforts": ["low", "medium", "high"],
-            "default_effort": "low",
-        }
-        assert agy_by_id["gemini-3.5-flash"]["context_lookup_key"] == "gemini-3.5-flash"
-        assert agy_by_id["gemini-3.5-flash"]["context_length"] == 1_048_576
-        assert agy_by_id["gemini-3.1-pro"]["reasoning"] == {
-            "supported_efforts": ["low", "high"],
-            "default_effort": "high",
-        }
-        assert "effort_display" not in agy_by_id["claude-opus-4-6"]
-        assert agy_by_id["claude-opus-4-6"]["reasoning"] == {
-            "supported_efforts": ["high"],
-            "default_effort": "high",
-        }
-        assert agy_by_id["gpt-oss-120b"]["context_length"] == 131_072
-        for provider in ("claude", "codex", "droid", "grok", "qwen"):
+        for provider in ("claude", "codex", "droid", "grok", "qwen", "agy"):
             assert providers[provider]["models"] == []
             assert providers[provider]["refresh"]["sources"][0]["state"] == "pending"
 
@@ -712,11 +687,67 @@ class TestProviderModelsRoute:
             "source": "unknown",
         }
         assert providers["droid"]["models"][0]["canonical_model"] == "droid-model"
-        assert [model["value"] for model in providers["agy"]["models"]] == list(AGY_MODELS)
-        assert providers["agy"]["refresh"]["sources"] == [
-            {"source_key": "version_gate", "state": "unsupported"}
-        ]
+        assert providers["agy"]["models"] == []
+        assert providers["agy"]["refresh"]["sources"][0]["state"] == "pending"
         assert providers["codex"]["refresh"]["generation"] == 1
+
+    def test_agy_models_route_uses_capability_snapshot_source_transitions(self) -> None:
+        observed_at = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
+        bundled = _agy_snapshot(observed_at)
+        live = replace(
+            bundled,
+            generation=7,
+            sources=(
+                SourceHealth(
+                    source_key="agy_models_cli",
+                    source_url=None,
+                    required=True,
+                    state=SourceState.OK,
+                    attempts=1,
+                    last_attempt_at=observed_at,
+                    last_success_at=observed_at,
+                    last_error=None,
+                ),
+            ),
+        )
+        current = {"snapshot": bundled}
+        service = MagicMock()
+        service.get_provider_snapshot.side_effect = lambda provider: (
+            current["snapshot"] if provider == "agy" else None
+        )
+        support = SimpleNamespace(
+            installed_version="1.1.18",
+            required_version="1.1.18",
+            supported=True,
+            reason="AGY 1.1.18 meets required version 1.1.18.",
+        )
+        app = FastAPI()
+        app.include_router(
+            create_providers_router(_server_stub(provider_capability_service=service))
+        )
+        client = TestClient(app)
+
+        with (
+            patch("gobby.servers.routes.providers.shutil.which", return_value="/usr/bin/agy"),
+            patch("gobby.providers.version_gate.peek_agy_support", return_value=support),
+        ):
+            first = {
+                entry["provider"]: entry
+                for entry in client.get("/api/providers/models").json()["providers"]
+            }
+            current["snapshot"] = live
+            second = {
+                entry["provider"]: entry
+                for entry in client.get("/api/providers/models").json()["providers"]
+            }
+
+        assert first["agy"]["models"][0]["canonical_model"] == "gemini-3.7-flash-high"
+        assert "value" not in first["agy"]["models"][0]
+        assert first["agy"]["refresh"]["sources"][0]["source_key"] == "bundled"
+        assert first["agy"]["refresh"]["sources"][0]["state"] == "stale"
+        assert second["agy"]["refresh"]["generation"] == 7
+        assert second["agy"]["refresh"]["sources"][0]["source_key"] == "agy_models_cli"
+        assert second["agy"]["refresh"]["sources"][0]["state"] == "ok"
 
     def test_models_route_serializes_droid_capability_snapshot(
         self,
@@ -1269,10 +1300,8 @@ def test_agy_and_endpoint_groups_unchanged() -> None:
         response = TestClient(app).get("/api/providers/models")
 
     providers = {entry["provider"]: entry for entry in response.json()["providers"]}
-    assert [model["value"] for model in providers["agy"]["models"]] == list(AGY_MODELS)
-    assert providers["agy"]["refresh"]["sources"] == [
-        {"source_key": "version_gate", "state": "unsupported"}
-    ]
+    assert providers["agy"]["models"] == []
+    assert providers["agy"]["refresh"]["sources"][0]["state"] == "pending"
     assert any(
         model.get("value") == "endpoint:openrouter/moonshotai/kimi-k3"
         for model in providers["codex"]["models"]

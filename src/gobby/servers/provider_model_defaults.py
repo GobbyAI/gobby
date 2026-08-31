@@ -12,8 +12,7 @@ GEMINI_FAMILY_MODELS: list[dict[str, Any]] = [
         "label": "Gemini 3.5 Flash",
         "reasoning": {
             "supported_efforts": ["minimal", "low", "medium", "high"],
-            # Docs list high as droid's default; AGY defaults to low. The
-            # per-provider capability matrix (#19483) reconciles defaults.
+            # Provider-specific catalogs may expose a narrower effort set.
             "default_effort": "medium",
         },
     },
@@ -33,9 +32,9 @@ GEMINI_FAMILY_MODELS: list[dict[str, Any]] = [
 ]
 
 
-# Static AGY 1.0.10 text-generation catalog. AGY accepts model display strings on
-# the CLI, while daemon callers route by base canonical IDs and choose the AGY
-# display string via reasoning_effort at the adapter boundary.
+# Bundled AGY 1.1.18 effort and alias table. Live availability comes from the
+# capability collector; daemon callers still route by base canonical IDs and
+# choose the AGY display string via reasoning_effort at the adapter boundary.
 def _agy_model_entry(entry: dict[str, Any]) -> dict[str, Any]:
     reasoning = entry.get("reasoning")
     if not isinstance(reasoning, dict):
@@ -65,6 +64,44 @@ def _agy_model_entry(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 AGY_MODELS: dict[str, dict[str, Any]] = {
+    "gemini-3.7-flash": {
+        "value": "gemini-3.7-flash",
+        "canonical_id": "gemini-3.7-flash",
+        "label": "Gemini 3.7 Flash",
+        "model_family": "gemini",
+        "context_lookup_key": "gemini-3.7-flash",
+        "context_length": 1_048_576,
+        "context_length_source": "provider_catalog",
+        "availability_source": "bundled",
+        "effort_display": {
+            "low": "Gemini 3.7 Flash (Low)",
+            "medium": "Gemini 3.7 Flash (Medium)",
+            "high": "Gemini 3.7 Flash (High)",
+        },
+        "reasoning": {
+            "supported_efforts": ["low", "medium", "high"],
+            "default_effort": "medium",
+        },
+    },
+    "gemini-3.6-flash": {
+        "value": "gemini-3.6-flash",
+        "canonical_id": "gemini-3.6-flash",
+        "label": "Gemini 3.6 Flash",
+        "model_family": "gemini",
+        "context_lookup_key": "gemini-3.6-flash",
+        "context_length": 1_048_576,
+        "context_length_source": "provider_catalog",
+        "availability_source": "bundled",
+        "effort_display": {
+            "low": "Gemini 3.6 Flash (Low)",
+            "medium": "Gemini 3.6 Flash (Medium)",
+            "high": "Gemini 3.6 Flash (High)",
+        },
+        "reasoning": {
+            "supported_efforts": ["low", "medium", "high"],
+            "default_effort": "medium",
+        },
+    },
     "gemini-3.5-flash": {
         "value": "gemini-3.5-flash",
         "canonical_id": "gemini-3.5-flash",
@@ -73,7 +110,7 @@ AGY_MODELS: dict[str, dict[str, Any]] = {
         "context_lookup_key": "gemini-3.5-flash",
         "context_length": 1_048_576,
         "context_length_source": "provider_catalog",
-        "availability_source": "agy-1.0.10-static",
+        "availability_source": "bundled",
         "effort_display": {
             "low": "Gemini 3.5 Flash (Low)",
             "medium": "Gemini 3.5 Flash (Medium)",
@@ -81,7 +118,7 @@ AGY_MODELS: dict[str, dict[str, Any]] = {
         },
         "reasoning": {
             "supported_efforts": ["low", "medium", "high"],
-            "default_effort": "low",
+            "default_effort": "medium",
         },
     },
     "gemini-3.1-pro": {
@@ -92,7 +129,7 @@ AGY_MODELS: dict[str, dict[str, Any]] = {
         "context_lookup_key": "gemini-3.1-pro-preview",
         "context_length": 1_000_000,
         "context_length_source": "provider_catalog",
-        "availability_source": "agy-1.0.10-static",
+        "availability_source": "bundled",
         "effort_display": {
             "low": "Gemini 3.1 Pro (Low)",
             "high": "Gemini 3.1 Pro (High)",
@@ -110,7 +147,7 @@ AGY_MODELS: dict[str, dict[str, Any]] = {
         "context_lookup_key": "claude-sonnet-4-6",
         "context_length": 200_000,
         "context_length_source": "provider_catalog",
-        "availability_source": "agy-1.0.10-static",
+        "availability_source": "bundled",
         # AGY exposes a single thinking-mode variant; key it on the standard
         # "high" effort (display string unchanged) so the natural request
         # reasoning_effort="high" resolves instead of being rejected.
@@ -130,7 +167,7 @@ AGY_MODELS: dict[str, dict[str, Any]] = {
         "context_lookup_key": "claude-opus-4-6",
         "context_length": 1_000_000,
         "context_length_source": "provider_catalog",
-        "availability_source": "agy-1.0.10-static",
+        "availability_source": "bundled",
         # See claude-sonnet-4-6: thinking-mode keyed on "high".
         "effort_display": {
             "high": "Claude Opus 4.6 (Thinking)",
@@ -146,7 +183,7 @@ AGY_MODELS: dict[str, dict[str, Any]] = {
         "label": "GPT-OSS 120B",
         "model_family": "gpt-oss",
         "context_lookup_key": "gpt-oss-120b",
-        "availability_source": "agy-1.0.10-static",
+        "availability_source": "bundled",
         "context_length": 131_072,
         "context_length_source": "provider_catalog",
         "effort_display": {

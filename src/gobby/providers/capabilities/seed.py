@@ -18,6 +18,7 @@ from gobby.providers.capabilities.models import (
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 
 _BUNDLED_SOURCE = "bundled"
+_AGY_SOURCES = ((_BUNDLED_SOURCE, None),)
 _CLAUDE_SOURCES = (
     (
         "models-overview",
@@ -63,6 +64,8 @@ class _SeedModel:
     default_effort: str | None = None
     base_model_id: str | None = None
     speed_multiplier: str | None = None
+    aliases: tuple[str, ...] = ()
+    context_length: int | None = None
 
 
 _CLAUDE_MODELS = (
@@ -166,11 +169,125 @@ _DROID_MODELS = (
     ),
 )
 
+_AGY_MODELS = (
+    _SeedModel(
+        "gemini-3.7-flash-high",
+        "Gemini 3.7 Flash (High)",
+        ("high",),
+        "high",
+        aliases=("gemini-3.7-flash",),
+        context_length=1_048_576,
+    ),
+    _SeedModel(
+        "gemini-3.7-flash-medium",
+        "Gemini 3.7 Flash (Medium)",
+        ("medium",),
+        "medium",
+        aliases=("gemini-3.7-flash",),
+        context_length=1_048_576,
+    ),
+    _SeedModel(
+        "gemini-3.7-flash-low",
+        "Gemini 3.7 Flash (Low)",
+        ("low",),
+        "low",
+        aliases=("gemini-3.7-flash",),
+        context_length=1_048_576,
+    ),
+    _SeedModel(
+        "gemini-3.6-flash-high",
+        "Gemini 3.6 Flash (High)",
+        ("high",),
+        "high",
+        aliases=("gemini-3.6-flash",),
+        context_length=1_048_576,
+    ),
+    _SeedModel(
+        "gemini-3.6-flash-medium",
+        "Gemini 3.6 Flash (Medium)",
+        ("medium",),
+        "medium",
+        aliases=("gemini-3.6-flash",),
+        context_length=1_048_576,
+    ),
+    _SeedModel(
+        "gemini-3.6-flash-low",
+        "Gemini 3.6 Flash (Low)",
+        ("low",),
+        "low",
+        aliases=("gemini-3.6-flash",),
+        context_length=1_048_576,
+    ),
+    _SeedModel(
+        "gemini-3.5-flash-high",
+        "Gemini 3.5 Flash (High)",
+        ("high",),
+        "high",
+        aliases=("gemini-3.5-flash",),
+        context_length=1_048_576,
+    ),
+    _SeedModel(
+        "gemini-3.5-flash-medium",
+        "Gemini 3.5 Flash (Medium)",
+        ("medium",),
+        "medium",
+        aliases=("gemini-3.5-flash",),
+        context_length=1_048_576,
+    ),
+    _SeedModel(
+        "gemini-3.5-flash-low",
+        "Gemini 3.5 Flash (Low)",
+        ("low",),
+        "low",
+        aliases=("gemini-3.5-flash",),
+        context_length=1_048_576,
+    ),
+    _SeedModel(
+        "gemini-3.1-pro-high",
+        "Gemini 3.1 Pro (High)",
+        ("high",),
+        "high",
+        aliases=("gemini-3.1-pro",),
+        context_length=1_000_000,
+    ),
+    _SeedModel(
+        "gemini-3.1-pro-low",
+        "Gemini 3.1 Pro (Low)",
+        ("low",),
+        "low",
+        aliases=("gemini-3.1-pro",),
+        context_length=1_000_000,
+    ),
+    _SeedModel(
+        "claude-sonnet-4-6",
+        "Claude Sonnet 4.6 (Thinking)",
+        context_length=200_000,
+    ),
+    _SeedModel(
+        "claude-opus-4-6-thinking",
+        "Claude Opus 4.6 (Thinking)",
+        aliases=("claude-opus-4-6",),
+        context_length=1_000_000,
+    ),
+    _SeedModel(
+        "gpt-oss-120b-medium",
+        "GPT-OSS 120B (Medium)",
+        ("medium",),
+        "medium",
+        aliases=("gpt-oss-120b",),
+        context_length=131_072,
+    ),
+)
+
 
 def apply_seed(store: ProviderCapabilityStore) -> None:
     """Persist cold-start rows for remote providers that have no live rows."""
     observed_at = datetime.now(UTC)
-    for snapshot in (_claude_snapshot(observed_at), _droid_snapshot(observed_at)):
+    for snapshot in (
+        _agy_snapshot(observed_at),
+        _claude_snapshot(observed_at),
+        _droid_snapshot(observed_at),
+    ):
         if not store.has_rows(snapshot.provider):
             store.replace_provider_snapshot(snapshot)
 
@@ -212,6 +329,17 @@ def _droid_snapshot(observed_at: datetime) -> ProviderSnapshot:
     )
 
 
+def _agy_snapshot(observed_at: datetime) -> ProviderSnapshot:
+    return ProviderSnapshot(
+        provider="agy",
+        generation=0,
+        models=tuple(
+            _model(model, aliases=model.aliases, observed_at=observed_at) for model in _AGY_MODELS
+        ),
+        sources=_stale_sources(_AGY_SOURCES),
+    )
+
+
 def _model(
     spec: _SeedModel,
     *,
@@ -229,7 +357,7 @@ def _model(
         available=True,
         hidden=False,
         is_default=False,
-        context_length=None,
+        context_length=spec.context_length,
         max_output_tokens=None,
         reasoning=(
             ReasoningSupport.KNOWN if spec.efforts is not None else ReasoningSupport.UNSUPPORTED
@@ -265,7 +393,9 @@ def _route(spec: _SeedModel, speed_mode: SpeedMode, observed_at: datetime) -> Mo
     )
 
 
-def _stale_sources(sources: tuple[tuple[str, str], ...]) -> tuple[SourceHealth, ...]:
+def _stale_sources(
+    sources: tuple[tuple[str, str | None], ...],
+) -> tuple[SourceHealth, ...]:
     return tuple(
         SourceHealth(
             source_key=source_key,

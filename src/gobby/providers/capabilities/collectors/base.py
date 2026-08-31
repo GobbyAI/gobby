@@ -232,6 +232,16 @@ def _validate_provenance(
         )
     for fact_name, fact_provenance in provenance.items():
         _normalized(fact_name, "provenance fact name")
+        if fact_provenance.source_key == "bundled":
+            if fact_provenance.source_url is not None:
+                raise SnapshotValidationError(
+                    f"{owner} bundled provenance must not declare a source URL"
+                )
+            if fact_provenance.observed_at.utcoffset() is None:
+                raise SnapshotValidationError(
+                    f"{owner} provenance timestamps must be timezone-aware"
+                )
+            continue
         spec = source_specs.get(fact_provenance.source_key)
         if spec is None:
             raise SnapshotValidationError(

@@ -44,6 +44,7 @@ Sleep = Callable[[float], Awaitable[None]]
 
 
 def _default_collectors() -> Mapping[str, CapabilityCollector]:
+    from gobby.providers.capabilities.collectors.agy import AgyCollector
     from gobby.providers.capabilities.collectors.claude import ClaudeCollector
     from gobby.providers.capabilities.collectors.codex import CodexCollector
     from gobby.providers.capabilities.collectors.droid import DroidCollector
@@ -51,6 +52,7 @@ def _default_collectors() -> Mapping[str, CapabilityCollector]:
     from gobby.providers.capabilities.collectors.qwen import QwenCollector
 
     builtins = (
+        cast(CapabilityCollector, AgyCollector()),
         cast(CapabilityCollector, ClaudeCollector()),
         cast(CapabilityCollector, CodexCollector()),
         cast(CapabilityCollector, DroidCollector()),

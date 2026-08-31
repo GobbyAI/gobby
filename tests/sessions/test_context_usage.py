@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
+from gobby.providers.capabilities.seed import apply_seed
+from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.sessions import context_usage
 from gobby.sessions.context_usage import (
     backfill_session_context_windows,
@@ -17,8 +19,7 @@ from gobby.sessions.context_usage import (
     snapshot_from_window_metadata,
 )
 from gobby.sessions.transcripts.base import TokenUsage
-
-pytestmark = pytest.mark.unit
+from gobby.storage.hub.protocol import HubDatabase
 
 
 class _TransactionFakeDb:
@@ -27,6 +28,7 @@ class _TransactionFakeDb:
         yield
 
 
+@pytest.mark.unit
 def test_snapshot_builders_resolve_one_million_context_marker() -> None:
     token_snapshot = snapshot_from_token_usage(
         source="claude",
@@ -63,16 +65,19 @@ def test_snapshot_builders_resolve_one_million_context_marker() -> None:
         ("GPT-OSS 120B (Medium)", 131_072),
     ],
 )
+@pytest.mark.unit
 def test_agy_uses_model_family_context_windows(model: str, expected: int) -> None:
     registry_value = None if "gpt-oss" in model.lower() else expected
     with patch("gobby.llm.model_registry.lookup_context_window", return_value=registry_value):
         assert context_window_for_source_model("agy", model) == expected
 
 
+@pytest.mark.unit
 def test_agy_does_not_use_family_fallback_for_unknown_models() -> None:
     assert context_window_for_source_model("agy", "unknown-claudeish-model") is None
 
 
+@pytest.mark.unit
 def test_agy_gemini_family_lookup_uses_agy_provider_catalog() -> None:
     with patch(
         "gobby.sessions.context_usage.resolve_context_window", return_value=1_048_576
@@ -87,6 +92,26 @@ def test_agy_gemini_family_lookup_uses_agy_provider_catalog() -> None:
     )
 
 
+@pytest.mark.integration
+def test_agy_context_window_uses_seeded_capability_fact(postgres_db: HubDatabase) -> None:
+    store = ProviderCapabilityStore(postgres_db)
+    apply_seed(store)
+
+    app_context = SimpleNamespace(
+        provider_capability_resolver=None,
+        provider_capability_service=store,
+    )
+    with patch("gobby.app_context.get_app_context", return_value=app_context):
+        assert (
+            context_usage._context_window_for_agy_model(
+                "gemini-3.1-pro",
+                db=postgres_db,
+            )
+            == 1_000_000
+        )
+
+
+@pytest.mark.unit
 def test_private_resolver_uses_normalized_source_without_renormalizing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -112,6 +137,7 @@ def test_private_resolver_uses_normalized_source_without_renormalizing(
     assert context_usage._resolve_context_window_for_source_model("claude", "model-x") == 123
 
 
+@pytest.mark.unit
 def test_grok_window_only_snapshot_uses_model_metadata() -> None:
     with patch("gobby.llm.model_registry.lookup_context_window", return_value=512_000):
         snapshot = snapshot_from_window_metadata(
@@ -129,6 +155,7 @@ def test_grok_window_only_snapshot_uses_model_metadata() -> None:
     assert snapshot.confidence == "unknown"
 
 
+@pytest.mark.unit
 def test_agy_window_only_snapshot_has_unknown_pressure() -> None:
     with patch("gobby.llm.model_registry.lookup_context_window", return_value=1_000_000):
         snapshot = snapshot_from_window_metadata(
@@ -144,6 +171,7 @@ def test_agy_window_only_snapshot_has_unknown_pressure() -> None:
     assert snapshot.context_usage_ratio is None
 
 
+@pytest.mark.unit
 def test_effective_context_window_repairs_stale_codex_value_from_registry() -> None:
     session = SimpleNamespace(
         id="session-1",
@@ -156,6 +184,7 @@ def test_effective_context_window_repairs_stale_codex_value_from_registry() -> N
         assert effective_context_window_for_session(session) == 258_400
 
 
+@pytest.mark.unit
 def test_context_window_overrides_applied() -> None:
     session = SimpleNamespace(
         id="session-override",
@@ -172,6 +201,7 @@ def test_context_window_overrides_applied() -> None:
     assert result == 333_000
 
 
+@pytest.mark.unit
 def test_effective_context_window_preserves_reported_session_value() -> None:
     session = SimpleNamespace(
         id="session-1",
@@ -184,6 +214,7 @@ def test_effective_context_window_preserves_reported_session_value() -> None:
     assert effective_context_window_for_session(session) == 200_000
 
 
+@pytest.mark.unit
 def test_effective_context_window_uses_reported_db_session_value() -> None:
     class FakeDb(_TransactionFakeDb):
         def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
@@ -201,6 +232,7 @@ def test_effective_context_window_uses_reported_db_session_value() -> None:
     assert effective_context_window_for_session(session, db=FakeDb()) == 200_000
 
 
+@pytest.mark.unit
 def test_effective_context_window_prefers_reported_db_value_over_model_fallback() -> None:
     class FakeDb(_TransactionFakeDb):
         def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
@@ -218,6 +250,7 @@ def test_effective_context_window_prefers_reported_db_value_over_model_fallback(
     assert effective_context_window_for_session(session, db=FakeDb()) == 175_000
 
 
+@pytest.mark.unit
 def test_effective_context_window_ignores_non_reported_db_session_value() -> None:
     class FakeDb(_TransactionFakeDb):
         def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
@@ -243,6 +276,7 @@ def test_effective_context_window_ignores_non_reported_db_session_value() -> Non
         assert effective_context_window_for_session(session, db=FakeDb()) is None
 
 
+@pytest.mark.unit
 def test_effective_context_window_prefers_latest_token_event_window() -> None:
     class FakeDb(_TransactionFakeDb):
         def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
@@ -277,6 +311,7 @@ def test_effective_context_window_prefers_latest_token_event_window() -> None:
     assert effective_context_window_for_session(session, db=FakeDb()) == 258_400
 
 
+@pytest.mark.unit
 def test_context_window_from_raw_message_truncates_fractional_windows() -> None:
     assert context_window_from_raw_message({"context_window": 1.5}) == 1
     assert context_window_from_raw_message({"context_window": 2.0}) == 2
@@ -309,6 +344,7 @@ class _BackfillFakeDb:
         return SimpleNamespace(rowcount=1)
 
 
+@pytest.mark.unit
 def test_backfill_bumps_under_counted_windows_and_recomputes_ratio() -> None:
     rows: list[dict[str, object]] = [
         # 1M-context Opus stored at the old 200k default -> bump to 1M, recompute.
@@ -377,6 +413,7 @@ def test_backfill_bumps_under_counted_windows_and_recomputes_ratio() -> None:
     assert by_id["s2"][1] == pytest.approx(0.15)
 
 
+@pytest.mark.unit
 def test_backfill_dry_run_writes_nothing() -> None:
     rows: list[dict[str, object]] = [
         {
