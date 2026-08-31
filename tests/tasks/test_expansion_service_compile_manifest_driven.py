@@ -93,6 +93,28 @@ def test_manifest_documentation_task_type_normalizes_to_chore(
     assert docs_task["task_type"] == "chore"
 
 
+def test_manifest_test_artifact_requires_symbol_qualified_reference(
+    service: ExpansionService,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    parent = _parent(service, sample_project)
+    malformed_plan = _MANIFEST_PLAN.replace(
+        "test: `tests/test_final.py::test_final`",
+        "test: `tests/test_final.py`",
+    )
+    plan_doc = parse_plan(
+        _write_plan(tmp_path, malformed_plan, name="malformed-test-artifact.md"),
+        parse_mode="expansion",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"acceptance item '3\.1\.1'.*path::test_symbol",
+    ):
+        service.compile_plan_to_spec(plan_doc, parent)
+
+
 _MANIFEST_PLAN = """
 > **Plan ID:** manifest-driven
 
@@ -151,7 +173,7 @@ Release body copied into the generated task description.
 Final body copied into the generated task description.
 
 **Acceptance:**
-- 3.1.1 - Final tests exist. test: `tests/test_final.py`
+- 3.1.1 - Final tests exist. test: `tests/test_final.py::test_final`
 
 ## M1 Task Manifest
 `kind: manifest`

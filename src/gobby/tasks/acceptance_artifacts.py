@@ -111,7 +111,7 @@ def resolve_acceptance_tests(
     tests: list[AcceptanceTest] = []
     findings: list[str] = []
     for reference in extract_artifact_references(criteria, "test"):
-        parsed = _parse_test_reference(reference)
+        parsed = parse_test_reference(reference)
         if parsed is None:
             findings.append(f"{reference}: malformed test reference; expected path::test_symbol")
             continue
@@ -222,7 +222,7 @@ def validate_structured_file_evidence(
     return tuple(findings)
 
 
-def _parse_test_reference(reference: str) -> tuple[str, str] | None:
+def parse_test_reference(reference: str) -> tuple[str, str] | None:
     if "::" not in reference:
         return None
     path, symbol = reference.split("::", 1)
