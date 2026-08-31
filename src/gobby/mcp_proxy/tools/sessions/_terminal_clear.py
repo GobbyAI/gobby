@@ -6,6 +6,10 @@ import logging
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from gobby.agents.terminal_delivery import (
+    TerminalDeliveryAdmissionClosedError,
+    shielded_terminal_delivery,
+)
 from gobby.mcp_proxy.tools.sessions._terminal import (
     _authorize_send_keys_target,
     _backfill_tmux_context_from_sibling,
@@ -234,43 +238,56 @@ async def execute_clear_session(
             attempt_state=attempt_state,
         )
 
+    async def deliver_clear() -> dict[str, Any]:
+        try:
+            ok, reason, _pending, failure_detail = await _send_terminal_compaction_command(
+                tmux,
+                target,
+                CLEAR_COMMAND,
+                resolved_session_id,
+                cli_source=source if isinstance(source, str) else None,
+                mark_continuation_pending=lambda: True,
+                clear_continuation_pending=restore_failed_attempt,
+                observe_codex_interrupt=observe_codex_interrupt,
+            )
+        except Exception as exc:
+            restore_failed_attempt()
+            logger.warning(
+                "Failed sending /clear for session %s",
+                resolved_session_id,
+                exc_info=True,
+            )
+            return _error(f"failed to send /clear: {exc}", "clear_send_failed")
+
+        if not ok:
+            restore_failed_attempt()
+            failure: dict[str, Any] = _error(
+                reason or "failed to send /clear",
+                "clear_send_failed",
+            )
+            if failure_detail is not None:
+                failure.update(failure_detail)
+            return failure
+
+        return {
+            "success": True,
+            "session_id": resolved_session_id,
+            "attempt_id": attempt_id,
+            "handoff_staged": True,
+            "command_sent": True,
+        }
+
     try:
-        ok, reason, _pending, failure_detail = await _send_terminal_compaction_command(
-            tmux,
-            target,
-            CLEAR_COMMAND,
-            resolved_session_id,
-            cli_source=source if isinstance(source, str) else None,
-            mark_continuation_pending=lambda: True,
-            clear_continuation_pending=restore_failed_attempt,
-            observe_codex_interrupt=observe_codex_interrupt,
+        result = await shielded_terminal_delivery(
+            f"clear-session:{resolved_session_id}",
+            deliver_clear,
+            raise_if_closed=True,
         )
-    except Exception as exc:
+    except TerminalDeliveryAdmissionClosedError as exc:
         restore_failed_attempt()
-        logger.warning(
-            "Failed sending /clear for session %s",
-            resolved_session_id,
-            exc_info=True,
-        )
-        return _error(f"failed to send /clear: {exc}", "clear_send_failed")
-
-    if not ok:
-        restore_failed_attempt()
-        failure: dict[str, Any] = _error(
-            reason or "failed to send /clear",
-            "clear_send_failed",
-        )
-        if failure_detail is not None:
-            failure.update(failure_detail)
-        return failure
-
-    return {
-        "success": True,
-        "session_id": resolved_session_id,
-        "attempt_id": attempt_id,
-        "handoff_staged": True,
-        "command_sent": True,
-    }
+        return _error(str(exc), "clear_delivery_unavailable")
+    assert result is not None
+    return result
 
 
 async def _clear_web_chat_session(
