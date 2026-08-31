@@ -418,6 +418,7 @@ class TestInitSubsystems:
         runner = RunnerStub()
         runner.startup_config = config
         runner.bootstrap_config = config
+        runner.machine_id = "machine-1"
         runner.codex_client = None
         text_generation_service = build_daemon_text_generation_service(
             config,
@@ -473,6 +474,7 @@ class TestInitSubsystems:
         runner.tool_chat_service = None
         runner._dev_mode = False
         capability_service = MagicMock()
+        capacity_service = MagicMock()
 
         with (
             patch(
@@ -488,6 +490,10 @@ class TestInitSubsystems:
                 "gobby.runner_init.servers.CapabilityRefreshCoordinator",
                 return_value=capability_service,
             ),
+            patch(
+                "gobby.runner_init.servers.ProviderCapacityService.create_default",
+                return_value=capacity_service,
+            ) as capacity_factory,
             patch("gobby.runner_init.servers.set_app_context"),
         ):
             init_servers(runner)
@@ -500,7 +506,13 @@ class TestInitSubsystems:
         services = cast(ServiceContainer, http_init["services"])
         assert services.text_generation_service is text_generation_service
         assert services.llm_service is None
+        assert services.provider_capacity_service is capacity_service
         assert services.provider_capability_service is capability_service
+        capacity_factory.assert_called_once_with(
+            runner.database,
+            machine_id="machine-1",
+            run_db=None,
+        )
         capability_service.prepare.assert_called_once_with()
         assert fake_client.start_calls == 0
         assert fake_client.stop_calls == 0

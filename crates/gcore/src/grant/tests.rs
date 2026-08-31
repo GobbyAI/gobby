@@ -1172,7 +1172,7 @@ fn hmac_sha256_rejects_empty_key() {
 
 #[test]
 fn expected_schema_identity_tracks_catalog_head() {
-    assert_eq!(expected_schema_identity().latest_version, 414);
+    assert_eq!(expected_schema_identity().latest_version, 415);
 }
 
 #[test]

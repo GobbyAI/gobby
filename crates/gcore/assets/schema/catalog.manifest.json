@@ -3229,6 +3229,34 @@
       "definition": "text|text|NO|'pending'::text|NEVER"
     },
     {
+      "name": "provider_capacity_snapshots.machine_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "provider_capacity_snapshots.observed_at",
+      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+    },
+    {
+      "name": "provider_capacity_snapshots.provider",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "provider_capacity_snapshots.reason",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "provider_capacity_snapshots.source_version",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "provider_capacity_snapshots.state",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "provider_capacity_snapshots.windows",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
       "name": "provider_model_capabilities.aliases",
       "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
     },
@@ -7051,6 +7079,26 @@
       "definition": "PRIMARY KEY (provider, source_key)"
     },
     {
+      "name": "provider_capacity_snapshots.provider_capacity_snapshots_machine_id_fkey",
+      "definition": "FOREIGN KEY (machine_id) REFERENCES machines(id) ON DELETE CASCADE"
+    },
+    {
+      "name": "provider_capacity_snapshots.provider_capacity_snapshots_pkey",
+      "definition": "PRIMARY KEY (machine_id, provider)"
+    },
+    {
+      "name": "provider_capacity_snapshots.provider_capacity_snapshots_provider_nonempty",
+      "definition": "CHECK (btrim(provider) <> ''::text)"
+    },
+    {
+      "name": "provider_capacity_snapshots.provider_capacity_snapshots_state_valid",
+      "definition": "CHECK (state = ANY (ARRAY['available'::text, 'exhausted'::text]))"
+    },
+    {
+      "name": "provider_capacity_snapshots.provider_capacity_snapshots_windows_array",
+      "definition": "CHECK (jsonb_typeof(windows) = 'array'::text)"
+    },
+    {
       "name": "provider_model_capabilities.provider_model_capabilities_pkey",
       "definition": "PRIMARY KEY (provider, canonical_model)"
     },
@@ -9401,6 +9449,10 @@
     {
       "name": "provider_capability_refresh_state_pkey",
       "definition": "CREATE UNIQUE INDEX provider_capability_refresh_state_pkey ON $schema.provider_capability_refresh_state USING btree (provider, source_key)"
+    },
+    {
+      "name": "provider_capacity_snapshots_pkey",
+      "definition": "CREATE UNIQUE INDEX provider_capacity_snapshots_pkey ON $schema.provider_capacity_snapshots USING btree (machine_id, provider)"
     },
     {
       "name": "provider_model_capabilities_pkey",

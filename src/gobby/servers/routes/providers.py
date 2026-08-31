@@ -6,7 +6,7 @@ import asyncio
 import shutil
 from collections import Counter
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter
 
@@ -18,6 +18,7 @@ from gobby.ai.endpoints import endpoint_provider
 from gobby.providers import provider_metadata
 from gobby.providers.capabilities.models import ModelCapability, ProviderSnapshot
 from gobby.providers.capabilities.resolve import CapabilityResolver, ContextSource
+from gobby.providers.capacity_service import ProviderCapacitySnapshot
 from gobby.servers.local_provider_models import (
     NO_COMPLETION_MODELS_ERROR,
     LocalEndpointModelGroup,
@@ -26,6 +27,7 @@ from gobby.servers.local_provider_models import (
 )
 
 if TYPE_CHECKING:
+    from gobby.providers.capacity_service import ProviderCapacityService
     from gobby.providers.version_gate import AgySupportRecord
     from gobby.servers.http import HTTPServer
 
@@ -420,5 +422,24 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
             )
         )
         return {"providers": result}
+
+    @router.get("/{provider}/usage")
+    async def get_provider_usage(provider: str) -> dict[str, object]:
+        """Return normalized provider capacity from the daemon's shared service."""
+        capacity_service = cast(
+            "ProviderCapacityService | None",
+            getattr(
+                getattr(server, "services", None),
+                "provider_capacity_service",
+                None,
+            ),
+        )
+
+        if capacity_service is None:
+            return ProviderCapacitySnapshot.unknown(
+                provider, "provider capacity service unavailable"
+            ).to_dict()
+        snapshot = await capacity_service.get(provider)
+        return snapshot.to_dict()
 
     return router

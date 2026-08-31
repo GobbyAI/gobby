@@ -23,6 +23,7 @@ from gobby.providers.capabilities.coverage import ModelMetadataCoverageAuditor
 from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.store import ProviderCapabilityStore
+from gobby.providers.capacity_service import ProviderCapacityService
 from gobby.servers.generation_endpoint_health import GenerationEndpointHealthCoordinator
 from gobby.servers.http import HTTPServer
 from gobby.servers.provider_model_discovery import (
@@ -124,6 +125,13 @@ def init_servers(runner: GobbyRunner) -> None:
     generation_endpoint_health = GenerationEndpointHealthCoordinator(
         lambda: runner.config_runtime.capture().snapshot.active.ai.generation.endpoints
     )
+    if runner.machine_id is None:
+        raise RuntimeError("runner machine identity must be initialized before servers")
+    provider_capacity_service = ProviderCapacityService.create_default(
+        runner.database,
+        machine_id=runner.machine_id,
+        run_db=getattr(runner.db_executor, "run", None),
+    )
 
     def tool_proxy_getter() -> object | None:
         http_server = http_server_ref() if http_server_ref is not None else None
@@ -182,6 +190,7 @@ def init_servers(runner: GobbyRunner) -> None:
         skill_manager=runner.skill_manager,
         hub_manager=runner.hub_manager,
         config_runtime=runner.config_runtime,
+        provider_capacity_service=provider_capacity_service,
         provider_capability_service=provider_capability_service,
         provider_capability_resolver=provider_capability_resolver,
         model_metadata_coverage_auditor=model_metadata_coverage_auditor,

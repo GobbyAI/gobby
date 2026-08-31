@@ -277,6 +277,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "9f275218cf1172d001df7b4e42d33512cdb9fd64054ae406ef9024ddc529f610",
         sql: include_str!("../../assets/schema/migrations/414_hook_receipt_effects.sql"),
     },
+    EmbeddedMigration {
+        version: 415,
+        filename: "415_provider_capacity_snapshots.sql",
+        checksum: "7397e2d9f59cc4d4573d58d546c430abf34b2f6614afe3f5ac7bd2e9a7a0fea9",
+        sql: include_str!("../../assets/schema/migrations/415_provider_capacity_snapshots.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

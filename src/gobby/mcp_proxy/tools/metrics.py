@@ -9,19 +9,24 @@ These tools are registered with the InternalToolRegistry and accessed
 via the downstream proxy pattern (call_tool).
 """
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.metrics import ToolMetricsManager
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.sessions.token_tracker import SessionTokenTracker
 
+if TYPE_CHECKING:
+    from gobby.providers.capacity_service import ProviderCapacityService
+
 
 def create_metrics_registry(
     metrics_manager: ToolMetricsManager,
     session_storage: Any | None = None,
     event_store: MetricsEventStore | None = None,
+    provider_capacity_resolver: Callable[[], ProviderCapacityService | None] | None = None,
 ) -> InternalToolRegistry:
     """
     Create a metrics tool registry with all metrics-related tools.
@@ -74,6 +79,21 @@ def create_metrics_registry(
             return {"success": True, "metrics": result}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    @registry.tool(
+        name="get_provider_capacity",
+        description="Get normalized provider usage capacity without starting an agent turn.",
+    )
+    async def get_provider_capacity(provider: str) -> dict[str, object]:
+        """Return the daemon's shared four-state provider capacity snapshot."""
+        from gobby.providers.capacity_service import ProviderCapacitySnapshot
+
+        service = provider_capacity_resolver() if provider_capacity_resolver is not None else None
+        if service is None:
+            return ProviderCapacitySnapshot.unknown(
+                provider, "provider capacity service unavailable"
+            ).to_dict()
+        return (await service.get(provider)).to_dict()
 
     @registry.tool(
         name="get_top_tools",

@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
     from gobby.memory.manager import MemoryManager
+    from gobby.providers.capacity_service import ProviderCapacityService
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.concurrency import CoverageExecutor
     from gobby.storage.hub.protocol import HubDatabase
@@ -50,6 +51,7 @@ def setup_internal_registries(
     task_validator_resolver: Callable[[], TaskValidator | None] | None = None,
     session_manager: SessionManager | None = None,
     metrics_manager: ToolMetricsManager | None = None,
+    provider_capacity_resolver: Callable[[], ProviderCapacityService | None] | None = None,
     llm_service_resolver: Callable[[], LLMService | None] | None = None,
     agent_runner: AgentRunner | None = None,
     worktree_storage: LocalWorktreeManager | None = None,
@@ -300,6 +302,7 @@ def setup_internal_registries(
             metrics_manager=metrics_manager,
             session_storage=session_manager,
             event_store=metrics_manager.event_store,
+            provider_capacity_resolver=provider_capacity_resolver,
         )
         manager.add_registry(metrics_registry)
         logger.debug("Metrics registry initialized with usage reporting")

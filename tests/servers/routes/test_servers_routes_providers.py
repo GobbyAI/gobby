@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastapi import FastAPI
@@ -28,6 +28,8 @@ from gobby.providers.capabilities.models import (
 )
 from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.seed import _agy_snapshot
+from gobby.providers.capacity_service import ProviderCapacitySnapshot
+from gobby.providers.usage import UsageWindow
 from gobby.servers.http import HTTPServer
 from gobby.servers.local_provider_models import LocalEndpointModelGroup
 from gobby.servers.routes.providers import _configured_endpoints, create_providers_router
@@ -328,6 +330,51 @@ class TestProviderRoutes:
         assert (
             providers["qwen"]["startup_error"] == "Timed out starting Qwen ACP backend after 15.0s"
         )
+
+    def test_usage_route_uses_shared_capacity_service(self) -> None:
+        observed_at = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
+        available = ProviderCapacitySnapshot(
+            provider="agy",
+            supported=True,
+            state="available",
+            observed_at=observed_at,
+            windows=(
+                UsageWindow(
+                    label="Gemini Models — Weekly Limit Remaining",
+                    used=0.3,
+                    limit=1.0,
+                    unit="fraction",
+                    resets_at="2026-09-06T12:00:00Z",
+                ),
+            ),
+            reason=None,
+            source_version="1.1.18",
+        )
+        unsupported = ProviderCapacitySnapshot(
+            provider="claude",
+            supported=False,
+            state="unknown",
+            observed_at=None,
+            windows=(),
+            reason="no usage reporter",
+            source_version=None,
+        )
+        service = AsyncMock()
+        service.get.side_effect = [available, available, unsupported]
+        app = FastAPI()
+        app.include_router(create_providers_router(_server_stub(provider_capacity_service=service)))
+        client = TestClient(app)
+
+        first = client.get("/api/providers/agy/usage")
+        second = client.get("/api/providers/agy/usage")
+        claude = client.get("/api/providers/claude/usage")
+
+        assert first.status_code == 200
+        assert second.json() == first.json()
+        assert first.json() == available.to_dict()
+        assert claude.status_code == 200
+        assert claude.json() == unsupported.to_dict()
+        assert service.get.await_args_list == [call("agy"), call("agy"), call("claude")]
 
 
 def _assert_models_response_matrix_shape() -> None:

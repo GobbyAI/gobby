@@ -177,6 +177,29 @@ def test_setup_with_metrics_manager_only() -> None:
     assert "gobby-metrics" in registry_names
 
 
+@pytest.mark.asyncio
+async def test_metrics_registry_receives_shared_provider_capacity_resolver() -> None:
+    mock_config = MagicMock()
+    mock_config.get_gobby_tasks_config.return_value.enabled = False
+    metrics_manager = MagicMock()
+    snapshot = MagicMock()
+    snapshot.to_dict.return_value = {"state": "available"}
+    capacity_service = AsyncMock()
+    capacity_service.get.return_value = snapshot
+
+    manager = setup_internal_registries(
+        config_resolver=lambda: mock_config,
+        metrics_manager=metrics_manager,
+        provider_capacity_resolver=lambda: capacity_service,
+    )
+
+    registry = manager.get_registry("gobby-metrics")
+    assert registry is not None
+    result = await registry._tools["get_provider_capacity"].func(provider="agy")
+    assert result == {"state": "available"}
+    capacity_service.get.assert_awaited_once_with("agy")
+
+
 def test_setup_with_agent_runner_only() -> None:
     """Test setup with only agent runner enabled."""
     mock_config = MagicMock()

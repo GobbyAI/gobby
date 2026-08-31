@@ -334,6 +334,7 @@ class HTTPServer:
             task_validator_resolver=resolve_task_validator,
             session_manager=services.session_manager,
             metrics_manager=services.metrics_manager,
+            provider_capacity_resolver=lambda: services.provider_capacity_service,
             llm_service_resolver=resolve_llm_service,
             agent_runner=services.agent_runner,
             worktree_storage=services.worktree_storage,

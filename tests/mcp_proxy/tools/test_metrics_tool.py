@@ -1,10 +1,13 @@
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.metrics import ToolMetricsManager
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.metrics import create_metrics_registry
+from gobby.providers.capacity_service import ProviderCapacitySnapshot
+from gobby.providers.usage import UsageWindow
 
 pytestmark = pytest.mark.unit
 
@@ -295,3 +298,61 @@ class TestTokenMetricsTools:
 
         assert result["success"] is False
         assert "DB error" in result["error"]
+
+
+class TestProviderCapacityTool:
+    @pytest.mark.asyncio
+    async def test_returns_shared_service_normalization(
+        self,
+        mock_metrics_manager: MagicMock,
+    ) -> None:
+        snapshot = ProviderCapacitySnapshot(
+            provider="agy",
+            supported=True,
+            state="available",
+            observed_at=datetime(2026, 8, 30, 12, 0, tzinfo=UTC),
+            windows=(
+                UsageWindow(
+                    label="Gemini Models — Weekly Limit Remaining",
+                    used=0.3,
+                    limit=1.0,
+                    unit="fraction",
+                    resets_at="2026-09-06T12:00:00Z",
+                ),
+            ),
+            reason=None,
+            source_version="1.1.18",
+        )
+        service = AsyncMock()
+        service.get.return_value = snapshot
+        registry = create_metrics_registry(
+            metrics_manager=mock_metrics_manager,
+            provider_capacity_resolver=lambda: service,
+        )
+
+        result = await registry._tools["get_provider_capacity"].func(provider="agy")
+
+        assert result == snapshot.to_dict()
+        service.get.assert_awaited_once_with("agy")
+
+    @pytest.mark.asyncio
+    async def test_documents_unavailable_service(
+        self,
+        mock_metrics_manager: MagicMock,
+    ) -> None:
+        registry = create_metrics_registry(
+            metrics_manager=mock_metrics_manager,
+            provider_capacity_resolver=lambda: None,
+        )
+
+        result = await registry._tools["get_provider_capacity"].func(provider="agy")
+
+        assert result == {
+            "provider": "agy",
+            "supported": False,
+            "state": "unknown",
+            "observed_at": None,
+            "windows": [],
+            "reason": "provider capacity service unavailable",
+            "source_version": None,
+        }
