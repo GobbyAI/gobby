@@ -213,7 +213,10 @@ file for daemon recovery.
 
 Droid uses PascalCase hook types (`SessionStart`, `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Notification`, `Stop`, `SubagentStop`, `PreCompact`, `SessionEnd`) and ghook forwards droid's stdin payload unchanged to the daemon with `source: "droid"`. Droid-specific block handling differs slightly from the other CLIs: daemon responses containing `continue:false` exit 2, while other meaningful response JSON is written to stdout with exit 0.
 
-AGY uses PascalCase hook types (`PreInvocation`, `PreToolUse`, `PostToolUse`, `PostInvocation`, `Stop`) and ghook forwards them with `source: "agy"`. AGY: PreInvocation, PreToolUse, PostToolUse, PostInvocation, Stop — none critical.
+AGY uses exactly five PascalCase hook types: `PreInvocation`, `PreToolUse`,
+`PostToolUse`, `PostInvocation`, and `Stop`. ghook forwards them with
+`source: "agy"`. The registry marks all five non-critical; AGY has no native
+`SessionStart` or `UserPromptSubmit` hook.
 
 Qwen uses its current PascalCase terminal-hook names. Malformed input and
 transport failures exit `2` for its three critical lifecycle hooks and `1` for
@@ -331,3 +334,5 @@ The whole point of ghook's design is that this case is survivable. The envelope 
 ### Schema version mismatch
 
 Envelopes carry `schema_version: 1`. If the daemon rejects envelopes for being a newer version than it understands, the daemon needs updating. ghook's `--version` command writes `~/.gobby/bin/.ghook-runtime.json` so the daemon can detect this.
+
+_Last verified: 2026-08-30_

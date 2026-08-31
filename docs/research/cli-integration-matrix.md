@@ -1,11 +1,11 @@
 # CLI Integration Feature Matrix & Readiness Gate
 
 **Status:** research artifact / evaluation framework. Researched 2026-06-27; updated
-2026-06-27 (Cursor CLI vs IDE correction, executive summary, verification protocol).
+2026-08-30 (AGY 1.1.18+ integration surfaces and readiness classification).
 **Purpose:** score coding CLIs against Gobby's three integration surfaces so a CLI
-is only marked "supported" once it clears all three — and the agy partial-support
-trap (hook adapter only, no transcripts, no ACP — upstream-blocked from completing
-the other two) is never repeated.
+is only marked "supported" once it clears all three. AGY's recovery from an obsolete
+hook-only assessment demonstrates why each surface must be probed against the current
+CLI version and why a stable custom subprocess transport can satisfy web chat without ACP.
 
 This is an **evaluation framework**, not an integration plan. It records what each
 CLI exposes and where it sits relative to the gate. The decision of what to build
@@ -25,9 +25,10 @@ only when the **upstream product** exposes all three surfaces below — not when
 can partially wire one of them. Do not integrate based on marketing docs; gate on
 verified surfaces per invocation mode.
 
-**The agy trap:** Gobby shipped a hook adapter for Antigravity CLI, but upstream
-exposes no parseable transcripts and no ACP server. Result: **Blocked** — two
-surfaces can never be completed with Gobby code alone. See [The agy lesson](#the-agy-lesson-why-this-matrix-exists).
+**The historical agy trap:** the 1.0.11 assessment stopped at hook parity because it
+found an opaque protobuf store and no ACP server. AGY 1.1.18 disproved that conclusion:
+it persists parseable JSONL and exposes a stable custom stream-json subprocess
+transport. ACP was never required. See [The agy lesson](#the-agy-lesson-why-this-matrix-exists).
 
 **Top candidates (research conclusion, not a build order):**
 
@@ -38,11 +39,11 @@ surfaces can never be completed with Gobby code alone. See [The agy lesson](#the
 | **P3** | **Cursor CLI** (`agent`) | ACP GA is strong; **CLI hook parity is partial** — contract probe required before "supported" |
 | **Watch** | **OpenCode** | ACP + DB transcripts; hooks pending ([issue #12472](https://github.com/anomalyco/opencode/issues/12472)) |
 | **Defer** | Windsurf/Devin Desktop, Aider, ForgeCode | Mid-pivot, wrong architecture, or no hook surface |
-| **Keep blocked** | **agy / Antigravity** | Upstream must add transcripts + ACP |
+| **Supported** | **agy / Antigravity** | Five hooks, JSONL transcripts, and custom stream-json web chat are verified on 1.1.18+ |
 
 **Critical Cursor distinction:** Cursor **IDE** has full hooks; Cursor **CLI**
 (`agent`) has GA ACP but **incomplete hook parity** in headless/`--print` modes.
-Integrating today without a per-mode contract probe risks AGY-style limbo: ACP works
+Integrating today without a per-mode contract probe risks the historical AGY failure: ACP works
 for web chat, but `preToolUse` and lifecycle hooks may not fire where dispatch runs.
 
 ## How to use this matrix
@@ -64,7 +65,7 @@ for web chat, but `preToolUse` and lifecycle hooks may not fire where dispatch r
 
 A CLI is **"supported"** only when all three surfaces exist **in the upstream CLI**
 (and are verified for the modes Gobby will use). Two-of-three = limbo. One-of-three
-with the rest unavailable upstream = blocked (the agy condition).
+with the rest unavailable upstream = blocked.
 
 | Surface | What it is | Code locations (reference) |
 | --- | --- | --- |
@@ -88,25 +89,25 @@ resolution in `sessions/context_usage.py`.
 | **Defer** | Surface is unstable / mid-pivot / EOL. Re-evaluate later. |
 | **Skip** | Wrong architecture; would need custom work on all three surfaces. |
 | **Limbo** | Gobby integrated two-of-three; the third is missing but the CLI exposes it, so Gobby can finish it with code. |
-| **Blocked** | Gobby integrated one or more surfaces, but the rest can't be built because the CLI doesn't expose them — upstream-blocked. Re-evaluate when the CLI adds them (the agy condition). |
+| **Blocked** | Gobby integrated one or more surfaces, but the rest can't be built because the CLI doesn't expose them — upstream-blocked. Re-evaluate when the CLI adds them. |
 | **ACP-only** | ACP confirmed; hooks and transcripts both unverified. |
 
 ## The agy lesson (why this matrix exists)
 
-`agy` is **Antigravity CLI**, Google's replacement for Gemini CLI. Google sunset
-Gemini CLI for free/Pro/Ultra users on **2026-06-18** (the public ACP agent list
-still names "Gemini CLI"; that row is now EOL). Gobby has the agy hook adapter +
-capabilities (`adapters/agy.py`, `adapters/agy_contract.py`), but agy is **hook-
-only and upstream-blocked**: Antigravity CLI does **not** expose an ACP server and
-does **not** persist parseable transcripts. That means the transcript-parser and
-web-chat-backend surfaces cannot be filled by writing Gobby code — they are blocked
-on upstream agy adding those capabilities.
+`agy` is **Antigravity CLI**, Google's replacement for Gemini CLI. The original
+1.0.11 probe found opaque protobuf conversation payloads and no ACP server, so the
+integration was classified as hook-only. That versioned observation became stale.
 
-This is a stricter lesson than "don't half-land a CLI": **verify all three surfaces
-exist in the CLI before integrating**, because a hooks-only CLI traps you in hook-only
-limbo with no completion path except waiting on the upstream vendor. (Note: Gobby's
-`agy.py` extending `ACPHookAdapter` is an internal hook-translation choice, not
-evidence that agy speaks ACP as a server.)
+The 1.1.18 contract probe verified all three surfaces. AGY fires five hooks
+(`PreInvocation`, `PreToolUse`, `PostToolUse`, `PostInvocation`, and `Stop`), persists
+parseable JSONL at `brain/<id>/.system_generated/logs/transcript_full.jsonl`, and
+accepts a stable `--input-format stream-json` subprocess transport used by
+`AgyWebChatBackend`. AGY still does not speak ACP as a server, but ACP was never a
+readiness requirement: a proven custom transport satisfies the web-chat surface.
+
+The lesson is to **probe all three surfaces on the current minimum supported version**
+and record the exact invocation modes. Do not mistake an internal adapter base class
+or the absence of ACP for the provider's complete transport story.
 
 Probe template: [task-15038 AGY/Grok contract probe](../../.gobby/plans/task-15038-agy-grok-contract-probe.md).
 
@@ -121,7 +122,7 @@ Probe template: [task-15038 AGY/Grok contract probe](../../.gobby/plans/task-150
 | Grok CLI | Full (9 events, transport capabilities) | JSONL | ACP (`GrokWebChatBackend`) | **FULL** |
 | Qwen Code | Full (ACP, 11 events, enableHooks gate) | JSONL | ACP (`QwenWebChatBackend`) | **FULL** |
 | Factory Droid | Full | JSONL | Custom (`DroidWebChatBackend`) | **FULL** |
-| **agy / Antigravity** | Yes (5 events: PreInvocation, PreToolUse, PostToolUse, PostInvocation, Stop) | **None** (CLI exposes none) | **None** (no ACP server) | **Blocked** — hook-only; upstream must add transcripts + ACP |
+| **agy / Antigravity** | Full (5 events: PreInvocation, PreToolUse, PostToolUse, PostInvocation, Stop; 1.1.18 floor) | JSONL (`brain/<id>/.system_generated/logs/transcript_full.jsonl`) | Custom stream-json (`AgyWebChatBackend`) | **FULL** |
 
 ### Named candidates (full deep-dives below)
 
@@ -177,8 +178,8 @@ clear the web-chat surface by construction.
 
 ### EOL
 
-Gemini CLI — sunset 2026-06-18, succeeded by **agy / Antigravity CLI** (already in
-Gobby, currently blocked — hook-only; upstream must add transcripts + ACP).
+Gemini CLI — sunset 2026-06-18, succeeded by **agy / Antigravity CLI**, which is
+fully supported in Gobby on the 1.1.18+ contract.
 
 ## OSS local-LLM CLI candidates
 
@@ -262,7 +263,8 @@ per invocation mode before integration.
    `stream-json` parser for headless observe-only paths
 
 **Risk if rushed:** Ship hook install for IDE events while dispatch runs `agent -p` —
-rules never fire, same class of failure as agy (surface present in docs, absent at runtime).
+rules never fire, the same class of version-and-mode error exposed by AGY's obsolete
+1.0.11 assessment.
 
 ### GitHub Copilot CLI
 
@@ -457,7 +459,8 @@ For each mode, record:
 - Discover path: hook payload field, env var, or CLI command (`session list`)
 - Confirm fields: messages, tool calls, tool results, token usage, session ID
 - JSONL → base parser; anything else → dedicated parser subclass
-- If format is binary or undocumented (agy `.pb`), score **None** — blocked
+- If the current supported version exposes only a binary or undocumented format,
+  score **None** — blocked
 
 ### 3. Web-chat transport
 
@@ -476,7 +479,7 @@ For each mode, record:
 | **Ready?** / **Ready\*** | **Ready** | All three surfaces confirmed for target modes; probe doc merged |
 | **ACP-only** | **Ready?** | Hooks + transcripts verified |
 | **Missing-hooks** | **Ready\*** | Upstream ships hook surface; re-run protocol |
-| **Blocked** | **Ready\*** | Upstream adds missing surface (e.g. agy adds ACP + transcripts) |
+| **Blocked** | **Ready\*** | Upstream adds a missing surface or a new version exposes a stable custom transport |
 | Any | **Supported in Gobby** | Implementation complete + [adapter fidelity](../guides/adapter-fidelity.md) declared |
 
 A CLI may be scored **Ready** only after all three cells are confirmed for the modes

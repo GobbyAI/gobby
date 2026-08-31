@@ -1,9 +1,9 @@
 # Sandbox Configuration
 
 Gobby owns sandbox selection and policy for daemon-managed runtimes. Managed
-terminal agents use Anthropic Sandbox Runtime (SRT) by default. Web chat keeps
-its provider-native sandbox because those runtimes use SDK, app-server, or ACP
-process models rather than the managed terminal launch path.
+terminal agents and web chat use Anthropic Sandbox Runtime (SRT) by default.
+Web-chat policy allows only bounded provider, loopback, Git, and package-registry
+network access instead of granting unrestricted network access.
 
 For the test and lifecycle matrix, see
 [sandbox-compatibility.md](./sandbox-compatibility.md).
@@ -13,10 +13,10 @@ For the test and lifecycle matrix, see
 Two explicit backends are supported:
 
 - `srt` wraps the complete provider command in one host-native process-tree
-  sandbox before tmux starts. It is the `agent_sandbox` default.
-- `provider-native` renders the provider's own sandbox flags. It is the
-  `web_chat_sandbox` default and an explicit rollout/debug option for managed
-  agents.
+  sandbox before tmux or a web-chat child starts. It is the default for both
+  `agent_sandbox` and `web_chat_sandbox`.
+- `provider-native` renders the provider's own sandbox flags. It remains an
+  explicit rollout/debug override for managed agents or web chat.
 
 Backend selection never falls back. If SRT installation, policy validation, or
 preflight fails, the agent run fails before tmux creation. If a provider has no
@@ -53,11 +53,13 @@ runtime is repaired.
 ```yaml
 web_chat_sandbox:
   enabled: true
-  backend: provider-native
+  backend: srt
   mode: permissive
-  allow_network: true
+  allow_network: false
   extra_read_paths: []
   extra_write_paths: []
+  allow_git_network: true
+  allow_package_registries: true
 
 agent_sandbox:
   enabled: true
@@ -78,9 +80,9 @@ agent_sandbox:
 | Parameter | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `enabled` | bool | `true` | Enables the selected backend |
-| `backend` | `srt` or `provider-native` | agents: `srt`; web chat: `provider-native` | Host sandbox implementation |
+| `backend` | `srt` or `provider-native` | `srt` | Host sandbox implementation |
 | `mode` | `permissive` or `restrictive` | `permissive` | Provider-native renderer mode; SRT uses its canonical path policy |
-| `allow_network` | bool | agents: `false`; web chat: `true` | Provider-native network switch; SRT rejects `true` because unrestricted network is not supported |
+| `allow_network` | bool | `false` | Provider-native network switch; SRT rejects `true` because unrestricted network is not supported |
 | `extra_read_paths` | list of paths | `[]` | Additional readable roots |
 | `extra_write_paths` | list of paths | `[]` | Additional writable roots |
 | `extra_deny_read_paths` | list of paths | `[]` | Additional hidden roots |
@@ -148,7 +150,7 @@ local package caches writable.
 
 ## Launch And Lifecycle
 
-Gobby constructs the complete Claude, Codex, Qwen, Grok, or Droid command first,
+Gobby constructs the complete Claude, Codex, Qwen, Grok, Droid, or AGY command first,
 preflights SRT, and then wraps that argv exactly once before tmux creation.
 Provider-native OS sandbox flags are omitted in SRT mode, while provider approval
 policies, tool permissions, MCP/browser/computer-use controls, authentication,
@@ -168,7 +170,15 @@ operations so host-native confinement does not block the active tmux PTY.
 Each launch also gets a mode-`0700` private temporary directory under its
 sandbox run directory; Gobby passes it through `CLAUDE_CODE_TMPDIR`, which SRT
 maps to the child's `TMPDIR`. Daemon-stop resume regenerates and preflights a
-fresh policy before launching the provider resume command.
+fresh policy before launching the provider resume command. A stored web-chat
+session can resume only when its policy hash matches the current daemon-owned
+policy; a stale hash invalidates direct resume and the continuation is recreated
+under the current policy instead.
+
+Web-chat provider processes are session-owned. Attach creates the child and its
+process group; detach, interrupt, timeout, session removal, and daemon shutdown
+terminate and await that group before releasing the session. No shared ACP or
+provider subprocess is allowed to outlive the owning web-chat session.
 
 Generated files live outside the workspace at
 `~/.gobby/run/sandbox/<agent-run-id>/`:
@@ -185,10 +195,11 @@ sandbox run directory.
 
 ## Provider-Native Rollout Backend
 
-Explicit `provider-native` agent mode retains the existing renderers for Claude,
-Codex, Qwen, and Grok. Droid has no Gobby provider-native renderer, so that
-combination is rejected. Web chat continues to use its established SDK,
-app-server, ACP, or per-session backend behavior and policy-hash resume checks.
+Explicit `provider-native` mode retains the existing provider renderers as an
+operator-selected override. A surface/provider combination without a renderer is
+rejected rather than falling back. Web-chat SDK, app-server, ACP, stream-jsonrpc,
+and AGY stream-json transports keep session-owned lifetimes and policy-hash resume
+checks regardless of the selected backend.
 
 ## Security Boundary
 
@@ -197,4 +208,4 @@ reduces host exposure for managed agents, but it is not the future microVM
 boundary for hostile repositories. Higher-risk unattended execution remains a
 separate microVM follow-up.
 
-_Last verified: 2026-07-21_
+_Last verified: 2026-08-30_

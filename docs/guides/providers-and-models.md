@@ -167,12 +167,13 @@ capability rows; a successful collection replaces the provider snapshot in one
 transaction.
 
 Capability collectors own provider-specific discovery for Claude, Codex, Droid,
-Grok, and Qwen. On an empty database, bundled Claude and Droid snapshots provide
-cold-start rows with `stale` source health and `bundled` provenance. Startup then
+Grok, Qwen, and AGY. On an empty database, bundled Claude, Droid, and AGY snapshots
+provide cold-start rows with `stale` source health and `bundled` provenance. Startup then
 refreshes collectors concurrently, with a 30-second source timeout, and repeats
 every 24 hours. Successful live facts retain their `source_key`, optional
-`source_url`, and `observed_at` per field. AGY retains static response rows
-pending #18653.
+`source_url`, and `observed_at` per field. The AGY collector reads live
+`agy --output-format json models` data; the bundled seed remains the fallback when
+that 6.3 collector cannot produce a fresh snapshot.
 
 ### Speed Routes And Results
 
@@ -304,4 +305,4 @@ speed result reporting.
 - [llm-features.md](llm-features.md)
 - [observability.md](observability.md)
 
-_Last verified: 2026-08-20_
+_Last verified: 2026-08-30_

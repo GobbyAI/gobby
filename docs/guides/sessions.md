@@ -87,7 +87,7 @@ summarize during lifecycle processing.
 | `qwen` | Qwen CLI hooks |
 | `droid` | Droid CLI hooks |
 | `grok` | Grok CLI hooks |
-| `agy` | AGY CLI hooks |
+| `agy` | AGY CLI hooks or web-chat AGY backend |
 | `pipeline` | Pipeline automation |
 | `system` | Bootstrapped root session for cron and pipeline work without a caller |
 
@@ -445,4 +445,4 @@ stop or turn-end event does not release the agent run.
 - [rules.md](./rules.md) - Semantic workflow events
 - [hook-schemas.md](./hook-schemas.md) - Raw hook mappings
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-08-30_

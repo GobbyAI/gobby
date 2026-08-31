@@ -2,12 +2,12 @@
 
 **Author:** Claude Code (Opus 4.8, 1M). **Date:** 2026-06-27.
 **Status:** one of several independent per-CLI research outputs, written for the
-user to synthesize. Scope: which coding CLIs Gobby doesn't yet support but could,
-and a readiness gate so we never ship another partial-support CLI like agy.
+user to synthesize and corrected 2026-08-30 for the AGY 1.1.18+ contract. Scope:
+which coding CLIs Gobby doesn't yet support but could, and a three-surface readiness gate.
 
 **Epistemic note (read first):** this doc is *strongest* where I read the Gobby
-source directly — the integration contract, the baseline rows, and the agy
-diagnosis are **codebase-verified** with `file:line` anchors. The external
+source directly — the integration contract, the baseline rows, and the updated AGY
+diagnosis are **codebase-verified**. The external
 candidate findings are **web research (directional)**: capability *existence*
 signals are reliable, but specific version numbers, GA/EOL dates, and
 acquisition/rebrand claims should be re-verified against official docs during
@@ -18,7 +18,7 @@ synthesis. Where my web pass disagrees with another CLI's output, I flag it.
 ## What FULL support actually requires (codebase-verified)
 
 Gobby integrates a CLI across **three surfaces**. A CLI is only "supported" when
-all three exist; anything less is the limbo agy sits in.
+all three exist; anything less remains limbo or blocked.
 
 | Surface | What it does | Where it lives |
 | --- | --- | --- |
@@ -26,13 +26,13 @@ all three exist; anything less is the limbo agy sits in.
 | **Transcript parser** | Session history (messages, tool calls, tokens) from a parseable on-disk format. | `sessions/transcripts/<cli>.py`, registered in `PARSER_REGISTRY` (`sessions/transcripts/__init__.py`) |
 | **Web-chat backend** | Daemon-hosted streaming to the web UI. | `servers/websocket/chat/backends/<cli>.py` |
 
-**The single biggest readiness lever is ACP.** I verified the web-chat surface
-has a shared `ACPWebChatBackend` (`servers/websocket/chat/backends/acp.py:36`).
+**ACP is a useful readiness lever, not a requirement.** The web-chat surface has
+a shared `ACPWebChatBackend` (`servers/websocket/chat/backends/acp.py`).
 ACP-speaking CLIs reuse it via a thin wrapper — `backends/grok.py` (1.1 KB) and
 `backends/qwen.py` (1.9 KB) are stubs over the shared backend, whereas the
 non-ACP backends are large and custom: `codex.py` (26 KB), `droid.py` (30 KB),
-`claude.py` + helpers. So: **ACP → cheap third surface; non-ACP → expensive custom
-backend.**
+`claude.py` + helpers. AGY now adds a bounded custom stream-json backend to that
+second category.
 
 Supporting plumbing (needed for a complete integration, not a gate cell):
 `SessionSource` enum value (`hooks/events.py:75`), adapter registration
@@ -43,9 +43,10 @@ resolution.
 Adapter base classes: `BaseAdapter` (`adapters/base.py:131`) for custom hook
 protocols; `ACPHookAdapter` (`adapters/acp_hook_adapter.py:53`) for the ACP hook
 *translation* plumbing. **Subclassing `ACPHookAdapter` is an internal code-reuse
-choice and does NOT mean the CLI speaks ACP as a server** — agy proves this (below).
+choice and does NOT mean the CLI speaks ACP as a server. AGY does not expose ACP;
+its stable custom stream-json subprocess transport satisfies web chat instead.
 
-## The readiness gate ("don't ship another agy")
+## The readiness gate
 
 Score each candidate on the three surfaces. **GREEN** overall requires all three:
 
@@ -58,8 +59,8 @@ Score each candidate on the three surfaces. **GREEN** overall requires all three
   custom subprocess backend.
 
 Two-of-three = **limbo** (don't ship as supported). One-of-three where the rest
-are *unavailable upstream* = **blocked** — the agy condition: no amount of Gobby
-code fixes it, you wait on the vendor.
+are *unavailable upstream* = **blocked** until a later provider version or newly
+verified transport changes the contract.
 
 Secondary signals (affect priority, not the gate): MCP client support, OSS/license,
 maturity & EOL risk, platform coverage, and **whether the hook protocol is
@@ -67,41 +68,27 @@ Claude-compatible** (cheapest adapter to write).
 
 ---
 
-## agy: the cautionary baseline (codebase-verified, strongest finding)
+## AGY: versioned recovery from the cautionary baseline
 
-I independently confirmed agy's identity and its exact blocker from the Gobby
-source — not from another model's output.
+The old classification described AGY 1.0.11: five hooks, opaque protobuf payloads,
+and no stable daemon transport. It was correct for that capture and stale for the
+supported version.
 
-- **agy = Google Antigravity CLI** (Gemini-family). The contract-probe fixture
-  `tests/fixtures/provider_contracts/agy/transcript-manifest.json` (CLI v1.0.10,
-  probed 2026-05-22) shows paths under `~/.gemini/antigravity-cli/...`, a
-  `~/.gemini/config/projects/<PROJECT_ID>.json` config, and model label
-  "Gemini 3.5 Flash". (Gemini CLI is being sunset; Antigravity is its successor —
-  worth re-verifying the transition dates from Google's own changelog.)
-- **(A) Hook adapter — PARTIAL.** `AGY_EVENT_MAP` (verified via
-  `tests/adapters/test_agy_contract.py`) is exactly five events:
-  `PreInvocation→BEFORE_AGENT`, `PreToolUse→BEFORE_TOOL`,
-  `PostToolUse→AFTER_TOOL`, `PostInvocation→AFTER_AGENT`, `Stop→STOP`.
-  **No `SESSION_START`/`SESSION_END`.** `translate_from_hook_response`
-  (`adapters/agy.py`) honors only `PreToolUse` decisions; its own docstring says
-  other AGY hook stdout "is currently ignored."
-- **(B) Transcript parser — BLOCKED (the precise reason).** agy is *not* in
-  `PARSER_REGISTRY` (which has only claude/grok/qwen/codex/droid), so it silently
-  falls back to the Claude parser. But the deeper blocker is the format: the probe
-  shows conversation payloads are **opaque binary protobuf** at
-  `~/.gemini/antigravity-cli/conversations/<id>.pb` (`content_committed: false`,
-  reason: "Binary protobuf payload may contain private transcript data"). There
-  *is* a JSON conversation index at `~/.gemini/antigravity-cli/cache/
-  last_conversations.json` (so session *discovery* works), but the **payload is
-  undocumented protobuf** — a parser would mean brittle reverse-engineering.
-- **(C) Web-chat backend — BLOCKED.** No `backends/agy.py`. agy is not an ACP
-  *server* (subclassing `ACPHookAdapter` is internal plumbing only), so the cheap
-  ACP path is unavailable and a custom backend has nothing stable to consume.
+- **(A) Hook adapter — FULL.** AGY exposes exactly five PascalCase events:
+  `PreInvocation`, `PreToolUse`, `PostToolUse`, `PostInvocation`, and `Stop`.
+- **(B) Transcript parser — FULL.** AGY 1.1.18+ persists parseable JSONL at
+  `brain/<id>/.system_generated/logs/transcript_full.jsonl`; Gobby registers a
+  dedicated AGY parser.
+- **(C) Web-chat backend — FULL.** `AgyWebChatBackend` uses AGY's stable
+  `--input-format stream-json` transport. ACP was never required.
 
-**Lesson:** agy is hook-only and **upstream-blocked** — (B) and (C) can't be built
-in Gobby until Antigravity ships a documented transcript format and/or an ACP
-server. This is *why* the gate exists: verify all three surfaces are *buildable*
-before integrating, or you inherit agy's limbo with no in-house fix.
+**Lesson:** preserve versioned negative evidence, then re-probe it at the supported
+version. A stable custom subprocess protocol is a complete web-chat surface even
+when the provider does not expose an ACP server.
+
+| Classification | CLI | Verified basis |
+| --- | --- | --- |
+| **Supported** | **agy / Antigravity** | 1.1.18+: hooks.json dispatch, JSONL transcripts, `--input-format stream-json` transport; no ACP required |
 
 ---
 
@@ -114,7 +101,7 @@ before integrating, or you inherit agy's limbo with no in-house fix.
 | Droid | Full | JSONL parser | Custom (`droid.py`) | **FULL** |
 | Grok | Full (real ACP event vocab) | JSONL parser | ACP (`grok.py` stub) | **FULL** |
 | Qwen | Full (real ACP event vocab) | JSONL parser | ACP (`qwen.py` stub) | **FULL** |
-| **agy / Antigravity** | Partial (5 events, no session start/end, responses mostly ignored) | **Blocked** (binary protobuf, no parser) | **Blocked** (no ACP server) | **BLOCKED — hook-only** |
+| **agy / Antigravity** | Full (5 events; 1.1.18 floor) | JSONL parser | Custom stream-json (`AgyWebChatBackend`) | **FULL** |
 
 ## Matrix — candidates (web research, directional)
 
@@ -175,9 +162,9 @@ if hook payloads and ACP are confirmed. Sources: `cursor.com/docs/hooks`,
 Gobby already has a **contract-probe harness** at
 `tests/fixtures/provider_contracts/` (currently `agy` and `grok`, plus a README).
 It captures a CLI's real config paths, transcript locations, and formats from a
-live probe. Before scoring any candidate's (B) cell as GREEN, run/author a probe
-for it rather than trusting docs — that's exactly how agy's protobuf blocker was
-caught. Per-surface checks:
+live probe. Before scoring any candidate's (B) cell as GREEN, run or update a probe
+instead of trusting docs — AGY's 1.0.11 protobuf capture and 1.1.18 JSONL recovery
+show why observations must remain versioned. Per-surface checks:
 
 1. **(A) Hooks** — confirm session-start + pre-tool-use (with allow/deny/modify)
    + stop events; note config path/format and Claude-compatibility; note
@@ -198,5 +185,5 @@ transcript format before building.
 4. **Goose** — OSS local-LLM option; budget a SQLite transcript parser.
 5. **Defer/skip:** Aider (architecture mismatch), Windsurf (pivot/EOL), Open
    Interpreter/gptme (unverified B/C), Cline (verify hooks first).
-6. **agy:** leave as blocked; revisit only if Antigravity documents its transcript
-   format or ships an ACP server.
+6. **AGY:** supported on the 1.1.18+ floor through hooks.json, JSONL transcripts,
+   and a custom stream-json backend; no ACP server is required.

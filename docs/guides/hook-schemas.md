@@ -20,7 +20,7 @@ must still finish by calling `gobby-agents:end_agent_run`.
 | CLI | Native Format | Session Field | Integration |
 | --- | --- | --- | --- |
 | Claude Code | Settings hook names with Gobby kebab-case `ghook --type` values | `session_id` | HTTP hook command |
-| AGY CLI | PascalCase (`PreInvocation`, `PreToolUse`) | `session_id` | HTTP hook command |
+| AGY CLI | PascalCase (`PreInvocation`, `PreToolUse`, `PostToolUse`, `PostInvocation`, `Stop`) | `session_id` | HTTP hook command |
 | Qwen CLI | Current PascalCase (`SessionStart`, `PreToolUse`, `Stop`) | `session_id` | HTTP hook command |
 | Codex CLI | hooks.json PascalCase (`SessionStart`, `PreToolUse`) | `session_id` | HTTP hook command |
 | Droid CLI | PascalCase (`PreToolUse`) | `session_id` | HTTP hook command |
@@ -176,8 +176,9 @@ passes kebab-case hook types to the daemon.
 ### AGY
 
 AGY hooks are installed to `~/.gemini/config/hooks.json`, which is the AGY
-vendor config path. Runtime web chat, spawning, and live transport remain
-unavailable.
+vendor config path. These are the only five native events; AGY does not expose
+`SessionStart` or `UserPromptSubmit`. Gobby separately supports managed spawning
+and web chat through AGY's custom stream-json subprocess transport on 1.1.18+.
 
 | Native Hook | Raw Workflow Event | Semantic Event |
 | --- | --- | --- |
@@ -500,8 +501,8 @@ Adapters translate these fields into the native response schema for each CLI.
 
 | HookResponse Field | Claude Code | Qwen | AGY | Codex | Droid |
 | --- | --- | --- | --- | --- | --- |
-| `context` | `hookSpecificOutput.additionalContext` when supported | `hookSpecificOutput.additionalContext` when supported | No native destination | `additionalContext` or `systemMessage`, depending on hook | `hookSpecificOutput.additionalContext` when supported |
-| `system_message` | Top-level `systemMessage`, except startup context is injected once | Top-level `systemMessage`, except startup context is injected once | No native destination | `systemMessage` for `PreToolUse` and `Stop` | Top-level `systemMessage`, except startup context is injected once |
+| `context` | `hookSpecificOutput.additionalContext` when supported | `hookSpecificOutput.additionalContext` when supported | `injectSteps.ephemeralMessage` on `PreInvocation` and `PostInvocation` | `additionalContext` or `systemMessage`, depending on hook | `hookSpecificOutput.additionalContext` when supported |
+| `system_message` | Top-level `systemMessage`, except startup context is injected once | Top-level `systemMessage`, except startup context is injected once | `injectSteps.userMessage` on `PreInvocation` and `PostInvocation` | `systemMessage` for `PreToolUse` and `Stop` | Top-level `systemMessage`, except startup context is injected once |
 
 ### Blocking And Tool Control
 
@@ -517,6 +518,13 @@ Adapters translate these fields into the native response schema for each CLI.
 | `worktree_path` | Claude `WorktreeCreate` output |
 | `elicitation_*` | Claude elicitation response fields |
 | `modify_args` | Qwen `BeforeModel.llm_request` or `BeforeToolSelection.toolConfig` |
+
+For AGY `PreToolUse`, the supported decisions are `allow`, `deny`, `ask`, and
+`deny_unless_prior_grant`; `modified_input` maps to `overwrite`.
+`PostInvocation` can return `terminationBehavior`, while Stop blocking maps to
+`decision: continue`. Gobby never emits schema-present `force_ask` because it is
+unmeasured, never emits `permissionOverrides` because headless auto-deny wins, and
+never emits `injectSteps.toolCall` because the provider treats it as fatal.
 
 ## Integration Example
 
@@ -564,4 +572,4 @@ AGY and Qwen communicate block decisions in JSON; their hook commands should
 exit `0` so the CLI treats the hook response as successful rather than a hook
 process failure.
 
-_Last verified: 2026-07-17 against Qwen Code 0.19.10_
+_Last verified: 2026-08-30 against Qwen Code 0.19.10 and AGY 1.1.24 response records_

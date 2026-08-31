@@ -6,7 +6,8 @@ Operator configuration is documented in [sandboxing.md](./sandboxing.md).
 ## Current Contract
 
 - Managed terminal agents default to the pinned SRT 0.0.66 backend.
-- Web chat defaults to `provider-native` and retains policy-hash resume checks.
+- Web chat defaults to `backend="srt"` with bounded provider, loopback, Git, and
+  package-registry network access; `provider-native` is an explicit override.
 - Backend selection is explicit and never downgrades on failure.
 - SRT policy and violation files are generated under Gobby's private run
   directory, outside the workspace.
@@ -20,6 +21,10 @@ Operator configuration is documented in [sandboxing.md](./sandboxing.md).
 - Every supported terminal provider command is wrapped once after command
   construction and before tmux creation.
 - Daemon-stop resume creates a fresh policy and fails closed before spawning.
+- A stale web-chat policy hash invalidates direct resume; continuation is recreated
+  under the current policy snapshot.
+- Web-chat provider process groups are session-owned and are terminated on detach,
+  interrupt, timeout, removal, or daemon shutdown.
 - Agent-run serialization exposes backend, SRT version, effective policy hash,
   and trusted violation data.
 
@@ -31,16 +36,13 @@ present in that run cache.
 
 | Surface | Provider | Default mapping | Compatibility invariant |
 | --- | --- | --- | --- |
-| Web chat | Claude | Provider-native SDK settings | Resume is blocked on policy-hash mismatch |
-| Web chat | Codex | App-server thread sandbox policy | Daemon-owned policy remains enabled |
-| Web chat | Qwen/Grok | Shared ACP backend | ACP startup is not wrapped in full-process SRT |
-| Web chat | Droid | Per-session stream-jsonrpc backend | Availability and session metadata remain consistent |
+| Web chat | Claude/Codex/Qwen/Grok/Droid/AGY | SRT wraps each session-owned SDK, app-server, ACP, stream-jsonrpc, or stream-json provider process | Bounded network policy is daemon-owned; stale policy hashes invalidate resume; explicit `provider-native` overrides never fall back |
 | Managed agent | Claude | SRT wraps complete `claude` argv | Claude approval/tool settings and MCP flags remain inside the wrapped argv |
 | Managed agent | Codex | SRT wraps complete `codex` argv | No nested Codex OS sandbox; approval/config flags remain active |
 | Managed agent | Qwen | SRT wraps complete `qwen` argv | No nested Seatbelt profile; Qwen flags and hooks remain active |
 | Managed agent | Grok | SRT wraps complete `grok` argv | No nested Grok OS sandbox; headless/approval flags remain active |
 | Managed agent | Droid | SRT wraps complete `droid` argv | SRT supplies the host boundary even though Droid has no provider-native renderer |
-| Managed agent | AGY/Gemini | Provider is currently unavailable for managed spawn | Gobby rejects the spawn; it does not launch an unsandboxed substitute |
+| Managed agent | AGY | SRT wraps complete `agy` argv | Interactive dispatch and terminal lifecycle use the same session-owned process boundary |
 
 Explicit `provider-native` managed-agent mode is covered for Claude, Codex,
 Qwen, and Grok. Selecting it for Droid fails closed. SRT supports both macOS
@@ -59,7 +61,7 @@ alpha and is not part of Gobby's supported compatibility gate.
 | All managed provider command builders and native rollout renderers | `tests/agents/test_spawn_executor.py` |
 | Fresh policy on daemon-stop resume and legacy sandbox-field non-replay | `tests/agents/test_resume_executor.py` |
 | Run-record policy metadata and trusted violation projection | `tests/storage/test_agent_sandbox_records.py` |
-| Web-chat translation and policy-hash resume behavior | `tests/servers/websocket/chat/test_runtime_manager.py`, `tests/servers/test_session_control.py` |
+| Web-chat SRT wrapping, session ownership, translation, and policy-hash resume behavior | `tests/servers/websocket/chat/test_runtime_manager.py`, `tests/servers/websocket/chat/test_agy_backend.py`, `tests/servers/test_session_control.py` |
 
 ## Tmux And Process-Tree Invariants
 
@@ -142,4 +144,4 @@ SRT 0.0.66 cannot restrict loopback by destination port. A future pin must keep
 that limitation documented or add a test proving exact port enforcement before
 claiming it.
 
-_Last verified: 2026-07-21_
+_Last verified: 2026-08-30_

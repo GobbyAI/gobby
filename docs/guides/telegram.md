@@ -445,8 +445,9 @@ Paused notifications are actionable:
 - Multiple structured questions keep their complete prompts and options in the
   message for a native Telegram reply.
 - A live native plan menu gets its exact provider choices. Claude, Codex,
-  Droid, Grok, and Qwen choices are revalidated against the current pane before
-  provider-specific keystrokes are sent. AGY has no native plan action.
+  Droid, Grok, Qwen, and AGY choices are revalidated against the current pane
+  before provider-specific keystrokes are sent. AGY opens the artifact review
+  with `ctrl+r`, then sends `y` to approve or `n` to request changes.
 - Other pauses get a **Continue** button.
 - A native reply to any chunk of a paused notification forwards the reply text
   verbatim. Every paused message explicitly tells the user that replies are
@@ -594,4 +595,4 @@ platform limits and rate guidance remain governed by the
 [telegram-features]: https://core.telegram.org/bots/features
 [telegram-faq]: https://core.telegram.org/bots/faq
 
-_Last verified: 2026-07-25_
+_Last verified: 2026-08-30_

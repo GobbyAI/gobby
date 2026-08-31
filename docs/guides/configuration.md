@@ -470,7 +470,11 @@ values must be positive. Changes require a
 daemon restart. A `hooks.provider_timeout` change also requires `gobby install`
 to rewrite provider settings. Qwen stores the provider value in milliseconds;
 Claude caps `SessionEnd` at 60 seconds; Codex keeps its enqueue-only `SessionEnd`
-hook at 3 seconds. AGY manages its own timeout contract.
+hook at 3 seconds. AGY stores a `timeout` on every action in
+`~/.gemini/config/hooks.json`; the bundled template uses 45 seconds through
+`AGY_HOOK_TIMEOUT_SECONDS`. Unlike the other standard installers, that AGY
+per-hook timeout is not rewritten from `hooks.provider_timeout`, so changing the
+provider ceiling does not change AGY's 45-second action deadline.
 
 ### Code Index
 
@@ -733,4 +737,4 @@ after changing server definitions.
 - [search.md](./search.md) - Search and embedding behavior
 - [webhooks-and-plugins.md](./webhooks-and-plugins.md) - Extension development
 
-_Last verified: 2026-07-20_
+_Last verified: 2026-08-30_

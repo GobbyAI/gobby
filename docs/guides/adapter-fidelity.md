@@ -7,11 +7,10 @@ context channels.
 
 The executable source of truth is `src/gobby/adapters/capabilities.py`.
 New providers must declare capabilities before adapter behavior is added.
-Unsupported-provider research lives in
-[`docs/research/cli-support-feature-matrix-codex-findings.md`](../research/cli-support-feature-matrix-codex-findings.md).
-Use that matrix before adding first-class CLI support; a provider must have
-proven hooks, transcripts/session identity, and web-chat streaming/control.
-AGY is the negative-control case: hook install parity alone is not enough.
+Before adding first-class CLI support, verify that the provider has proven hooks,
+transcripts/session identity, and web-chat streaming/control.
+AGY demonstrates that these surfaces can combine native hooks, a dedicated JSONL
+parser, and a custom subprocess backend without requiring ACP.
 
 ## Capability API
 
@@ -38,11 +37,14 @@ Each hook capability declares:
 | --- | --- | --- | --- | --- | --- |
 | Claude Code | `claude_contract.py` kebab-case native names | `additionalContext` on supported Claude hooks; startup banner is injected once | `PreToolUse`, `PermissionRequest`, retry, watch paths, worktree create | Supported on Claude elicitation hooks | Pre-tool rule-block reasons are compacted for terminal readability |
 | Codex hooks.json | PascalCase hooks in `CodexHooksAdapter.EVENT_MAP` | `additionalContext` for `SessionStart`, `UserPromptSubmit`, `PostToolUse`; `systemMessage` for `PreToolUse`, `PermissionRequest`, compaction, and stop hooks | `PreToolUse` and `PermissionRequest`; tool-input rewrites are applied by dispatch enforcement where supported | Not supported by terminal hooks.json adapter | Unsupported response fields are dropped with telemetry |
-| AGY CLI | PascalCase AGY hook names | Not supported by current AGY hook stdout | Compact `PreToolUse` allow/deny/ask decisions and `updatedInput` | Not supported | Hook install parity only; web chat, spawning, and live transport remain unavailable |
+| AGY CLI | Five PascalCase events: `PreInvocation`, `PreToolUse`, `PostToolUse`, `PostInvocation`, `Stop` | `PreInvocation`/`PostInvocation` context via `injectSteps.ephemeralMessage`; system messages via `injectSteps.userMessage` | `PreToolUse` honors `allow`/`deny`/`ask`, `deny_unless_prior_grant`, and argument `overwrite`; `PostInvocation` honors `terminationBehavior`. `force_ask` is schema-present but unmeasured and Gobby never emits it. `permissionOverrides` is not honored (headless auto-deny wins), and `injectSteps.toolCall` is fatal and never emitted. | Not supported | AGY 1.1.18 floor; custom `AgyWebChatBackend` stream-json transport; managed spawn and 6.1 interactive dispatch are proven |
 | Qwen CLI | `qwen_contract.py` current PascalCase hook names | Event-specific `hookSpecificOutput.additionalContext` | `PreToolUse.permissionDecision`, structured `PermissionRequest.decision`, and top-level stop/subagent/todo decisions | Not supported | Dedicated terminal adapter; ACP remains the web-chat transport only |
 | Factory Droid | PascalCase Droid hook names | `additionalContext` on Droid-supported context hooks; no context channel on `PreToolUse` | `PreToolUse.permissionDecision` | Not supported | Current behavior is intentionally standalone, not inherited from Claude |
-| AGY | No public live hook contract in AGY CLI `1.0.8` | No daemon-usable context channel; TUI hooks are not a stable subprocess protocol | No supported external tool approval, cancellation, streaming, or resume transport; hidden `agentapi` remains launcher-gated on `ANTIGRAVITY_LS_ADDRESS` | Not supported | Keep runtime surfaces unavailable until AGY CLI exposes ACP or the `google-antigravity` SDK evaluation proves a production daemon transport |
 | Grok | snake_case hooks in `GROK_EVENT_MAP`; ACP `0.2.51` init reports `loadSession`, `cancelRewind`, `_meta.x.ai/fs_notify`, and `availableCommands` (`compact`, `context`, `session-info`) | Observe stdout is ignored; PreToolUse uses deny reason/`updatedInput`; Stop/SubagentStop allow omits `decision`; briefing keep-working uses additionalContext-only; policy gates use `block` + reason | `pre_tool_use` permission control (`permission_decision`, `auto_approve`, modified input); live ACP model discovery reads `_meta.modelState.availableModels` | Not supported | Static fallback defaults to `grok-composer-2.5-fast` (200k ctx) with `grok-build` (512k ctx) secondary; reasoning efforts are `low`, `medium`, `high`, `xhigh`, `max` |
+
+AGY's `force_ask` disposition is intentionally separate from its honored decisions:
+the field exists in the 1.1.24 response schema, but headless mode auto-denies before
+a live proof can be collected. The adapter mapping therefore forbids emitting it.
 
 ## Degradation Telemetry
 
@@ -65,10 +67,11 @@ When adding or changing a provider adapter:
 1. Add or update capability declarations first.
 2. Add drift tests proving adapter behavior matches those declarations.
 3. Route unsupported `HookResponse` fields through degradation telemetry.
-4. Keep AGY unavailable until a documented subprocess or SDK contract proves
-   session create/resume, streaming, cancellation, tool approval, transcripts,
-   and model discovery.
+4. Keep version floors and live negative evidence explicit when a provider's
+   schema contains fields that Gobby deliberately does not emit.
 
 A broader universal response-translation layer is future work. The current
 slice records today's provider facts so that future extraction has a stable
 contract instead of another set of hard-coded special cases.
+
+_Last verified: 2026-08-30_
