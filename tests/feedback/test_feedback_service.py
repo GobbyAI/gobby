@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 
 from gobby.config.sessions import FeedbackReviewConfig
-from gobby.feedback.service import FeedbackReviewService
+from gobby.feedback.service import FINDINGS_EPIC_TITLE, FeedbackReviewService
 from gobby.feedback.storage import FeedbackReviewStore
 from gobby.prompts.sync import sync_bundled_prompts
 from gobby.storage.hub.protocol import HubDatabase
@@ -85,9 +85,15 @@ class _FakeLLM:
 
 
 class _FakeTaskManager:
-    def __init__(self, existing_open_titles: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        existing_open_titles: tuple[str, ...] = (),
+        existing_epic_id: str | None = None,
+    ) -> None:
         self.existing_open_titles = existing_open_titles
+        self.existing_epic_id = existing_epic_id
         self.created: list[SimpleNamespace] = []
+        self.epics: list[SimpleNamespace] = []
 
     def list_tasks(
         self,
@@ -99,11 +105,20 @@ class _FakeTaskManager:
     ) -> list[Any]:
         assert closed is False
         wanted = (title_like or "").casefold()
-        return [
-            SimpleNamespace(title=title)
+        rows = [
+            SimpleNamespace(title=title, task_type="task")
             for title in self.existing_open_titles
             if wanted in title.casefold()
-        ][:limit]
+        ]
+        if self.existing_epic_id is not None and wanted in FINDINGS_EPIC_TITLE.casefold():
+            rows.append(
+                SimpleNamespace(
+                    id=self.existing_epic_id,
+                    title=FINDINGS_EPIC_TITLE,
+                    task_type="epic",
+                )
+            )
+        return rows[:limit]
 
     def create_task(
         self,
@@ -115,9 +130,12 @@ class _FakeTaskManager:
         labels: list[str] | None = None,
         category: str | None = None,
         validation_criteria: str | None = None,
+        parent_task_id: str | None = None,
+        task_type: str = "task",
     ) -> Any:
+        registry = self.epics if task_type == "epic" else self.created
         task = SimpleNamespace(
-            id=f"task-{len(self.created) + 1}",
+            id=f"{task_type}-{len(registry) + 1}",
             project_id=project_id,
             title=title,
             description=description,
@@ -125,8 +143,10 @@ class _FakeTaskManager:
             labels=labels,
             category=category,
             validation_criteria=validation_criteria,
+            parent_task_id=parent_task_id,
+            task_type=task_type,
         )
-        self.created.append(task)
+        registry.append(task)
         return task
 
 
@@ -137,6 +157,7 @@ def _insert_feedback(
     kind: str = "friction",
     kind_other_label: str | None = None,
     created_at: datetime = _T0,
+    disposition: str | None = None,
 ) -> str:
     feedback_id = str(uuid4())
     db.execute(
@@ -146,9 +167,9 @@ def _insert_feedback(
             frequency, suggestion, disposition, reviewed, created_at
         )
         VALUES (%s, %s, 'survey', %s, %s, 'close gate re-ran validation', 'lost ten minutes',
-                'repeated', NULL, NULL, FALSE, %s)
+                'repeated', NULL, %s, FALSE, %s)
         """,
-        (feedback_id, session_id, kind, kind_other_label, created_at),
+        (feedback_id, session_id, kind, kind_other_label, disposition, created_at),
     )
     return feedback_id
 
@@ -159,6 +180,7 @@ def _cluster(
     classification: str = "defect",
     title: str | None = None,
     priority: int | None = None,
+    theme: str = "close-gate validation reruns",
 ) -> dict[str, Any]:
     proposed: dict[str, Any] | None = None
     if title is not None:
@@ -167,7 +189,7 @@ def _cluster(
             proposed["priority"] = priority
     return {
         "observation_ids": observation_ids,
-        "theme": "close-gate validation reruns",
+        "theme": theme,
         "classification": classification,
         "proposed_task": proposed,
         "digest_note": "Agents lose time to redundant validation reruns.",
@@ -449,3 +471,65 @@ async def test_digest_other_label_audit_flags_recurring_labels(
     assert "`doc-drift`: 2 — recurring; consider promoting to the kind enum" in run.digest_md
     assert "`one-off`: 1\n" in run.digest_md + "\n"
     assert "consider promoting" not in run.digest_md.split("`one-off`", 1)[1]
+
+
+async def test_run_review_creates_named_epic_and_parents_filed_tasks(
+    temp_db: HubDatabase, session_id: str
+) -> None:
+    obs = _insert_feedback(temp_db, session_id)
+    llm = _FakeLLM(response={"clusters": [_cluster([obs], title="Fix close-gate rerun")]})
+    task_manager = _FakeTaskManager()
+    service = _service(temp_db, llm, task_manager)
+
+    result = await service.run_review()
+
+    assert len(task_manager.epics) == 1
+    epic = task_manager.epics[0]
+    assert epic.title == FINDINGS_EPIC_TITLE
+    assert epic.task_type == "epic"
+    assert epic.parent_task_id is None
+    assert task_manager.created[0].parent_task_id == epic.id
+
+    run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
+    assert run is not None
+    assert run.actions is not None
+    assert run.actions["epic_task_id"] == epic.id
+
+
+async def test_run_review_reuses_existing_open_findings_epic(
+    temp_db: HubDatabase, session_id: str
+) -> None:
+    obs = _insert_feedback(temp_db, session_id)
+    llm = _FakeLLM(response={"clusters": [_cluster([obs], title="Fix close-gate rerun")]})
+    task_manager = _FakeTaskManager(existing_epic_id="epic-existing")
+    service = _service(temp_db, llm, task_manager)
+
+    await service.run_review()
+
+    assert task_manager.epics == []
+    assert task_manager.created[0].parent_task_id == "epic-existing"
+
+
+async def test_digest_flags_shirked_found_work(temp_db: HubDatabase, session_id: str) -> None:
+    shirked_obs = _insert_feedback(temp_db, session_id)
+    filed_obs = _insert_feedback(
+        temp_db, session_id, created_at=_T0 + timedelta(minutes=1), disposition="filed-task"
+    )
+    llm = _FakeLLM(
+        response={
+            "clusters": [
+                _cluster([shirked_obs], title="Fix close-gate rerun", theme="deferred defect"),
+                _cluster([filed_obs], theme="already filed defect"),
+            ]
+        }
+    )
+    service = _service(temp_db, llm, _FakeTaskManager())
+
+    result = await service.run_review()
+
+    run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
+    assert run is not None
+    assert run.digest_md is not None
+    assert "## Shirked found work" in run.digest_md
+    assert "**deferred defect** (1 obs; dispositions: none 1)" in run.digest_md
+    assert "**already filed defect** (" not in run.digest_md

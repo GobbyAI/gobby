@@ -44,7 +44,17 @@ FEEDBACK_OBSERVATION_INPUT_SCHEMA: dict[str, Any] = {
         "impact": {"type": "string"},
         "frequency": {"type": "string", "enum": list(FEEDBACK_FREQUENCIES)},
         "suggestion": {"type": "string"},
-        "disposition": {"type": "string", "enum": list(FEEDBACK_DISPOSITIONS)},
+        "disposition": {
+            "type": "string",
+            "enum": list(FEEDBACK_DISPOSITIONS),
+            "description": (
+                "How the observation was handled. An actionable Gobby defect is "
+                "found work: file its task in-line before surveying, record "
+                "'filed-task', and put the ref in evidence. Defects left at "
+                "'worked-around'/'noted' are flagged as shirked found work in "
+                "the nightly review digest."
+            ),
+        },
     },
     "required": ["source", "kind", "evidence", "impact", "frequency"],
     "additionalProperties": False,

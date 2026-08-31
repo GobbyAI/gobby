@@ -25,7 +25,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 FEEDBACK_TASK_LABEL = "feedback-review"
+FINDINGS_EPIC_TITLE = "[Gobby Feedback - Reviewed Findings]"
 GOBBY_PROJECT_NAME = "gobby"
+_RESOLVED_DISPOSITIONS = ("filed-task", "fixed")
 DISTILL_TOTAL_DEADLINE_SECONDS = 900.0
 _DEDUP_LOOKUP_LIMIT = 20
 _CLASSIFICATIONS = ("defect", "guidance-gap", "noise", "praise")
@@ -102,6 +104,8 @@ class ReviewTaskManagerProtocol(Protocol):
         labels: list[str] | None = ...,
         category: str | None = ...,
         validation_criteria: str | None = ...,
+        parent_task_id: str | None = ...,
+        task_type: str = ...,
     ) -> Any: ...
 
 
@@ -205,6 +209,8 @@ class FeedbackReviewService:
         if project_id is None:
             actions["skipped"].append(f"no project named {GOBBY_PROJECT_NAME!r}; digest only")
             return actions
+        epic_id = await asyncio.to_thread(self._findings_epic_id, project_id)
+        actions["epic_task_id"] = epic_id
 
         seen_titles: set[str] = set()
         for cluster in actionable[: self.config.max_tasks_per_run]:
@@ -223,7 +229,7 @@ class FeedbackReviewService:
             if cluster.get("classification") == "guidance-gap":
                 labels.append("needs-decision")
             task = await asyncio.to_thread(
-                self._create_task, project_id, title, cluster, proposed, labels
+                self._create_task, project_id, epic_id, title, cluster, proposed, labels
             )
             actions["filed"].append(
                 {"task_id": str(getattr(task, "id", "")), "title": title, "labels": labels}
@@ -239,6 +245,33 @@ class FeedbackReviewService:
             (GOBBY_PROJECT_NAME,),
         )
         return str(row["id"]) if row else None
+
+    def _findings_epic_id(self, project_id: str) -> str:
+        """Find the reviewed-findings epic by exact title, creating it when missing."""
+        assert self.task_manager is not None
+        candidates = self.task_manager.list_tasks(
+            project_id=project_id,
+            closed=False,
+            title_like=FINDINGS_EPIC_TITLE,
+            limit=_DEDUP_LOOKUP_LIMIT,
+        )
+        title_key = FINDINGS_EPIC_TITLE.casefold()
+        for candidate in candidates:
+            if (
+                str(getattr(candidate, "title", "")).strip().casefold() == title_key
+                and getattr(candidate, "task_type", "task") == "epic"
+            ):
+                return str(candidate.id)
+        epic = self.task_manager.create_task(
+            project_id,
+            FINDINGS_EPIC_TITLE,
+            "Findings filed by the nightly session-feedback review loop. The loop "
+            "locates this epic by its exact title and recreates it when missing, "
+            "so keep the title unchanged. A human verifier triages the children.",
+            task_type="epic",
+            labels=[FEEDBACK_TASK_LABEL],
+        )
+        return str(epic.id)
 
     def _has_open_task_titled(self, project_id: str, title: str) -> bool:
         assert self.task_manager is not None
@@ -257,6 +290,7 @@ class FeedbackReviewService:
     def _create_task(
         self,
         project_id: str,
+        epic_id: str,
         title: str,
         cluster: dict[str, Any],
         proposed: dict[str, Any],
@@ -271,6 +305,7 @@ class FeedbackReviewService:
             priority=int(priority) if isinstance(priority, int) else 2,
             labels=labels,
             category="research",
+            parent_task_id=epic_id,
             validation_criteria=(
                 "The recurring feedback theme is resolved or explicitly declined: the "
                 "referenced observations no longer reproduce, or the decline reason is "
@@ -306,6 +341,29 @@ def _render_rows_json(rows: list[FeedbackRow]) -> str:
         for row in rows
     ]
     return json_dumps(payload, indent=2)
+
+
+def _shirked_cluster_lines(rows: list[FeedbackRow], findings: dict[str, Any]) -> list[str]:
+    """One digest line per actionable cluster no observer filed or fixed in-line."""
+    rows_by_id = {row.id: row for row in rows}
+    lines: list[str] = []
+    for cluster in findings["clusters"]:
+        if cluster.get("classification") not in ("defect", "guidance-gap"):
+            continue
+        observed = [
+            rows_by_id[obs_id]
+            for obs_id in cluster.get("observation_ids", [])
+            if obs_id in rows_by_id
+        ]
+        if not observed or any(row.disposition in _RESOLVED_DISPOSITIONS for row in observed):
+            continue
+        dispositions = Counter(row.disposition or "none" for row in observed)
+        breakdown = ", ".join(f"{name} {count}" for name, count in dispositions.most_common())
+        lines.append(
+            f"- **{cluster.get('theme', '(untitled)')}** "
+            f"({len(observed)} obs; dispositions: {breakdown})"
+        )
+    return lines
 
 
 def _render_digest(
@@ -345,6 +403,18 @@ def _render_digest(
         lines.append(f"- Skipped: {skipped}")
     if not actions.get("filed") and not actions.get("deduplicated") and not actions.get("skipped"):
         lines.append("- None")
+    lines.append("")
+
+    lines.append("## Shirked found work")
+    shirked = _shirked_cluster_lines(rows, findings)
+    if shirked:
+        lines.append(
+            "Actionable clusters whose observations were deferred into the survey "
+            "instead of being filed or fixed in-line per the found-work ladder:"
+        )
+        lines.extend(shirked)
+    else:
+        lines.append("- None — every actionable cluster had a filed-task or fixed disposition.")
     lines.append("")
 
     label_counts = Counter(row.kind_other_label for row in rows if row.kind_other_label is not None)
