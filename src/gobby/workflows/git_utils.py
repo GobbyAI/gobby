@@ -19,6 +19,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ``git status --porcelain=v2 -z`` costs tens of milliseconds on a healthy repo,
+# so this is headroom for a loaded machine rather than a working budget. It is
+# deliberately well inside the shared blocking-effect budget: a caller parked
+# here holds one of the workflow runtime's few blocking threads.
+DEFAULT_GIT_STATUS_TIMEOUT_SECONDS = 5.0
+
 
 def get_git_status(project_path: str | None = None) -> str:
     """Get git status for a project directory.
@@ -270,7 +276,11 @@ def resolve_git_worktree_root(*candidate_paths: str | Path | None) -> str | None
     return None
 
 
-def get_dirty_files(project_path: str | None = None) -> set[str]:
+def get_dirty_files(
+    project_path: str | None = None,
+    *,
+    timeout: float = DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
+) -> set[str]:
     """
     Get the set of dirty files from git status --porcelain.
 
@@ -278,14 +288,19 @@ def get_dirty_files(project_path: str | None = None) -> set[str]:
 
     Args:
         project_path: Path to the project directory
+        timeout: Seconds to allow the git subprocess
 
     Returns:
         Set of dirty file paths (relative to repo root)
     """
-    return get_dirty_files_categorized(project_path).all
+    return get_dirty_files_categorized(project_path, timeout=timeout).all
 
 
-def get_dirty_files_categorized(project_path: str | None = None) -> DirtyFiles:
+def get_dirty_files_categorized(
+    project_path: str | None = None,
+    *,
+    timeout: float = DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
+) -> DirtyFiles:
     """
     Get dirty files from git status, split into tracked and untracked.
 
@@ -295,6 +310,9 @@ def get_dirty_files_categorized(project_path: str | None = None) -> DirtyFiles:
 
     Args:
         project_path: Path to the project directory
+        timeout: Seconds to allow the git subprocess. Callers on a deadline pass
+            their remaining budget; a timeout reports a clean tree, so keep a
+            floor rather than letting a spent budget reach zero.
 
     Returns:
         DirtyFiles with .tracked and .untracked sets
@@ -312,7 +330,7 @@ def get_dirty_files_categorized(project_path: str | None = None) -> DirtyFiles:
             ["git", "status", "--porcelain=v2", "-z"],
             cwd=worktree_root,
             capture_output=True,
-            timeout=10,
+            timeout=timeout,
         )
 
         if result.returncode != 0:
@@ -359,7 +377,9 @@ def get_dirty_files_categorized(project_path: str | None = None) -> DirtyFiles:
         return DirtyFiles(tracked, untracked)
 
     except subprocess.TimeoutExpired:
-        logger.warning("get_dirty_files: git status timed out")
+        # Reports a clean tree, so say which budget produced it — a dirty-file
+        # gate that silently stops gating is otherwise indistinguishable here.
+        logger.warning("get_dirty_files: git status timed out after %.1fs", timeout)
         return DirtyFiles(set(), set())
     except FileNotFoundError:
         logger.warning(

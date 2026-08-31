@@ -41,6 +41,7 @@ from gobby.adapters.qwen import QwenAdapter
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.config.hooks import HookTimeoutConfig
 from gobby.hooks.agent_run_ingress import validate_managed_agent_hook
 from gobby.hooks.envelope_dedupe import is_envelope_processed
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
@@ -3667,7 +3668,7 @@ class TestHooksEndpoints:
         server = create_http_server(
             port=60887,
             test_mode=True,
-            config=DaemonConfig(hooks={"adapter_timeout": 91}),
+            config=DaemonConfig(hooks={"adapter_timeout": 25}),
             session_manager=session_storage,
         )
         server.app.state.hook_manager = _mock_hook_manager()
@@ -3689,12 +3690,12 @@ class TestHooksEndpoints:
                 ),
             )
             run_adapter_hook.assert_awaited_once()
-            assert run_adapter_hook.await_args.kwargs["timeout_seconds"] == 91
+            assert run_adapter_hook.await_args.kwargs["timeout_seconds"] == 25
 
         assert response.status_code == 200
         data = response.json()
         assert data["continue"] is True
-        assert "timed out after 91s" in data["systemMessage"]
+        assert "timed out after 25s" in data["systemMessage"]
 
     def test_stalled_workflow_dependencies_do_not_starve_control_plane(
         self,
@@ -3897,12 +3898,14 @@ class TestHooksEndpoints:
             "decision": "block",
             "reason": "timed out",
         }
-        assert timeout_mock.await_args.kwargs["timeout_seconds"] == 105
+        assert (
+            timeout_mock.await_args.kwargs["timeout_seconds"] == HookTimeoutConfig().adapter_timeout
+        )
         mock_adapter.translate_from_hook_response.assert_called_once()
         hook_response = mock_adapter.translate_from_hook_response.call_args.args[0]
         assert hook_response.decision == "block"
         assert hook_response.reason == (
-            "Gobby hook evaluation timed out after 105s; blocking this critical hook for safety. "
+            "Gobby hook evaluation timed out after 26s; blocking this critical hook for safety. "
             "Try again after the daemon recovers."
         )
         assert hook_response.system_message is None

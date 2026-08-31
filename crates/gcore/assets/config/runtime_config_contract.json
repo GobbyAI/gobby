@@ -2053,8 +2053,8 @@
     },
     {
       "activation": "live",
-      "default": 105.0,
-      "description": "Daemon endpoint timeout in seconds for synchronous hook execution.",
+      "default": 26.0,
+      "description": "Daemon endpoint timeout in seconds for synchronous hook execution. Must expire inside the ghook transport window so the daemon answers before the client stops waiting.",
       "key": "hooks.adapter_timeout",
       "machineExport": false,
       "namespace": "hooks",
@@ -5943,7 +5943,7 @@
     },
     {
       "activation": "live",
-      "default": 90.0,
+      "default": 24.0,
       "description": "Finite workflow timeout in seconds; zero selects the default",
       "key": "workflow.timeout",
       "machineExport": false,

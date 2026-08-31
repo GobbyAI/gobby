@@ -46,8 +46,16 @@ class WorkflowEvaluationRuntime:
         if self._loop is None:
             raise RuntimeError("Workflow evaluation runtime failed to initialize")
 
-    def run(self, coroutine: Coroutine[Any, Any, T]) -> T:
-        """Run a coroutine on the isolated loop and return its result."""
+    def run(self, coroutine: Coroutine[Any, Any, T], *, timeout: float | None = None) -> T:
+        """Run a coroutine on the isolated loop and return its result.
+
+        ``timeout`` bounds the caller's wait, not the coroutine, which owns its
+        own deadline. Callers are hook adapter threads from a small fixed pool,
+        and a wedged loop would otherwise pin one past every deadline above it —
+        the route's own ``wait_for`` cannot free it, because an executor future
+        that has already started is not cancellable. On expiry the submitted
+        coroutine is cancelled and ``TimeoutError`` propagates.
+        """
         with self._lock:
             loop = self._loop
             if self._closing or loop is None or not loop.is_running():
@@ -60,7 +68,14 @@ class WorkflowEvaluationRuntime:
                 coroutine.close()
                 raise
 
-        return future.result()
+        try:
+            return future.result(timeout)
+        except TimeoutError:
+            # A completed future means the coroutine raised its own timeout;
+            # only an unfinished one is the wedge this bound exists to escape.
+            if not future.done():
+                future.cancel()
+            raise
 
     @property
     def is_closing(self) -> bool:

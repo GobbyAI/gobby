@@ -20,7 +20,11 @@ from pydantic import BaseModel, Field, field_validator
 from gobby.config.feature_base import FeatureDefaultConfig, FeatureProfile
 from gobby.config.url_validation import validate_optional_endpoint_url
 
-DEFAULT_WORKFLOW_TIMEOUT_SECONDS = 90.0
+# Sits above the shared blocking-effect budget plus the RTK proxy stage's
+# reservation, and below the adapter timeout, which in turn sits inside the
+# ghook transport window. ``DaemonConfig.validate_hook_timeout_order`` enforces
+# the whole ladder.
+DEFAULT_WORKFLOW_TIMEOUT_SECONDS = 24.0
 
 __all__ = [
     "FileExtractionConfig",

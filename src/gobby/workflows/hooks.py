@@ -9,7 +9,10 @@ from copy import deepcopy
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
-from gobby.hooks.effect_deadline import BlockingEffectDeadline
+from gobby.hooks.effect_deadline import (
+    BlockingEffectDeadline,
+    remaining_blocking_effect_seconds,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 from gobby.workflows.block_audit import audit_source_block, audit_source_block_sync
@@ -19,6 +22,7 @@ from gobby.workflows.found_work_gate import (
     capture_found_work_handoff,
     capture_turn_prompt,
 )
+from gobby.workflows.git_utils import DEFAULT_GIT_STATUS_TIMEOUT_SECONDS
 from gobby.workflows.step_context import get_active_step_workflow_context
 from gobby.workflows.tool_context import WorkflowToolContextMixin
 
@@ -33,6 +37,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_EVALUATION_TIMEOUT_SECONDS = 15.0
+
+
+# Keeps the runtime wait ordered between the evaluation deadline it backstops
+# and the adapter timeout enclosing it.
+_RUNTIME_WAIT_MARGIN_SECONDS = 1.0
+
+# Enough for the scan to finish on a loaded machine, since finishing is what
+# keeps the dirty-file gates honest.
+_GIT_STATUS_FLOOR_SECONDS = 1.0
 
 
 class WorkflowEvaluationTimeout(TimeoutError):
@@ -87,6 +100,21 @@ def _is_turn_end_event(event_type: HookEventType | str) -> bool:
 
 def _is_known_no_repo_project(project_id: str | None) -> bool:
     return isinstance(project_id, str) and project_id in _NO_REPO_SYSTEM_PROJECTS
+
+
+def _git_status_timeout(deadline: BlockingEffectDeadline | None) -> float:
+    """Bound the dirty-file scan by what is left of the shared blocking budget.
+
+    Floored rather than capped to zero: a timed-out scan reports a clean tree,
+    so a spent budget would quietly stop the dirty-file gates from gating.
+    """
+    return max(
+        _GIT_STATUS_FLOOR_SECONDS,
+        remaining_blocking_effect_seconds(
+            deadline,
+            maximum=DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
+        ),
+    )
 
 
 def _target_task_tool_input(data: dict[str, Any]) -> dict[str, Any]:
@@ -603,7 +631,10 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 def _load_dirty_files() -> DirtyFiles:
                     nonlocal dirty_files
                     if dirty_files is None:
-                        dirty_files = get_dirty_files_categorized(project_path)
+                        dirty_files = get_dirty_files_categorized(
+                            project_path,
+                            timeout=_git_status_timeout(blocking_deadline),
+                        )
                     return dirty_files
 
                 # Lazy-init baseline on first evaluation (rule template may not have fired)
@@ -821,9 +852,12 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
         Primary entry point for workflow evaluation.
         """
-        enabled, _ = self._resolve_policy()
+        enabled, timeout = self._resolve_policy()
         if not enabled:
             return HookResponse(decision="allow")
+        # ``evaluate_async`` owns the evaluation deadline; this only bounds the
+        # wait so a wedged runtime cannot hold this adapter thread forever.
+        runtime_wait = None if timeout is None else timeout + _RUNTIME_WAIT_MARGIN_SECONDS
         try:
             try:
                 asyncio.get_running_loop()
@@ -835,13 +869,23 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         "Synchronous workflow evaluation requires a runtime"
                     ) from None
                 return self._evaluation_runtime.run(
-                    self.evaluate_async(event, blocking_deadline=blocking_deadline)
+                    self.evaluate_async(event, blocking_deadline=blocking_deadline),
+                    timeout=runtime_wait,
                 )
 
         except (asyncio.CancelledError, concurrent.futures.CancelledError):
             return self._handle_cancelled(event)
         except WorkflowEvaluationTimeout:
             raise
+        except TimeoutError as exc:
+            # The runtime never scheduled the coroutine, so it raised nothing of
+            # its own. Report it as an evaluation timeout so the hook boundary
+            # degrades it the same way, with the same diagnostics.
+            raise WorkflowEvaluationTimeout(
+                event_type=event.event_type,
+                session_id=event.metadata.get("_platform_session_id") or "",
+                timeout_seconds=runtime_wait if runtime_wait is not None else 0.0,
+            ) from exc
         except Exception as e:
             logger.exception("Error evaluating rules: %s: %s", type(e).__name__, e)
             raise
