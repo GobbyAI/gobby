@@ -107,7 +107,16 @@ Params: `api_name`, `api_base_url`, `spec_url` | `spec_path`, `auth_type`
 (`none`|`bearer`|`api_key`|`basic`), `auth_token`, `auth_api_key`,
 `auth_api_key_name`, `auth_api_key_in`, `auth_username`, `auth_password`,
 `include_tags`, `exclude_tags`, `allow_insecure_http`,
-`allow_private_networks`.
+`allow_private_networks`, `output_validation` (`strict`|`repair`|`off`),
+`repair_null_policy` (`drop`|`empty`).
+
+`output_validation: strict` (default) makes the upstream server reject any
+response that drifts from the spec. `repair` turns that check off and the proxy
+repairs each result against the spec's response schema instead: a null in a
+non-nullable field is dropped or, with `repair_null_policy: empty`, replaced
+by `""`/`0`/`false`/`[]`/`{}`; parseable scalars are coerced to the declared
+type; every change is listed under `schema_deviations` in the result. `off`
+disables both.
 
 Constraints:
 

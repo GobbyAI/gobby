@@ -112,6 +112,8 @@ def test_seven_bundled_templates_load_and_openapi_contract() -> None:
         "exclude_tags",
         "allow_insecure_http",
         "allow_private_networks",
+        "output_validation",
+        "repair_null_policy",
     ]
     assert openapi.require_one_of == (("spec_url", "spec_path"),)
     by_name = {param.name: param for param in openapi.params}
@@ -124,6 +126,17 @@ def test_seven_bundled_templates_load_and_openapi_contract() -> None:
     assert by_name["auth_password"].secret is True
     assert by_name["auth_api_key_in"].choices == ("header", "query", "cookie")
     assert by_name["allow_insecure_http"].choices == ("true", "false")
+    assert by_name["output_validation"].env == "VALIDATE_OUTPUT"
+    assert by_name["output_validation"].default == "strict"
+    assert by_name["output_validation"].choices == ("strict", "repair", "off")
+    assert by_name["output_validation"].env_values == {
+        "strict": "true",
+        "repair": "false",
+        "off": "false",
+    }
+    assert by_name["repair_null_policy"].env is None
+    assert by_name["repair_null_policy"].default == "drop"
+    assert by_name["repair_null_policy"].choices == ("drop", "empty")
     equals_to_requires = {
         rule.equals: rule.requires for rule in openapi.require_when if rule.param == "auth_type"
     }
@@ -394,3 +407,67 @@ def test_choices_error_for_secret_param_does_not_echo_value() -> None:
     assert "nope" in message
     assert "'token' must be one of" in message
     assert "super_secret" not in message
+
+
+def test_expand_template_maps_choice_to_env_value() -> None:
+    template = _template(
+        params=(
+            _param(
+                name="mode",
+                env="VALIDATE",
+                choices=("strict", "repair"),
+                env_values={"repair": "false"},
+            ),
+        )
+    )
+
+    repair = _expand(template, {"mode": "repair"})
+    strict = _expand(template, {"mode": "strict"})
+
+    assert repair.config.env == {"VALIDATE": "false"}
+    assert repair.template_values == {"mode": "repair"}
+    assert strict.config.env == {"VALIDATE": "strict"}
+
+
+def test_bundled_openapi_repair_mode_disables_upstream_validation() -> None:
+    openapi = _load_bundled()["openapi"]
+    base = {"api_name": "demo", "api_base_url": "https://api.example.test", "spec_url": "u"}
+
+    default = _expand(openapi, base)
+    repair = _expand(
+        openapi, {**base, "output_validation": "repair", "repair_null_policy": "empty"}
+    )
+
+    assert default.config.env["VALIDATE_OUTPUT"] == "true"
+    assert default.template_values["output_validation"] == "strict"
+    assert default.template_values["repair_null_policy"] == "drop"
+    assert repair.config.env["VALIDATE_OUTPUT"] == "false"
+    assert repair.template_values["output_validation"] == "repair"
+    assert repair.template_values["repair_null_policy"] == "empty"
+    assert "repair_null_policy" not in {key.lower() for key in repair.config.env}
+
+
+def test_param_env_values_round_trip_and_reject_unknown_choice() -> None:
+    definition: dict[str, Any] = {
+        "name": "demo",
+        "description": "Demo",
+        "version": 1,
+        "transport": "stdio",
+        "command": "uvx",
+        "params": [
+            {
+                "name": "mode",
+                "env": "MODE",
+                "choices": ["a", "b"],
+                "env_values": {"b": "1"},
+            }
+        ],
+    }
+
+    template = MCPServerTemplate.from_definition(definition)
+    assert template.params[0].env_values == {"b": "1"}
+    assert template.to_definition()["params"][0]["env_values"] == {"b": "1"}
+
+    definition["params"][0]["env_values"] = {"c": "1"}
+    with pytest.raises(ValueError, match="params\\[0\\].env_values keys must be declared choices"):
+        MCPServerTemplate.from_definition(definition)

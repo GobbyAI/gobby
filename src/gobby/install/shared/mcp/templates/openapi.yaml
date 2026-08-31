@@ -23,6 +23,21 @@ params:
   - {name: exclude_tags, env: EXCLUDE_TAGS}
   - {name: allow_insecure_http, env: ALLOW_INSECURE_HTTP, choices: ["true", "false"]}
   - {name: allow_private_networks, env: ALLOW_PRIVATE_NETWORKS, choices: ["true", "false"]}
+  - name: output_validation
+    env: VALIDATE_OUTPUT
+    default: strict
+    choices: [strict, repair, "off"]
+    env_values: {strict: "true", repair: "false", "off": "false"}
+    description: >-
+      strict rejects responses that drift from the spec upstream; repair turns the
+      upstream check off and the proxy repairs results against the spec response
+      schema, reporting changes under schema_deviations; off disables both
+  - name: repair_null_policy
+    default: drop
+    choices: [drop, empty]
+    description: >-
+      With output_validation=repair, a null in a non-nullable field is dropped
+      (drop) or replaced by the typed empty value "" 0 false [] {} (empty)
 require_one_of:
   - [spec_url, spec_path]
 require_when:

@@ -12,6 +12,7 @@ from typing import Any, cast
 
 from gobby.hooks.tool_error_tracker import track_proxy_outcome
 from gobby.mcp_proxy.models import MCPError, ToolProxyErrorCode
+from gobby.mcp_proxy.services.output_repair import maybe_repair_output
 from gobby.mcp_proxy.services.server_resolution import (
     caller_project_id,
     resolve_server,
@@ -654,6 +655,14 @@ async def _execute_tool_dispatch(
         effective_session_id=effective_session_id,
         project_id=project_id,
         timeout=timeout,
+        dispatch_id=dispatch_id,
+    )
+    result = await maybe_repair_output(
+        service=service,
+        server_name=server_name,
+        tool_name=tool_name,
+        result=result,
+        project_id=project_id,
         dispatch_id=dispatch_id,
     )
     if emit_after_workflow:

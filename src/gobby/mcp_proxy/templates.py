@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +28,7 @@ class TemplateParam:
     default: str | None = None
     default_secret: str | None = None
     choices: tuple[str, ...] = ()
+    env_values: Mapping[str, str] = field(default_factory=dict)
     description: str = ""
 
 
@@ -261,7 +262,7 @@ def expand_template(
                     optional_missing_secrets.append(secret_name)
                     continue
         if param.env:
-            env[param.env] = value
+            env[param.env] = param.env_values.get(value, value)
         if param.arg_flag:
             args.extend([param.arg_flag, value])
 
@@ -373,6 +374,8 @@ def _param_to_definition(param: TemplateParam) -> dict[str, Any]:
         definition["default_secret"] = param.default_secret
     if param.choices:
         definition["choices"] = list(param.choices)
+    if param.env_values:
+        definition["env_values"] = dict(param.env_values)
     if param.description:
         definition["description"] = param.description
     return definition
@@ -382,7 +385,13 @@ def _parse_param(raw: object, index: int) -> TemplateParam:
     field = f"params[{index}]"
     data = _require_mapping(raw, field=field)
     name = _require_str(data.get("name"), field=f"{field}.name")
-    choices_raw = data.get("choices", [])
+    choices = tuple(_require_str_list(data.get("choices", []), field=f"{field}.choices"))
+    env_values = _require_str_dict(data.get("env_values"), field=f"{field}.env_values")
+    unknown = [key for key in env_values if key not in choices]
+    if unknown:
+        raise ValueError(
+            f"{field}.env_values keys must be declared choices; unknown: {', '.join(unknown)}"
+        )
     return TemplateParam(
         name=name,
         env=_optional_str(data.get("env"), field=f"{field}.env"),
@@ -391,7 +400,8 @@ def _parse_param(raw: object, index: int) -> TemplateParam:
         secret=_optional_bool(data.get("secret"), field=f"{field}.secret", default=False),
         default=_optional_str(data.get("default"), field=f"{field}.default"),
         default_secret=_optional_str(data.get("default_secret"), field=f"{field}.default_secret"),
-        choices=tuple(_require_str_list(choices_raw, field=f"{field}.choices")),
+        choices=choices,
+        env_values=env_values,
         description=_optional_str(data.get("description"), field=f"{field}.description") or "",
     )
 

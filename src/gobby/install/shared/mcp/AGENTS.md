@@ -43,6 +43,7 @@ params:
     default: none
     default_secret: github_personal_access_token
     choices: ["none", bearer]
+    env_values: {bearer: "true"}   # optional env value per choice; keys must be choices
     description: Human-facing help
 require_one_of:
   - [spec_url, spec_path]
