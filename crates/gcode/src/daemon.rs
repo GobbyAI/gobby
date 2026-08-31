@@ -110,11 +110,18 @@ fn unique_project_by_name(
     listings: Vec<ProjectListing>,
     name: &str,
 ) -> Result<LookedUpProject, CliError> {
-    let matches: Vec<LookedUpProject> = listings
+    let mut matches = Vec::new();
+    for project in listings
         .into_iter()
         .filter(|project| project.deleted_at.is_none() && project.matches_name(name))
         .filter_map(looked_up_project)
-        .collect();
+    {
+        if matches.iter().all(|existing: &LookedUpProject| {
+            existing.id != project.id || existing.root != project.root
+        }) {
+            matches.push(project);
+        }
+    }
     match matches.as_slice() {
         [] => Err(CliError {
             code: "project_not_found",

@@ -284,6 +284,30 @@ fn project_name_lookup_prefers_active_project_over_deleted_duplicate() {
 
 #[test]
 #[serial_test::serial(serial_db)]
+fn project_name_lookup_deduplicates_repeated_local_checkout() {
+    let project = serde_json::json!({
+        "id": "00000000-0000-4000-8000-000000000002",
+        "name": "gobby",
+        "deleted_at": null,
+        "checkout": {
+            "machine_id": "00000000-0000-4000-8000-000000000010",
+            "root_path": "/local/active-checkout"
+        }
+    });
+    let (daemon_url, request) = serve_json_once(serde_json::json!([project.clone(), project]));
+
+    temp_env::with_var("GOBBY_DAEMON_URL", Some(&daemon_url), || {
+        let root = resolve_project_by_name("gobby").expect("one active checkout");
+        assert_eq!(root, PathBuf::from("/local/active-checkout"));
+    });
+    assert_eq!(
+        request.join().expect("test daemon thread"),
+        "GET /api/projects HTTP/1.1"
+    );
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
 fn project_name_lookup_rejects_deleted_only_name() {
     let (daemon_url, request) = serve_json_once(serde_json::json!([{
         "id": "00000000-0000-4000-8000-000000000001",
