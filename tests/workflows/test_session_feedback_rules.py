@@ -158,7 +158,7 @@ def _sessions_tool_event(tool_name: str, *, after: bool = False) -> HookEvent:
 def _engine(
     db: HubDatabase,
     *,
-    survey: str = "all",
+    survey: str = "gobby",
 ) -> RuleEngine:
     return RuleEngine(
         db,
@@ -167,21 +167,30 @@ def _engine(
 
 
 class TestSurveyIsActive:
-    def test_all_gobby_and_off_scopes(self) -> None:
+    def test_supported_scopes_and_unknown_values(self) -> None:
         assert survey_is_active("all", "game-goblins") is True
         assert survey_is_active("gobby", "gobby") is True
         assert survey_is_active("gobby", "game-goblins") is False
         assert survey_is_active("off", "gobby") is False
+        assert survey_is_active("unexpected", "gobby") is False
 
-    def test_blank_scope_defaults_to_all(self) -> None:
-        assert survey_is_active("", "game-goblins") is True
+    def test_blank_scope_defaults_to_gobby(self) -> None:
+        assert survey_is_active("", "gobby") is True
+        assert survey_is_active("   ", "gobby") is True
+        assert survey_is_active("", "game-goblins") is False
         assert survey_is_active(" ALL ", "anywhere") is True
 
     def test_inject_reads_project_name_and_config(self) -> None:
         variables: dict[str, Any] = {"project": _project("game-goblins")}
+        inject_survey_active(variables, {})
+        assert variables[SURVEY_ACTIVE_VARIABLE] is False
         inject_survey_active(variables, {SURVEY_CONFIG_KEY: "gobby"})
         assert variables[SURVEY_ACTIVE_VARIABLE] is False
         inject_survey_active(variables, {SURVEY_CONFIG_KEY: "all"})
+        assert variables[SURVEY_ACTIVE_VARIABLE] is True
+
+        variables = {"project": _project("gobby")}
+        inject_survey_active(variables, {})
         assert variables[SURVEY_ACTIVE_VARIABLE] is True
 
 
@@ -357,6 +366,34 @@ class TestSessionFeedbackRules:
         assert foreign_handoff.decision == "allow"
         assert owner_stop.decision == "block"
         assert owner[SURVEY_ACTIVE_VARIABLE] is True
+
+    @pytest.mark.asyncio
+    async def test_all_scope_gates_other_project_names(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        _enable_rules(
+            db,
+            "review-gobby-session-feedback-on-stop",
+            "review-gobby-session-feedback-before-handoff",
+        )
+        engine = _engine(db, survey="all")
+        stop_variables: dict[str, Any] = {
+            "project": _project("game-goblins"),
+            "_memory_pending_task_reviews": [{"task_ref": "#42"}],
+        }
+        handoff_variables: dict[str, Any] = {
+            "project": _project("game-goblins"),
+            "task_claimed": True,
+        }
+
+        stop = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, stop_variables)
+        handoff = await engine.evaluate(
+            _sessions_tool_event("set_handoff"), SESSION_ID, handoff_variables
+        )
+
+        assert stop.decision == "block"
+        assert handoff.decision == "block"
+        assert stop_variables[SURVEY_ACTIVE_VARIABLE] is True
+        assert handoff_variables[SURVEY_ACTIVE_VARIABLE] is True
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

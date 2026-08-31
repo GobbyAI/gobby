@@ -233,11 +233,11 @@ class SessionFeedbackConfig(BaseModel):
     """Gobby-experience survey capture (session_feedback table)."""
 
     survey: Literal["all", "gobby", "off"] = Field(
-        default="all",
+        default="gobby",
         description=(
             "Who gets the session-feedback survey gates. "
             "all: every project. "
-            "gobby: only projects named gobby. "
+            "gobby: only projects named gobby (default). "
             "off: no prompts; gobby-sessions:feedback remains callable."
         ),
     )

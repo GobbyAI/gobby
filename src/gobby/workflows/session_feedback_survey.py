@@ -12,12 +12,12 @@ SURVEY_CONFIG_KEY = "session_feedback.survey"
 
 def survey_is_active(scope: str, project_name: str) -> bool:
     """Return whether survey gates should fire for this project and config scope."""
-    normalized = (scope or "all").strip().lower()
-    if normalized == "off":
-        return False
+    normalized = (scope or "gobby").strip().lower() or "gobby"
+    if normalized == "all":
+        return True
     if normalized == "gobby":
         return project_name == GOBBY_PROJECT_NAME
-    return True
+    return False
 
 
 def inject_survey_active(
@@ -30,6 +30,6 @@ def inject_survey_active(
     if isinstance(project_info, dict):
         project_name = str(project_info.get("name") or "")
     variables[SURVEY_ACTIVE_VARIABLE] = survey_is_active(
-        str(config_values.get(SURVEY_CONFIG_KEY, "all")),
+        str(config_values.get(SURVEY_CONFIG_KEY, "gobby")),
         project_name,
     )

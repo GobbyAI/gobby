@@ -3640,8 +3640,8 @@
     },
     {
       "activation": "live",
-      "default": "all",
-      "description": "Who gets the session-feedback survey gates. all: every project. gobby: only projects named gobby. off: no prompts; gobby-sessions:feedback remains callable.",
+      "default": "gobby",
+      "description": "Who gets the session-feedback survey gates. all: every project. gobby: only projects named gobby (default). off: no prompts; gobby-sessions:feedback remains callable.",
       "key": "session_feedback.survey",
       "machineExport": false,
       "namespace": "session_feedback",

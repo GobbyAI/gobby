@@ -4,6 +4,7 @@ import json
 import os
 import stat
 from pathlib import Path
+from typing import Literal
 from unittest.mock import patch
 
 import pytest
@@ -401,9 +402,14 @@ class TestSessionSummaryConfig:
 class TestSessionFeedbackConfig:
     """Tests for SessionFeedbackConfig and DaemonConfig.session_feedback."""
 
-    def test_default_survey_is_all(self) -> None:
-        assert SessionFeedbackConfig().survey == "all"
-        assert DaemonConfig().session_feedback.survey == "all"
+    def test_default_survey_is_gobby(self) -> None:
+        assert SessionFeedbackConfig().survey == "gobby"
+        assert DaemonConfig().session_feedback.survey == "gobby"
+
+    @pytest.mark.parametrize("survey", ["all", "gobby", "off"])
+    def test_accepts_supported_survey_values(self, survey: Literal["all", "gobby", "off"]) -> None:
+        assert SessionFeedbackConfig(survey=survey).survey == survey
+        assert DaemonConfig(session_feedback={"survey": survey}).session_feedback.survey == survey
 
     def test_rejects_invalid_survey_value(self) -> None:
         with pytest.raises(ValidationError):
@@ -502,7 +508,7 @@ class TestDaemonConfig:
         assert config.daemon_health_check_interval == 10.0
         assert isinstance(config.bin_freshness, BinFreshnessConfig)
         assert isinstance(config.project_verification_synthesis, ProjectVerificationSynthesisConfig)
-        assert config.session_feedback.survey == "all"
+        assert config.session_feedback.survey == "gobby"
         assert "conductor" not in DaemonConfig.model_fields
         assert not hasattr(config, "conductor")
 

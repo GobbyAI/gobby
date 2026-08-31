@@ -40,8 +40,11 @@ rows. Both feedback entry points use the same transactional batch writer.
 
 Bundled ask-once survey gates prompt in-scope sessions to call
 `gobby-sessions:feedback` before `set_handoff` and after completed work on stop.
-Daemon config `session_feedback.survey` is `all` (default), `gobby` (only
-`projects.name == "gobby"`), or `off` (prompts off; the manual tool still works).
+Daemon config `session_feedback.survey` is `gobby` (default; only exact
+`projects.name == "gobby"`), `all` (every project), or `off` (prompts off).
+Projects outside the Gobby repository receive gates only after an operator explicitly
+selects `all`. The manual feedback tool remains callable from every repository, and
+capture stays on the local machine; email and form delivery are outside this contract.
 The computed flag `_gobby_feedback_survey_active` is injected per event; epoch
 acknowledgment lives in `_gobby_feedback_epoch_reviewed`.
 
