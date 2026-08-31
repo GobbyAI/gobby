@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from gobby.mcp_proxy.models import MCPServerConfig
+from gobby.mcp_proxy.client_manager import tool_inventory
+from gobby.mcp_proxy.models import MCPError, MCPServerConfig
 from gobby.mcp_proxy.semantic_search import (
     DEFAULT_EMBEDDING_DIM,
     DEFAULT_EMBEDDING_MODEL,
@@ -18,6 +19,7 @@ from gobby.mcp_proxy.semantic_search import (
     _compute_text_hash,
     _cosine_similarity,
 )
+from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
 from gobby.projects.write_fence import ProjectWriteFence
 from gobby.storage.hub.protocol import HubDatabase
@@ -507,6 +509,104 @@ class TestEmbeddingGeneration:
 
         embedded_names = [call.kwargs["name"] for call in mock_embed.await_args_list]
         assert embedded_names == ["GetRetailer"]
+
+    @pytest.mark.asyncio
+    async def test_mixed_case_search_result_is_a_valid_lookup_identifier(
+        self,
+        temp_db: HubDatabase,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        """Regression for gobby-#21371, end to end: a semantic search hit for a
+        mixed-case operation must be usable verbatim by get_tool_schema and
+        call_tool, which live servers match case-sensitively."""
+        project_id = sample_project["id"]
+        server = mcp_manager.upsert(
+            name="lightspeed",
+            transport="http",
+            url="https://example.test",
+            project_id=project_id,
+        )
+        live_inventory = [
+            {
+                "name": "GetRetailer",
+                "description": "Fetch the retailer record",
+                "inputSchema": {"type": "object", "properties": {}},
+            }
+        ]
+        mcp_manager.cache_tools(server.id, live_inventory)
+
+        # Vector store fake: remembers every upserted payload and serves it back.
+        stored: list[tuple[str, dict[str, Any]]] = []
+
+        async def _upsert(**kwargs: Any) -> None:
+            stored.append((kwargs["memory_id"], kwargs["payload"]))
+
+        async def _search(**_: Any) -> list[tuple[str, float, dict[str, Any]]]:
+            return [(point_id, 0.9, payload) for point_id, payload in stored]
+
+        vector_store = AsyncMock()
+        vector_store.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
+        vector_store.upsert = AsyncMock(side_effect=_upsert)
+        vector_store.search_with_payload = AsyncMock(side_effect=_search)
+        search = SemanticToolSearch(temp_db, embedding_api_key="sk-test", vector_store=vector_store)
+
+        with patch.object(
+            search,
+            "embed_text",
+            new_callable=AsyncMock,
+            return_value=[0.1] * DEFAULT_EMBEDDING_DIM,
+        ):
+            await search.embed_all_tools(project_id=project_id, mcp_manager=mcp_manager)
+            results = await search.search_tools(query="retailer", project_id=project_id)
+
+        assert [result.tool_name for result in results] == ["GetRetailer"]
+        returned_name = results[0].tool_name
+
+        # Client-manager stand-in whose inventory lookups run the real
+        # tool_inventory exact-name matching over a live list_tools payload.
+        config = MCPServerConfig(
+            name="lightspeed", project_id=project_id, url="https://example.test", id=server.id
+        )
+        manager = MagicMock()
+        manager.project_id = project_id
+        manager.session_manager = None
+        manager.server_configs = [config]
+        manager._configs = {config.id: config}
+        manager._tool_schema_cache = {}
+        manager.get_server_config.side_effect = lambda sid: manager._configs.get(sid)
+        manager.has_server.side_effect = lambda sid: sid in manager._configs
+        manager._list_tools_for_server = AsyncMock(return_value=list(live_inventory))
+
+        async def _tool_info(server_id: str, tool_name: str) -> dict[str, Any]:
+            return await tool_inventory.get_tool_info(manager, server_id, tool_name)
+
+        async def _input_schema(server_id: str, tool_name: str) -> dict[str, Any]:
+            return await tool_inventory.get_tool_input_schema(manager, server_id, tool_name)
+
+        async def _call_tool(server_id: str, *, tool_name: str, **_: Any) -> dict[str, Any]:
+            await manager.get_tool_info(server_id, tool_name)
+            return {"content": [{"type": "text", "text": f"called {tool_name}"}]}
+
+        manager.get_tool_info = AsyncMock(side_effect=_tool_info)
+        manager.get_tool_input_schema = AsyncMock(side_effect=_input_schema)
+        manager.call_tool = AsyncMock(side_effect=_call_tool)
+        proxy = ToolProxyService(mcp_manager=manager, internal_manager=None)
+
+        schema = await proxy.get_tool_schema("lightspeed", returned_name, project_id=project_id)
+        assert schema["success"] is True
+        assert schema["tool"]["name"] == "GetRetailer"
+        assert schema["tool"]["inputSchema"] == live_inventory[0]["inputSchema"]
+
+        called = await proxy.call_tool(
+            "lightspeed", returned_name, {}, None, wrapper_originated=True, project_id=project_id
+        )
+        assert called.get("success", True) is True
+        assert manager.call_tool.await_args.kwargs["tool_name"] == "GetRetailer"
+
+        # The pre-fix identifier is rejected by the same live server.
+        with pytest.raises(MCPError):
+            await proxy.get_tool_schema("lightspeed", returned_name.lower(), project_id=project_id)
 
     @pytest.mark.asyncio
     async def test_embed_all_tools_with_internal_manager(
