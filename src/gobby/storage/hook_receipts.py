@@ -21,10 +21,10 @@ ReceiptState = Literal["prepared", "acknowledged", "released", "terminal-undeliv
 
 @dataclass(frozen=True)
 class ReceiptPruneResult:
-    """One bounded prune pass over terminal receipt-effects rows."""
+    """One bounded prune pass over terminal receipt rows and stale budgets."""
 
-    examined: int
     deleted: int
+    budgets_deleted: int = 0
     truncated: bool = False
 
 
@@ -96,6 +96,15 @@ def prepare_receipt(
         ).fetchone()
         if existing is not None:
             receipt = _row_to_receipt(existing)
+            if receipt.state == "prepared" and staged_payload is not None:
+                # A re-prepared receipt already carries this envelope; the
+                # caller merged the lost delivery's effects into the payload.
+                conn.execute(
+                    "UPDATE hook_receipt_effects SET staged_payload = %s "
+                    "WHERE receipt_id = %s AND state = 'prepared'",
+                    (Jsonb(payload), receipt.receipt_id),
+                )
+                receipt = replace(receipt, staged_payload=dict(payload))
             if force_continue_execution_num is None:
                 return receipt
             existing_count = _force_continue_count_on_conn(
@@ -193,6 +202,71 @@ def reprepare_receipt(
     return _row_to_receipt(row) if row is not None else None
 
 
+def release_and_reprepare_for_session(
+    db: HubDatabase,
+    *,
+    session_id: str,
+    envelope_id: str,
+) -> HookReceipt | None:
+    """Carry the newest undelivered receipt for a session onto a new envelope.
+
+    One transaction: the newest ``prepared`` or ``released`` row whose current
+    envelope is not ``envelope_id`` is compare-and-set prepared->released (when
+    still prepared) and then released->prepared onto ``envelope_id`` with the
+    delivery generation incremented and ``staged_payload`` preserved. Returns
+    ``None`` when the session has nothing to re-deliver.
+    """
+
+    now = utc_now()
+    with db.transaction() as conn:
+        candidate = conn.execute(
+            "SELECT receipt_id, state FROM hook_receipt_effects "
+            "WHERE session_id = %s AND state IN ('prepared', 'released') "
+            "AND current_envelope_id <> %s "
+            "ORDER BY created_at DESC, receipt_id DESC LIMIT 1 FOR UPDATE SKIP LOCKED",
+            (session_id, envelope_id),
+        ).fetchone()
+        if candidate is None:
+            return None
+        receipt_id = str(candidate["receipt_id"])
+        if candidate["state"] == "prepared":
+            released = conn.execute(
+                "UPDATE hook_receipt_effects SET state = 'released', transition_at = %s "
+                "WHERE receipt_id = %s AND state = 'prepared' RETURNING receipt_id",
+                (now, receipt_id),
+            ).fetchone()
+            if released is None:
+                return None
+        row = conn.execute(
+            "UPDATE hook_receipt_effects SET state = 'prepared', "
+            "current_envelope_id = %s, delivery_generation = delivery_generation + 1, "
+            "transition_at = %s WHERE receipt_id = %s AND state = 'released' "
+            "RETURNING " + _RECEIPT_COLUMNS,
+            (envelope_id, now, receipt_id),
+        ).fetchone()
+    return _row_to_receipt(row) if row is not None else None
+
+
+def find_undelivered_startup_context(
+    db: HubDatabase,
+    *,
+    session_id: str,
+) -> dict[str, Any] | None:
+    """Return the staged startup-context claim of the newest undelivered receipt."""
+
+    row = db.fetchone(
+        "SELECT staged_payload FROM hook_receipt_effects "
+        "WHERE session_id = %s AND state IN ('prepared', 'released') "
+        "AND staged_payload ? 'startup_context' "
+        "ORDER BY created_at DESC, receipt_id DESC LIMIT 1",
+        (session_id,),
+    )
+    if row is None:
+        return None
+    startup = _payload_dict(row["staged_payload"]).get("startup_context")
+    return dict(startup) if isinstance(startup, dict) else None
+
+
 def terminalize_receipts_for_envelope(db: HubDatabase, *, envelope_id: str) -> int:
     """CAS prepared or released rows for this carrying envelope to undelivered."""
 
@@ -207,27 +281,17 @@ def terminalize_receipts_for_envelope(db: HubDatabase, *, envelope_id: str) -> i
         return int(getattr(result, "rowcount", 0) or 0)
 
 
-def increment_force_continue(
-    db: HubDatabase,
-    session_id: str,
-    execution_num: int,
-) -> int:
-    """Atomically increment the per-execution force_continue budget."""
-
-    with db.transaction() as conn:
-        return _increment_force_continue_on_conn(conn, session_id, execution_num)
-
-
 def _increment_force_continue_on_conn(
     conn: Any,
     session_id: str,
     execution_num: int,
 ) -> int:
     row = conn.execute(
-        "INSERT INTO hook_force_continue_budgets (session_id, execution_num, count) "
-        "VALUES (%s, %s, 1) "
+        "INSERT INTO hook_force_continue_budgets "
+        "(session_id, execution_num, count, updated_at) "
+        "VALUES (%s, %s, 1, now()) "
         "ON CONFLICT (session_id, execution_num) "
-        "DO UPDATE SET count = hook_force_continue_budgets.count + 1 "
+        "DO UPDATE SET count = hook_force_continue_budgets.count + 1, updated_at = now() "
         "RETURNING count",
         (session_id, execution_num),
     ).fetchone()
@@ -248,31 +312,6 @@ def _force_continue_count_on_conn(
     if row is None:
         return None
     return int(row["count"])
-
-
-def terminalize_receipts_for_session(db: HubDatabase, *, session_id: str) -> int:
-    """CAS prepared or released rows for this session to undelivered."""
-
-    now = utc_now()
-    with db.transaction() as conn:
-        result = conn.execute(
-            "UPDATE hook_receipt_effects SET state = 'terminal-undelivered', "
-            "transition_at = %s WHERE session_id = %s "
-            "AND state IN ('prepared', 'released')",
-            (now, session_id),
-        )
-        return int(getattr(result, "rowcount", 0) or 0)
-
-
-def retire_force_continue_budgets(db: HubDatabase, *, session_id: str) -> int:
-    """Drop every force_continue budget row for a finished session."""
-
-    with db.transaction() as conn:
-        rows = conn.execute(
-            "DELETE FROM hook_force_continue_budgets WHERE session_id = %s RETURNING session_id",
-            (session_id,),
-        ).fetchall()
-    return len(rows)
 
 
 def retire_session_hook_effects(db: HubDatabase, *, session_id: str) -> int:
@@ -318,18 +357,18 @@ def prune_hook_receipts(
     now: datetime | None = None,
     max_entries: int | None = None,
 ) -> ReceiptPruneResult:
-    """Delete acknowledged and terminal-undelivered rows strictly after the window.
+    """Delete terminal receipt rows and stale budgets strictly after the window.
 
     Prepared and released rows are never pruned. Eligibility is
-    ``transition_at < now - HOOK_RECEIPT_IDEMPOTENCY_WINDOW``: a row exactly at
-    the boundary is retained. Batches are bounded so a backlog drains across
-    successive passes.
+    ``transition_at < now - HOOK_RECEIPT_IDEMPOTENCY_WINDOW`` (``updated_at``
+    for force_continue budgets): a row exactly at the boundary is retained.
+    Batches are bounded so a backlog drains across successive passes.
     """
 
     cutoff = (now if now is not None else utc_now()) - HOOK_RECEIPT_IDEMPOTENCY_WINDOW
     limit = HOOK_RECEIPT_PRUNE_MAX_ENTRIES if max_entries is None else max(0, max_entries)
     if limit == 0:
-        return ReceiptPruneResult(examined=0, deleted=0, truncated=False)
+        return ReceiptPruneResult(deleted=0, budgets_deleted=0, truncated=False)
     with db.transaction() as conn:
         rows = conn.execute(
             "DELETE FROM hook_receipt_effects WHERE receipt_id IN ("
@@ -341,9 +380,19 @@ def prune_hook_receipts(
             ") RETURNING receipt_id",
             (cutoff, limit),
         ).fetchall()
+        budgets = conn.execute(
+            "DELETE FROM hook_force_continue_budgets WHERE (session_id, execution_num) IN ("
+            "SELECT session_id, execution_num FROM hook_force_continue_budgets "
+            "WHERE updated_at < %s "
+            "ORDER BY updated_at ASC "
+            "LIMIT %s"
+            ") RETURNING session_id",
+            (cutoff, limit),
+        ).fetchall()
     deleted = len(rows)
+    budgets_deleted = len(budgets)
     return ReceiptPruneResult(
-        examined=deleted,
         deleted=deleted,
-        truncated=deleted == limit,
+        budgets_deleted=budgets_deleted,
+        truncated=deleted == limit or budgets_deleted == limit,
     )

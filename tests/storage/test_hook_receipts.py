@@ -136,6 +136,165 @@ class TestHookReceiptLifecycle:
             is None
         )
 
+    def test_dead_storage_api_is_gone(self) -> None:
+        receipts = _receipts()
+        for name in (
+            "terminalize_receipts_for_session",
+            "retire_force_continue_budgets",
+            "increment_force_continue",
+        ):
+            assert not hasattr(receipts, name)
+        assert "examined" not in receipts.ReceiptPruneResult.__dataclass_fields__
+
+
+class TestReleaseAndReprepareForSession:
+    def test_carries_newest_prepared_row_onto_the_new_envelope(
+        self, receipts_db: HubDatabase
+    ) -> None:
+        receipts = _receipts()
+        session_id = str(uuid4())
+        older = receipts.prepare_receipt(
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-lost-1",
+            staged_payload={"session_variables": {"older": True}},
+        )
+        newest = receipts.prepare_receipt(
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-lost-2",
+            staged_payload={"session_variables": {"newest": True}},
+        )
+        carried = receipts.release_and_reprepare_for_session(
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-live",
+        )
+        assert carried is not None
+        assert carried.receipt_id == newest.receipt_id
+        assert carried.state == "prepared"
+        assert carried.original_envelope_id == "env-lost-2"
+        assert carried.current_envelope_id == "env-live"
+        assert carried.delivery_generation == 2
+        assert carried.staged_payload == {"session_variables": {"newest": True}}
+        assert _receipt_state(receipts_db, older.receipt_id) == "prepared"
+        stale = receipts.acknowledge_receipt(
+            receipts_db,
+            receipt_id=newest.receipt_id,
+            delivery_generation=1,
+        )
+        assert stale is None
+        assert _receipt_state(receipts_db, newest.receipt_id) == "prepared"
+        current = receipts.acknowledge_receipt(
+            receipts_db,
+            receipt_id=newest.receipt_id,
+            delivery_generation=2,
+        )
+        assert current is not None
+        assert current.state == "acknowledged"
+
+    def test_carries_a_released_row_without_a_second_release(
+        self, receipts_db: HubDatabase
+    ) -> None:
+        receipts = _receipts()
+        session_id = str(uuid4())
+        receipt = receipts.prepare_receipt(
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-released",
+            staged_payload={"context": "startup"},
+        )
+        receipts.release_receipt(receipts_db, receipt_id=receipt.receipt_id)
+        carried = receipts.release_and_reprepare_for_session(
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-next",
+        )
+        assert carried is not None
+        assert carried.receipt_id == receipt.receipt_id
+        assert carried.current_envelope_id == "env-next"
+        assert carried.delivery_generation == 2
+        assert carried.staged_payload == {"context": "startup"}
+
+    def test_ignores_same_envelope_and_terminal_rows(self, receipts_db: HubDatabase) -> None:
+        receipts = _receipts()
+        session_id = str(uuid4())
+        same = receipts.prepare_receipt(receipts_db, session_id=session_id, envelope_id="env-same")
+        acked = receipts.prepare_receipt(
+            receipts_db, session_id=session_id, envelope_id="env-acked"
+        )
+        receipts.acknowledge_receipt(
+            receipts_db, receipt_id=acked.receipt_id, delivery_generation=1
+        )
+        undelivered = receipts.prepare_receipt(
+            receipts_db, session_id=session_id, envelope_id="env-undelivered"
+        )
+        receipts.terminalize_receipts_for_envelope(receipts_db, envelope_id="env-undelivered")
+        assert (
+            receipts.release_and_reprepare_for_session(
+                receipts_db, session_id=session_id, envelope_id="env-same"
+            )
+            is None
+        )
+        assert _receipt_state(receipts_db, same.receipt_id) == "prepared"
+        assert _receipt_state(receipts_db, undelivered.receipt_id) == "terminal-undelivered"
+        assert (
+            receipts.release_and_reprepare_for_session(
+                receipts_db, session_id=str(uuid4()), envelope_id="env-other"
+            )
+            is None
+        )
+
+    def test_prepare_adopts_merged_payload_on_the_carried_envelope(
+        self, receipts_db: HubDatabase
+    ) -> None:
+        receipts = _receipts()
+        session_id = str(uuid4())
+        lost = receipts.prepare_receipt(
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-lost",
+            staged_payload={"session_variables": {"lost": True}},
+        )
+        receipts.release_and_reprepare_for_session(
+            receipts_db, session_id=session_id, envelope_id="env-live"
+        )
+        merged = receipts.prepare_receipt(
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-live",
+            staged_payload={"session_variables": {"lost": True, "live": True}},
+        )
+        assert merged.receipt_id == lost.receipt_id
+        assert merged.delivery_generation == 2
+        assert merged.staged_payload == {"session_variables": {"lost": True, "live": True}}
+        assert _receipt_count(receipts_db) == 1
+
+    def test_find_undelivered_startup_context(self, receipts_db: HubDatabase) -> None:
+        receipts = _receipts()
+        session_id = str(uuid4())
+        assert receipts.find_undelivered_startup_context(receipts_db, session_id=session_id) is None
+        receipts.prepare_receipt(
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-plain",
+            staged_payload={"session_variables": {"k": 1}},
+        )
+        startup = {"generation": 3, "owner_token": "owner-3", "session_id": session_id}
+        prepared = receipts.prepare_receipt(
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-startup",
+            staged_payload={"startup_context": startup},
+        )
+        assert (
+            receipts.find_undelivered_startup_context(receipts_db, session_id=session_id) == startup
+        )
+        receipts.acknowledge_receipt(
+            receipts_db, receipt_id=prepared.receipt_id, delivery_generation=1
+        )
+        assert receipts.find_undelivered_startup_context(receipts_db, session_id=session_id) is None
+
 
 def _prepare_budget(
     receipts: Any,
@@ -163,6 +322,17 @@ def _prepare_budget(
         return None
 
 
+def _budget_updated_at(db: HubDatabase, session_id: str, execution_num: int) -> datetime:
+    with db.transaction() as conn:
+        row = conn.execute(
+            "SELECT updated_at FROM hook_force_continue_budgets "
+            "WHERE session_id = %s AND execution_num = %s",
+            (session_id, execution_num),
+        ).fetchone()
+    assert row is not None
+    return row["updated_at"]
+
+
 def _budget_count(db: HubDatabase, session_id: str, execution_num: int) -> int | None:
     with db.transaction() as conn:
         row = conn.execute(
@@ -179,14 +349,36 @@ class TestForceContinueBudget:
     def test_increment_serializes_and_does_not_refund(self, receipts_db: HubDatabase) -> None:
         receipts = _receipts()
         session_id = str(uuid4())
-        first = receipts.increment_force_continue(receipts_db, session_id, execution_num=1)
-        second = receipts.increment_force_continue(receipts_db, session_id, execution_num=1)
-        assert first == 1
-        assert second == 2
-        other_exec = receipts.increment_force_continue(receipts_db, session_id, execution_num=2)
-        assert other_exec == 1
-        limit = getattr(receipts, "AGY_FORCE_CONTINUE_LIMIT", None)
-        assert limit is None or isinstance(limit, int)
+        first = _prepare_budget(
+            receipts, receipts_db, session_id=session_id, envelope_id="env-inc-1", execution_num=1
+        )
+        second = _prepare_budget(
+            receipts, receipts_db, session_id=session_id, envelope_id="env-inc-2", execution_num=1
+        )
+        assert first.force_continue_count == 1
+        assert second.force_continue_count == 2
+        other_exec = _prepare_budget(
+            receipts, receipts_db, session_id=session_id, envelope_id="env-inc-3", execution_num=2
+        )
+        assert other_exec.force_continue_count == 1
+        assert not hasattr(receipts, "increment_force_continue")
+
+    def test_increment_stamps_updated_at_on_conflict(self, receipts_db: HubDatabase) -> None:
+        receipts = _receipts()
+        session_id = str(uuid4())
+        _prepare_budget(
+            receipts, receipts_db, session_id=session_id, envelope_id="env-stamp-1", execution_num=1
+        )
+        stale = utc_now() - timedelta(days=3)
+        with receipts_db.transaction() as conn:
+            conn.execute(
+                "UPDATE hook_force_continue_budgets SET updated_at = %s WHERE session_id = %s",
+                (stale, session_id),
+            )
+        _prepare_budget(
+            receipts, receipts_db, session_id=session_id, envelope_id="env-stamp-2", execution_num=1
+        )
+        assert _budget_updated_at(receipts_db, session_id, 1) > stale + timedelta(days=2)
 
     def test_prepare_increments_budget_in_the_same_transaction(
         self, receipts_db: HubDatabase
@@ -329,7 +521,13 @@ class TestForceContinueBudget:
             execution_num=1,
         )
         assert prepared is not None
-        receipts.increment_force_continue(receipts_db, other, execution_num=1)
+        _prepare_budget(
+            receipts,
+            receipts_db,
+            session_id=other,
+            envelope_id="env-fc-retire-other",
+            execution_num=1,
+        )
         deleted = retire(receipts_db, session_id=session_id)
         assert deleted >= 1
         assert _budget_count(receipts_db, session_id, 1) is None
@@ -487,6 +685,36 @@ class TestHookReceiptRetention:
         assert duplicate is None
         assert _receipt_count(receipts_db) == 0
 
+    def test_prune_deletes_stale_budgets_and_keeps_fresh_ones(
+        self, receipts_db: HubDatabase
+    ) -> None:
+        receipts = _receipts()
+        window = receipts.HOOK_RECEIPT_IDEMPOTENCY_WINDOW
+        now = utc_now()
+        stale_session = str(uuid4())
+        fresh_session = str(uuid4())
+        _prepare_budget(
+            receipts, receipts_db, session_id=stale_session, envelope_id="env-b-1", execution_num=1
+        )
+        _prepare_budget(
+            receipts, receipts_db, session_id=fresh_session, envelope_id="env-b-2", execution_num=1
+        )
+        with receipts_db.transaction() as conn:
+            conn.execute(
+                "UPDATE hook_force_continue_budgets SET updated_at = %s WHERE session_id = %s",
+                (now - (window + timedelta(seconds=5)), stale_session),
+            )
+            conn.execute(
+                "UPDATE hook_force_continue_budgets SET updated_at = %s WHERE session_id = %s",
+                (now - window, fresh_session),
+            )
+
+        result = receipts.prune_hook_receipts(receipts_db, now=now)
+        assert result.budgets_deleted == 1
+        assert result.deleted == 0
+        assert _budget_count(receipts_db, stale_session, 1) is None
+        assert _budget_count(receipts_db, fresh_session, 1) == 1
+
     def test_prune_is_bounded(self, receipts_db: HubDatabase) -> None:
         receipts = _receipts()
         prune = getattr(receipts, "prune_hook_receipts", None)
@@ -513,6 +741,15 @@ class TestHookReceiptRetention:
         assert result.deleted == 2
         assert result.truncated is True
         assert _receipt_count(receipts_db) == 2
+
+
+def _receipt_state(db: HubDatabase, receipt_id: str) -> str | None:
+    with db.transaction() as conn:
+        row = conn.execute(
+            "SELECT state FROM hook_receipt_effects WHERE receipt_id = %s",
+            (receipt_id,),
+        ).fetchone()
+    return None if row is None else str(row["state"])
 
 
 def _receipt_exists(db: HubDatabase, receipt_id: str) -> bool:

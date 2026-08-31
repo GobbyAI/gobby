@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -22,6 +24,7 @@ from gobby.hooks.envelope_dedupe import (
     release_envelope_processing_claim,
 )
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
+from gobby.hooks.startup_claim_preflight import StartupClaimLease
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import StartupContextClaim
@@ -364,6 +367,7 @@ class TestAgyStartupClaimPreflight:
     def test_mismatching_session_hint_is_rejected_without_claim_or_mutation(
         self,
         session_storage: SessionManager,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         server = create_http_server(
             port=60887,
@@ -399,6 +403,7 @@ class TestAgyStartupClaimPreflight:
             return StartupContextClaim("full", 1, owner_token or "owner-1", "claimed")
 
         with (
+            caplog.at_level(logging.WARNING, logger="gobby.hooks.startup_claim_preflight"),
             TestClient(server.app) as client,
             patch("gobby.adapters.agy.AgyAdapter") as mock_adapter_cls,
             patch(
@@ -434,6 +439,60 @@ class TestAgyStartupClaimPreflight:
         assert "sess-wrong" in hint_error
         assert captured.get("_gobby_startup_claim") is None
         assert "_gobby_session_hint_error" not in response.json()
+        assert any(
+            record.levelno == logging.WARNING and hint_error in record.getMessage()
+            for record in caplog.records
+        )
+
+    def test_preflight_timeout_returns_retry_and_invalidates_the_late_lease(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        gobby_home = tmp_path / "gobby-home"
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        server = _short_timeout_server(session_storage)
+        hook_manager = server.app.state.hook_manager
+        gate = threading.Event()
+        lease = StartupClaimLease("sess-slow", 5, "owner-slow")
+        envelope_id = "env-preflight-slow"
+
+        def slow_preflight(_payload: dict[str, Any], _hook_manager: Any) -> StartupClaimLease:
+            assert gate.wait(timeout=5)
+            return lease
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.hooks.startup_claim_preflight.preflight_agy_startup_claim",
+                slow_preflight,
+            ),
+            patch(
+                "gobby.hooks.startup_claim_preflight.invalidate_agy_startup_claim",
+            ) as invalidate,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+            ) as run_adapter,
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: envelope_id},
+                json=_agy_pre_invocation_envelope(),
+            )
+            assert response.status_code == 503
+            assert response.json() == {"status": "retry", "retry_kind": "preflight_timeout"}
+            run_adapter.assert_not_awaited()
+            invalidate.assert_not_called()
+            gate.set()
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline and not invalidate.call_args_list:
+                time.sleep(0.02)
+            invalidate.assert_called_once_with(hook_manager, lease)
+
+        marker = read_envelope_marker(envelope_id, processed_dir=_processed_dir(gobby_home))
+        assert marker is None or marker.get("status") != "processing"
 
 
 def _capability_gate_server(session_storage: SessionManager) -> Any:
@@ -1245,6 +1304,165 @@ class TestExecuteHookDeliveryReceipt:
         prepare_receipt.assert_called_once()
 
 
+class TestExecuteHookReceiptRedelivery:
+    def test_next_live_hook_carries_the_lost_delivery_and_stale_ack_is_a_noop(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.storage.hook_receipts import acknowledge_receipt, release_receipt
+
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        server = _delivery_receipt_server(session_storage)
+        db = session_storage.db
+        session_id = str(uuid4())
+        first_body = {
+            "decision": "allow",
+            "_gobby_staged_effects": {
+                "session_id": session_id,
+                "session_variables": {"first": True},
+            },
+        }
+        second_body = {
+            "decision": "allow",
+            "_gobby_staged_effects": {
+                "session_id": session_id,
+                "session_variables": {"second": True},
+            },
+        }
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                side_effect=[first_body, second_body],
+            ),
+        ):
+            first = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: "env-carry-1", "X-Gobby-Session-Id": session_id},
+                json=_agy_post_invocation_envelope(),
+            )
+            assert first.status_code == 200
+            first_receipt = first.json()["_gobby_delivery_receipt"]
+            assert first_receipt["delivery_generation"] == 1
+            # Transport loss: the emitted response never reached the hook process.
+            assert release_receipt(db, receipt_id=first_receipt["receipt_id"]) is not None
+
+            second = client.post(
+                "/api/hooks/execute",
+                headers={ENVELOPE_ID_HEADER: "env-carry-2", "X-Gobby-Session-Id": session_id},
+                json=_agy_post_invocation_envelope(),
+            )
+
+        assert second.status_code == 200
+        assert "_gobby_staged_effects" not in second.json()
+        second_receipt = second.json()["_gobby_delivery_receipt"]
+        assert second_receipt["receipt_id"] == first_receipt["receipt_id"]
+        assert second_receipt["original_envelope_id"] == "env-carry-1"
+        assert second_receipt["delivery_generation"] == 2
+
+        stale = acknowledge_receipt(
+            db, receipt_id=first_receipt["receipt_id"], delivery_generation=1
+        )
+        assert stale is None
+        row = db.fetchone(
+            "SELECT state, current_envelope_id FROM hook_receipt_effects WHERE receipt_id = %s",
+            (first_receipt["receipt_id"],),
+        )
+        assert row is not None
+        assert row["state"] == "prepared"
+        assert row["current_envelope_id"] == "env-carry-2"
+
+        committed = acknowledge_receipt(
+            db, receipt_id=first_receipt["receipt_id"], delivery_generation=2
+        )
+        assert committed is not None
+        assert committed.state == "acknowledged"
+        assert committed.staged_payload["session_variables"] == {"first": True, "second": True}
+        count = db.fetchone(
+            "SELECT count(*) AS n FROM hook_receipt_effects WHERE session_id = %s",
+            (session_id,),
+        )
+        assert count is not None and int(count["n"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_emission_failure_releases_the_receipt(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        from gobby.hooks.receipt_redelivery import receipt_guarded_response
+        from gobby.storage.hook_receipts import prepare_receipt
+
+        db = session_storage.db
+        receipt = prepare_receipt(db, session_id=str(uuid4()), envelope_id="env-emit-fail")
+        body = {
+            "decision": "allow",
+            "_gobby_delivery_receipt": {
+                "receipt_id": receipt.receipt_id,
+                "original_envelope_id": "env-emit-fail",
+                "delivery_generation": 1,
+            },
+        }
+        response = receipt_guarded_response(body, db=db)
+        scope = {"type": "http", "method": "POST", "headers": []}
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.request"}
+
+        async def failing_send(_message: dict[str, Any]) -> None:
+            raise ConnectionResetError("client went away")
+
+        with pytest.raises(ConnectionResetError):
+            await response(scope, receive, failing_send)
+
+        row = db.fetchone(
+            "SELECT state FROM hook_receipt_effects WHERE receipt_id = %s",
+            (receipt.receipt_id,),
+        )
+        assert row is not None
+        assert row["state"] == "released"
+
+    @pytest.mark.asyncio
+    async def test_successful_emission_keeps_the_receipt_prepared(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        from gobby.hooks.receipt_redelivery import receipt_guarded_response
+        from gobby.storage.hook_receipts import prepare_receipt
+
+        db = session_storage.db
+        receipt = prepare_receipt(db, session_id=str(uuid4()), envelope_id="env-emit-ok")
+        body = {
+            "decision": "allow",
+            "_gobby_delivery_receipt": {
+                "receipt_id": receipt.receipt_id,
+                "original_envelope_id": "env-emit-ok",
+                "delivery_generation": 1,
+            },
+        }
+        response = receipt_guarded_response(body, db=db)
+        sent: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.request"}
+
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+        await response({"type": "http", "method": "POST", "headers": []}, receive, send)
+
+        assert any(message.get("type") == "http.response.body" for message in sent)
+        row = db.fetchone(
+            "SELECT state FROM hook_receipt_effects WHERE receipt_id = %s",
+            (receipt.receipt_id,),
+        )
+        assert row is not None
+        assert row["state"] == "prepared"
+
+
 class TestAgyForceContinueBudget:
     def test_identity_less_post_invocation_strips_force_continue(
         self,
@@ -1263,7 +1481,6 @@ class TestAgyForceContinueBudget:
                 return_value=_force_continue_body(),
             ),
             patch("gobby.storage.hook_receipts.prepare_receipt") as prepare_receipt,
-            patch("gobby.storage.hook_receipts.increment_force_continue") as increment,
         ):
             response = client.post(
                 "/api/hooks/execute",
@@ -1275,7 +1492,6 @@ class TestAgyForceContinueBudget:
         assert "terminationBehavior" not in body
         assert body["injectSteps"] == [{"ephemeralMessage": "stay in the turn"}]
         prepare_receipt.assert_not_called()
-        increment.assert_not_called()
 
     def test_durable_post_invocation_prepares_with_execution_num(
         self,

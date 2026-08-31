@@ -274,7 +274,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 414,
         filename: "414_hook_receipt_effects.sql",
-        checksum: "9f275218cf1172d001df7b4e42d33512cdb9fd64054ae406ef9024ddc529f610",
+        checksum: "1eb825f0cdefb3b3fcc88d33388748260fe0f91ad7ec6156026fbf6bc00fd185",
         sql: include_str!("../../assets/schema/migrations/414_hook_receipt_effects.sql"),
     },
     EmbeddedMigration {

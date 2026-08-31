@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS hook_force_continue_budgets (
     session_id uuid NOT NULL,
     execution_num integer NOT NULL,
     count integer NOT NULL DEFAULT 0,
+    updated_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (session_id, execution_num),
     CONSTRAINT hook_force_continue_budgets_count_nonnegative CHECK (count >= 0)
 );
+
+CREATE INDEX IF NOT EXISTS hook_force_continue_budgets_updated_at_idx
+    ON hook_force_continue_budgets (updated_at);

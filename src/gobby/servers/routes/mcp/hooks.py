@@ -13,7 +13,6 @@ from fastapi import APIRouter, HTTPException, Request
 from starlette.requests import ClientDisconnect
 
 from gobby.adapters.agy_contract import (
-    AGY_FORCE_CONTINUE_LIMIT,
     agy_execution_num,
     strip_unbudgeted_force_continue,
 )
@@ -44,14 +43,21 @@ from gobby.hooks.envelope_dedupe import (
 )
 from gobby.hooks.health_gate import DaemonNotReadyError
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
+from gobby.hooks.receipt_redelivery import (
+    attach_delivery_receipt,
+    receipt_guarded_response,
+    receipt_session_id,
+)
 from gobby.hooks.runtime_compat import (
     SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
     envelope_has_hook_response_capability,
 )
 from gobby.hooks.startup_claim_preflight import (
     StartupClaimLease,
+    StartupClaimPreflightTimeout,
     invalidate_agy_startup_claim,
-    preflight_agy_startup_claim,
+    preflight_agy_startup_claim_bounded,
+    preflight_timeout_seconds,
     rollback_agy_startup_claim,
     strip_private_startup_claim_fields,
 )
@@ -347,66 +353,6 @@ def _is_codex_root_context_miss(
     return isinstance(cwd, str) and is_unusable_hook_cwd(cwd)
 
 
-def _receipt_session_id(
-    *,
-    claim_lease: StartupClaimLease | None,
-    payload: dict[str, Any],
-    platform_session_id: str,
-    envelope_id: str,
-) -> str:
-    if claim_lease is not None and claim_lease.session_id:
-        return claim_lease.session_id
-    if platform_session_id:
-        return platform_session_id
-    input_data = payload.get("input_data")
-    if isinstance(input_data, dict):
-        for key in ("session_id", "conversationId", "conversation_id"):
-            value = input_data.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    return envelope_id
-
-
-def _attach_delivery_receipt(
-    response: dict[str, Any],
-    *,
-    db: Any,
-    envelope_id: str,
-    session_id: str,
-    staged_payload: dict[str, Any] | None = None,
-    force_continue_execution_num: int | None = None,
-) -> dict[str, Any]:
-    if db is None:
-        return strip_unbudgeted_force_continue(response)
-    try:
-        from gobby.storage.hook_receipts import prepare_receipt
-
-        receipt = prepare_receipt(
-            db,
-            session_id=session_id,
-            envelope_id=envelope_id,
-            staged_payload=staged_payload,
-            force_continue_execution_num=force_continue_execution_num,
-        )
-    except Exception:
-        logger.warning(
-            "Failed to prepare hook delivery receipt for envelope %s",
-            envelope_id,
-            exc_info=True,
-        )
-        return strip_unbudgeted_force_continue(response)
-    attached = dict(response)
-    count = getattr(receipt, "force_continue_count", None)
-    if isinstance(count, int) and count > AGY_FORCE_CONTINUE_LIMIT:
-        attached.pop("terminationBehavior", None)
-    attached["_gobby_delivery_receipt"] = {
-        "receipt_id": receipt.receipt_id,
-        "original_envelope_id": receipt.original_envelope_id,
-        "delivery_generation": receipt.delivery_generation,
-    }
-    return attached
-
-
 def create_hooks_router(server: "HTTPServer") -> APIRouter:
     """
     Create hooks router with endpoints bound to server instance.
@@ -454,9 +400,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         payload: dict[str, Any] = {}
         platform_session_id = ""
 
-        def mark_processed_and_return(response: dict[str, Any]) -> dict[str, Any]:
+        def mark_processed_and_return(response: dict[str, Any]) -> Any:
             staged_payload = response.get(STAGED_EFFECTS_FIELD)
             response = strip_private_startup_claim_fields(response)
+            receipt_db = getattr(getattr(server, "services", None), "database", None)
             if claim_lease is not None:
                 staged = dict(staged_payload) if isinstance(staged_payload, dict) else {}
                 staged["startup_context"] = {
@@ -469,11 +416,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 execution_num = None
                 if response.get("terminationBehavior") == "force_continue":
                     execution_num = agy_execution_num(payload)
-                response = _attach_delivery_receipt(
+                response = attach_delivery_receipt(
                     response,
-                    db=getattr(getattr(server, "services", None), "database", None),
+                    db=receipt_db,
                     envelope_id=envelope_id,
-                    session_id=_receipt_session_id(
+                    session_id=receipt_session_id(
                         claim_lease=claim_lease,
                         payload=payload,
                         platform_session_id=platform_session_id,
@@ -498,7 +445,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         envelope_id,
                         exc,
                     )
-                return response
+                return receipt_guarded_response(response, db=receipt_db)
             if envelope_id:
                 try:
                     mark_envelope_processed(
@@ -512,7 +459,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         envelope_id,
                         exc,
                     )
-            return response
+            return receipt_guarded_response(response, db=receipt_db)
 
         try:
             # Parse request
@@ -658,15 +605,40 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     ),
                 )
 
-            # Execute hook via adapter
-            claim_lease = preflight_agy_startup_claim(payload, hook_manager)
+            config = server.config
+            hook_timeout = (
+                config.hooks.adapter_timeout
+                if config is not None
+                else HookTimeoutConfig().adapter_timeout
+            )
             try:
-                config = server.config
-                hook_timeout = (
-                    config.hooks.adapter_timeout
-                    if config is not None
-                    else HookTimeoutConfig().adapter_timeout
+                claim_lease = await preflight_agy_startup_claim_bounded(
+                    payload,
+                    hook_manager,
+                    timeout_seconds=preflight_timeout_seconds(hook_timeout),
                 )
+            except StartupClaimPreflightTimeout as exc:
+                inc_counter("hooks_failed_total")
+                released = bool(envelope_id and release_envelope_processing_claim(envelope_id))
+                logger.warning(
+                    "Retrying hook after startup-claim preflight timeout",
+                    extra=_hook_log_extra(
+                        hook_type,
+                        request_metadata,
+                        source=source,
+                        envelope_id=envelope_id,
+                        processing_claim_released=released,
+                        retry_kind="preflight_timeout",
+                        error=str(exc),
+                    ),
+                )
+                return JSONResponse(
+                    status_code=503,
+                    content={"status": "retry", "retry_kind": "preflight_timeout"},
+                )
+
+            # Execute hook via adapter
+            try:
                 result = await _run_adapter_hook(
                     adapter,
                     payload,
