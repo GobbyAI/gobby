@@ -47,6 +47,11 @@ pub(crate) struct Cli {
 pub(crate) enum Command {
     /// Emit the CLI contract for daemon conformance tests
     Contract,
+    /// Print the embedded schema identity.
+    SchemaIdentity {
+        #[arg(long)]
+        json: bool,
+    },
 
     // ── Project Setup ────────────────────────────────────────────────
     /// Index this machine's registered Gobby checkout and install gcode skills

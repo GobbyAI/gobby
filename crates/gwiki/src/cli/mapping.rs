@@ -25,6 +25,9 @@ pub(super) fn command_from_cli_with_runtime(
 ) -> Result<Command, WikiError> {
     match command {
         CliCommand::Contract => unreachable!("contract command is handled before runtime dispatch"),
+        CliCommand::SchemaIdentity { .. } => {
+            unreachable!("schema-identity command is handled before runtime dispatch")
+        }
         CliCommand::Code(args) => {
             let project_root = match scope {
                 ScopeSelection::Detect => {

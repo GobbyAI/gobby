@@ -37,10 +37,31 @@ mod terminal_context;
 mod test_http;
 mod transport;
 
-use args::Args;
+use args::{Args, Command};
 
 fn main() -> ExitCode {
     let args = Args::parse();
+
+    if let Some(Command::SchemaIdentity { json }) = &args.command {
+        if !json {
+            eprintln!("ghook: schema-identity requires --json");
+            return ExitCode::from(2);
+        }
+        return match serde_json::to_string(&gobby_core::schema::SchemaIdentityContract::embedded())
+        {
+            Ok(identity) => match output::stdout(format_args!("{identity}\n")) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("ghook: {error}");
+                    ExitCode::from(1)
+                }
+            },
+            Err(error) => {
+                eprintln!("ghook: {error}");
+                ExitCode::from(1)
+            }
+        };
+    }
 
     if args.version {
         return match runtime::write_runtime_stamp() {

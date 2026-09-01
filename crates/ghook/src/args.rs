@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -7,6 +7,9 @@ use clap::Parser;
     disable_version_flag = true
 )]
 pub(crate) struct Args {
+    #[command(subcommand)]
+    pub(crate) command: Option<Command>,
+
     /// Normal hook-invocation mode. Required for enqueue/POST.
     #[arg(long)]
     pub(crate) gobby_owned: bool,
@@ -34,4 +37,13 @@ pub(crate) struct Args {
     /// Exit after the durable inbox enqueue without posting to the daemon.
     #[arg(long)]
     pub(crate) enqueue_only: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum Command {
+    /// Print the embedded schema identity.
+    SchemaIdentity {
+        #[arg(long)]
+        json: bool,
+    },
 }

@@ -33,7 +33,7 @@ pub use gate::{
     ArtifactRecord, BackupGateContext, BackupManifestError, HubBackupManifest, SourceIdentity,
     StoreRecord, VerificationState, VerifiedBackupManifest, parse_backup_manifest,
 };
-pub use identity::{AssetIdentity, SchemaIdentity, schema_identity};
+pub use identity::{AssetIdentity, SchemaIdentity, SchemaIdentityContract, schema_identity};
 pub use runner::{ApplyReport, SchemaRunner};
 pub use sql_splitter::split_sql_statements;
 pub use sweep::sweep_test_schemas;

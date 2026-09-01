@@ -9,10 +9,10 @@ use gobby_core::degradation::redact_database_url;
 use gobby_core::gobby_home;
 use gobby_core::postgres::{connect_readwrite, is_lock_timeout};
 use gobby_core::schema::{
-    BackupGateContext, HubBackupManifest, SchemaRunner, SourceIdentity, VerifiedBackupManifest,
-    parse_backup_manifest, schema_identity, sweep_test_schemas as sweep_orphaned_test_schemas,
+    BackupGateContext, HubBackupManifest, SchemaIdentityContract, SchemaRunner, SourceIdentity,
+    VerifiedBackupManifest, parse_backup_manifest,
+    sweep_test_schemas as sweep_orphaned_test_schemas,
 };
-use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -52,31 +52,6 @@ enum SchemaCommand {
         #[arg(long)]
         json: bool,
     },
-}
-
-#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-struct SchemaIdentityContract {
-    runner_protocol: u32,
-    baseline_version: i32,
-    baseline_checksum: String,
-    latest_version: i32,
-    latest_checksum: String,
-    assets_root_hash: String,
-}
-
-impl SchemaIdentityContract {
-    fn embedded() -> Self {
-        let identity = schema_identity();
-        Self {
-            runner_protocol: identity.runner_protocol_version,
-            baseline_version: identity.baseline.version,
-            baseline_checksum: identity.baseline.checksum.to_owned(),
-            latest_version: identity.latest_asset.version,
-            latest_checksum: identity.latest_asset.checksum.to_owned(),
-            assets_root_hash: identity.root_hash,
-        }
-    }
 }
 
 fn main() -> Result<()> {
