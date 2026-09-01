@@ -29,7 +29,7 @@ use super::runner::{
     auth_schema_for, render_sql_for_schema,
 };
 use super::sql_splitter::split_sql_statements;
-use super::verify::catalog_manifest;
+use super::verify::{catalog_manifest, verify_schema};
 
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     version: 376,
@@ -822,6 +822,38 @@ fn receipt_chain_advances_from_19645_and_lineage_checksums() -> anyhow::Result<(
             .to_string()
             .contains("recreate from a verified backup")
     );
+    Ok(())
+}
+
+#[test]
+fn verify_receipts_accepts_the_pre_epic_384_receipt() -> anyhow::Result<()> {
+    // Hubs stamped 384 before epic #19651 edited it in place carry
+    // 0f7a499e...; verify must treat that receipt as current, and must still
+    // reject a receipt nobody ever issued.
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    verify_schema(&mut client, "public")?;
+
+    client.execute(
+        "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
+        &[
+            &"0f7a499e1b7216a7a2426dc5c04064eae97440a1ee1a4d5134a0dd7a8cf6ebef",
+            &384_i32,
+        ],
+    )?;
+    verify_schema(&mut client, "public")?;
+
+    client.execute(
+        "UPDATE schema_migrations SET checksum = 'unrecognized' WHERE version = $1",
+        &[&384_i32],
+    )?;
+    let drift = verify_schema(&mut client, "public").expect_err("unknown 384 receipt must fail");
+    assert!(drift.to_string().contains("384"), "{drift}");
     Ok(())
 }
 
