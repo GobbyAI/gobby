@@ -838,18 +838,37 @@ def _record_edit(
         return
     paths = _extract_edit_paths(basename, arguments, state.repo_path)
     for path in paths:
-        if path not in state.task_edited_files:
+        task_file = _match_task_file(path, state.task_edited_files)
+        if task_file is None:
             continue
         state.edits.append(
             TranscriptEdit(
                 session_id=state.session.id,
                 source=state.session.source,
-                path=path,
+                path=task_file,
                 timestamp=timestamp,
                 order=order,
                 tool_name=tool_name,
             )
         )
+
+
+def _match_task_file(path: str, task_files: set[str]) -> str | None:
+    """Map an edit path to a task file, tolerating edits made in another checkout.
+
+    Sessions edit with absolute paths, and a worktree session's paths escape the
+    checkout the close resolves (``../../.gobby/worktrees/...``). A path outside
+    the close root matches the task file it ends with; the longest suffix wins.
+    """
+    if path in task_files:
+        return path
+    if not (os.path.isabs(path) or path.startswith("../")):
+        return None
+    return max(
+        (task_file for task_file in task_files if path.endswith(f"/{task_file}")),
+        key=len,
+        default=None,
+    )
 
 
 def _extract_edit_paths(

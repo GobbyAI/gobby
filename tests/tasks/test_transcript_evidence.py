@@ -1804,3 +1804,109 @@ async def test_compound_run_records_every_segment_with_its_categories(tmp_path: 
         ),
         TranscriptValidationSegment(command="pytest tests/unit -q", categories=("test",)),
     )
+
+
+async def test_edits_in_another_checkout_match_task_files_by_suffix(tmp_path: Path) -> None:
+    """Edits made in a worktree count when the close resolves the main checkout."""
+    repo_path = tmp_path / "main"
+    worktree = tmp_path / "worktrees" / "task-1"
+    patch = (
+        f"*** Begin Patch\n*** Update File: {worktree / 'src' / 'changed.py'}\n"
+        "@@\n-old\n+new\n*** End Patch\n"
+    )
+    codex_transcript = tmp_path / "codex.jsonl"
+    _write_jsonl(
+        codex_transcript,
+        [
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "wrapped-patch",
+                    "name": "exec",
+                    "input": (
+                        f"const patch = {json.dumps(patch)};\n"
+                        "const result = await tools.apply_patch(patch); text(result);"
+                    ),
+                },
+                BASE_TIME,
+            ),
+        ],
+    )
+    claude_transcript = tmp_path / "claude.jsonl"
+    _write_jsonl(
+        claude_transcript,
+        [
+            {
+                "type": "assistant",
+                "timestamp": BASE_TIME.isoformat(),
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "edit-1",
+                            "name": "Edit",
+                            "input": {"file_path": str(worktree / "src" / "changed.py")},
+                        }
+                    ],
+                },
+            },
+        ],
+    )
+
+    codex_evidence = await derive_transcript_evidence(
+        _session("codex", codex_transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {"src/changed.py"},
+        str(repo_path),
+    )
+    claude_evidence = await derive_transcript_evidence(
+        _session("claude", claude_transcript, suffix="2"),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {"src/changed.py"},
+        str(repo_path),
+    )
+
+    assert [(edit.path, edit.tool_name) for edit in codex_evidence.edits] == [
+        ("src/changed.py", "exec")
+    ]
+    assert [(edit.path, edit.tool_name) for edit in claude_evidence.edits] == [
+        ("src/changed.py", "Edit")
+    ]
+
+
+async def test_edit_outside_every_checkout_without_task_suffix_is_ignored(tmp_path: Path) -> None:
+    repo_path = tmp_path / "main"
+    transcript = tmp_path / "claude.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            {
+                "type": "assistant",
+                "timestamp": BASE_TIME.isoformat(),
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "edit-1",
+                            "name": "Edit",
+                            "input": {"file_path": str(tmp_path / "elsewhere" / "other.py")},
+                        }
+                    ],
+                },
+            },
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {"src/changed.py"},
+        str(repo_path),
+    )
+
+    assert evidence.edits == ()
