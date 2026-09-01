@@ -22,12 +22,20 @@ against those decisions so it is not lost in task history.
   Plans: `.gobby/plans/m0-shared-datastores-bridge.md`,
   `.gobby/plans/two-daemon-hub.md`, `.gobby/plans/hub-pc-datastore-move.md`.
 - **Identity / hub files**: account/machine ownership (#19650), hub-owned
-  files home (#20330 / #20238), and the reactive config store (#19645) are
-  on `0.5.0`. Path-independent project identity (#19651) is not.
+  files home (#20330 / #20238), the reactive config store (#19645), and
+  path-independent project identity (#19651, closed 2026-09-01) are on
+  `0.5.0`.
 - **Rust bridgehead**: `crates/` ships `gcode`, `gwiki`, `ghook`, `gdaemon`
   over the shared `gcore` library — the strangler beachhead for the daemon
-  port. gcode/gwiki daemon-native grants (#18902) closed; checkout grants
-  still land in #19651 P4.
+  port. gcode/gwiki daemon-native grants (#18902) and checkout grants
+  (#19651 P4, #20300) closed. Grant-surface reservation: the
+  `gobby_gcode_capability` role keeps `SELECT` on `projects(id, name,
+  deleted_at)` in `baseline@419` although landed gcode reads none of it —
+  project resolution goes through the daemon's `/api/projects` and the index
+  write fence keys on `project_checkouts.root_path`. Kept on purpose for the
+  wiki information-model redesign (#19664): #21504 (`needs-decision`, the
+  #21438 follow-up) settles consume-or-drop, and a drop lands as a migration
+  ≥ 420, never a baseline edit.
 - **Product that landed on `0.5.0` and is off the architecture spine**:
   class-hierarchy graph views (#17680, including P3), clear-self durable
   handoff (#20539), vLLM runtime support (#20488) plus follow-up parity
@@ -236,19 +244,18 @@ Not a stage-decision change. Checked `0.5.0` (`9e0730d46e`) and
 1. **Stage 0 rework — `#20255` / `herdr-terminal-client-qa-fixes`.** Named
    current stage. Without a merged native PTY host, stories A–C still die on
    tmux. Do not merge `wt-task-20255-m4` as-is.
-2. **`#19651` project-checkout-identity**, separate worktree. Last #17488
-   identity brick (first leaf `#20303`, `project_checkouts` in the flattened
-   `baseline@419`).
-   Unblocks two-machine testing and the wiki grant chain. Do not pair schema
-   leaves with herdr P2 — both rewrite `crates/gcore` baseline/catalog
-   identity files.
+2. **`#19651` project-checkout-identity** — closed 2026-09-01 (last #17488
+   identity brick; `project_checkouts` lives in the flattened `baseline@419`;
+   review findings under #21459). Two-machine testing and the wiki grant
+   chain are unblocked. Do not pair schema leaves with herdr P2 — both
+   rewrite `crates/gcore` baseline/catalog identity files.
 3. **When a second physical machine is available: `#19600`, then `#19647`.**
    M0 close, then residual hub/node authority research. Not coding you can
    do on one box.
 4. **Repo-intel / wiki, not the spine.** #17680 is merged. Next is #19664
    wiki-output (blocked on finishing #17678), then #18779 empty-vault
-   production cutover. Checkout P4 (gcode grants) should land before
-   grant-consuming wiki work.
+   production cutover. Checkout P4 (gcode grants, #20300) landed; #21504
+   settles the `projects` grant reservation before grant-consuming wiki work.
 5. **Stages 1–3 stay later.** Rust daemon strangler (`:60890` sidecar),
    Python retirement / `gclient`→`gobby`, then `hub`/`node` with #17436
    (gated on #19651 + #19647), #17769 (gated on #19647), #17440 (gated on
