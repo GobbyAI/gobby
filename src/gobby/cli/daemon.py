@@ -575,7 +575,7 @@ def _do_stop(
     if gate == "cancelled":
         return True
 
-    config = get_cli_runtime(ctx).operational_config
+    config = get_cli_runtime(ctx).read_only_operational_config()
     # A restart-protected cron run (nightly memory dream) holds a lease the
     # daemon reports; honor it before either stop path can kill the run.
     if not clear_protected_runs(
@@ -718,6 +718,7 @@ def restart(
 def status(ctx: click.Context) -> None:
     """Show Gobby daemon operational health dashboard."""
     from gobby.cli.runtime import get_cli_runtime, require_cli_database
+    from gobby.storage.schema_divergence import collect_schema_heads
 
     if unsupported_platform_error():
         click.echo(format_status_message(running=False, unsupported_platform=True))
@@ -732,7 +733,7 @@ def status(ctx: click.Context) -> None:
             click.echo(format_singleton_status(probe))
         sys.exit(0)
 
-    config = get_cli_runtime(ctx).operational_config
+    config = get_cli_runtime(ctx).read_only_operational_config()
     log_dir = resolved_logs_dir(config.logging)
 
     reported_pid = _read_pid_file()
@@ -837,7 +838,7 @@ def status(ctx: click.Context) -> None:
     try:
         managed_services = (gobby_home / "services" / "docker-compose.yml").is_file()
         deps_info = collect_all_deps(
-            require_cli_database(ctx),
+            require_cli_database(ctx, apply_migrations=False),
             managed_services=managed_services,
         )
     except Exception as exc:
@@ -864,6 +865,12 @@ def status(ctx: click.Context) -> None:
             },
         }
     config_issues = check_config_mismatches(config)
+
+    try:
+        schema_heads = collect_schema_heads(require_cli_database(ctx, apply_migrations=False))
+    except Exception:
+        logger.debug("Failed to collect schema heads", exc_info=True)
+        schema_heads = collect_schema_heads(None)
 
     # Build service info
     service_info: str | None = None
@@ -896,6 +903,7 @@ def status(ctx: click.Context) -> None:
         log_files=str(log_dir),
         deps_info=deps_info,
         config_issues=config_issues,
+        schema_heads=schema_heads,
         control_plane_error=control_plane_error,
         status_details_error=status_details_error,
         process_uptime_seconds=uptime_seconds,
@@ -918,7 +926,7 @@ def health(ctx: click.Context) -> None:
         click.echo(format_singleton_status(probe))
         sys.exit(1)
 
-    config = get_cli_runtime(ctx).operational_config
+    config = get_cli_runtime(ctx).read_only_operational_config()
     http_port = config.daemon_port
     pid = probe.pid
 

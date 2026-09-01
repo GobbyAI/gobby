@@ -56,7 +56,20 @@ class CliRuntime:
     @property
     def operational_config(self) -> DaemonConfig:
         """Overlay bootstrap-owned process settings onto the DB projection."""
-        config = deepcopy(self.config)
+        return self._overlay_bootstrap(self.config)
+
+    def read_only_operational_config(self) -> DaemonConfig:
+        """Same overlay for observability commands, without applying schema.
+
+        Read-only commands must stay usable while the checkout's schema pin, the
+        installed gdaemon, and the live hub disagree — the window in which they are
+        most needed. Nothing here writes, so the safety the identity gate protects is
+        untouched.
+        """
+        return self._overlay_bootstrap(self.require_config(apply_migrations=False))
+
+    def _overlay_bootstrap(self, projection: DaemonConfig) -> DaemonConfig:
+        config = deepcopy(projection)
         bootstrap = load_bootstrap(self.config_file)
         config.daemon_port = bootstrap.daemon_port
         config.bind_host = bootstrap.bind_host

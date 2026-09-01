@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from gobby.storage.schema_divergence import SchemaHeads
 from gobby.utils.dependency_requirements import STARTING_GRACE_SECONDS
 from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.postgres_extensions import BASELINE_POSTGRES_EXTENSIONS
@@ -288,6 +289,7 @@ def format_status_message(
     deps_info: dict[str, Any] | None = None,
     # Config mismatches
     config_issues: list[dict[str, str]] | None = None,
+    schema_heads: SchemaHeads | None = None,
     control_plane_error: str | None = None,
     status_details_error: str | None = None,
     process_uptime_seconds: float | None = None,
@@ -568,6 +570,11 @@ def format_status_message(
                 detail += f" (every {interval}s)"
             lines.append(f"  {'Automation:':<{_LW}}{detail}")
 
+        lines.append("")
+
+    if schema_heads is not None:
+        lines.append("Schema:")
+        lines.append(f"  {'Heads:':<{_LW}}{schema_heads.describe()}")
         lines.append("")
 
     # ---- Dependencies ----
