@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -28,12 +29,12 @@ from gobby.sessions.clear_continuation import (
 )
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -453,11 +454,15 @@ def _web_chat_row(sessions: SessionManager, project_id: str, label: str) -> Any:
 
 
 class TestCommitWebChatClearSuccessorTransaction:
-    def test_one_transaction_expires_inserts_parents_and_seeds(self, hub_db: HubDatabase) -> None:
-        project = LocalProjectManager(hub_db).create(
+    def test_one_transaction_expires_inserts_parents_and_seeds(
+        self, hub_db: HubDatabase, tmp_path: Path
+    ) -> None:
+        project = install_isolated_checkout_project(
+            hub_db,
+            tmp_path / "clear-web",
             name=f"clear-web-{uuid4().hex[:8]}",
-            repo_path="/tmp/clear-web",
-        )
+            machine_id=LOCAL_MACHINE_ID,
+        ).project
         sessions = SessionManager(hub_db)
         predecessor = _web_chat_row(sessions, project.id, "predecessor")
         run = LocalAgentRunManager(hub_db).create(
@@ -511,11 +516,15 @@ class TestCommitWebChatClearSuccessorTransaction:
         assert seeded == {}
         assert refreshed_pred.handoff_markdown == HANDOFF
 
-    def test_failed_insert_rolls_back_predecessor(self, hub_db: HubDatabase) -> None:
-        project = LocalProjectManager(hub_db).create(
+    def test_failed_insert_rolls_back_predecessor(
+        self, hub_db: HubDatabase, tmp_path: Path
+    ) -> None:
+        project = install_isolated_checkout_project(
+            hub_db,
+            tmp_path / "clear-web-fail",
             name=f"clear-web-fail-{uuid4().hex[:8]}",
-            repo_path="/tmp/clear-web-fail",
-        )
+            machine_id=LOCAL_MACHINE_ID,
+        ).project
         sessions = SessionManager(hub_db)
         predecessor = _web_chat_row(sessions, project.id, "predecessor")
         stage_clear_attempt(
@@ -558,11 +567,15 @@ class TestCommitWebChatClearSuccessorTransaction:
         assert marker[CLEAR_ATTEMPT_VARIABLE]["consumed_by"] is None
 
     @pytest.mark.asyncio
-    async def test_web_path_transfers_claims_before_returning(self, hub_db: HubDatabase) -> None:
-        project = LocalProjectManager(hub_db).create(
+    async def test_web_path_transfers_claims_before_returning(
+        self, hub_db: HubDatabase, tmp_path: Path
+    ) -> None:
+        project = install_isolated_checkout_project(
+            hub_db,
+            tmp_path / "clear-web-claims",
             name=f"clear-web-claims-{uuid4().hex[:8]}",
-            repo_path="/tmp/clear-web-claims",
-        )
+            machine_id=LOCAL_MACHINE_ID,
+        ).project
         sessions = SessionManager(hub_db)
         predecessor = _web_chat_row(sessions, project.id, "predecessor")
         third = sessions.register(

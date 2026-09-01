@@ -69,10 +69,17 @@ class FakeTransaction:
         table = tail.split()[0]
         if stripped.upper().startswith("SELECT"):
             rows: list[dict[str, Any]] = []
-            if table == "memories":
-                rows = [{"id": "memory-1"}, {"id": "memory-2"}]
+            if table == "memories" and not self.db.memories_purged:
+                # Purge batches until a SELECT returns nothing; the fake drains
+                # after the DELETE so the loop terminates like the real table.
+                rows = [
+                    {"row_id": "memory-1", "source_id": "memory-1"},
+                    {"row_id": "memory-2", "source_id": "memory-2"},
+                ]
             return SimpleNamespace(fetchall=lambda: rows)
         self.db.events.append(f"sql:{table}")
+        if table == "memories":
+            self.db.memories_purged = True
         if table == "projects":
             self.db.projects.hard_deleted = True
         return SimpleNamespace(rowcount=1)
@@ -84,6 +91,7 @@ class FakeDB:
         self.projects = projects
         self.tombstones: list[tuple[str, str, bool]] = []
         self.sequence = 0
+        self.memories_purged = False
 
     def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, str]]:
         del params
@@ -252,11 +260,21 @@ async def test_purge_orders_quiescence_projections_cleanup_and_hub_transaction()
         "code:invalidate",
         "vectors:clear",
         "graph:clear",
+        # Tombstone batches run one hub transaction per batch: the memory batch
+        # deletes and tombstones, then each source kind drains with an empty SELECT.
+        "hub:begin",
+        "sql:memories",
+        "hub:commit",
+        "hub:begin",
+        "hub:commit",
+        "hub:begin",
+        "hub:commit",
+        "hub:begin",
+        "hub:commit",
         "hub:begin",
         "sql:tasks",
         "sql:plans",
         "sql:sessions",
-        "sql:memories",
         "sql:projects",
         "hub:commit",
         "fence:exit",

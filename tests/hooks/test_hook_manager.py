@@ -24,7 +24,6 @@ from gobby.storage import workspace_machine_scope
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.project_checkouts import (
-    CheckoutRootTakenError,
     CheckoutSentinelRejectedError,
     LocalProjectCheckoutManager,
     MissingMachineContextError,
@@ -2071,7 +2070,6 @@ class TestHookCheckoutIngress:
         [
             ("validate", OverlayRegistrationRejectedError),
             ("validate", MarkerMismatchError),
-            ("register", CheckoutRootTakenError),
             ("register", CheckoutSentinelRejectedError),
             ("register", OverlayRegistrationRejectedError),
             ("require", MissingMachineContextError),
@@ -2123,12 +2121,18 @@ class TestHookCheckoutIngress:
         assert event.project_id is None
         assert "project_id" not in event.data
 
-    def test_root_taken_refusal_is_live_not_swallowed(
+    def test_root_taken_refusal_warns_with_rebind_hint_and_keeps_owner(
         self,
         tmp_path: Path,
         temp_db: HubDatabase,
         monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
+        """A root owned by another project warns once and keeps the hook alive.
+
+        The session still resolves to the marker project; the owner keeps the
+        checkout and the operator rebinds explicitly (fdac8174ab, #21443).
+        """
         machine_id = _pin_hook_machine(temp_db, monkeypatch)
         owner = LocalProjectManager(temp_db).create(name="hook-root-owner")
         LocalProjectCheckoutManager(temp_db).register(machine_id, owner.id, str(tmp_path))
@@ -2138,14 +2142,21 @@ class TestHookCheckoutIngress:
         sessions = _hook_sessions(temp_db)
         resolver = ProjectIdResolver(session_manager=sessions)
 
-        with pytest.raises(CheckoutRootTakenError):
+        with caplog.at_level(logging.WARNING):
             resolve_hook_project_context(
                 event,
                 session_manager=sessions,
                 resolve_project_id=resolver.resolve,
             )
 
-        assert event.project_id is None
+        rebind_warnings = [
+            record.getMessage()
+            for record in caplog.records
+            if record.levelno == logging.WARNING and "gobby projects rebind" in record.getMessage()
+        ]
+        assert len(rebind_warnings) == 1
+        assert f"gobby projects rebind {challenger.name} {tmp_path}" in rebind_warnings[0]
+        assert event.project_id == challenger.id
         assert _checkout_root(temp_db, machine_id, challenger.id) is None
         assert _checkout_root(temp_db, machine_id, owner.id) == str(tmp_path)
 
