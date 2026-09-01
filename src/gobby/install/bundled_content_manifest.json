@@ -496,7 +496,7 @@
     "workflows/rules/brevity/detect-brevity-drift.yaml": "e8e64088efa9f72b3777d0d39bacf8adb7ce69d22b971af1fdb664241fb76790",
     "workflows/rules/brevity/reinforce-brevity.yaml": "0b79f0891817ca25b8cd70ab8e74a1622c94c558573e465b1c93a0893990c75e",
     "workflows/rules/build-coordinator/require-build-coordinator-for-gobby-build.yaml": "3c0232ee6ec1c0fcbecbf8061a04eed9f3f4544f98572dd28afd9371d535a887",
-    "workflows/rules/code-index/require-code-index-skill.yaml": "d65092688d869c1821d7365d8d888225ff224da25188c7a92bc62fc389bd3135",
+    "workflows/rules/code-index/require-code-index-skill.yaml": "fd6db33ed391f341fe229fc12e3aba201f7af6fc8b082075d5535296f6f01e9c",
     "workflows/rules/context-handoff/block-autonomous-clear-session.yaml": "df73dda8f0b5b35bc5657ccf1e4931edd3aa857e053c73f75d8ad3da1f690fca",
     "workflows/rules/context-handoff/clear-pending-context-reset-on-start.yaml": "64628aec03c9eb7495a8410dee0fd297448a818c97421cd92778df8762070237",
     "workflows/rules/context-handoff/inject-task-context-on-start.yaml": "4b389a39c6dfd228ec85cb0d9e59b27cbc0066d2a5681c475e15e6b870db01d9",
