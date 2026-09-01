@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -33,9 +34,11 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 @pytest.fixture
-def session_id(temp_db: HubDatabase) -> str:
+def session_id(temp_db: HubDatabase, tmp_path: Path) -> str:
     sync_bundled_prompts(temp_db)
-    project = LocalProjectManager(temp_db).create(name="gobby", repo_path="/tmp/gobby")
+    checkout = tmp_path / "gobby"
+    checkout.mkdir()
+    project = LocalProjectManager(temp_db).create(name="gobby", repo_path=str(checkout))
     SessionManager(temp_db).register_session(
         external_id="feedback-service-session",
         machine_id=MACHINE_ID,
