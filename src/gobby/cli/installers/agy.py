@@ -187,8 +187,7 @@ def _merge_gobby_hooks(
             raise ValueError(f"AGY hooks template missing hook type: {hook_type}")
 
     updated = deepcopy(existing_settings)
-    # Drop any legacy Gobby-owned entries, including the pre-1.1 nesting that
-    # wrote a literal "hooks" key AGY parsed as a hook name and then rejected.
+    # Drop existing Gobby-owned entries so reinstall is idempotent under any name.
     for name in [key for key, value in updated.items() if config_contains_gobby_hook(value)]:
         del updated[name]
     updated[AGY_GOBBY_HOOK_NAME] = deepcopy(gobby_hooks)

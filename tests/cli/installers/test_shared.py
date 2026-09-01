@@ -52,7 +52,6 @@ def test_install_global_hooks_installs_validate_settings_only(temp_dir: Path) ->
         installed = install_global_hooks()
 
     assert installed == ["validate_settings.py"]
-    assert not (hooks_dir / "ghook_guard.py").exists()
     assert (hooks_dir / "validate_settings.py").exists()
     assert os.access(hooks_dir / "validate_settings.py", os.X_OK)
 

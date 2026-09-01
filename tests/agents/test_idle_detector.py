@@ -409,7 +409,7 @@ class TestStopHookBlocked:
         """Agent tried to stop but hook blocked it — treat as idle."""
         output = (
             "⏺ Ran 1 stop hook (ctrl+o to expand)\n"
-            "  ⎿  Stop hook error: [uv run python hooks/hook_dispatcher.py]:\n"
+            "  ⎿  Stop hook error: [ghook --gobby-owned --cli=claude --type=stop]:\n"
             "  Rule enforced by Gobby: [tool-failure-recovery]\n"
             "────────────────────\n"
             "   Opus 4.6  46.5%  4hr \n"
@@ -433,6 +433,6 @@ class TestStopHookBlocked:
             "⏺ Bash(uv run ruff check src/)\n"
             "  ⎿  Error: Exit code 1\n"
             "⏺ Ran 1 stop hook (ctrl+o to expand)\n"
-            "  ⎿  Stop hook error: [uv run python hooks/hook_dispatcher.py]\n"
+            "  ⎿  Stop hook error: [ghook --gobby-owned --cli=claude --type=stop]\n"
         )
         assert self.detector.detect(output) == "idle"

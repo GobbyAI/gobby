@@ -51,14 +51,12 @@ class TestInstallClaude:
         hooks_dir = claude_dir / "hooks"
         hooks_dir.mkdir(parents=True)
 
-        # Create mock hook files (legacy location)
-        (hooks_dir / "hook_dispatcher.py").write_text("# mock hook dispatcher")
+        # Create mock hook files
         (hooks_dir / "validate_settings.py").write_text("# mock validate settings")
 
         # Create shared hooks (used by install_shared_hooks)
         shared_hooks_dir = install_dir / "shared" / "hooks"
         shared_hooks_dir.mkdir(parents=True)
-        (shared_hooks_dir / "hook_dispatcher.py").write_text("# mock hook dispatcher")
         (shared_hooks_dir / "validate_settings.py").write_text("# mock validate settings")
 
         source_template = get_real_install_dir() / "claude" / "hooks-template.json"
@@ -118,7 +116,7 @@ class TestInstallClaude:
         from gobby.cli.installers.claude import install_claude
 
         mock_get_install_dir.return_value = mock_install_dir
-        mock_global_hooks.return_value = ["hook_dispatcher.py", "validate_settings.py"]
+        mock_global_hooks.return_value = ["validate_settings.py"]
         mock_shared_content.return_value = {
             "plugins": [],
             "docs": [],
@@ -253,7 +251,6 @@ class TestInstallClaude:
         hooks_dir.mkdir(parents=True)
 
         # Create hook files but not template
-        (hooks_dir / "hook_dispatcher.py").write_text("# mock")
         (hooks_dir / "validate_settings.py").write_text("# mock")
 
         mock_get_install_dir.return_value = install_dir
@@ -560,7 +557,6 @@ class TestInstallClaude:
         hooks_dir = claude_dir / "hooks"
         hooks_dir.mkdir(parents=True)
 
-        (hooks_dir / "hook_dispatcher.py").write_text("# mock")
         (hooks_dir / "validate_settings.py").write_text("# mock")
 
         hooks_template = {
@@ -610,7 +606,6 @@ class TestInstallClaude:
         hooks_dir = claude_dir / "hooks"
         hooks_dir.mkdir(parents=True)
 
-        (hooks_dir / "hook_dispatcher.py").write_text("# mock")
         (hooks_dir / "validate_settings.py").write_text("# mock")
         (claude_dir / "hooks-template.json").write_text("{ invalid json }")
 
@@ -643,15 +638,15 @@ class TestInstallClaude:
         from gobby.cli.installers.claude import install_claude
 
         mock_get_install_dir.return_value = mock_install_dir
-        mock_global_hooks.return_value = ["hook_dispatcher.py", "validate_settings.py"]
+        mock_global_hooks.return_value = ["validate_settings.py"]
         mock_shared_content.return_value = {"workflows": [], "plugins": []}
         mock_cli_content.return_value = {"workflows": [], "commands": []}
         mock_mcp_config.return_value = {"success": True, "added": False}
 
-        # Create existing hook file (legacy per-project hooks)
+        # Create existing per-project hook file
         hooks_dir = temp_project / ".claude" / "hooks"
         hooks_dir.mkdir(parents=True)
-        existing_hook = hooks_dir / "hook_dispatcher.py"
+        existing_hook = hooks_dir / "validate_settings.py"
         existing_hook.write_text("# old content")
 
         with patch.object(Path, "home", return_value=mock_home_dir):
@@ -684,7 +679,7 @@ class TestInstallClaude:
         from gobby.cli.installers.claude import install_claude
 
         mock_get_install_dir.return_value = mock_install_dir
-        mock_global_hooks.return_value = ["hook_dispatcher.py", "validate_settings.py"]
+        mock_global_hooks.return_value = ["validate_settings.py"]
         mock_shared_content.return_value = {"workflows": [], "plugins": []}
         mock_cli_content.return_value = {"workflows": [], "commands": []}
         mock_mcp_config.return_value = {"success": True, "added": False}
@@ -754,10 +749,7 @@ class TestUninstallClaude:
         )
 
         # Create hook files
-        (hooks_dir / "hook_dispatcher.py").write_text("# hook")
         (hooks_dir / "validate_settings.py").write_text("# validate")
-        (hooks_dir / "README.md").write_text("# readme")
-        (hooks_dir / "HOOK_SCHEMAS.md").write_text("# schemas")
 
         return temp_project
 
@@ -797,10 +789,7 @@ class TestUninstallClaude:
         assert "PostToolUse" in result["hooks_removed"]
 
         # Verify files were removed
-        assert "hook_dispatcher.py" in result["files_removed"]
-        assert "validate_settings.py" in result["files_removed"]
-        assert "README.md" in result["files_removed"]
-        assert "HOOK_SCHEMAS.md" in result["files_removed"]
+        assert result["files_removed"] == ["validate_settings.py"]
 
         assert result["mcp_removed"] is True
 
@@ -1008,22 +997,20 @@ class TestUninstallClaude:
         mock_get_install_dir.return_value = mock_install_dir
         mock_remove_mcp.return_value = {"success": True, "removed": True}
 
-        # Create minimal installation (only some hook files)
+        # Create minimal installation with no hook files present
         claude_path = temp_project / ".claude"
         hooks_dir = claude_path / "hooks"
         hooks_dir.mkdir(parents=True)
 
         (claude_path / "settings.json").write_text(json.dumps({"hooks": {}}))
-        (hooks_dir / "hook_dispatcher.py").write_text("# hook")
         # validate_settings.py is missing
 
         with patch.object(Path, "home", return_value=mock_home_dir):
             result = uninstall_claude(temp_project)
 
         assert result["success"] is True
-        assert "hook_dispatcher.py" in result["files_removed"]
         # Should not fail even though validate_settings.py is missing
-        assert "validate_settings.py" not in result["files_removed"]
+        assert result["files_removed"] == []
 
     @patch("gobby.cli.installers.claude.get_install_dir")
     @patch("gobby.cli.installers.claude.remove_mcp_server_json")
@@ -1221,7 +1208,6 @@ class TestInstallClaudeEdgeCases:
         hooks_dir = claude_dir / "hooks"
         hooks_dir.mkdir(parents=True)
 
-        (hooks_dir / "hook_dispatcher.py").write_text("# mock hook dispatcher")
         (hooks_dir / "validate_settings.py").write_text("# mock validate settings")
 
         hooks_template: dict[str, Any] = {"hooks": {"SessionStart": [{"hooks": []}]}}

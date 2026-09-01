@@ -180,10 +180,11 @@ def test_gobby_hook_detection_accepts_ghook_marker() -> None:
     )
 
 
-def test_gobby_hook_detection_rejects_legacy_dispatcher_commands() -> None:
-    assert not is_gobby_hook_command("uv run /tmp/hooks/hook_dispatcher.py --cli=codex")
+def test_gobby_hook_detection_requires_the_marker_not_a_path() -> None:
+    """Ownership is the ``--gobby-owned`` marker alone; paths never imply it."""
+    assert not is_gobby_hook_command("uv run /Users/test/.gobby/hooks/custom.py --cli=codex")
     assert not config_contains_gobby_hook(
-        {"hooks": [{"type": "command", "command": "hook_dispatcher.py --cli=qwen"}]}
+        {"hooks": [{"type": "command", "command": "ghook --cli=qwen"}]}
     )
 
 

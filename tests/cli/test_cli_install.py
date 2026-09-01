@@ -499,7 +499,7 @@ class TestInstallCommand:
             return_value={
                 "success": True,
                 "hooks_installed": [],
-                "files_installed": ["/home/user/.gobby/hooks/codex/hook_dispatcher.py"],
+                "files_installed": ["/home/user/.gobby/hooks/validate_settings.py"],
                 "workflows_installed": [],
                 "commands_installed": [],
                 "plugins_installed": [],
@@ -680,7 +680,7 @@ class TestUninstallCommand:
                 {
                     "success": True,
                     "hooks_removed": ["SessionStart", "SessionEnd"],
-                    "files_removed": ["hook_dispatcher.py"],
+                    "files_removed": ["validate_settings.py"],
                 },
                 ("Removed 2 hooks", "Removed 1 files"),
             ),
@@ -690,7 +690,7 @@ class TestUninstallCommand:
                 {
                     "success": True,
                     "hooks_removed": [],
-                    "files_removed": ["/home/user/.gobby/hooks/codex/hook_dispatcher.py"],
+                    "files_removed": ["/home/user/.gobby/hooks/validate_settings.py"],
                     "config_updated": True,
                 },
                 ("Removed 1 files",),
@@ -701,7 +701,7 @@ class TestUninstallCommand:
                 {
                     "success": True,
                     "hooks_removed": ["SessionStart"],
-                    "files_removed": ["hook_dispatcher.py"],
+                    "files_removed": ["validate_settings.py"],
                 },
                 ("Removed 1 hooks",),
             ),
@@ -847,7 +847,7 @@ class TestUninstallCommand:
             return_value={
                 "success": True,
                 "hooks_removed": [],
-                "files_removed": [str(temp_dir / ".gobby/hooks/codex/hook_dispatcher.py")],
+                "files_removed": [str(temp_dir / ".gobby/hooks/validate_settings.py")],
                 "config_updated": True,
             }
         )

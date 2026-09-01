@@ -298,7 +298,7 @@ def _iter_gobby_hook_trust_entries(
             if not isinstance(handlers, list):
                 continue
             for handler_index, handler in enumerate(handlers):
-                if not isinstance(handler, dict) or not _is_gobby_hook(handler):
+                if not isinstance(handler, dict) or not config_contains_gobby_hook(handler):
                     continue
                 current_hash = _normalized_codex_command_hook_hash(event_name, group, handler)
                 if current_hash:
@@ -469,7 +469,7 @@ def _install_hooks_file(
         if not isinstance(existing_groups, list):
             existing_groups = []
         existing["hooks"][hook_type] = merge_gobby_hook_groups(
-            existing_groups, hook_config, is_gobby_hook=_is_gobby_hook
+            existing_groups, hook_config, is_gobby_hook=config_contains_gobby_hook
         )
         hooks_installed.append(hook_type)
 
@@ -490,45 +490,6 @@ def _install_hooks_json(
         hooks_dir,
         hook_timeout_seconds=hook_timeout_seconds,
     )
-
-
-def _is_gobby_hook(hook_entry: Any) -> bool:
-    """Check if a hooks.json entry was installed by Gobby.
-
-    Inspects the entry's command/args for either the template marker or the
-    installed dispatcher command shape.
-    """
-    return config_contains_gobby_hook(hook_entry) or _is_codex_dispatcher_hook(hook_entry)
-
-
-def _normalize_hook_command_part(part: Any) -> str:
-    return str(part).replace("\\", "/")
-
-
-def _is_codex_dispatcher_command(command: Any) -> bool:
-    if isinstance(command, str):
-        normalized_command = _normalize_hook_command_part(command)
-        return (
-            ".gobby/hooks/hook_dispatcher.py" in normalized_command
-            and "--cli=codex" in normalized_command
-        )
-
-    if isinstance(command, Sequence):
-        normalized_parts = [_normalize_hook_command_part(part) for part in command]
-        return any("hook_dispatcher.py" in part for part in normalized_parts) and any(
-            part == "--cli=codex" or "--cli=codex" in part for part in normalized_parts
-        )
-
-    return False
-
-
-def _is_codex_dispatcher_hook(hook_entry: Any) -> bool:
-    if not isinstance(hook_entry, dict):
-        return False
-    for field in ("command", "cmd", "script"):
-        if _is_codex_dispatcher_command(hook_entry.get(field)):
-            return True
-    return False
 
 
 def install_codex(
@@ -779,13 +740,13 @@ def uninstall_codex(project_path: Path | None = None) -> dict[str, Any]:
                 for hook_type in list(hooks_config["hooks"].keys()):
                     hook_groups = hooks_config["hooks"][hook_type]
                     if not isinstance(hook_groups, list):
-                        if _is_gobby_hook(hook_groups):
+                        if config_contains_gobby_hook(hook_groups):
                             del hooks_config["hooks"][hook_type]
                             result["hooks_removed"].append(hook_type)
                         continue
 
                     cleaned_groups, removed = remove_gobby_hook_handlers(
-                        hook_groups, is_gobby_hook=_is_gobby_hook
+                        hook_groups, is_gobby_hook=config_contains_gobby_hook
                     )
                     if not removed:
                         continue

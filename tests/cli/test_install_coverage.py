@@ -1245,9 +1245,9 @@ class TestUninstallCommand:
         monkeypatch.delenv("GOBBY_HOOKS_DIR", raising=False)
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".claude" / "settings.json").write_text("{}")
-        dispatcher = tmp_path / ".gobby" / "hooks" / "hook_dispatcher.py"
-        dispatcher.parent.mkdir(parents=True)
-        dispatcher.write_text("# dispatcher")
+        validator = tmp_path / ".gobby" / "hooks" / "validate_settings.py"
+        validator.parent.mkdir(parents=True)
+        validator.write_text("# validate settings")
         claude = MagicMock(
             return_value={"success": True, "hooks_removed": ["hook1"], "files_removed": []}
         )
@@ -1263,8 +1263,8 @@ class TestUninstallCommand:
         assert result.exit_code == 0, result.output
         assert "Gobby Uninstallation" in result.output
         assert "Targets to uninstall: claude, rtk, impeccable" in result.output
-        assert "Removed global hook dispatchers from ~/.gobby/hooks/" in result.output
-        assert not dispatcher.exists()
+        assert "Removed global hook files from ~/.gobby/hooks/" in result.output
+        assert not validator.exists()
         claude.assert_called_once_with(tmp_path)
         tools["disable_rule"].assert_called_once_with(
             tools["runtime"].require_database.return_value

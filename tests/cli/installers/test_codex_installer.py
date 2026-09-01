@@ -257,87 +257,6 @@ trusted_hash = "sha256:user-tool"
     assert user_entry["trusted_hash"] == "sha256:user-tool"
 
 
-def test_codex_dispatcher_hook_detects_posix_string_command() -> None:
-    from gobby.cli.installers.codex import _is_codex_dispatcher_hook
-
-    assert _is_codex_dispatcher_hook(
-        {
-            "command": (
-                "python3 /tmp/project/.gobby/hooks/hook_dispatcher.py --cli=codex --type=Stop"
-            )
-        }
-    )
-
-
-def test_codex_dispatcher_hook_detects_windows_string_command() -> None:
-    from gobby.cli.installers.codex import _is_codex_dispatcher_hook
-
-    assert _is_codex_dispatcher_hook(
-        {
-            "cmd": (
-                "py C:\\Users\\josh\\repo\\.gobby\\hooks\\hook_dispatcher.py "
-                "--cli=codex --type=Stop"
-            )
-        }
-    )
-
-
-def test_codex_dispatcher_hook_detects_argv_command_list() -> None:
-    from gobby.cli.installers.codex import _is_codex_dispatcher_hook
-
-    assert _is_codex_dispatcher_hook(
-        {
-            "script": [
-                "python3",
-                "/tmp/project/.gobby/hooks/hook_dispatcher.py",
-                "--cli=codex",
-                "--type=Stop",
-            ]
-        }
-    )
-
-
-def test_codex_dispatcher_hook_ignores_non_codex_dispatcher_command() -> None:
-    from gobby.cli.installers.codex import _is_codex_dispatcher_hook
-
-    assert not _is_codex_dispatcher_hook(
-        {
-            "command": [
-                "python3",
-                "/tmp/project/.gobby/hooks/hook_dispatcher.py",
-                "--cli=claude",
-                "--type=Stop",
-            ]
-        }
-    )
-
-
-def test_codex_dispatcher_cleanup_preserves_unrelated_commands() -> None:
-    from gobby.cli.installers.codex import _is_gobby_hook
-    from gobby.cli.installers.hook_commands import remove_gobby_hook_handlers
-
-    user_hook = {"type": "command", "command": "echo user session hook"}
-    groups = [
-        {
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": (
-                        "python3 /tmp/project/.gobby/hooks/hook_dispatcher.py "
-                        "--cli=codex --type=Stop"
-                    ),
-                },
-                user_hook,
-            ]
-        }
-    ]
-
-    cleaned_groups, removed = remove_gobby_hook_handlers(groups, is_gobby_hook=_is_gobby_hook)
-
-    assert removed is True
-    assert cleaned_groups == [{"hooks": [user_hook]}]
-
-
 class TestInstallCodex:
     """Tests for install_codex function."""
 
@@ -383,7 +302,7 @@ class TestInstallCodex:
             mock_cli.return_value = {
                 "commands": ["cmd1"],
             }
-            mock_global.return_value = ["hook_dispatcher.py", "validate_settings.py"]
+            mock_global.return_value = ["validate_settings.py"]
             mock_clean.return_value = []
             yield mock_shared, mock_cli, mock_global
 
@@ -621,7 +540,7 @@ class TestInstallCodex:
             patch("gobby.cli.installers.codex.install_cli_content") as mock_cli,
             patch("gobby.cli.installers.codex.configure_mcp_server_toml") as mock_mcp,
         ):
-            mock_global.return_value = ["hook_dispatcher.py"]
+            mock_global.return_value = ["validate_settings.py"]
             mock_shared.return_value = {"plugins": []}
             mock_cli.return_value = {"commands": []}
             mock_mcp.return_value = {"success": True, "added": True}
@@ -687,7 +606,7 @@ class TestInstallCodex:
         ):
             mock_shared.return_value = {"plugins": ["plugin.py"]}
             mock_cli.return_value = {"commands": ["command1"]}
-            mock_global.return_value = ["hook_dispatcher.py"]
+            mock_global.return_value = ["validate_settings.py"]
 
             result = install_codex(mock_home)
 
@@ -1242,7 +1161,7 @@ class TestHooksTemplateFormat:
             mock_shared.return_value = {"plugins": []}
             mock_cli.return_value = {"commands": []}
             mock_mcp.return_value = {"success": True, "added": True}
-            mock_global.return_value = ["hook_dispatcher.py"]
+            mock_global.return_value = ["validate_settings.py"]
             yield
 
     def test_hooks_use_regex_matcher(
@@ -1388,7 +1307,7 @@ class TestEdgeCases:
             mock_shared.return_value = {"plugins": []}
             mock_cli.return_value = {"commands": []}
             mock_mcp.return_value = {"success": True, "added": True}
-            mock_global.return_value = ["hook_dispatcher.py"]
+            mock_global.return_value = ["validate_settings.py"]
 
             result = install_codex(mock_home)
 
@@ -1427,7 +1346,7 @@ debug = true
             mock_shared.return_value = {"plugins": []}
             mock_cli.return_value = {"commands": []}
             mock_mcp.return_value = {"success": True, "added": True}
-            mock_global.return_value = ["hook_dispatcher.py"]
+            mock_global.return_value = ["validate_settings.py"]
 
             result = install_codex(mock_home)
 
@@ -1465,7 +1384,7 @@ debug = true
             mock_shared.return_value = {"plugins": []}
             mock_cli.return_value = {"commands": []}
             mock_mcp.return_value = {"success": True, "added": True}
-            mock_global.return_value = ["hook_dispatcher.py"]
+            mock_global.return_value = ["validate_settings.py"]
 
             result = install_codex(mock_home)
 
@@ -1563,7 +1482,7 @@ debug = true
             mock_shared.return_value = {"plugins": []}
             mock_cli.return_value = {"commands": []}
             mock_mcp.return_value = {"success": True, "added": True}
-            mock_global.return_value = ["hook_dispatcher.py"]
+            mock_global.return_value = ["validate_settings.py"]
 
             result = install_codex(mock_home)
 
@@ -1616,7 +1535,7 @@ class TestResultStructure:
             mock_shared.return_value = {"plugins": []}
             mock_cli.return_value = {"commands": []}
             mock_mcp.return_value = {"success": True, "added": True}
-            mock_global.return_value = ["hook_dispatcher.py"]
+            mock_global.return_value = ["validate_settings.py"]
 
             result = install_codex(mock_home)
 

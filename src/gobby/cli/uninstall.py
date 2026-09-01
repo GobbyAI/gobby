@@ -49,18 +49,18 @@ def _detected_clis(home: Path) -> list[str]:
     return [name for name, config in _GLOBAL_CLI_CONFIGS if (home / config).exists()]
 
 
-def _remove_global_dispatchers() -> None:
+def _remove_global_hook_files() -> None:
     global_hooks_dir = Path(
         os.environ.get("GOBBY_HOOKS_DIR", str(Path.home() / ".gobby" / "hooks"))
     )
-    for fname in ("hook_dispatcher.py", "validate_settings.py"):
+    for fname in ("validate_settings.py",):
         fpath = global_hooks_dir / fname
         if fpath.exists():
             try:
                 fpath.unlink()
             except OSError as exc:
                 click.echo(f"  Warning: could not remove {fpath}: {exc}", err=True)
-    click.echo("Removed global hook dispatchers from ~/.gobby/hooks/")
+    click.echo("Removed global hook files from ~/.gobby/hooks/")
     click.echo("")
 
 
@@ -127,7 +127,7 @@ def uninstall(components: tuple[str, ...], working_dir: Path | None) -> None:
         runtime.close()
 
     if full_uninstall:
-        _remove_global_dispatchers()
+        _remove_global_hook_files()
         _teardown_ui_exposure()
 
     if not _echo_uninstall_summary(results):
