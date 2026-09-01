@@ -1087,3 +1087,40 @@ def test_pipeline_project_context_fails_closed_without_checkout(  # tdd-red wind
 
     with pytest.raises(CheckoutNotFoundError):
         executor._pipeline_project_context(project.id)
+
+
+@pytest.mark.asyncio
+async def test_execute_pipeline_keeps_project_id_without_checkout(
+    cron_storage: CronJobStorage, temp_db: HubDatabase
+) -> None:
+    """A project with no resolvable checkout root still hands its id downstream."""
+    pipeline = MagicMock()
+    pipeline.name = "cron-test-pipeline"
+    pipeline.model_dump_json.return_value = '{"name":"cron-test-pipeline"}'
+
+    pipeline_executor = MagicMock()
+    pipeline_executor.loader = MagicMock()
+    pipeline_executor.loader.load_pipeline = AsyncMock(return_value=pipeline)
+    pipeline_executor.session_manager = SessionManager(temp_db)
+
+    execution = MagicMock()
+    execution.id = "eeeeeeee-eeee-4eee-8eee-eeeeeeee0202"
+    pipeline_executor.execution_manager = MagicMock()
+    pipeline_executor.execution_manager.create_execution.return_value = execution
+
+    executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
+    background = AsyncMock(return_value=None)
+
+    # PROJECT_ID is a checkout-free sentinel, so the root lookup is refused.
+    job = _make_job(cron_storage, "pipeline", {"pipeline_name": "cron-test-pipeline"})
+    run = cron_storage.create_run(job.id)
+    assert run is not None
+
+    with patch.object(executor, "_run_pipeline_background", new=background):
+        result = await executor.execute(job, run)
+        if executor._background_tasks:
+            await asyncio.gather(*list(executor._background_tasks), return_exceptions=True)
+
+    assert result.status == "dispatched"
+    assert background.await_args is not None
+    assert background.await_args.kwargs["project_ctx"] == {"id": PROJECT_ID, "project_path": None}

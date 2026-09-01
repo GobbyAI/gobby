@@ -12,7 +12,14 @@ from gobby.config.tasks import DEFAULT_WORKFLOW_TIMEOUT_SECONDS
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
-from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import (
+    CHECKOUT_FREE_PROJECT_IDS,
+    GLOBAL_PROJECT_ID,
+    ORPHANED_PROJECT_ID,
+    PERSONAL_PROJECT_ID,
+    LocalProjectManager,
+)
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.git_utils import DEFAULT_GIT_STATUS_TIMEOUT_SECONDS, DirtyFiles
 from gobby.workflows.hooks import (
@@ -21,6 +28,12 @@ from gobby.workflows.hooks import (
     WorkflowHookHandler,
     _git_status_timeout,
     _is_known_no_repo_project,
+)
+from tests.fixtures.isolated_checkout import (
+    insert_isolated_machine,
+    insert_overlay,
+    install_isolated_checkout_project,
+    patch_local_machine_id,
 )
 
 pytestmark = pytest.mark.unit
@@ -52,6 +65,30 @@ def _handler_with_variables(
     handler._session_var_manager = MagicMock()
     handler._session_var_manager.get_variables.return_value = variables
     return handler, mock_engine
+
+
+def _handler_with_db(db: HubDatabase) -> WorkflowHookHandler:
+    handler = WorkflowHookHandler()
+    handler.rule_engine = MagicMock(db=db)
+    return handler
+
+
+def _init_git_repo(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
+    return path
+
+
+def _event_for(project_id: str, cwd: Path) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=MOCK_EXTERNAL_ID,
+        source=SessionSource.CLAUDE,
+        timestamp=MOCK_TIMESTAMP,
+        data={"tool_name": "Edit"},
+        cwd=str(cwd),
+        project_id=project_id,
+    )
 
 
 def test_handler_delegates_to_evaluate(workflow_handler: WorkflowHookHandler) -> None:
@@ -535,6 +572,7 @@ class TestProjectPathResolution:
         mock_engine = MagicMock()
         mock_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
         mock_engine.db = MagicMock()
+        mock_engine.db.fetchone.return_value = None  # no checkout row for this machine
         handler.rule_engine = mock_engine
 
         event = HookEvent(
@@ -551,3 +589,97 @@ class TestProjectPathResolution:
             await handler._evaluate_rules(event)
 
         assert "no project_path resolved" in caplog.text
+
+    @pytest.mark.parametrize("project_id", sorted(CHECKOUT_FREE_PROJECT_IDS))
+    def test_checkout_free_sentinel_skips_checkout_lookup(
+        self,
+        project_id: str,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
+    ) -> None:
+        handler = WorkflowHookHandler()
+        mock_engine = MagicMock()
+        handler.rule_engine = mock_engine
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=MOCK_EXTERNAL_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=MOCK_TIMESTAMP,
+            data={"tool_name": "Edit"},
+            project_id=project_id,
+        )
+
+        with caplog.at_level("WARNING", logger="gobby.workflows.hooks"):
+            assert handler._resolve_project_path(event) is None
+
+        mock_engine.db.fetchone.assert_not_called()
+        assert not caplog.records
+
+    def test_unregistered_git_root_falls_back_to_worktree_root(
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
+    ) -> None:
+        machine_id = insert_isolated_machine(temp_db)
+        patch_local_machine_id(monkeypatch, machine_id)
+        project = LocalProjectManager(temp_db).create(name="hooks-unregistered-root")
+        clone = _init_git_repo(tmp_path / "clone")
+        handler = _handler_with_db(temp_db)
+        event = _event_for(project.id, clone)
+
+        with caplog.at_level("WARNING", logger="gobby.workflows.hooks"):
+            resolved = handler._resolve_project_path(event)
+
+        assert resolved is not None
+        assert Path(resolved).resolve() == clone.resolve()
+        assert event.metadata["project_path"] == resolved
+        assert not caplog.records
+
+    def test_unregistered_root_beside_primary_checkout_falls_back_to_worktree_root(
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
+    ) -> None:
+        isolated = install_isolated_checkout_project(
+            temp_db, tmp_path / "primary", monkeypatch=monkeypatch
+        )
+        second = _init_git_repo(tmp_path / "second-clone")
+        handler = _handler_with_db(temp_db)
+        event = _event_for(isolated.project.id, second)
+
+        with caplog.at_level("WARNING", logger="gobby.workflows.hooks"):
+            resolved = handler._resolve_project_path(event)
+
+        assert resolved is not None
+        assert Path(resolved).resolve() == second.resolve()
+        assert Path(resolved).resolve() != Path(isolated.root_path).resolve()
+        assert not caplog.records
+
+    def test_registered_overlay_still_resolves_to_overlay_root(
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        isolated = install_isolated_checkout_project(
+            temp_db, tmp_path / "primary", monkeypatch=monkeypatch
+        )
+        overlay = _init_git_repo(tmp_path / "overlay").resolve()
+        insert_overlay(
+            temp_db,
+            project_id=isolated.project.id,
+            machine_id=isolated.machine_id,
+            path=str(overlay),
+            kind="worktree",
+        )
+        handler = _handler_with_db(temp_db)
+        event = _event_for(isolated.project.id, overlay)
+
+        assert handler._resolve_project_path(event) == str(overlay)
+        assert event.metadata["project_path"] == str(overlay)

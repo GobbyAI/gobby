@@ -257,10 +257,17 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         """Resolve the best available filesystem path for workflow git checks."""
         from gobby.storage.project_checkouts import (
             CheckoutNotFoundError,
+            CheckoutSentinelRejectedError,
+            MissingMachineContextError,
+            OverlayRegistrationRejectedError,
             require_root,
             resolve_operation_root,
         )
-        from gobby.storage.workspace_machine_scope import require_local_machine_id
+        from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS
+        from gobby.storage.workspace_machine_scope import (
+            MachineOwnershipMismatchError,
+            require_local_machine_id,
+        )
         from gobby.workflows.git_utils import resolve_git_worktree_root
 
         metadata = event.metadata if isinstance(event.metadata, dict) else {}
@@ -275,38 +282,48 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
             candidates.append(metadata_path)
 
         worktree_root = resolve_git_worktree_root(*candidates)
-        if not event.project_id or self.rule_engine is None:
-            if worktree_root:
-                metadata["project_path"] = worktree_root
-                return worktree_root
-            return None
+        if worktree_root:
+            metadata["project_path"] = worktree_root
+        project_id = event.project_id
+        if (
+            not project_id
+            or self.rule_engine is None
+            or _is_known_no_repo_project(project_id)
+            or project_id in CHECKOUT_FREE_PROJECT_IDS
+        ):
+            return worktree_root
 
-        machine_id = require_local_machine_id(
-            None, resource_kind="project_checkout", resource_id=event.project_id
+        # Checkout lookups fail soft on the hook hot path: a missing row, an
+        # unregistered root, or a machine-context gap degrades to the git
+        # worktree root (or None) so rule evaluation still runs.
+        soft_errors = (
+            CheckoutNotFoundError,
+            CheckoutSentinelRejectedError,
+            MissingMachineContextError,
+            OverlayRegistrationRejectedError,
+            MachineOwnershipMismatchError,
         )
         db = self.rule_engine.db
-        primary: str | None = None
         try:
-            primary = require_root(db, event.project_id, machine_id)
-        except CheckoutNotFoundError:
-            primary = None
-
-        if worktree_root:
-            if primary is not None and Path(worktree_root).resolve() == Path(primary).resolve():
-                metadata["project_path"] = primary
-                return primary
+            machine_id = require_local_machine_id(
+                None, resource_kind="project_checkout", resource_id=project_id
+            )
+            primary = require_root(db, project_id, machine_id)
+        except soft_errors as exc:
+            logger.debug("No checkout for project %s; using %r: %s", project_id, worktree_root, exc)
+            return worktree_root
+        if not worktree_root or Path(worktree_root).resolve() == Path(primary).resolve():
+            metadata["project_path"] = primary
+            return primary
+        try:
             resolved = resolve_operation_root(
-                db, event.project_id, machine_id, overlay_path=worktree_root
+                db, project_id, machine_id, overlay_path=worktree_root
             )
-            metadata["project_path"] = resolved
-            return resolved
-
-        if primary is None:
-            raise CheckoutNotFoundError(
-                f"no checkout for machine {machine_id} project {event.project_id}"
-            )
-        metadata["project_path"] = primary
-        return primary
+        except soft_errors as exc:
+            logger.debug("Unregistered root %s for project %s: %s", worktree_root, project_id, exc)
+            return worktree_root
+        metadata["project_path"] = resolved
+        return resolved
 
     def _handle_cancelled(self, event: HookEvent) -> HookResponse:
         """Handle CancelledError by logging and returning appropriate response."""

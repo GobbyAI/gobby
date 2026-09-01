@@ -212,6 +212,9 @@ def set_project_context_from_session(
     if not session or not session.project_id:
         return None
 
+    from gobby.storage.project_checkouts import CheckoutNotFoundError
+    from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+
     try:
         from gobby.storage.projects import LocalProjectManager
 
@@ -223,7 +226,9 @@ def set_project_context_from_session(
                 db=db,
                 machine_id=getattr(session, "machine_id", None),
             )
-    except (ImportError, OSError) as e:
+    except (ImportError, OSError, CheckoutNotFoundError, MachineOwnershipMismatchError) as e:
+        # No local checkout (or a foreign-machine session) degrades to an
+        # id-only context instead of failing the caller.
         logger.debug("Failed to enrich project context for session %s: %s", session_id, e)
 
     return set_project_context({"id": session.project_id})

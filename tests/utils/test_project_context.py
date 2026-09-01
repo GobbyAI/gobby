@@ -1075,7 +1075,22 @@ def test_build_and_set_project_context_uses_machine_checkout(  # tdd-red window
         reset_project_context(token)
 
 
-def test_build_and_set_project_context_fails_closed_without_checkout(  # tdd-red window
+def test_build_and_set_project_context_fails_closed_without_checkout(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="ctx-no-checkout")
+
+    from gobby.storage.project_checkouts import CheckoutNotFoundError
+
+    with pytest.raises(CheckoutNotFoundError):
+        _build_and_set_project_context(project, db=temp_db, machine_id=machine_id)
+
+
+def test_session_context_degrades_to_id_only_without_checkout(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1089,7 +1104,32 @@ def test_build_and_set_project_context_fails_closed_without_checkout(  # tdd-red
     session_manager = MagicMock()
     session_manager.get.return_value = session
 
-    from gobby.storage.project_checkouts import CheckoutNotFoundError
+    token = set_project_context_from_session("sess-1", session_manager, temp_db)
+    assert token is not None
+    try:
+        assert _current_project_context.get() == {"id": project.id}
+    finally:
+        reset_project_context(token)
 
-    with pytest.raises(CheckoutNotFoundError):
-        set_project_context_from_session("sess-1", session_manager, temp_db)
+
+def test_session_context_degrades_to_id_only_for_foreign_machine_session(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    session = MagicMock()
+    session.project_id = isolated.project.id
+    session.machine_id = "machine-elsewhere"
+    session_manager = MagicMock()
+    session_manager.get.return_value = session
+
+    token = set_project_context_from_session("sess-1", session_manager, temp_db)
+    assert token is not None
+    try:
+        assert _current_project_context.get() == {"id": isolated.project.id}
+    finally:
+        reset_project_context(token)

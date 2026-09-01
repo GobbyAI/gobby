@@ -109,13 +109,14 @@ class ProjectContextMiddleware(BaseHTTPMiddleware):
                             )
                             project = None
                         if project:
-                            return set_project_context(
-                                _project_context_payload(
-                                    project,
-                                    session_manager.db,
-                                    getattr(session, "machine_id", None),
-                                )
+                            payload = await _run_db(
+                                request,
+                                _project_context_payload,
+                                project,
+                                session_manager.db,
+                                getattr(session, "machine_id", None),
                             )
+                            return set_project_context(payload)
                         return set_project_context({"id": session.project_id})
             except Exception as e:
                 logger.debug("Failed to set project context from session %s: %s", session_id, e)
@@ -131,9 +132,10 @@ class ProjectContextMiddleware(BaseHTTPMiddleware):
                     pm = LocalProjectManager(session_manager.db)
                     project = await _run_db(request, pm.get, project_id)
                     if project:
-                        return set_project_context(
-                            _project_context_payload(project, session_manager.db, None)
+                        payload = await _run_db(
+                            request, _project_context_payload, project, session_manager.db, None
                         )
+                        return set_project_context(payload)
             except Exception as e:
                 logger.debug("Failed to resolve project %s: %s", project_id, e)
             # Fallback: set minimal context with just the id

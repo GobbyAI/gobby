@@ -9,6 +9,8 @@ from typing import Any
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import Project
 
+_logger = logging.getLogger(__name__)
+
 
 def register_cwd_marker_checkout(
     db: HubDatabase,
@@ -18,6 +20,8 @@ def register_cwd_marker_checkout(
 ) -> None:
     """Register or skip a cwd-marker checkout. Typed refusals propagate."""
     from gobby.storage.project_checkouts import (
+        CheckoutConflictError,
+        CheckoutRootTakenError,
         LocalProjectCheckoutManager,
         MissingMachineContextError,
         SoftDeletedProjectRejectedError,
@@ -54,8 +58,8 @@ def register_cwd_marker_checkout(
         raise MissingMachineContextError(str(exc)) from exc
 
     if manager._repo_path_write_is_blocked(cwd, machine_id=machine_id):
-        if project is not None:
-            _refresh_stale_marker(cwd, project, project_context, logger)
+        # Overlay, isolation, and worktree cwds carry a tracked marker:
+        # registration is refused and the marker is left untouched.
         return
 
     root = validate_checkout_root(
@@ -75,7 +79,22 @@ def register_cwd_marker_checkout(
                 f"project {project_id} is soft-deleted; hook ingress does not restore"
             )
 
-    LocalProjectCheckoutManager(db).register(machine_id, project_id, root)
+    try:
+        LocalProjectCheckoutManager(db).register(machine_id, project_id, root)
+    except (CheckoutConflictError, CheckoutRootTakenError) as exc:
+        # A second clone of a registered project, or a root owned by another
+        # project, must not break every hook in that clone: the session still
+        # starts and the operator rebinds explicitly.
+        (logger or _logger).warning(
+            "Checkout for project %s was not registered at %s: %s. "
+            "Rebind explicitly with `gobby projects rebind %s %s`.",
+            project.name,
+            root,
+            exc,
+            project.name,
+            root,
+        )
+        return
     _refresh_stale_marker(cwd, project, project_context, logger)
 
 
@@ -95,3 +114,5 @@ def _refresh_stale_marker(
     except MarkerMismatchError:
         if logger:
             logger.warning("Refused stale marker refresh at %s", cwd)
+    except OSError as exc:
+        (logger or _logger).warning("Could not refresh stale marker at %s: %s", cwd, exc)

@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 from starlette.responses import Response
 
-from gobby.servers.middleware.project_context import ProjectContextMiddleware
+from gobby.servers.middleware.project_context import (
+    ProjectContextMiddleware,
+    _project_context_payload,
+)
 from gobby.utils.project_context import get_project_context, reset_project_context
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
@@ -25,37 +28,26 @@ async def test_session_context_lookups_use_server_db_executor() -> None:
     session_manager.db = MagicMock()
     session = SimpleNamespace(project_id="project-1")
     project = SimpleNamespace(id="project-1", name="Test", repo_path="/repo")
-    server = SimpleNamespace(run_db=AsyncMock(side_effect=[session, project]))
+    payload = {"id": "project-1", "name": "Test", "project_path": "/repo"}
+    server = SimpleNamespace(run_db=AsyncMock(side_effect=[session, project, payload]))
     request = _request(
         {"x-gobby-session-id": "session-1"},
         SimpleNamespace(session_manager=session_manager, server=server),
     )
     middleware = ProjectContextMiddleware(AsyncMock())
 
-    with (
-        patch("gobby.storage.projects.LocalProjectManager") as manager_class,
-        patch(
-            "gobby.storage.project_checkouts.require_root",
-            return_value="/repo",
-        ),
-        patch(
-            "gobby.storage.workspace_machine_scope.require_local_machine_id",
-            return_value="machine-1",
-        ),
-    ):
+    with patch("gobby.storage.projects.LocalProjectManager") as manager_class:
         project_manager = manager_class.return_value
         token = await middleware._set_context(request)
 
     assert token is not None
     try:
-        assert get_project_context() == {
-            "id": "project-1",
-            "name": "Test",
-            "project_path": "/repo",
-        }
+        assert get_project_context() == payload
+        # The checkout lookup inside the payload builder runs off the loop too.
         assert server.run_db.await_args_list == [
             call(session_manager.get, "session-1"),
             call(project_manager.get, "project-1"),
+            call(_project_context_payload, project, session_manager.db, None),
         ]
     finally:
         reset_project_context(token)
@@ -76,7 +68,7 @@ async def test_project_context_lookup_uses_thread_fallback_without_server() -> N
         patch(
             "gobby.servers.middleware.project_context.asyncio.to_thread",
             new_callable=AsyncMock,
-            return_value=project,
+            side_effect=lambda func, *args: func(*args),
         ) as to_thread,
         patch("gobby.storage.project_checkouts.require_root", return_value="/repo"),
         patch(
@@ -85,6 +77,7 @@ async def test_project_context_lookup_uses_thread_fallback_without_server() -> N
         ),
     ):
         project_manager = manager_class.return_value
+        project_manager.get.return_value = project
         token = await middleware._set_context(request)
 
     assert token is not None
@@ -95,7 +88,10 @@ async def test_project_context_lookup_uses_thread_fallback_without_server() -> N
             "project_path": "/repo",
         }
         manager_class.assert_called_once_with(session_manager.db)
-        to_thread.assert_awaited_once_with(project_manager.get, "project-1")
+        assert to_thread.await_args_list == [
+            call(project_manager.get, "project-1"),
+            call(_project_context_payload, project, session_manager.db, None),
+        ]
     finally:
         reset_project_context(token)
 
@@ -118,11 +114,11 @@ async def test_dispatch_exposes_seeded_context_to_request_handler() -> None:
         return Response()
 
     with (
-        patch("gobby.storage.projects.LocalProjectManager"),
+        patch("gobby.storage.projects.LocalProjectManager") as manager_class,
         patch(
             "gobby.servers.middleware.project_context.asyncio.to_thread",
             new_callable=AsyncMock,
-            return_value=project,
+            side_effect=lambda func, *args: func(*args),
         ),
         patch("gobby.storage.project_checkouts.require_root", return_value="/repo"),
         patch(
@@ -130,6 +126,7 @@ async def test_dispatch_exposes_seeded_context_to_request_handler() -> None:
             return_value="machine-1",
         ),
     ):
+        manager_class.return_value.get.return_value = project
         await middleware.dispatch(request, call_next)
 
     assert observed_context == {

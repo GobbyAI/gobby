@@ -437,8 +437,13 @@ class CronExecutor:
             try:
                 project_ctx = await self._run_db(self._pipeline_project_context, job.project_id)
             except Exception:
+                # Keep the project id so downstream handlers still resolve
+                # task refs; only the checkout root is unknown.
+                project_ctx = {"id": job.project_id, "project_path": None}
                 logger.debug(
-                    "Failed to resolve repo_path for project %s", job.project_id, exc_info=True
+                    "Failed to resolve checkout root for project %s",
+                    job.project_id,
+                    exc_info=True,
                 )
 
         execution_manager = getattr(pipeline_executor, "execution_manager", None)
