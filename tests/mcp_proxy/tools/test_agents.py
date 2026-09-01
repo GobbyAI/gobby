@@ -494,8 +494,9 @@ class TestWaitForAgent:
         await completion_registry.notify(_WAIT_RUN_ID, {"status": "success"})
 
         assert wake.await_count == 2
-        wake.assert_any_await(_WAIT_ROOT_SESSION_ID, "", {"status": "success"})
-        wake.assert_any_await(_WAIT_CALLER_SESSION_ID, "", {"status": "success"})
+        wake_payload = {"status": "success", "completion_id": _WAIT_RUN_ID}
+        wake.assert_any_await(_WAIT_ROOT_SESSION_ID, "", wake_payload)
+        wake.assert_any_await(_WAIT_CALLER_SESSION_ID, "", wake_payload)
 
     @pytest.mark.asyncio
     async def test_late_notify_snapshot_does_not_gain_waiter(self, temp_db: HubDatabase) -> None:
