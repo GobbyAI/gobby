@@ -1878,6 +1878,7 @@ async def test_edits_in_another_checkout_match_task_files_by_suffix(tmp_path: Pa
 
 
 async def test_edit_outside_every_checkout_without_task_suffix_is_ignored(tmp_path: Path) -> None:
+    """Escaping paths only count when they end with a task file."""
     repo_path = tmp_path / "main"
     transcript = tmp_path / "claude.jsonl"
     _write_jsonl(
