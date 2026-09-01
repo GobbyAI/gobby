@@ -33,6 +33,7 @@ from ._session_binding import (
     _normalize_web_chat_provider,
     _resolve_web_chat_reasoning,
 )
+from ._session_checkout import ChatCheckoutRequiredError, resolve_chat_session_project_path
 from ._session_launch import (
     SessionLaunchContext,
     bind_session_lifecycle,
@@ -660,28 +661,36 @@ class ChatSessionMixin:
             except Exception:
                 logger.debug("Failed to persist pending chat_mode", exc_info=True)
 
-        # Look up the session-machine checkout so the subprocess CWD matches.
-        if session_manager and not session.project_path:
-            try:
-                from gobby.servers.websocket.chat._session_checkout import (
-                    resolve_chat_session_project_path,
-                )
-
-                session_machine_id = getattr(existing_db_session, "machine_id", None)
-                checkout_root = resolve_chat_session_project_path(
-                    session_manager.db, effective_pid, session_machine_id
-                )
-                if checkout_root:
-                    session.project_path = checkout_root
-            except Exception as e:
-                logger.warning("Failed to look up project checkout: %s", e)
-
-        # Override project_path with pending worktree path (from set_worktree)
+        # Consume any pending worktree override (from set_worktree) up front so a
+        # refusal below never leaves it queued for an unrelated later start.
         pending_wt = getattr(self, "_pending_worktree_paths", {})
         wt_override = pending_wt.pop(session_key, None)
+        getattr(self, "_pending_config_updated_at", {}).pop(session_key, None)
+
+        # Look up the session-machine checkout so the subprocess CWD matches.
+        # A real project with no checkout on this machine refuses to start
+        # (ChatCheckoutRequiredError) instead of running in the daemon's cwd.
+        if session_manager and not session.project_path and not wt_override:
+            session_machine_id = getattr(existing_db_session, "machine_id", None)
+            try:
+                checkout_root = await run_db(
+                    self,
+                    resolve_chat_session_project_path,
+                    session_manager.db,
+                    effective_pid,
+                    session_machine_id,
+                )
+            except ChatCheckoutRequiredError:
+                raise
+            except Exception as e:
+                logger.warning("Failed to look up project checkout: %s", e)
+            else:
+                if checkout_root:
+                    session.project_path = checkout_root
+
+        # Override project_path with the pending worktree path
         if wt_override:
             session.project_path = wt_override
-        getattr(self, "_pending_config_updated_at", {}).pop(session_key, None)
 
         # Persona / agent prompt bootstrap.
         session._pending_agent_name = agent_name

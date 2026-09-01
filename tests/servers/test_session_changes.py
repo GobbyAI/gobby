@@ -194,6 +194,61 @@ def test_resolve_session_workspace_prefers_isolated_worktree(
     )
 
 
+def test_resolve_session_workspace_prefers_isolated_worktree_without_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.storage.project_checkouts import CheckoutNotFoundError
+
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    session_manager = SimpleNamespace(
+        get=lambda _sid: SimpleNamespace(project_id="proj-1", machine_id="machine-1"),
+        db=SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "gobby.storage.project_checkouts.require_root",
+        lambda _db, _project_id, _machine_id: _raise(CheckoutNotFoundError("missing")),
+    )
+    monkeypatch.setattr(
+        "gobby.storage.workspace_machine_scope.require_local_machine_id",
+        lambda provided, **_kwargs: provided or "machine-1",
+    )
+    artifacts = SimpleNamespace(
+        worktree_path=str(worktree), clone_path=None, base_commit_sha="abc123"
+    )
+    task_manager = SimpleNamespace(
+        list_tasks=lambda claimed_by_session_id: [SimpleNamespace(id="task-1")],
+        artifacts=SimpleNamespace(get_artifacts=lambda _tid: artifacts),
+    )
+
+    ws = resolve_session_workspace(
+        session_manager=session_manager, task_manager=task_manager, session_id="sess-1"
+    )
+
+    assert ws == SessionWorkspace(
+        working_dir=str(worktree), base_ref="abc123", isolation="worktree"
+    )
+
+
+def test_resolve_session_workspace_propagates_foreign_machine_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+
+    session_manager = SimpleNamespace(
+        get=lambda _sid: SimpleNamespace(project_id="proj-1", machine_id="machine-foreign"),
+        db=SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "gobby.storage.workspace_machine_scope.require_machine_id", lambda: "machine-local"
+    )
+
+    with pytest.raises(MachineOwnershipMismatchError):
+        resolve_session_workspace(
+            session_manager=session_manager, task_manager=None, session_id="sess-1"
+        )
+
+
 def test_resolve_session_workspace_falls_back_to_project_repo(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

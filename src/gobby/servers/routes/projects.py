@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException
@@ -149,6 +150,19 @@ def _local_checkout(db: Any, project_id: str) -> ProjectCheckout | None:
     return LocalProjectCheckoutManager(db).get(machine_id, project_id)
 
 
+def _local_checkouts(db: Any, project_ids: Iterable[str]) -> dict[str, ProjectCheckout]:
+    """Return this daemon's checkouts for `project_ids`, keyed by project id, in one query."""
+    machine_id = get_machine_id()
+    wanted = set(project_ids)
+    if not machine_id or not wanted:
+        return {}
+    return {
+        checkout.project_id: checkout
+        for checkout in LocalProjectCheckoutManager(db).list_for_machine(machine_id)
+        if checkout.project_id in wanted
+    }
+
+
 def _get_project_manager(server: HTTPServer) -> LocalProjectManager:
     """Get a LocalProjectManager from the server's database."""
     if server.session_manager is None:
@@ -206,13 +220,13 @@ def _get_project_stats(server: HTTPServer, project_id: str) -> dict[str, Any]:
     return _get_project_stats_batch(server, [project_id])[project_id]
 
 
-def _project_to_response(
-    server: HTTPServer, project: Project, stats: dict[str, Any] | None = None
+def _build_project_response(
+    project: Project, stats: dict[str, Any], checkout: ProjectCheckout | None
 ) -> dict[str, Any]:
+    """Shape one project payload from already-resolved stats and checkout."""
     data = cast(dict[str, Any], jsonable_encoder(project.to_dict()))
     data["display_name"] = "Personal" if project.name == "_personal" else project.name
-    data.update(stats if stats is not None else _get_project_stats(server, project.id))
-    checkout = _local_checkout(_get_project_manager(server).db, project.id)
+    data.update(stats)
     data["checkout"] = _checkout_payload(checkout)
     if checkout is None:
         data["approval_rules"] = []
@@ -223,9 +237,46 @@ def _project_to_response(
     return data
 
 
+def _project_to_response(
+    server: HTTPServer, project: Project, stats: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    if stats is None:
+        stats = _get_project_stats(server, project.id)
+    checkout = _local_checkout(_get_project_manager(server).db, project.id)
+    return _build_project_response(project, stats, checkout)
+
+
+def _projects_to_responses(server: HTTPServer, projects: Sequence[Project]) -> list[dict[str, Any]]:
+    """Shape list payloads with one stats batch and one checkout query per request."""
+    if not projects:
+        return []
+    db = _get_project_manager(server).db
+    project_ids = [project.id for project in projects]
+    stats_by_project = _get_project_stats_batch(server, project_ids)
+    checkouts = _local_checkouts(db, project_ids)
+    return [
+        _build_project_response(project, stats_by_project[project.id], checkouts.get(project.id))
+        for project in projects
+    ]
+
+
 def create_projects_router(server: HTTPServer) -> APIRouter:
     """Create the projects API router."""
     router = APIRouter(prefix="/api/projects", tags=["projects"])
+
+    async def _broadcast_project(event: str, project_id: str, **kwargs: Any) -> None:
+        """Broadcast a project event via WebSocket if available."""
+        ws = server.services.websocket_server
+        if ws:
+            try:
+                await ws.broadcast_project_event(event, project_id, **kwargs)
+            except Exception as e:
+                logger.warning(
+                    "Failed to broadcast project event '%s' for project %s: %s",
+                    event,
+                    project_id,
+                    e,
+                )
 
     @router.get("")
     async def list_projects() -> list[dict[str, Any]]:
@@ -236,14 +287,9 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         visible_projects = [
             project for project in projects if project.name not in HIDDEN_PROJECT_NAMES
         ]
-        stats_by_project = await server.run_db(
-            _get_project_stats_batch, server, [project.id for project in visible_projects]
+        results: list[dict[str, Any]] = await server.run_db(
+            _projects_to_responses, server, visible_projects
         )
-        results = [
-            await server.run_db(_project_to_response, server, project, stats_by_project[project.id])
-            for project in visible_projects
-        ]
-
         return results
 
     @router.get("/{project_id}")
@@ -261,7 +307,7 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         """Return the calling daemon's checkout object-or-null."""
         pm = _get_project_manager(server)
         project = await server.run_db(pm.get, project_id)
-        if not project:
+        if not project or project.deleted_at:
             raise HTTPException(404, "Project not found")
         checkout = await server.run_db(_local_checkout, pm.db, project_id)
         return {"checkout": _checkout_payload(checkout)}
@@ -299,9 +345,12 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                 raise _checkout_http_error(exc) from exc
 
         checkout, created = await server.run_db(apply_register)
+        payload = _checkout_payload(checkout)
+        if created:
+            await _broadcast_project("checkout_registered", project_id, checkout=payload)
         return JSONResponse(
             status_code=201 if created else 200,
-            content={"checkout": _checkout_payload(checkout)},
+            content={"checkout": payload},
         )
 
     @router.post("/{project_id}/checkouts/{machine_id}/rebind")
@@ -333,7 +382,9 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                 raise _checkout_http_error(exc) from exc
 
         checkout = await server.run_db(apply_rebind)
-        return {"checkout": _checkout_payload(checkout)}
+        payload = _checkout_payload(checkout)
+        await _broadcast_project("checkout_rebound", project_id, checkout=payload)
+        return {"checkout": payload}
 
     @router.put("/{project_id}")
     @router.patch("/{project_id}")

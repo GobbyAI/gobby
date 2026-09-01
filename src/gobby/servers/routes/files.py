@@ -15,7 +15,11 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from gobby.servers.routes.projects import _checkout_http_error, _project_to_response
+from gobby.servers.routes.projects import (
+    HIDDEN_PROJECT_NAMES,
+    _checkout_http_error,
+    _projects_to_responses,
+)
 from gobby.storage.project_checkouts import (
     CheckoutNotFoundError,
     CheckoutSentinelRejectedError,
@@ -216,14 +220,20 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
 
     @router.get("/projects")
     async def list_projects() -> list[dict[str, Any]]:
-        """List projects as checkout-shaped JSON, never `repo_path`."""
+        """List visible projects as checkout-shaped JSON, never `repo_path`.
+
+        Hidden system projects stay out of the browser; stats and this daemon's
+        checkouts resolve in one batch per request rather than per project.
+        """
         pm = _get_project_manager(server)
         projects = await server.run_db(pm.list)
         if not any(project.id == PERSONAL_PROJECT_ID for project in projects):
             personal = await server.run_db(pm.get, PERSONAL_PROJECT_ID)
             if personal is not None:
                 projects = [personal, *projects]
-        return [await server.run_db(_project_to_response, server, project) for project in projects]
+        visible = [project for project in projects if project.name not in HIDDEN_PROJECT_NAMES]
+        results: list[dict[str, Any]] = await server.run_db(_projects_to_responses, server, visible)
+        return results
 
     @router.get("/tree")
     async def list_directory(

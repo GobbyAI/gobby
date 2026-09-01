@@ -12,14 +12,14 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import APIRouter, HTTPException, Query
 
 from gobby.servers.routes import source_control_github as _source_control_github
-from gobby.servers.routes.projects import _checkout_http_error
+from gobby.servers.routes.projects import HIDDEN_PROJECT_NAMES, _checkout_http_error
 from gobby.storage.project_checkouts import (
     CheckoutNotFoundError,
     CheckoutSentinelRejectedError,
     MissingMachineContextError,
     require_root,
 )
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS, LocalProjectManager
 from gobby.storage.workspace_machine_scope import (
     MachineOwnershipMismatchError,
     require_local_machine_id,
@@ -110,16 +110,19 @@ def _get_project_manager(server: HTTPServer) -> LocalProjectManager:
 def _resolve_project(server: HTTPServer, project_id: str | None) -> tuple[str | None, str | None]:
     """Resolve project_id to (checkout root, github_repo).
 
-    When project_id is None, falls back to the first project with a local checkout.
-    A named project with no checkout is HTTP 409, not an empty diff.
+    A checkout-free sentinel project resolves to (None, github_repo) so callers
+    return an empty payload instead of an error. When project_id is None, falls
+    back to the first checkout-owning project with a local checkout. A named
+    real project with no checkout is HTTP 409, not an empty diff.
     """
-    _HIDDEN = {"_orphaned", "_migrated"}
     try:
         pm = _get_project_manager(server)
         if project_id:
             project = pm.get(project_id)
             if not project:
                 return None, None
+            if project.id in CHECKOUT_FREE_PROJECT_IDS:
+                return None, project.github_repo
             machine_id = require_local_machine_id(
                 None, resource_kind="project_checkout", resource_id=project.id
             )
@@ -128,14 +131,14 @@ def _resolve_project(server: HTTPServer, project_id: str | None) -> tuple[str | 
             except CheckoutNotFoundError as exc:
                 raise _checkout_http_error(exc) from exc
         for project in pm.list():
-            if project.name in _HIDDEN:
+            if project.name in HIDDEN_PROJECT_NAMES or project.id in CHECKOUT_FREE_PROJECT_IDS:
                 continue
             try:
                 machine_id = require_local_machine_id(
                     None, resource_kind="project_checkout", resource_id=project.id
                 )
                 return require_root(pm.db, project.id, machine_id), project.github_repo
-            except CheckoutNotFoundError:
+            except (CheckoutNotFoundError, CheckoutSentinelRejectedError):
                 continue
     except HTTPException as exc:
         if exc.status_code == 409:

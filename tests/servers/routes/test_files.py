@@ -24,6 +24,7 @@ from tests.fixtures.isolated_checkout import (
 pytestmark = pytest.mark.unit
 
 PROJECT_ID = "11111111-1111-4111-8111-111111111111"
+HIDDEN_PROJECT_ID = "00000000-0000-0000-0000-000000000002"
 GIT_PROJECT_ID = "22222222-2222-4222-8222-222222222222"
 GIT_DIFF_PROJECT_ID = "33333333-3333-4333-8333-333333333333"
 UNKNOWN_PROJECT_ID = "99999999-9999-4999-8999-999999999999"
@@ -137,21 +138,22 @@ class TestFilesRoutes:
             checkout_root,
         )
 
-        def project_to_response(
-            _server: MagicMock, project: Any, stats: Any | None = None
-        ) -> dict[str, Any]:
-            return {
-                "id": project.id,
-                "name": project.name,
-                "checkout": {
-                    "machine_id": "test-machine",
-                    "root_path": project.repo_path,
-                },
-            }
+        def projects_to_responses(_server: MagicMock, projects: list[Any]) -> list[dict[str, Any]]:
+            return [
+                {
+                    "id": project.id,
+                    "name": project.name,
+                    "checkout": {
+                        "machine_id": "test-machine",
+                        "root_path": mock_project.repo_path,
+                    },
+                }
+                for project in projects
+            ]
 
         monkeypatch.setattr(
-            "gobby.servers.routes.files._project_to_response",
-            project_to_response,
+            "gobby.servers.routes.files._projects_to_responses",
+            projects_to_responses,
         )
         return server
 
@@ -172,6 +174,20 @@ class TestFilesRoutes:
         assert row["name"] == "test-project"
         assert "repo_path" not in row
         assert row["checkout"]["root_path"]
+
+    def test_list_projects_hides_system_projects(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        rows = list(mock_server.session_manager.db.fetchall.return_value)
+        hidden = dict(rows[0], id=HIDDEN_PROJECT_ID, name="_global")
+        mock_server.session_manager.db.fetchall.return_value = [hidden, *rows]
+
+        resp = client.get("/api/files/projects")
+
+        assert resp.status_code == 200
+        names = [project["name"] for project in resp.json()]
+        assert "_global" not in names
+        assert "test-project" in names
 
     # -- /tree --
 

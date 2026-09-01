@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -240,6 +240,77 @@ class TestProjectRoutes:
             assert payloads[project.id]["session_count"] == 1
             assert payloads[project.id]["open_task_count"] == 1
             assert payloads[project.id]["last_activity_at"] is not None
+
+    @pytest.mark.parametrize("path", ["/api/projects", "/api/files/projects"])
+    def test_project_lists_batch_checkout_queries(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        session_manager: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        path: str,
+    ) -> None:
+        checked_out = [
+            _install_local_checkout(
+                project_manager.db,
+                tmp_path / f"batch-root-{index}",
+                name=_unique_name("batch-checkout"),
+            )
+            for index in range(3)
+        ]
+        bare = project_manager.create(name=_unique_name("batch-bare"))
+
+        original_fetchall = session_manager.db.fetchall
+        original_fetchone = session_manager.db.fetchone
+        checkout_list_queries = 0
+        checkout_row_queries = 0
+        stats_queries = 0
+
+        def counting_fetchall(sql: str, params: tuple[Any, ...] = ()) -> Any:
+            nonlocal checkout_list_queries, stats_queries
+            if "FROM project_checkouts" in sql:
+                checkout_list_queries += 1
+            if "GROUP BY project_id" in sql and ("FROM sessions" in sql or "FROM tasks" in sql):
+                stats_queries += 1
+            return original_fetchall(sql, params)
+
+        def counting_fetchone(sql: str, params: tuple[Any, ...] = ()) -> Any:
+            nonlocal checkout_row_queries
+            if "FROM project_checkouts" in sql:
+                checkout_row_queries += 1
+            return original_fetchone(sql, params)
+
+        monkeypatch.setattr(session_manager.db, "fetchall", counting_fetchall)
+        monkeypatch.setattr(session_manager.db, "fetchone", counting_fetchone)
+
+        response = client.get(path)
+
+        assert response.status_code == 200
+        assert checkout_list_queries == 1
+        assert checkout_row_queries == 0
+        assert stats_queries == 2
+        payloads = {item["id"]: item for item in response.json()}
+        for isolated in checked_out:
+            assert payloads[isolated.project.id]["checkout"] == {
+                "machine_id": LOCAL_MACHINE_ID,
+                "root_path": isolated.root_path,
+            }
+        assert payloads[bare.id]["checkout"] is None
+
+    def test_files_projects_list_hides_system_projects(
+        self,
+        client: TestClient,
+        personal_project: dict,
+        orphaned_project: dict,
+        migrated_project: dict,
+    ) -> None:
+        response = client.get("/api/files/projects")
+
+        assert response.status_code == 200
+        names = {item["name"] for item in response.json()}
+        assert "_personal" in names
+        assert names.isdisjoint({"_orphaned", "_migrated", "_global"})
 
     # -----------------------------------------------------------------
     # GET /api/projects/{project_id}
@@ -666,7 +737,7 @@ class TestProjectRoutes:
     # DELETE /api/projects/{project_id}
     # -----------------------------------------------------------------
 
-    def test_delete_project(self, client: TestClient, real_project: dict) -> None:
+    def test_delete_project(self, client: TestClient, real_project: dict[str, Any]) -> None:
         """Successfully soft-delete a project."""
         response = client.delete(f"/api/projects/{real_project['id']}")
         assert response.status_code == 200
@@ -680,7 +751,7 @@ class TestProjectRoutes:
         assert response.status_code == 404
 
     def test_delete_project_already_deleted(
-        self, client: TestClient, real_project: dict, project_manager: LocalProjectManager
+        self, client: TestClient, real_project: dict[str, Any], project_manager: LocalProjectManager
     ) -> None:
         """404 when deleting already soft-deleted project."""
         project_manager.soft_delete(real_project["id"])
@@ -690,7 +761,7 @@ class TestProjectRoutes:
     def test_purge_project_uses_runner_service(
         self,
         session_manager: SessionManager,
-        real_project: dict,
+        real_project: dict[str, Any],
     ) -> None:
         calls: list[str] = []
 
@@ -715,7 +786,7 @@ class TestProjectRoutes:
     def test_purge_project_returns_503_without_runner_service(
         self,
         session_manager: SessionManager,
-        real_project: dict,
+        real_project: dict[str, Any],
     ) -> None:
         server = create_http_server(
             session_manager=session_manager,
@@ -770,7 +841,9 @@ class TestProjectRoutes:
             }
         }
 
-    def test_delete_protected_personal(self, client: TestClient, personal_project: dict) -> None:
+    def test_delete_protected_personal(
+        self, client: TestClient, personal_project: dict[str, Any]
+    ) -> None:
         """Cannot delete _personal (system project)."""
         response = client.delete(f"/api/projects/{personal_project['id']}")
         assert response.status_code == 403
@@ -905,6 +978,72 @@ class TestProjectCheckoutHttp:
         assert sentinel.json() == {"checkout": None}
         assert null_checkout.status_code == 200
         assert null_checkout.json() == {"checkout": None}
+
+    def test_get_checkouts_soft_deleted_is_404(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        isolated = _install_local_checkout(
+            project_manager.db,
+            tmp_path / "deleted-root",
+            name=_unique_name("deleted-checkout"),
+        )
+        assert project_manager.soft_delete(isolated.project.id)
+
+        response = client.get(f"/api/projects/{isolated.project.id}/checkouts")
+
+        assert response.status_code == 404
+
+    def test_register_and_rebind_broadcast_project_event(
+        self,
+        session_manager: SessionManager,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        websocket_server = MagicMock()
+        websocket_server.broadcast_project_event = AsyncMock()
+        server = create_http_server(
+            session_manager=session_manager,
+            database=session_manager.db,
+            websocket_server=websocket_server,
+        )
+        client = TestClient(server.app)
+        isolated = _install_local_checkout(
+            project_manager.db,
+            tmp_path / "broadcast-root",
+            name=_unique_name("broadcast-http"),
+        )
+        project_manager.db.execute(
+            "DELETE FROM project_checkouts WHERE project_id = %s AND machine_id = %s",
+            (isolated.project.id, LOCAL_MACHINE_ID),
+        )
+        url = f"/api/projects/{isolated.project.id}/checkouts"
+
+        created = client.post(url, json={"root_path": isolated.root_path})
+        assert created.status_code == 201
+        websocket_server.broadcast_project_event.assert_awaited_once_with(
+            "checkout_registered",
+            isolated.project.id,
+            checkout={"machine_id": LOCAL_MACHINE_ID, "root_path": isolated.root_path},
+        )
+
+        retry = client.post(url, json={"root_path": isolated.root_path})
+        assert retry.status_code == 200
+        assert websocket_server.broadcast_project_event.await_count == 1
+
+        moved = tmp_path / "broadcast-moved"
+        moved.mkdir()
+        write_project_marker(moved, project_id=isolated.project.id, name=isolated.project.name)
+        rebound = client.post(f"{url}/{LOCAL_MACHINE_ID}/rebind", json={"root_path": str(moved)})
+        assert rebound.status_code == 200
+        assert websocket_server.broadcast_project_event.await_count == 2
+        websocket_server.broadcast_project_event.assert_awaited_with(
+            "checkout_rebound",
+            isolated.project.id,
+            checkout=rebound.json()["checkout"],
+        )
 
     def test_register_is_201_then_200_and_maps_typed_errors(
         self,

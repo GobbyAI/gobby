@@ -27,7 +27,13 @@ from gobby.servers.routes.source_control import (
     create_source_control_router,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.project_checkouts import CheckoutSentinelRejectedError
+from gobby.storage.projects import (
+    CHECKOUT_FREE_PROJECT_IDS,
+    GLOBAL_PROJECT_ID,
+    PERSONAL_PROJECT_ID,
+    LocalProjectManager,
+)
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.worktrees.executor import WorktreeDeleteExecutor
 from tests.fixtures.isolated_checkout import (
@@ -340,6 +346,98 @@ class TestResolveProject:
         repo_path, github_repo = _resolve_project(mock_server, "proj-123")
         assert repo_path is None
         assert github_repo is None
+
+    def test_resolve_fallback_skips_checkout_free_sentinels(
+        self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        global_project = MagicMock()
+        global_project.id = GLOBAL_PROJECT_ID
+        global_project.name = "_global"
+        personal = MagicMock()
+        personal.id = PERSONAL_PROJECT_ID
+        personal.name = "_personal"
+        real = MagicMock()
+        real.id = "real"
+        real.name = "real-project"
+        real.github_repo = "org/real"
+
+        mock_pm = MagicMock()
+        mock_pm.list.return_value = [global_project, personal, real]
+        mock_pm.db = MagicMock()
+        monkeypatch.setattr(
+            "gobby.servers.routes.source_control.require_local_machine_id",
+            lambda _provided, **_kwargs: "machine-1",
+        )
+        resolved: list[str] = []
+
+        def fake_require_root(_db: Any, project_id: str, _machine_id: str) -> str:
+            resolved.append(project_id)
+            if project_id in CHECKOUT_FREE_PROJECT_IDS:
+                raise CheckoutSentinelRejectedError(project_id)
+            return "/tmp/real"
+
+        monkeypatch.setattr("gobby.servers.routes.source_control.require_root", fake_require_root)
+
+        with patch("gobby.servers.routes.source_control.LocalProjectManager", return_value=mock_pm):
+            from gobby.servers.routes.source_control import _resolve_project
+
+            repo_path, github_repo = _resolve_project(mock_server, None)
+
+        assert (repo_path, github_repo) == ("/tmp/real", "org/real")
+        assert resolved == ["real"]
+
+    def test_resolve_explicit_sentinel_is_empty_not_conflict(
+        self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        personal = MagicMock()
+        personal.id = PERSONAL_PROJECT_ID
+        personal.name = "_personal"
+        personal.github_repo = None
+
+        mock_pm = MagicMock()
+        mock_pm.get.return_value = personal
+        mock_pm.db = MagicMock()
+
+        def refuse(*_args: Any, **_kwargs: Any) -> str:
+            raise AssertionError("sentinel projects must not resolve a checkout")
+
+        monkeypatch.setattr("gobby.servers.routes.source_control.require_root", refuse)
+
+        with patch("gobby.servers.routes.source_control.LocalProjectManager", return_value=mock_pm):
+            from gobby.servers.routes.source_control import _resolve_project
+
+            repo_path, github_repo = _resolve_project(mock_server, PERSONAL_PROJECT_ID)
+
+        assert repo_path is None
+        assert github_repo is None
+
+    def test_status_for_sentinel_project_is_empty_200(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        personal = MagicMock()
+        personal.id = PERSONAL_PROJECT_ID
+        personal.name = "_personal"
+        personal.github_repo = None
+        mock_pm = MagicMock()
+        mock_pm.get.return_value = personal
+        mock_pm.db = MagicMock()
+        monkeypatch.setattr(sc_module, "_get_github", lambda _server, _project_id: None)
+
+        with patch("gobby.servers.routes.source_control.LocalProjectManager", return_value=mock_pm):
+            response = client.get(
+                "/api/source-control/status", params={"project_id": PERSONAL_PROJECT_ID}
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "github_available": False,
+            "github_repo": None,
+            "current_branch": None,
+            "branch_count": 0,
+            "worktree_count": 0,
+            "clone_count": 0,
+            "repo_path": None,
+        }
 
 
 # ---------------------------------------------------------------------------

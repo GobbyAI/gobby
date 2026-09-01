@@ -14,6 +14,7 @@ from gobby.agents.terminal_delivery import (
     deliver_existing_terminal_run_in_scope,
     shielded_terminal_delivery,
 )
+from gobby.servers.websocket.chat._session_checkout import ChatCheckoutRequiredError
 from gobby.servers.websocket.db import run_db
 from gobby.servers.websocket.handlers.session_observe_support import (
     _as_str,
@@ -379,6 +380,10 @@ async def handle_continue_in_chat(
                         session.db_session_id,
                         **session_updates,
                     )
+        except ChatCheckoutRequiredError as exc:
+            logger.warning("Refused continuation session %s: %s", conversation_id, exc)
+            await mixin._send_error(websocket, str(exc), code=exc.code)
+            return
         except Exception as e:
             logger.error("Failed to create continuation session: %s", e)
             await mixin._send_error(websocket, "Failed to create session")

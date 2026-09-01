@@ -593,6 +593,37 @@ class TestStreamChatResponse:
         )
 
     @pytest.mark.asyncio
+    async def test_startup_checkout_required_sends_stable_error_frames(
+        self,
+        mixin: DummyMessagingMixin,
+        ws: AsyncMock,
+    ) -> None:
+        from gobby.servers.websocket.chat._session_checkout import ChatCheckoutRequiredError
+
+        mixin.clients[ws] = {"conversation_id": "c1"}
+
+        with patch.object(
+            mixin,
+            "_create_chat_session",
+            new=AsyncMock(side_effect=ChatCheckoutRequiredError("proj-1")),
+        ):
+            await mixin._stream_chat_response(ws, "c1", "hi", None, "req-1")
+
+        messages = [json.loads(call[0][0]) for call in ws.send.call_args_list]
+        chat_error = next(msg for msg in messages if msg.get("type") == "chat_error")
+        error_frame = next(msg for msg in messages if msg.get("type") == "error")
+
+        assert chat_error["code"] == "checkout_required"
+        assert chat_error["error"] == "No checkout for this project on this machine"
+        assert chat_error["request_id"] == "req-1"
+        assert error_frame == {
+            "type": "error",
+            "code": "checkout_required",
+            "message": "No checkout for this project on this machine",
+            "request_id": "req-1",
+        }
+
+    @pytest.mark.asyncio
     async def test_stream_model_switch(self, mixin: DummyMessagingMixin, ws: AsyncMock):
         mixin.clients[ws] = {"conversation_id": "c1"}
         session = AsyncMock()

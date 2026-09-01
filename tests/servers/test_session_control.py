@@ -689,6 +689,67 @@ class TestContinueInChatTerminalKill:
         assert host._active_chat_tasks == {}
 
     @pytest.mark.asyncio
+    async def test_continue_in_chat_refuses_without_local_checkout(self) -> None:
+        from gobby.servers.websocket.chat._session_checkout import ChatCheckoutRequiredError
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+
+        source_session = MagicMock()
+        source_session.session_type = "terminal"
+        source_session.external_id = "cli-session-123"
+        source_session.project_id = "proj-1"
+        source_session.transcript_path = None
+        source_session.source = "codex"
+        source_session.terminal_context = {"parent_pid": "123"}
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=source_session)
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.agent_run_manager = None
+        host._send_error = AsyncMock()
+        host._create_chat_session = AsyncMock(side_effect=ChatCheckoutRequiredError("proj-1"))
+
+        with (
+            patch(
+                "gobby.storage.agents.LocalAgentRunManager.get_by_session",
+                return_value=None,
+            ),
+            patch(
+                "gobby.servers.websocket.handlers.session_observe.kill_terminal_session",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "gobby.servers.websocket.handlers.session_observe.check_resume_blocked",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "gobby.servers.websocket.handlers.session_observe_continue.asyncio.sleep",
+                new=AsyncMock(),
+            ),
+        ):
+            await SessionControlMixin._handle_continue_in_chat(
+                host,
+                ws,
+                {
+                    "source_session_id": "source-uuid",
+                    "conversation_id": "new-conv",
+                },
+            )
+
+        host._create_chat_session.assert_awaited_once()
+        host._send_error.assert_awaited_once_with(
+            ws, "No checkout for this project on this machine", code="checkout_required"
+        )
+        assert host._chat_sessions == {}
+        assert host._active_chat_tasks == {}
+
+    @pytest.mark.asyncio
     async def test_continue_in_chat_reuses_terminal_session_identity(self) -> None:
         """Terminal attach should convert the source session into the active web chat."""
         from gobby.servers.websocket.session_control import SessionControlMixin

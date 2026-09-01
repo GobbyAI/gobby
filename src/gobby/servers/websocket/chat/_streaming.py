@@ -16,6 +16,7 @@ from gobby.providers.capabilities.models import SpeedMode
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.chat_stream_transport import ChatStreamTransport
 from gobby.servers.websocket.chat._session_binding import _normalize_runtime_chat_mode
+from gobby.servers.websocket.chat._session_checkout import ChatCheckoutRequiredError
 from gobby.servers.websocket.chat._session_runtime import _resolve_git_branch
 from gobby.servers.websocket.chat._stream_events import (
     ChatStreamEventHandler,
@@ -373,18 +374,30 @@ class ChatStreamingMixin:
                 conversation_id,
             )
             error_message = "Failed to start chat session. Please try again."
+            error_code: str | None = None
             if isinstance(exc, LocalOpenAIModelWarmupError):
                 error_message = str(exc)
+            elif isinstance(exc, ChatCheckoutRequiredError):
+                error_message = str(exc)
+                error_code = exc.code
             error_payload = transport.base_msg(
                 type="chat_error",
                 message_id=assistant_message_id,
                 conversation_id=conversation_id,
                 error=error_message,
             )
+            if error_code is not None:
+                error_payload["code"] = error_code
             messaging_logger = logging.getLogger("gobby.servers.websocket.chat._messaging")
             if logger.isEnabledFor(logging.DEBUG) or messaging_logger.isEnabledFor(logging.DEBUG):
                 error_payload["error_detail"] = f"{type(exc).__name__}: {exc}"
             await transport.send_direct(error_payload)
+            if error_code is not None:
+                # Stable top-level error frame so the UI can act on the code
+                # without depending on the request-scoped chat_error lifecycle.
+                await transport.send_direct(
+                    transport.base_msg(type="error", code=error_code, message=error_message)
+                )
             return None
 
     async def _maybe_switch_model(

@@ -146,36 +146,45 @@ def resolve_session_workspace(
     """Resolve the working directory + diff base for a session.
 
     Returns None when the session is unknown or no readable working directory
-    can be resolved.
+    can be resolved. An isolated worktree/clone wins outright; otherwise the
+    session machine's primary checkout is required, and ``CheckoutNotFoundError``
+    (no checkout here) or ``MachineOwnershipMismatchError`` (foreign machine)
+    propagate so HTTP routes can map them to 404/409.
     """
     session = session_manager.get(session_id)
     if session is None:
         return None
 
-    repo_path: str | None = None
-    try:
-        from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
-        from gobby.storage.workspace_machine_scope import require_local_machine_id
-
-        if session.project_id:
-            machine_id = require_local_machine_id(
-                getattr(session, "machine_id", None),
-                resource_kind="project_checkout",
-                resource_id=session.project_id,
-            )
-            repo_path = require_root(session_manager.db, session.project_id, machine_id)
-    except CheckoutNotFoundError:
-        raise
-    except _RECOVERABLE_WORKSPACE_ERRORS:
-        logger.debug("Failed to resolve project for session %s", session_id, exc_info=True)
-
     isolated = _resolve_isolated_workspace(task_manager, session_id)
     if isolated is not None:
         return isolated
 
+    repo_path = _resolve_checkout_root(session_manager, session, session_id)
     if repo_path and Path(repo_path).is_dir():
         return SessionWorkspace(working_dir=repo_path, base_ref="HEAD", isolation="none")
     return None
+
+
+def _resolve_checkout_root(session_manager: Any, session: Any, session_id: str) -> str | None:
+    """Return the session machine's primary checkout root, or None on shape errors."""
+    from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
+    from gobby.storage.workspace_machine_scope import require_local_machine_id
+
+    try:
+        project_id = session.project_id
+        if not project_id:
+            return None
+        machine_id = require_local_machine_id(
+            getattr(session, "machine_id", None),
+            resource_kind="project_checkout",
+            resource_id=project_id,
+        )
+        return require_root(session_manager.db, project_id, machine_id)
+    except CheckoutNotFoundError:
+        raise
+    except _RECOVERABLE_WORKSPACE_ERRORS:
+        logger.debug("Failed to resolve project for session %s", session_id, exc_info=True)
+        return None
 
 
 def _resolve_isolated_workspace(task_manager: Any, session_id: str) -> SessionWorkspace | None:

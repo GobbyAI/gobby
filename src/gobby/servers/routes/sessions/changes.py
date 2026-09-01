@@ -21,6 +21,8 @@ from gobby.servers.session_changes import (
     is_safe_relative_path,
     resolve_session_workspace,
 )
+from gobby.storage.project_checkouts import CheckoutNotFoundError
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -32,11 +34,24 @@ def register_changes_routes(router: APIRouter, server: HTTPServer) -> None:
     """Register session-scoped Changes routes on the router."""
 
     def _resolve(session_id: str) -> SessionWorkspace:
-        workspace = resolve_session_workspace(
-            session_manager=server.session_manager,
-            task_manager=server.task_manager,
-            session_id=session_id,
-        )
+        try:
+            workspace = resolve_session_workspace(
+                session_manager=server.session_manager,
+                task_manager=server.task_manager,
+                session_id=session_id,
+            )
+        except CheckoutNotFoundError as exc:
+            raise HTTPException(
+                404,
+                detail={
+                    "error": type(exc).__name__,
+                    "message": "No checkout for this session's project on this machine",
+                },
+            ) from exc
+        except MachineOwnershipMismatchError as exc:
+            raise HTTPException(
+                409, detail={"error": type(exc).__name__, "message": str(exc)}
+            ) from exc
         if workspace is None:
             raise HTTPException(404, "Session working directory not found")
         return workspace

@@ -664,6 +664,7 @@ class TestCreateChatSessionInner:
         existing_db_sess.id = "db-existing"
         existing_db_sess.seq_num = 88
         existing_db_sess.session_type = "web_chat"
+        existing_db_sess.machine_id = None
         existing_db_sess.source = "codex"
         existing_db_sess.project_id = "proj-1"
         existing_db_sess.external_id = None
@@ -705,6 +706,7 @@ class TestCreateChatSessionInner:
         predecessor.id = "pred-db"
         predecessor.seq_num = 88
         predecessor.session_type = "web_chat"
+        predecessor.machine_id = None
         predecessor.status = "expired"
         predecessor.source = "claude"
         predecessor.project_id = "project-old"
@@ -718,6 +720,7 @@ class TestCreateChatSessionInner:
         successor.id = "succ-db"
         successor.seq_num = 89
         successor.session_type = "web_chat"
+        successor.machine_id = None
         successor.status = "active"
         successor.source = "codex"
         successor.project_id = "project-new"
@@ -777,6 +780,7 @@ class TestCreateChatSessionInner:
         existing_db_sess.id = "db-existing"
         existing_db_sess.seq_num = 88
         existing_db_sess.session_type = "web_chat"
+        existing_db_sess.machine_id = None
         existing_db_sess.status = "active"
         existing_db_sess.source = "codex"
         existing_db_sess.project_id = "project-old"
@@ -826,6 +830,7 @@ class TestCreateChatSessionInner:
         existing_db_sess.id = "db-expired"
         existing_db_sess.seq_num = 89
         existing_db_sess.session_type = "web_chat"
+        existing_db_sess.machine_id = None
         existing_db_sess.status = "expired"
         existing_db_sess.source = "codex"
         existing_db_sess.project_id = "proj-1"
@@ -869,6 +874,7 @@ class TestCreateChatSessionInner:
         existing_terminal.id = "term-row-id"
         existing_terminal.seq_num = 27
         existing_terminal.session_type = "terminal"
+        existing_terminal.machine_id = None
         existing_terminal.source = "claude"
         existing_terminal.project_id = "proj-1"
         existing_terminal.external_id = "sdk-session-123"
@@ -881,6 +887,7 @@ class TestCreateChatSessionInner:
         normalized_session.id = "term-row-id"
         normalized_session.seq_num = 27
         normalized_session.session_type = "web_chat"
+        normalized_session.machine_id = None
         normalized_session.source = "claude"
         normalized_session.project_id = "proj-1"
         normalized_session.external_id = "sdk-session-123"
@@ -988,6 +995,118 @@ class TestCreateChatSessionInner:
 
         assert session is mock_session
         assert session.project_path == isolated.root_path
+
+    @pytest.mark.asyncio
+    async def test_create_chat_session_refuses_without_local_checkout(
+        self,
+        mixin: DummyMixin,
+        temp_db: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.servers.websocket.chat._session_checkout import ChatCheckoutRequiredError
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import (
+            insert_isolated_machine,
+            patch_local_machine_id,
+        )
+
+        machine_id = insert_isolated_machine(temp_db)
+        patch_local_machine_id(monkeypatch, machine_id)
+        project = LocalProjectManager(temp_db).create(name="chat-no-checkout")
+        existing = MagicMock()
+        existing.id = "db-no-checkout"
+        existing.seq_num = 4
+        existing.session_type = "web_chat"
+        existing.source = "claude"
+        existing.project_id = project.id
+        existing.machine_id = machine_id
+        existing.external_id = "ext-no-checkout"
+        existing.usage_output_tokens = 0
+        existing.chat_mode = "normal"
+        existing.approved_tools_json = None
+        existing.status = "active"
+        existing.model = None
+        existing.sandbox_policy_hash = None
+
+        mock_session = AsyncMock()
+        mock_session.chat_mode = "code"
+        mock_session.db_session_id = None
+        mock_session.resume_session_id = None
+        mock_session.project_path = None
+        mock_session.project_id = None
+        mock_session.system_prompt_override = None
+        mixin.web_chat_runtime_manager = MagicMock()
+        mixin.web_chat_runtime_manager.create_session.return_value = mock_session
+        mixin.web_chat_runtime_manager.sandbox_policy_hash = "policy"
+        mixin.session_manager = MagicMock()
+        mixin.session_manager.db = temp_db
+        mixin.session_manager.get.return_value = existing
+
+        with (
+            patch.object(mixin, "_fire_lifecycle", AsyncMock()),
+            pytest.raises(ChatCheckoutRequiredError) as excinfo,
+        ):
+            await mixin._create_chat_session_inner("conv-no-checkout", project_id=project.id)
+
+        assert excinfo.value.code == "checkout_required"
+        assert str(excinfo.value) == "No checkout for this project on this machine"
+        mock_session.start.assert_not_awaited()
+        assert mock_session.project_path is None
+        assert "conv-no-checkout" not in mixin._chat_sessions
+
+    @pytest.mark.asyncio
+    async def test_create_chat_session_sentinel_project_starts_without_checkout(
+        self,
+        mixin: DummyMixin,
+        temp_db: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.storage.projects import PERSONAL_PROJECT_ID
+        from tests.fixtures.isolated_checkout import (
+            insert_isolated_machine,
+            patch_local_machine_id,
+        )
+
+        machine_id = insert_isolated_machine(temp_db)
+        patch_local_machine_id(monkeypatch, machine_id)
+        existing = MagicMock()
+        existing.id = "db-personal"
+        existing.seq_num = 5
+        existing.session_type = "web_chat"
+        existing.source = "claude"
+        existing.project_id = PERSONAL_PROJECT_ID
+        existing.machine_id = machine_id
+        existing.external_id = "ext-personal"
+        existing.usage_output_tokens = 0
+        existing.chat_mode = "normal"
+        existing.approved_tools_json = None
+        existing.status = "active"
+        existing.model = None
+        existing.sandbox_policy_hash = None
+
+        mock_session = AsyncMock()
+        mock_session.chat_mode = "code"
+        mock_session.db_session_id = None
+        mock_session.resume_session_id = None
+        mock_session.project_path = None
+        mock_session.project_id = None
+        mock_session.system_prompt_override = None
+        mixin.web_chat_runtime_manager = MagicMock()
+        mixin.web_chat_runtime_manager.create_session.return_value = mock_session
+        mixin.web_chat_runtime_manager.sandbox_policy_hash = "policy"
+        mixin.session_manager = MagicMock()
+        mixin.session_manager.db = temp_db
+        mixin.session_manager.get.return_value = existing
+
+        with patch.object(mixin, "_fire_lifecycle", AsyncMock()):
+            session = await mixin._create_chat_session_inner(
+                "conv-personal", project_id=PERSONAL_PROJECT_ID
+            )
+
+        assert session is mock_session
+        # Checkout-free sentinels keep the pre-existing launch fallback.
+        assert session.project_path == "."
+        mock_session.start.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_fire_session_end(self, mixin: DummyMixin) -> None:
