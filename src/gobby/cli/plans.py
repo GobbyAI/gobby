@@ -20,7 +20,9 @@ from gobby.plans.review_evidence_store import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
+from gobby.storage.project_checkouts import require_root
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.tasks.expansion._validate import validate_plan_file
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.project_context import get_project_context
@@ -237,9 +239,12 @@ def _normalized_evidence_plan_path(
     if plan_path is None:
         return None
     project = LocalProjectManager(db).get(project_id)
-    if project is None or project.repo_path is None:
+    if project is None:
         raise click.ClickException(f"Project {project_id} has no repository path")
-    root = Path(project.repo_path).expanduser().resolve()
+    machine_id = require_local_machine_id(
+        None, resource_kind="project_checkout", resource_id=project_id
+    )
+    root = Path(require_root(db, project_id, machine_id)).expanduser().resolve()
     try:
         return normalize_plan_path(root, plan_path).relative_to(root).as_posix()
     except (OSError, ReviewEvidenceError) as exc:

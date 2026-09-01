@@ -1737,6 +1737,18 @@ class _FakeDreamDB:
 
     def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
         normalized = " ".join(sql.split())
+        if "FROM project_checkouts" in normalized:
+            machine_id, project_id = map(str, params[:2])
+            project = self.projects.get(project_id)
+            root_path = project.get("repo_path") if project is not None else None
+            timestamp = datetime(2025, 1, 1, tzinfo=UTC)
+            return {
+                "machine_id": machine_id,
+                "project_id": project_id,
+                "root_path": root_path or f"/tmp/{project_id}",
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            }
         if normalized.startswith("SELECT COUNT(*) AS total FROM memory_dream_snapshots"):
             run_id = str(params[0])
             total = sum(1 for row in self.snapshots if row["run_id"] == run_id and row["applied"])
@@ -3370,6 +3382,7 @@ async def test_run_all_due_projects_disabled_returns_empty_aggregate_without_enu
 async def test_truth_change_trigger_rejudges_cooled_memory_on_digest_change(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A codewiki digest change clears the cooldown for a cooled project.
 
@@ -3379,9 +3392,16 @@ async def test_truth_change_trigger_rejudges_cooled_memory_on_digest_change(
     firmly cooled (a normal cooldown-throttled sweep would skip it), yet a digest
     change must make it due again; an unchanged digest must leave it cooled.
     """
-    pm = LocalProjectManager(temp_db)
-    repo = tmp_path / "repo"
-    project = pm.create(name="truth-trigger-proj", repo_path=str(repo))
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db,
+        tmp_path / "repo",
+        name="truth-trigger-proj",
+        monkeypatch=monkeypatch,
+    )
+    repo = Path(isolated.root_path)
+    project = isolated.project
     manager = LocalMemoryManager(temp_db)
     service = MemoryDreamService(
         memory_manager=cast(MemoryDreamManagerProtocol, manager),
@@ -3794,3 +3814,35 @@ async def test_apply_action_os_failure_stays_warning(
 def test_duplicate_memory_content_error_is_value_error() -> None:
     """The MCP create/update surface catches ValueError; the subclass must stay one."""
     assert issubclass(DuplicateMemoryContentError, ValueError)
+
+
+def test_dream_resolve_repo_path_uses_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    service = MemoryDreamService(memory_manager=SimpleNamespace(db=temp_db))
+
+    assert service._resolve_repo_path(isolated.project.id) == isolated.root_path
+
+
+def test_dream_resolve_repo_path_fails_closed_without_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.project_checkouts import CheckoutNotFoundError
+    from gobby.storage.projects import LocalProjectManager
+    from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="dream-no-checkout")
+    service = MemoryDreamService(memory_manager=SimpleNamespace(db=temp_db))
+
+    with pytest.raises(CheckoutNotFoundError):
+        service._resolve_repo_path(project.id)

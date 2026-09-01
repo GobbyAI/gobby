@@ -660,17 +660,21 @@ class ChatSessionMixin:
             except Exception:
                 logger.debug("Failed to persist pending chat_mode", exc_info=True)
 
-        # Look up repo_path from DB so the subprocess CWD matches the selected project
+        # Look up the session-machine checkout so the subprocess CWD matches.
         if session_manager and not session.project_path:
             try:
-                from gobby.storage.projects import LocalProjectManager
+                from gobby.servers.websocket.chat._session_checkout import (
+                    resolve_chat_session_project_path,
+                )
 
-                pm = LocalProjectManager(session_manager.db)
-                project = pm.get(effective_pid)
-                if project and project.repo_path:
-                    session.project_path = project.repo_path
+                session_machine_id = getattr(existing_db_session, "machine_id", None)
+                checkout_root = resolve_chat_session_project_path(
+                    session_manager.db, effective_pid, session_machine_id
+                )
+                if checkout_root:
+                    session.project_path = checkout_root
             except Exception as e:
-                logger.warning("Failed to look up project repo_path: %s", e)
+                logger.warning("Failed to look up project checkout: %s", e)
 
         # Override project_path with pending worktree path (from set_worktree)
         pending_wt = getattr(self, "_pending_worktree_paths", {})

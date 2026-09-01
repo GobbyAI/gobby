@@ -49,9 +49,16 @@ async def _run_db(
 def _discover_wiki_cron_project_scopes(
     database: Any,
 ) -> tuple[list[tuple[str, list[str] | None]], list[str]]:
+    from gobby.storage.project_checkouts import LocalProjectCheckoutManager
     from gobby.storage.projects import LocalProjectManager
+    from gobby.utils.machine_id import require_machine_id
 
     project_manager = LocalProjectManager(database)
+    checkout_manager = LocalProjectCheckoutManager(database)
+    checkouts = {
+        checkout.project_id: checkout
+        for checkout in checkout_manager.list_for_machine(require_machine_id())
+    }
     scopes: list[tuple[str, list[str] | None]] = []
     stale_project_ids: list[str] = []
     offset = 0
@@ -65,7 +72,8 @@ def _discover_wiki_cron_project_scopes(
         for project in projects:
             if project_manager.is_protected(project):
                 continue
-            if not project.repo_path or not Path(project.repo_path).is_dir():
+            checkout = checkouts.get(project.id)
+            if checkout is None or not Path(checkout.root_path).is_dir():
                 stale_project_ids.append(project.id)
                 continue
             scopes.append((project.id, None))

@@ -12,8 +12,18 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import APIRouter, HTTPException, Query
 
 from gobby.servers.routes import source_control_github as _source_control_github
+from gobby.servers.routes.projects import _checkout_http_error
+from gobby.storage.project_checkouts import (
+    CheckoutNotFoundError,
+    CheckoutSentinelRejectedError,
+    MissingMachineContextError,
+    require_root,
+)
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+from gobby.storage.workspace_machine_scope import (
+    MachineOwnershipMismatchError,
+    require_local_machine_id,
+)
 from gobby.worktrees.deletion import (
     DeletionSurface,
     WorktreeDeletionRequest,
@@ -98,25 +108,47 @@ def _get_project_manager(server: HTTPServer) -> LocalProjectManager:
 
 
 def _resolve_project(server: HTTPServer, project_id: str | None) -> tuple[str | None, str | None]:
-    """Resolve project_id to (repo_path, github_repo).
+    """Resolve project_id to (checkout root, github_repo).
 
-    When project_id is None, falls back to the first project with a repo_path.
-    Returns (None, None) if no project found.
+    When project_id is None, falls back to the first project with a local checkout.
+    A named project with no checkout is HTTP 409, not an empty diff.
     """
     _HIDDEN = {"_orphaned", "_migrated"}
     try:
         pm = _get_project_manager(server)
         if project_id:
             project = pm.get(project_id)
-            if project:
-                return project.repo_path, project.github_repo
-        else:
-            # No project specified — use first project with a repo_path
-            for p in pm.list():
-                if p.name not in _HIDDEN and p.repo_path:
-                    return p.repo_path, p.github_repo
-    except (ValueError, OSError, HTTPException) as e:
-        logger.debug("Failed to resolve project %s: %s", project_id, e)
+            if not project:
+                return None, None
+            machine_id = require_local_machine_id(
+                None, resource_kind="project_checkout", resource_id=project.id
+            )
+            try:
+                return require_root(pm.db, project.id, machine_id), project.github_repo
+            except CheckoutNotFoundError as exc:
+                raise _checkout_http_error(exc) from exc
+        for project in pm.list():
+            if project.name in _HIDDEN:
+                continue
+            try:
+                machine_id = require_local_machine_id(
+                    None, resource_kind="project_checkout", resource_id=project.id
+                )
+                return require_root(pm.db, project.id, machine_id), project.github_repo
+            except CheckoutNotFoundError:
+                continue
+    except HTTPException as exc:
+        if exc.status_code == 409:
+            raise
+        logger.debug("Failed to resolve project %s: %s", project_id, exc)
+    except (
+        MissingMachineContextError,
+        MachineOwnershipMismatchError,
+        CheckoutSentinelRejectedError,
+    ) as exc:
+        raise _checkout_http_error(exc) from exc
+    except (ValueError, OSError) as exc:
+        logger.debug("Failed to resolve project %s: %s", project_id, exc)
     return None, None
 
 

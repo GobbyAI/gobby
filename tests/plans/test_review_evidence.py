@@ -20,10 +20,9 @@ from gobby.plans.review_evidence_io import (
 )
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.hub.protocol import Transaction
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.utils.machine_id import require_machine_id
 from tests.plans.review_evidence_helpers import (
     ROUND_PROSE,
     bind_interactive_review,
@@ -146,7 +145,7 @@ def test_prepare_next_round_after_finalized_checkpoint_from_other_session(
 
     successor = SessionManager(service.db).register(
         external_id="review-evidence-successor",
-        machine_id=require_machine_id(),
+        machine_id=None,
         source="claude",
         project_id=project_id,
     )
@@ -204,7 +203,7 @@ def test_reconcile_tolerates_session_rekey_on_finalized_evidence(
     evidence_id, _plan_hash = _finalize_round_two(service, project_id, session_id, plan_path)
     successor = SessionManager(service.db).register(
         external_id="review-evidence-unified-successor",
-        machine_id=require_machine_id(),
+        machine_id=None,
         source="claude",
         project_id=project_id,
     )
@@ -841,7 +840,7 @@ def test_two_phase_run_binding(
     )
     other_session = SessionManager(service.db).register(
         external_id="other-review-parent",
-        machine_id=require_machine_id(),
+        machine_id=None,
         source="codex",
         project_id=project_id,
     )
@@ -1269,3 +1268,57 @@ def test_append_plan_changelog_round_approved_still_requires_identity(
     with pytest.raises(ReviewEvidenceError) as stale:
         service.append_plan_changelog_round(evidence_id, ROUND_PROSE, approved)
     assert stale.value.code == "stale_plan_evidence"
+
+
+def test_review_evidence_resolve_plan_path_uses_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
+    from gobby.plans.review_manifest_service import ReviewManifestService
+    from gobby.storage.projects import LocalProjectManager
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    plan_dir = tmp_path / "repo" / ".gobby" / "plans"
+    plan_dir.mkdir(parents=True)
+    plan_path = plan_dir / "review-evidence.md"
+    plan_path.write_text("# Review\n", encoding="utf-8")
+    service = ReviewManifestService(
+        db=temp_db,
+        store=PlanReviewEvidenceStore(temp_db),
+        projects=LocalProjectManager(temp_db),
+    )
+
+    resolved, relative = service.resolve_plan_path(isolated.project.id, plan_path)
+
+    assert resolved == plan_path.resolve()
+    assert relative == ".gobby/plans/review-evidence.md"
+
+
+def test_review_evidence_resolve_plan_path_fails_closed_without_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
+    from gobby.plans.review_manifest_service import ReviewManifestService
+    from gobby.storage.projects import LocalProjectManager
+    from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="review-no-checkout")
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text("# Plan\n", encoding="utf-8")
+    service = ReviewManifestService(
+        db=temp_db,
+        store=PlanReviewEvidenceStore(temp_db),
+        projects=LocalProjectManager(temp_db),
+    )
+
+    with pytest.raises(ReviewEvidenceError):
+        service.resolve_plan_path(project.id, plan_path)

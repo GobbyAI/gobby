@@ -48,7 +48,6 @@ from gobby.memory.dream.truth_digest import (
     build_project_truth_digest_async,
 )
 from gobby.storage.memories_scope import MemoryScope, MemoryScopeKind
-from gobby.storage.projects import LocalProjectManager
 
 logger = logging.getLogger(__name__)
 
@@ -390,8 +389,13 @@ class MemoryDreamService:
         return project_id is not None and project_id == self.current_project_id
 
     def _resolve_repo_path(self, project_id: str) -> str | None:
-        project = LocalProjectManager(self.memory_manager.db).get(project_id)
-        return project.repo_path if project is not None else None
+        from gobby.storage.project_checkouts import require_root
+        from gobby.storage.workspace_machine_scope import require_local_machine_id
+
+        machine_id = require_local_machine_id(
+            None, resource_kind="project_checkout", resource_id=project_id
+        )
+        return require_root(self.memory_manager.db, project_id, machine_id)
 
     async def execute_run(self, run_id: str, options: DreamRunOptions) -> dict[str, Any]:
         async with _execution_lock():

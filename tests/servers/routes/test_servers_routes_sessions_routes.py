@@ -10,6 +10,7 @@ import asyncio
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, call, patch
 
 import pytest
@@ -26,9 +27,17 @@ from gobby.servers.routes.sessions import (
     create_sessions_router,
 )
 from gobby.sessions.transcript_window import WindowResult
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager, MachineNotRegisteredError
+from gobby.storage.project_checkouts import CheckoutNotFoundError
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from tests._timing import wait_for_condition
+from tests.fixtures.isolated_checkout import (
+    insert_isolated_machine,
+    install_isolated_checkout_project,
+    patch_local_machine_id,
+)
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = [
@@ -42,9 +51,9 @@ LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
 
 
 @pytest.fixture(autouse=True)
-def _local_machine_identity() -> Iterator[None]:
-    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
-        yield
+def _local_machine_identity(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    patch_local_machine_id(monkeypatch, LOCAL_MACHINE_ID)
+    yield
 
 
 def _make_session(**overrides) -> MagicMock:
@@ -217,12 +226,16 @@ def test_app_wires_session_change_listener_to_websocket(session_storage, sample_
             os="test",
             owner_user_id=TEST_USER_ID,
         )
-        session = session_storage.register(
-            external_id="app-session-change-test",
-            machine_id="20000000-0000-4000-8000-000000000001",
-            source="claude",
-            project_id=sample_project["id"],
-        )
+        with patch(
+            "gobby.storage.workspace_machine_scope.require_machine_id",
+            return_value=LOCAL_MACHINE_ID,
+        ):
+            session = session_storage.register(
+                external_id="app-session-change-test",
+                machine_id=LOCAL_MACHINE_ID,
+                source="claude",
+                project_id=sample_project["id"],
+            )
 
         wait_for_condition(
             lambda: ws_server.broadcast_session_event.await_count > 0,
@@ -273,18 +286,26 @@ def test_app_cancels_session_broadcast_tasks_on_shutdown(session_storage, sample
             os="test",
             owner_user_id=TEST_USER_ID,
         )
-        session_storage.register(
-            external_id="app-session-shutdown-test",
-            machine_id="20000000-0000-4000-8000-000000000001",
-            source="claude",
-            project_id=sample_project["id"],
-        )
+        with patch(
+            "gobby.storage.workspace_machine_scope.require_machine_id",
+            return_value=LOCAL_MACHINE_ID,
+        ):
+            session = session_storage.register(
+                external_id="app-session-shutdown-test",
+                machine_id=LOCAL_MACHINE_ID,
+                source="claude",
+                project_id=sample_project["id"],
+            )
         wait_for_condition(
             broadcast_started.is_set,
             description="session broadcast start",
         )
 
     assert broadcast_cancelled.is_set()
+    ws_server.broadcast_session_event.assert_awaited_once_with("session_created", session.id)
+    assert server.app.state.session_broadcast_closed is True
+    assert server.app.state.session_broadcast_tasks == set()
+    assert not hasattr(server.app.state, "session_change_listener")
 
 
 # =============================================================================
@@ -373,15 +394,19 @@ class TestGetSessionStats:
 class TestGetCommitCount:
     """Test _get_commit_count helper function."""
 
-    async def test_returns_count_with_valid_cwd(self) -> None:
-        """Returns commit count when project has repo_path."""
+    async def test_returns_count_with_valid_cwd(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Returns commit count when the session machine checkout resolves."""
         db = MagicMock()
         session = _make_session(
             project_id="proj-1",
+            machine_id=LOCAL_MACHINE_ID,
             created_at="2026-02-10T10:00:00+00:00",
             updated_at="2026-02-10T12:00:00+00:00",
         )
-        db.fetchone.return_value = {"repo_path": "/tmp/repo"}
+        monkeypatch.setattr(
+            "gobby.storage.project_checkouts.require_root",
+            lambda _db, _project_id, _machine_id: "/tmp/repo",
+        )
 
         with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
             mock_result = MagicMock()
@@ -405,35 +430,42 @@ class TestGetCommitCount:
 
         assert count == 0
 
-    async def test_returns_zero_without_repo_path(self) -> None:
-        """Returns 0 when project has no repo_path in DB."""
+    async def test_returns_zero_without_repo_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Returns 0 when the session machine has no checkout."""
         db = MagicMock()
-        session = _make_session(project_id="proj-1")
-        db.fetchone.return_value = None
+        session = _make_session(project_id="proj-1", machine_id=LOCAL_MACHINE_ID)
+
+        def _missing(_db: object, _project_id: str, _machine_id: str | None) -> str:
+            raise CheckoutNotFoundError("missing")
+
+        monkeypatch.setattr("gobby.storage.project_checkouts.require_root", _missing)
 
         count = await _get_commit_count(db, session)
 
         assert count == 0
 
     async def test_returns_zero_when_repo_path_empty(self) -> None:
-        """Returns 0 when repo_path row exists but value is empty."""
+        """Returns 0 when the session has no machine id."""
         db = MagicMock()
-        session = _make_session(project_id="proj-1")
-        db.fetchone.return_value = {"repo_path": ""}
+        session = _make_session(project_id="proj-1", machine_id=None)
 
         count = await _get_commit_count(db, session)
 
         assert count == 0
 
-    async def test_returns_zero_on_subprocess_error(self) -> None:
+    async def test_returns_zero_on_subprocess_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Returns 0 when git command fails (nonzero exit)."""
         db = MagicMock()
         session = _make_session(
             project_id="proj-1",
+            machine_id=LOCAL_MACHINE_ID,
             created_at="2026-02-10T10:00:00+00:00",
             updated_at="2026-02-10T12:00:00+00:00",
         )
-        db.fetchone.return_value = {"repo_path": "/tmp/repo"}
+        monkeypatch.setattr(
+            "gobby.storage.project_checkouts.require_root",
+            lambda _db, _project_id, _machine_id: "/tmp/repo",
+        )
 
         with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
             mock_result = MagicMock()
@@ -443,18 +475,24 @@ class TestGetCommitCount:
             count = await _get_commit_count(db, session)
 
         assert count == 0
+        mock_sp.run.assert_called_once()
+        assert mock_sp.run.call_args.kwargs["cwd"] == "/tmp/repo"
 
-    async def test_returns_zero_on_timeout(self) -> None:
+    async def test_returns_zero_on_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Returns 0 when git command times out."""
         import subprocess
 
         db = MagicMock()
         session = _make_session(
             project_id="proj-1",
+            machine_id=LOCAL_MACHINE_ID,
             created_at="2026-02-10T10:00:00+00:00",
             updated_at="2026-02-10T12:00:00+00:00",
         )
-        db.fetchone.return_value = {"repo_path": "/tmp/repo"}
+        monkeypatch.setattr(
+            "gobby.storage.project_checkouts.require_root",
+            lambda _db, _project_id, _machine_id: "/tmp/repo",
+        )
 
         with patch(
             "gobby.servers.routes.sessions.core.subprocess.run",
@@ -464,15 +502,19 @@ class TestGetCommitCount:
 
         assert count == 0
 
-    async def test_handles_datetime_objects(self) -> None:
+    async def test_handles_datetime_objects(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Handles created_at/updated_at as datetime objects instead of strings."""
         db = MagicMock()
         session = _make_session(
             project_id="proj-1",
+            machine_id=LOCAL_MACHINE_ID,
             created_at=datetime(2026, 2, 10, 10, 0, 0, tzinfo=UTC),
             updated_at=datetime(2026, 2, 10, 12, 0, 0, tzinfo=UTC),
         )
-        db.fetchone.return_value = {"repo_path": "/tmp/repo"}
+        monkeypatch.setattr(
+            "gobby.storage.project_checkouts.require_root",
+            lambda _db, _project_id, _machine_id: "/tmp/repo",
+        )
 
         with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
             mock_result = MagicMock()
@@ -483,16 +525,21 @@ class TestGetCommitCount:
             count = await _get_commit_count(db, session)
 
         assert count == 3
+        assert mock_sp.run.call_args.kwargs["cwd"] == "/tmp/repo"
 
-    async def test_handles_none_updated_at(self) -> None:
+    async def test_handles_none_updated_at(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Uses current time when updated_at is None."""
         db = MagicMock()
         session = _make_session(
             project_id="proj-1",
+            machine_id=LOCAL_MACHINE_ID,
             created_at="2026-02-10T10:00:00+00:00",
             updated_at=None,
         )
-        db.fetchone.return_value = {"repo_path": "/tmp/repo"}
+        monkeypatch.setattr(
+            "gobby.storage.project_checkouts.require_root",
+            lambda _db, _project_id, _machine_id: "/tmp/repo",
+        )
 
         with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
             mock_result = MagicMock()
@@ -503,26 +550,41 @@ class TestGetCommitCount:
             count = await _get_commit_count(db, session)
 
         assert count == 1
+        mock_sp.run.assert_called_once()
+        command = mock_sp.run.call_args.args[0]
+        assert "--since=2026-02-10T10:00:00+0000" in command
+        assert any(argument.startswith("--until=") for argument in command)
+        assert mock_sp.run.call_args.kwargs["cwd"] == "/tmp/repo"
 
-    async def test_handles_db_exception_for_repo_path(self) -> None:
-        """Returns 0 when DB query for repo_path throws."""
+    async def test_handles_db_exception_for_repo_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Returns 0 when checkout resolution throws."""
         db = MagicMock()
-        session = _make_session(project_id="proj-1")
-        db.fetchone.side_effect = Exception("DB error")
+        session = _make_session(project_id="proj-1", machine_id=LOCAL_MACHINE_ID)
+
+        def _boom(_db: object, _project_id: str, _machine_id: str | None) -> str:
+            raise Exception("DB error")
+
+        monkeypatch.setattr("gobby.storage.project_checkouts.require_root", _boom)
 
         count = await _get_commit_count(db, session)
 
         assert count == 0
 
-    async def test_handles_naive_datetimes(self) -> None:
+    async def test_handles_naive_datetimes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Handles timezone-naive datetime objects correctly."""
         db = MagicMock()
         session = _make_session(
             project_id="proj-1",
+            machine_id=LOCAL_MACHINE_ID,
             created_at=datetime(2026, 2, 10, 10, 0, 0),  # no tzinfo
             updated_at=datetime(2026, 2, 10, 12, 0, 0),  # no tzinfo
         )
-        db.fetchone.return_value = {"repo_path": "/tmp/repo"}
+        monkeypatch.setattr(
+            "gobby.storage.project_checkouts.require_root",
+            lambda _db, _project_id, _machine_id: "/tmp/repo",
+        )
 
         with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
             mock_result = MagicMock()
@@ -533,6 +595,84 @@ class TestGetCommitCount:
             count = await _get_commit_count(db, session)
 
         assert count == 2
+        assert mock_sp.run.call_args.kwargs["cwd"] == "/tmp/repo"
+
+    async def test_get_commit_count_uses_session_machine_checkout(  # tdd-red window
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        isolated = install_isolated_checkout_project(
+            temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+        )
+        session = _make_session(
+            project_id=isolated.project.id,
+            machine_id=isolated.machine_id,
+            created_at="2026-02-10T10:00:00+00:00",
+            updated_at="2026-02-10T12:00:00+00:00",
+        )
+
+        with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
+            mock_result = MagicMock()
+            mock_result.returncode = 0
+            mock_result.stdout = "5\n"
+            mock_sp.run.return_value = mock_result
+            count = await _get_commit_count(temp_db, session)
+
+        assert count == 5
+        assert mock_sp.run.call_args.kwargs["cwd"] == isolated.root_path
+
+    async def test_get_commit_count_zero_without_checkout(  # tdd-red window
+        self,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = insert_isolated_machine(temp_db)
+        patch_local_machine_id(monkeypatch, machine_id)
+        project = LocalProjectManager(temp_db).create(name="commits-no-checkout")
+        session = _make_session(project_id=project.id, machine_id=machine_id)
+
+        with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
+            count = await _get_commit_count(temp_db, session)
+
+        assert count == 0
+        mock_sp.run.assert_not_called()
+
+    async def test_get_commit_count_zero_without_machine(  # tdd-red window
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        isolated = install_isolated_checkout_project(
+            temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+        )
+        session = _make_session(project_id=isolated.project.id, machine_id=None)
+
+        with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
+            count = await _get_commit_count(temp_db, session)
+
+        assert count == 0
+        mock_sp.run.assert_not_called()
+
+    async def test_get_commit_count_zero_foreign_machine(  # tdd-red window
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        isolated = install_isolated_checkout_project(
+            temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+        )
+        foreign = insert_isolated_machine(temp_db)
+        session = _make_session(project_id=isolated.project.id, machine_id=foreign)
+
+        with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
+            count = await _get_commit_count(temp_db, session)
+
+        assert count == 0
+        mock_sp.run.assert_not_called()
 
 
 # =============================================================================
@@ -592,16 +732,22 @@ class TestRegisterSession:
             os="test",
             owner_user_id=TEST_USER_ID,
         )
-        canonical = session_manager.register(
-            external_id=external_id,
-            machine_id=None,
-            source="codex",
-            project_id=project_id,
-        )
         mock_server.session_manager = session_manager
         mock_server.resolve_project_id.return_value = project_id
 
-        with patch("gobby.utils.machine_id.get_machine_id", return_value=machine_id):
+        with (
+            patch("gobby.utils.machine_id.get_machine_id", return_value=machine_id),
+            patch(
+                "gobby.storage.workspace_machine_scope.require_machine_id",
+                return_value=machine_id,
+            ),
+        ):
+            canonical = session_manager.register(
+                external_id=external_id,
+                machine_id=None,
+                source="codex",
+                project_id=project_id,
+            )
             response = client.post(
                 "/api/sessions/register",
                 json={
@@ -1571,10 +1717,16 @@ class TestGenerateSummary:
         updated_session = _make_session(summary_markdown="# Summary\nDid stuff.")
         mock_server.session_manager.get.side_effect = [session, updated_session]
 
-        with patch(
-            "gobby.sessions.summarize.generate_session_summaries",
-            new_callable=AsyncMock,
-            return_value={"status": "ok"},
+        with (
+            patch(
+                "gobby.sessions.transcripts.get_parser",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "gobby.sessions.summarize.generate_session_summaries",
+                new_callable=AsyncMock,
+                return_value={"status": "ok"},
+            ),
         ):
             response = client.post("/api/sessions/sess-abc123/generate-summary")
 
@@ -1613,10 +1765,16 @@ class TestGenerateSummary:
         session = _make_session()
         mock_server.session_manager.get.return_value = session
 
-        with patch(
-            "gobby.sessions.summarize.generate_session_summaries",
-            new_callable=AsyncMock,
-            return_value={"error": "No transcript data available"},
+        with (
+            patch(
+                "gobby.sessions.transcripts.get_parser",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "gobby.sessions.summarize.generate_session_summaries",
+                new_callable=AsyncMock,
+                return_value={"error": "No transcript data available"},
+            ),
         ):
             response = client.post("/api/sessions/sess-abc123/generate-summary")
 

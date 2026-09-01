@@ -157,12 +157,19 @@ def _seed_wiki_overview_var(handler: Any, session_id: str, project_id: str | Non
     if not project_id or handler._session_manager is None:
         return
     try:
-        from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
+        from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS
+        from gobby.storage.workspace_machine_scope import require_local_machine_id
         from gobby.workflows.state_manager import SessionVariableManager
 
-        project = LocalProjectManager(handler._session_manager.db).get(project_id)
-        repo_path = project.repo_path if project else None
-        if not repo_path:
+        if project_id in CHECKOUT_FREE_PROJECT_IDS:
+            return
+        try:
+            machine_id = require_local_machine_id(
+                None, resource_kind="project_checkout", resource_id=project_id
+            )
+            repo_path = require_root(handler._session_manager.db, project_id, machine_id)
+        except CheckoutNotFoundError:
             return
         overview = load_wiki_overview(Path(repo_path))
         if not overview:

@@ -200,13 +200,39 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 status_code=400,
                 detail="project_id is required for local or ZIP skill imports",
             )
-        from gobby.storage.projects import LocalProjectManager
+        from gobby.servers.routes.projects import _checkout_http_error
+        from gobby.storage.project_checkouts import (
+            CheckoutNotFoundError,
+            CheckoutSentinelRejectedError,
+            MissingMachineContextError,
+            require_root,
+        )
+        from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS, LocalProjectManager
+        from gobby.storage.workspace_machine_scope import (
+            MachineOwnershipMismatchError,
+            require_local_machine_id,
+        )
 
         manager = LocalProjectManager(server.services.database)
+        if project_id in CHECKOUT_FREE_PROJECT_IDS:
+            raise HTTPException(
+                status_code=400, detail="checkout-free project cannot import skills"
+            )
         project = await run_in_threadpool(partial(manager.get, project_id))
-        if project is None or not project.repo_path:
-            raise HTTPException(status_code=400, detail="Project repo_path is required")
-        root = Path(project.repo_path).expanduser().resolve()
+        if project is None:
+            raise HTTPException(status_code=400, detail="Project not found")
+        try:
+            machine_id = require_local_machine_id(
+                None, resource_kind="project_checkout", resource_id=project_id
+            )
+            root = Path(require_root(manager.db, project_id, machine_id)).expanduser().resolve()
+        except (
+            CheckoutNotFoundError,
+            MissingMachineContextError,
+            MachineOwnershipMismatchError,
+            CheckoutSentinelRejectedError,
+        ) as exc:
+            raise _checkout_http_error(exc) from exc
         source_path = Path(source).expanduser()
         candidate = source_path if source_path.is_absolute() else root / source_path
         resolved = candidate.resolve()

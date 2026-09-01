@@ -4103,15 +4103,22 @@ async def test_dispatch_spawn_uses_task_project_context_for_cross_project_build(
     """Dispatcher-spawned agents use the target task project, not the caller project."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch.spawn import spawn_agent
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
     sync_bundled_agents(temp_db)
-    projects = LocalProjectManager(temp_db)
-    caller_project = projects.create("caller-project", repo_path=str(tmp_path / "caller"))
-    target_repo = tmp_path / "target"
-    target_repo.mkdir()
-    target_project = projects.create("target-project", repo_path=str(target_repo))
+    caller = install_isolated_checkout_project(
+        temp_db, tmp_path / "caller", name="caller-project", monkeypatch=monkeypatch
+    )
+    target = install_isolated_checkout_project(
+        temp_db, tmp_path / "target", name="target-project", monkeypatch=monkeypatch
+    )
+    caller_project = caller.project
+    target_project = target.project
+    monkeypatch.setattr(
+        "gobby.agents.launcher_session.require_machine_id",
+        lambda: target.machine_id,
+    )
     task_manager = LocalTaskManager(temp_db)
     task = task_manager.create_task(
         project_id=target_project.id,
@@ -4149,9 +4156,179 @@ async def test_dispatch_spawn_uses_task_project_context_for_cross_project_build(
     launcher = sessions.get(str(captured["parent_session_id"]))
 
     assert run_id == "4bd0f604-127d-596e-9130-67a92c34f6ef"
-    assert captured["project_path"] == str(target_repo)
+    assert captured["project_path"] == target.root_path
     assert launcher is not None
     assert launcher.project_id == target_project.id
+
+
+@pytest.mark.asyncio
+async def test_dispatch_spawn_uses_machine_checkout(  # tdd-red window
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch.spawn import spawn_agent
+    from gobby.storage.sessions import SessionManager
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    sync_bundled_agents(temp_db)
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "spawn-checkout", name="spawn-checkout", monkeypatch=monkeypatch
+    )
+    monkeypatch.setattr(
+        "gobby.agents.launcher_session.require_machine_id",
+        lambda: isolated.machine_id,
+    )
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=isolated.project.id,
+        title="Spawn checkout task",
+        task_type="task",
+        category="code",
+        allow_automation=True,
+        isolation="none",
+        validation_criteria="Test task completion is observable.",
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_spawn_agent_impl(**kwargs: Any) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"success": True, "run_id": "aa37aedd-eea4-5c79-a039-aa80a4a17195"}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    sessions = SessionManager(temp_db)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=sessions,
+        agent_runner=SimpleNamespace(),
+    )
+
+    run_id = await spawn_agent(
+        SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go"),
+        db=temp_db,
+        services=services,
+    )
+
+    assert run_id == "aa37aedd-eea4-5c79-a039-aa80a4a17195"
+    assert captured["project_path"] == isolated.root_path
+
+
+@pytest.mark.asyncio
+async def test_dispatch_spawn_uses_registered_overlay_cwd(  # tdd-red window
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch.spawn import spawn_agent
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.sessions import SessionManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+    from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
+
+    sync_bundled_agents(temp_db)
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    monkeypatch.setattr("gobby.storage.worktrees.require_machine_id", lambda: machine_id)
+    monkeypatch.setattr("gobby.agents.launcher_session.require_machine_id", lambda: machine_id)
+    project = LocalProjectManager(temp_db).create("spawn-overlay")
+    overlay = tmp_path / "spawn-worktree"
+    overlay.mkdir()
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=project.id,
+        title="Spawn overlay task",
+        task_type="task",
+        category="code",
+        allow_automation=True,
+        isolation="worktree",
+        validation_criteria="Test task completion is observable.",
+    )
+    worktree = LocalWorktreeManager(temp_db).create(
+        project_id=project.id,
+        branch_name="task/overlay",
+        worktree_path=str(overlay),
+        task_id=task.id,
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        worktree_path=str(overlay),
+        worktree_id=worktree.id,
+        base_commit_sha="a" * 40,
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_spawn_agent_impl(**kwargs: Any) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"success": True, "run_id": "bb37aedd-eea4-5c79-a039-aa80a4a17195"}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    sessions = SessionManager(temp_db)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=sessions,
+        agent_runner=SimpleNamespace(),
+    )
+
+    run_id = await spawn_agent(
+        SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go"),
+        db=temp_db,
+        services=services,
+    )
+
+    assert run_id == "bb37aedd-eea4-5c79-a039-aa80a4a17195"
+    assert captured["project_path"] == str(overlay)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_spawn_fails_closed_without_checkout(  # tdd-red window
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch.spawn import spawn_agent
+    from gobby.storage.project_checkouts import CheckoutNotFoundError
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.sessions import SessionManager
+    from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
+
+    sync_bundled_agents(temp_db)
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create("spawn-missing-checkout")
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=project.id,
+        title="Spawn missing checkout",
+        task_type="task",
+        category="code",
+        allow_automation=True,
+        isolation="none",
+        validation_criteria="Test task completion is observable.",
+    )
+    sessions = SessionManager(temp_db)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=sessions,
+        agent_runner=SimpleNamespace(),
+    )
+
+    with pytest.raises((CheckoutNotFoundError, DispatchSpawnFailed)):
+        await spawn_agent(
+            SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go"),
+            db=temp_db,
+            services=services,
+        )
 
 
 @pytest.mark.asyncio

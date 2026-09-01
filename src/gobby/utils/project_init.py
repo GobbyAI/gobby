@@ -12,6 +12,8 @@ import logging
 import os
 import stat
 import tempfile
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -20,7 +22,7 @@ from psycopg.errors import UniqueViolation
 
 from gobby.agents.isolation_git_hygiene import is_generated_isolation_project_json
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import datetime_to_required_iso
+from gobby.utils.datetime import datetime_to_required_iso, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -58,13 +60,145 @@ def _optional_str(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _ensure_project_path_matches(name: str, repo_path: str | None, cwd: Path) -> None:
-    """Reject adoption of a same-name project belonging to another repository."""
-    if repo_path and Path(repo_path).expanduser().resolve() != cwd:
-        raise ValueError(
-            f"Project '{name}' belongs to a different repository at '{repo_path}'. "
-            "Choose a different project name with --name."
+_INIT_FAILPOINTS: dict[str, Callable[[], None]] = {}
+
+
+def _hit_failpoint(name: str) -> None:
+    hook = _INIT_FAILPOINTS.get(name)
+    if hook is not None:
+        hook()
+
+
+def _marker_path(root: Path) -> Path:
+    return root / ".gobby" / "project.json"
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_fd = os.open(path, flags)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _read_marker_file(path: Path) -> dict[str, Any] | None:
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def _reject_invalid_root(candidate_path: str) -> None:
+    from gobby.utils.checkout_root import InvalidCheckoutRootError
+
+    if (
+        not candidate_path
+        or candidate_path.startswith("~")
+        or not os.path.isabs(candidate_path)
+        or os.path.normpath(candidate_path) != candidate_path
+        or not os.path.isdir(candidate_path)
+    ):
+        raise InvalidCheckoutRootError(
+            f"checkout root {candidate_path!r} is not a platform-local normalized absolute path"
         )
+
+
+def _publish_marker_exclusive(root: Path, payload: dict[str, Any]) -> bool:
+    """Install a complete marker with create-if-absent. Return True if this writer won."""
+    project_file = _marker_path(root)
+    project_file.parent.mkdir(parents=True, exist_ok=True)
+    _hit_failpoint("publish_before_temp_write")
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=".project.json.",
+        suffix=".tmp",
+        dir=str(project_file.parent),
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+            json.dump(payload, tmp, indent=2)
+            tmp.write("\n")
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        _hit_failpoint("publish_after_file_fsync")
+        try:
+            os.link(tmp_name, project_file)
+        except FileExistsError:
+            return False
+        _hit_failpoint("publish_after_install")
+        _fsync_directory(project_file.parent)
+        _hit_failpoint("publish_after_directory_fsync")
+        return True
+    finally:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+
+
+def _unlink_still_matching_marker(root: Path, expected_id: str, failpoint_prefix: str) -> None:
+    from gobby.utils.durable_file import exclusive_file_lock
+
+    project_file = _marker_path(root)
+    _hit_failpoint(f"{failpoint_prefix}_before_unlink")
+    with exclusive_file_lock(project_file):
+        data = _read_marker_file(project_file)
+        if data is None or str(data.get("id")) != expected_id:
+            return
+        try:
+            project_file.unlink()
+        except FileNotFoundError:
+            return
+        _hit_failpoint(f"{failpoint_prefix}_after_unlink")
+        _fsync_directory(project_file.parent)
+        _hit_failpoint(f"{failpoint_prefix}_after_dir_fsync")
+
+
+def refresh_marker_expected_id(cwd: Path, expected_project_id: str, name: str) -> None:
+    """Update only ``name`` on a still-matching marker. Refuse a replacement id."""
+    from gobby.utils.checkout_root import MarkerMismatchError
+    from gobby.utils.durable_file import exclusive_file_lock
+
+    project_file = _marker_path(cwd)
+    existing = _read_marker_file(project_file)
+    if existing is None or str(existing.get("id")) != expected_project_id:
+        raise MarkerMismatchError(f"marker at {cwd} does not match project {expected_project_id}")
+    payload = dict(existing)
+    payload["name"] = name
+    project_file.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=".project.json.",
+        suffix=".tmp",
+        dir=str(project_file.parent),
+        text=True,
+    )
+    installed = False
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+            json.dump(payload, tmp, indent=2)
+            tmp.write("\n")
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        _hit_failpoint("refresh_after_temp_fsync")
+        with exclusive_file_lock(project_file):
+            current = _read_marker_file(project_file)
+            if current is None or str(current.get("id")) != expected_project_id:
+                raise MarkerMismatchError(
+                    f"marker at {cwd} does not match project {expected_project_id}"
+                )
+            os.replace(tmp_name, project_file)
+            installed = True
+            _hit_failpoint("refresh_after_install")
+            _fsync_directory(project_file.parent)
+            _hit_failpoint("refresh_after_dir_fsync")
+    finally:
+        if not installed:
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
 
 
 @dataclass
@@ -173,33 +307,240 @@ def detect_verification_commands(cwd: Path) -> VerificationCommands:
     return VerificationCommands.from_dict(result.after)
 
 
+def _finish_init_result(
+    root: Path,
+    project_id: str,
+    project_name: str,
+    created_at: str,
+    *,
+    already_existed: bool,
+) -> InitResult:
+    update_project_json_fields(root)
+    from gobby.project_verification.refresh import refresh_project_verification_deterministic
+
+    refresh_result = refresh_project_verification_deterministic(root, fix=True)
+    verification = VerificationCommands.from_dict(refresh_result.after)
+    if refresh_result.written:
+        logger.info("Updated verification commands in project.json")
+    return InitResult(
+        project_id=project_id,
+        project_name=project_name,
+        project_path=os.fspath(root),
+        created_at=created_at,
+        already_existed=already_existed,
+        verification=verification if verification.to_dict() else None,
+    )
+
+
+def _init_with_marker(
+    db: HubDatabase,
+    root: Path,
+    marker: dict[str, Any],
+    github_url: str | None,
+) -> InitResult:
+    from gobby.storage.project_checkouts import (
+        CheckoutRootTakenError,
+        CheckoutSentinelRejectedError,
+        LocalProjectCheckoutManager,
+        OverlayRegistrationRejectedError,
+    )
+    from gobby.storage.projects import (
+        CHECKOUT_FREE_PROJECT_IDS,
+        LocalProjectManager,
+        NameAttachRejectedError,
+    )
+    from gobby.storage.workspace_machine_scope import require_local_machine_id
+    from gobby.utils.checkout_root import MarkerMismatchError, validate_checkout_root
+
+    del github_url
+    project_id = str(marker["id"])
+    if project_id in CHECKOUT_FREE_PROJECT_IDS:
+        raise CheckoutSentinelRejectedError(
+            f"checkout-free sentinel project {project_id} cannot own a checkout"
+        )
+    machine_id = require_local_machine_id(
+        None, resource_kind="project_checkout", resource_id=project_id
+    )
+    root_str = os.fspath(root)
+    manager = LocalProjectManager(db)
+    project = manager.get(project_id)
+
+    try:
+        validate_checkout_root(
+            db,
+            project_id=project_id,
+            machine_id=machine_id,
+            candidate_path=root_str,
+            expected_marker_id=project_id,
+        )
+    except OverlayRegistrationRejectedError:
+        if project is None:
+            _unlink_still_matching_marker(root, project_id, "overlay_validate")
+        raise
+    if project is not None and project.deleted_at is not None:
+        active = manager.get_by_name(project.name)
+        if active is not None and active.id != project.id:
+            raise NameAttachRejectedError(
+                f"project name {project.name!r} is active on another project"
+            )
+        with db.transaction():
+            restored = manager.restore(project_id)
+            if restored is None:
+                raise RuntimeError(f"Failed to restore project {project_id}")
+            LocalProjectCheckoutManager(db).register(machine_id, project_id, root_str)
+            project = restored
+    elif project is None:
+        marker_name = str(marker.get("name") or root.name)
+        taken = manager.get_by_name(marker_name, include_deleted=True)
+        if taken is not None and taken.id != project_id:
+            _unlink_still_matching_marker(root, project_id, "name_reject")
+            raise NameAttachRejectedError(
+                f"project name {marker_name!r} already exists; init is marker-authoritative"
+            )
+        try:
+            with db.transaction():
+                manager.ensure_exists(project_id, marker_name)
+                LocalProjectCheckoutManager(db).register(machine_id, project_id, root_str)
+        except UniqueViolation as exc:
+            _unlink_still_matching_marker(root, project_id, "name_reject")
+            raise NameAttachRejectedError(
+                f"project name {marker_name!r} already exists; init is marker-authoritative"
+            ) from exc
+        except CheckoutRootTakenError:
+            _unlink_still_matching_marker(root, project_id, "root_taken")
+            raise
+        except OverlayRegistrationRejectedError:
+            _unlink_still_matching_marker(root, project_id, "overlay_recheck")
+            raise
+        project = manager.get(project_id)
+        if project is None:
+            raise RuntimeError(f"Project {project_id} not found after ID-targeted create")
+    else:
+        LocalProjectCheckoutManager(db).register(machine_id, project_id, root_str)
+
+    if str(marker.get("name") or "") != project.name:
+        try:
+            refresh_marker_expected_id(root, project.id, project.name)
+        except MarkerMismatchError:
+            logger.warning("Refused stale marker refresh at %s", root)
+
+    created_at = (
+        datetime_to_required_iso(project.created_at)
+        if project.created_at is not None
+        else str(marker.get("created_at") or "")
+    )
+    return _finish_init_result(
+        root,
+        project.id,
+        project.name,
+        created_at,
+        already_existed=True,
+    )
+
+
+def _init_no_marker(
+    db: HubDatabase,
+    root: Path,
+    name: str | None,
+    github_url: str | None,
+) -> InitResult:
+    from gobby.storage.project_checkouts import (
+        CheckoutRootTakenError,
+        LocalProjectCheckoutManager,
+        OverlayRegistrationRejectedError,
+    )
+    from gobby.storage.projects import LocalProjectManager, NameAttachRejectedError
+    from gobby.storage.workspace_machine_scope import require_local_machine_id
+    from gobby.utils.checkout_root import validate_checkout_root
+    from gobby.utils.git import get_github_url as detect_github_url
+
+    manager = LocalProjectManager(db)
+    project_name = name or root.name
+    existing = manager.get_by_name(project_name, include_deleted=True)
+    if existing is not None and existing.deleted_at is not None:
+        raise NameAttachRejectedError(
+            f"project name {project_name!r} already exists; init is marker-authoritative"
+        )
+    if github_url is None:
+        github_url = detect_github_url(root)
+
+    verification = detect_verification_commands(root)
+    project_id = str(uuid.uuid4())
+    created_at = utc_now().isoformat()
+    payload: dict[str, Any] = {
+        "id": project_id,
+        "name": project_name,
+        "created_at": created_at,
+    }
+    verification_dict = verification.to_dict()
+    if verification_dict:
+        payload["verification"] = verification_dict
+
+    if not _publish_marker_exclusive(root, payload):
+        winner = _read_marker_file(_marker_path(root))
+        if winner is None or not winner.get("id"):
+            from gobby.utils.checkout_root import MarkerMismatchError
+
+            raise MarkerMismatchError(f"failed to publish marker at {root}")
+        return _init_with_marker(db, root, winner, github_url)
+
+    _hit_failpoint("after_marker_only")
+    machine_id = require_local_machine_id(
+        None, resource_kind="project_checkout", resource_id=project_id
+    )
+    root_str = os.fspath(root)
+    try:
+        validate_checkout_root(
+            db,
+            project_id=project_id,
+            machine_id=machine_id,
+            candidate_path=root_str,
+            expected_marker_id=project_id,
+        )
+    except OverlayRegistrationRejectedError:
+        _unlink_still_matching_marker(root, project_id, "overlay_validate")
+        raise
+    _hit_failpoint("after_validate_before_register")
+    try:
+        with db.transaction():
+            manager.ensure_exists(project_id, project_name)
+            if github_url is not None:
+                manager.update(project_id, github_url=github_url)
+            LocalProjectCheckoutManager(db).register(machine_id, project_id, root_str)
+    except UniqueViolation as exc:
+        _unlink_still_matching_marker(root, project_id, "name_reject")
+        raise NameAttachRejectedError(
+            f"project name {project_name!r} already exists; init is marker-authoritative"
+        ) from exc
+    except CheckoutRootTakenError:
+        _unlink_still_matching_marker(root, project_id, "root_taken")
+        raise
+    except OverlayRegistrationRejectedError:
+        _unlink_still_matching_marker(root, project_id, "overlay_recheck")
+        raise
+
+    project = manager.get(project_id)
+    if project is None:
+        raise RuntimeError(f"Project {project_id} not found after marker-first create")
+    logger.info("Initialized project '%s' in %s", project.name, root)
+    return _finish_init_result(
+        root,
+        project.id,
+        project.name,
+        datetime_to_required_iso(project.created_at),
+        already_existed=False,
+    )
+
+
 def initialize_project(
     cwd: Path | None = None,
     name: str | None = None,
     github_url: str | None = None,
     db: HubDatabase | None = None,
 ) -> InitResult:
-    """
-    Initialize a Gobby project in the given directory.
-
-    If the project is already initialized (has .gobby/project.json),
-    returns the existing project info. Otherwise creates a new project
-    in the database and writes the local project.json file.
-
-    Args:
-        cwd: Directory to initialize. Defaults to current working directory.
-        name: Project name. Defaults to directory name if not provided.
-        github_url: GitHub URL. Auto-detected from git remote if not provided.
-
-    Returns:
-        InitResult with project details and whether it already existed.
-
-    Raises:
-        Exception: If project creation fails.
-    """
+    """Initialize a Gobby project. Marker id is authoritative; names do not attach."""
     from gobby.storage.hub.runtime import runtime_hub_database
-    from gobby.storage.projects import LocalProjectManager
-    from gobby.utils.git import get_github_url as detect_github_url
+    from gobby.utils.checkout_root import MarkerMismatchError
     from gobby.utils.project_context import get_project_context
 
     if db is None:
@@ -208,117 +549,22 @@ def initialize_project(
 
     if cwd is None:
         cwd = Path.cwd()
+    root_str = os.fspath(cwd)
+    _reject_invalid_root(root_str)
 
-    cwd = cwd.resolve()
+    marker_file = _marker_path(cwd)
+    if marker_file.is_file():
+        loaded = _read_marker_file(marker_file)
+        if loaded is None or not loaded.get("id"):
+            raise MarkerMismatchError(f"malformed marker at {marker_file}")
+        return _init_with_marker(db, cwd, loaded, github_url)
 
-    # Check if already initialized
-    project_context = get_project_context(cwd)
-    if project_context and project_context.get("id"):
-        logger.debug("Project already initialized: %s", project_context.get("name"))
-        project_root = Path(project_context.get("project_path") or cwd).resolve()
-        project_id = str(project_context["id"])
-        project_name = str(project_context.get("name") or "")
-        project_manager = LocalProjectManager(db)
-        project_manager.ensure_exists(project_id, project_name, str(project_root))
-        update_project_json_fields(project_root)
+    context = get_project_context(cwd)
+    if context and context.get("id"):
+        project_root = Path(str(context.get("project_path") or cwd))
+        return _init_with_marker(db, project_root, context, github_url)
 
-        # Re-detect and merge verification commands on re-init
-        from gobby.project_verification.refresh import refresh_project_verification_deterministic
-
-        refresh_result = refresh_project_verification_deterministic(project_root, fix=True)
-        verification = VerificationCommands.from_dict(refresh_result.after)
-        if refresh_result.written:
-            logger.info("Updated verification commands in project.json")
-
-        return InitResult(
-            project_id=project_id,
-            project_name=project_name,
-            project_path=str(project_root),
-            created_at=str(project_context.get("created_at") or ""),
-            already_existed=True,
-            verification=verification if verification.to_dict() else None,
-        )
-
-    # Auto-detect name from directory if not provided
-    if not name:
-        name = cwd.name
-
-    # Auto-detect GitHub URL from git remote if not provided
-    if not github_url:
-        github_url = detect_github_url(cwd)
-
-    project_manager = LocalProjectManager(db)
-
-    # Auto-detect verification commands
-    verification = detect_verification_commands(cwd)
-
-    # Check if project with same name exists in database
-    existing = project_manager.get_by_name(name, include_deleted=True)
-    if existing:
-        _ensure_project_path_matches(existing.name, existing.repo_path, cwd)
-        if existing.deleted_at:
-            restored = project_manager.restore(existing.id)
-            if restored is None:
-                raise RuntimeError(f"Failed to restore project '{name}'")
-            existing = restored
-            logger.info("Restored soft-deleted project '%s'", name)
-
-        # Project exists in DB but no local project.json - write it
-        logger.debug("Found existing project in database: %s", name)
-
-        # Backfill repo_path if missing (e.g. project was created via GitHub)
-        if not existing.repo_path:
-            project_manager.update(existing.id, repo_path=str(cwd))
-            logger.info("Updated repo_path for project '%s' to %s", name, cwd)
-
-        _write_project_json(
-            cwd,
-            existing.id,
-            existing.name,
-            datetime_to_required_iso(existing.created_at),
-            verification,
-        )
-        return InitResult(
-            project_id=existing.id,
-            project_name=existing.name,
-            project_path=str(cwd),
-            created_at=datetime_to_required_iso(existing.created_at),
-            already_existed=True,
-            verification=verification if verification.to_dict() else None,
-        )
-
-    # Create new project
-    logger.debug("Creating new project: %s", name)
-    already_existed = False
-    try:
-        project = project_manager.create(
-            name=name,
-            repo_path=str(cwd),
-            github_url=github_url,
-        )
-    except UniqueViolation:
-        concurrent_project = project_manager.get_by_name(name)
-        if concurrent_project is None:
-            raise
-        _ensure_project_path_matches(concurrent_project.name, concurrent_project.repo_path, cwd)
-        project = concurrent_project
-        already_existed = True
-        logger.debug("Adopting concurrently created project: %s", name)
-
-    # Write local .gobby/project.json
-    project_created_at = datetime_to_required_iso(project.created_at)
-    _write_project_json(cwd, project.id, project.name, project_created_at, verification)
-
-    logger.info("Initialized project '%s' in %s", name, cwd)
-
-    return InitResult(
-        project_id=project.id,
-        project_name=project.name,
-        project_path=str(cwd),
-        created_at=project_created_at,
-        already_existed=already_existed,
-        verification=verification if verification.to_dict() else None,
-    )
+    return _init_no_marker(db, cwd, name, github_url)
 
 
 def _update_project_json_verification(

@@ -8,28 +8,27 @@ use crate::index::{chunker, hasher, languages, parser, walker};
 use crate::models::{CallTargetKind, IndexedFile, ParseResult};
 
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
-use super::types::FileIndexCounts;
+use super::types::{FileIndexCounts, IndexTarget};
 use super::util::{epoch_secs_str, relative_path};
 
 /// Index a single file. Returns symbol count or None if skipped.
 pub(super) fn index_file(
     conn: &mut Client,
     file_path: &Path,
-    project_id: &str,
-    root_path: &Path,
+    target: IndexTarget<'_>,
     exclude_patterns: &[impl AsRef<str>],
     import_context: &parser::ImportResolutionContext,
     semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
 ) -> anyhow::Result<Option<FileIndexCounts>> {
-    let rel = match relative_path(file_path, root_path) {
+    let rel = match relative_path(file_path, target.root_path) {
         Ok(rel) => rel,
         Err(_) => return Ok(None),
     };
 
     let Some(parse_result) = parser::parse_file_with_semantic(
         file_path,
-        project_id,
-        root_path,
+        target.project_id,
+        target.root_path,
         exclude_patterns,
         import_context,
         semantic_resolver,
@@ -74,10 +73,11 @@ pub(super) fn index_file(
         .transaction()
         .context("start indexed file transaction")?;
 
-    let mut sink = PostgresCodeFactSink::new(&mut tx, project_id, root_path)?;
+    let mut sink =
+        PostgresCodeFactSink::new(&mut tx, target.project_id, target.root_path, target.mode)?;
     let counts = write_parsed_file_facts(
         &mut sink,
-        project_id,
+        target.project_id,
         &rel,
         language,
         &h,
@@ -133,15 +133,14 @@ pub(super) fn explicit_file_route(
 pub(super) fn index_content_only(
     conn: &mut Client,
     path: &Path,
-    project_id: &str,
-    root_path: &Path,
+    target: IndexTarget<'_>,
     exclude_patterns: &[impl AsRef<str>],
 ) -> anyhow::Result<Option<FileIndexCounts>> {
-    if !walker::is_content_indexable(root_path, path, exclude_patterns) {
+    if !walker::is_content_indexable(target.root_path, path, exclude_patterns) {
         return Ok(None);
     }
 
-    let rel = match relative_path(path, root_path) {
+    let rel = match relative_path(path, target.root_path) {
         Ok(r) => r,
         Err(_) => return Ok(None),
     };
@@ -163,10 +162,11 @@ pub(super) fn index_content_only(
     let mut tx = conn
         .transaction()
         .context("start content-only file transaction")?;
-    let mut sink = PostgresCodeFactSink::new(&mut tx, project_id, root_path)?;
+    let mut sink =
+        PostgresCodeFactSink::new(&mut tx, target.project_id, target.root_path, target.mode)?;
     let counts = write_content_only_file_facts(
         &mut sink,
-        project_id,
+        target.project_id,
         &rel,
         &lang,
         &content_hash,

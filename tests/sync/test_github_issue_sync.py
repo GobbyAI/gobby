@@ -54,7 +54,6 @@ def github_sync() -> GitHubSyncFixture:
     project.deleted_at = None
     project.github_repo = "owner/repo"
     project.github_url = None
-    project.repo_path = None
     project_manager.get.return_value = project
     service = GitHubIssueSyncService(
         db=db,
@@ -361,7 +360,7 @@ async def test_outbound_selects_only_fully_linked_tasks(
 @pytest.mark.asyncio
 async def test_outbound_selects_tasks_updated_after_cursor(temp_db: HubDatabase) -> None:
     project_manager = LocalProjectManager(temp_db)
-    project = project_manager.create(name="github-outbound-cursor", repo_path=None)
+    project = project_manager.create(name="github-outbound-cursor")
     task_manager = LocalTaskManager(temp_db)
     old_task = task_manager.create_task(
         project_id=project.id,

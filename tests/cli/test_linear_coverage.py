@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
-from gobby.cli.linear import _run_linear_setup, linear
+from gobby.cli.linear import _persist_linear_binding, _run_linear_setup, linear
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import CheckoutNotFoundError
+from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS, LocalProjectManager
+from tests.fixtures.isolated_checkout import (
+    insert_isolated_machine,
+    install_isolated_checkout_project,
+    patch_local_machine_id,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -29,6 +39,7 @@ def _mock_linear_deps(
     task_manager = MagicMock()
     task_manager.db = db
     project_manager = MagicMock()
+    project_manager.db = db
     project = MagicMock()
     project.linear_team_id = linear_team_id
     project.linear_project_id = linear_project_id
@@ -38,6 +49,14 @@ def _mock_linear_deps(
     project.repo_path = "/tmp/gobby"
     project.deleted_at = None
     project_manager.get.return_value = project
+    now = datetime.now(UTC)
+    db.fetchone.return_value = {
+        "machine_id": "machine-1",
+        "project_id": project_id,
+        "root_path": "/tmp/gobby",
+        "created_at": now,
+        "updated_at": now,
+    }
     mcp_manager = MagicMock()
     mcp_manager.has_server.return_value = True
     mcp_manager.health = {"linear": MagicMock(state="connected")}
@@ -546,3 +565,62 @@ class TestLinearCreate:
         result = runner.invoke(linear, ["create", "#1"], catch_exceptions=False)
         assert result.exit_code != 0
         assert "bad task" in result.output
+
+
+def test_persist_linear_binding_uses_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", name="linear-checkout", monkeypatch=monkeypatch
+    )
+    calls: list[Path] = []
+
+    def capture(root: Path, **_fields: object) -> None:
+        calls.append(root)
+
+    import inspect
+
+    linear_mod = inspect.getmodule(_persist_linear_binding)
+    assert linear_mod is not None
+    monkeypatch.setattr(linear_mod, "update_project_json_fields", capture)
+    _persist_linear_binding(
+        LocalProjectManager(temp_db),
+        isolated.project.id,
+        "TEAM-1",
+        "LIN-1",
+    )
+
+    assert calls == [Path(isolated.root_path)]
+
+
+def test_persist_linear_binding_fails_closed_without_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="linear-no-checkout")
+
+    with pytest.raises(CheckoutNotFoundError):
+        _persist_linear_binding(LocalProjectManager(temp_db), project.id, "TEAM-1", "LIN-1")
+
+
+def test_persist_linear_binding_skips_require_root_for_sentinel(  # tdd-red window
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.project_checkouts import require_root
+
+    calls: list[str] = []
+    real = require_root
+
+    def spy(db: HubDatabase, project_id: str, machine_id: str | None) -> str:
+        calls.append(project_id)
+        return real(db, project_id, machine_id)
+
+    monkeypatch.setattr("gobby.storage.project_checkouts.require_root", spy)
+    sentinel = next(iter(CHECKOUT_FREE_PROJECT_IDS))
+    _persist_linear_binding(LocalProjectManager(temp_db), sentinel, "TEAM-1", "LIN-1")
+    assert calls == []

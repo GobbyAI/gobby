@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from gobby.code_index.models import IndexedProject
+from gobby.code_index.models import IndexedProject, IndexWriteMode
 from gobby.servers.lease_fence import run_hub_mutation
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.utils.machine_id import require_machine_id
@@ -15,10 +15,24 @@ class CodeIndexProjectStorageMixin:
 
     db: HubDatabase
 
-    def upsert_project_stats(self, project: IndexedProject) -> None:
+    def upsert_project_stats(
+        self,
+        project: IndexedProject,
+        *,
+        mode: IndexWriteMode,
+    ) -> None:
         """Insert shared project identity and this machine's local state."""
         machine_id = require_machine_id()
         with self.db.transaction() as conn:
+            if mode is IndexWriteMode.PRIMARY:
+                checkout = conn.execute(
+                    """SELECT 1 FROM project_checkouts
+                       WHERE machine_id = %s AND project_id = %s AND root_path = %s
+                       FOR SHARE""",
+                    (machine_id, project.id, project.root_path),
+                ).fetchone()
+                if checkout is None:
+                    raise ValueError(f"primary index checkout mismatch for project {project.id}")
             conn.execute(
                 """INSERT INTO code_indexed_projects (id) VALUES (%s)
                 ON CONFLICT(id) DO UPDATE SET updated_at=CURRENT_TIMESTAMP

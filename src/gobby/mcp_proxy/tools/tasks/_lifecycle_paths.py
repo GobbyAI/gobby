@@ -10,6 +10,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
+from gobby.storage.project_checkouts import OverlayRegistrationRejectedError, resolve_operation_root
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.utils.session_context import get_current_session_id
@@ -41,6 +42,28 @@ def _claimed_session_worktree_path(
     if len(worktrees) > 1:
         raise ValueError("Session owns multiple active worktrees; release one before inspection")
     return worktrees[0].worktree_path if worktrees else None
+
+
+def _lifecycle_checkout_root(
+    ctx: RegistryContext,
+    *,
+    session_id: str,
+    project_id: str,
+    overlay_path: str | None,
+) -> str | None:
+    session = ctx.session_manager.get(session_id)
+    machine_id = ctx.checkout_machine_id(project_id, session.id if session is not None else None)
+    if overlay_path:
+        try:
+            return resolve_operation_root(
+                ctx.task_manager.db,
+                project_id,
+                machine_id,
+                overlay_path=overlay_path,
+            )
+        except OverlayRegistrationRejectedError:
+            pass
+    return ctx.get_project_repo_path(project_id, machine_id)
 
 
 def _dirty_repo_paths(repo_path: str, paths: list[str]) -> list[str]:
@@ -124,11 +147,16 @@ def register_release_task_paths(
         try:
             session_id = ctx.resolve_session_id(session_ref)
             project_id = ctx.resolve_project_from_session(session_ref)
-            checkout_root = _claimed_session_worktree_path(
+            checkout_root = _lifecycle_checkout_root(
                 ctx,
                 session_id=session_id,
                 project_id=project_id,
-            ) or ctx.get_project_repo_path(project_id)
+                overlay_path=_claimed_session_worktree_path(
+                    ctx,
+                    session_id=session_id,
+                    project_id=project_id,
+                ),
+            )
         except ValueError as exc:
             return task_error(str(exc), TaskToolErrorCode.TASK_INVALID_STATUS)
         if checkout_root is None:
@@ -247,13 +275,14 @@ def register_release_task_paths(
                 session_id=session_id,
                 project_id=task.project_id,
             )
+            repo_path = _lifecycle_checkout_root(
+                ctx,
+                session_id=session_id,
+                project_id=task.project_id,
+                overlay_path=session_worktree_path or artifacts.worktree_path,
+            )
         except ValueError as exc:
             return task_error(str(exc), TaskToolErrorCode.TASK_INVALID_STATUS)
-        repo_path = (
-            session_worktree_path
-            or artifacts.worktree_path
-            or ctx.get_project_repo_path(task.project_id)
-        )
         if repo_path is None:
             return task_error(
                 "Cannot verify task paths because the project has no repository path",

@@ -382,6 +382,7 @@ def test_campaign_registry_and_admitted_constraints_have_exact_parity(
 
     expected = {
         "account-identity-cutover",
+        "project-checkout-cutover",
         "schema-apply",
         "purge",
         "reconcile",

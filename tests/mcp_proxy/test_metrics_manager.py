@@ -33,17 +33,17 @@ def metrics_manager(temp_db: "HubDatabase", mock_telemetry) -> ToolMetricsManage
     # Create test projects for foreign key constraints
     temp_db.execute(
         """
-        INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (%s, %s, %s, NOW(), NOW())
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES (%s, %s, NOW(), NOW())
         """,
-        (PROJECT_1, "Test Project 1", "/tmp/test1"),
+        (PROJECT_1, "Test Project 1"),
     )
     temp_db.execute(
         """
-        INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (%s, %s, %s, NOW(), NOW())
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES (%s, %s, NOW(), NOW())
         """,
-        (PROJECT_2, "Test Project 2", "/tmp/test2"),
+        (PROJECT_2, "Test Project 2"),
     )
     return ToolMetricsManager(temp_db)
 

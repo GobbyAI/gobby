@@ -7,6 +7,7 @@ Provides commands for syncing gobby tasks with Linear issues.
 import asyncio
 import logging
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -16,8 +17,10 @@ from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.storage.external_issue_sync import ExternalIssueSyncStatusStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp import LocalMCPManager
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
+from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS, LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.sync.linear import LinearSyncService
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.project_init import update_project_json_fields
@@ -111,16 +114,25 @@ def _persist_linear_binding(
     *,
     enabled: bool | None = None,
 ) -> None:
-    fields: dict[str, object] = {
+    fields: dict[str, Any] = {
         "linear_team_id": team_id,
         "linear_project_id": linear_project_id,
     }
     if enabled is not None:
         fields["linear_sync_enabled"] = enabled
     updated = project_manager.update(project_id, **fields)
-    if updated and updated.repo_path:
-        json_fields = dict(fields)
-        update_project_json_fields(Path(updated.repo_path), **json_fields)
+    if not updated:
+        return
+    if project_id in CHECKOUT_FREE_PROJECT_IDS:
+        return
+    json_fields = dict(fields)
+    machine_id = require_local_machine_id(
+        None, resource_kind="project_checkout", resource_id=project_id
+    )
+    update_project_json_fields(
+        Path(require_root(project_manager.db, project_id, machine_id)),
+        **json_fields,
+    )
 
 
 async def _run_linear_setup(
@@ -152,7 +164,16 @@ async def _run_linear_setup(
     if not selected_team_id:
         raise click.ClickException("Selected Linear team did not include an id.")
 
-    resolved_project_name = project_name or _project_linear_name(project.name, project.repo_path)
+    checkout_root: str | None = None
+    if project.id not in CHECKOUT_FREE_PROJECT_IDS:
+        try:
+            machine_id = require_local_machine_id(
+                None, resource_kind="project_checkout", resource_id=project.id
+            )
+            checkout_root = require_root(project_manager.db, project.id, machine_id)
+        except CheckoutNotFoundError:
+            checkout_root = None
+    resolved_project_name = project_name or _project_linear_name(project.name, checkout_root)
     if not bootstrap and not linear_project_id:
         raise click.ClickException("Pass --bootstrap to create/reuse a Linear project.")
 

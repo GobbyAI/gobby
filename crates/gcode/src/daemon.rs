@@ -61,9 +61,9 @@ struct ProjectListing {
     #[serde(default)]
     display_name: Option<String>,
     #[serde(default)]
-    repo_path: Option<String>,
+    deleted_at: Option<String>,
     #[serde(default)]
-    root_path: Option<String>,
+    checkout: Option<ProjectCheckoutListing>,
     #[serde(default)]
     total_files: Option<usize>,
     #[serde(default)]
@@ -78,11 +78,16 @@ struct ProjectListing {
     indexer_version: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ProjectCheckoutListing {
+    root_path: String,
+}
+
 impl ProjectListing {
     fn root_path(&self) -> String {
-        self.repo_path
-            .clone()
-            .or_else(|| self.root_path.clone())
+        self.checkout
+            .as_ref()
+            .map(|checkout| checkout.root_path.clone())
             .unwrap_or_default()
     }
 
@@ -105,10 +110,18 @@ fn unique_project_by_name(
     listings: Vec<ProjectListing>,
     name: &str,
 ) -> Result<LookedUpProject, CliError> {
-    let matches: Vec<ProjectListing> = listings
+    let mut matches = Vec::new();
+    for project in listings
         .into_iter()
-        .filter(|project| project.matches_name(name))
-        .collect();
+        .filter(|project| project.deleted_at.is_none() && project.matches_name(name))
+        .filter_map(looked_up_project)
+    {
+        if matches.iter().all(|existing: &LookedUpProject| {
+            existing.id != project.id || existing.root != project.root
+        }) {
+            matches.push(project);
+        }
+    }
     match matches.as_slice() {
         [] => Err(CliError {
             code: "project_not_found",
@@ -116,23 +129,14 @@ fn unique_project_by_name(
             recovery: None,
             exit_status: 2,
         }),
-        [_] => {
-            let project = matches
-                .into_iter()
-                .next()
-                .expect("one name match is present");
-            looked_up_project(project).ok_or_else(|| CliError {
-                code: "project_not_found",
-                message: format!("Project '{name}' not found"),
-                recovery: None,
-                exit_status: 2,
-            })
-        }
+        [_] => Ok(matches
+            .into_iter()
+            .next()
+            .expect("one name match is present")),
         _ => {
             let roots: Vec<String> = matches
                 .iter()
-                .map(ProjectListing::root_path)
-                .filter(|root| !root.is_empty())
+                .map(|project| project.root.display().to_string())
                 .collect();
             Err(CliError {
                 code: "project_ambiguous",
@@ -288,8 +292,10 @@ mod tests {
             id: id.to_string(),
             name: name.to_string(),
             display_name: None,
-            repo_path: Some(root.to_string()),
-            root_path: None,
+            deleted_at: None,
+            checkout: Some(ProjectCheckoutListing {
+                root_path: root.to_string(),
+            }),
             total_files: None,
             total_symbols: None,
             last_indexed_at: None,

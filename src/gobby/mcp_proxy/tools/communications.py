@@ -312,12 +312,23 @@ def create_communications_registry(
                 updated_at=utc_now(),
             )
             await communications_manager.update_channel(updated)
+            project_path = None
+            try:
+                from gobby.storage.project_checkouts import require_root
+                from gobby.storage.workspace_machine_scope import require_local_machine_id
+
+                machine_id = require_local_machine_id(
+                    None, resource_kind="project_checkout", resource_id=resolved.id
+                )
+                project_path = require_root(db, resolved.id, machine_id)
+            except (ValueError, RuntimeError):
+                project_path = None
             return {
                 "success": True,
                 "channel": channel,
                 "project_id": resolved.id,
                 "project_name": resolved.name,
-                "project_path": resolved.repo_path,
+                "project_path": project_path,
             }
         except Exception as e:
             logger.exception("Communications tool error")

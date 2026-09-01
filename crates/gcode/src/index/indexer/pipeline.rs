@@ -22,7 +22,7 @@ use super::local_imports::{
     resolve_project_local_import_calls,
 };
 use super::overlay::index_overlay_files;
-use super::types::{IndexOptions, IndexOutcome, IndexProgressSink, IndexRequest};
+use super::types::{IndexOptions, IndexOutcome, IndexProgressSink, IndexRequest, IndexTarget};
 use super::util::{
     effective_excludes, filter_discovered_paths, relative_path, requested_relative_path,
     unsupported_file_types,
@@ -63,9 +63,20 @@ fn index_discovered_files(
     let start = Instant::now();
     let discovery_start = Instant::now();
     let root_path = &request.project_root;
+    let target = IndexTarget {
+        project_id,
+        root_path,
+        mode: api::IndexWriteMode::Primary,
+    };
     let mut outcome = IndexOutcome::new(project_id);
     let machine_id = gobby_core::machine::read_local_machine_id()?;
-    api::upsert_project_seed(conn, &machine_id, project_id, root_path)?;
+    api::upsert_project_seed(
+        conn,
+        &machine_id,
+        project_id,
+        root_path,
+        api::IndexWriteMode::Primary,
+    )?;
 
     let excludes = effective_excludes(&ctx.indexing.extra_excludes);
     let (mut candidates, mut content_only) =
@@ -99,7 +110,14 @@ fn index_discovered_files(
         let orphans =
             get_orphan_files(conn, &machine_id, project_id, &current_files.present_paths)?;
         for orphan in &orphans {
-            api::delete_file_state(conn, &machine_id, project_id, orphan)?;
+            api::delete_file_state(
+                conn,
+                &machine_id,
+                project_id,
+                orphan,
+                root_path,
+                api::IndexWriteMode::Primary,
+            )?;
         }
     }
 
@@ -133,7 +151,15 @@ fn index_discovered_files(
         }
         if !request.full
             && let Some(content_hash) = current_files.hashes.get(&rel)
-            && api::adopt_file_state(conn, &machine_id, project_id, &rel, content_hash)?
+            && api::adopt_file_state(
+                conn,
+                &machine_id,
+                project_id,
+                &rel,
+                content_hash,
+                root_path,
+                api::IndexWriteMode::Primary,
+            )?
         {
             adopted_paths.push(rel.clone());
             outcome.skipped_files += 1;
@@ -144,15 +170,21 @@ fn index_discovered_files(
         match index_file(
             conn,
             path,
-            project_id,
-            root_path,
+            target,
             &excludes,
             &import_context,
             semantic_resolver.as_deref_mut(),
         )? {
             Some(counts) => outcome.add_counts(counts),
             None => {
-                api::delete_file_state(conn, &machine_id, project_id, &rel)?;
+                api::delete_file_state(
+                    conn,
+                    &machine_id,
+                    project_id,
+                    &rel,
+                    root_path,
+                    api::IndexWriteMode::Primary,
+                )?;
                 outcome.skipped_files += 1;
             }
         }
@@ -172,14 +204,22 @@ fn index_discovered_files(
         }
         if !request.full
             && let Some(content_hash) = current_files.hashes.get(&rel)
-            && api::adopt_file_state(conn, &machine_id, project_id, &rel, content_hash)?
+            && api::adopt_file_state(
+                conn,
+                &machine_id,
+                project_id,
+                &rel,
+                content_hash,
+                root_path,
+                api::IndexWriteMode::Primary,
+            )?
         {
             adopted_paths.push(rel.clone());
             outcome.skipped_files += 1;
             progress.advance(&rel);
             continue;
         }
-        match index_content_only(conn, path, project_id, root_path, &excludes)? {
+        match index_content_only(conn, path, target, &excludes)? {
             Some(counts) => outcome.add_counts(counts),
             None => outcome.skipped_files += 1,
         }
@@ -201,8 +241,7 @@ fn index_discovered_files(
     refresh_project_stats(
         conn,
         &machine_id,
-        root_path,
-        project_id,
+        target,
         start.elapsed().as_millis() as u64,
         Some(eligible_files),
         (request.full && request.path_filter.is_none()).then_some(env!("CARGO_PKG_VERSION")),
@@ -224,9 +263,20 @@ fn index_explicit_files_with_connection(
     let start = Instant::now();
     let discovery_start = Instant::now();
     let root_path = &request.project_root;
+    let target = IndexTarget {
+        project_id,
+        root_path,
+        mode: api::IndexWriteMode::Primary,
+    };
     let mut outcome = IndexOutcome::new(project_id);
     let machine_id = gobby_core::machine::read_local_machine_id()?;
-    api::upsert_project_seed(conn, &machine_id, project_id, root_path)?;
+    api::upsert_project_seed(
+        conn,
+        &machine_id,
+        project_id,
+        root_path,
+        api::IndexWriteMode::Primary,
+    )?;
     outcome.scanned_files = request.explicit_files.len();
 
     let excludes = effective_excludes(&ctx.indexing.extra_excludes);
@@ -242,7 +292,14 @@ fn index_explicit_files_with_connection(
 
         if !abs.exists() {
             let rel = requested_relative_path(root_path, fp);
-            api::delete_file_state(conn, &machine_id, project_id, &rel)?;
+            api::delete_file_state(
+                conn,
+                &machine_id,
+                project_id,
+                &rel,
+                root_path,
+                api::IndexWriteMode::Primary,
+            )?;
             continue;
         }
 
@@ -267,7 +324,14 @@ fn index_explicit_files_with_connection(
                     outcome.skipped_files += 1;
                     continue;
                 };
-                api::delete_file_state(conn, &machine_id, project_id, &rel)?;
+                api::delete_file_state(
+                    conn,
+                    &machine_id,
+                    project_id,
+                    &rel,
+                    root_path,
+                    api::IndexWriteMode::Primary,
+                )?;
                 outcome.skipped_files += 1;
             }
         }
@@ -300,7 +364,15 @@ fn index_explicit_files_with_connection(
         if !request.full
             && let Some(rel) = rel.as_deref()
             && let Ok(content_hash) = crate::index::hasher::file_content_hash(&abs)
-            && api::adopt_file_state(conn, &machine_id, project_id, rel, &content_hash)?
+            && api::adopt_file_state(
+                conn,
+                &machine_id,
+                project_id,
+                rel,
+                &content_hash,
+                root_path,
+                api::IndexWriteMode::Primary,
+            )?
         {
             adopted_paths.push(rel.to_string());
             outcome.skipped_files += 1;
@@ -312,8 +384,7 @@ fn index_explicit_files_with_connection(
                 if let Some(count) = index_file(
                     conn,
                     &abs,
-                    project_id,
-                    root_path,
+                    target,
                     &excludes,
                     &import_context,
                     semantic_resolver.as_deref_mut(),
@@ -324,7 +395,7 @@ fn index_explicit_files_with_connection(
                 }
             }
             ExplicitFileRoute::ContentOnly => {
-                match index_content_only(conn, &abs, project_id, root_path, &excludes)? {
+                match index_content_only(conn, &abs, target, &excludes)? {
                     Some(counts) => outcome.add_counts(counts),
                     None => outcome.skipped_files += 1,
                 }
@@ -348,8 +419,7 @@ fn index_explicit_files_with_connection(
     refresh_project_stats(
         conn,
         &machine_id,
-        root_path,
-        project_id,
+        target,
         start.elapsed().as_millis() as u64,
         Some(routed_file_count),
         None,

@@ -6,25 +6,24 @@ import pytest
 
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 
 @pytest.fixture
 def review_setup(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[PlanReviewEvidenceService, str, str, Path]:
-    project = LocalProjectManager(temp_db).create(
-        name="review-evidence",
-        repo_path=str(tmp_path),
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path, name="review-evidence", monkeypatch=monkeypatch
     )
     session = SessionManager(temp_db).register(
         external_id="review-evidence-parent",
-        machine_id=require_machine_id(),
+        machine_id=isolated.machine_id,
         source="codex",
-        project_id=project.id,
+        project_id=isolated.project.id,
     )
     plan_dir = tmp_path / ".gobby" / "plans"
     plan_dir.mkdir(parents=True)
@@ -79,4 +78,4 @@ def review_setup(
         ),
         encoding="utf-8",
     )
-    return PlanReviewEvidenceService(temp_db), project.id, session.id, plan_path
+    return PlanReviewEvidenceService(temp_db), isolated.project.id, session.id, plan_path

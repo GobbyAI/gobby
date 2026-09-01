@@ -20,7 +20,7 @@ from gobby.dispatch.workspace_merge import (
 )
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase, IntegrationWorkspaceMutex
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 
@@ -45,6 +45,32 @@ def _init_repo(path: Path) -> None:
     (path / "README.md").write_text("initial\n")
     _git(path, "add", "README.md")
     _git(path, "commit", "-m", "initial")
+
+
+def _merge_checkout(
+    temp_db: HubDatabase,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    name: str = "merge-project",
+) -> Project:
+    from tests.fixtures.isolated_checkout import (
+        IsolatedCheckoutProject,
+        install_isolated_checkout_project,
+    )
+
+    isolated: IsolatedCheckoutProject = install_isolated_checkout_project(
+        temp_db, repo, name=name, monkeypatch=monkeypatch
+    )
+    monkeypatch.setattr(
+        "gobby.storage.worktrees.require_machine_id",
+        lambda: isolated.machine_id,
+    )
+    monkeypatch.setattr(
+        "gobby.storage.clones.require_machine_id",
+        lambda: isolated.machine_id,
+    )
+    return isolated.project
 
 
 def _assert_worktree_removed(
@@ -139,6 +165,7 @@ async def test_non_gobby_status_lines_ignores_gobby_paths_with_full_or_stripped_
 async def test_execute_merge_workspace_merges_worktree_and_completes_stage(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
@@ -153,7 +180,7 @@ async def test_execute_merge_workspace_merges_worktree_and_completes_stage(
     _git(task_path, "add", "feature.txt")
     _git(task_path, "commit", "-m", "feature")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _merge_checkout(temp_db, repo, monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -217,6 +244,7 @@ async def test_execute_merge_workspace_merges_worktree_and_completes_stage(
 async def test_execute_merge_workspace_recovers_interrupted_target_merge(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
@@ -252,7 +280,7 @@ async def test_execute_merge_workspace_recovers_interrupted_target_merge(
     assert interrupted.returncode != 0
     assert _git(integration_path, "rev-parse", "--verify", "MERGE_HEAD")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _merge_checkout(temp_db, repo, monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -324,6 +352,7 @@ async def test_execute_merge_workspace_recovers_interrupted_target_merge(
 async def test_execute_merge_workspace_completes_already_merged_worktree(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
@@ -340,7 +369,7 @@ async def test_execute_merge_workspace_completes_already_merged_worktree(
     source_commit = _git(task_path, "rev-parse", "HEAD")
     _git(integration_path, "merge", "--no-ff", "--no-edit", source_commit)
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _merge_checkout(temp_db, repo, monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -404,6 +433,7 @@ async def test_execute_merge_workspace_completes_already_merged_worktree(
 async def test_execute_merge_workspace_retries_clone_sync_before_completing_stage(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration-clone"
@@ -422,7 +452,7 @@ async def test_execute_merge_workspace_retries_clone_sync_before_completing_stag
     _git(task_path, "add", "feature.txt")
     _git(task_path, "commit", "-m", "feature")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _merge_checkout(temp_db, repo, monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -508,6 +538,7 @@ async def test_execute_merge_workspace_retries_clone_sync_before_completing_stag
 async def test_execute_merge_workspace_escalates_non_ff_clone_sync(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration-clone"
@@ -531,7 +562,7 @@ async def test_execute_merge_workspace_escalates_non_ff_clone_sync(
     user_branch_sha = _git(repo, "rev-parse", "HEAD")
     _git(repo, "checkout", "main")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _merge_checkout(temp_db, repo, monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -601,6 +632,7 @@ async def test_execute_merge_workspace_escalates_non_ff_clone_sync(
 async def test_execute_merge_workspace_lands_root_integration_worktree_on_local_branch(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
@@ -618,7 +650,7 @@ async def test_execute_merge_workspace_lands_root_integration_worktree_on_local_
     _git(integration_path, "add", "feature.txt")
     _git(integration_path, "commit", "-m", "feature")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _merge_checkout(temp_db, repo, monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     root = task_manager.create_task(
         project_id=project.id,
@@ -722,6 +754,7 @@ async def test_execute_merge_workspace_lands_root_integration_worktree_on_local_
 async def test_execute_merge_workspace_lands_child_epic_integration_on_local_branch(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "phase-integration"
@@ -743,7 +776,7 @@ async def test_execute_merge_workspace_lands_child_epic_integration_on_local_bra
     _git(integration_path, "add", "phase.txt")
     _git(integration_path, "commit", "-m", "phase work")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _merge_checkout(temp_db, repo, monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     root = task_manager.create_task(
         project_id=project.id,
@@ -794,7 +827,7 @@ async def test_execute_merge_workspace_lands_child_epic_integration_on_local_bra
         integration_branch="gobby/integration/phase",
         integration_workspace_id=integration.id,
     )
-    (repo / ".gobby").mkdir()
+    (repo / ".gobby").mkdir(exist_ok=True)
     (repo / ".gobby" / "tasks.jsonl").write_text("sync artifact\n")
 
     merge_sha = await execute_merge_workspace(
@@ -823,6 +856,7 @@ async def test_execute_merge_workspace_lands_child_epic_integration_on_local_bra
 async def test_execute_merge_workspace_adopts_missing_integration_worktree_metadata(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Generated integration worktree metadata is adopted when the DB row is missing."""
     repo = tmp_path / "repo"
@@ -831,7 +865,7 @@ async def test_execute_merge_workspace_adopts_missing_integration_worktree_metad
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _merge_checkout(temp_db, repo, monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -905,6 +939,7 @@ async def test_execute_merge_workspace_adopts_missing_integration_worktree_metad
 async def test_execute_merge_workspace_rejects_dirty_unmanaged_integration_worktree(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
@@ -912,7 +947,7 @@ async def test_execute_merge_workspace_rejects_dirty_unmanaged_integration_workt
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _merge_checkout(temp_db, repo, monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -975,6 +1010,7 @@ async def test_execute_merge_workspace_rejects_dirty_unmanaged_integration_workt
 async def test_execute_merge_workspace_allows_disjoint_registered_target_dirt(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
@@ -989,7 +1025,7 @@ async def test_execute_merge_workspace_allows_disjoint_registered_target_dirt(
     _git(task_path, "add", "feature.txt")
     _git(task_path, "commit", "-m", "feature")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _merge_checkout(temp_db, repo, monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -1054,6 +1090,7 @@ async def test_execute_merge_workspace_allows_disjoint_registered_target_dirt(
 async def test_execute_merge_workspace_fails_stage_when_target_dirt_overlaps_merge(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
@@ -1068,7 +1105,7 @@ async def test_execute_merge_workspace_fails_stage_when_target_dirt_overlaps_mer
     _git(task_path, "add", "feature.txt")
     _git(task_path, "commit", "-m", "feature")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _merge_checkout(temp_db, repo, monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -1138,6 +1175,7 @@ async def test_execute_merge_workspace_fails_stage_when_target_dirt_overlaps_mer
 async def test_execute_merge_workspace_preserves_worktree_after_merge_conflict(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
@@ -1160,7 +1198,7 @@ async def test_execute_merge_workspace_preserves_worktree_after_merge_conflict(
     _git(task_path, "add", "conflict.txt")
     _git(task_path, "commit", "-m", "task change")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _merge_checkout(temp_db, repo, monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -1229,6 +1267,7 @@ async def test_execute_merge_workspace_preserves_worktree_after_merge_conflict(
 async def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Non-generated worktree-local project metadata is preserved during merge."""
     repo = tmp_path / "repo"
@@ -1236,7 +1275,7 @@ async def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
     task_path = tmp_path / "task"
     repo.mkdir()
     _init_repo(repo)
-    (repo / ".gobby").mkdir()
+    (repo / ".gobby").mkdir(exist_ok=True)
     project_json = (
         '{\n  "id": "aa81136a-134a-5bf3-bcd4-adac1fe28e9b",\n  "name": "merge-project"\n}\n'
     )
@@ -1261,7 +1300,7 @@ async def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
     _git(task_path, "add", ".gobby/project.json", "feature.txt")
     _git(task_path, "commit", "-m", "feature with local project metadata")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _merge_checkout(temp_db, repo, monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -1326,6 +1365,7 @@ async def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
 async def test_execute_merge_workspace_resolves_docs_guides_readme_row_conflict(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
@@ -1380,7 +1420,7 @@ async def test_execute_merge_workspace_resolves_docs_guides_readme_row_conflict(
     _git(task_path, "add", "docs/guides/README.md", "docs/guides/search.md")
     _git(task_path, "commit", "-m", "refresh search guide")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _merge_checkout(temp_db, repo, monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -1449,6 +1489,7 @@ async def test_execute_merge_workspace_resolves_docs_guides_readme_row_conflict(
 async def test_execute_merge_workspace_resolves_represented_docs_guides_readme_quick_link(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
@@ -1494,7 +1535,7 @@ async def test_execute_merge_workspace_resolves_represented_docs_guides_readme_q
     _git(task_path, "add", "docs/guides/README.md", "docs/guides/mcp-tools.md")
     _git(task_path, "commit", "-m", "refresh mcp tools guide")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _merge_checkout(temp_db, repo, monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -1554,3 +1595,56 @@ async def test_execute_merge_workspace_resolves_represented_docs_guides_readme_q
     assert task_manager.stage_states.get(leaf.id, "merge").state == "done"
     _assert_worktree_removed(worktrees, source.id, task_path)
     assert task_manager.artifacts.get_artifacts(leaf.id).worktree_id is None
+
+
+async def test_workspace_merge_uses_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.build.workspaces import _project_repo_path
+    from gobby.dispatch.workspace_merge import _repo_path_for_task
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    repo = tmp_path / "merge-checkout"
+    repo.mkdir()
+    _init_repo(repo)
+    isolated = install_isolated_checkout_project(
+        temp_db, repo, name="merge-checkout", monkeypatch=monkeypatch
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=isolated.project.id,
+        title="Merge checkout",
+        task_type="task",
+        category="code",
+        validation_criteria="Test task completion is observable.",
+    )
+
+    assert _repo_path_for_task(temp_db, task.id) == Path(isolated.root_path)
+    assert _project_repo_path(temp_db, isolated.project.id) == Path(isolated.root_path)
+
+
+async def test_workspace_merge_fails_closed_without_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.build.workspaces import BuildWorkspaceError, _project_repo_path
+    from gobby.dispatch.workspace_merge import _repo_path_for_task
+    from gobby.storage.project_checkouts import CheckoutNotFoundError
+    from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create("merge-missing-checkout")
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=project.id,
+        title="Merge missing checkout",
+        task_type="task",
+        category="code",
+        validation_criteria="Test task completion is observable.",
+    )
+
+    with pytest.raises(CheckoutNotFoundError):
+        _repo_path_for_task(temp_db, task.id)
+    with pytest.raises((CheckoutNotFoundError, BuildWorkspaceError)):
+        _project_repo_path(temp_db, project.id)

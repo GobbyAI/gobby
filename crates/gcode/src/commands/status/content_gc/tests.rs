@@ -58,7 +58,7 @@ fn recent_git_blob_protects_matching_content() -> anyhow::Result<()> {
 
 mod serial_db {
     use std::cell::RefCell;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
     use crate::index::api;
@@ -79,6 +79,7 @@ mod serial_db {
         };
         let root = git_init_root();
         seed_project(&mut conn, &project_id, root.path());
+        seed_primary_checkout(&mut conn, &project_id, root.path());
         seed_content_version(&mut conn, &project_id, "src/lib.rs", "gc-hash-v1", 60, true);
         seed_content_version(&mut conn, &project_id, "src/lib.rs", "gc-hash-v2", 60, true);
 
@@ -95,7 +96,9 @@ mod serial_db {
                 &machine_id,
                 &project_id,
                 "src/lib.rs",
-                "gc-hash-v1"
+                "gc-hash-v1",
+                root.path(),
+                api::IndexWriteMode::Primary,
             )
             .expect("adopt v1")
         );
@@ -111,7 +114,9 @@ mod serial_db {
                 &machine_id,
                 &project_id,
                 "src/lib.rs",
-                "gc-hash-v2"
+                "gc-hash-v2",
+                root.path(),
+                api::IndexWriteMode::Primary,
             )
             .expect("adopt v2")
         );
@@ -204,7 +209,7 @@ mod serial_db {
         let totals = prune_content_versions_with(
             &services,
             &candidates,
-            None,
+            || false,
             |project_id| Ok(test_context(&database_url, project_id)),
             delete_candidate_projections,
             code_graph::cleanup_orphans,
@@ -261,7 +266,7 @@ mod serial_db {
         let totals = prune_content_versions_with(
             &services,
             &candidates,
-            None,
+            || false,
             |project_id| {
                 let mut ctx = test_context(&database_url, project_id);
                 ctx.falkordb = Some(crate::config::FalkorConfig {
@@ -373,7 +378,7 @@ mod serial_db {
         let totals = prune_content_versions_with(
             &services,
             &candidates,
-            None,
+            || false,
             |project_id| Ok(test_context(&database_url, project_id)),
             delete_candidate_projections,
             code_graph::cleanup_orphans,
@@ -439,7 +444,7 @@ mod serial_db {
         let totals = prune_content_versions_with(
             &services,
             &candidates,
-            None,
+            || false,
             |project_id| {
                 resolved.borrow_mut().push(project_id.to_string());
                 Ok(test_context(&database_url, project_id))
@@ -492,7 +497,7 @@ mod serial_db {
         let totals = prune_content_versions_with(
             &services,
             &candidates,
-            Some(Instant::now()),
+            || true,
             |project_id| Ok(test_context(&database_url, project_id)),
             |_: &Context, _: &ContentGcCandidate| {
                 panic!("an expired budget must not touch projections")
@@ -537,7 +542,7 @@ mod serial_db {
         let totals = prune_content_versions_with(
             &services,
             &candidates,
-            None,
+            || false,
             |project_id| {
                 let mut ctx = test_context(&database_url, project_id);
                 // Both stores are "configured" so the skip gate lets the
@@ -601,20 +606,20 @@ mod serial_db {
             .expect("discover GC candidates");
         assert_eq!(candidates.len(), 2);
 
-        // The first delete outlives the budget, so the second candidate is
-        // deferred while the first stays committed. The budget leaves room for
-        // the run's two hub connections before the first deadline check.
-        let budget = Duration::from_millis(400);
+        // Allow the first candidate through, then expire the deterministic
+        // budget before the second candidate starts.
+        let deadline_checks = std::cell::Cell::new(0);
         let services = test_context(&database_url, &project_id);
         let totals = prune_content_versions_with(
             &services,
             &candidates,
-            Some(Instant::now() + budget),
-            |project_id| Ok(test_context(&database_url, project_id)),
-            |_: &Context, _: &ContentGcCandidate| {
-                std::thread::sleep(budget * 3);
-                Ok(())
+            || {
+                let checks = deadline_checks.get();
+                deadline_checks.set(checks + 1);
+                checks > 0
             },
+            |project_id| Ok(test_context(&database_url, project_id)),
+            |_: &Context, _: &ContentGcCandidate| Ok(()),
             |_: &Context| panic!("no graph store is configured, nothing to sweep"),
         )
         .expect("prune honours the time budget");
@@ -643,7 +648,7 @@ mod serial_db {
         let totals = prune_content_versions_with(
             &services,
             &remaining,
-            None,
+            || false,
             |project_id| Ok(test_context(&database_url, project_id)),
             delete_candidate_projections,
             code_graph::cleanup_orphans,
@@ -763,6 +768,29 @@ mod serial_db {
             ],
         )
         .expect("insert indexed project state");
+    }
+
+    fn seed_primary_checkout(conn: &mut postgres::Client, project_id: &str, root: &Path) {
+        let project_uuid = db::id_param(project_id).expect("test project id is a uuid");
+        let machine_id = db::id_param(
+            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+        )
+        .expect("local machine id is a uuid");
+        conn.execute(
+            "INSERT INTO projects (id, name) VALUES ($1, $2)",
+            &[&project_uuid, &format!("gc-{project_id}")],
+        )
+        .expect("insert registry project");
+        conn.execute(
+            "INSERT INTO project_checkouts (machine_id, project_id, root_path)
+             VALUES ($1, $2, $3)",
+            &[
+                &machine_id,
+                &project_uuid,
+                &root.to_string_lossy().to_string(),
+            ],
+        )
+        .expect("insert primary checkout");
     }
 
     fn seed_content_version(
@@ -942,6 +970,8 @@ mod serial_db {
             "DELETE FROM code_content_chunks WHERE project_id = $1",
             "DELETE FROM code_indexed_files WHERE project_id = $1",
             "DELETE FROM code_indexed_projects WHERE id = $1",
+            "DELETE FROM project_checkouts WHERE project_id = $1",
+            "DELETE FROM projects WHERE id = $1",
         ] {
             conn.execute(statement, &[&project_id])?;
         }

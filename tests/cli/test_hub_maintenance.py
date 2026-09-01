@@ -306,6 +306,25 @@ def test_account_identity_cutover_leaves_daemon_stopped_for_binary_install(
     assert "Install the staged gdaemon and gcode binaries" in result.output
 
 
+def test_project_checkout_cutover_leaves_daemon_stopped_for_binary_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    epoch = _epoch("project-checkout-cutover")
+    batch = _batch(epoch)
+    _install_lifecycle_fakes(monkeypatch, epoch=epoch, batch=batch, events=events)
+
+    result = CliRunner().invoke(
+        cli,
+        ["hub-maintenance", "run", "project-checkout-cutover"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert events[-2:] == ["mark-verified", "release"]
+    assert "restart" not in events
+    assert "Install the staged gdaemon and gcode binaries" in result.output
+
+
 def test_resume_uses_only_hub_epoch_and_batch_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -503,6 +522,53 @@ def test_abort_requires_confirmation_and_records_disposition(
     assert accepted.exit_code == 0, accepted.output
 
 
+@pytest.mark.parametrize("status", ["applied", "verified"])
+def test_project_checkout_abort_after_target_apply_leaves_daemon_stopped(
+    monkeypatch: pytest.MonkeyPatch,
+    status: BatchStatus,
+) -> None:
+    epoch = _epoch("project-checkout-cutover")
+    batch = _batch(epoch, status=status)
+    events: list[str] = []
+    monkeypatch.setattr(command, "_resolve_database_url", lambda: "postgresql://example/gobby")
+    monkeypatch.setattr(command, "discover_active_maintenance_epoch", lambda _dsn: epoch)
+    monkeypatch.setattr(command, "get_destructive_batch", lambda *_args, **_kwargs: batch)
+    monkeypatch.setattr(command, "abort_maintenance_epoch", lambda *_args, **_kwargs: epoch)
+    monkeypatch.setattr(command, "_start_daemon", lambda: events.append("restart"))
+
+    result = CliRunner().invoke(
+        cli,
+        ["hub-maintenance", "abort", "--disposition", "staged binaries required"],
+        input="y\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert events == []
+    assert "Install the staged gdaemon and gcode binaries" in result.output
+
+
+def test_project_checkout_predecessor_only_abort_restarts_daemon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    epoch = _epoch("project-checkout-cutover")
+    batch = _batch(epoch, status="pending")
+    events: list[str] = []
+    monkeypatch.setattr(command, "_resolve_database_url", lambda: "postgresql://example/gobby")
+    monkeypatch.setattr(command, "discover_active_maintenance_epoch", lambda _dsn: epoch)
+    monkeypatch.setattr(command, "get_destructive_batch", lambda *_args, **_kwargs: batch)
+    monkeypatch.setattr(command, "abort_maintenance_epoch", lambda *_args, **_kwargs: epoch)
+    monkeypatch.setattr(command, "_start_daemon", lambda: events.append("restart"))
+
+    result = CliRunner().invoke(
+        cli,
+        ["hub-maintenance", "abort", "--disposition", "preflight only"],
+        input="y\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert events == ["restart"]
+
+
 def test_hub_backup_epoch_refuses_non_orchestrator_invocation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -562,3 +628,19 @@ def test_account_identity_cutover_executor_is_loaded_lazily(
     executor = command._load_campaign_executor("account-identity-cutover")
 
     assert isinstance(executor, AccountIdentityCutoverExecutor)
+
+
+def test_project_checkout_cutover_executor_is_loaded_lazily(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.cli.project_checkout_cutover import ProjectCheckoutCutoverExecutor
+
+    monkeypatch.delitem(
+        command._CAMPAIGN_EXECUTORS,
+        "project-checkout-cutover",
+        raising=False,
+    )
+
+    executor = command._load_campaign_executor("project-checkout-cutover")
+
+    assert isinstance(executor, ProjectCheckoutCutoverExecutor)

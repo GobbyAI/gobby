@@ -14,9 +14,10 @@ from gobby.clones.git import CloneGitManager
 from gobby.runner_maintenance_helpers import _run_db
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase, IsolationRegistryReconciliation
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.projects import LocalProjectManager, Project
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.storage.worktrees import LocalWorktreeManager
-from gobby.utils.machine_id import require_machine_id
 from gobby.worktrees.git import WorktreeGitManager
 from gobby.worktrees.git import _status as worktree_git_status
 
@@ -44,11 +45,19 @@ async def reconcile_isolation_registry(
     run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> IsolationReconciliationResult:
     """Adopt unmanaged isolation workspaces for registered local projects."""
-    resolved_machine_id = machine_id or require_machine_id()
+    resolved_machine_id = require_local_machine_id(
+        machine_id,
+        resource_kind="isolation_registry",
+        resource_id=machine_id or "local",
+    )
     lock = IsolationRegistryReconciliation(machine_id=resolved_machine_id)
 
     async with db.advisory_lock(lock):
-        result = await _reconcile_isolation_registry(db, run_db=run_db)
+        result = await _reconcile_isolation_registry(
+            db,
+            resolved_machine_id,
+            run_db=run_db,
+        )
 
     if result.total_adopted:
         logger.info(
@@ -62,26 +71,31 @@ async def reconcile_isolation_registry(
 
 async def _reconcile_isolation_registry(
     db: HubDatabase,
+    machine_id: str,
     *,
     run_db: Callable[..., Awaitable[Any]] | None,
 ) -> IsolationReconciliationResult:
     project_storage = LocalProjectManager(db)
+    checkout_storage = LocalProjectCheckoutManager(db)
     worktree_storage = LocalWorktreeManager(db)
     clone_storage = LocalCloneManager(db)
-    projects: list[Project] = await _run_db(run_db, project_storage.list)
+    checkouts = await _run_db(run_db, checkout_storage.list_for_machine, machine_id)
     worktrees_adopted = 0
     clones_adopted = 0
 
-    for project in projects:
-        if not project.repo_path or _is_ignored_name(project.name):
+    for checkout in checkouts:
+        project = await _run_db(run_db, project_storage.get, checkout.project_id)
+        if project is None or _is_ignored_name(project.name):
             continue
         worktrees_adopted += await _reconcile_project_worktrees(
             project,
+            checkout.root_path,
             worktree_storage,
             run_db=run_db,
         )
         clones_adopted += await _reconcile_project_clones(
             project,
+            checkout.root_path,
             clone_storage,
             run_db=run_db,
         )
@@ -94,14 +108,14 @@ async def _reconcile_isolation_registry(
 
 async def _reconcile_project_worktrees(
     project: Project,
+    checkout_root: str,
     storage: LocalWorktreeManager,
     *,
     run_db: Callable[..., Awaitable[Any]] | None,
 ) -> int:
-    assert project.repo_path is not None
-    manager = WorktreeGitManager(project.repo_path)
+    manager = WorktreeGitManager(checkout_root)
     try:
-        primary_path = await asyncio.to_thread(_canonical_path, project.repo_path)
+        primary_path = await asyncio.to_thread(_canonical_path, checkout_root)
         worktrees = await asyncio.to_thread(
             worktree_git_status.list_worktrees,
             manager,
@@ -142,12 +156,12 @@ async def _reconcile_project_worktrees(
 
 async def _reconcile_project_clones(
     project: Project,
+    checkout_root: str,
     storage: LocalCloneManager,
     *,
     run_db: Callable[..., Awaitable[Any]] | None,
 ) -> int:
-    assert project.repo_path is not None
-    manager = CloneGitManager(project.repo_path)
+    manager = CloneGitManager(checkout_root)
     try:
         project_directory = await asyncio.to_thread(
             _canonical_path,

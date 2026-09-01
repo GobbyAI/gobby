@@ -248,6 +248,7 @@ fn seeded_file(prefix: &str, hash: &str) -> (postgres::Client, String, ProjectCl
             total_eligible_files: None,
             indexer_version: None,
         },
+        api::IndexWriteMode::Overlay,
     )
     .expect("seed project");
     upsert_content_version(&mut conn, &project_id, hash);
@@ -288,6 +289,8 @@ fn point_file_state(conn: &mut postgres::Client, project_id: &str, hash: &str) {
             byte_size: 16,
             indexed_at: String::new(),
         },
+        std::path::Path::new("/tmp/queries-cas"),
+        api::IndexWriteMode::Overlay,
     )
     .expect("point file state");
 }

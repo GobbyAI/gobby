@@ -32,7 +32,10 @@ export interface OpenFile {
 export interface Project {
   id: string;
   name: string;
-  repo_path: string;
+  checkout: {
+    machine_id: string;
+    root_path: string;
+  } | null;
 }
 
 // Map file extensions to syntax highlighter language names

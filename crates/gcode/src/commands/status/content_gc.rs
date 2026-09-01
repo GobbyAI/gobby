@@ -161,7 +161,7 @@ pub(super) fn prune_content_versions(
     prune_content_versions_with(
         services,
         candidates,
-        deadline,
+        || deadline.is_some_and(|deadline| Instant::now() >= deadline),
         |project_id| {
             Context::resolve_for_project_id_with_services(
                 project_id,
@@ -177,7 +177,7 @@ pub(super) fn prune_content_versions(
 fn prune_content_versions_with(
     services: &Context,
     candidates: &[ContentGcCandidate],
-    deadline: Option<Instant>,
+    mut deadline_reached: impl FnMut() -> bool,
     resolve_project_services: impl Fn(&str) -> anyhow::Result<Context>,
     mut delete_projections: impl FnMut(&Context, &ContentGcCandidate) -> anyhow::Result<()>,
     mut sweep_graph_orphans: impl FnMut(&Context) -> anyhow::Result<()>,
@@ -194,7 +194,7 @@ fn prune_content_versions_with(
     // every version made a large backlog take hours instead of minutes (#21085).
     let mut graph_dirty_projects = BTreeSet::new();
     for (index, candidate) in candidates.iter().enumerate() {
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        if deadline_reached() {
             totals.deferred_versions = candidates.len() - index;
             break;
         }

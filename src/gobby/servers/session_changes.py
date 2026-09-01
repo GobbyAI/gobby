@@ -154,10 +154,18 @@ def resolve_session_workspace(
 
     repo_path: str | None = None
     try:
-        from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
+        from gobby.storage.workspace_machine_scope import require_local_machine_id
 
-        project = LocalProjectManager(session_manager.db).get(session.project_id)
-        repo_path = project.repo_path if project else None
+        if session.project_id:
+            machine_id = require_local_machine_id(
+                getattr(session, "machine_id", None),
+                resource_kind="project_checkout",
+                resource_id=session.project_id,
+            )
+            repo_path = require_root(session_manager.db, session.project_id, machine_id)
+    except CheckoutNotFoundError:
+        raise
     except _RECOVERABLE_WORKSPACE_ERRORS:
         logger.debug("Failed to resolve project for session %s", session_id, exc_info=True)
 

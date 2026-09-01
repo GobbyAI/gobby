@@ -197,11 +197,11 @@ def test_subtree_cascade_serializes_overlapping_subtrees(
     try:
         db.execute(
             """
-            INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (id) DO NOTHING
-            """,
-            (project_id, "Project 1", "/tmp/project-1"),
+                INSERT INTO projects (id, name, created_at, updated_at)
+                VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO NOTHING
+                """,
+            (project_id, "Project 1"),
         )
         db.executemany(
             """

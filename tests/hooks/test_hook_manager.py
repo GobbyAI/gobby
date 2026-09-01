@@ -1,9 +1,13 @@
 """Tests for HookManager edge cases and error handling."""
 
 import asyncio
+import json
+import logging
 import threading
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,12 +18,33 @@ from gobby.hooks.dispatchers.mcp import run_coro_blocking
 from gobby.hooks.effect_deadline import BLOCKING_EFFECT_BUDGET_SECONDS, BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
+from gobby.hooks.project_context import ProjectIdResolver, resolve_hook_project_context
 from gobby.hooks.session_types import HookSessionManager
 from gobby.storage import workspace_machine_scope
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
-from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.storage.project_checkouts import (
+    CheckoutRootTakenError,
+    CheckoutSentinelRejectedError,
+    LocalProjectCheckoutManager,
+    MissingMachineContextError,
+    OverlayRegistrationRejectedError,
+)
+from gobby.storage.projects import (
+    GLOBAL_PROJECT_ID,
+    PERSONAL_PROJECT_ID,
+    LocalProjectManager,
+)
 from gobby.storage.sessions import SessionManager
+from gobby.utils.checkout_root import MarkerMismatchError
+from gobby.utils.project_context import ensure_project_json_for_isolation
+from gobby.utils.project_init import initialize_project
+from tests.fixtures.isolated_checkout import (
+    insert_isolated_machine,
+    insert_overlay,
+    patch_local_machine_id,
+    write_project_marker,
+)
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
@@ -1321,24 +1346,10 @@ class TestEnsureProjectInDb:
         """_ensure_project_in_db does nothing when session_manager is None."""
         manager = manager_with_mocks
         manager._session_manager = cast(HookSessionManager, None)
+        manager._project_id_resolver.session_manager = None
 
         manager._ensure_project_in_db({"id": "proj-1", "name": "test"})
         assert manager._session_manager is None
-
-    def test_ensure_project_db_error_handled(
-        self,
-        manager_with_mocks: HookManager,
-    ) -> None:
-        """_ensure_project_in_db handles DB errors gracefully."""
-        manager = manager_with_mocks
-        manager._session_manager = MagicMock()
-        manager._session_manager.db = MagicMock()
-
-        with patch("gobby.storage.projects.LocalProjectManager") as MockPM:
-            MockPM.return_value.ensure_exists.side_effect = ValueError("DB error")
-            result = manager._ensure_project_in_db({"id": "proj-1", "name": "test"})
-            assert result is None
-            MockPM.return_value.ensure_exists.assert_called_once_with("proj-1", "test", None)
 
 
 class TestSessionManagerUnification:
@@ -1873,3 +1884,401 @@ def test_grok_preserve_original_gate_flushes_pending_context(
         variables.get_variables(session_id)["grok_pending_delivery"]["envelope_id"]
         == f"{gate_kind}-envelope"
     )
+
+
+def _pin_hook_machine(db: HubDatabase, monkeypatch: pytest.MonkeyPatch) -> str:
+    machine_id = insert_isolated_machine(db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+    return machine_id
+
+
+def _hook_sessions(db: HubDatabase) -> HookSessionManager:
+    return cast(HookSessionManager, SessionManager(db))
+
+
+def _checkout_root(db: HubDatabase, machine_id: str, project_id: str) -> str | None:
+    row = LocalProjectCheckoutManager(db).get(machine_id, project_id)
+    return None if row is None else row.root_path
+
+
+def _read_marker(root: Path) -> dict[str, Any]:
+    loaded: object = json.loads((root / ".gobby" / "project.json").read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    return loaded
+
+
+def _cwd_hook_event(cwd: str) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id="missing-session",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={},
+        cwd=cwd,
+    )
+
+
+def _resolve_cwd_marker(
+    cwd: Path,
+    session_manager: HookSessionManager,
+) -> tuple[HookEvent, Any]:
+    event = _cwd_hook_event(str(cwd))
+    resolver = ProjectIdResolver(
+        session_manager=session_manager,
+        logger=logging.getLogger("test.hooks.checkout"),
+    )
+    resolution = resolve_hook_project_context(
+        event,
+        session_manager=session_manager,
+        resolve_project_id=resolver.resolve,
+        logger=resolver.logger,
+    )
+    return event, resolution
+
+
+class TestHookCheckoutIngress:
+    """§ 2.2 register from hook ingress."""
+
+    def test_non_overlay_cwd_registers_local_checkout(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_hook_machine(temp_db, monkeypatch)
+        project = LocalProjectManager(temp_db).create(name="hook-register")
+        write_project_marker(tmp_path, project_id=project.id, name="hook-register")
+        sessions = _hook_sessions(temp_db)
+
+        event, resolution = _resolve_cwd_marker(tmp_path, sessions)
+
+        assert resolution.skipped is False
+        assert resolution.source == "cwd"
+        assert resolution.project_id == project.id
+        assert event.project_id == project.id
+        assert _checkout_root(temp_db, machine_id, project.id) == str(tmp_path)
+
+    def test_overlay_cwd_resolves_without_register_or_rebind(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_hook_machine(temp_db, monkeypatch)
+        canonical = tmp_path / "main"
+        overlay = tmp_path / "wt"
+        canonical.mkdir()
+        overlay.mkdir()
+        project = LocalProjectManager(temp_db).create(name="hook-overlay")
+        write_project_marker(canonical, project_id=project.id, name="hook-overlay")
+        write_project_marker(overlay, project_id=project.id, name="hook-overlay")
+        LocalProjectCheckoutManager(temp_db).register(machine_id, project.id, str(canonical))
+        insert_overlay(
+            temp_db,
+            project_id=project.id,
+            machine_id=machine_id,
+            path=str(overlay),
+            kind="worktree",
+        )
+
+        event, resolution = _resolve_cwd_marker(overlay, _hook_sessions(temp_db))
+
+        assert resolution.project_id == project.id
+        assert resolution.source == "cwd"
+        assert event.project_id == project.id
+        assert _checkout_root(temp_db, machine_id, project.id) == str(canonical)
+
+    def test_isolation_copy_does_not_register(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_hook_machine(temp_db, monkeypatch)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        canonical = tmp_path / "main"
+        isolated = tmp_path / ".gobby" / "worktrees" / "hook-iso" / "task-1"
+        canonical.mkdir()
+        isolated.mkdir(parents=True)
+        project = LocalProjectManager(temp_db).create(name="hook-isolation")
+        write_project_marker(canonical, project_id=project.id, name="hook-isolation")
+        LocalProjectCheckoutManager(temp_db).register(machine_id, project.id, str(canonical))
+        ensure_project_json_for_isolation(canonical, isolated)
+
+        _resolve_cwd_marker(isolated, _hook_sessions(temp_db))
+
+        assert _checkout_root(temp_db, machine_id, project.id) == str(canonical)
+        rows = temp_db.fetchall(
+            "SELECT root_path FROM project_checkouts WHERE project_id = %s",
+            (project.id,),
+        )
+        assert [str(row["root_path"]) for row in rows] == [str(canonical)]
+
+    @pytest.mark.parametrize("sentinel_id", [PERSONAL_PROJECT_ID, GLOBAL_PROJECT_ID])
+    def test_sentinel_cwd_does_not_register(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+        sentinel_id: str,
+    ) -> None:
+        machine_id = _pin_hook_machine(temp_db, monkeypatch)
+        write_project_marker(tmp_path, project_id=sentinel_id, name="_sentinel")
+        event, resolution = _resolve_cwd_marker(tmp_path, _hook_sessions(temp_db))
+        assert resolution.project_id == sentinel_id
+        assert resolution.source == "cwd"
+        assert event.project_id == sentinel_id
+        assert _checkout_root(temp_db, machine_id, sentinel_id) is None
+
+    def test_soft_deleted_marker_refuses_without_restore_or_register(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_hook_machine(temp_db, monkeypatch)
+        manager = LocalProjectManager(temp_db)
+        project = manager.create(name="hook-deleted")
+        write_project_marker(tmp_path, project_id=project.id, name="hook-deleted")
+        assert manager.soft_delete(project.id)
+        sessions = _hook_sessions(temp_db)
+        event = _cwd_hook_event(str(tmp_path))
+        resolver = ProjectIdResolver(session_manager=sessions)
+
+        with pytest.raises(ValueError) as caught:
+            resolve_hook_project_context(
+                event,
+                session_manager=sessions,
+                resolve_project_id=resolver.resolve,
+            )
+
+        assert type(caught.value).__name__ == "SoftDeletedProjectRejectedError"
+        assert event.project_id is None
+        stored = manager.get(project.id)
+        assert stored is not None
+        assert stored.deleted_at is not None
+        assert _checkout_root(temp_db, machine_id, project.id) is None
+        restored = initialize_project(tmp_path, db=temp_db)
+        assert restored.project_id == project.id
+        live = manager.get(project.id)
+        assert live is not None
+        assert live.deleted_at is None
+        assert _checkout_root(temp_db, machine_id, project.id) == str(tmp_path)
+
+    @pytest.mark.parametrize(
+        ("raise_from", "exc_type"),
+        [
+            ("validate", OverlayRegistrationRejectedError),
+            ("validate", MarkerMismatchError),
+            ("register", CheckoutRootTakenError),
+            ("register", CheckoutSentinelRejectedError),
+            ("register", OverlayRegistrationRejectedError),
+            ("require", MissingMachineContextError),
+        ],
+    )
+    def test_typed_checkout_refusal_propagates_without_resolution(
+        self,
+        manager_with_mocks: HookManager,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+        raise_from: str,
+        exc_type: type[BaseException],
+    ) -> None:
+        _pin_hook_machine(temp_db, monkeypatch)
+        project = LocalProjectManager(temp_db).create(name=f"hook-refuse-{raise_from}")
+        write_project_marker(tmp_path, project_id=project.id, name=project.name)
+        sessions = _hook_sessions(temp_db)
+        err = exc_type("typed checkout refusal")
+        if raise_from == "validate":
+            monkeypatch.setattr(
+                "gobby.utils.checkout_root.validate_checkout_root",
+                lambda *args, **kwargs: (_ for _ in ()).throw(err),
+            )
+        elif raise_from == "register":
+            monkeypatch.setattr(
+                "gobby.storage.project_checkouts.LocalProjectCheckoutManager.register",
+                lambda *args, **kwargs: (_ for _ in ()).throw(err),
+            )
+        else:
+            monkeypatch.setattr(
+                "gobby.storage.workspace_machine_scope.require_local_machine_id",
+                lambda *args, **kwargs: (_ for _ in ()).throw(err),
+            )
+        event = _cwd_hook_event(str(tmp_path))
+        resolver = ProjectIdResolver(
+            session_manager=sessions,
+            logger=manager_with_mocks.logger,
+        )
+
+        with pytest.raises(exc_type, match="typed checkout refusal"):
+            resolve_hook_project_context(
+                event,
+                session_manager=sessions,
+                resolve_project_id=resolver.resolve,
+                logger=manager_with_mocks.logger,
+            )
+
+        assert event.project_id is None
+        assert "project_id" not in event.data
+
+    def test_root_taken_refusal_is_live_not_swallowed(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_hook_machine(temp_db, monkeypatch)
+        owner = LocalProjectManager(temp_db).create(name="hook-root-owner")
+        LocalProjectCheckoutManager(temp_db).register(machine_id, owner.id, str(tmp_path))
+        challenger = LocalProjectManager(temp_db).create(name="hook-root-challenger")
+        write_project_marker(tmp_path, project_id=challenger.id, name="hook-root-challenger")
+        event = _cwd_hook_event(str(tmp_path))
+        sessions = _hook_sessions(temp_db)
+        resolver = ProjectIdResolver(session_manager=sessions)
+
+        with pytest.raises(CheckoutRootTakenError):
+            resolve_hook_project_context(
+                event,
+                session_manager=sessions,
+                resolve_project_id=resolver.resolve,
+            )
+
+        assert event.project_id is None
+        assert _checkout_root(temp_db, machine_id, challenger.id) is None
+        assert _checkout_root(temp_db, machine_id, owner.id) == str(tmp_path)
+
+    def test_stale_name_refreshes_matching_marker_not_database_name(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        machine_id = _pin_hook_machine(temp_db, monkeypatch)
+        manager = LocalProjectManager(temp_db)
+        project = manager.create(name="canonical-hook-name")
+        write_project_marker(tmp_path, project_id=project.id, name="stale-hook-name")
+        marker_path = tmp_path / ".gobby" / "project.json"
+        payload = json.loads(marker_path.read_text(encoding="utf-8"))
+        payload["created_at"] = "2024-01-02T00:00:00Z"
+        payload["extra_field"] = "keep-me"
+        marker_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        event, resolution = _resolve_cwd_marker(tmp_path, _hook_sessions(temp_db))
+
+        stored = manager.get(project.id)
+        assert stored is not None
+        assert stored.name == "canonical-hook-name"
+        refreshed = _read_marker(tmp_path)
+        assert refreshed["name"] == "canonical-hook-name"
+        assert refreshed["id"] == project.id
+        assert refreshed["created_at"] == "2024-01-02T00:00:00Z"
+        assert refreshed["extra_field"] == "keep-me"
+        assert resolution.project_id == project.id
+        assert event.project_id == project.id
+        assert _checkout_root(temp_db, machine_id, project.id) == str(tmp_path)
+
+    def test_stale_name_refresh_leaves_replaced_marker_untouched(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import gobby.utils.project_init as project_init
+
+        machine_id = _pin_hook_machine(temp_db, monkeypatch)
+        manager = LocalProjectManager(temp_db)
+        project = manager.create(name="refresh-hook")
+        write_project_marker(tmp_path, project_id=project.id, name="old-hook-name")
+        replacement_id = str(uuid.uuid4())
+
+        def replace_marker() -> None:
+            write_project_marker(tmp_path, project_id=replacement_id, name="replacement")
+
+        monkeypatch.setitem(
+            project_init._INIT_FAILPOINTS, "refresh_after_temp_fsync", replace_marker
+        )
+        event, resolution = _resolve_cwd_marker(tmp_path, _hook_sessions(temp_db))
+
+        assert resolution.project_id == project.id
+        assert event.project_id == project.id
+        stored = manager.get(project.id)
+        assert stored is not None
+        assert stored.name == "refresh-hook"
+        assert _read_marker(tmp_path)["id"] == replacement_id
+        assert _checkout_root(temp_db, machine_id, project.id) == str(tmp_path)
+
+    @pytest.mark.parametrize(
+        "source",
+        ["explicit", "session", "existing-session", "contract-probe", "current-context"],
+    )
+    def test_non_cwd_resolutions_do_not_register_rebind_or_refresh(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+        source: str,
+    ) -> None:
+        machine_id = _pin_hook_machine(temp_db, monkeypatch)
+        project = LocalProjectManager(temp_db).create(name="hook-non-cwd")
+        write_project_marker(tmp_path, project_id=project.id, name="stale-non-cwd")
+        session = SimpleNamespace(id="sess-1", project_id=project.id)
+        sessions = MagicMock()
+        sessions.db = temp_db
+        sessions.get.return_value = session
+        sessions.get_session_id.return_value = None
+        sessions.find_active_by_external_id.return_value = None
+        sessions.recover_session.return_value = None
+        resolver = ProjectIdResolver(session_manager=sessions)
+        event = _cwd_hook_event(str(tmp_path))
+        if source == "explicit":
+            event.project_id = project.id
+        elif source == "session":
+            event.metadata["_platform_session_id"] = session.id
+            sessions.get_session_id.return_value = None
+        elif source == "existing-session":
+            sessions.get_session_id.return_value = session.id
+        elif source == "contract-probe":
+            event.cwd = "/tmp/gobby-contract-probe-20307"
+            event.data["cwd"] = event.cwd
+        else:
+            event.cwd = "/"
+            event.data["cwd"] = "/"
+            monkeypatch.setenv("GOBBY_PROJECT_ID", project.id)
+
+        with (
+            patch(
+                "gobby.storage.project_checkouts.LocalProjectCheckoutManager.register",
+                side_effect=AssertionError("register"),
+            ),
+            patch(
+                "gobby.storage.project_checkouts.LocalProjectCheckoutManager.rebind",
+                side_effect=AssertionError("rebind"),
+            ),
+            patch(
+                "gobby.utils.project_init.refresh_marker_expected_id",
+                side_effect=AssertionError("refresh"),
+            ),
+        ):
+            resolution = resolve_hook_project_context(
+                event,
+                session_manager=sessions,
+                resolve_project_id=resolver.resolve,
+            )
+
+        assert resolution.skipped is False
+        if source == "contract-probe":
+            assert resolution.source == "contract-probe"
+            assert resolution.project_id == GLOBAL_PROJECT_ID
+        elif source == "current-context":
+            assert resolution.source == "current-context"
+            assert resolution.project_id == project.id
+        elif source == "explicit":
+            assert resolution.source == "explicit"
+            assert resolution.project_id == project.id
+        else:
+            assert resolution.source in {"platform-session", "existing-session"}
+            assert resolution.project_id == project.id
+        assert _checkout_root(temp_db, machine_id, project.id) is None
+        assert _read_marker(tmp_path)["name"] == "stale-non-cwd"

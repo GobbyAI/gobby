@@ -136,7 +136,7 @@ def create_hub_registry(
 
     @registry.tool(
         name="list_all_projects",
-        description="List all initialized gobby projects with names and repo paths. Use project names with create_task(project='name') for cross-project task creation.",
+        description="List all initialized gobby projects with names. Use project names with create_task(project='name') for cross-project task creation.",
     )
     async def list_all_projects(
         include_system: bool = False,
@@ -144,7 +144,7 @@ def create_hub_registry(
         """
         List all initialized gobby projects.
 
-        Returns project names and repo paths from the projects table.
+        Returns project names from the projects table.
         Use project names with create_task(project="name") for cross-project
         task creation.
 
@@ -163,7 +163,7 @@ def create_hub_registry(
                 # which hangs on real hubs (#18332).
                 return hub_db.fetchall(
                     """
-                SELECT p.id, p.name, p.repo_path,
+                SELECT p.id, p.name,
                        COALESCE(t.task_count, 0) as task_count,
                        COALESCE(s.session_count, 0) as session_count
                 FROM projects p
@@ -185,7 +185,6 @@ def create_hub_registry(
                 {
                     "project_id": r["id"],
                     "name": r["name"],
-                    "repo_path": r["repo_path"],
                     "task_count": r["task_count"],
                     "session_count": r["session_count"],
                 }

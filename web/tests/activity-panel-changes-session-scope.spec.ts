@@ -132,7 +132,10 @@ async function setupMocks(page: Page, current: SessionRecord) {
           id: "proj-1",
           name: "project-one",
           display_name: "Project One",
-          repo_path: "/tmp/project-one",
+          checkout: {
+            machine_id: "machine-1",
+            root_path: "/tmp/project-one",
+          },
           github_url: null,
           github_repo: null,
           linear_team_id: null,

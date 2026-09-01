@@ -218,15 +218,20 @@ def project_storage(temp_db: HubDatabase) -> LocalProjectManager:
 
 
 @pytest.fixture
-def test_project(project_storage: LocalProjectManager, temp_dir: Path) -> dict[str, Any]:
-    """Create a test project with project.json file."""
-    project = project_storage.create(name="test-project", repo_path=str(temp_dir))
+def test_project(
+    project_storage: LocalProjectManager,
+    temp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, Any]:
+    """Create a test project with an isolated machine, marker, and checkout."""
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
-    gobby_dir = temp_dir / ".gobby"
-    gobby_dir.mkdir()
-    (gobby_dir / "project.json").write_text(f'{{"id": "{project.id}", "name": "test-project"}}')
-
-    return project.to_dict()
+    isolated = install_isolated_checkout_project(
+        project_storage.db,
+        temp_dir,
+        monkeypatch=monkeypatch,
+    )
+    return isolated.project.to_dict()
 
 
 @pytest.fixture

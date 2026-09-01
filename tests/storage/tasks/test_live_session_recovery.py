@@ -14,7 +14,7 @@ import pytest
 
 from gobby.sessions.contested_expiry import CONTESTED_TERMINAL_EXPIRY_VARIABLE
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS
@@ -22,6 +22,10 @@ from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._live_session_recovery import recover_expired_live_session_claims
 from gobby.storage.tasks._transitions import escalate_task_if_owned, release_task_claim_if_owned
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.isolated_checkout import (
+    insert_isolated_machine,
+    install_isolated_checkout_project,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -35,11 +39,13 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 def _project_id(temp_db: HubDatabase, repo_path: Path) -> str:
-    project = LocalProjectManager(temp_db).create(
+    isolated = install_isolated_checkout_project(
+        temp_db,
+        repo_path,
         name=f"live-recovery-{uuid.uuid4()}",
-        repo_path=str(repo_path),
+        machine_id=LOCAL_MACHINE_ID,
     )
-    return project.id
+    return isolated.project.id
 
 
 def _session(
@@ -51,7 +57,9 @@ def _session(
     tmux_pane: str | None = None,
     tty: str | None = None,
     contested: bool = False,
+    machine_id: str = LOCAL_MACHINE_ID,
 ) -> Session:
+    insert_isolated_machine(temp_db, machine_id)
     manager = SessionManager(temp_db)
     terminal_context: dict[str, str] = {"cwd": str(repo_path)}
     if tmux_pane is not None:
@@ -61,7 +69,7 @@ def _session(
         terminal_context["tty"] = tty
     session = manager.register(
         external_id=f"ext-{uuid.uuid4()}",
-        machine_id="21000000-0000-4000-8000-00000000000f",
+        machine_id=machine_id,
         source="codex",
         project_id=project_id,
         terminal_context=terminal_context,
@@ -138,6 +146,67 @@ def test_preserves_claims_for_live_owner_statuses(
 
     assert result.released == 0
     assert result.escalated == 0
+    assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id == session.id
+
+
+def test_ignores_foreign_session_before_inspecting_matching_local_path(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    project_id = _project_id(temp_db, tmp_path)
+    foreign_machine_id = "22000000-0000-4000-8000-00000000000f"
+    with patch(
+        "gobby.storage.sessions._crud.require_local_machine_id",
+        return_value=foreign_machine_id,
+    ):
+        session = _session(
+            temp_db,
+            project_id,
+            tmp_path,
+            machine_id=foreign_machine_id,
+        )
+    task = _live_task(temp_db, project_id, session.id, title="Foreign live task")
+    _set_claim_variables(
+        temp_db,
+        session.id,
+        [task],
+        task_edited_files={task.id: ["matching-local-path.txt"]},
+    )
+
+    with patch(
+        "gobby.storage.tasks._live_session_recovery.task_dirty_paths",
+        side_effect=AssertionError("foreign path was inspected"),
+    ):
+        result = recover_expired_live_session_claims(temp_db, project_id=project_id)
+
+    assert result.released == 0
+    assert result.escalated == 0
+    assert result.raced == 0
+    assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id == session.id
+
+
+def test_ignores_checkout_free_sentinel_before_filesystem_inspection(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    session = _session(temp_db, GLOBAL_PROJECT_ID, tmp_path)
+    task = _live_task(temp_db, GLOBAL_PROJECT_ID, session.id, title="Global live task")
+    _set_claim_variables(
+        temp_db,
+        session.id,
+        [task],
+        task_edited_files={task.id: ["global.txt"]},
+    )
+
+    with patch(
+        "gobby.storage.tasks._live_session_recovery.task_dirty_paths",
+        side_effect=AssertionError("sentinel path was inspected"),
+    ):
+        result = recover_expired_live_session_claims(temp_db, project_id=GLOBAL_PROJECT_ID)
+
+    assert result.released == 0
+    assert result.escalated == 0
+    assert result.raced == 0
     assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id == session.id
 
 

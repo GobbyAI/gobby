@@ -1,10 +1,12 @@
 """Tests for ServiceContainer lazy pipeline executor creation."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.app_context import ServiceContainer
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -209,3 +211,27 @@ class TestGetPipelineExecutor:
         executor = container.get_pipeline_executor(project_id="proj-1")
 
         assert executor is not None
+
+
+def test_get_git_manager_uses_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.tasks import LocalTaskManager
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    db: HubDatabase = temp_db
+    isolated = install_isolated_checkout_project(
+        db, Path(str(tmp_path)) / "repo", monkeypatch=monkeypatch
+    )
+    container = ServiceContainer(
+        database=db,
+        session_manager=None,
+        task_manager=LocalTaskManager(db),
+    )
+
+    manager = container.get_git_manager(isolated.project.id)
+
+    assert manager is not None
+    assert manager.repo_path == Path(isolated.root_path)

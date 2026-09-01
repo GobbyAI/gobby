@@ -10,12 +10,64 @@ import pytest
 
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 from gobby.mcp_proxy.tools.tasks import create_task_registry as _create_task_registry
+from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.tasks import Task
 from gobby.tasks.close_verdict import CloseVerdict
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 TEST_REPO_PATH = str(Path(__file__).resolve().parents[3])
+_CHECKOUT_MACHINE = "21000000-0000-4000-8000-000000000001"
+
+
+def _checkout_session_manager() -> MagicMock:
+    manager = MagicMock()
+    manager.get.return_value = MagicMock(
+        id="test-session",
+        machine_id=_CHECKOUT_MACHINE,
+        project_id="11111111-1111-4111-8111-111111110001",
+    )
+    manager.resolve_session_reference.side_effect = lambda ref, _project_id=None: ref
+    return manager
+
+
+@pytest.fixture(autouse=True)
+def _stub_checkout_resolvers() -> Iterator[None]:
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.tasks._context.require_root",
+            return_value=TEST_REPO_PATH,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._context.require_local_machine_id",
+            return_value=_CHECKOUT_MACHINE,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.task_repo_paths.require_root",
+            return_value=TEST_REPO_PATH,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.task_repo_paths.require_local_machine_id",
+            return_value=_CHECKOUT_MACHINE,
+        ),
+        patch(
+            "gobby.storage.project_checkouts.require_local_machine_id",
+            return_value=_CHECKOUT_MACHINE,
+        ),
+        patch(
+            "gobby.storage.project_checkouts.require_root",
+            return_value=TEST_REPO_PATH,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._context.SessionManager",
+            return_value=_checkout_session_manager(),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.check_linked_committed_bundled_manifest",
+            return_value=None,
+        ),
+    ):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -55,7 +107,11 @@ def create_task_registry(
             feedback="Every criterion is satisfied by admissible evidence.",
         )
         kwargs["task_validator_resolver"] = lambda: validator
-    return _create_task_registry(task_manager, *args, **kwargs)
+    with patch(
+        "gobby.mcp_proxy.tools.tasks._context.SessionManager",
+        return_value=_checkout_session_manager(),
+    ):
+        return _create_task_registry(task_manager, *args, **kwargs)
 
 
 @pytest.fixture(autouse=True)
@@ -128,7 +184,7 @@ class TestCloseTaskTool:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             MockSessionManager.return_value.resolve_session_reference.return_value = "test-session"
             MockSVManager.return_value.get_variables.return_value = {
@@ -172,7 +228,7 @@ class TestCloseTaskTool:
             ),
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -220,7 +276,7 @@ class TestCloseTaskTool:
 
         with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager:
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager)
@@ -255,7 +311,7 @@ class TestCloseTaskTool:
             ),
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -298,7 +354,7 @@ class TestCloseTaskTool:
             ),
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "ambient-head"
 
@@ -359,7 +415,7 @@ class TestCloseTaskTool:
             patch("gobby.hooks.event_handlers._plan.on_epic_terminal") as archive,
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager)
@@ -395,6 +451,8 @@ class TestCloseTaskTool:
         mock_task_manager.close_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []
 
+        expected_repo_path = str((tmp_path / "repo").resolve())
+        (tmp_path / "repo").mkdir()
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
             patch("gobby.utils.git.run_git_command") as mock_git,
@@ -402,13 +460,17 @@ class TestCloseTaskTool:
                 "gobby.utils.git.normalize_commit_sha",
                 side_effect=lambda sha, cwd=None: sha,
             ),
+            patch(
+                "gobby.mcp_proxy.tools.task_repo_paths.require_root",
+                return_value=expected_repo_path,
+            ),
+            patch(
+                "gobby.storage.project_checkouts.require_root",
+                return_value=expected_repo_path,
+            ),
         ):
-            expected_repo_path = str((tmp_path / "repo").resolve())
-            (tmp_path / "repo").mkdir()
             mock_proj_instance = MagicMock()
-            mock_project = MagicMock()
-            mock_project.repo_path = expected_repo_path
-            mock_proj_instance.get.return_value = mock_project
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -456,7 +518,7 @@ class TestCloseTaskTool:
 
         with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager:
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager)
@@ -493,6 +555,14 @@ class TestCloseTaskTool:
             patch("gobby.tasks.commits.auto_link_commits") as mock_autolink,
             patch("gobby.utils.git.normalize_commit_sha") as mock_normalize,
             patch("gobby.utils.git.run_git_command") as mock_run_git,
+            patch(
+                "gobby.mcp_proxy.tools.task_repo_paths.require_root",
+                side_effect=CheckoutNotFoundError("no checkout"),
+            ),
+            patch(
+                "gobby.storage.project_checkouts.require_root",
+                side_effect=CheckoutNotFoundError("no checkout"),
+            ),
         ):
             MockProjManager.return_value.get.return_value = None
             registry = create_task_registry(mock_task_manager)
@@ -537,6 +607,14 @@ class TestCloseTaskTool:
             patch("gobby.tasks.commits.auto_link_commits") as mock_autolink,
             patch("gobby.utils.git.normalize_commit_sha") as mock_normalize,
             patch("gobby.utils.git.run_git_command") as mock_run_git,
+            patch(
+                "gobby.mcp_proxy.tools.task_repo_paths.require_root",
+                side_effect=CheckoutNotFoundError("no checkout"),
+            ),
+            patch(
+                "gobby.storage.project_checkouts.require_root",
+                side_effect=CheckoutNotFoundError("no checkout"),
+            ),
         ):
             MockProjManager.return_value.get.return_value = None
             MockSVM.return_value.get_variables.return_value = {}
@@ -577,8 +655,17 @@ class TestCloseTaskTool:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager") as MockSTM,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
             patch("gobby.tasks.commits.auto_link_commits") as mock_autolink,
+            patch(
+                "gobby.mcp_proxy.tools.task_repo_paths.require_root",
+                side_effect=CheckoutNotFoundError("no checkout"),
+            ),
+            patch(
+                "gobby.storage.project_checkouts.require_root",
+                side_effect=CheckoutNotFoundError("no checkout"),
+            ),
         ):
             MockProjManager.return_value.get.return_value = None
+            MockSessionManager.return_value = _checkout_session_manager()
             MockSessionManager.return_value.resolve_session_reference.return_value = "test-session"
             MockSTM.return_value.get_task_sessions.return_value = [
                 {
@@ -637,7 +724,7 @@ class TestCloseTaskTool:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
 
             mock_session_instance = MagicMock()
@@ -699,7 +786,7 @@ class TestCloseTaskTool:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
 
             mock_session_instance = MagicMock()
@@ -754,7 +841,7 @@ class TestCloseTaskTool:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -828,7 +915,7 @@ class TestCloseTaskTool:
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -912,7 +999,7 @@ class TestCloseTaskTool:
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -994,7 +1081,7 @@ class TestCloseTaskTool:
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager)
@@ -1075,7 +1162,7 @@ class TestCloseTaskTool:
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(
@@ -1338,7 +1425,7 @@ class TestSessionVariableMirroring:
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+            mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 

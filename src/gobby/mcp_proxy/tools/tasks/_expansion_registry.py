@@ -91,7 +91,12 @@ def _bind_registered_plan(
         if _plan_root_matches_task(plan, ancestor)
     ]
     repo_path = (
-        ctx.get_project_repo_path(requested_task.project_id) if plan_file is not None else None
+        ctx.get_project_repo_path(
+            requested_task.project_id,
+            ctx.checkout_machine_id(requested_task.project_id, get_current_session_id()),
+        )
+        if plan_file is not None
+        else None
     )
     if plan_file is not None:
         path_matches = [
@@ -654,7 +659,11 @@ def _register_qa_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> 
         run = run_manager.get(run_id)
         if run is None:
             return {"ok": False, "error": f"Expansion run {run_id} not found"}
-        repo_path = ctx.get_project_repo_path(project_id or run.project_id)
+        repo_project_id = project_id or run.project_id
+        repo_path = ctx.get_project_repo_path(
+            repo_project_id,
+            ctx.checkout_machine_id(repo_project_id, get_current_session_id()),
+        )
         return run_qa_coverage(
             task_manager=ctx.task_manager,
             run=run,
@@ -746,7 +755,10 @@ def _register_plan_validation_tool(registry: InternalToolRegistry, ctx: Registry
         expected_project_id = ctx.get_current_project_id()
         project_context = get_project_context()
         if project_context is None and expected_project_id:
-            repo_path = ctx.get_project_repo_path(expected_project_id)
+            repo_path = ctx.get_project_repo_path(
+                expected_project_id,
+                ctx.checkout_machine_id(expected_project_id, get_current_session_id()),
+            )
             project_context = {
                 "id": expected_project_id,
                 "project_path": repo_path,

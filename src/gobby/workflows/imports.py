@@ -18,7 +18,9 @@ from gobby.storage.definitions.agents import (
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
+from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS, LocalProjectManager
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.definitions import (
     PipelineDefinition,
@@ -211,8 +213,16 @@ def sync_imported_workflows(
         roots.append((Path(project_path) / ".gobby" / "workflows", project_id))
     else:
         for project in LocalProjectManager(db).list():
-            if project.repo_path:
-                roots.append((Path(project.repo_path) / ".gobby" / "workflows", project.id))
+            if project.id in CHECKOUT_FREE_PROJECT_IDS:
+                continue
+            try:
+                machine_id = require_local_machine_id(
+                    None, resource_kind="project_checkout", resource_id=project.id
+                )
+                checkout_root = require_root(db, project.id, machine_id)
+            except CheckoutNotFoundError:
+                continue
+            roots.append((Path(checkout_root) / ".gobby" / "workflows", project.id))
 
     synced = 0
     errors: list[str] = []

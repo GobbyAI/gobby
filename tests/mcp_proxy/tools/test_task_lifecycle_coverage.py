@@ -23,6 +23,18 @@ from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 TEST_REPO_PATH = str(Path(__file__).resolve().parents[3])
+_CHECKOUT_MACHINE = "21000000-0000-4000-8000-000000000001"
+
+
+def _checkout_session_manager(session_id: str = "test-session") -> MagicMock:
+    manager = MagicMock()
+    manager.get.return_value = MagicMock(
+        id=session_id,
+        machine_id=_CHECKOUT_MACHINE,
+        project_id="11111111-1111-4111-8111-111111110001",
+    )
+    manager.resolve_session_reference.return_value = session_id
+    return manager
 
 
 # ---------------------------------------------------------------------------
@@ -114,9 +126,44 @@ def _stub_project_manager() -> Iterator[None]:
     MagicMock rows as datetimes (fromisoformat TypeError). Stubbing the class
     provides the explicit repository required by close_task Git operations.
     """
-    with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm:
-        mock_pm.return_value.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
+    with (
+        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
+        patch(
+            "gobby.mcp_proxy.tools.tasks._context.require_root",
+            return_value=TEST_REPO_PATH,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._context.require_local_machine_id",
+            return_value="21000000-0000-4000-8000-000000000001",
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.task_repo_paths.require_root",
+            return_value=TEST_REPO_PATH,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.task_repo_paths.require_local_machine_id",
+            return_value="21000000-0000-4000-8000-000000000001",
+        ),
+        patch(
+            "gobby.storage.project_checkouts.require_local_machine_id",
+            return_value="21000000-0000-4000-8000-000000000001",
+        ),
+        patch(
+            "gobby.storage.project_checkouts.require_root",
+            return_value=TEST_REPO_PATH,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._context.SessionManager",
+            return_value=_checkout_session_manager(),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.check_linked_committed_bundled_manifest",
+            return_value=None,
+        ),
+    ):
+        mock_pm.return_value.get.return_value = MagicMock()
         mock_pm.return_value.list.return_value = []
+        mock_pm.return_value.db = MagicMock()
         yield
 
 
@@ -154,8 +201,7 @@ def _create_registry(
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSM,
     ):
-        mock_sm = MagicMock()
-        mock_sm.resolve_session_reference.return_value = "resolved-session"
+        mock_sm = _checkout_session_manager("resolved-session")
         MockSM.return_value = mock_sm
         return create_task_registry(task_manager, task_validator_resolver=lambda: task_validator)
 
@@ -169,9 +215,8 @@ def _create_stage_ops_registry(task_manager: MagicMock) -> Any:
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSM,
     ):
-        mock_sm = MagicMock()
+        mock_sm = _checkout_session_manager()
         mock_sm.resolve_session_reference.return_value = "resolved-session"
-        mock_sm.get.return_value = None
         MockSM.return_value = mock_sm
         ctx = RegistryContext(task_manager=task_manager)
         return create_stage_ops_registry(ctx)
@@ -490,14 +535,14 @@ class TestCloseTask:
             patch("gobby.utils.git.normalize_commit_sha", return_value="abc1234"),
         ):
             mock_vcr.return_value = MagicMock(can_close=True)
-            await registry.call(
+            result = await registry.call(
                 "close_task",
                 {"task_id": task.id, "changes_summary": "done", "commit_sha": "abc1234"},
             )
 
         # link_commit should have been called with cwd keyword arg
         call_kwargs = mock_task_manager.link_commit.call_args
-        assert call_kwargs is not None
+        assert call_kwargs is not None, result
         assert "cwd" in call_kwargs.kwargs
 
     @pytest.mark.asyncio
@@ -545,7 +590,7 @@ class TestCloseTask:
                 side_effect=lambda sha, cwd=None: sha,
             ) as mock_norm,
         ):
-            MockPM.return_value.get.return_value = MagicMock(repo_path=str(repo_path))
+            MockPM.return_value.get.return_value = MagicMock()
             MockSVM.return_value.get_variables.return_value = {
                 "task_edited_files": {task.id: ["src/owned.py"]},
             }
@@ -628,7 +673,7 @@ class TestCloseTask:
                 side_effect=lambda sha, cwd=None: sha,
             ) as mock_norm,
         ):
-            MockPM.return_value.get.return_value = MagicMock(repo_path=str(task_repo))
+            MockPM.return_value.get.return_value = MagicMock()
             MockSVM.return_value.get_variables.return_value = {
                 "task_edited_files": {task.id: ["src/owned.py"]},
             }
@@ -667,7 +712,7 @@ class TestCloseTask:
         mock_task_manager.list_tasks.return_value = []
 
         with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockPM:
-            MockPM.return_value.get.return_value = MagicMock(repo_path=str(tmp_path))
+            MockPM.return_value.get.return_value = MagicMock()
             registry = _create_registry(mock_task_manager)
             result = await registry.call(
                 "close_task",
@@ -694,7 +739,7 @@ class TestCloseTask:
         project_path.write_text("not a repo")
 
         with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockPM:
-            MockPM.return_value.get.return_value = MagicMock(repo_path=str(tmp_path))
+            MockPM.return_value.get.return_value = MagicMock()
             registry = _create_registry(mock_task_manager)
             result = await registry.call(
                 "close_task",

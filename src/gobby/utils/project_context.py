@@ -141,23 +141,29 @@ def get_project_context(cwd: Path | None = None) -> dict[str, Any] | None:
 
 def _build_and_set_project_context(
     project: Any,
+    db: Any | None = None,
+    machine_id: str | None = None,
 ) -> contextvars.Token[dict[str, Any] | None]:
-    """Build enriched context dict from a Project and set the ContextVar.
-
-    Normalizes repo_path, builds base context, and enriches from
-    .gobby/project.json on disk when available.
+    """Build enriched context dict from a Project checkout and set the ContextVar.
 
     Args:
         project: A Project dataclass instance (from storage.projects).
+        db: Hub database used to resolve the calling-machine checkout.
+        machine_id: Session machine id when present; otherwise the local daemon.
 
     Returns:
         Context var token for reset (via reset_project_context).
     """
-    # Normalize empty/whitespace repo_path to None — system projects
-    # (_global, _personal, _orphaned, _migrated) store "" in the DB.
-    repo_path = project.repo_path
-    if repo_path is not None and not repo_path.strip():
-        repo_path = None
+    from gobby.storage.project_checkouts import require_root
+    from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS
+    from gobby.storage.workspace_machine_scope import require_local_machine_id
+
+    repo_path: str | None = None
+    if db is not None and project.id not in CHECKOUT_FREE_PROJECT_IDS:
+        resolved_machine = require_local_machine_id(
+            machine_id, resource_kind="project_checkout", resource_id=project.id
+        )
+        repo_path = require_root(db, project.id, resolved_machine)
     ctx: dict[str, Any] = {
         "id": project.id,
         "name": project.name,
@@ -174,7 +180,7 @@ def _build_and_set_project_context(
                         "Project ID mismatch: db='%s', filesystem='%s' at %s. Using filesystem.",
                         project.id,
                         fs_id,
-                        project.repo_path,
+                        repo_path,
                     )
                 data["project_path"] = repo_path
                 return set_project_context(_with_isolation_marker(data, Path(repo_path)))
@@ -212,7 +218,11 @@ def set_project_context_from_session(
         pm = LocalProjectManager(db)
         project = pm.get(session.project_id)
         if project:
-            return _build_and_set_project_context(project)
+            return _build_and_set_project_context(
+                project,
+                db=db,
+                machine_id=getattr(session, "machine_id", None),
+            )
     except (ImportError, OSError) as e:
         logger.debug("Failed to enrich project context for session %s: %s", session_id, e)
 
@@ -242,7 +252,7 @@ def set_project_context_from_ref(
     project = pm.resolve_ref(ref)
     if not project:
         return None
-    return _build_and_set_project_context(project)
+    return _build_and_set_project_context(project, db=db)
 
 
 def get_workflow_project_path(cwd: Path | None = None) -> Path | None:

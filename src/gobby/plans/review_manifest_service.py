@@ -23,7 +23,9 @@ from gobby.plans.review_evidence_models import (
 )
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
 from gobby.storage.hub.protocol import HubDatabase, PlanReviewEvidenceMutation
+from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 
 
 class RoundResultResolver(Protocol):
@@ -343,12 +345,21 @@ class ReviewManifestService:
         plan_path: str | Path,
     ) -> tuple[Path, str]:
         project = self.projects.get(project_id)
-        if project is None or project.repo_path is None:
+        if project is None:
             raise ReviewEvidenceError(
                 "project_not_found",
                 f"project has no local repository: {project_id}",
             )
-        root = Path(project.repo_path).resolve(strict=True)
+        try:
+            machine_id = require_local_machine_id(
+                None, resource_kind="project_checkout", resource_id=project_id
+            )
+            root = Path(require_root(self.db, project_id, machine_id)).resolve(strict=True)
+        except CheckoutNotFoundError as exc:
+            raise ReviewEvidenceError(
+                "project_not_found",
+                f"project has no local repository: {project_id}",
+            ) from exc
         resolved = normalize_plan_path(root, plan_path)
         return resolved, resolved.relative_to(root).as_posix()
 

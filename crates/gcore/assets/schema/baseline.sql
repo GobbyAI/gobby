@@ -743,7 +743,7 @@ CREATE TABLE destructive_batches (
     aborted_at timestamp with time zone,
     abort_disposition text,
     CONSTRAINT destructive_batches_backup_manifest_sha256_check CHECK (((backup_manifest_sha256 IS NULL) OR (backup_manifest_sha256 ~ '^[0-9a-f]{64}$'::text))),
-    CONSTRAINT destructive_batches_campaign_check CHECK ((campaign = ANY (ARRAY['account-identity-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))),
+CONSTRAINT destructive_batches_campaign_check CHECK ((campaign = ANY (ARRAY['account-identity-cutover'::text, 'project-checkout-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))),
     CONSTRAINT destructive_batches_check CHECK ((((status = 'verified'::text) AND (verified_at IS NOT NULL)) OR ((status <> 'verified'::text) AND (verified_at IS NULL)))),
     CONSTRAINT destructive_batches_check1 CHECK ((((status = 'aborted'::text) AND (aborted_at IS NOT NULL) AND (abort_disposition IS NOT NULL)) OR ((status <> 'aborted'::text) AND (aborted_at IS NULL) AND (abort_disposition IS NULL)))),
     CONSTRAINT destructive_batches_intent_check CHECK ((jsonb_typeof(intent) = 'object'::text)),
@@ -947,7 +947,7 @@ CREATE TABLE maintenance_epochs (
     scope_note text NOT NULL,
     released_at timestamp with time zone,
     released_by_command text,
-    CONSTRAINT maintenance_epochs_campaign_check CHECK ((campaign = ANY (ARRAY['account-identity-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))),
+CONSTRAINT maintenance_epochs_campaign_check CHECK ((campaign = ANY (ARRAY['account-identity-cutover'::text, 'project-checkout-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))),
     CONSTRAINT maintenance_epochs_check CHECK ((((released_at IS NULL) AND (released_by_command IS NULL)) OR ((released_at IS NOT NULL) AND (released_by_command IS NOT NULL))))
 );
 
@@ -1279,14 +1279,23 @@ ALTER TABLE project_lifecycle_events ALTER COLUMN id ADD GENERATED ALWAYS AS IDE
     INCREMENT BY 1
     NO MINVALUE
     NO MAXVALUE
-    CACHE 1
+CACHE 1
 );
 
+CREATE TABLE project_checkouts (
+machine_id uuid NOT NULL,
+project_id uuid NOT NULL,
+root_path text NOT NULL,
+created_at timestamp with time zone DEFAULT now() NOT NULL,
+updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE ONLY project_checkouts FORCE ROW LEVEL SECURITY;
+
 CREATE TABLE projects (
-    id uuid NOT NULL,
-    name text NOT NULL,
-    repo_path text,
-    github_url text,
+id uuid NOT NULL,
+name text NOT NULL,
+github_url text,
     github_repo text,
     linear_team_id text,
     linear_project_id text,
@@ -2606,10 +2615,22 @@ ALTER TABLE ONLY project_github_triage_configs
     ADD CONSTRAINT project_github_triage_configs_pkey PRIMARY KEY (project_id);
 
 ALTER TABLE ONLY project_lifecycle_events
-    ADD CONSTRAINT project_lifecycle_events_pkey PRIMARY KEY (id);
+ADD CONSTRAINT project_lifecycle_events_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY project_checkouts
+ADD CONSTRAINT project_checkouts_pkey PRIMARY KEY (machine_id, project_id);
+
+ALTER TABLE ONLY project_checkouts
+ADD CONSTRAINT project_checkouts_machine_id_root_path_key UNIQUE (machine_id, root_path);
+
+ALTER TABLE ONLY project_checkouts
+ADD CONSTRAINT project_checkouts_machine_id_fkey FOREIGN KEY (machine_id) REFERENCES machines(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY projects
-    ADD CONSTRAINT projects_pkey PRIMARY KEY (id);
+ADD CONSTRAINT projects_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY project_checkouts
+ADD CONSTRAINT project_checkouts_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY prompts
     ADD CONSTRAINT prompts_pkey PRIMARY KEY (id);
@@ -4079,9 +4100,13 @@ GRANT SELECT(name) ON TABLE projects TO gobby_gcode_capability;
 
 GRANT SELECT(name) ON TABLE projects TO gobby_agent_issuer;
 
-GRANT SELECT(repo_path) ON TABLE projects TO gobby_gcode_capability;
+GRANT SELECT(deleted_at) ON TABLE projects TO gobby_gcode_capability;
 
-GRANT SELECT(repo_path) ON TABLE projects TO gobby_agent_issuer;
+GRANT SELECT(deleted_at) ON TABLE projects TO gobby_agent_issuer;
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE project_checkouts TO gobby_daemon_runtime;
+
+GRANT SELECT(machine_id,project_id,root_path),UPDATE(machine_id,project_id,root_path) ON TABLE project_checkouts TO gobby_gcode_capability;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE prompts TO gobby_daemon_runtime;
 
@@ -4239,13 +4264,13 @@ ALTER DEFAULT PRIVILEGES FOR ROLE CURRENT_USER IN SCHEMA public GRANT ALL ON FUN
 
 ALTER DEFAULT PRIVILEGES FOR ROLE CURRENT_USER IN SCHEMA public GRANT SELECT,INSERT,DELETE,UPDATE ON TABLES TO gobby_daemon_runtime;
 
-INSERT INTO projects (id, name, repo_path, github_url, github_repo, linear_team_id, linear_project_id, linear_synced_at, linear_sync_enabled, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000000', '_orphaned', NULL, NULL, NULL, NULL, NULL, NULL, false, NULL, NOW(), NOW());
+INSERT INTO projects (id, name, github_url, github_repo, linear_team_id, linear_project_id, linear_synced_at, linear_sync_enabled, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000000', '_orphaned', NULL, NULL, NULL, NULL, NULL, false, NULL, NOW(), NOW());
 
-INSERT INTO projects (id, name, repo_path, github_url, github_repo, linear_team_id, linear_project_id, linear_synced_at, linear_sync_enabled, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000001', '_migrated', NULL, NULL, NULL, NULL, NULL, NULL, false, NULL, NOW(), NOW());
+INSERT INTO projects (id, name, github_url, github_repo, linear_team_id, linear_project_id, linear_synced_at, linear_sync_enabled, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000001', '_migrated', NULL, NULL, NULL, NULL, NULL, false, NULL, NOW(), NOW());
 
-INSERT INTO projects (id, name, repo_path, github_url, github_repo, linear_team_id, linear_project_id, linear_synced_at, linear_sync_enabled, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000002', '_global', NULL, NULL, NULL, NULL, NULL, NULL, false, NULL, NOW(), NOW());
+INSERT INTO projects (id, name, github_url, github_repo, linear_team_id, linear_project_id, linear_synced_at, linear_sync_enabled, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000002', '_global', NULL, NULL, NULL, NULL, NULL, false, NULL, NOW(), NOW());
 
-INSERT INTO projects (id, name, repo_path, github_url, github_repo, linear_team_id, linear_project_id, linear_synced_at, linear_sync_enabled, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000060887', '_personal', NULL, NULL, NULL, NULL, NULL, NULL, false, NULL, NOW(), NOW());
+INSERT INTO projects (id, name, github_url, github_repo, linear_team_id, linear_project_id, linear_synced_at, linear_sync_enabled, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000060887', '_personal', NULL, NULL, NULL, NULL, NULL, false, NULL, NOW(), NOW());
 
 INSERT INTO task_stages_registry (name, display_label, description, category, default_agent, reviewer_agent, reviewer_agent_selector_json, review_policy, dispatch_type, dispatch_target, dispatch_inputs_json, position_hint, requires_human, is_terminal, default_max_work_attempts, default_max_review_rounds, bundled_hash, deleted_at, updated_at) VALUES ('architecture', 'Architecture', 'Cross-cutting design decisions and component shape.', 'design', 'architect', NULL, NULL, 'none', NULL, NULL, NULL, 30, false, false, 3, 5, 'd084b4acbf67c7012e577d2d386dc20ae45cbfebe347a58f3fbc89cef5038b2c', NULL, NOW());
 
@@ -5207,7 +5232,7 @@ BEGIN
         'gobby_daemon_runtime'
     );
     EXECUTE format(
-        'GRANT SELECT (id, name, repo_path) ON %I.projects TO %I',
+'GRANT SELECT (id, name, deleted_at) ON %I.projects TO %I',
         target_schema,
         'gobby_gcode_capability'
     );
@@ -5333,7 +5358,7 @@ ALTER TABLE gobby_agent_auth.orphan_revocation_retries OWNER TO gobby_agent_issu
 GRANT SELECT (id, project_id, agent_run_id, status)
     ON public.sessions TO gobby_agent_issuer;
 GRANT SELECT (id, status) ON public.agent_runs TO gobby_agent_issuer;
-GRANT SELECT (id, name, repo_path) ON public.projects TO gobby_agent_issuer;
+GRANT SELECT (id, name, deleted_at) ON public.projects TO gobby_agent_issuer;
 
 CREATE OR REPLACE FUNCTION gobby_agent_auth.enforce_principal_lifetime()
 RETURNS TRIGGER
@@ -5768,19 +5793,29 @@ REVOKE ALL ON FUNCTION gobby_agent_auth.managed_execution_is_login_capable(UUID)
 GRANT EXECUTE ON FUNCTION gobby_agent_auth.reconcile_daemon(UUID)
     TO gobby_daemon_runtime;
 GRANT EXECUTE ON FUNCTION gobby_agent_auth.managed_execution_is_login_capable(UUID)
-    TO gobby_daemon_runtime;
+TO gobby_daemon_runtime;
+
+ALTER TABLE project_checkouts ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY gobby_daemon_runtime_access ON project_checkouts
+TO gobby_daemon_runtime USING (TRUE) WITH CHECK (TRUE);
+
+CREATE POLICY gobby_migration_owner_access ON project_checkouts
+TO CURRENT_USER USING (TRUE) WITH CHECK (TRUE);
 
 CREATE OR REPLACE FUNCTION gobby_agent_auth.resolve_tool_session(
     p_session_id UUID
 )
-RETURNS TABLE(session_id UUID, project_id UUID, repo_path TEXT)
+RETURNS TABLE(session_id UUID, project_id UUID, machine_id UUID, root_path TEXT)
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = pg_catalog
 AS $function$
-    SELECT session.id, project.id, project.repo_path
+    SELECT session.id, session.project_id, session.machine_id, checkout.root_path
     FROM public.sessions AS session
-    JOIN public.projects AS project ON project.id = session.project_id
+    LEFT JOIN public.project_checkouts AS checkout
+      ON checkout.machine_id = session.machine_id
+     AND checkout.project_id = session.project_id
     WHERE session.id = p_session_id
       AND COALESCE(session.status, 'active') NOT IN ('expired', 'deleted')
 $function$;
@@ -7032,3 +7067,18 @@ GRANT EXECUTE ON FUNCTION gobby_agent_auth.lookup_interactive_principal(
 GRANT EXECUTE ON FUNCTION gobby_agent_auth.rotate_interactive_principal(
     TEXT, UUID, UUID, UUID, TIMESTAMPTZ, TEXT, TIMESTAMPTZ
 ) TO gobby_daemon_runtime;
+
+CREATE POLICY gobby_gcode_project_read ON project_checkouts
+FOR SELECT TO gobby_gcode_capability
+USING (
+    project_id = gobby_agent_auth.current_project_id()
+    AND machine_id = gobby_agent_auth.current_machine_id()
+);
+
+CREATE POLICY gobby_gcode_project_update ON project_checkouts
+FOR UPDATE TO gobby_gcode_capability
+USING (
+    project_id = gobby_agent_auth.current_project_id()
+    AND machine_id = gobby_agent_auth.current_machine_id()
+)
+WITH CHECK (false);

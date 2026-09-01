@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 from gobby.utils.project_context import (
     IsolationProjectJsonError,
     _build_and_set_project_context,
@@ -21,6 +23,11 @@ from gobby.utils.project_context import (
     set_project_context,
     set_project_context_from_ref,
     set_project_context_from_session,
+)
+from tests.fixtures.isolated_checkout import (
+    insert_isolated_machine,
+    install_isolated_checkout_project,
+    patch_local_machine_id,
 )
 
 pytestmark = pytest.mark.unit
@@ -899,9 +906,16 @@ class TestBuildAndSetProjectContext:
         project = MagicMock()
         project.id = "proj-123"
         project.name = "my-project"
-        project.repo_path = str(tmp_path)
+        monkeypatch.setattr(
+            "gobby.storage.project_checkouts.require_root",
+            lambda _db, _project_id, _machine_id: str(tmp_path),
+        )
+        monkeypatch.setattr(
+            "gobby.storage.workspace_machine_scope.require_local_machine_id",
+            lambda _provided, **_kwargs: "machine-1",
+        )
 
-        token = _build_and_set_project_context(project)
+        token = _build_and_set_project_context(project, db=MagicMock())
         try:
             ctx = _current_project_context.get()
             assert ctx is not None
@@ -920,9 +934,16 @@ class TestBuildAndSetProjectContext:
         project = MagicMock()
         project.id = "db-id"
         project.name = "my-project"
-        project.repo_path = str(tmp_path)
+        monkeypatch.setattr(
+            "gobby.storage.project_checkouts.require_root",
+            lambda _db, _project_id, _machine_id: str(tmp_path),
+        )
+        monkeypatch.setattr(
+            "gobby.storage.workspace_machine_scope.require_local_machine_id",
+            lambda _provided, **_kwargs: "machine-1",
+        )
 
-        token = _build_and_set_project_context(project)
+        token = _build_and_set_project_context(project, db=MagicMock())
         try:
             ctx = _current_project_context.get()
             assert ctx is not None
@@ -944,6 +965,10 @@ class TestSetProjectContextFromRef:
         mock_project.repo_path = None
 
         mock_db = MagicMock()
+        monkeypatch.setattr(
+            "gobby.storage.project_checkouts.require_root",
+            lambda _db, _project_id, _machine_id: "/tmp/test-proj",
+        )
         with patch("gobby.storage.projects.LocalProjectManager") as MockPM:
             MockPM.return_value.resolve_ref.return_value = mock_project
             token = set_project_context_from_ref("uuid-123", mock_db)
@@ -966,6 +991,10 @@ class TestSetProjectContextFromRef:
         mock_project.repo_path = None
 
         mock_db = MagicMock()
+        monkeypatch.setattr(
+            "gobby.storage.project_checkouts.require_root",
+            lambda _db, _project_id, _machine_id: "/tmp/gobby",
+        )
         with patch("gobby.storage.projects.LocalProjectManager") as MockPM:
             MockPM.return_value.resolve_ref.return_value = mock_project
             token = set_project_context_from_ref("gobby", mock_db)
@@ -991,13 +1020,15 @@ class TestSetProjectContextFromRef:
     def test_refactored_session_path_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """set_project_context_from_session still produces correct output after refactor."""
         monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        from gobby.storage.projects import PERSONAL_PROJECT_ID
+
         mock_session = MagicMock()
-        mock_session.project_id = "proj-abc"
+        mock_session.project_id = PERSONAL_PROJECT_ID
+        mock_session.machine_id = None
 
         mock_project = MagicMock()
-        mock_project.id = "proj-abc"
-        mock_project.name = "my-project"
-        mock_project.repo_path = None
+        mock_project.id = PERSONAL_PROJECT_ID
+        mock_project.name = "_personal"
 
         mock_session_manager = MagicMock()
         mock_session_manager.get.return_value = mock_session
@@ -1011,8 +1042,54 @@ class TestSetProjectContextFromRef:
         try:
             ctx = _current_project_context.get()
             assert ctx is not None
-            assert ctx["id"] == "proj-abc"
-            assert ctx["name"] == "my-project"
+            assert ctx["id"] == PERSONAL_PROJECT_ID
+            assert ctx["name"] == "_personal"
             assert ctx["project_path"] is None
         finally:
             reset_project_context(token)
+
+
+def test_build_and_set_project_context_uses_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    session = MagicMock()
+    session.project_id = isolated.project.id
+    session.machine_id = isolated.machine_id
+    session_manager = MagicMock()
+    session_manager.get.return_value = session
+
+    token = set_project_context_from_session("sess-1", session_manager, temp_db)
+    assert token is not None
+    try:
+        ctx = _current_project_context.get()
+        assert ctx is not None
+        assert ctx["id"] == isolated.project.id
+        assert ctx["project_path"] == isolated.root_path
+    finally:
+        reset_project_context(token)
+
+
+def test_build_and_set_project_context_fails_closed_without_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="ctx-no-checkout")
+    session = MagicMock()
+    session.project_id = project.id
+    session.machine_id = machine_id
+    session_manager = MagicMock()
+    session_manager.get.return_value = session
+
+    from gobby.storage.project_checkouts import CheckoutNotFoundError
+
+    with pytest.raises(CheckoutNotFoundError):
+        set_project_context_from_session("sess-1", session_manager, temp_db)

@@ -466,13 +466,20 @@ def _init_git_repo(repo_path: Path) -> None:
 
 
 @pytest.fixture
-def sample_project(project_manager: "LocalProjectManager") -> dict[str, Any]:
-    """Create a sample DB project for testing."""
-    project = project_manager.create(
-        name="test-project",
-        github_url="https://github.com/test/test-project",
+def sample_project(
+    project_manager: "LocalProjectManager",
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, Any]:
+    """Create a sample DB project with an isolated machine, marker, and checkout."""
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        project_manager.db,
+        tmp_path / "isolated-checkout",
+        monkeypatch=monkeypatch,
     )
-    return project.to_dict()
+    return isolated.project.to_dict()
 
 
 @pytest.fixture
@@ -484,6 +491,9 @@ def sample_git_project(
     """Create a sample project with a real git repo."""
     repo_path = tmp_path / "test-project"
     _init_git_repo(repo_path)
+    from tests.fixtures.isolated_checkout import write_project_marker
+
+    write_project_marker(repo_path, project_id=sample_project["id"], name="test-project")
     project = project_manager.update(
         sample_project["id"],
         repo_path=str(repo_path),

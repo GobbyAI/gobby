@@ -30,10 +30,12 @@ ROUTING: dict[str, object] = {
 def handoff_setup(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[PlanHandoffManifestService, str, Path]:
-    project = LocalProjectManager(temp_db).create(
-        name="plan-handoff",
-        repo_path=str(tmp_path),
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path, name="plan-handoff", monkeypatch=monkeypatch
     )
     plan_dir = tmp_path / ".gobby" / "plans"
     plan_dir.mkdir(parents=True)
@@ -69,7 +71,7 @@ def handoff_setup(
         ),
         encoding="utf-8",
     )
-    return PlanHandoffManifestService(temp_db), project.id, plan_path
+    return PlanHandoffManifestService(temp_db), isolated.project.id, plan_path
 
 
 def _apply(
@@ -248,3 +250,44 @@ def test_expansion_parse_failure_prevents_derivation(
         )
     assert exc_info.value.code == "invalid_plan"
     assert plan_path.read_bytes() == original
+
+
+def test_handoff_resolve_plan_path_uses_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    plan_dir = tmp_path / "repo" / ".gobby" / "plans"
+    plan_dir.mkdir(parents=True)
+    plan_path = plan_dir / "handoff.md"
+    plan_path.write_text("# Handoff\n", encoding="utf-8")
+    service = PlanHandoffManifestService(temp_db)
+
+    resolved, relative = service._resolve_plan_path(isolated.project.id, plan_path)
+
+    assert resolved == plan_path.resolve()
+    assert relative == ".gobby/plans/handoff.md"
+
+
+def test_handoff_resolve_plan_path_fails_closed_without_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="handoff-no-checkout")
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text("# Plan\n", encoding="utf-8")
+    service = PlanHandoffManifestService(temp_db)
+
+    with pytest.raises(ReviewEvidenceError) as exc_info:
+        service._resolve_plan_path(project.id, plan_path)
+    assert "local repository" in str(exc_info.value) or exc_info.value.code == "project_not_found"

@@ -15,7 +15,18 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from gobby.storage.projects import LocalProjectManager
+from gobby.servers.routes.projects import _checkout_http_error, _project_to_response
+from gobby.storage.project_checkouts import (
+    CheckoutNotFoundError,
+    CheckoutSentinelRejectedError,
+    MissingMachineContextError,
+    require_root,
+)
+from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
+from gobby.storage.workspace_machine_scope import (
+    MachineOwnershipMismatchError,
+    require_local_machine_id,
+)
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -105,6 +116,26 @@ def _get_project_manager(server: "HTTPServer") -> LocalProjectManager:
     return LocalProjectManager(server.session_manager.db)
 
 
+def _require_project_checkout_root(server: "HTTPServer", project_id: str) -> str:
+    """Return this daemon's primary checkout root, or raise HTTP 404/409."""
+    pm = _get_project_manager(server)
+    project = pm.get(project_id)
+    if not project:
+        raise HTTPException(404, f"Project not found: {project_id}")
+    try:
+        machine_id = require_local_machine_id(
+            None, resource_kind="project_checkout", resource_id=project_id
+        )
+        return require_root(pm.db, project_id, machine_id)
+    except (
+        CheckoutNotFoundError,
+        MissingMachineContextError,
+        MachineOwnershipMismatchError,
+        CheckoutSentinelRejectedError,
+    ) as exc:
+        raise _checkout_http_error(exc) from exc
+
+
 async def _run_git(cwd: str, args: list[str], timeout: float = 10.0) -> tuple[int, str]:
     """Run a git command asynchronously."""
     try:
@@ -185,24 +216,14 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
 
     @router.get("/projects")
     async def list_projects() -> list[dict[str, Any]]:
-        """List all registered projects."""
-        from gobby.storage.projects import PERSONAL_PROJECT_ID
-
+        """List projects as checkout-shaped JSON, never `repo_path`."""
         pm = _get_project_manager(server)
         projects = await server.run_db(pm.list)
-        result: list[dict[str, Any]] = [
-            {
-                "id": p.id,
-                "name": p.name,
-                "repo_path": p.repo_path,
-            }
-            for p in projects
-            if p.repo_path and Path(p.repo_path).is_dir()
-        ]
-        # Include Personal project so it appears in filter dropdowns
-        if not any(p["id"] == PERSONAL_PROJECT_ID for p in result):
-            result.insert(0, {"id": PERSONAL_PROJECT_ID, "name": "Personal", "repo_path": None})
-        return result
+        if not any(project.id == PERSONAL_PROJECT_ID for project in projects):
+            personal = await server.run_db(pm.get, PERSONAL_PROJECT_ID)
+            if personal is not None:
+                projects = [personal, *projects]
+        return [await server.run_db(_project_to_response, server, project) for project in projects]
 
     @router.get("/tree")
     async def list_directory(
@@ -214,12 +235,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         Returns entries sorted: directories first, then files, both alphabetical.
         Respects .gitignore via git ls-files.
         """
-        pm = _get_project_manager(server)
-        project = await server.run_db(pm.get, project_id)
-        if not project or not project.repo_path:
-            raise HTTPException(404, f"Project not found: {project_id}")
-
-        repo_path: str = project.repo_path
+        repo_path = await server.run_db(_require_project_checkout_root, server, project_id)
         target = _resolve_safe_path(repo_path, path)
         if not target.is_dir():
             raise HTTPException(400, "Path is not a directory")
@@ -273,12 +289,8 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         Returns content with metadata. Large files are truncated.
         Binary files return metadata only.
         """
-        pm = _get_project_manager(server)
-        project = await server.run_db(pm.get, project_id)
-        if not project or not project.repo_path:
-            raise HTTPException(404, "Project not found")
-
-        target = _resolve_safe_path(project.repo_path, path)
+        repo_path = await server.run_db(_require_project_checkout_root, server, project_id)
+        target = _resolve_safe_path(repo_path, path)
         if not target.is_file():
             raise HTTPException(404, "File not found")
 
@@ -328,12 +340,8 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         path: str = Query(..., description="Relative path within project"),
     ) -> FileResponse:
         """Serve an image file directly for <img> tags."""
-        pm = _get_project_manager(server)
-        project = await server.run_db(pm.get, project_id)
-        if not project or not project.repo_path:
-            raise HTTPException(404, "Project not found")
-
-        target = _resolve_safe_path(project.repo_path, path)
+        repo_path = await server.run_db(_require_project_checkout_root, server, project_id)
+        target = _resolve_safe_path(repo_path, path)
         if not target.is_file():
             raise HTTPException(404, "File not found")
 
@@ -361,15 +369,11 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
 
         Refuses writes to .git/ directory.
         """
-        pm = _get_project_manager(server)
-        project = await server.run_db(pm.get, request.project_id)
-        if not project or not project.repo_path:
-            raise HTTPException(404, "Project not found")
-
-        target = _resolve_safe_path(project.repo_path, request.path)
+        repo_path = await server.run_db(_require_project_checkout_root, server, request.project_id)
+        target = _resolve_safe_path(repo_path, request.path)
 
         # Refuse writes to .git/
-        rel = str(target.relative_to(Path(project.repo_path).resolve()))
+        rel = str(target.relative_to(Path(repo_path).resolve()))
         if rel.startswith(".git") and (rel == ".git" or rel.startswith(".git/")):
             raise HTTPException(403, "Cannot write to .git directory")
 
@@ -398,24 +402,21 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         Returns branch name and file statuses using `git status --porcelain`.
         Status codes: M=modified, A=added, D=deleted, ?=untracked, R=renamed.
         """
-        pm = _get_project_manager(server)
-        project = await server.run_db(pm.get, project_id)
-        if not project or not project.repo_path:
-            raise HTTPException(404, "Project not found")
+        repo_path = await server.run_db(_require_project_checkout_root, server, project_id)
 
         result: dict[str, Any] = {"branch": None, "files": {}}
 
         try:
             # Get branch name
             rc_branch, stdout_branch = await _run_git(
-                project.repo_path, ["rev-parse", "--abbrev-ref", "HEAD"], timeout=5
+                repo_path, ["rev-parse", "--abbrev-ref", "HEAD"], timeout=5
             )
             if rc_branch == 0:
                 result["branch"] = stdout_branch.strip()
 
             # Get file statuses
             rc_status, stdout_status = await _run_git(
-                project.repo_path, ["status", "--porcelain"], timeout=10
+                repo_path, ["status", "--porcelain"], timeout=10
             )
 
             if rc_status == 0:
@@ -444,16 +445,13 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         path: str = Query(..., description="Relative file path"),
     ) -> dict[str, str]:
         """Get git diff for a specific file."""
-        pm = _get_project_manager(server)
-        project = await server.run_db(pm.get, project_id)
-        if not project or not project.repo_path:
-            raise HTTPException(404, "Project not found")
+        repo_path = await server.run_db(_require_project_checkout_root, server, project_id)
 
         # Validate path
-        _resolve_safe_path(project.repo_path, path)
+        _resolve_safe_path(repo_path, path)
 
         try:
-            rc, stdout = await _run_git(project.repo_path, ["diff", "HEAD", "--", path], timeout=10)
+            rc, stdout = await _run_git(repo_path, ["diff", "HEAD", "--", path], timeout=10)
             diff = stdout if rc == 0 else ""
         except Exception:
             diff = ""

@@ -20,11 +20,12 @@ from gobby.dispatch.actions import MergeWorkspaceAction
 from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase, IntegrationWorkspaceMutex
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.project_checkouts import require_root
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._stage_states import StageStatesManager
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.project_init import WORKTREE_LOCAL_PROJECT_KEYS
 
@@ -641,10 +642,10 @@ def _branch_contains(repo_path: Path, branch: str, commit_sha: str) -> bool:
 
 def _repo_path_for_task(db: HubDatabase, task_id: str) -> Path:
     project_id = _project_id_for_task(db, task_id)
-    project = LocalProjectManager(db).get(project_id)
-    if project is None or not project.repo_path:
-        raise RuntimeError("project repo_path is required for clone integration sync")
-    return Path(project.repo_path)
+    machine_id = require_local_machine_id(
+        None, resource_kind="project_checkout", resource_id=project_id
+    )
+    return Path(require_root(db, project_id, machine_id))
 
 
 def _local_target_path_if_checked_out(

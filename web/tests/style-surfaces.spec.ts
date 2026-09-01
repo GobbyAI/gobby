@@ -99,7 +99,10 @@ const PROJECT = {
   id: PROJECT_ID,
   name: "project-one",
   display_name: "Project One",
-  repo_path: "/tmp/project-one",
+  checkout: {
+    machine_id: "machine-1",
+    root_path: "/tmp/project-one",
+  },
   github_url: null,
   github_repo: null,
   linear_team_id: null,

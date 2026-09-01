@@ -157,7 +157,7 @@ class TestPersonalProjectEnsure:
 
         assert not (files_home / "_personal" / ".gobby" / "project.json").exists()
 
-    def test_ensure_personal_project_creates_folder_and_repo_path(
+    def test_ensure_personal_project_creates_folder_without_checkout(
         self,
         project_manager: LocalProjectManager,
         tmp_path: Path,
@@ -176,12 +176,17 @@ class TestPersonalProjectEnsure:
         assert expected_path.is_dir()
         assert project.id == PERSONAL_PROJECT_ID
         assert project.name == "_personal"
-        assert project.repo_path == str(expected_path)
         assert second.id == project.id
-        assert second.repo_path == str(expected_path)
+        assert (
+            project_manager.db.fetchone(
+                "SELECT 1 FROM project_checkouts WHERE project_id = %s",
+                (PERSONAL_PROJECT_ID,),
+            )
+            is None
+        )
         assert not (get_gobby_home() / "personal").exists()
 
-    def test_ensure_personal_project_repairs_stale_repo_path(
+    def test_ensure_personal_project_remains_checkout_free(
         self,
         project_manager: LocalProjectManager,
         tmp_path: Path,
@@ -190,14 +195,20 @@ class TestPersonalProjectEnsure:
         files_home.mkdir()
         _write_local_bootstrap(files_home)
         project_manager.ensure_exists(PERSONAL_PROJECT_ID, "_personal")
-        project_manager.update(PERSONAL_PROJECT_ID, repo_path=None)
         claim = _hold_maintenance()
         try:
             project = ensure_personal_project(project_manager.db)
         finally:
             claim.release()
 
-        assert project.repo_path == str(files_home / "_personal")
+        assert project.id == PERSONAL_PROJECT_ID
+        assert (
+            project_manager.db.fetchone(
+                "SELECT 1 FROM project_checkouts WHERE project_id = %s",
+                (PERSONAL_PROJECT_ID,),
+            )
+            is None
+        )
 
     def test_ensure_personal_project_repairs_name_and_deleted_at(
         self,
@@ -210,7 +221,6 @@ class TestPersonalProjectEnsure:
         project_manager.ensure_exists(
             PERSONAL_PROJECT_ID,
             "wrong-name",
-            repo_path="/stale",
         )
         project_manager.soft_delete(PERSONAL_PROJECT_ID)
         claim = _hold_maintenance()
@@ -220,8 +230,14 @@ class TestPersonalProjectEnsure:
             claim.release()
 
         assert project.name == "_personal"
-        assert project.repo_path == str(files_home / "_personal")
         assert project.deleted_at is None
+        assert (
+            project_manager.db.fetchone(
+                "SELECT 1 FROM project_checkouts WHERE project_id = %s",
+                (PERSONAL_PROJECT_ID,),
+            )
+            is None
+        )
 
     def test_ensure_personal_project_materializes_on_disk_identity(
         self,
@@ -343,7 +359,7 @@ class TestSoftDelete:
 
     def test_soft_delete_sets_deleted_at(self, project_manager: LocalProjectManager) -> None:
         """Soft-deleting a project sets deleted_at timestamp."""
-        project = project_manager.create(name="deletable", repo_path="/tmp/deletable")
+        project = project_manager.create(name="deletable")
 
         result = project_manager.soft_delete(project.id)
         assert result is True
@@ -355,7 +371,7 @@ class TestSoftDelete:
 
     def test_soft_delete_hides_from_list(self, project_manager: LocalProjectManager) -> None:
         """Soft-deleted projects are hidden from list()."""
-        project = project_manager.create(name="will-delete", repo_path="/tmp/wd")
+        project = project_manager.create(name="will-delete")
         project_manager.soft_delete(project.id)
 
         projects = project_manager.list()
@@ -364,7 +380,7 @@ class TestSoftDelete:
 
     def test_soft_delete_hides_from_get_by_name(self, project_manager: LocalProjectManager) -> None:
         """Soft-deleted projects are hidden from get_by_name()."""
-        project = project_manager.create(name="hidden-proj", repo_path="/tmp/hp")
+        project = project_manager.create(name="hidden-proj")
         project_manager.soft_delete(project.id)
 
         result = project_manager.get_by_name("hidden-proj")
@@ -373,7 +389,7 @@ class TestSoftDelete:
     def test_restore_makes_soft_deleted_project_active(
         self, project_manager: LocalProjectManager
     ) -> None:
-        project = project_manager.create(name="restored-proj", repo_path="/tmp/restored")
+        project = project_manager.create(name="restored-proj")
         project_manager.soft_delete(project.id)
 
         restored = project_manager.restore(project.id)
@@ -387,7 +403,7 @@ class TestSoftDelete:
         self, project_manager: LocalProjectManager
     ) -> None:
         """list(include_deleted=True) shows soft-deleted projects."""
-        project = project_manager.create(name="show-deleted", repo_path="/tmp/sd")
+        project = project_manager.create(name="show-deleted")
         project_manager.soft_delete(project.id)
 
         projects = project_manager.list(include_deleted=True)
@@ -403,7 +419,7 @@ class TestSoftDelete:
 
     def test_soft_delete_idempotent(self, project_manager: LocalProjectManager) -> None:
         """Soft-deleting an already-deleted project returns False."""
-        project = project_manager.create(name="double-delete", repo_path="/tmp/dd")
+        project = project_manager.create(name="double-delete")
         assert project_manager.soft_delete(project.id) is True
         assert project_manager.soft_delete(project.id) is False
 
@@ -413,21 +429,21 @@ class TestResolveRef:
 
     def test_resolve_by_id(self, project_manager: LocalProjectManager) -> None:
         """resolve_ref finds project by UUID."""
-        project = project_manager.create(name="by-id", repo_path="/tmp/bi")
+        project = project_manager.create(name="by-id")
         result = project_manager.resolve_ref(project.id)
         assert result is not None
         assert result.name == "by-id"
 
     def test_resolve_by_name(self, project_manager: LocalProjectManager) -> None:
         """resolve_ref finds project by name."""
-        project_manager.create(name="by-name", repo_path="/tmp/bn")
+        project_manager.create(name="by-name")
         result = project_manager.resolve_ref("by-name")
         assert result is not None
         assert result.name == "by-name"
 
     def test_resolve_excludes_deleted(self, project_manager: LocalProjectManager) -> None:
         """resolve_ref does not return soft-deleted projects."""
-        project = project_manager.create(name="deleted-ref", repo_path="/tmp/dr")
+        project = project_manager.create(name="deleted-ref")
         project_manager.soft_delete(project.id)
 
         assert project_manager.resolve_ref(project.id) is None
@@ -450,7 +466,7 @@ class TestIsProtected:
 
     def test_regular_projects_not_protected(self, project_manager: LocalProjectManager) -> None:
         """Regular projects are not protected."""
-        project = project_manager.create(name="regular", repo_path="/tmp/reg")
+        project = project_manager.create(name="regular")
         assert project_manager.is_protected(project) is False
 
 
@@ -461,7 +477,7 @@ class TestProjectDeletedAtField:
         self, project_manager: LocalProjectManager
     ) -> None:
         """to_dict() does not include deleted_at when it's None."""
-        project = project_manager.create(name="no-deleted", repo_path="/tmp/nd")
+        project = project_manager.create(name="no-deleted")
         d = project.to_dict()
         assert "deleted_at" not in d
 
@@ -469,7 +485,7 @@ class TestProjectDeletedAtField:
         self, project_manager: LocalProjectManager
     ) -> None:
         """to_dict() includes deleted_at when project is soft-deleted."""
-        project = project_manager.create(name="has-deleted", repo_path="/tmp/hd")
+        project = project_manager.create(name="has-deleted")
         project_manager.soft_delete(project.id)
         deleted = project_manager.get(project.id)
         assert deleted is not None

@@ -10,13 +10,13 @@ Tests cover:
 """
 
 import json
-import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-from click.testing import CliRunner
+from click.testing import CliRunner, Result
 
 from gobby.cli import cli
 
@@ -206,7 +206,7 @@ class TestShowProject:
         assert result.exit_code == 0
         assert "Project: test-project" in result.output
         assert "ID: proj-abc123" in result.output
-        assert "Path:" in result.output
+        assert "Path:" not in result.output
         assert "GitHub:" in result.output
         assert "Repo:" in result.output
 
@@ -539,84 +539,567 @@ class TestRepairProject:
         assert result.exit_code == 1
         assert "No .gobby/project.json found" in result.output
 
-    @patch("gobby.cli.projects.get_project_manager")
-    def test_repair_no_issues(
+
+def _cli_text(result: Result) -> str:
+    return f"{result.output}{result.stderr or ''}"
+
+
+def _hub(db: object) -> Any:
+    from gobby.storage.hub.protocol import HubDatabase
+
+    return cast(HubDatabase, db)
+
+
+def _pin_cli_machine(db: object, monkeypatch: pytest.MonkeyPatch) -> str:
+    from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
+
+    machine_id = insert_isolated_machine(_hub(db))
+    patch_local_machine_id(monkeypatch, machine_id)
+    return machine_id
+
+
+def _invoke_projects(
+    runner: CliRunner,
+    db: object,
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    monkeypatch: pytest.MonkeyPatch | None = None,
+) -> Result:
+    from gobby.storage.projects import LocalProjectManager
+
+    if cwd is not None:
+        assert monkeypatch is not None
+        monkeypatch.chdir(cwd)
+    manager = LocalProjectManager(_hub(db))
+    with patch("gobby.cli.projects.get_project_manager", lambda: manager):
+        return runner.invoke(cli, ["projects", *args])
+
+
+def _checkout_root(db: object, machine_id: str, project_id: str) -> str | None:
+    from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+
+    row = LocalProjectCheckoutManager(_hub(db)).get(machine_id, project_id)
+    return None if row is None else row.root_path
+
+
+def _project_row(db: object, project_id: str) -> dict[str, Any]:
+    row = _hub(db).fetchone(
+        "SELECT repo_path, deleted_at, name FROM projects WHERE id = %s",
+        (project_id,),
+    )
+    assert row is not None
+    return dict(row)
+
+
+def _read_marker(root: Path) -> dict[str, object]:
+    loaded: object = json.loads((root / ".gobby" / "project.json").read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    return loaded
+
+
+def _unique_name(prefix: str) -> str:
+    import uuid
+
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+class TestProjectRebindCli:
+    """§ 2.3.1 / 2.3.2 gobby projects rebind.
+
+    Named methods are the TDD acceptance symbols for close.
+    """
+
+    def test_rebind_verifies_marker_and_updates_only_local_checkout(
         self,
-        mock_get_manager: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Test repair when everything is consistent."""
-        with runner.isolated_filesystem(temp_dir=tmp_path) as td:
-            os.makedirs(".gobby")
-            cwd = os.path.realpath(td)
-            with open(".gobby/project.json", "w") as f:
-                json.dump({"id": "proj-123", "name": "my-project"}, f)
+        from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import insert_isolated_machine, write_project_marker
 
-            db_project = MagicMock()
-            db_project.name = "my-project"
-            db_project.repo_path = cwd
+        machine_id = _pin_cli_machine(temp_db, monkeypatch)
+        name = _unique_name("rebind-move")
+        first = tmp_path / "first"
+        second = tmp_path / "second"
+        first.mkdir()
+        second.mkdir()
+        project = LocalProjectManager(_hub(temp_db)).create(name=name)
+        write_project_marker(first, project_id=project.id, name=name)
+        write_project_marker(second, project_id=project.id, name=name)
+        checkouts = LocalProjectCheckoutManager(_hub(temp_db))
+        checkouts.register(machine_id, project.id, str(first))
+        foreign_machine = insert_isolated_machine(_hub(temp_db))
+        checkouts.register(foreign_machine, project.id, "/foreign/root")
 
-            mock_manager = MagicMock()
-            mock_manager.get.return_value = db_project
-            mock_get_manager.return_value = mock_manager
-
-            result = runner.invoke(cli, ["projects", "repair"])
+        result = _invoke_projects(runner, temp_db, ["rebind", name, str(second)])
 
         assert result.exit_code == 0
-        assert "No issues found" in result.output
+        assert _checkout_root(temp_db, machine_id, project.id) == str(second)
+        assert _checkout_root(temp_db, foreign_machine, project.id) == "/foreign/root"
+        assert _project_row(temp_db, project.id)["repo_path"] is None
+        mismatch = tmp_path / "other"
+        mismatch.mkdir()
+        write_project_marker(mismatch, project_id=_unique_name("not-uuid"), name="other")
+        refused = _invoke_projects(runner, temp_db, ["rebind", name, str(mismatch)])
+        assert refused.exit_code == 1
+        assert "does not match project" in _cli_text(refused)
+        assert _checkout_root(temp_db, machine_id, project.id) == str(second)
 
-    @patch("gobby.cli.projects.get_project_manager")
-    def test_repair_detects_path_mismatch(
+    def test_update_rejects_removed_repo_path_option(
         self,
-        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_project: MagicMock,
+    ) -> None:
+        with patch("gobby.cli.projects.get_project_manager") as mock_get_manager:
+            mock_manager = MagicMock()
+            mock_manager.resolve_ref.return_value = mock_project
+            mock_get_manager.return_value = mock_manager
+            result = runner.invoke(
+                cli,
+                ["projects", "update", "test-project", "--repo-path", "/tmp/moved"],
+            )
+
+        text = _cli_text(result).lower()
+        assert result.exit_code != 0
+        assert "no such option" in text
+        assert "repo-path" in text
+        mock_manager.update.assert_not_called()
+
+    def test_list_and_show_print_local_checkout_separately(
+        self,
         runner: CliRunner,
         tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Test repair detects repo_path mismatch."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            os.makedirs(".gobby")
-            with open(".gobby/project.json", "w") as f:
-                json.dump({"id": "proj-123", "name": "my-project"}, f)
+        from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import write_project_marker
 
-            db_project = MagicMock()
-            db_project.name = "my-project"
-            db_project.repo_path = "/some/other/path"
+        machine_id = _pin_cli_machine(temp_db, monkeypatch)
+        name = _unique_name("show-checkout")
+        root = tmp_path / "repo"
+        root.mkdir()
+        project = LocalProjectManager(_hub(temp_db)).create(name=name)
+        write_project_marker(root, project_id=project.id, name=name)
+        LocalProjectCheckoutManager(_hub(temp_db)).register(machine_id, project.id, str(root))
 
-            mock_manager = MagicMock()
-            mock_manager.get.return_value = db_project
-            mock_get_manager.return_value = mock_manager
+        listed = _invoke_projects(runner, temp_db, ["list"])
+        assert listed.exit_code == 0
+        list_text = _cli_text(listed)
+        assert name in list_text
+        assert str(root) in list_text
+        listed_json = _invoke_projects(runner, temp_db, ["list", "--json"])
+        assert listed_json.exit_code == 0
+        payload = json.loads(listed_json.output)
+        row = next(item for item in payload if item["name"] == name)
+        assert "repo_path" not in row
+        assert row["checkout"]["root_path"] == str(root)
+        assert row["checkout"]["machine_id"] == machine_id
 
-            result = runner.invoke(cli, ["projects", "repair"])
+        shown = _invoke_projects(runner, temp_db, ["show", name])
+        assert shown.exit_code == 0
+        show_text = _cli_text(shown)
+        assert f"Checkout: {root}" in show_text
+        assert "Path:" not in show_text
+        shown_json = _invoke_projects(runner, temp_db, ["show", name, "--json"])
+        assert shown_json.exit_code == 0
+        show_payload = json.loads(shown_json.output)
+        assert "repo_path" not in show_payload
+        assert show_payload["checkout"]["root_path"] == str(root)
 
-        assert result.exit_code == 0
-        assert "repo_path mismatch" in result.output
-        assert "Run with --fix" in result.output
-
-    @patch("gobby.cli.projects.get_project_manager")
-    def test_repair_fix_applies_corrections(
+    def test_rebind_unique_soft_deleted_preserves_deleted_at(
         self,
-        mock_get_manager: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Test repair --fix applies corrections."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            os.makedirs(".gobby")
-            with open(".gobby/project.json", "w") as f:
-                json.dump({"id": "proj-123", "name": "my-project"}, f)
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import write_project_marker
 
-            db_project = MagicMock()
-            db_project.id = "proj-123"
-            db_project.name = "my-project"
-            db_project.repo_path = "/some/other/path"
+        machine_id = _pin_cli_machine(temp_db, monkeypatch)
+        name = _unique_name("deleted-rebind")
+        root = tmp_path / "deleted-root"
+        root.mkdir()
+        manager = LocalProjectManager(_hub(temp_db))
+        project = manager.create(name=name)
+        write_project_marker(root, project_id=project.id, name=name)
+        assert manager.soft_delete(project.id)
 
-            mock_manager = MagicMock()
-            mock_manager.get.return_value = db_project
-            mock_get_manager.return_value = mock_manager
+        by_name = _invoke_projects(runner, temp_db, ["rebind", name, str(root)])
+        assert by_name.exit_code == 0
+        stored = _project_row(temp_db, project.id)
+        assert stored["deleted_at"] is not None
+        assert stored["repo_path"] is None
+        assert _checkout_root(temp_db, machine_id, project.id) == str(root)
 
-            result = runner.invoke(cli, ["projects", "repair", "--fix"])
+        moved = tmp_path / "deleted-moved"
+        moved.mkdir()
+        write_project_marker(moved, project_id=project.id, name=name)
+        by_uuid = _invoke_projects(runner, temp_db, ["rebind", project.id, str(moved)])
+        assert by_uuid.exit_code == 0
+        stored = _project_row(temp_db, project.id)
+        assert stored["deleted_at"] is not None
+        assert _checkout_root(temp_db, machine_id, project.id) == str(moved)
 
+    def test_rebind_ambiguous_deleted_name_requires_uuid_or_path_marker(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import write_project_marker
+
+        machine_id = _pin_cli_machine(temp_db, monkeypatch)
+        name = _unique_name("dup-deleted")
+        manager = LocalProjectManager(_hub(temp_db))
+        first = manager.create(name=name)
+        assert manager.soft_delete(first.id)
+        second = manager.create(name=name)
+        assert manager.soft_delete(second.id)
+        first_root = tmp_path / "first"
+        second_root = tmp_path / "second"
+        empty_root = tmp_path / "empty"
+        first_root.mkdir()
+        second_root.mkdir()
+        empty_root.mkdir()
+        write_project_marker(first_root, project_id=first.id, name=name)
+        write_project_marker(second_root, project_id=second.id, name=name)
+
+        ambiguous = _invoke_projects(runner, temp_db, ["rebind", name, str(empty_root)])
+        assert ambiguous.exit_code == 1
+        assert "ambiguous" in _cli_text(ambiguous).lower()
+        assert _checkout_root(temp_db, machine_id, first.id) is None
+        assert _checkout_root(temp_db, machine_id, second.id) is None
+
+        selected = _invoke_projects(runner, temp_db, ["rebind", name, str(second_root)])
+        assert selected.exit_code == 0
+        assert _checkout_root(temp_db, machine_id, second.id) == str(second_root)
+        assert _checkout_root(temp_db, machine_id, first.id) is None
+        assert _project_row(temp_db, second.id)["deleted_at"] is not None
+
+        by_uuid = _invoke_projects(runner, temp_db, ["rebind", first.id, str(first_root)])
+        assert by_uuid.exit_code == 0
+        assert _checkout_root(temp_db, machine_id, first.id) == str(first_root)
+        assert _project_row(temp_db, first.id)["deleted_at"] is not None
+
+
+class TestProjectRepairCheckout:
+    """§ 2.3.3 repair checkout/marker drift."""
+
+    def test_repair_registers_missing_checkout_for_valid_same_root_marker(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import write_project_marker
+
+        machine_id = _pin_cli_machine(temp_db, monkeypatch)
+        name = _unique_name("repair-create")
+        root = tmp_path / "repair-root"
+        root.mkdir()
+        project = LocalProjectManager(_hub(temp_db)).create(name=name)
+        write_project_marker(root, project_id=project.id, name=name)
+
+        dry = _invoke_projects(runner, temp_db, ["repair"], cwd=root, monkeypatch=monkeypatch)
+        assert dry.exit_code == 0
+        assert _checkout_root(temp_db, machine_id, project.id) is None
+        assert "missing" in _cli_text(dry).lower() or "register" in _cli_text(dry).lower()
+
+        fixed = _invoke_projects(
+            runner, temp_db, ["repair", "--fix"], cwd=root, monkeypatch=monkeypatch
+        )
+        assert fixed.exit_code == 0
+        assert "creat" in _cli_text(fixed).lower()
+        assert _checkout_root(temp_db, machine_id, project.id) == str(root)
+        assert _project_row(temp_db, project.id)["repo_path"] is None
+
+    def test_repair_refuses_overlay_without_persist(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import insert_overlay, write_project_marker
+
+        machine_id = _pin_cli_machine(temp_db, monkeypatch)
+        name = _unique_name("repair-overlay")
+        overlay = tmp_path / "overlay"
+        overlay.mkdir()
+        project = LocalProjectManager(_hub(temp_db)).create(name=name)
+        write_project_marker(overlay, project_id=project.id, name=name)
+        insert_overlay(
+            _hub(temp_db),
+            project_id=project.id,
+            machine_id=machine_id,
+            path=str(overlay),
+            kind="worktree",
+        )
+
+        result = _invoke_projects(
+            runner, temp_db, ["repair", "--fix"], cwd=overlay, monkeypatch=monkeypatch
+        )
+        assert result.exit_code == 1
+        assert _checkout_root(temp_db, machine_id, project.id) is None
+        assert _project_row(temp_db, project.id)["repo_path"] is None
+
+    def test_repair_refuses_sentinel_without_persist(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.storage.projects import ORPHANED_PROJECT_ID
+        from tests.fixtures.isolated_checkout import write_project_marker
+
+        machine_id = _pin_cli_machine(temp_db, monkeypatch)
+        root = tmp_path / "sentinel"
+        root.mkdir()
+        write_project_marker(root, project_id=ORPHANED_PROJECT_ID, name="_orphaned")
+
+        result = _invoke_projects(
+            runner, temp_db, ["repair", "--fix"], cwd=root, monkeypatch=monkeypatch
+        )
+        assert result.exit_code == 1
+        assert (
+            "sentinel" in _cli_text(result).lower() or "checkout-free" in _cli_text(result).lower()
+        )
+        assert _checkout_root(temp_db, machine_id, ORPHANED_PROJECT_ID) is None
+
+    def test_repair_refuses_marker_mismatch_without_persist(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import uuid
+
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import write_project_marker
+
+        machine_id = _pin_cli_machine(temp_db, monkeypatch)
+        name = _unique_name("repair-mismatch")
+        root = tmp_path / "mismatch"
+        root.mkdir()
+        project = LocalProjectManager(_hub(temp_db)).create(name=name)
+        write_project_marker(root, project_id=project.id, name=name)
+        monkeypatch.setattr(
+            "gobby.utils.checkout_root.get_project_context",
+            lambda *_args, **_kwargs: {"id": str(uuid.uuid4()), "name": "other"},
+        )
+
+        result = _invoke_projects(
+            runner, temp_db, ["repair", "--fix"], cwd=root, monkeypatch=monkeypatch
+        )
+        assert result.exit_code == 1
+        assert "does not match project" in _cli_text(result)
+        assert _checkout_root(temp_db, machine_id, project.id) is None
+
+    def test_repair_refuses_invalid_root_without_persist(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import write_project_marker
+
+        machine_id = _pin_cli_machine(temp_db, monkeypatch)
+        name = _unique_name("repair-invalid")
+        root = tmp_path / "valid"
+        root.mkdir()
+        project = LocalProjectManager(_hub(temp_db)).create(name=name)
+        write_project_marker(root, project_id=project.id, name=name)
+        monkeypatch.chdir(root)
+        monkeypatch.setattr("os.getcwd", lambda: "not-abs-repair-root")
+
+        result = _invoke_projects(runner, temp_db, ["repair", "--fix"])
+        assert result.exit_code == 1
+        assert "not a platform-local normalized absolute path" in _cli_text(result)
+        assert _checkout_root(temp_db, machine_id, project.id) is None
+        assert _project_row(temp_db, project.id)["repo_path"] is None
+
+    def test_repair_refuses_different_root_and_tells_user_to_rebind(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import write_project_marker
+
+        machine_id = _pin_cli_machine(temp_db, monkeypatch)
+        name = _unique_name("repair-conflict")
+        registered = tmp_path / "registered"
+        other = tmp_path / "other"
+        registered.mkdir()
+        other.mkdir()
+        project = LocalProjectManager(_hub(temp_db)).create(name=name)
+        write_project_marker(registered, project_id=project.id, name=name)
+        write_project_marker(other, project_id=project.id, name=name)
+        LocalProjectCheckoutManager(_hub(temp_db)).register(machine_id, project.id, str(registered))
+
+        result = _invoke_projects(
+            runner, temp_db, ["repair", "--fix"], cwd=other, monkeypatch=monkeypatch
+        )
+        assert result.exit_code == 1
+        assert "rebind" in _cli_text(result).lower()
+        assert _checkout_root(temp_db, machine_id, project.id) == str(registered)
+        assert _project_row(temp_db, project.id)["repo_path"] is None
+
+    def test_repair_same_root_existing_reports_no_drift(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import write_project_marker
+
+        machine_id = _pin_cli_machine(temp_db, monkeypatch)
+        name = _unique_name("repair-ok")
+        root = tmp_path / "same"
+        root.mkdir()
+        project = LocalProjectManager(_hub(temp_db)).create(name=name)
+        write_project_marker(root, project_id=project.id, name=name)
+        LocalProjectCheckoutManager(_hub(temp_db)).register(machine_id, project.id, str(root))
+
+        result = _invoke_projects(
+            runner, temp_db, ["repair", "--fix"], cwd=root, monkeypatch=monkeypatch
+        )
         assert result.exit_code == 0
-        assert "Applied 1 fix(es)" in result.output
-        mock_manager.update.assert_called_once()
+        assert "no drift" in _cli_text(result).lower() or "no issues" in _cli_text(result).lower()
+        assert _checkout_root(temp_db, machine_id, project.id) == str(root)
+        assert _project_row(temp_db, project.id)["repo_path"] is None
+
+
+class TestProjectRenameCheckout:
+    """§ 2.3.4 rename commits projects.name and best-effort marker refresh."""
+
+    def test_rename_commits_name_without_local_checkout(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import write_project_marker
+
+        _pin_cli_machine(temp_db, monkeypatch)
+        name = _unique_name("rename-free")
+        new_name = _unique_name("renamed-free")
+        stale = tmp_path / "stale-repo-path"
+        stale.mkdir()
+        manager = LocalProjectManager(_hub(temp_db))
+        project = manager.create(name=name)
+        write_project_marker(stale, project_id=project.id, name=name)
+        _hub(temp_db).execute(
+            "UPDATE projects SET repo_path = %s WHERE id = %s",
+            (str(stale), project.id),
+        )
+
+        result = _invoke_projects(runner, temp_db, ["rename", name, new_name])
+        assert result.exit_code == 0
+        stored = _project_row(temp_db, project.id)
+        assert stored["name"] == new_name
+        assert _read_marker(stale)["name"] == name
+
+    def test_rename_refreshes_only_local_marker_after_commit(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import write_project_marker
+
+        machine_id = _pin_cli_machine(temp_db, monkeypatch)
+        name = _unique_name("rename-local")
+        new_name = _unique_name("renamed-local")
+        root = tmp_path / "checkout"
+        stale = tmp_path / "stale"
+        root.mkdir()
+        stale.mkdir()
+        project = LocalProjectManager(_hub(temp_db)).create(name=name)
+        write_project_marker(root, project_id=project.id, name=name)
+        write_project_marker(stale, project_id=project.id, name=name)
+        marker = root / ".gobby" / "project.json"
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+        payload["created_at"] = "2024-01-02T00:00:00Z"
+        payload["extra_field"] = "keep-me"
+        marker.write_text(json.dumps(payload), encoding="utf-8")
+        LocalProjectCheckoutManager(_hub(temp_db)).register(machine_id, project.id, str(root))
+        _hub(temp_db).execute(
+            "UPDATE projects SET repo_path = %s WHERE id = %s",
+            (str(stale), project.id),
+        )
+
+        result = _invoke_projects(runner, temp_db, ["rename", name, new_name])
+        assert result.exit_code == 0
+        assert _project_row(temp_db, project.id)["name"] == new_name
+        refreshed = _read_marker(root)
+        assert refreshed["name"] == new_name
+        assert refreshed["id"] == project.id
+        assert refreshed["created_at"] == "2024-01-02T00:00:00Z"
+        assert refreshed["extra_field"] == "keep-me"
+        assert _read_marker(stale)["name"] == name
+
+    def test_rename_warns_on_marker_mismatch_leaving_database_name_changed(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import uuid
+
+        import gobby.utils.project_init as project_init
+        from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import write_project_marker
+
+        machine_id = _pin_cli_machine(temp_db, monkeypatch)
+        name = _unique_name("rename-warn")
+        new_name = _unique_name("renamed-warn")
+        root = tmp_path / "checkout"
+        root.mkdir()
+        project = LocalProjectManager(_hub(temp_db)).create(name=name)
+        write_project_marker(root, project_id=project.id, name=name)
+        LocalProjectCheckoutManager(_hub(temp_db)).register(machine_id, project.id, str(root))
+        replacement_id = str(uuid.uuid4())
+
+        def replace_marker() -> None:
+            write_project_marker(root, project_id=replacement_id, name="replacement")
+
+        monkeypatch.setitem(
+            project_init._INIT_FAILPOINTS, "refresh_after_temp_fsync", replace_marker
+        )
+
+        result = _invoke_projects(runner, temp_db, ["rename", name, new_name])
+        assert result.exit_code == 0
+        assert "warning" in _cli_text(result).lower()
+        assert _project_row(temp_db, project.id)["name"] == new_name
+        assert _read_marker(root)["id"] == replacement_id
+        assert _read_marker(root)["name"] == "replacement"

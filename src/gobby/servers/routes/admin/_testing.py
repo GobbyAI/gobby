@@ -66,16 +66,34 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             project_manager = LocalProjectManager(db)
 
-            # Create the project with the specific ID
+            # Create the project with the specific ID; checkout is a separate row.
             inserted = db.execute(
                 """
-                INSERT INTO projects (id, name, repo_path)
-                VALUES (%s, %s, %s)
+                INSERT INTO projects (id, name)
+                VALUES (%s, %s)
                 ON CONFLICT (id) DO NOTHING
                 RETURNING id
                 """,
-                (request.project_id, request.name, request.repo_path),
+                (request.project_id, request.name),
             ).fetchone()
+            if inserted is not None and request.repo_path:
+                from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+                from gobby.storage.workspace_machine_scope import require_local_machine_id
+                from gobby.utils.checkout_root import validate_checkout_root
+
+                machine_id = require_local_machine_id(
+                    None,
+                    resource_kind="project_checkout",
+                    resource_id=request.project_id,
+                )
+                root = validate_checkout_root(
+                    db,
+                    project_id=request.project_id,
+                    machine_id=machine_id,
+                    candidate_path=request.repo_path,
+                    expected_marker_id=request.project_id,
+                )
+                LocalProjectCheckoutManager(db).register(machine_id, request.project_id, root)
 
             if inserted is None:
                 existing = project_manager.get(request.project_id)

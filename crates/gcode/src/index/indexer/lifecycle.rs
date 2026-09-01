@@ -9,7 +9,7 @@ use crate::index::{api, hasher};
 use crate::models::IndexedProject;
 use crate::projection::sync::{self, ProjectionSyncRequest, ProjectionTarget};
 
-use super::types::{IndexOutcome, IndexRequest};
+use super::types::{IndexOutcome, IndexRequest, IndexTarget};
 use super::util::{epoch_secs_str, relative_path};
 
 pub(super) fn attach_projection_sync(outcome: &mut IndexOutcome, request: &IndexRequest) {
@@ -54,21 +54,20 @@ pub fn invalidate(
 pub(super) fn refresh_project_stats(
     conn: &mut Client,
     machine_id: &str,
-    root_path: &Path,
-    project_id: &str,
+    target: IndexTarget<'_>,
     elapsed_ms: u64,
     total_eligible_files: Option<usize>,
     indexer_version: Option<&str>,
 ) {
-    let total_files = count_machine_rows(conn, machine_id, project_id, false);
-    let total_symbols = count_machine_rows(conn, machine_id, project_id, true);
+    let total_files = count_machine_rows(conn, machine_id, target.project_id, false);
+    let total_symbols = count_machine_rows(conn, machine_id, target.project_id, true);
 
     if let Err(error) = api::upsert_project_stats(
         conn,
         machine_id,
         &IndexedProject {
-            id: project_id.to_string(),
-            root_path: root_path.to_string_lossy().to_string(),
+            id: target.project_id.to_string(),
+            root_path: target.root_path.to_string_lossy().to_string(),
             total_files,
             total_symbols,
             last_indexed_at: epoch_secs_str(),
@@ -76,10 +75,12 @@ pub(super) fn refresh_project_stats(
             total_eligible_files,
             indexer_version: indexer_version.map(ToOwned::to_owned),
         },
+        target.mode,
     ) {
         eprintln!(
-            "Warning: refresh_project_stats failed to upsert project stats for project {project_id} at {}: {error}",
-            root_path.display()
+            "Warning: refresh_project_stats failed to upsert project stats for project {} at {}: {error}",
+            target.project_id,
+            target.root_path.display()
         );
     }
 }

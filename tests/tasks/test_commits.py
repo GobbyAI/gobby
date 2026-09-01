@@ -436,6 +436,34 @@ class TestAutoLinkCommits:
         assert result.total_linked == 1
         mock_task_manager.get_task.assert_called_once_with("task-1")
 
+    def test_task_filter_uses_resolved_uuid_for_branch_lookup(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        task = MagicMock(id="task-uuid", seq_num=1, commits=[])
+        mock_task_manager.resolve_task_reference.return_value = task.id
+        mock_task_manager.get_task.return_value = task
+
+        with (
+            patch(
+                "gobby.tasks.commits._resolve_branch_for_task", return_value=None
+            ) as resolve_branch,
+            patch(
+                "gobby.tasks.commits.run_git_command",
+                return_value="abc123|[gobby-#1] fix",
+            ),
+        ):
+            result = auto_link_commits(
+                mock_task_manager,
+                task_id="#1",
+                cwd="/tmp/repo",
+                project_name="gobby",
+                project_id="project-uuid",
+            )
+
+        assert result.linked_tasks == {"#1": ["abc123"]}
+        assert result.total_linked == 1
+        resolve_branch.assert_called_once_with(mock_task_manager, task.id)
+
     def test_read_only_resolver_returns_ordered_task_commits_without_linking(
         self, mock_task_manager: MagicMock
     ) -> None:

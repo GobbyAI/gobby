@@ -10,7 +10,6 @@ import pytest
 
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
 from gobby.mcp_proxy.tools.communications import create_communications_registry
-from gobby.storage.projects import LocalProjectManager
 
 pytestmark = pytest.mark.unit
 
@@ -297,8 +296,14 @@ async def test_set_channel_project_resolves_name_and_persists_config(
     mock_manager: MagicMock,
     mock_store: MagicMock,
     temp_db: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    project = LocalProjectManager(temp_db).create("gobby", repo_path="/tmp/gobby")
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "gobby", name="gobby", monkeypatch=monkeypatch
+    )
     channel = _make_channel()
     channel.config_json = {"responder": {"enabled": True}}
     mock_store.get_channel_by_name.return_value = channel
@@ -314,12 +319,14 @@ async def test_set_channel_project_resolves_name_and_persists_config(
     assert result == {
         "success": True,
         "channel": "test-channel",
-        "project_id": project.id,
+        "project_id": isolated.project.id,
         "project_name": "gobby",
-        "project_path": "/tmp/gobby",
+        "project_path": isolated.root_path,
     }
     updated = mock_manager.update_channel.await_args.args[0]
-    assert updated.config_json == {"responder": {"enabled": True, "project_id": project.id}}
+    assert updated.config_json == {
+        "responder": {"enabled": True, "project_id": isolated.project.id}
+    }
     assert updated.updated_at > channel.updated_at
     assert channel.config_json == {"responder": {"enabled": True}}
 

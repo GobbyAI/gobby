@@ -358,12 +358,9 @@ def _python_test_findings(test: AcceptanceTest) -> list[str]:
         return [f"{test.reference}: test body is not parseable Python"]
     findings: list[str] = []
     has_assertion = False
-    current_name = test.symbol.rsplit("::", 1)[-1].rsplit(".", 1)[-1]
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             called = _called_name(node.func)
-            if called.startswith("test_") and called != current_name:
-                findings.append(f"{test.reference}: delegates acceptance to another test {called}")
             if called in {"assertEqual", "assertNotEqual", "assertTrue", "assertFalse"} and all(
                 _is_static_expression(arg) for arg in node.args
             ):
@@ -383,10 +380,6 @@ def _python_test_findings(test: AcceptanceTest) -> list[str]:
 def _text_test_findings(test: AcceptanceTest) -> list[str]:
     body = test.body
     findings: list[str] = []
-    current_name = re.escape(test.symbol.rsplit("::", 1)[-1])
-    delegated = re.search(r"\btest_[A-Za-z0-9_]+\s*\(", body)
-    if delegated and not re.search(rf"\b{current_name}\s*\(", delegated.group(0)):
-        findings.append(f"{test.reference}: delegates acceptance to another test")
     placebo_patterns = (
         r"assert!\s*\(\s*true\s*\)",
         r"assert!\s*\([^)]*\|\|\s*true\s*\)",

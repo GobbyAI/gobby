@@ -148,8 +148,8 @@ class TestBuildPersonaChanges:
 
         # Create a project + session so FK constraints are satisfied
         db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
-            ("11111111-1111-4111-8111-111111110001", "test-project", "/tmp/test"),
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
+            ("11111111-1111-4111-8111-111111110001", "test-project"),
         )
         session_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4002"
         db.execute(
@@ -205,8 +205,8 @@ class TestBuildPersonaChanges:
         from gobby.workflows.step_instances import AgentStepInstanceManager
 
         db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
-            ("11111111-1111-4111-8111-111111110004", "taskless-project", "/tmp/test"),
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
+            ("11111111-1111-4111-8111-111111110004", "taskless-project"),
         )
         session_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4005"
         db.execute(
@@ -250,8 +250,8 @@ class TestBuildPersonaChanges:
         from tests.workflows.step_instance_fixtures import make_step_instance
 
         db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
-            ("11111111-1111-4111-8111-111111110003", "test-project-preserve", "/tmp/test"),
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
+            ("11111111-1111-4111-8111-111111110003", "test-project-preserve"),
         )
         session_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4004"
         db.execute(
@@ -559,8 +559,8 @@ class TestApplyPersonaImpl:
         from gobby.workflows.step_instances import AgentStepInstanceManager
 
         db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
-            ("11111111-1111-4111-8111-111111110006", "persona-project", "/tmp/test"),
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
+            ("11111111-1111-4111-8111-111111110006", "persona-project"),
         )
         session_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4006"
         db.execute(

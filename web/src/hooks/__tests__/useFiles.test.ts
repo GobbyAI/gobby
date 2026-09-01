@@ -1,10 +1,40 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import { useFiles } from "../useFiles";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("useFiles projects", () => {
+  it("accepts checkout objects and projects without a checkout", async () => {
+    const projects = [
+      {
+        id: "project-1",
+        name: "Project One",
+        checkout: { machine_id: "machine-1", root_path: "/tmp/project-one" },
+      },
+      { id: "project-2", name: "Project Two", checkout: null },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).endsWith("/api/files/projects")) {
+          return { ok: true, json: async () => projects } as Response;
+        }
+        throw new Error(`Unexpected request: ${String(input)}`);
+      }),
+    );
+
+    const { result } = renderHook(() => useFiles());
+
+    await waitFor(() => expect(result.current.projects).toEqual(projects));
+    expectTypeOf(result.current.projects[0]!.checkout).toEqualTypeOf<{
+      machine_id: string;
+      root_path: string;
+    } | null>();
+  });
 });
 
 describe("useFiles saves", () => {

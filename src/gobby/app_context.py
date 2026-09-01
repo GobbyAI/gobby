@@ -192,7 +192,7 @@ class ServiceContainer:
     def get_git_manager(self, project_id: str) -> Any | None:
         """Get or create a WorktreeGitManager for a project.
 
-        Looks up the project's repo_path from the database and creates a
+        Looks up this machine's primary project checkout and creates a
         WorktreeGitManager, caching it for subsequent calls.
 
         Returns:
@@ -204,15 +204,15 @@ class ServiceContainer:
                 return cached
 
         try:
-            from gobby.storage.projects import LocalProjectManager
+            from gobby.storage.project_checkouts import require_root
+            from gobby.storage.workspace_machine_scope import require_local_machine_id
             from gobby.worktrees.git import WorktreeGitManager
 
-            pm = LocalProjectManager(self.database)
-            project = pm.get(project_id)
-            if not project or not project.repo_path:
-                return None
-
-            gm = WorktreeGitManager(project.repo_path)
+            machine_id = require_local_machine_id(
+                None, resource_kind="project_checkout", resource_id=project_id
+            )
+            root = require_root(self.database, project_id, machine_id)
+            gm = WorktreeGitManager(root)
             self._project_infra_cache.setdefault(project_id, {})["git_manager"] = gm
             return gm
         except (ValueError, OSError):

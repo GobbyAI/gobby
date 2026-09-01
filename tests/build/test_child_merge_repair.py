@@ -20,7 +20,7 @@ from gobby.build.workspaces import (
 )
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 
@@ -58,6 +58,27 @@ def _init_repo(path: Path) -> None:
     _git(path, "commit", "-m", "initial")
 
 
+def _checkout_project(
+    temp_db: HubDatabase,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    name: str,
+) -> Project:
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(temp_db, repo, name=name, monkeypatch=monkeypatch)
+    monkeypatch.setattr(
+        "gobby.storage.worktrees.require_machine_id",
+        lambda: isolated.machine_id,
+    )
+    monkeypatch.setattr(
+        "gobby.storage.clones.require_machine_id",
+        lambda: isolated.machine_id,
+    )
+    return isolated.project
+
+
 @pytest.mark.asyncio
 async def test_child_build_resume_leaves_parent_integration_unprovisioned(
     monkeypatch: pytest.MonkeyPatch,
@@ -70,7 +91,7 @@ async def test_child_build_resume_leaves_parent_integration_unprovisioned(
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -153,7 +174,7 @@ async def test_child_build_resume_preserves_workspaces_without_parent_refresh(
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -243,7 +264,7 @@ async def test_epic_build_does_not_provision_integration_workspaces(
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("lazy-build", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="lazy-build")
     task_manager = LocalTaskManager(temp_db)
     root = task_manager.create_task(
         project_id=project.id,
@@ -295,7 +316,7 @@ def test_leaf_dispatch_provisions_only_open_epic_ancestry(
         _workspace_path("clones", repo.name, "probe").parents[1],
     )
 
-    project = LocalProjectManager(temp_db).create("lazy-ancestry", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="lazy-ancestry")
     task_manager = LocalTaskManager(temp_db)
     root = task_manager.create_task(
         project_id=project.id,
@@ -457,13 +478,14 @@ def test_leaf_dispatch_requires_root_target_metadata(
 def test_epic_integration_workspace_refreshes_from_advanced_target_branch(
     temp_db,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -513,13 +535,14 @@ def test_epic_integration_workspace_refreshes_from_advanced_target_branch(
 def test_epic_integration_workspace_adopts_pruned_metadata(
     temp_db,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -568,7 +591,7 @@ def test_epic_integration_workspace_recreates_missing_path(
     _init_repo(repo)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -624,7 +647,7 @@ def test_epic_integration_workspace_recreates_invalid_git_path(
     _init_repo(repo)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -685,7 +708,7 @@ def test_epic_integration_workspace_recreates_invalid_branch_record_from_other_t
     _init_repo(repo)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -740,6 +763,7 @@ def test_epic_integration_workspace_recreates_invalid_branch_record_from_other_t
 def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
     temp_db,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.storage.agents import LocalAgentRunManager
 
@@ -747,7 +771,7 @@ def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -814,7 +838,7 @@ def test_epic_integration_workspace_blocks_active_run_for_invalid_git_path(
     _init_repo(repo)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -887,13 +911,14 @@ def test_epic_integration_workspace_blocks_active_run_for_invalid_git_path(
 def test_epic_integration_workspace_merges_closed_descendant_commits(
     temp_db,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -955,13 +980,14 @@ def test_epic_integration_workspace_merges_closed_descendant_commits(
 def test_epic_integration_workspace_prefers_closed_commit_over_stale_links(
     temp_db,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -1029,13 +1055,14 @@ def test_epic_integration_workspace_prefers_closed_commit_over_stale_links(
 def test_epic_integration_workspace_skips_non_automation_planning_commits(
     temp_db,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -1211,6 +1238,7 @@ def test_epic_integration_workspace_refuses_dirty_checkout(
 def test_epic_integration_workspace_clears_stale_task_worktree_artifacts(
     temp_db,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
@@ -1218,7 +1246,7 @@ def test_epic_integration_workspace_clears_stale_task_worktree_artifacts(
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -1284,6 +1312,7 @@ def test_epic_integration_workspace_clears_stale_task_worktree_artifacts(
 def test_epic_integration_workspace_promotes_existing_task_worktree(
     temp_db,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     phase_path = tmp_path / "phase"
@@ -1299,7 +1328,7 @@ def test_epic_integration_workspace_promotes_existing_task_worktree(
     _git(phase_path, "commit", "-m", "phase work")
     phase_sha = _git(phase_path, "rev-parse", "HEAD")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -1348,8 +1377,9 @@ def test_epic_integration_workspace_promotes_existing_task_worktree(
 
 
 def test_epic_integration_workspace_dirty_task_worktree_keeps_task_role(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     phase_path = tmp_path / "phase"
@@ -1360,7 +1390,7 @@ def test_epic_integration_workspace_dirty_task_worktree_keeps_task_role(
     _git(repo, "worktree", "add", "-b", "task/phase", str(phase_path), "main")
     (phase_path / "dirty.txt").write_text("dirty work\n")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -1406,6 +1436,7 @@ def test_epic_integration_workspace_dirty_task_worktree_keeps_task_role(
 def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotion(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.storage.agents import LocalAgentRunManager
 
@@ -1417,7 +1448,7 @@ def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotio
 
     _git(repo, "worktree", "add", "-b", "task/phase", str(phase_path), "main")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -1487,6 +1518,7 @@ def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotio
 def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.storage.agents import LocalAgentRunManager
 
@@ -1502,7 +1534,7 @@ def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
     _git(repo, "checkout", "main")
     _git(tmp_path, "clone", "--branch", "task/phase", str(repo), str(clone_path))
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -1572,6 +1604,7 @@ def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
 def test_epic_integration_workspace_recovers_partially_promoted_worktree(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     phase_path = tmp_path / "phase"
@@ -1587,7 +1620,7 @@ def test_epic_integration_workspace_recovers_partially_promoted_worktree(
     _git(phase_path, "commit", "-m", "phase work")
     phase_sha = _git(phase_path, "rev-parse", "HEAD")
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,
@@ -1637,6 +1670,7 @@ def test_epic_integration_workspace_recovers_partially_promoted_worktree(
 def test_closed_epic_without_a_workspace_is_not_provisioned_during_merge_repair(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Repair merges into a workspace an epic already has; it does not create one.
 
@@ -1648,7 +1682,7 @@ def test_closed_epic_without_a_workspace_is_not_provisioned_during_merge_repair(
     repo.mkdir()
     _init_repo(repo)
 
-    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    project = _checkout_project(temp_db, repo, monkeypatch, name="merge-project")
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=project.id,

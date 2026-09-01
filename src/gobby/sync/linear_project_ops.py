@@ -84,10 +84,19 @@ class LinearProjectOpsMixin:
         return True
 
     def _linear_project_name(self) -> str:
+        from gobby.storage.project_checkouts import require_root
+        from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS
+        from gobby.storage.workspace_machine_scope import require_local_machine_id
+
         project = self.project_manager.get(self.project_id)
         if not project:
             raise LinearSyncError(f"Project not found: {self.project_id}")
-        return Path(project.repo_path).name if project.repo_path else project.name
+        if project.id in CHECKOUT_FREE_PROJECT_IDS:
+            return project.name
+        machine_id = require_local_machine_id(
+            None, resource_kind="project_checkout", resource_id=project.id
+        )
+        return Path(require_root(self.project_manager.db, project.id, machine_id)).name
 
     def _linear_project_display_name(self) -> str | None:
         try:
@@ -257,12 +266,20 @@ class LinearProjectOpsMixin:
             linear_team_id=team_id,
             linear_project_id=resolved_project_id,
         )
-        if updated and updated.repo_path:
-            update_project_json_fields(
-                Path(updated.repo_path),
-                linear_team_id=team_id,
-                linear_project_id=resolved_project_id,
-            )
+        if updated:
+            from gobby.storage.project_checkouts import require_root
+            from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS
+            from gobby.storage.workspace_machine_scope import require_local_machine_id
+
+            if self.project_id not in CHECKOUT_FREE_PROJECT_IDS:
+                machine_id = require_local_machine_id(
+                    None, resource_kind="project_checkout", resource_id=self.project_id
+                )
+                update_project_json_fields(
+                    Path(require_root(self.project_manager.db, self.project_id, machine_id)),
+                    linear_team_id=team_id,
+                    linear_project_id=resolved_project_id,
+                )
         return resolved_project_id
 
     def _issue_list_args(

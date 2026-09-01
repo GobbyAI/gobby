@@ -60,6 +60,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._task_scope import evaluate_task_scope
+from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.acceptance_artifacts import (
@@ -221,14 +222,32 @@ async def _evaluate_close(
     evaluation.resolved_session_id = resolved_session_id
     evaluation.pass_gate(2, "session_context", "Close session resolved.")
 
+    close_session = ctx.session_manager.get(resolved_session_id)
+    if close_session is None or not close_session.machine_id:
+        return evaluation.fail(
+            3,
+            "repository_path",
+            "session_machine_missing",
+            "close_task requires the resolved session to have a machine_id.",
+        )
     try:
         repo_path = resolve_task_repo_path(
             task_manager=ctx.task_manager,
             project_manager=ctx.project_manager,
             task=task,
             project_path=project_path,
+            machine_id=close_session.machine_id,
+        )
+    except CheckoutNotFoundError:
+        return evaluation.fail(
+            3,
+            "repository_path",
+            "task_repo_path_unavailable",
+            "close_task requires a registered repository path.",
         )
     except RepoPathValidationError as exc:
+        return evaluation.fail(3, "repository_path", "invalid_project_path", str(exc))
+    except ValueError as exc:
         return evaluation.fail(3, "repository_path", "invalid_project_path", str(exc))
     if repo_path is None:
         return evaluation.fail(

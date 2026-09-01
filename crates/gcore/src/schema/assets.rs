@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 pub const BASELINE_VERSION: i32 = 375;
 pub const BASELINE_CHECKSUM: &str =
-    "84eb875cb839f6f61219f3f3fd54a5befc3abf38f01461d96780e956dc1864d8";
+    "58524c140b36a49ef115bb7c9a83e9dedf8aeb59e0d53b280537fe564c3464ac";
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");
@@ -76,7 +76,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 384,
         filename: "384_grant_projects_liveness_to_capability.sql",
-        checksum: "0f7a499e1b7216a7a2426dc5c04064eae97440a1ee1a4d5134a0dd7a8cf6ebef",
+        checksum: "e72f299424484dd52131a1cbca1a7664bb402ccdf50027971116ead50cde37fb",
         sql: include_str!(
             "../../assets/schema/migrations/384_grant_projects_liveness_to_capability.sql"
         ),
@@ -294,6 +294,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         filename: "417_provider_capacity_snapshots.sql",
         checksum: "7397e2d9f59cc4d4573d58d546c430abf34b2f6614afe3f5ac7bd2e9a7a0fea9",
         sql: include_str!("../../assets/schema/migrations/417_provider_capacity_snapshots.sql"),
+    },
+    EmbeddedMigration {
+        version: 418,
+        filename: "418_project_checkouts.sql",
+        checksum: "42c0684fb86430e525b325f2dcc57e7f41eb684515f2ce63be5a491821005243",
+        sql: include_str!("../../assets/schema/migrations/418_project_checkouts.sql"),
     },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

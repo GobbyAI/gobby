@@ -73,11 +73,25 @@ class TemplatingMixin:
             if project_id:
                 proj = project_manager.get(project_id)
                 if proj:
+                    from gobby.storage.project_checkouts import (
+                        CheckoutNotFoundError,
+                        require_root,
+                    )
+                    from gobby.storage.workspace_machine_scope import require_local_machine_id
+
+                    checkout_path = project_info.get("path", "")
+                    try:
+                        machine_id = require_local_machine_id(
+                            None, resource_kind="project_checkout", resource_id=proj.id
+                        )
+                        checkout_path = require_root(self.db, proj.id, machine_id)
+                    except CheckoutNotFoundError:
+                        pass
                     project_info.update(
                         {
                             "name": proj.name,
                             "id": proj.id,
-                            "path": proj.repo_path or project_info.get("path", ""),
+                            "path": checkout_path,
                         }
                     )
         except (OSError, psycopg.Error) as e:

@@ -20,6 +20,8 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
@@ -5409,3 +5411,95 @@ async def test_progress_stagnation_after_delivered_result_keeps_failure_path_for
     assert len(stuck_logs) == 1
     assert f"run_id={run.id}" in stuck_logs[0]
     assert "action=stop" in stuck_logs[0]
+
+
+@pytest.mark.asyncio
+async def test_resolve_agent_cwd_uses_session_machine_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    monkeypatch.setattr(
+        lifecycle_monitor_module,
+        "require_machine_id",
+        lambda: isolated.machine_id,
+        raising=False,
+    )
+    session = SessionManager(temp_db).register(
+        external_id="cwd-checkout",
+        machine_id=isolated.machine_id,
+        source="codex",
+        project_id=isolated.project.id,
+    )
+    monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        agent_run_manager=MagicMock(),
+        db=temp_db,
+        session_manager=SessionManager(temp_db),
+        tmux_config=TmuxConfig(),
+        terminal_services=_fake_terminal_services(temp_db),
+    )
+    run = SimpleNamespace(
+        id=_rid("cwd-checkout"),
+        worktree_id=None,
+        clone_id=None,
+        child_session_id=session.id,
+        task_id=None,
+    )
+
+    cwd = await monitor._resolve_agent_cwd(cast(AgentRun, run))
+
+    assert cwd == isolated.root_path
+    assert Path(cwd).exists()
+
+
+@pytest.mark.asyncio
+async def test_resolve_agent_cwd_fails_closed_without_checkout(  # tdd-red window
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.projects import LocalProjectManager
+    from tests.fixtures.isolated_checkout import (
+        insert_isolated_machine,
+        patch_local_machine_id,
+    )
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    monkeypatch.setattr(
+        lifecycle_monitor_module,
+        "require_machine_id",
+        lambda: machine_id,
+        raising=False,
+    )
+    project = LocalProjectManager(temp_db).create(name="monitor-no-checkout")
+    session = SessionManager(temp_db).register(
+        external_id="cwd-missing",
+        machine_id=machine_id,
+        source="codex",
+        project_id=project.id,
+    )
+    monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        agent_run_manager=MagicMock(),
+        db=temp_db,
+        session_manager=SessionManager(temp_db),
+        tmux_config=TmuxConfig(),
+        terminal_services=_fake_terminal_services(temp_db),
+    )
+    run = SimpleNamespace(
+        id=_rid("cwd-missing"),
+        worktree_id=None,
+        clone_id=None,
+        child_session_id=session.id,
+        task_id=None,
+    )
+
+    cwd = await monitor._resolve_agent_cwd(cast(AgentRun, run))
+
+    assert cwd is None

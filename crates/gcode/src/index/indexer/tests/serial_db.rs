@@ -203,6 +203,7 @@ fn parsed_reindex_preserves_summaries_for_immutable_content_versions() {
             total_eligible_files: None,
             indexer_version: None,
         },
+        api::IndexWriteMode::Overlay,
     )
     .expect("seed project row");
 
@@ -350,6 +351,8 @@ fn indexing_adopts_existing_content_version_without_reparse() {
         database_url: database_url.clone(),
         project_id: project_id.clone(),
     };
+    seed_primary_checkout(&mut conn, &project_id, project_root.path())
+        .expect("seed primary checkout");
     api::upsert_project_stats(
         &mut conn,
         &first_machine_id,
@@ -363,6 +366,7 @@ fn indexing_adopts_existing_content_version_without_reparse() {
             total_eligible_files: None,
             indexer_version: None,
         },
+        api::IndexWriteMode::Overlay,
     )
     .expect("seed first machine project state");
     let shared_file = IndexedFile {
@@ -383,8 +387,14 @@ fn indexing_adopts_existing_content_version_without_reparse() {
         &[&test_uuid_param(&shared_file.id)],
     )
     .expect("mark shared projections complete");
-    api::upsert_file_state(&mut conn, &first_machine_id, &shared_file)
-        .expect("seed first machine selector");
+    api::upsert_file_state(
+        &mut conn,
+        &first_machine_id,
+        &shared_file,
+        Path::new("/first-machine/repo"),
+        api::IndexWriteMode::Overlay,
+    )
+    .expect("seed first machine selector");
 
     let ctx = Context {
         database_url,
@@ -466,6 +476,8 @@ fn full_indexing_reparses_previously_adopted_content() {
         database_url: database_url.clone(),
         project_id: project_id.clone(),
     };
+    seed_primary_checkout(&mut conn, &project_id, project_root.path())
+        .expect("seed primary checkout");
     api::upsert_project_stats(
         &mut conn,
         &first_machine_id,
@@ -479,6 +491,7 @@ fn full_indexing_reparses_previously_adopted_content() {
             total_eligible_files: None,
             indexer_version: None,
         },
+        api::IndexWriteMode::Overlay,
     )
     .expect("seed first machine project state");
     // Seed the shared content row with wrong stats: only a real re-parse
@@ -494,8 +507,14 @@ fn full_indexing_reparses_previously_adopted_content() {
         indexed_at: String::new(),
     };
     api::upsert_file(&mut conn, &shared_file).expect("seed shared content version");
-    api::upsert_file_state(&mut conn, &first_machine_id, &shared_file)
-        .expect("seed first machine selector");
+    api::upsert_file_state(
+        &mut conn,
+        &first_machine_id,
+        &shared_file,
+        Path::new("/first-machine/repo"),
+        api::IndexWriteMode::Overlay,
+    )
+    .expect("seed first machine selector");
 
     let ctx = Context {
         database_url,
@@ -591,6 +610,7 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
             total_eligible_files: None,
             indexer_version: None,
         },
+        api::IndexWriteMode::Overlay,
     )
     .expect("seed parent project state");
     let parent_file = IndexedFile {
@@ -604,7 +624,14 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
         indexed_at: String::new(),
     };
     api::upsert_file(&mut conn, &parent_file).expect("seed parent content version");
-    api::upsert_file_state(&mut conn, &machine_id, &parent_file).expect("seed parent selector");
+    api::upsert_file_state(
+        &mut conn,
+        &machine_id,
+        &parent_file,
+        Path::new("/tmp/gcode-overlay-adoption-parent"),
+        api::IndexWriteMode::Overlay,
+    )
+    .expect("seed parent selector");
 
     // Another machine already parsed this exact overlay content version.
     api::upsert_project_stats(
@@ -620,6 +647,7 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
             total_eligible_files: None,
             indexer_version: None,
         },
+        api::IndexWriteMode::Overlay,
     )
     .expect("seed first machine overlay project state");
     let overlay_file = IndexedFile {
@@ -640,8 +668,14 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
         &[&test_uuid_param(&overlay_file.id)],
     )
     .expect("mark overlay projections complete");
-    api::upsert_file_state(&mut conn, &first_machine_id, &overlay_file)
-        .expect("seed first machine overlay selector");
+    api::upsert_file_state(
+        &mut conn,
+        &first_machine_id,
+        &overlay_file,
+        Path::new("/first-machine/overlay"),
+        api::IndexWriteMode::Overlay,
+    )
+    .expect("seed first machine overlay selector");
 
     let ctx = Context {
         database_url,
@@ -706,6 +740,15 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
         .expect("load adopted overlay selector")
         .get(0);
     assert_eq!(adopted_hash, content_hash);
+    let overlay_stats = conn
+        .query_one(
+            "SELECT total_files, total_symbols FROM code_indexed_project_states
+             WHERE machine_id = $1 AND project_id = $2",
+            &[&machine_uuid, &overlay_uuid],
+        )
+        .expect("load refreshed overlay stats");
+    assert_eq!(overlay_stats.get::<_, i32>(0), 1);
+    assert_eq!(overlay_stats.get::<_, i32>(1), 0);
 }
 
 fn connect_summary_preservation_test_db() -> (postgres::Client, String) {
@@ -729,6 +772,27 @@ fn unique_test_uuid(prefix: &str) -> String {
 
 fn test_uuid_param(id: &str) -> uuid::Uuid {
     db::id_param(id).expect("test id is a uuid")
+}
+
+fn seed_primary_checkout(
+    conn: &mut postgres::Client,
+    project_id: &str,
+    root_path: &Path,
+) -> anyhow::Result<()> {
+    let machine_id = gobby_core::machine::read_local_machine_id()?;
+    crate::test_env::seed_test_machine(conn, &machine_id).map_err(anyhow::Error::msg)?;
+    let machine_id = test_uuid_param(&machine_id);
+    let project_uuid = test_uuid_param(project_id);
+    conn.execute(
+        "INSERT INTO projects (id, name) VALUES ($1, $2)",
+        &[&project_uuid, &format!("serial-db-{project_id}")],
+    )?;
+    conn.execute(
+        "INSERT INTO project_checkouts (machine_id, project_id, root_path)
+         VALUES ($1, $2, $3)",
+        &[&machine_id, &project_uuid, &root_path.to_string_lossy()],
+    )?;
+    Ok(())
 }
 
 struct SummaryPreservationCleanup {
@@ -786,6 +850,11 @@ fn cleanup_summary_preservation_project(
         "DELETE FROM code_indexed_projects WHERE id = $1",
         &[&project_id],
     )?;
+    tx.execute(
+        "DELETE FROM project_checkouts WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    tx.execute("DELETE FROM projects WHERE id = $1", &[&project_id])?;
     tx.commit()?;
     Ok(())
 }
@@ -827,7 +896,8 @@ fn write_postgres_parsed_file_facts_with_root(
     };
     let mut tx = conn.transaction().expect("start parsed write transaction");
     let mut sink =
-        PostgresCodeFactSink::new(&mut tx, project_id, root_path).expect("seed project row");
+        PostgresCodeFactSink::new(&mut tx, project_id, root_path, api::IndexWriteMode::Overlay)
+            .expect("seed project row");
     write_parsed_file_facts(
         &mut sink,
         project_id,

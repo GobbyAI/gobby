@@ -34,6 +34,10 @@ let fetchMock: MockFetchInstance;
 function mockBranchPickerData(options?: {
   checkoutStatus?: number;
   checkoutBody?: unknown;
+  projectCheckout?: {
+    machine_id: string;
+    root_path: string;
+  } | null;
   worktrees?: Array<{
     id: string;
     branch_name: string | null;
@@ -44,9 +48,15 @@ function mockBranchPickerData(options?: {
     /\/api\/source-control\/status\?project_id=proj-1$/,
     {
       current_branch: "current",
-      repo_path: "/repo",
+      repo_path: "/status-repo",
     },
   );
+  fetchMock.mockJsonResponse(/\/api\/projects\/proj-1\/checkouts$/, {
+    checkout:
+      options?.projectCheckout === undefined
+        ? { machine_id: "machine-1", root_path: "/repo" }
+        : options.projectCheckout,
+  });
   fetchMock.mockJsonResponse(
     /\/api\/source-control\/worktrees\?project_id=proj-1$/,
     {
@@ -65,18 +75,21 @@ function mockBranchPickerData(options?: {
     options?.checkoutBody ?? {
       success: true,
       current_branch: "feature",
-      repo_path: "/repo",
+      repo_path: "/checkout-response-repo",
     },
     { status: options?.checkoutStatus ?? 200 },
   );
 }
 
-async function openBranchPicker(onWorktreeChange = vi.fn()) {
+async function openBranchPicker(
+  onWorktreeChange = vi.fn(),
+  worktreePath: string | null = "/repo",
+) {
   const user = userEvent.setup();
   render(
     <BranchIndicator
       currentBranch="current"
-      worktreePath="/repo"
+      worktreePath={worktreePath}
       projectId="proj-1"
       onWorktreeChange={onWorktreeChange}
     />,
@@ -118,6 +131,16 @@ describe("BranchIndicator", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ branch_name: "feature" }),
     });
+  });
+
+  it("renders a path-free state when the project has no checkout", async () => {
+    mockBranchPickerData({ projectCheckout: null });
+
+    await openBranchPicker(vi.fn(), null);
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("No checkout registered for this project");
+    expect(status).not.toHaveTextContent("/repo");
   });
 
   it("does not render remote-only branches as switch targets", async () => {

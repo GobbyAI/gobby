@@ -18,13 +18,30 @@ from gobby.utils.uuid_validation import parse_uuid_reference
 logger = logging.getLogger(__name__)
 
 ORPHANED_PROJECT_ID = "00000000-0000-0000-0000-000000000000"
+MIGRATED_PROJECT_ID = "00000000-0000-0000-0000-000000000001"
 PERSONAL_PROJECT_ID = "00000000-0000-0000-0000-000000060887"
 GLOBAL_PROJECT_ID = "00000000-0000-0000-0000-000000000002"
+CHECKOUT_FREE_PROJECT_IDS = frozenset(
+    {
+        ORPHANED_PROJECT_ID,
+        MIGRATED_PROJECT_ID,
+        GLOBAL_PROJECT_ID,
+        PERSONAL_PROJECT_ID,
+    }
+)
 SYSTEM_PROJECT_NAMES = frozenset({"_orphaned", "_migrated", "_personal", "_global", "gobby"})
 
 
 class IsolatedAgentProjectPathError(ValueError):
     """Raised when an isolated agent session tries to set a canonical repo path."""
+
+
+class NameAttachRejectedError(ValueError):
+    """Raised when init tries to attach a checkout by project name instead of marker id."""
+
+
+class AmbiguousProjectRefError(ValueError):
+    """Raised when a project name matches more than one unique row."""
 
 
 def personal_project_path(gobby_home: Path | None = None) -> Path:
@@ -127,21 +144,19 @@ def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) 
         and bool(config.files_home)
         and held_singleton_claim() is not None
     )
-    repo_path = str(personal_project_path()) if write_identity else None
     project_manager = LocalProjectManager(db)
     now = utc_now()
     with db.transaction() as txn:
         txn.execute(
             """
-            INSERT INTO projects (id, name, repo_path, deleted_at)
-            VALUES (%s, %s, %s, NULL)
+            INSERT INTO projects (id, name, deleted_at)
+            VALUES (%s, %s, NULL)
             ON CONFLICT (id) DO UPDATE
             SET name = EXCLUDED.name,
-                repo_path = COALESCE(EXCLUDED.repo_path, projects.repo_path),
                 deleted_at = NULL,
                 updated_at = EXCLUDED.updated_at
             """,
-            (PERSONAL_PROJECT_ID, "_personal", repo_path),
+            (PERSONAL_PROJECT_ID, "_personal"),
         )
     project = project_manager.get(PERSONAL_PROJECT_ID)
     if project is None:
@@ -167,7 +182,6 @@ class Project:
 
     id: str
     name: str
-    repo_path: str | None
     github_url: str | None
     created_at: datetime
     updated_at: datetime
@@ -185,7 +199,6 @@ class Project:
         return cls(
             id=row["id"],
             name=row["name"],
-            repo_path=row["repo_path"],
             github_url=row["github_url"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -204,7 +217,6 @@ class Project:
         d: dict[str, Any] = {
             "id": self.id,
             "name": self.name,
-            "repo_path": self.repo_path,
             "github_url": self.github_url,
             "github_repo": self.github_repo,
             "linear_team_id": self.linear_team_id,
@@ -242,17 +254,17 @@ class LocalProjectManager:
         )
         return row is not None
 
-    def _is_registered_isolation_path(self, repo_path: str | None) -> bool:
+    def _is_registered_isolation_path(self, repo_path: str | None, *, machine_id: str) -> bool:
         if not repo_path:
             return False
         row = self.db.fetchone(
             """
-            SELECT 1 FROM worktrees WHERE worktree_path = %s
+            SELECT 1 FROM worktrees WHERE machine_id = %s AND worktree_path = %s
             UNION ALL
-            SELECT 1 FROM clones WHERE clone_path = %s
+            SELECT 1 FROM clones WHERE machine_id = %s AND clone_path = %s
             LIMIT 1
             """,
-            (repo_path, repo_path),
+            (machine_id, repo_path, machine_id, repo_path),
         )
         if row is not None:
             return True
@@ -260,14 +272,15 @@ class LocalProjectManager:
         try:
             canonical_path = Path(repo_path).expanduser().resolve(strict=False)
         except (OSError, RuntimeError):
-            return False
+            return True
 
         rows = self.db.fetchall(
             """
-            SELECT worktree_path AS isolation_path FROM worktrees
+            SELECT worktree_path AS isolation_path FROM worktrees WHERE machine_id = %s
             UNION ALL
-            SELECT clone_path AS isolation_path FROM clones
-            """
+            SELECT clone_path AS isolation_path FROM clones WHERE machine_id = %s
+            """,
+            (machine_id, machine_id),
         )
         for registered in rows:
             try:
@@ -283,7 +296,7 @@ class LocalProjectManager:
     @staticmethod
     def _is_under_isolation_root(repo_path: str | None) -> bool:
         # An orphaned worktree/clone directory (dir exists, registry row gone)
-        # must not become a project's canonical repo_path, so the roots are
+        # must not become a project's primary checkout, so the roots are
         # forbidden prefixes regardless of registration state.
         if not repo_path:
             return False
@@ -300,52 +313,106 @@ class LocalProjectManager:
                 return True
         return False
 
-    def _repo_path_write_is_blocked(self, repo_path: str | None) -> bool:
+    def _repo_path_write_is_blocked(self, repo_path: str | None, *, machine_id: str) -> bool:
         return (
             self._is_isolated_agent_session()
             or self._is_under_isolation_root(repo_path)
-            or self._is_registered_isolation_path(repo_path)
+            or self._is_registered_isolation_path(repo_path, machine_id=machine_id)
         )
 
-    def _guard_repo_path_write(self, repo_path: str | None) -> None:
-        if self._repo_path_write_is_blocked(repo_path):
+    def _guard_repo_path_write(self, repo_path: str | None, *, machine_id: str) -> None:
+        if self._repo_path_write_is_blocked(repo_path, machine_id=machine_id):
             raise IsolatedAgentProjectPathError(
                 "project repo_path cannot be changed from an isolated agent session "
                 "or to an isolation path (registered or under the worktrees/clones roots)"
             )
+
+    def _validated_ordinary_root(
+        self,
+        project_id: str,
+        repo_path: str,
+        *,
+        machine_id: str | None,
+    ) -> tuple[str, str]:
+        from gobby.storage.workspace_machine_scope import require_local_machine_id
+        from gobby.utils.checkout_root import validate_checkout_root
+
+        local_machine_id = require_local_machine_id(
+            machine_id, resource_kind="project_checkout", resource_id=project_id
+        )
+        root = validate_checkout_root(
+            self.db,
+            project_id=project_id,
+            machine_id=local_machine_id,
+            candidate_path=repo_path,
+            expected_marker_id=project_id,
+        )
+        return local_machine_id, root
+
+    def _write_checkout(self, machine_id: str, project_id: str, root_path: str) -> None:
+        from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+
+        manager = LocalProjectCheckoutManager(self.db)
+        existing = manager.get(machine_id, project_id)
+        if existing is None:
+            manager.register(machine_id, project_id, root_path)
+        else:
+            manager.rebind(machine_id, project_id, root_path)
 
     def create(
         self,
         name: str,
         repo_path: str | None = None,
         github_url: str | None = None,
+        *,
+        machine_id: str | None = None,
+        project_id: str | None = None,
     ) -> Project:
         """
         Create a new project.
 
         Args:
             name: Unique project name
-            repo_path: Local repository path
+            repo_path: Local filesystem path for this machine's checkout
             github_url: GitHub repository URL
+            machine_id: Claimed machine id, or None for the local daemon
+            project_id: Stable marker UUID, or None to generate one
 
         Returns:
             Created Project instance
         """
+        resolved_id = project_id or str(uuid.uuid4())
+        checkout: tuple[str, str] | None = None
         if repo_path is not None:
-            self._guard_repo_path_write(repo_path)
+            checkout = self._validated_ordinary_root(resolved_id, repo_path, machine_id=machine_id)
 
-        project_id = str(uuid.uuid4())
+        if checkout is None:
+            row = self.db.fetchone(
+                """
+                INSERT INTO projects (id, name, github_url)
+                VALUES (%s, %s, %s)
+                RETURNING *
+                """,
+                (resolved_id, name, github_url),
+            )
+            if row is None:
+                raise RuntimeError(f"Project '{name}' not found after insert")
+            return Project.from_row(row)
 
-        row = self.db.fetchone(
-            """
-            INSERT INTO projects (id, name, repo_path, github_url)
-            VALUES (%s, %s, %s, %s)
-            RETURNING *
-            """,
-            (project_id, name, repo_path, github_url),
-        )
-        if row is None:
-            raise RuntimeError(f"Project '{name}' not found after insert")
+        with self.db.transaction():
+            row = self.db.fetchone(
+                """
+                INSERT INTO projects (id, name, github_url)
+                VALUES (%s, %s, %s)
+                RETURNING *
+                """,
+                (resolved_id, name, github_url),
+            )
+            if row is None:
+                raise RuntimeError(f"Project '{name}' not found after insert")
+            from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+
+            LocalProjectCheckoutManager(self.db).register(checkout[0], resolved_id, checkout[1])
         return Project.from_row(row)
 
     def get(self, project_id: str) -> Project | None:
@@ -370,21 +437,34 @@ class LocalProjectManager:
         name: str,
         repo_path: str | None = None,
         github_url: str | None = None,
+        *,
+        machine_id: str | None = None,
     ) -> Project:
-        """Get existing project or create new one."""
+        """Get existing project or create a new one.
+
+        A checkout root never attaches an existing name. Name-only calls still
+        upsert only the logical project row.
+        """
         if repo_path is not None:
-            self._guard_repo_path_write(repo_path)
+            existing = self.get_by_name(name, include_deleted=True)
+            if existing is not None:
+                raise NameAttachRejectedError(
+                    f"project name {name!r} already exists; init is marker-authoritative"
+                )
+            return self.create(
+                name, repo_path=repo_path, github_url=github_url, machine_id=machine_id
+            )
 
         project_id = str(uuid.uuid4())
         row = self.db.fetchone(
             """
-            INSERT INTO projects (id, name, repo_path, github_url)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO projects (id, name, github_url)
+            VALUES (%s, %s, %s)
             ON CONFLICT (name) WHERE deleted_at IS NULL
             DO UPDATE SET name = EXCLUDED.name
             RETURNING *
             """,
-            (project_id, name, repo_path, github_url),
+            (project_id, name, github_url),
         )
         if row is None:
             raise RuntimeError(f"Project '{name}' not found after atomic upsert")
@@ -395,6 +475,8 @@ class LocalProjectManager:
         project_id: str,
         name: str,
         repo_path: str | None = None,
+        *,
+        machine_id: str | None = None,
     ) -> Project:
         """
         Ensure a project with the given ID exists in the database.
@@ -406,40 +488,41 @@ class LocalProjectManager:
         Args:
             project_id: The project ID (from project.json)
             name: Project name
-            repo_path: Local repository path
+            repo_path: Local filesystem path for this machine's checkout
+            machine_id: Claimed machine id, or None for the local daemon
 
         Returns:
             The existing or newly created Project
         """
-        now = utc_now()
-        if self._repo_path_write_is_blocked(repo_path):
-            project = self.get(project_id)
-            if project is None:
-                raise IsolatedAgentProjectPathError(
-                    "isolated agent session cannot establish a canonical project repo_path"
-                )
-            self.db.execute(
-                "UPDATE projects SET name = %s, updated_at = %s WHERE id = %s",
-                (name, now, project_id),
+        checkout: tuple[str, str] | None = None
+        if repo_path is not None:
+            from gobby.storage.workspace_machine_scope import require_local_machine_id
+
+            local_machine_id = require_local_machine_id(
+                machine_id, resource_kind="project_checkout", resource_id=project_id
             )
-            updated_project = self.get(project_id)
-            if updated_project:
-                return updated_project
-            raise RuntimeError(
-                f"Project '{name}' ({project_id}) not found after isolated-session update"
-            )
+            if self._repo_path_write_is_blocked(repo_path, machine_id=local_machine_id):
+                project = self.get(project_id)
+                if project is None:
+                    raise IsolatedAgentProjectPathError(
+                        "isolated agent session cannot establish a canonical project checkout"
+                    )
+                return project
+            checkout = self._validated_ordinary_root(project_id, repo_path, machine_id=machine_id)
 
         self.db.execute(
             """
-            INSERT INTO projects (id, name, repo_path)
-            VALUES (%s, %s, %s)
+            INSERT INTO projects (id, name)
+            VALUES (%s, %s)
             ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                repo_path = EXCLUDED.repo_path,
-                updated_at = EXCLUDED.updated_at
+                updated_at = now()
             """,
-            (project_id, name, repo_path),
+            (project_id, name),
         )
+        if checkout is not None:
+            from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+
+            LocalProjectCheckoutManager(self.db).register(checkout[0], project_id, checkout[1])
 
         project = self.get(project_id)
         if project:
@@ -499,23 +582,31 @@ class LocalProjectManager:
             )
         return [Project.from_row(row) for row in rows]
 
-    def update(self, project_id: str, **fields: Any) -> Project | None:
+    def update(
+        self,
+        project_id: str,
+        *,
+        machine_id: str | None = None,
+        **fields: Any,
+    ) -> Project | None:
         """
         Update project fields.
 
         Args:
             project_id: Project ID
-            **fields: Fields to update (name, repo_path, github_url)
+            machine_id: Claimed machine id, or None for the local daemon
+            **fields: Fields to update, plus an optional validated checkout root
 
         Returns:
             Updated Project or None if not found
         """
-        if not fields:
-            return self.get(project_id)
+        repo_path = fields.pop("repo_path", None) if "repo_path" in fields else None
+        checkout: tuple[str, str] | None = None
+        if repo_path is not None:
+            checkout = self._validated_ordinary_root(project_id, repo_path, machine_id=machine_id)
 
         allowed = {
             "name",
-            "repo_path",
             "github_url",
             "github_repo",
             "linear_team_id",
@@ -524,22 +615,23 @@ class LocalProjectManager:
             "linear_sync_enabled",
         }
         fields = {k: v for k, v in fields.items() if k in allowed}
-        if not fields:
+        if not fields and checkout is None:
             return self.get(project_id)
 
-        if "repo_path" in fields:
-            self._guard_repo_path_write(fields["repo_path"])
+        if self.get(project_id) is None:
+            return None
 
-        fields["updated_at"] = utc_now()
-
-        set_clause = ", ".join(f"{k} = %s" for k in fields)
-        values = list(fields.values()) + [project_id]
-
-        self.db.execute(
-            # set_clause contains only fixed allowlisted project columns.
-            f"UPDATE projects SET {set_clause} WHERE id = %s",  # nosec
-            tuple(values),
-        )
+        if fields:
+            fields["updated_at"] = utc_now()
+            set_clause = ", ".join(f"{k} = %s" for k in fields)
+            values = list(fields.values()) + [project_id]
+            self.db.execute(
+                # set_clause contains only fixed allowlisted project columns.
+                f"UPDATE projects SET {set_clause} WHERE id = %s",  # nosec
+                tuple(values),
+            )
+        if checkout is not None:
+            self._write_checkout(checkout[0], project_id, checkout[1])
 
         return self.get(project_id)
 

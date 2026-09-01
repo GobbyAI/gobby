@@ -50,18 +50,23 @@ def _init_repo_with_release_branch(repo_path: Path) -> None:
     _git("branch", "release")
 
 
-def _project(temp_db, tmp_path: Path) -> tuple[str, Path]:
+def _project(
+    temp_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, name: str = "phase-3-target"
+) -> tuple[str, Path]:
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
     repo_path = tmp_path / "repo"
-    repo_path.mkdir()
-    project = LocalProjectManager(temp_db).create(name="phase-3-target", repo_path=str(repo_path))
-    return project.id, repo_path
+    isolated = install_isolated_checkout_project(
+        temp_db, repo_path, name=name, monkeypatch=monkeypatch
+    )
+    return isolated.project.id, repo_path
 
 
 @pytest.mark.asyncio
-async def test_target_branch_none_resolves_to_head_when_project_repo_has_git(
+async def test_target_branch_none_resolves_to_head_when_project_repo_has_git(  # tdd-red window
     monkeypatch: pytest.MonkeyPatch, temp_db, tmp_path: Path
 ) -> None:
-    project_id, repo_path = _project(temp_db, tmp_path)
+    project_id, repo_path = _project(temp_db, tmp_path, monkeypatch)
     (repo_path / ".git").mkdir()
     plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n", encoding="utf-8")
@@ -78,16 +83,20 @@ async def test_target_branch_none_resolves_to_head_when_project_repo_has_git(
 
 
 @pytest.mark.asyncio
-async def test_current_target_branch_returns_none_without_project_repo_or_git(
-    temp_db, tmp_path: Path
+async def test_current_target_branch_fails_closed_without_checkout(  # tdd-red window
+    temp_db,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.build.target_branch import _current_target_branch
+    from gobby.storage.project_checkouts import CheckoutNotFoundError
+    from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
 
-    assert await _current_target_branch(temp_db, "missing-project") is None
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="missing-checkout-target")
 
-    project_id, _repo_path = _project(temp_db, tmp_path)
-
-    assert await _current_target_branch(temp_db, project_id) is None
+    with pytest.raises(CheckoutNotFoundError):
+        await _current_target_branch(temp_db, project.id)
 
 
 @pytest.mark.asyncio
@@ -96,7 +105,7 @@ async def test_current_target_branch_resolves_git_from_fallback_path(
 ) -> None:
     from gobby.build.target_branch import _current_target_branch
 
-    project_id, repo_path = _project(temp_db, tmp_path)
+    project_id, repo_path = _project(temp_db, tmp_path, monkeypatch)
     (repo_path / ".git").mkdir()
     fallback_bin = tmp_path / "fallback-bin"
     fallback_bin.mkdir()
@@ -116,7 +125,7 @@ async def test_explicit_target_branch_validated(
 ) -> None:
     from gobby.build.target_branch import _validate_target_branch
 
-    project_id, repo_path = _project(temp_db, tmp_path)
+    project_id, repo_path = _project(temp_db, tmp_path, monkeypatch)
     (repo_path / ".git").mkdir()
     calls: list[tuple[str, ...]] = []
 
@@ -132,8 +141,10 @@ async def test_explicit_target_branch_validated(
 
 
 @pytest.mark.asyncio
-async def test_target_branch_persisted_before_isolation_action(temp_db, tmp_path: Path) -> None:
-    project_id, repo_path = _project(temp_db, tmp_path)
+async def test_target_branch_persisted_before_isolation_action(
+    temp_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id, repo_path = _project(temp_db, tmp_path, monkeypatch)
     _init_repo_with_release_branch(repo_path)
     task = LocalTaskManager(temp_db).create_task(
         project_id=project_id,
@@ -154,8 +165,10 @@ async def test_target_branch_persisted_before_isolation_action(temp_db, tmp_path
 
 
 @pytest.mark.asyncio
-async def test_leaf_build_inherits_target_branch_via_cascade(temp_db, tmp_path: Path) -> None:
-    project_id, repo_path = _project(temp_db, tmp_path)
+async def test_leaf_build_inherits_target_branch_via_cascade(
+    temp_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id, repo_path = _project(temp_db, tmp_path, monkeypatch)
     _init_repo_with_release_branch(repo_path)
     manager = LocalTaskManager(temp_db)
     leaf = manager.create_task(
@@ -180,8 +193,10 @@ async def test_leaf_build_inherits_target_branch_via_cascade(temp_db, tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_worktree_leaf_build_persists_target_branch(temp_db, tmp_path: Path) -> None:
-    project_id, _repo_path = _project(temp_db, tmp_path)
+async def test_worktree_leaf_build_persists_target_branch(
+    temp_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id, _repo_path = _project(temp_db, tmp_path, monkeypatch)
     manager = LocalTaskManager(temp_db)
     leaf = manager.create_task(
         project_id=project_id,

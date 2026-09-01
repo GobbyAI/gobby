@@ -6,8 +6,14 @@ from pathlib import Path
 
 from gobby.build.options import BuildOptions
 from gobby.build.stage_manifest import InputKind
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import (
+    OverlayRegistrationRejectedError,
+    require_root,
+    resolve_operation_root,
+)
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.utils.sql import sql_placeholders
 
 
@@ -118,14 +124,19 @@ def plan_file_path_candidates(
     return tuple(dict.fromkeys(candidates))
 
 
+def _local_machine_id(project_id: str) -> str:
+    return require_local_machine_id(None, resource_kind="project_checkout", resource_id=project_id)
+
+
+def _checkout_root(db: HubDatabase, project_id: str) -> Path:
+    return Path(require_root(db, project_id, _local_machine_id(project_id)))
+
+
 def _project_root_for_plan_lookup(
     task_manager: LocalTaskManager,
     project_id: str,
 ) -> Path | None:
-    project = LocalProjectManager(task_manager.db).get(project_id)
-    if project is None or not project.repo_path:
-        return None
-    return Path(project.repo_path).expanduser().resolve()
+    return _checkout_root(task_manager.db, project_id)
 
 
 def _project_roots_for_plan(plan_file: Path) -> tuple[Path, ...]:
@@ -161,12 +172,18 @@ def plan_file_base_dir(
     project_id: str,
     opts: BuildOptions,
 ) -> Path:
+    machine_id = _local_machine_id(project_id)
     if opts.cwd is not None:
-        return opts.cwd.expanduser().resolve()
-    project = LocalProjectManager(task_manager.db).get(project_id)
-    if project is not None and project.repo_path:
-        return Path(project.repo_path).expanduser().resolve()
-    return Path.cwd().resolve()
+        overlay = str(opts.cwd.expanduser().resolve())
+        try:
+            return Path(
+                resolve_operation_root(
+                    task_manager.db, project_id, machine_id, overlay_path=overlay
+                )
+            )
+        except OverlayRegistrationRejectedError:
+            pass
+    return Path(require_root(task_manager.db, project_id, machine_id))
 
 
 def _resolve_under_base(path: Path, base_dir: Path, *, label: str) -> Path:

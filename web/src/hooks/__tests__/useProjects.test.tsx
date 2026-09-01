@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useProjects, type ProjectWithStats } from "../useProjects";
@@ -20,7 +20,10 @@ function makeProject(
     id: "p1",
     name: "gobby",
     display_name: "Gobby",
-    repo_path: "/Users/josh/Projects/gobby",
+    checkout: {
+      machine_id: "machine-1",
+      root_path: "/Users/josh/Projects/gobby",
+    },
     github_url: null,
     github_repo: null,
     linear_team_id: null,
@@ -41,6 +44,7 @@ function okResponse(projects: ProjectWithStats[]): Response {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
   vi.restoreAllMocks();
@@ -48,13 +52,16 @@ afterEach(() => {
 
 describe("useProjects auth gating (#20066)", () => {
   it("fetches on mount by default", async () => {
-    const fetchMock = vi.fn(() => Promise.resolve(okResponse([makeProject()])));
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve(okResponse([makeProject()])),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() => useProjects());
 
     await waitFor(() => expect(result.current.allProjects).toHaveLength(1));
-    expect(fetchMock).toHaveBeenCalledExactlyOnceWith("/api/projects");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/projects");
   });
 
   it("defers fetching while disabled and fetches once enabled flips true", async () => {
@@ -103,5 +110,91 @@ describe("useProjects auth gating (#20066)", () => {
     await waitFor(() => expect(result.current.allProjects).toHaveLength(1));
     expect(result.current.error).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("searches checkout roots and tolerates projects without a checkout", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        okResponse([
+          makeProject(),
+          makeProject({
+            id: "p2",
+            name: "checkout-free",
+            display_name: "Checkout Free",
+            checkout: null,
+          }),
+        ]),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useProjects());
+
+    await waitFor(() => expect(result.current.allProjects).toHaveLength(2));
+    expect(result.current.allProjects[1]).not.toHaveProperty("repo_path");
+
+    act(() => result.current.setSearchText("projects/gobby"));
+    expect(result.current.projects.map((project) => project.id)).toEqual([
+      "p1",
+    ]);
+
+    act(() => result.current.setSearchText("checkout free"));
+    expect(result.current.projects.map((project) => project.id)).toEqual([
+      "p2",
+    ]);
+
+    act(() => result.current.setSearchText("missing/root"));
+    expect(result.current.projects).toEqual([]);
+  });
+
+  it("retries transient failures with bounded exponential backoff", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 500 } as Response)
+      .mockResolvedValueOnce({ ok: false, status: 503 } as Response)
+      .mockResolvedValueOnce(okResponse([makeProject()]));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { result } = renderHook(() => useProjects());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.current.allProjects).toEqual([makeProject()]);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("cancels a pending retry when the hook unmounts", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+    } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { unmount } = renderHook(() => useProjects());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

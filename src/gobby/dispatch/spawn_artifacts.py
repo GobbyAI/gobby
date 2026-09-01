@@ -394,14 +394,12 @@ def _artifact_ref_resolves(
 
     git_manager = _service_git_manager(services, project_id) if project_id else None
     if git_manager is None:
-        from gobby.storage.projects import LocalProjectManager
         from gobby.worktrees.git import WorktreeGitManager
 
         if project_id is None:
             return True
-        project = LocalProjectManager(db).get(project_id)
-        repo_path = Path(project.repo_path) if project is not None and project.repo_path else None
-        if repo_path is None or not (repo_path / ".git").exists():
+        repo_path = _checkout_root(db, project_id)
+        if not (repo_path / ".git").exists():
             return True
         git_manager = WorktreeGitManager(repo_path)
 
@@ -432,14 +430,12 @@ def _artifact_ref_sha(
 
     git_manager = _service_git_manager(services, project_id) if project_id else None
     if git_manager is None:
-        from gobby.storage.projects import LocalProjectManager
         from gobby.worktrees.git import WorktreeGitManager
 
         if project_id is None:
             return False, None
-        project = LocalProjectManager(db).get(project_id)
-        repo_path = Path(project.repo_path) if project is not None and project.repo_path else None
-        if repo_path is None or not (repo_path / ".git").exists():
+        repo_path = _checkout_root(db, project_id)
+        if not (repo_path / ".git").exists():
             return False, None
         git_manager = WorktreeGitManager(repo_path)
 
@@ -525,6 +521,16 @@ def _uses_epic_integration_workspace(task: object, action: SpawnAgentAction) -> 
         return False
     stage_name = (action.initial_variables or {}).get("stage_name")
     return stage_name in {None, "epic_qa"}
+
+
+def _checkout_root(db: HubDatabase, project_id: str) -> Path:
+    from gobby.storage.project_checkouts import require_root
+    from gobby.storage.workspace_machine_scope import require_local_machine_id
+
+    machine_id = require_local_machine_id(
+        None, resource_kind="project_checkout", resource_id=project_id
+    )
+    return Path(require_root(db, project_id, machine_id))
 
 
 def _service_git_manager(services: object | None, project_id: str) -> object | None:

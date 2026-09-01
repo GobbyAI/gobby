@@ -7,8 +7,8 @@ import type { ProjectWithStats } from "../../../hooks/useProjects";
 import { useAppProjectSelection } from "../useAppProjectSelection";
 
 const PROJECTS = [
-  { id: "persisted-project", name: "persisted" },
-  { id: "user-project", name: "user" },
+  { id: "persisted-project", name: "persisted", checkout: null },
+  { id: "user-project", name: "user", checkout: null },
 ] as ProjectWithStats[];
 
 function deferred<T>() {

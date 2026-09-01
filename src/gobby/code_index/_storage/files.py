@@ -6,8 +6,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from gobby.code_index._storage.constants import SYNC_FAILURE_COOLOFF_SECONDS
-from gobby.code_index.models import IndexedFile
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.code_index.models import IndexedFile, IndexWriteMode
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.utils.machine_id import require_machine_id
 
 
@@ -16,10 +16,36 @@ class CodeIndexFileStorageMixin:
 
     db: HubDatabase
 
-    def upsert_file(self, file: IndexedFile) -> None:
+    @staticmethod
+    def _lock_primary_checkout(
+        conn: Transaction,
+        machine_id: str,
+        project_id: str,
+        root_path: str,
+        mode: IndexWriteMode,
+    ) -> None:
+        if mode is IndexWriteMode.OVERLAY:
+            return
+        checkout = conn.execute(
+            """SELECT 1 FROM project_checkouts
+               WHERE machine_id = %s AND project_id = %s AND root_path = %s
+               FOR SHARE""",
+            (machine_id, project_id, root_path),
+        ).fetchone()
+        if checkout is None:
+            raise ValueError(f"primary index checkout mismatch for project {project_id}")
+
+    def upsert_file(
+        self,
+        file: IndexedFile,
+        *,
+        root_path: str,
+        mode: IndexWriteMode,
+    ) -> None:
         """Reference Python file writer used by tests; production indexing is Rust gcode."""
         machine_id = require_machine_id()
         with self.db.transaction() as conn:
+            self._lock_primary_checkout(conn, machine_id, file.project_id, root_path, mode)
             conn.execute(
                 """INSERT INTO code_indexed_files (
                     id, project_id, file_path, language, content_hash,
@@ -244,11 +270,20 @@ class CodeIndexFileStorageMixin:
             )
             return cursor.rowcount
 
-    def delete_file(self, project_id: str, file_path: str) -> None:
+    def delete_file(
+        self,
+        project_id: str,
+        file_path: str,
+        *,
+        root_path: str,
+        mode: IndexWriteMode,
+    ) -> None:
         """Delete this machine's selector for a file."""
+        machine_id = require_machine_id()
         with self.db.transaction() as conn:
+            self._lock_primary_checkout(conn, machine_id, project_id, root_path, mode)
             conn.execute(
                 """DELETE FROM code_indexed_file_states
                    WHERE machine_id = %s AND project_id = %s AND file_path = %s""",
-                (require_machine_id(), project_id, file_path),
+                (machine_id, project_id, file_path),
             )

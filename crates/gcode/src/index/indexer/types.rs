@@ -1,8 +1,9 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::index::api::IndexWriteMode;
 use crate::projection::sync::{ProjectionSyncStatus, ProjectionTarget};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +106,13 @@ pub struct OverlayIndexMetadata {
     pub overlay_root: String,
     pub parent_project_id: String,
     pub parent_root: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct IndexTarget<'a> {
+    pub project_id: &'a str,
+    pub root_path: &'a Path,
+    pub mode: IndexWriteMode,
 }
 
 impl IndexOutcome {

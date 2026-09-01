@@ -111,7 +111,7 @@ async function mocks(page: Page, box: { sendEpoch: number }) {
             id: "p1",
             name: "p",
             display_name: "P",
-            repo_path: "/tmp/p",
+            checkout: { machine_id: "machine-1", root_path: "/tmp/p" },
             github_url: null,
             github_repo: null,
             linear_team_id: null,

@@ -296,16 +296,20 @@ class TestSpawnAgentDefaults:
         mock_runner,
         db: HubDatabase,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+        from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
-        project = LocalProjectManager(db).create(
-            "spawn-parent-project",
-            repo_path=str(tmp_path),
+        isolated = install_isolated_checkout_project(
+            db, tmp_path, name="spawn-parent-project", monkeypatch=monkeypatch
         )
+        project = isolated.project
         session_manager = MagicMock()
         session_manager.resolve_session_reference.return_value = "parent-uuid"
-        session_manager.get.return_value = SimpleNamespace(project_id=project.id)
+        session_manager.get.return_value = SimpleNamespace(
+            project_id=project.id, machine_id=isolated.machine_id
+        )
         agent_body = AgentDefinitionBody(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="spawn-reviewer-agent",
@@ -344,25 +348,28 @@ class TestSpawnAgentDefaults:
         assert result["success"] is True
         assert mock_load.call_args.kwargs["project_id"] == project.id
         assert mock_spawn_impl.call_args.kwargs["parent_session_id"] == "parent-uuid"
-        assert mock_spawn_impl.call_args.kwargs["project_path"] == str(tmp_path)
+        assert mock_spawn_impl.call_args.kwargs["project_path"] == isolated.root_path
 
     def test_parent_session_project_context_preserves_isolation_parent_fields(
         self,
         db: HubDatabase,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._factory import _parent_session_project_context
+        from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
         project_dir = tmp_path / "worktree"
-        project_dir.mkdir()
-        (project_dir / ".gobby").mkdir()
+        isolated = install_isolated_checkout_project(
+            db, project_dir, name="spawn-parent-project", monkeypatch=monkeypatch
+        )
         # Tracked project.json parent keys are stale by contract (#21193); the
         # gitignored isolation.json sidecar is the only parent-identity source.
         (project_dir / ".gobby" / "project.json").write_text(
             json.dumps(
                 {
-                    "id": "isolated-project",
-                    "name": "isolated",
+                    "id": isolated.project.id,
+                    "name": isolated.project.name,
                     "parent_project_id": "stale-tracked-parent",
                     "parent_project_path": "/stale/tracked/path",
                 }
@@ -378,12 +385,10 @@ class TestSpawnAgentDefaults:
             ),
             encoding="utf-8",
         )
-        project = LocalProjectManager(db).create(
-            "spawn-parent-project",
-            repo_path=str(project_dir),
-        )
         session_manager = MagicMock()
-        session_manager.get.return_value = SimpleNamespace(project_id=project.id)
+        session_manager.get.return_value = SimpleNamespace(
+            project_id=isolated.project.id, machine_id=isolated.machine_id
+        )
 
         context = _parent_session_project_context(
             parent_session_id="parent-session",
@@ -392,12 +397,70 @@ class TestSpawnAgentDefaults:
         )
 
         assert context == {
-            "id": project.id,
-            "name": project.name,
-            "project_path": str(project_dir),
+            "id": isolated.project.id,
+            "name": isolated.project.name,
+            "project_path": isolated.root_path,
             "parent_project_id": "parent-project",
             "parent_project_path": "/repo/main",
         }
+
+    def test_parent_session_project_context_uses_machine_checkout(  # tdd-red window
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent._factory import _parent_session_project_context
+        from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+        isolated = install_isolated_checkout_project(db, tmp_path / "repo", monkeypatch=monkeypatch)
+        session_manager = MagicMock()
+        session_manager.get.return_value = SimpleNamespace(
+            project_id=isolated.project.id,
+            machine_id=isolated.machine_id,
+        )
+
+        context = _parent_session_project_context(
+            parent_session_id="parent-session",
+            session_manager=session_manager,
+            db=db,
+        )
+
+        assert context is not None
+        assert context["id"] == isolated.project.id
+        assert context["project_path"] == isolated.root_path
+
+    def test_parent_session_project_context_fails_closed_without_checkout(  # tdd-red window
+        self,
+        db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent._factory import (
+            _UNRESOLVED_PARENT_PROJECT,
+            _parent_session_project_context,
+        )
+        from tests.fixtures.isolated_checkout import (
+            insert_isolated_machine,
+            patch_local_machine_id,
+        )
+
+        machine_id = insert_isolated_machine(db)
+        patch_local_machine_id(monkeypatch, machine_id)
+        project = LocalProjectManager(db).create(name="spawn-missing")
+        session_manager = MagicMock()
+        session_manager.get.return_value = SimpleNamespace(
+            project_id=project.id,
+            machine_id=machine_id,
+        )
+
+        context = _parent_session_project_context(
+            parent_session_id="parent-session",
+            session_manager=session_manager,
+            db=db,
+        )
+
+        assert context is not None
+        assert context.get(_UNRESOLVED_PARENT_PROJECT) is True
 
     def test_parent_session_project_context_uses_unresolved_project_sentinel(
         self,

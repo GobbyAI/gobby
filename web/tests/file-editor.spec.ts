@@ -5,7 +5,10 @@ const mockProjects = [
   {
     id: "proj-1",
     name: "test-project",
-    repo_path: "/tmp/test-project",
+    checkout: {
+      machine_id: "machine-1",
+      root_path: "/tmp/test-project",
+    },
   },
 ];
 
@@ -52,6 +55,22 @@ const mockGitStatus = {
 };
 
 function setupApiMocks(page: import("@playwright/test").Page) {
+  page.route("**/api/auth/status", (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ authenticated: true }),
+    });
+  });
+
+  page.route("**/api/projects", (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(mockProjects),
+    });
+  });
+
   // Mock projects endpoint
   page.route("**/api/files/projects", (route) => {
     route.fulfill({
@@ -98,6 +117,32 @@ function setupApiMocks(page: import("@playwright/test").Page) {
   page.route("**/ws", (route) => route.abort());
 }
 
+async function openFilesTab(page: import("@playwright/test").Page) {
+  await page.locator(".activity-panel-mobile-trigger").click();
+  await page
+    .locator(".activity-panel-mobile-menu")
+    .getByRole("button", { name: "Files", exact: true })
+    .click();
+
+  const panel = page.getByRole("complementary", { name: "Activity: Files" });
+  await expect(
+    panel.getByRole("tree", { name: "Project files" }),
+  ).toBeVisible();
+  return panel;
+}
+
+async function openSrcFile(
+  panel: import("@playwright/test").Locator,
+  fileName: RegExp,
+) {
+  const tree = panel.getByRole("tree", { name: "Project files" });
+  const src = tree.getByRole("treeitem", { name: /^src\b/ });
+  if ((await src.getAttribute("aria-expanded")) !== "true") {
+    await src.click();
+  }
+  await tree.getByRole("treeitem", { name: fileName }).click();
+}
+
 test.describe("File editor", () => {
   test.beforeEach(async ({ page }) => {
     await setupApiMocks(page);
@@ -107,144 +152,50 @@ test.describe("File editor", () => {
   test("can navigate to Files, open a file, and click Edit", async ({
     page,
   }) => {
-    // 1. Click the hamburger to open sidebar, then click Files nav item
-    await page.click(".hamburger-button");
-    await page.click('.sidebar-item:has-text("Files")');
+    // 1. Open Files from the activity-panel tab picker.
+    const panel = await openFilesTab(page);
+    await openSrcFile(panel, /^main\.py\b/);
 
-    // 2. Wait for the files page and project to appear
-    await page.waitForSelector(".files-page");
-    await page.waitForSelector(".files-project-header");
+    await expect(panel.getByText("src/main.py", { exact: true })).toBeVisible();
+    await expect(panel.locator("code")).toContainText("def hello");
 
-    // 3. Expand the project
-    await page.click(".files-project-header");
-    await page.waitForSelector(".files-project-children");
-
-    // 4. Expand the src directory
-    await page.click('.files-tree-item:has-text("src")');
-    await page.waitForSelector('.files-tree-file:has-text("main.py")');
-
-    // 5. Click a file to open it
-    await page.click('.files-tree-file:has-text("main.py")');
-
-    // 6. Wait for the file tab and toolbar to appear (file loaded)
-    await page.waitForSelector(".files-tab.active");
-    await page.waitForSelector(".files-toolbar");
-
-    // Verify the file name shows in the tab
-    await expect(page.locator(".files-tab.active .files-tab-name")).toHaveText(
-      "main.py",
-    );
-
-    // Verify the toolbar shows the file path
-    await expect(page.locator(".files-toolbar-path")).toHaveText("src/main.py");
-
-    // Verify code is rendered in the read-only syntax highlighter
-    await expect(page.locator(".files-code-viewer")).toBeVisible();
-
-    // Verify the Edit button says "Edit" (not yet in editing mode)
-    const editButton = page.locator(".files-edit-toggle");
-    await expect(editButton).toBeVisible();
-    await expect(editButton).toHaveText("Edit");
-
-    // 7. Click the Edit button
+    const editButton = panel.getByRole("button", { name: "Edit", exact: true });
     await editButton.click();
 
-    // 8. Verify we're now in edit mode
-    await expect(editButton).toHaveText("View");
-    await expect(editButton).toHaveClass(/active/);
-
-    // Verify the CodeMirror editor appeared
-    await page.waitForSelector(".cm-editor");
-    await expect(page.locator(".cm-editor")).toBeVisible();
-
-    // Take a screenshot for visual reference
-    await page.screenshot({
-      path: "tests/screenshots/file-editor-edit-mode.png",
-      fullPage: true,
-    });
+    await expect(panel.getByRole("button", { name: "Save" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Cancel" })).toBeVisible();
+    await expect(panel.locator(".cm-editor")).toBeVisible();
   });
 
-  test("Edit button toggles back to View mode", async ({ page }) => {
-    // Navigate to files and open a file
-    await page.click(".hamburger-button");
-    await page.click('.sidebar-item:has-text("Files")');
-    await page.waitForSelector(".files-project-header");
-    await page.click(".files-project-header");
-    await page.waitForSelector(".files-project-children");
-    await page.click('.files-tree-item:has-text("src")');
-    await page.waitForSelector('.files-tree-file:has-text("main.py")');
-    await page.click('.files-tree-file:has-text("main.py")');
-    await page.waitForSelector(".files-edit-toggle");
+  test("Cancel returns the editor to read-only mode", async ({ page }) => {
+    const panel = await openFilesTab(page);
+    await openSrcFile(panel, /^main\.py\b/);
 
-    const editButton = page.locator(".files-edit-toggle");
-
-    // Enter edit mode
+    const editButton = panel.getByRole("button", { name: "Edit", exact: true });
     await editButton.click();
-    await expect(editButton).toHaveText("View");
-    await page.waitForSelector(".cm-editor");
+    await panel.getByRole("button", { name: "Cancel" }).click();
 
-    // Toggle back to view mode
-    await editButton.click();
-    await expect(editButton).toHaveText("Edit");
-
-    // CodeMirror editor should be gone, syntax highlighter should be back
-    await expect(page.locator(".cm-editor")).not.toBeVisible();
-    await expect(page.locator(".files-code-viewer")).toBeVisible();
+    await expect(editButton).toBeVisible();
+    await expect(panel.locator(".cm-editor")).toHaveCount(0);
+    await expect(panel.locator("code")).toContainText("def hello");
   });
 
   test("can open multiple files without fetch errors", async ({ page }) => {
-    // Navigate to files and expand the tree
-    await page.click(".hamburger-button");
-    await page.click('.sidebar-item:has-text("Files")');
-    await page.waitForSelector(".files-project-header");
-    await page.click(".files-project-header");
-    await page.waitForSelector(".files-project-children");
-    await page.click('.files-tree-item:has-text("src")');
-    await page.waitForSelector('.files-tree-file:has-text("main.py")');
+    const panel = await openFilesTab(page);
 
-    // Open first file
-    await page.click('.files-tree-file:has-text("main.py")');
-    await page.waitForSelector(".files-tab.active");
-    await page.waitForSelector(".files-toolbar");
-    await expect(page.locator(".files-tab.active .files-tab-name")).toHaveText(
-      "main.py",
-    );
+    await openSrcFile(panel, /^main\.py\b/);
+    await expect(panel.getByText("src/main.py", { exact: true })).toBeVisible();
 
-    // Verify no errors on first file
-    await expect(page.locator(".files-viewer-error")).not.toBeVisible();
-
-    // Open second file
-    await page.click('.files-tree-file:has-text("utils.ts")');
-    await page.waitForSelector(
-      '.files-tab.active .files-tab-name:has-text("utils.ts")',
-    );
-
-    // Verify no errors on second file
-    await expect(page.locator(".files-viewer-error")).not.toBeVisible();
-    await expect(page.locator(".files-code-viewer")).toBeVisible();
-
-    // Should have 2 tabs
-    const tabs = page.locator(".files-tab");
-    await expect(tabs).toHaveCount(2);
-
-    // Open third file (README.md from root)
-    await page.click('.files-tree-file:has-text("README.md")');
-    await page.waitForSelector(
-      '.files-tab.active .files-tab-name:has-text("README.md")',
-    );
-
-    // Verify no errors on third file
-    await expect(page.locator(".files-viewer-error")).not.toBeVisible();
-    await expect(page.locator(".files-code-viewer")).toBeVisible();
-
-    // Should have 3 tabs
-    await expect(tabs).toHaveCount(3);
-
-    // Click back to first file tab - should still work
-    await page.click('.files-tab:has-text("main.py")');
+    await openSrcFile(panel, /^utils\.ts\b/);
     await expect(
-      page.locator('.files-tab.active .files-tab-name:has-text("main.py")'),
+      panel.getByText("src/utils.ts", { exact: true }),
     ).toBeVisible();
-    await expect(page.locator(".files-viewer-error")).not.toBeVisible();
+
+    const readme = panel
+      .getByRole("tree", { name: "Project files" })
+      .getByRole("treeitem", { name: /^README\.md\b/ });
+    await readme.click();
+    await expect(readme).toHaveAttribute("aria-selected", "true");
+    await expect(panel.getByRole("alert")).toHaveCount(0);
   });
 });

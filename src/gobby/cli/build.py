@@ -100,14 +100,25 @@ def _resolve_build_project_context(
 
 def _project_repo_path(project_id: str) -> Path:
     from gobby.cli.runtime import require_cli_database
+    from gobby.storage.project_checkouts import (
+        CheckoutNotFoundError,
+        MissingMachineContextError,
+        require_root,
+    )
     from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.workspace_machine_scope import require_local_machine_id
 
-    project = LocalProjectManager(require_cli_database()).get(project_id)
+    db = require_cli_database()
+    project = LocalProjectManager(db).get(project_id)
     if project is None:
         raise click.ClickException(f"Project not found: {project_id}")
-    if not project.repo_path:
-        raise click.ClickException(f"Project {project_id} has no repo_path")
-    return Path(project.repo_path).expanduser()
+    try:
+        machine_id = require_local_machine_id(
+            None, resource_kind="project_checkout", resource_id=project_id
+        )
+        return Path(require_root(db, project_id, machine_id))
+    except (CheckoutNotFoundError, MissingMachineContextError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def invoke_build_skill() -> None:

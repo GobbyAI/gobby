@@ -16,21 +16,42 @@ from gobby.runner_maintenance import (
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import Project
 from gobby.storage.worktrees import LocalWorktreeManager
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
+
+
+def _install_project(
+    temp_db: HubDatabase,
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Project:
+    isolated = install_isolated_checkout_project(
+        temp_db,
+        root,
+        name="proj-1",
+        monkeypatch=monkeypatch,
+    )
+    monkeypatch.setattr(
+        "gobby.storage.worktrees.require_machine_id",
+        lambda: isolated.machine_id,
+    )
+    monkeypatch.setattr(
+        "gobby.storage.clones.require_machine_id",
+        lambda: isolated.machine_id,
+    )
+    return isolated.project
 
 
 def test_cleanup_missing_isolation_records_removes_dead_paths(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Worktree and clone records with missing directories are removed."""
-    project = LocalProjectManager(temp_db).create(
-        name="proj-1",
-        repo_path=str(tmp_path / "repo"),
-    )
+    project = _install_project(temp_db, tmp_path / "repo", monkeypatch)
     worktrees = LocalWorktreeManager(temp_db)
     clones = LocalCloneManager(temp_db)
 
@@ -73,12 +94,10 @@ def test_cleanup_missing_isolation_records_removes_dead_paths(
 async def test_expired_isolation_loop_uses_bounded_db_runner(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Missing-record cleanup in the periodic loop keeps PostgreSQL handles bounded."""
-    project = LocalProjectManager(temp_db).create(
-        name="proj-1",
-        repo_path=str(tmp_path / "repo"),
-    )
+    project = _install_project(temp_db, tmp_path / "repo", monkeypatch)
     LocalWorktreeManager(temp_db).create(
         project_id=project.id,
         branch_name="task/missing-worktree",
@@ -122,11 +141,9 @@ async def test_expired_isolation_loop_uses_bounded_db_runner(
 async def test_expired_isolation_loop_deletes_only_safe_clones(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    project = LocalProjectManager(temp_db).create(
-        name="proj-1",
-        repo_path=str(tmp_path / "repo"),
-    )
+    project = _install_project(temp_db, tmp_path / "repo", monkeypatch)
     clones = LocalCloneManager(temp_db)
     active_path = tmp_path / "expired-active-clone"
     active_path.mkdir()
@@ -185,10 +202,7 @@ async def test_expired_isolation_loop_runs_git_in_parent_repo(
         check=True,
     )
 
-    project = LocalProjectManager(temp_db).create(
-        name="proj-1",
-        repo_path=str(repo_path),
-    )
+    project = _install_project(temp_db, repo_path, monkeypatch)
     worktrees = LocalWorktreeManager(temp_db)
     worktree = worktrees.create(
         project_id=project.id,
@@ -253,10 +267,7 @@ async def test_expired_isolation_loop_logs_git_cleanup_failures(
     """Nonzero prune and branch results retain actionable cleanup evidence."""
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
-    project = LocalProjectManager(temp_db).create(
-        name="proj-1",
-        repo_path=str(repo_path),
-    )
+    project = _install_project(temp_db, repo_path, monkeypatch)
     worktrees = LocalWorktreeManager(temp_db)
     worktree = worktrees.create(
         project_id=project.id,

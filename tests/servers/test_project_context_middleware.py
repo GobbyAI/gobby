@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -31,7 +32,17 @@ async def test_session_context_lookups_use_server_db_executor() -> None:
     )
     middleware = ProjectContextMiddleware(AsyncMock())
 
-    with patch("gobby.storage.projects.LocalProjectManager") as manager_class:
+    with (
+        patch("gobby.storage.projects.LocalProjectManager") as manager_class,
+        patch(
+            "gobby.storage.project_checkouts.require_root",
+            return_value="/repo",
+        ),
+        patch(
+            "gobby.storage.workspace_machine_scope.require_local_machine_id",
+            return_value="machine-1",
+        ),
+    ):
         project_manager = manager_class.return_value
         token = await middleware._set_context(request)
 
@@ -67,6 +78,11 @@ async def test_project_context_lookup_uses_thread_fallback_without_server() -> N
             new_callable=AsyncMock,
             return_value=project,
         ) as to_thread,
+        patch("gobby.storage.project_checkouts.require_root", return_value="/repo"),
+        patch(
+            "gobby.storage.workspace_machine_scope.require_local_machine_id",
+            return_value="machine-1",
+        ),
     ):
         project_manager = manager_class.return_value
         token = await middleware._set_context(request)
@@ -108,6 +124,11 @@ async def test_dispatch_exposes_seeded_context_to_request_handler() -> None:
             new_callable=AsyncMock,
             return_value=project,
         ),
+        patch("gobby.storage.project_checkouts.require_root", return_value="/repo"),
+        patch(
+            "gobby.storage.workspace_machine_scope.require_local_machine_id",
+            return_value="machine-1",
+        ),
     ):
         await middleware.dispatch(request, call_next)
 
@@ -117,3 +138,75 @@ async def test_dispatch_exposes_seeded_context_to_request_handler() -> None:
         "project_path": "/repo",
     }
     assert get_project_context() == initial_context
+
+
+async def test_session_context_uses_machine_checkout(  # tdd-red window
+    temp_db: Any,
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pathlib import Path
+
+    from gobby.storage.sessions import SessionManager
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    isolated = install_isolated_checkout_project(
+        temp_db, Path(tmp_path) / "repo", monkeypatch=monkeypatch
+    )
+    session = SessionManager(temp_db).register(
+        external_id="ctx-checkout",
+        machine_id=isolated.machine_id,
+        source="codex",
+        project_id=isolated.project.id,
+    )
+    session_manager = SessionManager(temp_db)
+    request = _request(
+        {"x-gobby-session-id": session.id},
+        SimpleNamespace(session_manager=session_manager),
+    )
+    middleware = ProjectContextMiddleware(AsyncMock())
+    token = await middleware._set_context(request)
+    assert token is not None
+    try:
+        context = get_project_context()
+        assert context is not None
+        assert context["id"] == isolated.project.id
+        assert context["project_path"] == isolated.root_path
+    finally:
+        reset_project_context(token)
+
+
+async def test_session_context_omits_path_without_checkout(  # tdd-red window
+    temp_db: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.sessions import SessionManager
+    from tests.fixtures.isolated_checkout import (
+        insert_isolated_machine,
+        patch_local_machine_id,
+    )
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="ctx-missing")
+    session = SessionManager(temp_db).register(
+        external_id="ctx-missing",
+        machine_id=machine_id,
+        source="codex",
+        project_id=project.id,
+    )
+    request = _request(
+        {"x-gobby-session-id": session.id},
+        SimpleNamespace(session_manager=SessionManager(temp_db)),
+    )
+    middleware = ProjectContextMiddleware(AsyncMock())
+    token = await middleware._set_context(request)
+    assert token is not None
+    try:
+        context = get_project_context()
+        assert context is not None
+        assert context["id"] == project.id
+        assert not context.get("project_path")
+    finally:
+        reset_project_context(token)

@@ -90,7 +90,15 @@ def create_core_affected_files_registry(ctx: "RegistryContext") -> InternalToolR
             }
 
         # Resolve repo path for git commands
-        repo_path = ctx.get_project_repo_path(task.project_id)
+        from gobby.utils.session_context import get_current_session_id
+
+        try:
+            repo_path = ctx.get_project_repo_path(
+                task.project_id,
+                ctx.checkout_machine_id(task.project_id, get_current_session_id()),
+            )
+        except ValueError:
+            repo_path = None
         if not repo_path:
             logger.error(
                 "Cannot update observed files for task %s: no repo path resolved", resolved_id

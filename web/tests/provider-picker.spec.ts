@@ -96,12 +96,12 @@ function mockApiRoutes(
               source: "static",
             },
             {
-              provider: "local:lm-studio",
+              provider: "endpoint:studio",
               display_name: "LM Studio",
               available: true,
               models: [
                 {
-                  value: "local:lm-studio/qwen3-coder",
+                  value: "endpoint:studio/qwen3-coder",
                   label: "Qwen3 Coder",
                 },
               ],
@@ -110,12 +110,12 @@ function mockApiRoutes(
               supports_web_chat: true,
             },
             {
-              provider: "local:generic",
+              provider: "endpoint:generic",
               display_name: "OpenAI Compatible",
               available: false,
               models: [
                 {
-                  value: "local:generic/fallback-model",
+                  value: "endpoint:generic/fallback-model",
                   label: "Generic Fallback",
                 },
               ],
@@ -169,7 +169,10 @@ function mockApiRoutes(
           {
             id: "proj-1",
             display_name: "Project One",
-            repo_path: "/tmp/project-one",
+            checkout: {
+              machine_id: "machine-1",
+              root_path: "/tmp/project-one",
+            },
             github_repo: null,
             session_count: 0,
             open_task_count: 0,
@@ -184,7 +187,14 @@ function mockApiRoutes(
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([
-          { id: "proj-1", name: "Project One", repo_path: "/tmp/project-one" },
+          {
+            id: "proj-1",
+            name: "Project One",
+            checkout: {
+              machine_id: "machine-1",
+              root_path: "/tmp/project-one",
+            },
+          },
         ]),
       });
       return;
@@ -417,11 +427,6 @@ test("Codex picker shows friendly labels and no Default placeholder", async ({
     "Codex",
   );
   await expect(page.getByLabel("Select model")).toContainText("GPT 5.4");
-
-  await page.screenshot({
-    path: "tests/screenshots/provider-picker-codex-selected.png",
-    fullPage: true,
-  });
 });
 
 test("local catalog selection routes through Codex and restores its catalog owner", async ({
@@ -476,16 +481,10 @@ test("local catalog selection routes through Codex and restores its catalog owne
   await expect(page.getByText("LM Studio", { exact: true })).toBeVisible();
   await expect(
     page.getByText("OpenAI Compatible", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText(
-      "Generic OpenAI-compatible endpoints are unavailable for web chat",
-      { exact: true },
-    ),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Generic Fallback", exact: true }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
 
   await page.getByRole("button", { name: "Qwen3 Coder", exact: true }).click();
   await expect(page.getByLabel("Select provider")).toHaveAttribute(
@@ -499,7 +498,7 @@ test("local catalog selection routes through Codex and restores its catalog owne
   await expect.poll(() => createdSessions).toHaveLength(1);
   expect(createdSessions[0]).toMatchObject({
     provider: "codex",
-    model: "local:lm-studio/qwen3-coder",
+    model: "endpoint:studio/qwen3-coder",
   });
 
   await page.getByLabel("Select provider").click();

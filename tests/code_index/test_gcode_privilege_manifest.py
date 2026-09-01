@@ -50,12 +50,14 @@ def test_manifest_covers_every_rust_database_call_at_head() -> None:
 
 
 def test_manifest_privileges_match_the_managed_relation_set() -> None:
+    """Privilege manifest lists project_checkouts SELECT/UPDATE scoped to machine_id."""
     manifest = _load_manifest()
     assert manifest["version"] == 1
     assert manifest["principal"] == "gobby_gcode_capability"
     relations = {entry["relation"]: entry for entry in manifest["relations"]}
     assert set(relations) == {
         "projects",
+        "project_checkouts",
         "config_state",
         "code_indexed_projects",
         "code_indexed_project_states",
@@ -70,6 +72,14 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
         "code_index_prune_dirty_projects",
     }
     assert relations["projects"]["operations"] == ["SELECT"]
+    assert relations["projects"]["columns"] == ["id", "name", "deleted_at"]
+    assert relations["project_checkouts"] == {
+        "relation": "project_checkouts",
+        "operations": ["SELECT", "UPDATE"],
+        "columns": ["machine_id", "project_id", "root_path"],
+        "scope_column": "project_id",
+        "machine_scope_column": "machine_id",
+    }
     assert relations["config_state"] == {
         "relation": "config_state",
         "operations": ["SELECT"],

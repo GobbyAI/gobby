@@ -24,6 +24,8 @@ use runner_adoption::{
 
 pub(crate) const ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM: &str =
     "855576453641152d2ef9199dc418fcc3dd2ad69e78eff924b05a7b3b122cf398";
+pub(crate) const PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM: &str =
+    "a40068605d886d0d0ec4ae71152602266c510be5514dd3d440b54a8b658491e3";
 pub(crate) const PREDECESSOR_BASELINE_CHECKSUM: &str =
     "4e2bb4de8059488a7887b62b5e509ce308c0ebf2d319862c8b3d7c6175cb662e";
 pub(crate) const PARENT_BASELINE_CHECKSUM: &str =
@@ -175,6 +177,12 @@ impl<'a> SchemaRunner<'a> {
                         .to_owned(),
                 ));
             }
+            BaselineState::ProjectCheckoutPredecessor => {
+                return Err(SchemaError::Unsupported(
+                    "schema baseline requires project-checkout-cutover; run 'gobby hub-maintenance run project-checkout-cutover'"
+                        .to_owned(),
+                ));
+            }
         };
         let migrations_applied = apply_pending_migrations(
             self.client,
@@ -198,6 +206,7 @@ enum BaselineState {
     GwikiStandalone,
     AlreadyBaselined,
     AccountIdentityPredecessor,
+    ProjectCheckoutPredecessor,
     PredecessorBaseline,
     ParentBaseline,
     WorktreeBaseline,
@@ -411,6 +420,9 @@ fn recognized_baseline_receipt(
         Some(WORKTREE_BASELINE_CHECKSUM) => Some(BaselineState::WorktreeBaseline),
         Some(ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM) => {
             Some(BaselineState::AccountIdentityPredecessor)
+        }
+        Some(PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM) => {
+            Some(BaselineState::ProjectCheckoutPredecessor)
         }
         _ => None,
     })

@@ -10,7 +10,9 @@ from urllib.parse import urlparse
 from gobby.build.options import BuildOptions
 from gobby.storage.delivery import TaskDeliveryStateManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import require_root
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.utils.git import get_github_url
 
 logger = logging.getLogger(__name__)
@@ -65,12 +67,14 @@ def resolve_project_source_repo(db: HubDatabase, project_id: str) -> str:
         parsed = github_repo_from_url(project.github_url)
         if parsed:
             return parsed
-    if project.repo_path:
-        remote_url = get_github_url(Path(project.repo_path))
-        if remote_url:
-            parsed = github_repo_from_url(remote_url)
-            if parsed:
-                return parsed
+    machine_id = require_local_machine_id(
+        None, resource_kind="project_checkout", resource_id=project_id
+    )
+    remote_url = get_github_url(Path(require_root(db, project_id, machine_id)))
+    if remote_url:
+        parsed = github_repo_from_url(remote_url)
+        if parsed:
+            return parsed
     raise ValueError("pull_request delivery requires project github_repo, github_url, or origin")
 
 

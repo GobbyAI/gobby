@@ -98,7 +98,14 @@ mod serial_db {
         let mut file = indexed_file(&project_id, rel, "file-hash-v1", 1, 16);
         api::upsert_file(&mut conn, &file).expect("insert indexed file");
         let machine_id = gobby_core::machine::read_local_machine_id().expect("read machine id");
-        api::upsert_file_state(&mut conn, &machine_id, &file).expect("insert indexed file state");
+        api::upsert_file_state(
+            &mut conn,
+            &machine_id,
+            &file,
+            std::path::Path::new("/tmp/test-view"),
+            api::IndexWriteMode::Overlay,
+        )
+        .expect("insert indexed file state");
 
         assert!(
             db::mark_vector_sync_attempted(&mut conn, &project_id, rel)
@@ -211,12 +218,25 @@ mod serial_db {
 
         let local_file = indexed_file(&project_id, "src/local.rs", "hash-local", 1, 16);
         api::upsert_file(&mut conn, &local_file).expect("insert local file");
-        api::upsert_file_state(&mut conn, &local_machine, &local_file).expect("local file state");
+        api::upsert_file_state(
+            &mut conn,
+            &local_machine,
+            &local_file,
+            std::path::Path::new("/tmp/local-view"),
+            api::IndexWriteMode::Overlay,
+        )
+        .expect("local file state");
 
         let foreign_file = indexed_file(&project_id, "src/foreign.rs", "hash-foreign", 1, 16);
         api::upsert_file(&mut conn, &foreign_file).expect("insert foreign file");
-        api::upsert_file_state(&mut conn, &foreign_machine, &foreign_file)
-            .expect("foreign file state");
+        api::upsert_file_state(
+            &mut conn,
+            &foreign_machine,
+            &foreign_file,
+            std::path::Path::new("/tmp/foreign-view"),
+            api::IndexWriteMode::Overlay,
+        )
+        .expect("foreign file state");
 
         // Content referenced by no machine stays out of the keep-set.
         let orphan_file = indexed_file(&project_id, "src/orphan.rs", "hash-orphan", 1, 16);
@@ -287,6 +307,8 @@ mod serial_db {
                 &project_id,
                 &file.file_path,
                 &file.content_hash,
+                std::path::Path::new("/tmp/test-view"),
+                api::IndexWriteMode::Overlay,
             )
             .expect("reject incomplete adoption")
         );
@@ -305,6 +327,8 @@ mod serial_db {
                 &project_id,
                 &file.file_path,
                 &file.content_hash,
+                std::path::Path::new("/tmp/test-view"),
+                api::IndexWriteMode::Overlay,
             )
             .expect("adopt complete content version")
         );
@@ -464,13 +488,26 @@ fn mark_graph_unsynced_clears_completion_and_attempt_for_selected_files() {
     let machine_id = gobby_core::machine::read_local_machine_id().expect("machine id");
     let file = indexed_file(&project_id, "src/lib.rs", "hash-1", 1, 16);
     api::upsert_file(&mut conn, &file).expect("insert indexed file");
-    api::upsert_file_state(&mut conn, &machine_id, &file).expect("set current indexed file");
+    api::upsert_file_state(
+        &mut conn,
+        &machine_id,
+        &file,
+        std::path::Path::new("/tmp/test-view"),
+        api::IndexWriteMode::Overlay,
+    )
+    .expect("set current indexed file");
     let old_file = indexed_file(&project_id, "src/lib.rs", "hash-old", 1, 16);
     api::upsert_file(&mut conn, &old_file).expect("insert historic indexed file");
     let empty_file = indexed_file(&project_id, "src/empty.rs", "hash-empty", 0, 0);
     api::upsert_file(&mut conn, &empty_file).expect("insert empty indexed file");
-    api::upsert_file_state(&mut conn, &machine_id, &empty_file)
-        .expect("set current empty indexed file");
+    api::upsert_file_state(
+        &mut conn,
+        &machine_id,
+        &empty_file,
+        std::path::Path::new("/tmp/test-view"),
+        api::IndexWriteMode::Overlay,
+    )
+    .expect("set current empty indexed file");
     let file_id = db::id_param(&file.id).expect("file uuid");
     conn.execute(
         "UPDATE code_indexed_files
@@ -542,7 +579,13 @@ fn project_stats_preserve_and_replace_indexer_version() {
         total_eligible_files: None,
         indexer_version: None,
     };
-    api::upsert_project_stats(&mut conn, &machine_id, &project).expect("seed null version");
+    api::upsert_project_stats(
+        &mut conn,
+        &machine_id,
+        &project,
+        api::IndexWriteMode::Overlay,
+    )
+    .expect("seed null version");
     assert_eq!(
         api::project_indexer_version(&mut conn, &machine_id, &project_id)
             .expect("read null version"),
@@ -550,9 +593,21 @@ fn project_stats_preserve_and_replace_indexer_version() {
     );
 
     project.indexer_version = Some("1.6.0".to_string());
-    api::upsert_project_stats(&mut conn, &machine_id, &project).expect("stamp version");
+    api::upsert_project_stats(
+        &mut conn,
+        &machine_id,
+        &project,
+        api::IndexWriteMode::Overlay,
+    )
+    .expect("stamp version");
     project.indexer_version = None;
-    api::upsert_project_stats(&mut conn, &machine_id, &project).expect("preserve version");
+    api::upsert_project_stats(
+        &mut conn,
+        &machine_id,
+        &project,
+        api::IndexWriteMode::Overlay,
+    )
+    .expect("preserve version");
     assert_eq!(
         api::project_indexer_version(&mut conn, &machine_id, &project_id)
             .expect("read version")
@@ -561,13 +616,520 @@ fn project_stats_preserve_and_replace_indexer_version() {
     );
 
     project.indexer_version = Some("1.6.1".to_string());
-    api::upsert_project_stats(&mut conn, &machine_id, &project).expect("replace version");
+    api::upsert_project_stats(
+        &mut conn,
+        &machine_id,
+        &project,
+        api::IndexWriteMode::Overlay,
+    )
+    .expect("replace version");
     assert_eq!(
         api::project_indexer_version(&mut conn, &machine_id, &project_id)
             .expect("read replacement")
             .as_deref(),
         Some("1.6.1")
     );
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+fn project_seed_modes_require_primary_checkout_and_allow_overlay() {
+    let (mut conn, database_url) = connect_test_db();
+    let project_id = unique_test_project_id("gcode-primary-mode");
+    let overlay_id = unique_test_project_id("gcode-overlay-mode");
+    cleanup_project(&mut conn, &project_id).expect("pre-clean primary rows");
+    cleanup_project(&mut conn, &overlay_id).expect("pre-clean overlay rows");
+    let _primary_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: project_id.clone(),
+    };
+    let _overlay_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay_id.clone(),
+    };
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("machine id");
+    let root = std::path::Path::new("/tmp/primary-checkout");
+    let project_uuid = db::id_param(&project_id).expect("project uuid");
+    let machine_uuid = db::id_param(&machine_id).expect("machine uuid");
+    conn.execute(
+        "INSERT INTO projects (id, name) VALUES ($1, $2)",
+        &[&project_uuid, &format!("primary-{project_id}")],
+    )
+    .expect("seed registry project");
+    conn.execute(
+        "INSERT INTO project_checkouts (machine_id, project_id, root_path)
+         VALUES ($1, $2, $3)",
+        &[&machine_uuid, &project_uuid, &root.to_string_lossy()],
+    )
+    .expect("seed primary checkout");
+
+    api::upsert_project_seed(
+        &mut conn,
+        &machine_id,
+        &project_id,
+        root,
+        api::IndexWriteMode::Primary,
+    )
+    .expect("matching primary seed");
+    let stale = api::upsert_project_seed(
+        &mut conn,
+        &machine_id,
+        &project_id,
+        std::path::Path::new("/tmp/stale-checkout"),
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("stale primary root");
+    assert!(stale.to_string().contains("checkout"));
+    let matching_stats = IndexedProject {
+        id: project_id.clone(),
+        root_path: root.display().to_string(),
+        total_files: 2,
+        total_symbols: 3,
+        last_indexed_at: String::new(),
+        index_duration_ms: 4,
+        total_eligible_files: None,
+        indexer_version: None,
+    };
+    api::upsert_project_stats(
+        &mut conn,
+        &machine_id,
+        &matching_stats,
+        api::IndexWriteMode::Primary,
+    )
+    .expect("matching primary stats");
+    let mut stale_stats = matching_stats.clone();
+    stale_stats.root_path = "/tmp/stale-checkout".to_string();
+    api::upsert_project_stats(
+        &mut conn,
+        &machine_id,
+        &stale_stats,
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("stale primary stats");
+
+    let mut rebind_conn =
+        gobby_core::postgres::connect_readwrite(&database_url).expect("connect rebind");
+    rebind_conn
+        .batch_execute("SET statement_timeout = '250ms'")
+        .expect("set bounded rebind wait");
+    {
+        let mut seed_tx = conn.transaction().expect("begin primary seed writer");
+        api::upsert_project_seed(
+            &mut seed_tx,
+            &machine_id,
+            &project_id,
+            root,
+            api::IndexWriteMode::Primary,
+        )
+        .expect("seed writer holds checkout lock");
+        let blocked = rebind_conn
+            .execute(
+                "UPDATE project_checkouts SET root_path = $3
+                 WHERE machine_id = $1 AND project_id = $2",
+                &[
+                    &machine_uuid,
+                    &project_uuid,
+                    &"/tmp/primary-checkout-rebound",
+                ],
+            )
+            .expect_err("rebind must wait for seed writer");
+        assert_eq!(blocked.code().map(|code| code.code()), Some("57014"));
+        seed_tx.commit().expect("commit primary seed writer");
+    }
+    {
+        let mut stats_tx = conn.transaction().expect("begin primary stats writer");
+        api::upsert_project_stats(
+            &mut stats_tx,
+            &machine_id,
+            &matching_stats,
+            api::IndexWriteMode::Primary,
+        )
+        .expect("stats writer holds checkout lock");
+        let blocked = rebind_conn
+            .execute(
+                "UPDATE project_checkouts SET root_path = $3
+                 WHERE machine_id = $1 AND project_id = $2",
+                &[
+                    &machine_uuid,
+                    &project_uuid,
+                    &"/tmp/primary-checkout-rebound",
+                ],
+            )
+            .expect_err("rebind must wait for stats writer");
+        assert_eq!(blocked.code().map(|code| code.code()), Some("57014"));
+        stats_tx.commit().expect("commit primary stats writer");
+    }
+    rebind_conn
+        .batch_execute("RESET statement_timeout")
+        .expect("reset bounded rebind wait");
+    rebind_conn
+        .execute(
+            "UPDATE project_checkouts SET root_path = $3
+             WHERE machine_id = $1 AND project_id = $2",
+            &[
+                &machine_uuid,
+                &project_uuid,
+                &"/tmp/primary-checkout-rebound",
+            ],
+        )
+        .expect("rebind after project writers commit");
+    api::upsert_project_seed(
+        &mut conn,
+        &machine_id,
+        &project_id,
+        root,
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("old-root seed cannot write after rebind");
+    api::upsert_project_stats(
+        &mut conn,
+        &machine_id,
+        &matching_stats,
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("old-root stats cannot write after rebind");
+    api::upsert_project_seed(
+        &mut conn,
+        &machine_id,
+        &overlay_id,
+        std::path::Path::new("/tmp/overlay-view"),
+        api::IndexWriteMode::Overlay,
+    )
+    .expect("overlay seed without checkout");
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+fn file_state_modes_require_primary_checkout_and_allow_overlay() {
+    let (mut conn, database_url) = connect_test_db();
+    let project_id = unique_test_project_id("gcode-primary-file-mode");
+    let overlay_id = unique_test_project_id("gcode-overlay-file-mode");
+    cleanup_project(&mut conn, &project_id).expect("pre-clean primary rows");
+    cleanup_project(&mut conn, &overlay_id).expect("pre-clean overlay rows");
+    let _primary_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: project_id.clone(),
+    };
+    let _overlay_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay_id.clone(),
+    };
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("machine id");
+    let root = std::path::Path::new("/tmp/primary-file-checkout");
+    let project_uuid = db::id_param(&project_id).expect("project uuid");
+    let machine_uuid = db::id_param(&machine_id).expect("machine uuid");
+    conn.execute(
+        "INSERT INTO projects (id, name) VALUES ($1, $2)",
+        &[&project_uuid, &format!("primary-file-{project_id}")],
+    )
+    .expect("seed registry project");
+    conn.execute(
+        "INSERT INTO project_checkouts (machine_id, project_id, root_path)
+         VALUES ($1, $2, $3)",
+        &[&machine_uuid, &project_uuid, &root.to_string_lossy()],
+    )
+    .expect("seed primary checkout");
+    api::upsert_project_seed(
+        &mut conn,
+        &machine_id,
+        &project_id,
+        root,
+        api::IndexWriteMode::Primary,
+    )
+    .expect("seed primary indexed project");
+    let file = indexed_file(&project_id, "src/lib.rs", "hash-a", 1, 10);
+    api::upsert_file(&mut conn, &file).expect("seed shared file");
+    conn.execute(
+        "UPDATE code_indexed_files SET graph_synced = true, vectors_synced = true
+         WHERE id = $1",
+        &[&db::id_param(&file.id).expect("file uuid")],
+    )
+    .expect("mark projections synced");
+
+    api::upsert_file_state(
+        &mut conn,
+        &machine_id,
+        &file,
+        root,
+        api::IndexWriteMode::Primary,
+    )
+    .expect("matching primary file state");
+    api::upsert_file_state(
+        &mut conn,
+        &machine_id,
+        &file,
+        std::path::Path::new("/tmp/stale-file-checkout"),
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("stale primary file state");
+    api::delete_file_state(
+        &mut conn,
+        &machine_id,
+        &project_id,
+        &file.file_path,
+        std::path::Path::new("/tmp/stale-file-checkout"),
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("stale primary delete");
+    assert!(
+        api::delete_file_state(
+            &mut conn,
+            &machine_id,
+            &project_id,
+            &file.file_path,
+            root,
+            api::IndexWriteMode::Primary,
+        )
+        .expect("matching primary delete")
+    );
+    assert!(
+        api::adopt_file_state(
+            &mut conn,
+            &machine_id,
+            &project_id,
+            &file.file_path,
+            &file.content_hash,
+            root,
+            api::IndexWriteMode::Primary,
+        )
+        .expect("matching primary adoption")
+    );
+    api::adopt_file_state(
+        &mut conn,
+        &machine_id,
+        &project_id,
+        &file.file_path,
+        &file.content_hash,
+        std::path::Path::new("/tmp/stale-file-checkout"),
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("stale primary adoption");
+
+    let mut rebind_conn =
+        gobby_core::postgres::connect_readwrite(&database_url).expect("connect file rebind");
+    rebind_conn
+        .batch_execute("SET statement_timeout = '250ms'")
+        .expect("set bounded file rebind wait");
+    for writer in ["upsert", "adopt", "delete"] {
+        let mut writer_tx = conn.transaction().expect("begin primary file writer");
+        match writer {
+            "upsert" => api::upsert_file_state(
+                &mut writer_tx,
+                &machine_id,
+                &file,
+                root,
+                api::IndexWriteMode::Primary,
+            ),
+            "adopt" => api::adopt_file_state(
+                &mut writer_tx,
+                &machine_id,
+                &project_id,
+                &file.file_path,
+                &file.content_hash,
+                root,
+                api::IndexWriteMode::Primary,
+            )
+            .map(|_| ()),
+            "delete" => api::delete_file_state(
+                &mut writer_tx,
+                &machine_id,
+                &project_id,
+                &file.file_path,
+                root,
+                api::IndexWriteMode::Primary,
+            )
+            .map(|_| ()),
+            _ => unreachable!("closed writer table"),
+        }
+        .expect("matching file writer holds checkout lock");
+        let blocked = rebind_conn
+            .execute(
+                "UPDATE project_checkouts SET root_path = $3
+                 WHERE machine_id = $1 AND project_id = $2",
+                &[
+                    &machine_uuid,
+                    &project_uuid,
+                    &"/tmp/primary-file-checkout-rebound",
+                ],
+            )
+            .expect_err("rebind must wait for file writer");
+        assert_eq!(
+            blocked.code().map(|code| code.code()),
+            Some("57014"),
+            "{writer} must hold the checkout lock"
+        );
+        writer_tx.commit().expect("commit primary file writer");
+    }
+    rebind_conn
+        .batch_execute("RESET statement_timeout")
+        .expect("reset bounded file rebind wait");
+    rebind_conn
+        .execute(
+            "UPDATE project_checkouts SET root_path = $3
+             WHERE machine_id = $1 AND project_id = $2",
+            &[
+                &machine_uuid,
+                &project_uuid,
+                &"/tmp/primary-file-checkout-rebound",
+            ],
+        )
+        .expect("rebind after file writers commit");
+    api::upsert_file_state(
+        &mut conn,
+        &machine_id,
+        &file,
+        root,
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("old-root file upsert cannot write after rebind");
+    api::adopt_file_state(
+        &mut conn,
+        &machine_id,
+        &project_id,
+        &file.file_path,
+        &file.content_hash,
+        root,
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("old-root adoption cannot write after rebind");
+    api::delete_file_state(
+        &mut conn,
+        &machine_id,
+        &project_id,
+        &file.file_path,
+        root,
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("old-root delete cannot write after rebind");
+
+    let overlay_file = indexed_file(&overlay_id, "src/overlay.rs", "hash-overlay", 1, 10);
+    api::upsert_project_seed(
+        &mut conn,
+        &machine_id,
+        &overlay_id,
+        std::path::Path::new("/tmp/overlay-view"),
+        api::IndexWriteMode::Overlay,
+    )
+    .expect("seed overlay indexed project");
+    api::upsert_file(&mut conn, &overlay_file).expect("seed overlay shared file");
+    api::upsert_file_state(
+        &mut conn,
+        &machine_id,
+        &overlay_file,
+        std::path::Path::new("/tmp/overlay-view"),
+        api::IndexWriteMode::Overlay,
+    )
+    .expect("overlay file state without checkout");
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+fn primary_writer_blocks_rebind_and_stale_writer_cannot_repopulate() {
+    let (mut writer_conn, database_url) = connect_test_db();
+    let project_id = unique_test_project_id("gcode-primary-rebind-race");
+    cleanup_project(&mut writer_conn, &project_id).expect("pre-clean race rows");
+    let _cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: project_id.clone(),
+    };
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("machine id");
+    let machine_uuid = db::id_param(&machine_id).expect("machine uuid");
+    let project_uuid = db::id_param(&project_id).expect("project uuid");
+    let old_root = std::path::Path::new("/tmp/primary-race-old");
+    let new_root = std::path::Path::new("/tmp/primary-race-new");
+    writer_conn
+        .execute(
+            "INSERT INTO projects (id, name) VALUES ($1, $2)",
+            &[&project_uuid, &format!("primary-race-{project_id}")],
+        )
+        .expect("seed registry project");
+    writer_conn
+        .execute(
+            "INSERT INTO project_checkouts (machine_id, project_id, root_path)
+             VALUES ($1, $2, $3)",
+            &[&machine_uuid, &project_uuid, &old_root.to_string_lossy()],
+        )
+        .expect("seed primary checkout");
+    api::upsert_project_seed(
+        &mut writer_conn,
+        &machine_id,
+        &project_id,
+        old_root,
+        api::IndexWriteMode::Primary,
+    )
+    .expect("seed indexed project");
+    let file = indexed_file(&project_id, "src/lib.rs", "race-hash", 1, 10);
+    api::upsert_file(&mut writer_conn, &file).expect("seed shared file");
+
+    let mut writer_tx = writer_conn.transaction().expect("begin primary writer");
+    api::upsert_file_state(
+        &mut writer_tx,
+        &machine_id,
+        &file,
+        old_root,
+        api::IndexWriteMode::Primary,
+    )
+    .expect("write primary selector while holding checkout lock");
+
+    let mut rebind_conn =
+        gobby_core::postgres::connect_readwrite(&database_url).expect("connect concurrent rebind");
+    rebind_conn
+        .batch_execute("SET statement_timeout = '250ms'")
+        .expect("set bounded lock wait");
+    let blocked = rebind_conn
+        .execute(
+            "UPDATE project_checkouts SET root_path = $3
+             WHERE machine_id = $1 AND project_id = $2",
+            &[&machine_uuid, &project_uuid, &new_root.to_string_lossy()],
+        )
+        .expect_err("rebind must wait for the primary writer transaction");
+    assert_eq!(blocked.code().map(|code| code.code()), Some("57014"));
+
+    writer_tx.commit().expect("commit primary writer");
+    rebind_conn
+        .batch_execute("RESET statement_timeout")
+        .expect("reset bounded lock wait");
+    let mut rebind_tx = rebind_conn.transaction().expect("begin rebind");
+    rebind_tx
+        .query_one(
+            "SELECT 1 FROM project_checkouts
+             WHERE machine_id = $1 AND project_id = $2 FOR UPDATE",
+            &[&machine_uuid, &project_uuid],
+        )
+        .expect("lock checkout for rebind");
+    rebind_tx
+        .execute(
+            "UPDATE project_checkouts SET root_path = $3
+             WHERE machine_id = $1 AND project_id = $2",
+            &[&machine_uuid, &project_uuid, &new_root.to_string_lossy()],
+        )
+        .expect("commit new checkout root");
+    rebind_tx
+        .execute(
+            "DELETE FROM code_indexed_file_states
+             WHERE machine_id = $1 AND project_id = $2",
+            &[&machine_uuid, &project_uuid],
+        )
+        .expect("clear rebound machine selectors");
+    rebind_tx.commit().expect("commit rebind");
+
+    let selector_count: i64 = writer_conn
+        .query_one(
+            "SELECT COUNT(*)::BIGINT FROM code_indexed_file_states
+             WHERE machine_id = $1 AND project_id = $2",
+            &[&machine_uuid, &project_uuid],
+        )
+        .expect("count rebound selectors")
+        .get(0);
+    assert_eq!(selector_count, 0);
+    api::upsert_file_state(
+        &mut writer_conn,
+        &machine_id,
+        &file,
+        old_root,
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("stale writer cannot repopulate after rebind");
 }
 
 fn connect_test_db() -> (postgres::Client, String) {
@@ -596,6 +1158,7 @@ fn seed_project_for_machine(conn: &mut postgres::Client, machine_id: &str, proje
             total_eligible_files: None,
             indexer_version: None,
         },
+        api::IndexWriteMode::Overlay,
     )
     .expect("seed project row");
 }
@@ -748,5 +1311,10 @@ fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Res
         "DELETE FROM code_indexed_projects WHERE id = $1",
         &[&project_id],
     )?;
+    conn.execute(
+        "DELETE FROM project_checkouts WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    conn.execute("DELETE FROM projects WHERE id = $1", &[&project_id])?;
     Ok(())
 }

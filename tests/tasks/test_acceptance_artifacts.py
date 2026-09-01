@@ -284,7 +284,6 @@ def test_feature() -> None:
     )
 
     assert result.passed is False
-    assert any("delegates acceptance" in finding for finding in result.findings)
     assert any("tautological assertion" in finding for finding in result.findings)
     assert all("test_feature" in finding for finding in result.findings)
 
@@ -315,6 +314,98 @@ fn protocol_frame_roundtrip() {
         "crates/gterminal/tests/frame_protocol.rs::protocol_frame_roundtrip: "
         "contains a constant, stub, or placebo assertion",
     )
+
+
+@pytest.mark.parametrize(
+    ("path", "symbol", "body"),
+    [
+        (
+            "tests/test_schema.py",
+            "test_schema_contract",
+            """
+def test_schema_contract() -> None:
+    database = test_database()
+    assert database is not None
+""",
+        ),
+        (
+            "crates/gcore/tests/schema_contract.rs",
+            "schema_contract",
+            """
+#[test]
+fn schema_contract() -> anyhow::Result<()> {
+    let Some(database) = test_database()? else {
+        return Ok(());
+    };
+    assert!(database.is_ready());
+    Ok(())
+}
+""",
+        ),
+    ],
+)
+def test_test_named_helper_call_is_not_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    path: str,
+    symbol: str,
+    body: str,
+) -> None:
+    monkeypatch.setattr(artifacts_module, "_resolve_test_body", lambda *_args: body)
+
+    result = evaluate_acceptance_artifacts(
+        criteria=f"Contract is executable. test: {path}::{symbol}",
+        repo_path=str(tmp_path),
+        commit_shas=[],
+    )
+
+    assert result.passed is True
+    assert result.findings == ()
+
+
+@pytest.mark.parametrize(
+    ("path", "symbol", "body", "finding"),
+    [
+        (
+            "tests/test_schema.py",
+            "test_schema_contract",
+            """
+def test_schema_contract() -> None:
+    test_other_contract()
+""",
+            "contains no executable assertion",
+        ),
+        (
+            "crates/gcore/tests/schema_contract.rs",
+            "schema_contract",
+            """
+#[test]
+fn schema_contract() {
+    test_other_contract();
+}
+""",
+            "contains no executable assertion or panic expectation",
+        ),
+    ],
+)
+def test_delegation_only_body_still_requires_an_executable_assertion(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    path: str,
+    symbol: str,
+    body: str,
+    finding: str,
+) -> None:
+    monkeypatch.setattr(artifacts_module, "_resolve_test_body", lambda *_args: body)
+
+    result = evaluate_acceptance_artifacts(
+        criteria=f"Contract is executable. test: {path}::{symbol}",
+        repo_path=str(tmp_path),
+        commit_shas=[],
+    )
+
+    assert result.passed is False
+    assert result.findings == (f"{path}::{symbol}: {finding}",)
 
 
 def test_structured_evidence_rejects_postdated_sha_and_missing_workflow(

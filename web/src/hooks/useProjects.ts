@@ -1,11 +1,42 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useWebSocketEvent } from "./useWebSocketEvent";
+
+const PROJECT_FETCH_RETRY_DELAYS_MS = [2_000, 4_000] as const;
+
+function isRetryableProjectFetchStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function waitForProjectFetchRetry(
+  delayMs: number,
+  signal: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error("Project fetch cancelled"));
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      signal.removeEventListener("abort", cancel);
+      resolve();
+    }, delayMs);
+    const cancel = () => {
+      window.clearTimeout(timeoutId);
+      reject(new Error("Project fetch cancelled"));
+    };
+    signal.addEventListener("abort", cancel, { once: true });
+  });
+}
 
 export interface ProjectWithStats {
   id: string;
   name: string;
   display_name: string;
-  repo_path: string | null;
+  checkout: {
+    machine_id: string;
+    root_path: string;
+  } | null;
   github_url: string | null;
   github_repo: string | null;
   linear_team_id: string | null;
@@ -56,37 +87,87 @@ export function useProjects({ enabled = true }: UseProjectsOptions = {}) {
   );
   const [activeSubTab, setActiveSubTab] = useState<ProjectSubTab>("overview");
   const [searchText, setSearchText] = useState("");
+  const activeFetchRef = useRef<AbortController | null>(null);
 
   const baseUrl = getBaseUrl();
 
   const fetchProjects = useCallback(async () => {
+    activeFetchRef.current?.abort();
+    const controller = new AbortController();
+    activeFetchRef.current = controller;
     setIsLoading(true);
     try {
-      const res = await fetch(`${baseUrl}/api/projects`);
-      if (!res.ok) {
-        throw new Error(`Failed to fetch projects: ${res.status}`);
+      for (
+        let attempt = 0;
+        attempt <= PROJECT_FETCH_RETRY_DELAYS_MS.length;
+        attempt += 1
+      ) {
+        let response: Response;
+        try {
+          response = await fetch(`${baseUrl}/api/projects`, {
+            signal: controller.signal,
+          });
+        } catch (fetchError) {
+          if (controller.signal.aborted) return;
+          if (attempt === PROJECT_FETCH_RETRY_DELAYS_MS.length) {
+            throw fetchError;
+          }
+          await waitForProjectFetchRetry(
+            PROJECT_FETCH_RETRY_DELAYS_MS[attempt],
+            controller.signal,
+          );
+          continue;
+        }
+
+        if (!response.ok) {
+          const responseError = new Error(
+            `Failed to fetch projects: ${response.status}`,
+          );
+          if (
+            !isRetryableProjectFetchStatus(response.status) ||
+            attempt === PROJECT_FETCH_RETRY_DELAYS_MS.length
+          ) {
+            throw responseError;
+          }
+          await waitForProjectFetchRetry(
+            PROJECT_FETCH_RETRY_DELAYS_MS[attempt],
+            controller.signal,
+          );
+          continue;
+        }
+
+        const data: ProjectWithStats[] = await response.json();
+        if (controller.signal.aborted) return;
+        setProjects(data);
+        setError(null);
+        return;
       }
-      const data: ProjectWithStats[] = await res.json();
-      setProjects(data);
-      setError(null);
     } catch (e) {
+      if (controller.signal.aborted) return;
       setError(e instanceof Error ? e : new Error("Failed to fetch projects"));
       console.error("Failed to fetch projects:", e);
     } finally {
-      setIsLoading(false);
+      if (activeFetchRef.current === controller) {
+        activeFetchRef.current = null;
+        if (!controller.signal.aborted) setIsLoading(false);
+      }
     }
   }, [baseUrl]);
 
   useEffect(() => {
-    if (!enabled) return;
-    fetchProjects();
+    if (!enabled) {
+      activeFetchRef.current?.abort();
+      return;
+    }
+    void fetchProjects();
+    return () => activeFetchRef.current?.abort();
   }, [enabled, fetchProjects]);
 
   // Real-time updates via WebSocket
   useWebSocketEvent(
     "project_event",
     useCallback(() => {
-      if (enabled) fetchProjects();
+      if (enabled) void fetchProjects();
     }, [enabled, fetchProjects]),
   );
 
@@ -101,7 +182,7 @@ export function useProjects({ enabled = true }: UseProjectsOptions = {}) {
     return projects.filter(
       (p) =>
         p.display_name.toLowerCase().includes(q) ||
-        (p.repo_path && p.repo_path.toLowerCase().includes(q)) ||
+        (p.checkout?.root_path.toLowerCase().includes(q) ?? false) ||
         (p.github_repo && p.github_repo.toLowerCase().includes(q)),
     );
   }, [projects, searchText]);

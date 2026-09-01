@@ -381,21 +381,31 @@ def _seed_e2e_runtime_state(postgres_db: Any, project_dir: Path) -> Path:
         ),
         source="e2e-fixture",
     )
+    project_id = "00000000-0000-0000-0000-000000000e2e"
+    machine_id = "21000000-0000-4000-8000-000000000002"
     postgres_db.execute(
         """
-        INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (%s, %s, %s, NOW(), NOW())
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES (%s, %s, NOW(), NOW())
         ON CONFLICT (id) DO UPDATE
         SET name = EXCLUDED.name,
-            repo_path = EXCLUDED.repo_path,
             updated_at = EXCLUDED.updated_at
         """,
-        (
-            "00000000-0000-0000-0000-000000000e2e",
-            "E2E Test Project",
-            str(project_dir),
-        ),
+        (project_id, "E2E Test Project"),
     )
+    from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+    from gobby.utils.checkout_root import validate_checkout_root
+    from tests.fixtures.isolated_checkout import insert_isolated_machine
+
+    insert_isolated_machine(postgres_db, machine_id)
+    root = validate_checkout_root(
+        postgres_db,
+        project_id=project_id,
+        machine_id=machine_id,
+        candidate_path=str(project_dir),
+        expected_marker_id=project_id,
+    )
+    LocalProjectCheckoutManager(postgres_db).register(machine_id, project_id, root)
     return tmux_socket
 
 
@@ -568,7 +578,6 @@ def e2e_project_dir() -> Generator[Path]:
                 {
                     "id": "00000000-0000-0000-0000-000000000e2e",
                     "name": "E2E Test Project",
-                    "repo_path": str(project_dir),
                 }
             )
         )

@@ -51,9 +51,19 @@ def _resolve_project_ref_or_path(project_ref: str, manager: SessionManager) -> s
     if project:
         return project.id
 
+    from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
+    from gobby.storage.workspace_machine_scope import require_local_machine_id
+
     target_path = _normalize_project_path(project_ref)
     for candidate in project_manager.list():
-        if candidate.repo_path and _normalize_project_path(candidate.repo_path) == target_path:
+        try:
+            machine_id = require_local_machine_id(
+                None, resource_kind="project_checkout", resource_id=candidate.id
+            )
+            root = require_root(project_manager.db, candidate.id, machine_id)
+        except CheckoutNotFoundError:
+            continue
+        if _normalize_project_path(root) == target_path:
             return candidate.id
 
     raise click.ClickException(f"Project not found: {project_ref}")
@@ -529,17 +539,24 @@ def summarize_session(
     )
     handoff_ctx = analyzer.extract_handoff_context(turns)
 
-    # Determine the git working directory - prefer project repo_path, fall back to transcript parent
+    # Determine the git working directory from the session-machine checkout
     git_cwd = path.parent
     if session.project_id:
-        from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
+        from gobby.storage.workspace_machine_scope import require_local_machine_id
 
-        project_manager = LocalProjectManager(require_cli_database())
-        project = project_manager.get(session.project_id)
-        if project and project.repo_path:
-            project_repo = Path(project.repo_path)
+        db = require_cli_database()
+        try:
+            machine_id = require_local_machine_id(
+                getattr(session, "machine_id", None),
+                resource_kind="project_checkout",
+                resource_id=session.project_id,
+            )
+            project_repo = Path(require_root(db, session.project_id, machine_id))
             if project_repo.exists():
                 git_cwd = project_repo
+        except CheckoutNotFoundError:
+            pass
 
     # Enrich with real-time git status
     if not handoff_ctx.git_status:

@@ -12,8 +12,9 @@ from gobby.clones.git import CloneGitManager
 from gobby.storage.agents import AgentRun
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.project_checkouts import require_root
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.worktrees.events import emit_worktree_event
 from gobby.worktrees.git import WorktreeGitManager
@@ -335,10 +336,10 @@ def delete_artifacts(
 
 
 def get_project_path(db: HubDatabase, project_id: str) -> Path:
-    project = LocalProjectManager(db).get(project_id)
-    if project is not None and project.repo_path:
-        return Path(project.repo_path)
-    return Path.cwd()
+    machine_id = require_local_machine_id(
+        None, resource_kind="project_checkout", resource_id=project_id
+    )
+    return Path(require_root(db, project_id, machine_id))
 
 
 def _append_artifact(

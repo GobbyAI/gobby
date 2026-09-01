@@ -94,7 +94,7 @@ def _auto_link_session_commits(
         from gobby.utils.datetime import datetime_to_required_iso
 
         session = ctx.session_manager.get(session_id)
-        repo_path = ctx.get_project_repo_path(project_id)
+        repo_path = ctx.get_project_repo_path(project_id, session.machine_id if session else None)
         if session:
             auto_link_commits(
                 task_manager=ctx.task_manager,
@@ -255,7 +255,10 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                 task=task,
                 commit_shas=task.commits or (),
                 attributed_paths=attributed_paths,
-                repo_path=ctx.get_project_repo_path(task.project_id),
+                repo_path=ctx.get_project_repo_path(
+                    task.project_id,
+                    ctx.checkout_machine_id(task.project_id, get_current_session_id()),
+                ),
                 scope_justification=scope_justification,
             )
         except RuntimeError as exc:

@@ -20,6 +20,7 @@ from gobby.utils.sql import render_internal_sql
 
 type Campaign = Literal[
     "account-identity-cutover",
+    "project-checkout-cutover",
     "schema-apply",
     "purge",
     "reconcile",
@@ -31,6 +32,7 @@ type JsonObject = dict[str, JsonValue]
 
 CAMPAIGNS: tuple[Campaign, ...] = (
     "account-identity-cutover",
+    "project-checkout-cutover",
     "schema-apply",
     "purge",
     "reconcile",
@@ -210,6 +212,12 @@ def open_maintenance_epoch(
             )
 
             admit_account_identity_campaign(connection)
+        elif campaign == "project-checkout-cutover":
+            from gobby.storage.project_checkout_cutover import (
+                admit_project_checkout_campaign,
+            )
+
+            admit_project_checkout_campaign(connection)
         try:
             row = connection.execute(
                 """

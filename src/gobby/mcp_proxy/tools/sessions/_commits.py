@@ -9,14 +9,12 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.machine_scope import (
     RemoteSessionOwnershipError,
     require_local_session_ownership,
 )
-from gobby.storage.projects import LocalProjectManager
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +46,19 @@ def register_commits_tools(
         return resolve_session_ref(session_manager, ref)
 
     def _session_repo_cwd(session: Any) -> str | None:
-        if db_handle is not None:
-            project = LocalProjectManager(db_handle).get(session.project_id)
-            if project and project.repo_path:
-                return project.repo_path
+        if db_handle is not None and session.project_id:
+            from gobby.storage.project_checkouts import require_root
+            from gobby.storage.workspace_machine_scope import require_local_machine_id
 
-        if session.transcript_path:
-            return str(Path(session.transcript_path).parent)
-
+            try:
+                machine_id = require_local_machine_id(
+                    getattr(session, "machine_id", None),
+                    resource_kind="project_checkout",
+                    resource_id=session.project_id,
+                )
+                return require_root(db_handle, session.project_id, machine_id)
+            except (ValueError, RuntimeError):
+                return None
         return None
 
     @registry.tool(

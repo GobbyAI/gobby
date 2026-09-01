@@ -31,7 +31,7 @@ _POSTGRES_DDL = re.compile(
 
 # These SQL-adjacent cases are intentionally outside persistent PostgreSQL
 # runtime schema authority: temporary staging, repair, FalkorDB Cypher, and the
-# one-shot PostgreSQL installer and the receipt-gated account identity cutover.
+# one-shot PostgreSQL installer and receipt-gated identity cutovers.
 # Container initdb and hub-backup SQL are not production Python and therefore
 # are outside this scan.
 _KEPT_ADJACENT_SQL = Counter(
@@ -47,6 +47,11 @@ _KEPT_ADJACENT_SQL = Counter(
         ("src/gobby/storage/account_identity_cutover.py", "DROP CONSTRAINT"): 1,
         ("src/gobby/storage/account_identity_cutover.py", "DROP INDEX"): 1,
         ("src/gobby/storage/account_identity_cutover.py", "DROP TABLE"): 1,
+        ("src/gobby/storage/project_checkout_cutover.py", "ALTER FUNCTION"): 1,
+        ("src/gobby/storage/project_checkout_cutover.py", "ALTER TABLE"): 7,
+        ("src/gobby/storage/project_checkout_cutover.py", "CREATE FUNCTION"): 1,
+        ("src/gobby/storage/project_checkout_cutover.py", "CREATE TABLE"): 1,
+        ("src/gobby/storage/project_checkout_cutover.py", "DROP FUNCTION"): 1,
     }
 )
 
