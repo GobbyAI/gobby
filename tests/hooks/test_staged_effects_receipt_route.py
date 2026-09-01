@@ -45,6 +45,7 @@ from gobby.servers.http import HTTPServer
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.session_feedback_survey import GOBBY_PROJECT_NAME
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.servers.conftest import authenticate_test_server
@@ -52,9 +53,6 @@ from tests.servers.conftest import authenticate_test_server
 pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_RECEIPT_MIGRATION = (
-    REPO_ROOT / "crates/gcore/assets/schema/migrations/416_hook_receipt_effects.sql"
-)
 _SESSION_FEEDBACK_RULES = (
     REPO_ROOT / "src/gobby/install/shared/workflows/rules/session-feedback/session-feedback.yaml"
 )
@@ -75,16 +73,12 @@ def _local_machine_identity() -> Iterator[None]:
 
 @pytest.fixture
 def receipts_db(temp_db: HubDatabase) -> HubDatabase:
-    """temp_db with the hook-receipt table applied and the real gate installed."""
-    sql = "\n".join(
-        line
-        for line in _RECEIPT_MIGRATION.read_text(encoding="utf-8").splitlines()
-        if not line.strip().startswith("--")
-    )
+    """temp_db with the real gate installed; hook_receipt_effects ships in the baseline."""
     with temp_db.transaction() as conn:
-        for statement in (part.strip() for part in sql.split(";")):
-            if statement:
-                conn.execute(statement)
+        table = conn.execute("SELECT to_regclass('hook_receipt_effects') AS oid").fetchone()
+    assert table is not None and table["oid"] is not None, (
+        "baseline is missing hook_receipt_effects"
+    )
 
     result = sync_bundled_rules(temp_db, get_bundled_rules_path())
     assert result["success"], result["errors"]
@@ -128,13 +122,25 @@ def hook_client(receipts_db: HubDatabase) -> Iterator[TestClient]:
 
 
 def _create_session(db: HubDatabase, session_id: str) -> None:
-    """session_variables carries an FK to sessions, which needs a project."""
-    project_id = str(uuid4())
+    """session_variables carries an FK to sessions, which needs a project.
+
+    Every session shares the one project named `gobby`: the gate's survey flag is
+    recomputed per event from `session_feedback.survey`, whose default scope arms
+    only that exact project name. `projects.name` is unique among active rows.
+    """
     with db.transaction() as conn:
-        conn.execute(
-            "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            (project_id, f"staged-effects-{project_id}"),
-        )
+        row = conn.execute(
+            "SELECT id FROM projects WHERE name = %s AND deleted_at IS NULL",
+            (GOBBY_PROJECT_NAME,),
+        ).fetchone()
+        if row is None:
+            project_id = str(uuid4())
+            conn.execute(
+                "INSERT INTO projects (id, name) VALUES (%s, %s)",
+                (project_id, GOBBY_PROJECT_NAME),
+            )
+        else:
+            project_id = str(row["id"])
         conn.execute(
             "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
             "VALUES (%s, %s, %s, %s, %s)",
