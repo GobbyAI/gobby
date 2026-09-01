@@ -20,6 +20,7 @@ rules:
       variables.get('code_index_available')
       and event.data.get('canonical_code_index_navigation')
       and not event.data.get('is_error')
+      and not event.data.get('canonical_code_index_error')
     effects:
       - type: set_variable
         variable: code_index_navigation_used_this_turn
@@ -36,7 +37,10 @@ rules:
     when: >
       variables.get('code_index_available')
       and event.data.get('canonical_code_index_navigation')
-      and event.data.get('is_error')
+      and (
+        event.data.get('is_error')
+        or event.data.get('canonical_code_index_error')
+      )
     effects:
       - type: set_variable
         variable: gcode_fail_open

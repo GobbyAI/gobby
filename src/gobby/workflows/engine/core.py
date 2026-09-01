@@ -292,6 +292,8 @@ class RuleEngine(
                 eval_context.setdefault("found_work_shirk_confirmed", False)
                 eval_context.setdefault("terminal_validation_failure", False)
                 eval_context.setdefault("terminal_validation_failure_commands", [])
+                eval_context.setdefault("unclaimed_found_work", False)
+                eval_context.setdefault("unclaimed_found_work_tasks", [])
                 eval_context.setdefault("_blocking_deadline", blocking_deadline)
 
                 active_agent_wait = False

@@ -17,6 +17,7 @@ pub enum CachedGrantInspection {
 
 pub(crate) fn annotate_source(error: GrantError, source: &str) -> GrantError {
     match error {
+        GrantError::Io(message) => GrantError::Io(format!("{source}: {message}")),
         GrantError::Malformed(message) => GrantError::Malformed(format!("{source}: {message}")),
         GrantError::PayloadSkew { detail } => GrantError::PayloadSkew {
             detail: format!("{source}: {detail}"),

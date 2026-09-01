@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -18,6 +19,7 @@ from gobby.prompts.sync import sync_bundled_prompts
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.isolated_checkout import write_project_marker
 
 pytestmark = pytest.mark.unit
 
@@ -33,9 +35,15 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 @pytest.fixture
-def session_id(temp_db: HubDatabase) -> str:
+def session_id(temp_db: HubDatabase, tmp_path: Path) -> str:
     sync_bundled_prompts(temp_db)
-    project = LocalProjectManager(temp_db).create(name="gobby", repo_path="/tmp/gobby")
+    checkout = tmp_path / "gobby"
+    checkout.mkdir()
+    project_id = str(uuid4())
+    write_project_marker(checkout, project_id=project_id, name="gobby")
+    project = LocalProjectManager(temp_db).create(
+        name="gobby", repo_path=str(checkout), project_id=project_id
+    )
     SessionManager(temp_db).register_session(
         external_id="feedback-service-session",
         machine_id=MACHINE_ID,
@@ -89,11 +97,16 @@ class _FakeTaskManager:
         self,
         existing_open_titles: tuple[str, ...] = (),
         existing_epic_id: str | None = None,
+        tasks_by_ref: dict[str, Any] | None = None,
     ) -> None:
         self.existing_open_titles = existing_open_titles
         self.existing_epic_id = existing_epic_id
+        self.tasks_by_ref = tasks_by_ref or {}
         self.created: list[SimpleNamespace] = []
         self.epics: list[SimpleNamespace] = []
+
+    def get_task(self, task_id: str, project_id: str | None = None) -> Any | None:
+        return self.tasks_by_ref.get(task_id)
 
     def list_tasks(
         self,
@@ -158,6 +171,7 @@ def _insert_feedback(
     kind_other_label: str | None = None,
     created_at: datetime = _T0,
     disposition: str | None = None,
+    evidence: str = "close gate re-ran validation",
 ) -> str:
     feedback_id = str(uuid4())
     db.execute(
@@ -166,10 +180,10 @@ def _insert_feedback(
             id, session_id, source, kind, kind_other_label, evidence, impact,
             frequency, suggestion, disposition, reviewed, created_at
         )
-        VALUES (%s, %s, 'survey', %s, %s, 'close gate re-ran validation', 'lost ten minutes',
+        VALUES (%s, %s, 'survey', %s, %s, %s, 'lost ten minutes',
                 'repeated', NULL, %s, FALSE, %s)
         """,
-        (feedback_id, session_id, kind, kind_other_label, disposition, created_at),
+        (feedback_id, session_id, kind, kind_other_label, evidence, disposition, created_at),
     )
     return feedback_id
 
@@ -270,6 +284,23 @@ async def test_run_review_empty_backlog_creates_no_run_row(temp_db: HubDatabase)
     assert llm.calls == []
     count = temp_db.fetchone("SELECT COUNT(*) AS count FROM feedback_review_runs")
     assert count is not None and count["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_marked_temporary_checkout_reaches_digest(
+    temp_db: HubDatabase, session_id: str
+) -> None:
+    observation_id = _insert_feedback(temp_db, session_id)
+    llm = _FakeLLM(
+        response={"clusters": [_cluster([observation_id], classification="noise", theme="fixture")]}
+    )
+
+    result = await _service(temp_db, llm, _FakeTaskManager()).run_review()
+
+    run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
+    assert run is not None
+    assert run.digest_md is not None
+    assert "**fixture** [noise, 1 obs]" in run.digest_md
 
 
 async def test_run_review_dedupes_open_titles_and_in_batch_duplicates(
@@ -513,7 +544,11 @@ async def test_run_review_reuses_existing_open_findings_epic(
 async def test_digest_flags_shirked_found_work(temp_db: HubDatabase, session_id: str) -> None:
     shirked_obs = _insert_feedback(temp_db, session_id)
     filed_obs = _insert_feedback(
-        temp_db, session_id, created_at=_T0 + timedelta(minutes=1), disposition="filed-task"
+        temp_db,
+        session_id,
+        created_at=_T0 + timedelta(minutes=1),
+        disposition="filed-task",
+        evidence="Filed #21484",
     )
     llm = _FakeLLM(
         response={
@@ -523,7 +558,16 @@ async def test_digest_flags_shirked_found_work(temp_db: HubDatabase, session_id:
             ]
         }
     )
-    service = _service(temp_db, llm, _FakeTaskManager())
+    task_manager = _FakeTaskManager(
+        tasks_by_ref={
+            "#21484": SimpleNamespace(
+                closed_at=None,
+                claimed_by_session_id=None,
+                labels=[],
+            )
+        }
+    )
+    service = _service(temp_db, llm, task_manager)
 
     result = await service.run_review()
 
@@ -532,4 +576,35 @@ async def test_digest_flags_shirked_found_work(temp_db: HubDatabase, session_id:
     assert run.digest_md is not None
     assert "## Shirked found work" in run.digest_md
     assert "**deferred defect** (1 obs; dispositions: none 1)" in run.digest_md
-    assert "**already filed defect** (" not in run.digest_md
+    assert (
+        "**already filed defect** (1 obs; dispositions: filed-task 1; #21484 filed unclaimed)"
+    ) in run.digest_md
+
+
+@pytest.mark.asyncio
+async def test_digest_accepts_labeled_rung_three_filing(
+    temp_db: HubDatabase, session_id: str
+) -> None:
+    filed_obs = _insert_feedback(
+        temp_db,
+        session_id,
+        disposition="filed-task",
+        evidence="Filed #21485",
+    )
+    llm = _FakeLLM(response={"clusters": [_cluster([filed_obs], theme="decision-bound defect")]})
+    task_manager = _FakeTaskManager(
+        tasks_by_ref={
+            "#21485": SimpleNamespace(
+                closed_at=None,
+                claimed_by_session_id=None,
+                labels=["needs-decision"],
+            )
+        }
+    )
+
+    result = await _service(temp_db, llm, task_manager).run_review()
+
+    run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
+    assert run is not None
+    assert run.digest_md is not None
+    assert "**decision-bound defect** (" not in run.digest_md

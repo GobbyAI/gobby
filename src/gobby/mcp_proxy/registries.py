@@ -232,6 +232,7 @@ def setup_internal_registries(
             startup_config=initial_config,
             config_resolver=config_resolver,
             db=db,
+            task_manager=task_manager,
             worktree_manager=worktree_storage,
             inter_session_message_manager=inter_session_message_manager,
             transcript_reader=transcript_reader,

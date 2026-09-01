@@ -49,6 +49,25 @@ rules:
           owner via send_message after a scoped green rerun, or file the edge case with a
           needs-decision/clean-window label and reason.
 
+  block-unclaimed-found-work:
+    description: "Block stop while this session's found-work filings remain unclaimed"
+    event: turn_end
+    enabled: true
+    priority: 44
+    when: >
+      unclaimed_found_work
+      and not variables.get('plan_mode')
+      and not has_active_agent_wait()
+      and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)
+    effects:
+      - type: block
+        reason: >-
+          Found-work ladder: this session filed {{ unclaimed_found_work_tasks | join(', ') }} and
+          left them unclaimed. Claim and finish each one now (claim_task, fix, close), hand it to
+          its active owner via send_message, or — edge case only — label it
+          needs-decision/clean-window with the reason in its description. Filing is not a terminal
+          state.
+
   remind-found-work-after-close:
     description: "Prompt one found-work sweep after each successful task close"
     event: after_tool

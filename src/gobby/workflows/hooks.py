@@ -790,6 +790,8 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 eval_context["found_work_shirk_confirmed"] = False
                 eval_context["terminal_validation_failure"] = False
                 eval_context["terminal_validation_failure_commands"] = []
+                eval_context["unclaimed_found_work"] = False
+                eval_context["unclaimed_found_work_tasks"] = []
                 if (
                     _is_turn_end_event(event.event_type)
                     and session_id
@@ -810,6 +812,15 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     eval_context["terminal_validation_failure_commands"] = list(
                         facts.terminal_validation_failures
                     )
+
+                if _is_turn_end_event(event.event_type) and session_id:
+                    unclaimed_tasks = await asyncio.to_thread(
+                        self._found_work_analyzer.unclaimed_found_work,
+                        session_id,
+                        user_prompt=str(variables.get("_current_user_prompt") or ""),
+                    )
+                    eval_context["unclaimed_found_work"] = bool(unclaimed_tasks)
+                    eval_context["unclaimed_found_work_tasks"] = list(unclaimed_tasks)
 
                 response = await self.rule_engine.evaluate(
                     event=event,

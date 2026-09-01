@@ -12,11 +12,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import Counter
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.feedback.storage import FeedbackReviewStore, FeedbackRow
 from gobby.prompts.loader import PromptLoader
+from gobby.sessions.handoff import FEEDBACK_TASK_REF_RE
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
@@ -94,6 +97,8 @@ class ReviewTaskManagerProtocol(Protocol):
         limit: int = ...,
     ) -> list[Any]: ...
 
+    def get_task(self, task_id: str, project_id: str | None = None) -> Any | None: ...
+
     def create_task(
         self,
         project_id: str,
@@ -144,7 +149,13 @@ class FeedbackReviewService:
                 actions["rows_marked_reviewed"] = self.store.mark_reviewed(
                     [row.id for row in rows], run_id
                 )
-            digest = _render_digest(rows, findings, actions, dry_run=dry_run)
+            digest = _render_digest(
+                rows,
+                findings,
+                actions,
+                dry_run=dry_run,
+                resolve_task=self._resolve_feedback_task,
+            )
             self.store.finalize_run(
                 run_id,
                 status="completed",
@@ -246,6 +257,20 @@ class FeedbackReviewService:
         )
         return str(row["id"]) if row else None
 
+    def _resolve_feedback_task(self, row: FeedbackRow, task_ref: str) -> Any | None:
+        if self.task_manager is None:
+            return None
+        session = self.db.fetchone(
+            "SELECT project_id FROM sessions WHERE id = %s",
+            (row.session_id,),
+        )
+        if session is None or not session["project_id"]:
+            return None
+        try:
+            return self.task_manager.get_task(task_ref, str(session["project_id"]))
+        except ValueError:
+            return None
+
     def _findings_epic_id(self, project_id: str) -> str:
         """Find the reviewed-findings epic by exact title, creating it when missing."""
         assert self.task_manager is not None
@@ -343,7 +368,11 @@ def _render_rows_json(rows: list[FeedbackRow]) -> str:
     return json_dumps(payload, indent=2)
 
 
-def _shirked_cluster_lines(rows: list[FeedbackRow], findings: dict[str, Any]) -> list[str]:
+def _shirked_cluster_lines(
+    rows: list[FeedbackRow],
+    findings: dict[str, Any],
+    resolve_task: Callable[[FeedbackRow, str], Any | None] | None = None,
+) -> list[str]:
     """One digest line per actionable cluster no observer filed or fixed in-line."""
     rows_by_id = {row.id: row for row in rows}
     lines: list[str] = []
@@ -355,13 +384,37 @@ def _shirked_cluster_lines(rows: list[FeedbackRow], findings: dict[str, Any]) ->
             for obs_id in cluster.get("observation_ids", [])
             if obs_id in rows_by_id
         ]
-        if not observed or any(row.disposition in _RESOLVED_DISPOSITIONS for row in observed):
+        if not observed:
+            continue
+        resolved = False
+        unclaimed_refs: list[str] = []
+        for row in observed:
+            if row.disposition not in _RESOLVED_DISPOSITIONS:
+                continue
+            if row.disposition == "fixed":
+                resolved = True
+                break
+            match = FEEDBACK_TASK_REF_RE.search(row.evidence)
+            task_ref = match.group(0) if match is not None else None
+            task = resolve_task(row, task_ref) if resolve_task is not None and task_ref else None
+            labels = set(getattr(task, "labels", ()) or ())
+            if (
+                is_task_closed(task)
+                or get_claimed_session_id(task) is not None
+                or {"needs-decision", "clean-window"}.intersection(labels)
+            ):
+                resolved = True
+                break
+            if task_ref is not None and task_ref not in unclaimed_refs:
+                unclaimed_refs.append(task_ref)
+        if resolved:
             continue
         dispositions = Counter(row.disposition or "none" for row in observed)
         breakdown = ", ".join(f"{name} {count}" for name, count in dispositions.most_common())
+        unresolved = f"; {', '.join(unclaimed_refs)} filed unclaimed" if unclaimed_refs else ""
         lines.append(
             f"- **{cluster.get('theme', '(untitled)')}** "
-            f"({len(observed)} obs; dispositions: {breakdown})"
+            f"({len(observed)} obs; dispositions: {breakdown}{unresolved})"
         )
     return lines
 
@@ -372,6 +425,7 @@ def _render_digest(
     actions: dict[str, Any],
     *,
     dry_run: bool,
+    resolve_task: Callable[[FeedbackRow, str], Any | None] | None = None,
 ) -> str:
     kind_counts = Counter(row.kind for row in rows)
     lines = ["# Session-feedback review digest", ""]
@@ -406,7 +460,7 @@ def _render_digest(
     lines.append("")
 
     lines.append("## Shirked found work")
-    shirked = _shirked_cluster_lines(rows, findings)
+    shirked = _shirked_cluster_lines(rows, findings, resolve_task)
     if shirked:
         lines.append(
             "Actionable clusters whose observations were deferred into the survey "
@@ -414,7 +468,10 @@ def _render_digest(
         )
         lines.extend(shirked)
     else:
-        lines.append("- None — every actionable cluster had a filed-task or fixed disposition.")
+        lines.append(
+            "- None — every actionable cluster had a fixed disposition or a filed-task "
+            "whose task was closed, claimed, or labeled needs-decision/clean-window."
+        )
     lines.append("")
 
     label_counts = Counter(row.kind_other_label for row in rows if row.kind_other_label is not None)

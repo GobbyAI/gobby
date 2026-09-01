@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 
@@ -29,9 +32,10 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.isolated_checkout import write_project_marker
 
 pytestmark = pytest.mark.unit
 
@@ -45,8 +49,14 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 @pytest.fixture
-def session_manager(temp_db: HubDatabase) -> SessionManager:
-    project = LocalProjectManager(temp_db).create(name="handoff-test", repo_path="/tmp/test")
+def session_manager(temp_db: HubDatabase, tmp_path: Path) -> SessionManager:
+    checkout = tmp_path / "handoff-test"
+    checkout.mkdir()
+    project_id = str(uuid4())
+    write_project_marker(checkout, project_id=project_id, name="handoff-test")
+    project = LocalProjectManager(temp_db).create(
+        name="handoff-test", repo_path=str(checkout), project_id=project_id
+    )
     manager = SessionManager(temp_db)
     manager.register_session(
         external_id="handoff-session",
@@ -161,6 +171,18 @@ def _observation(**overrides: object) -> dict[str, object]:
     return base
 
 
+def _feedback_task(**overrides: object) -> Task:
+    values: dict[str, object] = {
+        "created_in_session_id": "session-current",
+        "claimed_by_session_id": None,
+        "closed_in_session_id": None,
+        "closed_at": None,
+        "labels": [],
+    }
+    values.update(overrides)
+    return cast(Task, SimpleNamespace(**values))
+
+
 def test_feedback_enums_reject_unlisted_values() -> None:
     with pytest.raises(ValueError, match=r"kind must be one of"):
         normalize_feedback_observations([_observation(kind="tool-defect")])
@@ -168,6 +190,64 @@ def test_feedback_enums_reject_unlisted_values() -> None:
         normalize_feedback_observations([_observation(frequency="sometimes")])
     with pytest.raises(ValueError, match=r"disposition must be one of"):
         normalize_feedback_observations([_observation(disposition="observed")])
+
+
+def test_filed_task_requires_a_task_ref_and_labeled_current_session_task() -> None:
+    with pytest.raises(ValueError, match=r"observations\[0\]\.disposition: Found-work ladder"):
+        normalize_feedback_observations([_observation(disposition="filed-task")])
+
+    unlabeled = _feedback_task()
+    with pytest.raises(ValueError, match=r"needs-decision or clean-window"):
+        normalize_feedback_observations(
+            [_observation(disposition="filed-task", evidence="Filed #21484")],
+            resolve_task=lambda _ref: unlabeled,
+            session_id="session-current",
+        )
+
+    labeled = _feedback_task(labels=["needs-decision"])
+    [accepted] = normalize_feedback_observations(
+        [_observation(disposition="filed-task", evidence="Filed #21484")],
+        resolve_task=lambda _ref: labeled,
+        session_id="session-current",
+    )
+
+    assert accepted.disposition == "filed-task"
+
+
+def test_task_refs_accept_short_seq_numbers() -> None:
+    labeled = _feedback_task(labels=["needs-decision"])
+    seen: list[str] = []
+
+    def resolve(ref: str) -> Task:
+        seen.append(ref)
+        return labeled
+
+    [accepted] = normalize_feedback_observations(
+        [_observation(disposition="filed-task", evidence="Filed #42")],
+        resolve_task=resolve,
+        session_id="session-current",
+    )
+
+    assert accepted.disposition == "filed-task"
+    assert seen == ["#42"]
+
+
+def test_fixed_requires_a_task_owned_by_current_session() -> None:
+    foreign = _feedback_task(claimed_by_session_id="session-other")
+
+    with pytest.raises(ValueError, match=r"claimed or closed by this session"):
+        normalize_feedback_observations(
+            [_observation(disposition="fixed", evidence="Tracked in #21484")],
+            resolve_task=lambda _ref: foreign,
+            session_id="session-current",
+        )
+
+
+def test_escalated_requires_an_owner_session_ref() -> None:
+    with pytest.raises(ValueError, match=r"active owner session ref"):
+        normalize_feedback_observations(
+            [_observation(disposition="escalated", evidence="Sent the failure to its owner")]
+        )
 
 
 def test_feedback_other_kind_requires_a_novel_label() -> None:

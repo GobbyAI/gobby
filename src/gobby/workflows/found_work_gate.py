@@ -66,7 +66,8 @@ _DESTRUCTIVE_CONFIRMATION_RE = re.compile(
 _USER_DEFERRAL_RE = re.compile(
     r"\b(?:do not|don't|dont|must not|without)\s+(?:fix|change|edit|modify|implement)|"
     r"\b(?:only|just)\s+(?:review|assess|audit|diagnose|explain|report|answer)|"
-    r"\b(?:review|assessment|audit|diagnosis|report|q&a)\s+(?:only|deliverable)\b",
+    r"\b(?:review|assessment|audit|diagnosis|report|q&a)\s+(?:only|deliverable)\b|"
+    r"\bjust\s+file\b|\bfile\s+(?:it|them|these)\s+for\s+later\b",
     re.IGNORECASE,
 )
 _SCOPE_OPTION_NAMES = frozenset({"-k", "-m", "--filter", "--run", "-run"})
@@ -125,6 +126,7 @@ class FoundWorkStopFacts:
     shirk: bool = False
     shirk_confirmed: bool = False
     terminal_validation_failures: tuple[str, ...] = ()
+    unclaimed_found_work_tasks: tuple[str, ...] = ()
 
 
 def capture_turn_prompt(event: HookEvent, variables: dict[str, Any]) -> None:
@@ -319,6 +321,43 @@ class FoundWorkStopAnalyzer:
             shirk_confirmed=shirk_confirmed,
             terminal_validation_failures=failures,
         )
+
+    def unclaimed_found_work(
+        self,
+        session_id: str,
+        *,
+        user_prompt: str = "",
+    ) -> tuple[str, ...]:
+        """Return this session's open, unclaimed found-work task refs."""
+        if self._db is None or _USER_DEFERRAL_RE.search(user_prompt):
+            return ()
+        try:
+            rows = self._db.fetchall(
+                """
+                SELECT seq_num, labels
+                FROM tasks
+                WHERE created_in_session_id = %s
+                  AND closed_at IS NULL
+                  AND claimed_by_session_id IS NULL
+                ORDER BY seq_num
+                """,
+                (session_id,),
+            )
+        except Exception:
+            logger.debug("Could not inspect unclaimed found-work tasks", exc_info=True)
+            return ()
+
+        refs: list[str] = []
+        for row in rows:
+            labels = _task_labels(row["labels"])
+            if {"needs-decision", "clean-window"}.intersection(labels):
+                continue
+            if any(label.startswith("expansion-run:") for label in labels):
+                continue
+            seq_num = row["seq_num"]
+            if isinstance(seq_num, int):
+                refs.append(f"#{seq_num}")
+        return tuple(refs)
 
     def _has_labeled_deferral_task(self, session_id: str) -> bool:
         if self._session_task_manager is None:
@@ -536,6 +575,17 @@ def _coerce_text(value: Any) -> str:
             if (text := _coerce_text(value.get(key)))
         )
     return ""
+
+
+def _task_labels(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return ()
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes):
+        return ()
+    return tuple(label for label in value if isinstance(label, str))
 
 
 def _deterministic_exemption(message: str, user_prompt: str) -> bool:

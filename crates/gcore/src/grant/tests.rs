@@ -2137,6 +2137,48 @@ fn inspect_cached_grant_missing_file_is_absent() {
     assert!(matches!(inspected, CachedGrantInspection::Absent));
 }
 
+#[test]
+fn annotate_source_preserves_io_context() {
+    let error = super::inspection::annotate_source(
+        GrantError::Io("Operation not permitted (os error 1)".to_string()),
+        "managed grant file /tmp/grant.json",
+    );
+
+    assert_eq!(
+        error,
+        GrantError::Io(
+            "managed grant file /tmp/grant.json: Operation not permitted (os error 1)".to_string()
+        )
+    );
+}
+
+#[test]
+fn load_grant_file_io_error_names_path() {
+    let path = Path::new("\0");
+    let error = super::cache::load_grant_file(path).expect_err("invalid path must fail");
+    let GrantError::Io(message) = error else {
+        panic!("invalid path must produce an IO error");
+    };
+
+    assert!(
+        message.starts_with(&format!("grant file {}:", path.display())),
+        "IO error must name its grant file, got {message}"
+    );
+}
+
+#[test]
+fn grant_lock_io_error_names_path() {
+    let path = Path::new("\0");
+    let Err(GrantError::Io(message)) = super::cache::try_lock(path) else {
+        panic!("invalid lock path must produce an IO error");
+    };
+
+    assert!(
+        message.starts_with(&format!("grant lock {}:", path.display())),
+        "IO error must name its grant lock, got {message}"
+    );
+}
+
 // Changing this inventory requires bumping EXPECTED_API_CONTRACT (Rust) and
 // API_CONTRACT (Python) together and regenerating the goldens.
 const GRANT_FIELD_INVENTORY: &[&str] = &[

@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+import re
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, Never
 from uuid import uuid4
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.datetime import utc_now
+
+if TYPE_CHECKING:
+    from gobby.storage.tasks import Task
 
 PENDING_HANDOFF_VARIABLE = "set_handoff_pending"
 HANDOFF_PULL_PENDING_VARIABLE = "handoff_pull_pending"
@@ -21,6 +26,12 @@ _OPTIONAL_FEEDBACK_FIELDS = ("suggestion", "disposition")
 FEEDBACK_KINDS = ("friction", "bug", "noise", "surprise", "missing-affordance", "useful", "other")
 FEEDBACK_FREQUENCIES = ("once", "repeated", "always")
 FEEDBACK_DISPOSITIONS = ("worked-around", "filed-task", "fixed", "escalated", "noted")
+FEEDBACK_TASK_REF_RE = re.compile(r"#(\d+)")
+_FEEDBACK_SESSION_REF_RE = re.compile(
+    r"(?:\b[\w.-]+-S#\d+\b|(?<![\w#])#\d+\b|"
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
+    r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b)"
+)
 
 
 def build_handoff_continue_prompt() -> str:
@@ -92,6 +103,9 @@ def render_handoff_markdown(
 
 def normalize_feedback_observations(
     observations: Sequence[Mapping[str, Any]] | None,
+    *,
+    resolve_task: Callable[[str], Task | None] | None = None,
+    session_id: str | None = None,
 ) -> list[FeedbackObservation]:
     """Validate feedback input without mutating storage."""
     normalized: list[FeedbackObservation] = []
@@ -121,19 +135,66 @@ def normalize_feedback_observations(
                 f"observations[{index}].disposition must be one of "
                 f"{', '.join(FEEDBACK_DISPOSITIONS)}"
             )
+        evidence = _nonblank(raw.get("evidence"), f"observations[{index}].evidence")
+        disposition = optional["disposition"]
+        task_match = FEEDBACK_TASK_REF_RE.search(evidence)
+        if disposition in {"filed-task", "fixed"} and task_match is None:
+            _raise_disposition_error(
+                index,
+                f"'{disposition}' requires a #N task ref in evidence",
+            )
+        if disposition == "escalated" and _FEEDBACK_SESSION_REF_RE.search(evidence) is None:
+            _raise_disposition_error(
+                index,
+                "'escalated' requires the active owner session ref "
+                "(#N, UUID, or <project>-S#N) in evidence",
+            )
+        if disposition in {"filed-task", "fixed"} and resolve_task is not None:
+            assert task_match is not None
+            task = resolve_task(task_match.group(0))
+            if task is None or session_id is None:
+                _raise_disposition_error(index, f"{task_match.group(0)} could not be resolved")
+            if disposition == "filed-task":
+                labels = set(task.labels or ())
+                if task.created_in_session_id != session_id or not labels.intersection(
+                    {"needs-decision", "clean-window"}
+                ):
+                    _raise_disposition_error(
+                        index,
+                        "'filed-task' is rung 3 only: the referenced task must be created "
+                        "by this session and labeled needs-decision or clean-window",
+                    )
+            elif (
+                get_claimed_session_id(task) != session_id
+                and task.closed_in_session_id != session_id
+            ):
+                _raise_disposition_error(
+                    index,
+                    "'fixed' requires a task claimed or closed by this session",
+                )
         normalized.append(
             FeedbackObservation(
                 source=_nonblank(raw.get("source"), f"observations[{index}].source"),
                 kind=kind,
-                evidence=_nonblank(raw.get("evidence"), f"observations[{index}].evidence"),
+                evidence=evidence,
                 impact=_nonblank(raw.get("impact"), f"observations[{index}].impact"),
                 frequency=frequency,
                 suggestion=optional["suggestion"],
-                disposition=optional["disposition"],
+                disposition=disposition,
                 kind_other_label=_normalize_other_label(raw.get("kind_other_label"), kind, index),
             )
         )
     return normalized
+
+
+def _raise_disposition_error(index: int, detail: str) -> Never:
+    raise ValueError(
+        f"observations[{index}].disposition: Found-work ladder: {detail}. "
+        "Use 'fixed' for a referenced task this session claimed or closed; "
+        "use 'escalated' after send_message to a referenced active owner session; "
+        "use 'filed-task' only for a referenced rung-3 task carrying "
+        "needs-decision or clean-window."
+    )
 
 
 def _normalize_other_label(value: Any, kind: str, index: int) -> str | None:

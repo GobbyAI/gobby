@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.handoff import (
@@ -18,6 +19,7 @@ from gobby.utils.session_context import get_current_session_id
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.storage.sessions import SessionManager
+    from gobby.storage.tasks import LocalTaskManager, Task
 
 
 FEEDBACK_OBSERVATION_INPUT_SCHEMA: dict[str, Any] = {
@@ -48,11 +50,14 @@ FEEDBACK_OBSERVATION_INPUT_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": list(FEEDBACK_DISPOSITIONS),
             "description": (
-                "How the observation was handled. An actionable Gobby defect is "
-                "found work: file its task in-line before surveying, record "
-                "'filed-task', and put the ref in evidence. Defects left at "
-                "'worked-around'/'noted' are flagged as shirked found work in "
-                "the nightly review digest."
+                "How the observation was handled. An actionable Gobby defect is found work. "
+                "'fixed': include the #N task this session claimed and closed, or still has "
+                "claimed in progress. 'escalated': include the active owner session ref after "
+                "send_message. 'filed-task' is rung 3 only: include the #N task this session "
+                "created with needs-decision or clean-window and a description explaining why "
+                "rungs 1 and 2 do not apply. Unlabeled or unclaimed filings and every other "
+                "defect disposition are shirked found work; the stop gate blocks and the nightly "
+                "digest flags them."
             ),
         },
     },
@@ -61,9 +66,36 @@ FEEDBACK_OBSERVATION_INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
+def build_feedback_task_resolver(
+    session_manager: SessionManager,
+    task_manager: LocalTaskManager | None,
+    session_id: str,
+) -> Callable[[str], Task | None] | None:
+    """Build a project-scoped #N resolver for feedback disposition validation."""
+    if task_manager is None:
+        return None
+    session = session_manager.get(session_id)
+    project_id = getattr(session, "project_id", None)
+    if not isinstance(project_id, str) or not project_id:
+        return None
+
+    from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
+    from gobby.storage.tasks import TaskNotFoundError
+
+    def resolve_task(task_ref: str) -> Task | None:
+        try:
+            task_id = resolve_task_id_for_mcp(task_manager, task_ref, project_id)
+            return task_manager.get_task(task_id)
+        except (TaskNotFoundError, ValueError):
+            return None
+
+    return resolve_task
+
+
 def register_handoff_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
+    task_manager: LocalTaskManager | None = None,
 ) -> None:
     """Register pull-only handoff, feedback, and title tools."""
 
@@ -105,7 +137,15 @@ def register_handoff_tools(
         if session_id is None:
             return {"success": False, "error": "No session context available"}
         try:
-            normalized = normalize_feedback_observations(observations)
+            normalized = normalize_feedback_observations(
+                observations,
+                resolve_task=build_feedback_task_resolver(
+                    session_manager,
+                    task_manager,
+                    session_id,
+                ),
+                session_id=session_id,
+            )
             ids = write_feedback_batch(session_manager.db, session_id, normalized)
         except ValueError as exc:
             return {"success": False, "error": str(exc), "error_code": "invalid_feedback"}

@@ -10,7 +10,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `tool-hygiene` | `tool-hygiene/` | 4 | Require `uv` and route memory operations through Gobby |
 | `progressive-discovery` | `progressive-discovery/` | 5 | Require a current-context schema lease before ordinary MCP calls; track optional inventory discovery |
 | `task-enforcement` | `task-enforcement/` | 20 | Require claimed tasks and lifecycle skills, protect shared-worktree edits and commits, and enforce valid task transitions |
-| `stop-gates` | `stop-gates/` | 6 | Require workflow completion and enforce the Found Work ladder before turn end |
+| `stop-gates` | `stop-gates/` | 7 | Require workflow completion and enforce the Found Work ladder before turn end |
 | `plan-mode` | `plan-mode/` | 6 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
 | `memory-lifecycle` | `memory-lifecycle/` | 12 | Shadow relevance judging, layered guidance, claim-time search nudge, post-close review, plan-memory guards, turn sequencing, and tracking reset |
 | `session-feedback` | `session-feedback/` | 4 | Bounded Gobby-experience survey via `gobby-sessions:feedback` |

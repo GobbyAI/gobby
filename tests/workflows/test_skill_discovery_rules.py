@@ -6,6 +6,7 @@ have valid structure, and evaluate conditions properly.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from typing import Any
 import pytest
 import yaml
 
+from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.hooks.tool_error_tracker import extract_target_key, track_proxy_outcome
@@ -3964,6 +3966,62 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_codex_gcode_error_allows_raw_retry_but_ordinary_search_blocks(
+        self,
+        db: HubDatabase,
+    ) -> None:
+        _sync_bundled(db)
+        variables = self._variables(loaded=True)
+        command = "gcode grep -F 'gcode-runtime' -m 50"
+        completed_item = {
+            "id": "gcode-error",
+            "type": "dynamicToolCall",
+            "namespace": "functions",
+            "tool": "exec",
+            "arguments": (
+                f"const r = await tools.exec_command({{cmd: {json.dumps(command)}}}); "
+                "text(r.output);"
+            ),
+            "contentItems": [
+                {
+                    "type": "inputText",
+                    "text": "Script completed\nWall time 0.8 seconds\nOutput:\n",
+                },
+                {
+                    "type": "inputText",
+                    "text": ('{"error":"io","message":"grant io error: Operation not permitted"}'),
+                },
+            ],
+            "status": "completed",
+            "success": None,
+        }
+        failure_data = CodexAdapter()._build_completed_tool_data(completed_item)
+
+        assert failure_data["canonical_code_index_navigation"] is True
+        assert failure_data["canonical_code_index_error"] is True
+        await RuleEngine(db).evaluate(
+            self._event(HookEventType.AFTER_TOOL, failure_data),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        raw_retry = self._normalized_bash_event("rg -n -F 'gcode-runtime' .")
+        retry_response = await RuleEngine(db).evaluate(
+            raw_retry,
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+        ordinary_response = await RuleEngine(db).evaluate(
+            raw_retry,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert variables["gcode_fail_open"] is True
+        assert retry_response.decision == "allow"
+        assert ordinary_response.decision == "block"
 
     @pytest.mark.asyncio
     async def test_gcode_fail_open_bypasses_skill_requirement(self, db) -> None:

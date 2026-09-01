@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from gobby.feedback.storage import FeedbackReviewStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.isolated_checkout import write_project_marker
 
 pytestmark = pytest.mark.unit
 
@@ -28,8 +30,14 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 @pytest.fixture
-def session_id(temp_db: HubDatabase) -> str:
-    project = LocalProjectManager(temp_db).create(name="feedback-test", repo_path="/tmp/test")
+def session_id(temp_db: HubDatabase, tmp_path: Path) -> str:
+    checkout = tmp_path / "feedback-test"
+    checkout.mkdir()
+    project_id = str(uuid4())
+    write_project_marker(checkout, project_id=project_id, name="feedback-test")
+    project = LocalProjectManager(temp_db).create(
+        name="feedback-test", repo_path=str(checkout), project_id=project_id
+    )
     SessionManager(temp_db).register_session(
         external_id="feedback-session",
         machine_id=MACHINE_ID,
