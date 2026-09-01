@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -11,16 +10,7 @@ from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
-
-LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
-
-
-@pytest.fixture(autouse=True)
-def _local_machine_identity() -> Iterator[None]:
-    # Patch the cache, not the function: production modules bind get_machine_id
-    # by direct import, so a function patch misses those call sites.
-    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
-        yield
+from gobby.workflows.state_manager import SessionVariableManager
 
 
 @dataclass(frozen=True)
@@ -40,7 +30,12 @@ class _RunManager:
     def get(self, run_id: str) -> _Run | None:
         return None
 
-    def list_by_status(self, status: str, *, limit: int = 100) -> list[_Run]:
+    def list_by_status(
+        self,
+        status: str | None = None,
+        limit: int = 100,
+        project_id: str | None = None,
+    ) -> list[_Run]:
         return []
 
 
@@ -64,7 +59,7 @@ async def test_failed_non_in_progress_recovery_releases_run_mutex(temp_db, sampl
     task_manager = LocalTaskManager(temp_db)
     session = SessionManager(temp_db).register(
         external_id="task-recovery-owner",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=None,
         source="codex",
         project_id=sample_project["id"],
     )
@@ -111,7 +106,7 @@ async def test_resolve_claimed_task_requires_child_session_ownership(
     task_manager = LocalTaskManager(temp_db)
     session = SessionManager(temp_db).register(
         external_id="task-recovery-claimed-owner",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=None,
         source="codex",
         project_id=sample_project["id"],
     )
@@ -149,6 +144,70 @@ async def test_resolve_claimed_task_requires_child_session_ownership(
     resolved = await handler.resolve_claimed_task_for_run(owning_run)
     assert resolved is not None
     assert resolved[0] == task.id
+
+
+def test_clear_claim_session_variables_does_not_materialize_missing_rows(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
+    session_manager = SessionManager(temp_db)
+    missing_session = session_manager.register(
+        external_id="task-recovery-missing-variables",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    existing_session = session_manager.register(
+        external_id="task-recovery-existing-variables",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        sample_project["id"],
+        "Recover variable state",
+        validation_criteria="Test task completion is observable.",
+    )
+    variable_manager = SessionVariableManager(temp_db)
+    variable_manager.merge_variables(
+        existing_session.id,
+        {
+            "task_claimed": True,
+            "claimed_tasks": {task.id: f"#{task.seq_num}"},
+            "active_task_id": task.id,
+            "task_edited_files": {task.id: ["src/gobby/example.py"]},
+        },
+    )
+    handler = TaskRecoveryHandler(
+        task_manager,
+        _RunManager(),
+        _Classifier(),
+        run_db=_run_db,
+    )
+
+    for session in (missing_session, existing_session):
+        handler._clear_claim_session_variables(
+            _Run(
+                id=f"recovery-{session.id}",
+                status="cancelled",
+                task_id=task.id,
+                child_session_id=session.id,
+                claimed_session_id=session.id,
+            ),
+            task.id,
+        )
+
+    assert (
+        temp_db.fetchone(
+            "SELECT 1 FROM session_variables WHERE session_id = %s",
+            (missing_session.id,),
+        )
+        is None
+    )
+    existing_variables = variable_manager.get_variables(existing_session.id)
+    assert task.id not in existing_variables["claimed_tasks"]
+    assert task.id not in existing_variables["task_edited_files"]
 
 
 def test_release_task_claim_mutex_construction_type_error_falls_back() -> None:

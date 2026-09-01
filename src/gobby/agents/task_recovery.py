@@ -466,7 +466,7 @@ class TaskRecoveryHandler:
             for session_id in session_ids:
                 session_vars = session_var_manager.get_variables(session_id)
                 merge_dict = remove_claimed_task(session_vars, task_id)
-                session_var_manager.merge_variables(session_id, merge_dict)
+                session_var_manager.merge_existing_variables(session_id, merge_dict)
         except Exception as e:
             logger.debug(
                 "Best-effort claimed_tasks cleanup failed for agent %s task %s: %s",
