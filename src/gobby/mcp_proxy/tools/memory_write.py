@@ -21,6 +21,7 @@ from gobby.mcp_proxy.tools.memory_scope import (
 )
 from gobby.memory.embedding_text import memory_embedding_text
 from gobby.memory.scoring import undecay
+from gobby.memory.services.lifecycle import MAX_MEMORY_CONTENT_CHARS
 from gobby.storage.memories import MemoryType, validate_memory_type
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.sync.memories import is_ephemeral_implementation_note
@@ -40,16 +41,67 @@ logger = logging.getLogger(__name__)
 AUTO_SUPERSEDE_SIMILARITY = 0.9
 # How many neighbours the write-time probe reports back to the writer.
 SIMILAR_EXISTING_LIMIT = 5
+RATIONALE_MAX_CHARS = 500
 RATIONALE_REQUIRED_ERROR = (
     "rationale_required: one or two sentences on why this memory should be "
-    "re-served to future sessions (max 500 chars)"
+    f"re-served to future sessions (max {RATIONALE_MAX_CHARS} chars)"
 )
-_RATIONALE_MAX_LEN = 500
+_CONTENT_DESCRIPTION = (
+    f"Memory body, at most {MAX_MEMORY_CONTENT_CHARS} characters. Longer content is "
+    "rejected with content_too_long, never truncated: condense it, or update or "
+    "supersede a narrower existing memory instead."
+)
+_RATIONALE_DESCRIPTION = (
+    "Durable-value claim: one or two sentences on why a future, unrelated session "
+    f"should be served this memory (at most {RATIONALE_MAX_CHARS} characters)."
+)
 
 
 def normalize_memory_rationale(rationale: str | None) -> str | None:
     stripped = "" if rationale is None else rationale.strip()
-    return stripped if stripped and len(stripped) <= _RATIONALE_MAX_LEN else None
+    return stripped if stripped and len(stripped) <= RATIONALE_MAX_CHARS else None
+
+
+def rationale_error(rationale: str | None, *, required: bool) -> str | None:
+    """Name what is wrong with a rationale, or return None when it is usable.
+
+    An over-length rationale is reported as too long rather than as missing, so
+    the writer trims it instead of re-sending the same body with a "new" one.
+    """
+    stripped = "" if rationale is None else rationale.strip()
+    if len(stripped) > RATIONALE_MAX_CHARS:
+        return (
+            f"rationale_too_long: rationale is {len(stripped)} characters, over the "
+            f"{RATIONALE_MAX_CHARS}-character limit"
+        )
+    if required and not stripped:
+        return RATIONALE_REQUIRED_ERROR
+    return None
+
+
+def content_cap_error(content: str) -> str | None:
+    """Reject over-cap content at the tool boundary, before any embedding probe runs."""
+    if len(content) > MAX_MEMORY_CONTENT_CHARS:
+        return (
+            f"content_too_long: memory content is {len(content)} characters, over the "
+            f"{MAX_MEMORY_CONTENT_CHARS}-character limit; it is rejected, never truncated "
+            "-- condense it before writing"
+        )
+    return None
+
+
+def _advertise_write_caps(
+    registry: InternalToolRegistry, tool_name: str, *, rationale_rule: str
+) -> None:
+    """Patch the caps into a derived schema; ``@registry.tool`` emits types only."""
+    meta = registry.get_tool_metadata(tool_name)
+    if meta is None:
+        return
+    properties = meta.input_schema["properties"]
+    properties["content"]["maxLength"] = MAX_MEMORY_CONTENT_CHARS
+    properties["content"]["description"] = _CONTENT_DESCRIPTION
+    properties["rationale"]["maxLength"] = RATIONALE_MAX_CHARS
+    properties["rationale"]["description"] = f"{_RATIONALE_DESCRIPTION} {rationale_rule}"
 
 
 def derive_memory_create_provenance(
@@ -118,8 +170,10 @@ def register_memory_write_tools(
             "Create a new memory. Bugs, incidents, and incorrect runtime "
             "behavior belong on gobby-tasks.create_task with claim=true, not "
             "here. rationale is mandatory: one or two sentences on why a "
-            "future, unrelated session should be served this memory (max 500 "
-            "chars). source_task_id and created_by_agent are derived unless "
+            "future, unrelated session should be served this memory (max "
+            f"{RATIONALE_MAX_CHARS} chars). content is capped at "
+            f"{MAX_MEMORY_CONTENT_CHARS} chars; longer bodies are rejected, never "
+            "truncated. source_task_id and created_by_agent are derived unless "
             "overridden. Returns similar existing memories to help detect "
             "duplicates."
         ),
@@ -142,7 +196,9 @@ def register_memory_write_tools(
         ``gobby-tasks.create_task`` with ``claim=true``, not here.
 
         Args:
-            content: The memory content to store
+            content: The memory content to store. Max 3000 characters; an
+                over-cap body is rejected with ``content_too_long``, never
+                truncated.
             rationale: Durable-value claim — why a future, unrelated session
                 should see this. Run logs, status snapshots, and one-time
                 results do not qualify. Max 500 characters.
@@ -165,9 +221,10 @@ def register_memory_write_tools(
         try:
             from gobby.storage.memories_crud import normalize_supersedes
 
+            error = rationale_error(rationale, required=True) or content_cap_error(content)
+            if error is not None:
+                return {"success": False, "error": error}
             normalized_rationale = normalize_memory_rationale(rationale)
-            if normalized_rationale is None:
-                return {"success": False, "error": RATIONALE_REQUIRED_ERROR}
 
             supersedes_ids = normalize_supersedes(supersedes)
             if not supersedes_ids and is_ephemeral_implementation_note(
@@ -298,6 +355,7 @@ def register_memory_write_tools(
         required = create_meta.input_schema.setdefault("required", [])
         if "rationale" not in required:
             required.append("rationale")
+    _advertise_write_caps(registry, "create_memory", rationale_rule="Always required.")
 
     @registry.tool(
         name="update_memory",
@@ -315,20 +373,22 @@ def register_memory_write_tools(
 
         Args:
             memory_id: The ID of the memory to update
-            content: New content (optional). A content change requires a fresh
-                ``rationale`` -- the durable-value claim is re-argued with the
-                body it describes.
+            content: New content (optional), max 3000 characters; an over-cap
+                body is rejected with ``content_too_long``, never truncated. A
+                content change requires a fresh ``rationale`` -- the
+                durable-value claim is re-argued with the body it describes.
             tags: New list of tags (optional)
             rationale: New durable-value claim (max 500 characters); required when
                 ``content`` is given, optional otherwise
             memory_type: New type (fact, preference, pattern, context)
         """
         try:
+            error = rationale_error(rationale, required=content is not None)
+            if error is None and content is not None:
+                error = content_cap_error(content)
+            if error is not None:
+                return {"success": False, "error": error}
             normalized_rationale = normalize_memory_rationale(rationale)
-            if content is not None and normalized_rationale is None:
-                return {"success": False, "error": RATIONALE_REQUIRED_ERROR}
-            if rationale is not None and normalized_rationale is None:
-                return {"success": False, "error": RATIONALE_REQUIRED_ERROR}
             canonical_memory_type = (
                 validate_memory_type(memory_type) if memory_type is not None else None
             )
@@ -356,6 +416,12 @@ def register_memory_write_tools(
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    _advertise_write_caps(
+        registry,
+        "update_memory",
+        rationale_rule="Required when content is supplied; optional for tags-only or type-only updates.",
+    )
 
     @registry.tool(
         name="delete_memory",

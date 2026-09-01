@@ -1524,7 +1524,7 @@ class TestUpdateMemoryRationale:
         )
 
         assert result["success"] is False
-        assert result["error"].startswith("rationale_required")
+        assert result["error"].startswith("rationale_too_long")
         mock_memory_manager.update_memory_scoped.assert_not_awaited()
 
     @pytest.mark.asyncio

@@ -111,7 +111,7 @@ async def test_create_memory_requires_rationale(mock_memory_manager: MagicMock) 
 
     too_long = await registry.call("create_memory", {**payload, "rationale": "x" * 501})
     assert too_long["success"] is False
-    assert str(too_long["error"]).startswith(_RATIONALE_REQUIRED_PREFIX)
+    assert str(too_long["error"]).startswith("rationale_too_long:")
 
     ephemeral = await registry.call(
         "create_memory",
