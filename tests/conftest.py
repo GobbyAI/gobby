@@ -500,7 +500,9 @@ def sample_git_project(
         github_url="https://github.com/test/test-project",
     )
     assert project is not None
-    return project.to_dict()
+    # Project rows no longer carry repo_path; expose the fixture's checkout root so
+    # tests that run git inside it keep a single source for the path.
+    return {**project.to_dict(), "repo_path": str(repo_path)}
 
 
 @pytest.fixture

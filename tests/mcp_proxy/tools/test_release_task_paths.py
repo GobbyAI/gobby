@@ -15,13 +15,14 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import Project
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.commit_guard import DirtyEditOwnershipInspectionError
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import normalize_task_checkout_root
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -34,6 +35,20 @@ def _local_machine_identity() -> Iterator[None]:
         yield
 
 
+def _checkout_project(temp_db: HubDatabase, repo: Path, name: str) -> Project:
+    """Register `repo` as the local checkout of a new project and commit its marker."""
+    isolated = install_isolated_checkout_project(
+        temp_db, repo, name=name, machine_id=LOCAL_MACHINE_ID
+    )
+    subprocess.run(["git", "add", ".gobby/project.json"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "marker"],
+        cwd=repo,
+        check=True,
+    )
+    return isolated.project
+
+
 @pytest.mark.asyncio
 async def test_release_task_paths_is_owner_only_and_clears_commit_guard_attribution(
     temp_db: HubDatabase,
@@ -42,10 +57,7 @@ async def test_release_task_paths_is_owner_only_and_clears_commit_guard_attribut
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    project = LocalProjectManager(temp_db).create(
-        "release-task-paths-test",
-        repo_path=str(repo),
-    )
+    project = _checkout_project(temp_db, repo, "release-task-paths-test")
     sessions = SessionManager(temp_db)
     owner = sessions.register(
         external_id="release-owner",
@@ -183,10 +195,7 @@ class _Harness:
 
 def _harness(temp_db: HubDatabase, repo: Path) -> _Harness:
     """Owner session with stale (committed) attribution on SHARED_PATH."""
-    project = LocalProjectManager(temp_db).create(
-        "release-dirty-paths-test",
-        repo_path=str(repo),
-    )
+    project = _checkout_project(temp_db, repo, "release-dirty-paths-test")
     sessions = SessionManager(temp_db)
     owner = sessions.register(
         external_id="dirty-release-owner",

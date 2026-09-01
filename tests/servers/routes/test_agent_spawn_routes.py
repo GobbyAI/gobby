@@ -6,6 +6,7 @@ create_http_server() with real managers backed by temp_db.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
@@ -26,6 +27,7 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.state_semantics import current_stage_state
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.definitions import AgentDefinitionBody
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.servers.conftest import StubConfigRuntime, create_http_server
 
 pytestmark = pytest.mark.unit
@@ -67,9 +69,11 @@ def session_manager(temp_db: HubDatabase) -> SessionManager:
 
 
 @pytest.fixture
-def test_project(project_manager: Any) -> Any:
-    """Create a test project for FK constraints."""
-    return project_manager.create(name="spawn-test-proj", repo_path="/tmp/spawn-test")
+def test_project(temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Create a test project with a registered checkout on an isolated machine."""
+    return install_isolated_checkout_project(
+        temp_db, tmp_path / "spawn-test", name="spawn-test-proj", monkeypatch=monkeypatch
+    ).project
 
 
 @pytest.fixture

@@ -1,5 +1,6 @@
 """Tests for expansion QA storage on expansion runs."""
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -10,6 +11,7 @@ from gobby.mcp_proxy.tools.tasks._expansion import create_expansion_registry
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -20,12 +22,10 @@ def task_manager(temp_db: HubDatabase) -> LocalTaskManager:
 
 
 @pytest.fixture
-def test_project(project_manager: Any) -> Any:
-    project = project_manager.create(
-        name="test-project",
-        repo_path="/tmp/test-project",
-    )
-    return project.id
+def test_project(temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    return install_isolated_checkout_project(
+        temp_db, tmp_path / "test-project", name="test-project", monkeypatch=monkeypatch
+    ).project.id
 
 
 @pytest.fixture

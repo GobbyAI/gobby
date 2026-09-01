@@ -26,9 +26,11 @@ from gobby.mcp_proxy.tools.tasks._expansion_runtime import (
     schedule_expansion_run,
 )
 from gobby.storage.expansion_runs import LocalExpansionRunManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
 from tests._timing import drain_asyncio_tasks
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -47,12 +49,14 @@ def task_manager(temp_db):
 
 
 @pytest.fixture
-def test_project(project_manager):
-    project = project_manager.create(
+def test_project(temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    return install_isolated_checkout_project(
+        temp_db,
+        tmp_path / "test-project",
         name="test-project",
-        repo_path="/tmp/test-project",
-    )
-    return project.id
+        machine_id=LOCAL_MACHINE_ID,
+        monkeypatch=monkeypatch,
+    ).project.id
 
 
 @pytest.fixture
