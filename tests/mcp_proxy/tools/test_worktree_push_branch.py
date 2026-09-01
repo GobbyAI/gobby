@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
 from tests.mcp_proxy.tools.git_helpers import GitResult
 
@@ -16,11 +17,12 @@ async def test_push_branch_pushes_worktree_branch_with_force_lease() -> None:
     git_manager = MagicMock()
     git_manager.run_git_command.return_value = GitResult(0, stdout="ok")
     worktree_storage = MagicMock()
+    worktree_storage.resolve_reference.side_effect = lambda ref: ref
     worktree_storage.get.return_value = SimpleNamespace(
         worktree_path="/repo/.worktrees/wt-1",
         branch_name="feature/task",
     )
-    ctx = SimpleNamespace(
+    ctx = RegistryContext(
         worktree_storage=worktree_storage,
         git_manager=git_manager,
         project_id="project-1",
@@ -54,11 +56,12 @@ async def test_push_branch_omits_force_lease_by_default() -> None:
     git_manager = MagicMock()
     git_manager.run_git_command.return_value = GitResult(0, stdout="ok")
     worktree_storage = MagicMock()
+    worktree_storage.resolve_reference.side_effect = lambda ref: ref
     worktree_storage.get.return_value = SimpleNamespace(
         worktree_path="/repo/.worktrees/wt-1",
         branch_name="feature/task",
     )
-    ctx = SimpleNamespace(
+    ctx = RegistryContext(
         worktree_storage=worktree_storage,
         git_manager=git_manager,
         project_id="project-1",
@@ -81,8 +84,9 @@ async def test_push_branch_omits_force_lease_by_default() -> None:
 async def test_push_branch_reports_missing_worktree() -> None:
     git_manager = MagicMock()
     worktree_storage = MagicMock()
+    worktree_storage.resolve_reference.side_effect = lambda ref: ref
     worktree_storage.get.return_value = None
-    ctx = SimpleNamespace(
+    ctx = RegistryContext(
         worktree_storage=worktree_storage,
         git_manager=git_manager,
         project_id="project-1",
@@ -99,11 +103,12 @@ async def test_push_branch_returns_push_failure() -> None:
     git_manager = MagicMock()
     git_manager.run_git_command.return_value = GitResult(1, stderr="rejected")
     worktree_storage = MagicMock()
+    worktree_storage.resolve_reference.side_effect = lambda ref: ref
     worktree_storage.get.return_value = SimpleNamespace(
         worktree_path="/repo/.worktrees/wt-1",
         branch_name="feature/task",
     )
-    ctx = SimpleNamespace(
+    ctx = RegistryContext(
         worktree_storage=worktree_storage,
         git_manager=git_manager,
         project_id="project-1",
@@ -124,11 +129,12 @@ async def test_push_branch_uses_custom_remote_and_source_branch() -> None:
     git_manager = MagicMock()
     git_manager.run_git_command.return_value = GitResult(0, stdout="ok")
     worktree_storage = MagicMock()
+    worktree_storage.resolve_reference.side_effect = lambda ref: ref
     worktree_storage.get.return_value = SimpleNamespace(
         worktree_path="/repo/.worktrees/wt-1",
         branch_name="feature/task",
     )
-    ctx = SimpleNamespace(
+    ctx = RegistryContext(
         worktree_storage=worktree_storage,
         git_manager=git_manager,
         project_id="project-1",

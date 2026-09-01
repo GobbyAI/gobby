@@ -47,13 +47,14 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         """Claim a worktree for an agent session.
 
         Args:
-            worktree_id: The worktree ID to claim.
+            worktree_id: The worktree ID to claim (full UUID or unique id prefix).
             session_id: Session reference (accepts #N, N, UUID, or prefix) claiming ownership.
 
         Returns:
             Dict with success status.
         """
         try:
+            worktree_id = ctx.resolve_worktree_id(worktree_id)
             resolved_session_id = ctx.resolve_session_id(session_id)
         except ValueError as e:
             return {"success": False, "error": str(e)}
@@ -91,11 +92,15 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         """Release a worktree from its current owner.
 
         Args:
-            worktree_id: The worktree ID to release.
+            worktree_id: The worktree ID to release (full UUID or unique id prefix).
 
         Returns:
             Dict with success status.
         """
+        try:
+            worktree_id = ctx.resolve_worktree_id(worktree_id)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         worktree = ctx.worktree_storage.get(worktree_id)
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
@@ -131,7 +136,8 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         Do NOT manually run `git worktree remove` - use this tool instead.
 
         Args:
-            worktree_id: The registered worktree ID (uuid) to delete.
+            worktree_id: The registered worktree ID (full UUID or unique id prefix)
+                to delete.
             worktree_path: An existing linked worktree path to adopt and delete.
             force: Force deletion even if there are uncommitted changes.
             force_delete_branch: Force-delete the branch even if it is unmerged.
@@ -145,6 +151,11 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "success": False,
                 "error": "Provide exactly one of worktree_id or worktree_path",
             }
+        if worktree_id is not None:
+            try:
+                worktree_id = ctx.resolve_worktree_id(worktree_id)
+            except ValueError as e:
+                return {"success": False, "error": str(e)}
 
         force = force in (True, "true", "True", "1") if isinstance(force, str) else force
         force_delete_branch = (
@@ -284,11 +295,15 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         """Mark a worktree as merged.
 
         Args:
-            worktree_id: The worktree ID to mark.
+            worktree_id: The worktree ID to mark (full UUID or unique id prefix).
 
         Returns:
             Dict with success status.
         """
+        try:
+            worktree_id = ctx.resolve_worktree_id(worktree_id)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         worktree = ctx.worktree_storage.get(worktree_id)
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
@@ -324,11 +339,15 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         """Mark a worktree as abandoned.
 
         Args:
-            worktree_id: The worktree ID to abandon.
+            worktree_id: The worktree ID to abandon (full UUID or unique id prefix).
 
         Returns:
             Dict with success status.
         """
+        try:
+            worktree_id = ctx.resolve_worktree_id(worktree_id)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         worktree = ctx.worktree_storage.get(worktree_id)
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
@@ -347,11 +366,15 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         """Reactivate a worktree.
 
         Args:
-            worktree_id: The worktree ID to reactivate.
+            worktree_id: The worktree ID to reactivate (full UUID or unique id prefix).
 
         Returns:
             Dict with success status.
         """
+        try:
+            worktree_id = ctx.resolve_worktree_id(worktree_id)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         worktree = ctx.worktree_storage.get(worktree_id)
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
@@ -378,12 +401,16 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         """Link a task to a worktree.
 
         Args:
-            worktree_id: The worktree ID.
+            worktree_id: The worktree ID (full UUID or unique id prefix).
             task_id: The task ID to link.
 
         Returns:
             Dict with success status.
         """
+        try:
+            worktree_id = ctx.resolve_worktree_id(worktree_id)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         worktree = ctx.worktree_storage.get(worktree_id)
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}

@@ -76,7 +76,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         """Sync a worktree with the main branch.
 
         Args:
-            worktree_id: The worktree ID to sync.
+            worktree_id: The worktree ID to sync (full UUID or unique id prefix).
             strategy: Sync strategy ('merge' or 'rebase').
             source_branch: Explicit source branch/ref to sync from. Defaults to the
                 worktree's stored base_branch.
@@ -97,6 +97,10 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "error": "Git manager not configured and no project_path provided.",
             }
 
+        try:
+            worktree_id = ctx.resolve_worktree_id(worktree_id)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         worktree = ctx.worktree_storage.get(worktree_id)
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
@@ -150,7 +154,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         delivery path, not worktree merge automation.
 
         Args:
-            worktree_id: The worktree ID to merge.
+            worktree_id: The worktree ID to merge (full UUID or unique id prefix).
             source_branch: Agent's working branch (defaults to worktree's branch_name).
             target_branch: Branch to merge into (defaults to worktree's base_branch).
             push: Unsupported. Worktree merge never pushes to remote.
@@ -168,6 +172,10 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if resolved_git_mgr is None:
             return {"success": False, "error": "Git manager not available"}
 
+        try:
+            worktree_id = ctx.resolve_worktree_id(worktree_id)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         worktree = ctx.worktree_storage.get(worktree_id)
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
@@ -857,7 +865,10 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         force_with_lease: bool = False,
         project_path: str | None = None,
     ) -> dict[str, Any]:
-        """Push a branch from the isolated worktree."""
+        """Push a branch from the isolated worktree.
+
+        ``worktree_id`` is a full UUID or a unique id prefix.
+        """
         resolved_git_mgr, _, error = resolve_project_context(
             project_path, ctx.git_manager, ctx.project_id
         )
@@ -866,6 +877,10 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if resolved_git_mgr is None:
             return {"success": False, "error": "Git manager not available"}
 
+        try:
+            worktree_id = ctx.resolve_worktree_id(worktree_id)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         worktree = ctx.worktree_storage.get(worktree_id)
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}

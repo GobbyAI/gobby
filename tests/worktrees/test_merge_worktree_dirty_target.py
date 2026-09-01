@@ -50,6 +50,7 @@ def _repo_with_feature(tmp_path: Path) -> tuple[Path, Path, WorktreeGitManager, 
         git_manager=git_manager,
         project_id="test-project",
     )
+    ctx.resolve_worktree_id.side_effect = lambda ref: ref
     ctx.worktree_storage.get.return_value = worktree
     return repo, source_path, git_manager, ctx
 

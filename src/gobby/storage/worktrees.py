@@ -20,8 +20,13 @@ from gobby.storage.workspace_machine_scope import (
 )
 from gobby.utils.datetime import normalize_datetime_model, utc_now
 from gobby.utils.machine_id import require_machine_id
+from gobby.utils.uuid_validation import parse_uuid_reference
 
 logger = logging.getLogger(__name__)
+
+
+def _escape_like_prefix(prefix: str) -> str:
+    return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class WorktreeStatus(str, Enum):
@@ -203,6 +208,40 @@ class LocalWorktreeManager:
             merged_at=None,
             workspace_role=workspace_role,
         )
+
+    def resolve_reference(self, ref: str) -> str:
+        """Resolve a worktree reference (full UUID or unique id prefix) to its UUID.
+
+        A full UUID is returned canonicalised without a lookup so ``get`` keeps
+        owning the not-found and foreign-machine outcomes. Anything else is an
+        id prefix: exactly one match resolves, more than one is ambiguous, and
+        no match -- including text that is not a UUID at all -- is not found.
+        The prefix never reaches the uuid column, so psycopg's
+        ``invalid input syntax for type uuid`` cannot surface.
+
+        Raises:
+            ValueError: If the reference is ambiguous or matches no worktree.
+        """
+        ref = ref.strip()
+        uuid_obj = parse_uuid_reference(ref)
+        if uuid_obj is not None:
+            return str(uuid_obj)
+        if not ref:
+            raise ValueError(f"Worktree '{ref}' not found")
+
+        rows = self.db.fetchall(
+            "SELECT id FROM worktrees WHERE id::text LIKE %s ESCAPE '\\' ORDER BY id LIMIT 2",
+            (f"{_escape_like_prefix(ref)}%",),
+        )
+        if len(rows) > 1:
+            matches = ", ".join(str(row["id"]) for row in rows)
+            raise ValueError(
+                f"Ambiguous worktree reference '{ref}' matches: {matches}. "
+                "Pass the full worktree UUID to disambiguate."
+            )
+        if not rows:
+            raise ValueError(f"Worktree '{ref}' not found")
+        return str(rows[0]["id"])
 
     def get(self, worktree_id: str) -> Worktree | None:
         """Get worktree by ID."""

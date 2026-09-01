@@ -36,11 +36,15 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         """Get worktree details by ID.
 
         Args:
-            worktree_id: The worktree ID.
+            worktree_id: The worktree ID (full UUID or unique id prefix).
 
         Returns:
             Dict with full worktree details.
         """
+        try:
+            worktree_id = ctx.resolve_worktree_id(worktree_id)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         worktree = ctx.worktree_storage.get(worktree_id)
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}

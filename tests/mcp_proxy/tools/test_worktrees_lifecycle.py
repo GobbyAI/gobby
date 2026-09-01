@@ -35,7 +35,9 @@ def _detached_worktree() -> Worktree:
 
 @pytest.fixture
 def mock_worktree_storage():
-    return MagicMock()
+    storage = MagicMock()
+    storage.resolve_reference.side_effect = lambda ref: ref
+    return storage
 
 
 @pytest.fixture
@@ -126,7 +128,7 @@ def _local_merge_git_side_effect(
             return MagicMock(returncode=0, stdout="", stderr="")
         if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
             return MagicMock(returncode=0, stdout=current, stderr="")
-        if args == ["rev-parse", "HEAD"]:
+        if args in (["rev-parse", "HEAD"], ["rev-parse", f"refs/heads/{target}"]):
             return MagicMock(returncode=0, stdout="abc123def456\n", stderr="")
         if args == ["stash", "list"]:
             stash_list_calls += 1
