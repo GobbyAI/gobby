@@ -43,12 +43,29 @@ _GOBBY_HOOK_TYPES = list(CLAUDE_PASCAL_HOOK_NAMES)
 
 
 _STATUSLINE_GHOOK_MARKER = "--gobby-owned --cli=claude --type=statusline"
+_STATUSLINE_LEGACY_MARKER = ".gobby/hooks/statusline_handler.py"
+_STATUSLINE_UNWRAP_LIMIT = 8
 _AUTO_MEMORY_PROVENANCE_FILENAME = ".gobby-auto-memory.json"
 
 
 def _is_gobby_statusline_command(command: str) -> bool:
     """Return whether a statusLine command belongs to Gobby."""
     return _STATUSLINE_GHOOK_MARKER in command
+
+
+def _unwrap_legacy_statusline(downstream: str | None) -> str | None:
+    """Drop retired Gobby-owned Python statusline layers, keeping their downstream.
+
+    The Python handler and the daemon endpoint it posted to are both gone, but
+    installs predating the ghook migration still carry it as the wrapped
+    downstream. It is provably ours, so collapse it instead of re-preserving a
+    dead subprocess on every statusline tick.
+    """
+    for _ in range(_STATUSLINE_UNWRAP_LIMIT):
+        if not downstream or _STATUSLINE_LEGACY_MARKER not in downstream:
+            return downstream
+        downstream = _extract_downstream(downstream)
+    return None
 
 
 def _with_statusline_downstream(command: str, downstream: str | None) -> str:
@@ -92,7 +109,7 @@ def _configure_statusline(settings: dict[str, Any], hooks_dir: Path) -> None:
 
     settings["statusLine"] = {
         "type": "command",
-        "command": _build_statusline_command(downstream),
+        "command": _build_statusline_command(_unwrap_legacy_statusline(downstream)),
     }
 
 
@@ -145,7 +162,7 @@ def _restore_statusline(settings: dict[str, Any]) -> None:
     if not _is_gobby_statusline_command(cmd):
         return  # Not ours
 
-    downstream = _extract_downstream(cmd)
+    downstream = _unwrap_legacy_statusline(_extract_downstream(cmd))
     if downstream:
         settings["statusLine"] = {"type": "command", "command": downstream}
     else:

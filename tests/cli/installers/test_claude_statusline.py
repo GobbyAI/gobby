@@ -7,9 +7,11 @@ import pytest
 
 from gobby.cli.installers.claude import (
     _STATUSLINE_GHOOK_MARKER,
+    _STATUSLINE_UNWRAP_LIMIT,
     _configure_statusline,
     _extract_downstream,
     _restore_statusline,
+    _unwrap_legacy_statusline,
 )
 
 pytestmark = pytest.mark.unit
@@ -109,6 +111,65 @@ class TestConfigureStatusline:
         cmd = settings["statusLine"]["command"]
         assert _STATUSLINE_GHOOK_MARKER in cmd
         assert _extract_downstream(cmd) == "cship --color"
+
+    def test_collapses_legacy_python_layer_to_real_display_command(self, tmp_path: Path) -> None:
+        """A pre-ghook install wrapped the retired Python handler as a foreign downstream."""
+        settings: dict[str, Any] = {
+            "statusLine": {
+                "type": "command",
+                "command": (
+                    "GOBBY_STATUSLINE_DOWNSTREAM='cship' "
+                    "python3 /home/u/.gobby/hooks/statusline_handler.py"
+                ),
+            }
+        }
+        hooks_dir = tmp_path / "hooks"
+        hooks_dir.mkdir()
+
+        _configure_statusline(settings, hooks_dir)
+
+        cmd = settings["statusLine"]["command"]
+        assert _STATUSLINE_GHOOK_MARKER in cmd
+        assert _extract_downstream(cmd) == "cship"
+        assert "statusline_handler.py" not in cmd
+
+    def test_collapses_legacy_python_layer_already_wrapped_by_ghook(self, tmp_path: Path) -> None:
+        settings: dict[str, Any] = {
+            "statusLine": {
+                "type": "command",
+                "command": (
+                    "GOBBY_STATUSLINE_DOWNSTREAM="
+                    "'GOBBY_STATUSLINE_DOWNSTREAM='\\''cship'\\'' "
+                    "python3 /home/u/.gobby/hooks/statusline_handler.py' "
+                    "/path/ghook --gobby-owned --cli=claude --type=statusline"
+                ),
+            }
+        }
+        hooks_dir = tmp_path / "hooks"
+        hooks_dir.mkdir()
+
+        _configure_statusline(settings, hooks_dir)
+
+        cmd = settings["statusLine"]["command"]
+        assert _STATUSLINE_GHOOK_MARKER in cmd
+        assert _extract_downstream(cmd) == "cship"
+        assert "statusline_handler.py" not in cmd
+
+    def test_drops_legacy_python_layer_with_no_display_command(self, tmp_path: Path) -> None:
+        settings: dict[str, Any] = {
+            "statusLine": {
+                "type": "command",
+                "command": "python3 /home/u/.gobby/hooks/statusline_handler.py",
+            }
+        }
+        hooks_dir = tmp_path / "hooks"
+        hooks_dir.mkdir()
+
+        _configure_statusline(settings, hooks_dir)
+
+        cmd = settings["statusLine"]["command"]
+        assert _STATUSLINE_GHOOK_MARKER in cmd
+        assert "GOBBY_STATUSLINE_DOWNSTREAM" not in cmd
 
     def test_handles_string_statusline(self, tmp_path: Path) -> None:
         settings: dict[str, Any] = {"statusLine": "some-command --flag"}
@@ -222,3 +283,72 @@ class TestRestoreStatusline:
         settings: dict[str, Any] = {}
         _restore_statusline(settings)
         assert "statusLine" not in settings
+
+    def test_restores_display_command_behind_legacy_python_layer(self) -> None:
+        settings: dict[str, Any] = {
+            "statusLine": {
+                "type": "command",
+                "command": (
+                    "GOBBY_STATUSLINE_DOWNSTREAM="
+                    "'GOBBY_STATUSLINE_DOWNSTREAM='\\''cship'\\'' "
+                    "python3 /home/u/.gobby/hooks/statusline_handler.py' "
+                    "/path/ghook --gobby-owned --cli=claude --type=statusline"
+                ),
+            }
+        }
+
+        _restore_statusline(settings)
+
+        assert settings["statusLine"] == {"type": "command", "command": "cship"}
+
+    def test_removes_when_legacy_python_layer_has_no_downstream(self) -> None:
+        settings: dict[str, Any] = {
+            "statusLine": {
+                "type": "command",
+                "command": (
+                    "GOBBY_STATUSLINE_DOWNSTREAM="
+                    "'python3 /home/u/.gobby/hooks/statusline_handler.py' "
+                    "/path/ghook --gobby-owned --cli=claude --type=statusline"
+                ),
+            }
+        }
+
+        _restore_statusline(settings)
+
+        assert "statusLine" not in settings
+
+
+class TestUnwrapLegacyStatusline:
+    """Tests for _unwrap_legacy_statusline."""
+
+    def test_returns_none_for_missing_downstream(self) -> None:
+        assert _unwrap_legacy_statusline(None) is None
+
+    def test_preserves_foreign_downstream_byte_for_byte(self) -> None:
+        downstream = "cship --color --theme=dark"
+        assert _unwrap_legacy_statusline(downstream) == downstream
+
+    def test_collapses_nested_legacy_layers(self) -> None:
+        downstream = (
+            "GOBBY_STATUSLINE_DOWNSTREAM="
+            "'GOBBY_STATUSLINE_DOWNSTREAM='\\''cship'\\'' "
+            "python3 /home/u/.gobby/hooks/statusline_handler.py' "
+            "python3 /home/u/.gobby/hooks/statusline_handler.py"
+        )
+
+        assert _unwrap_legacy_statusline(downstream) == "cship"
+
+    def test_returns_none_for_legacy_layer_without_downstream(self) -> None:
+        downstream = "python3 /home/u/.gobby/hooks/statusline_handler.py"
+        assert _unwrap_legacy_statusline(downstream) is None
+
+    def test_gives_up_on_pathological_nesting(self) -> None:
+        downstream = "python3 /home/u/.gobby/hooks/statusline_handler.py"
+        for _ in range(_STATUSLINE_UNWRAP_LIMIT + 1):
+            quoted = "'" + downstream.replace("'", "'\\''") + "'"
+            downstream = (
+                f"GOBBY_STATUSLINE_DOWNSTREAM={quoted} "
+                "python3 /home/u/.gobby/hooks/statusline_handler.py"
+            )
+
+        assert _unwrap_legacy_statusline(downstream) is None
