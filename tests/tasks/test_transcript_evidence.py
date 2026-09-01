@@ -576,6 +576,209 @@ Failures:
     assert result.red_runs == (rewritten,)
 
 
+async def _derive_claude_tdd_cycle(
+    tmp_path: Path,
+    *,
+    red_command: str,
+    red_output: str,
+    green_command: str,
+) -> TranscriptEvidence:
+    test_path = "tests/hooks/test_session_coordinator.py"
+    source_path = "src/gobby/hooks/session_coordinator.py"
+    transcript = tmp_path / "claude-tdd.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            {
+                "type": "assistant",
+                "timestamp": BASE_TIME.isoformat(),
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "test-edit",
+                            "name": "Edit",
+                            "input": {"file_path": str(tmp_path / test_path)},
+                        }
+                    ],
+                },
+            },
+            *_claude_tool_pair(
+                command=red_command,
+                call_id="red-run",
+                start=BASE_TIME + timedelta(seconds=1),
+                result={"exit_code": 1, "stdout": red_output},
+                is_error=True,
+            ),
+            {
+                "type": "assistant",
+                "timestamp": (BASE_TIME + timedelta(seconds=3)).isoformat(),
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "source-edit",
+                            "name": "Edit",
+                            "input": {"file_path": str(tmp_path / source_path)},
+                        }
+                    ],
+                },
+            },
+            *_claude_tool_pair(
+                command=green_command,
+                call_id="green-run",
+                start=BASE_TIME + timedelta(seconds=4),
+                result={"exit_code": 0, "stdout": "Pytest: 1 passed"},
+            ),
+        ],
+    )
+    return await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {test_path, source_path},
+        str(tmp_path),
+    )
+
+
+@pytest.mark.parametrize(
+    "method,red_output",
+    [
+        pytest.param(
+            "test_activity_via_helper",
+            """\
+________ TestAgentRunCompletion.test_activity_via_helper ________
+    def test_activity_via_helper() -> None:
+>       _helper()
+/deleted/worktree/tests/hooks/test_session_coordinator.py:606:
+    def _helper() -> None:
+>       raise TypeError("unexpected keyword argument 'transcript_reader'")
+E       TypeError: unexpected keyword argument 'transcript_reader'
+/deleted/worktree/tests/hooks/test_session_coordinator.py:590: TypeError
+=========================== short test summary info ============================
+FAILED tests/hooks/test_session_coordinator.py::TestAgentRunCompletion::test_activity_via_helper
+""",
+            id="helper-raised-type-error",
+        ),
+        pytest.param(
+            "test_activity_direct",
+            """\
+__________ TestAgentRunCompletion.test_activity_direct __________
+    def test_activity_direct() -> None:
+>       raise TypeError("direct")
+E       TypeError: direct
+/deleted/worktree/tests/hooks/test_session_coordinator.py:620: TypeError
+=========================== short test summary info ============================
+FAILED tests/hooks/test_session_coordinator.py::TestAgentRunCompletion::test_activity_direct
+""",
+            id="direct-type-error",
+        ),
+    ],
+)
+async def test_claude_tdd_gate_accepts_default_pytest_test_body_exception(
+    tmp_path: Path,
+    method: str,
+    red_output: str,
+) -> None:
+    test_path = "tests/hooks/test_session_coordinator.py"
+    source_path = "src/gobby/hooks/session_coordinator.py"
+    node_id = f"{test_path}::TestAgentRunCompletion::{method}"
+    command = f"uv run pytest {node_id} -q"
+    evidence = await _derive_claude_tdd_cycle(
+        tmp_path,
+        red_command=command,
+        red_output=red_output,
+        green_command=command,
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::TestAgentRunCompletion",
+        path=test_path,
+        symbol="TestAgentRunCompletion",
+        body="class TestAgentRunCompletion: ...",
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    test_edit = next(edit for edit in evidence.edits if edit.path == test_path)
+    source_edit = next(edit for edit in evidence.edits if edit.path == source_path)
+    red = next(run for run in evidence.validation_runs if run.outcome == "failure")
+    green = next(run for run in evidence.validation_runs if run.outcome == "success")
+
+    assert test_edit.order < red.order < source_edit.order < green.order
+    assert result.passed is True, result
+    assert result.red_runs == (command,)
+
+
+async def test_tdd_gate_does_not_borrow_default_pytest_exception_from_sibling_test(
+    tmp_path: Path,
+) -> None:
+    test_path = "tests/hooks/test_session_coordinator.py"
+    target = f"{test_path}::TestAgentRunCompletion::test_target"
+    sibling = f"{test_path}::TestOther::test_sibling"
+    command = f"uv run pytest {target} {sibling} -q"
+    sibling_output = """\
+________________________ TestOther.test_sibling _________________________
+    def test_sibling() -> None:
+>       raise TypeError("sibling")
+E       TypeError: sibling
+/deleted/worktree/tests/hooks/test_session_coordinator.py:700: TypeError
+=========================== short test summary info ============================
+FAILED tests/hooks/test_session_coordinator.py::TestOther::test_sibling
+"""
+    test = AcceptanceTest(
+        reference=f"{test_path}::TestAgentRunCompletion",
+        path=test_path,
+        symbol="TestAgentRunCompletion",
+        body="class TestAgentRunCompletion: ...",
+    )
+    evidence = await _derive_claude_tdd_cycle(
+        tmp_path,
+        red_command=command,
+        red_output=sibling_output,
+        green_command=f"uv run pytest {target} -q",
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is False
+    assert result.red_runs == ()
+
+
+async def test_tdd_gate_attributes_unqualified_header_among_multiple_selected_tests(
+    tmp_path: Path,
+) -> None:
+    test_path = "tests/hooks/test_session_coordinator.py"
+    target = f"{test_path}::test_target"
+    sibling = f"{test_path}::test_sibling"
+    command = f"uv run pytest {target} {sibling} -q"
+    target_output = """\
+______________________________ test_target ______________________________
+    def test_target() -> None:
+>       raise TypeError("target")
+E       TypeError: target
+/deleted/worktree/tests/hooks/test_session_coordinator.py:710: TypeError
+=========================== short test summary info ============================
+FAILED tests/hooks/test_session_coordinator.py::test_target
+"""
+    test = AcceptanceTest(
+        reference=target,
+        path=test_path,
+        symbol="test_target",
+        body="def test_target(): ...",
+    )
+    evidence = await _derive_claude_tdd_cycle(
+        tmp_path,
+        red_command=command,
+        red_output=target_output,
+        green_command=f"uv run pytest {target} -q",
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is True, result
+    assert result.red_runs == (command,)
+
+
 @pytest.mark.asyncio
 async def test_codex_compound_timeout_preserves_completed_segment_outcomes(
     tmp_path: Path,

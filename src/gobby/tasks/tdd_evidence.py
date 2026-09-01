@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -23,8 +24,10 @@ _ASSERTION_DETAIL_RE = re.compile(
     r"AssertionError|assertion failed|\bassert\b|panicked at",
     re.IGNORECASE,
 )
-_PYTEST_BODY_FRAME_RE = re.compile(
-    r"^\s*(?P<path>\S+\.py):\d+: in (?P<symbol>[A-Za-z_][A-Za-z0-9_]*(?:\.\.\.)?)\s*$"
+_PYTEST_FAILURE_HEADER_RE = re.compile(r"^_{2,}\s+(?P<name>\S+)\s+_{2,}\s*$")
+_PYTEST_LOCATION_RE = re.compile(
+    r"^\s*(?P<path>\S+\.py):\d+:"
+    r"(?: in (?P<symbol>\S+)| [A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception))?\s*$"
 )
 _PYTHON_EXCEPTION_DETAIL_RE = re.compile(
     r"^\s*E\s+(?:[A-Za-z_][A-Za-z0-9_.]*)(?:Error|Exception):",
@@ -234,7 +237,9 @@ def _find_red_run(
 def _has_named_red_failure(command: str, output: str | None, test: AcceptanceTest) -> bool:
     if not output:
         return False
-    if validation_run_names_test(command, None, test) and _has_pytest_body_failure(output, test):
+    if validation_run_names_test(command, None, test) and _has_pytest_body_failure(
+        command, output, test
+    ):
         return True
     symbols = (
         test.symbol,
@@ -256,30 +261,112 @@ def _has_named_red_failure(command: str, output: str | None, test: AcceptanceTes
     return False
 
 
-def _has_pytest_body_failure(output: str, test: AcceptanceTest) -> bool:
+def _has_pytest_body_failure(command: str, output: str, test: AcceptanceTest) -> bool:
     """Recognize a failure raised from a targeted pytest body, including RTK summaries."""
     if not is_assertion_failure(output):
         return False
-    expected_symbol = test.symbol.replace("::", ".").rsplit(".", maxsplit=1)[-1]
-    expected_is_method = expected_symbol.startswith("test_")
-    expected_path_parts = PurePosixPath(test.path).parts
+    artifact_nodes, same_file_nodes = _selected_pytest_nodes(command, test)
+    if not artifact_nodes:
+        return False
     lines = output.splitlines()
     for index, line in enumerate(lines):
-        match = _PYTEST_BODY_FRAME_RE.match(line)
-        if match is None:
-            continue
-        reported_path_parts = PurePosixPath(match.group("path")).parts
-        if reported_path_parts[-len(expected_path_parts) :] != expected_path_parts:
-            continue
-        reported_symbol = match.group("symbol").removesuffix("...")
-        if expected_is_method and not expected_symbol.startswith(reported_symbol):
-            continue
-        if not expected_is_method and not reported_symbol.startswith("test_"):
+        header = _PYTEST_FAILURE_HEADER_RE.match(line)
+        if header is None or not _selected_node_matches(
+            header.group("name"), artifact_nodes, same_file_nodes
+        ):
             continue
         section = _failure_section(lines, index)
-        if _ASSERTION_DETAIL_RE.search(section) or _PYTHON_EXCEPTION_DETAIL_RE.search(section):
+        if _section_has_artifact_location(section, test) and _section_has_failure_detail(section):
+            return True
+    for index, line in enumerate(lines):
+        match = _PYTEST_LOCATION_RE.match(line)
+        if match is None:
+            continue
+        reported_symbol = match.group("symbol")
+        if (
+            reported_symbol is None
+            or not _path_matches_artifact(match.group("path"), test)
+            or not _selected_node_matches(reported_symbol, artifact_nodes, same_file_nodes)
+        ):
+            continue
+        section = _failure_section(lines, index)
+        if _section_has_failure_detail(section):
             return True
     return False
+
+
+def _selected_pytest_nodes(
+    command: str,
+    test: AcceptanceTest,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return (), ()
+    artifact_name = test.symbol.replace("::", ".")
+    artifact_nodes: list[str] = []
+    same_file_nodes: list[str] = []
+    for token in tokens:
+        node_path, separator, node_name = token.partition("::")
+        if not separator or not _path_matches_artifact(node_path, test):
+            continue
+        normalized_name = node_name.replace("::", ".").split("[", maxsplit=1)[0]
+        same_file_nodes.append(normalized_name)
+        if normalized_name == artifact_name or normalized_name.startswith(f"{artifact_name}."):
+            artifact_nodes.append(normalized_name)
+    return tuple(dict.fromkeys(artifact_nodes)), tuple(dict.fromkeys(same_file_nodes))
+
+
+def _selected_node_matches(
+    reported: str,
+    artifact_nodes: tuple[str, ...],
+    same_file_nodes: tuple[str, ...],
+) -> bool:
+    reported = reported.split("[", maxsplit=1)[0]
+    truncated = reported.endswith("...")
+    if truncated:
+        reported = reported.removesuffix("...")
+    if "." in reported:
+        for node in artifact_nodes:
+            if (truncated and node.startswith(reported)) or node == reported:
+                return True
+            if node.rsplit(".", maxsplit=1)[-1].startswith("Test") and reported.startswith(
+                f"{node}."
+            ):
+                return True
+        return False
+    matching_nodes = tuple(
+        node for node in same_file_nodes if _node_leaf_matches(node, reported, truncated=truncated)
+    )
+    if len(matching_nodes) == 1:
+        return matching_nodes[0] in artifact_nodes
+    if len(same_file_nodes) == 1 and artifact_nodes[0].rsplit(".", maxsplit=1)[-1].startswith(
+        "Test"
+    ):
+        return reported.startswith("test_")
+    return False
+
+
+def _node_leaf_matches(node: str, reported: str, *, truncated: bool) -> bool:
+    leaf = node.rsplit(".", maxsplit=1)[-1]
+    return leaf.startswith(reported) if truncated else leaf == reported
+
+
+def _section_has_artifact_location(section: str, test: AcceptanceTest) -> bool:
+    return any(
+        match is not None and _path_matches_artifact(match.group("path"), test)
+        for match in (_PYTEST_LOCATION_RE.match(line) for line in section.splitlines())
+    )
+
+
+def _section_has_failure_detail(section: str) -> bool:
+    return bool(_ASSERTION_DETAIL_RE.search(section) or _PYTHON_EXCEPTION_DETAIL_RE.search(section))
+
+
+def _path_matches_artifact(path: str, test: AcceptanceTest) -> bool:
+    expected_parts = PurePosixPath(test.path).parts
+    reported_parts = PurePosixPath(path).parts
+    return reported_parts[-len(expected_parts) :] == expected_parts
 
 
 def _failure_section(lines: list[str], start: int) -> str:
