@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import ast
+import functools
 import json
 import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -12,9 +14,11 @@ import pytest
 from psycopg import sql
 from psycopg.rows import dict_row
 
+import gobby.cli.project_checkout_cutover as executor_module
 import gobby.storage.project_checkout_cutover as cutover
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
+from gobby.storage.maintenance_epoch import DestructiveBatch, MaintenanceEpoch
 from gobby.storage.project_checkout_cutover import preflight_project_checkout_cutover
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.projects import (
@@ -1188,7 +1192,44 @@ def test_v417_hub_stamps_shadowed_migration_after_campaign_apply(
             is None
         )
 
-    apply_schema(predecessor_database, schema=_search_path_schema(predecessor_database))
+    # Drive the real executor: only the hub binding and the schema scope are
+    # redirected at the isolated test schema; apply_schema/verify_schema run gdaemon.
+    now = datetime(2026, 8, 31, tzinfo=UTC)
+    epoch = MaintenanceEpoch(
+        id=epoch_id,
+        campaign=cutover.PROJECT_CHECKOUT_CUTOVER_CAMPAIGN,
+        opened_at=now,
+        opened_by="test",
+        scope_note="test",
+        released_at=None,
+        released_by_command=None,
+    )
+    batch = DestructiveBatch(
+        id=batch_id,
+        maintenance_epoch_id=epoch_id,
+        campaign=cutover.PROJECT_CHECKOUT_CUTOVER_CAMPAIGN,
+        status="applied",
+        intent={},
+        migration_plan=[],
+        target_receipts={},
+        backup_manifest_path=None,
+        backup_manifest_sha256=None,
+        verified_at=None,
+        aborted_at=None,
+        abort_disposition=None,
+        created_at=now,
+        updated_at=now,
+    )
+    monkeypatch.setattr(
+        executor_module, "_bound_database_url", lambda _epoch_id: predecessor_database
+    )
+    monkeypatch.setattr(executor_module, "_target_checksum", lambda: target_checksum)
+    monkeypatch.setattr(
+        executor_module,
+        "apply_schema",
+        functools.partial(apply_schema, schema=_search_path_schema(predecessor_database)),
+    )
+    executor_module.ProjectCheckoutCutoverExecutor().verify(epoch, batch)
 
     with psycopg.connect(predecessor_database, autocommit=True, row_factory=dict_row) as connection:
         assert connection.execute(
