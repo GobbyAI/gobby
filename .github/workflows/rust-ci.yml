@@ -93,13 +93,7 @@ jobs:
       - name: Test (ghook)
         run: cargo nextest run --profile ci -p gobby-hooks
 
-      - name: Test (ghook, no default features)
-        run: cargo nextest run --profile ci -p gobby-hooks --no-default-features
-
-      - name: Clippy (ghook, no default features)
-        run: cargo clippy -p gobby-hooks --all-targets --no-default-features -- -D warnings
-
-      # gwiki: default checks include documents/pdfium; no-default-features covers degraded storage path
+      # gwiki: default checks include documents/pdfium
       - name: Clippy (gwiki)
         run: cargo clippy -p gobby-wiki --all-targets -- -D warnings
 
@@ -112,21 +106,12 @@ jobs:
           emitted_mermaid_blocks_pass_real_mermaid_parser
           -- --ignored --nocapture
 
-      - name: Clippy (gwiki, no default features)
-        run: cargo clippy -p gobby-wiki --all-targets --no-default-features -- -D warnings
+      # gcode: full clippy + tests
+      - name: Clippy (gcode)
+        run: cargo clippy -p gobby-code --all-targets -- -D warnings
 
-      - name: Test (gwiki, no default features)
-        run: cargo nextest run --profile ci -p gobby-wiki --no-default-features
-
-      # gcode: clippy + tests without embeddings (Linux CI has no cmake/Metal)
-      - name: Clippy (gcode, no embeddings)
-        run: cargo clippy -p gobby-code --all-targets --no-default-features -- -D warnings
-
-      - name: Test (gcode, no embeddings)
-        run: cargo nextest run --profile ci -p gobby-code --no-default-features
-
-      - name: Test (gcode effective_config with ai)
-        run: cargo nextest run --profile ci -p gobby-code --features ai --test effective_config
+      - name: Test (gcode)
+        run: cargo nextest run --profile ci -p gobby-code
 
       # gobby-daemon: schema CLI (release workflow is also a rust-ci path trigger)
       - name: Clippy (gobby-daemon)
@@ -167,14 +152,14 @@ jobs:
           rustup target add x86_64-pc-windows-msvc
           cargo clippy -p gobby-terminal --target x86_64-pc-windows-msvc --features vt-engine --all-targets -- -D warnings
 
-      - name: Test workspace (no default features)
-        run: cargo nextest run --profile ci --workspace --no-default-features
+      - name: Test workspace
+        run: cargo nextest run --profile ci --workspace
 
-      - name: Test doctests (workspace, no default features)
-        run: cargo test --doc --workspace --no-default-features
+      - name: Test doctests (workspace)
+        run: cargo test --doc --workspace
 
-      - name: Build workspace (without embeddings)
-        run: cargo build --workspace --no-default-features
+      - name: Build workspace
+        run: cargo build --workspace
 
   # PostgreSQL-backed Rust tests: gcore schema authority and the gcode DB
   # suites. gcode always runs under the daemon's grant; the test_env fixture
@@ -311,7 +296,7 @@ jobs:
       - name: Generate LCOV report
         run: |
           cargo llvm-cov clean --workspace
-          cargo llvm-cov --no-report nextest --workspace --no-default-features --profile ci
+          cargo llvm-cov --no-report nextest --workspace --profile ci
           cargo llvm-cov report --lcov --output-path lcov.info
 
       - name: Upload LCOV artifact

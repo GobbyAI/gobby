@@ -11,9 +11,7 @@ fn release_workflow_builds_publishes_and_packages_gdaemon() {
     for required in [
         "tags:\n      - \"gdaemon-v*\"",
         "cargo clippy -p gobby-daemon --all-targets -- -D warnings",
-        "cargo clippy -p gobby-daemon --all-targets --no-default-features -- -D warnings",
         "cargo nextest run --profile ci -p gobby-daemon",
-        "cargo nextest run --profile ci -p gobby-daemon --no-default-features",
         "cargo publish -p gobby-daemon",
         "cargo build --release --target ${{ matrix.target }} -p gobby-daemon",
         "gh release create \"$tag\"",
@@ -24,6 +22,11 @@ fn release_workflow_builds_publishes_and_packages_gdaemon() {
             "release-gdaemon.yml is missing required contract: {required}"
         );
     }
+
+    assert!(
+        !workflow.contains("--no-default-features"),
+        "release-gdaemon.yml must check gdaemon with its default features only"
+    );
 
     for target in [
         "x86_64-unknown-linux-gnu",
