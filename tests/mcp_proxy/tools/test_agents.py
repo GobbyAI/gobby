@@ -232,6 +232,30 @@ class TestGetAgentResult:
         assert result["turns_used"] == 3
         assert result["child_session_id"] == "child-sess-456"
 
+    @pytest.mark.asyncio
+    async def test_prompt_is_opt_in(self) -> None:
+        """Polling pays for status only; the static prompt returns on request (#21508)."""
+        mock_run = _make_mock_agent_run(status="success", started_at=_RUN_STARTED_AT)
+        mock_run.prompt = "x" * 8000
+        mock_run.result = "Task completed"
+        mock_run.error = None
+        mock_run.completed_at = _RUN_COMPLETED_AT
+        mock_run.terminal_reason = None
+        runner = MagicMock()
+        runner.get_run.return_value = mock_run
+        registry = create_agents_registry(runner)
+        get_result = registry._tools["get_agent_result"].func
+
+        default_payload = await get_result(run_id=mock_run.id)
+        opted_in = await get_result(run_id=mock_run.id, include_prompt=True)
+        schema = registry.get_schema("get_agent_result")
+
+        assert default_payload["success"] is True
+        assert "prompt" not in default_payload
+        assert opted_in["prompt"] == mock_run.prompt
+        assert schema is not None
+        assert schema["inputSchema"]["properties"]["include_prompt"]["type"] == "boolean"
+
 
 class TestWaitForAgent:
     """Tests for the subscribe-and-return wait_for_agent contract."""

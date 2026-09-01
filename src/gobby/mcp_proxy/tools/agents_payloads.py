@@ -114,7 +114,7 @@ def _bounded_capture_result(prefix: str, capture: str) -> tuple[str, int, bool]:
 def _agent_result_payload(
     run: AgentRunProtocol,
     *,
-    include_prompt: bool = True,
+    include_prompt: bool = False,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "run_id": run.id,

@@ -175,10 +175,11 @@ def register_agent_query_tools(
         name="get_agent_result",
         description=(
             "Look up an agent run's current status and result. Safe for explicit polling; "
-            "creates no completion subscription."
+            "creates no completion subscription. The run's prompt is static metadata the "
+            "caller already holds, so it is omitted unless include_prompt=true."
         ),
     )
-    async def get_agent_result(run_id: str) -> dict[str, Any]:
+    async def get_agent_result(run_id: str, include_prompt: bool = False) -> dict[str, Any]:
         run, error = _lookup_run(run_id)
         if error is not None:
             return error
@@ -199,7 +200,7 @@ def register_agent_query_tools(
         return {
             "success": True,
             "recovery_pending": recovery_pending,
-            **_agent_result_payload(run),
+            **_agent_result_payload(run, include_prompt=include_prompt),
         }
 
     def get_agent_capture(
@@ -314,7 +315,6 @@ def register_agent_query_tools(
         if run.status in agents._TERMINAL_AGENT_STATUSES and not recovery_pending:
             payload = _agent_result_payload(
                 await overlay_live_activity(run, ctx.transcript_reader),
-                include_prompt=False,
             )
             return {
                 "success": True,
@@ -360,7 +360,6 @@ def register_agent_query_tools(
             if run.status in agents._TERMINAL_AGENT_STATUSES and not wait_target.recovery_pending:
                 payload = _agent_result_payload(
                     await overlay_live_activity(run, ctx.transcript_reader),
-                    include_prompt=False,
                 )
                 return {
                     "success": True,
@@ -382,7 +381,6 @@ def register_agent_query_tools(
                 ctx.completion_registry.cleanup(run.id)
             payload = _agent_result_payload(
                 await overlay_live_activity(run, ctx.transcript_reader),
-                include_prompt=False,
             )
             return {
                 "success": True,
@@ -395,7 +393,6 @@ def register_agent_query_tools(
 
         payload = _agent_result_payload(
             await overlay_live_activity(run, ctx.transcript_reader),
-            include_prompt=False,
         )
 
         # INVARIANT: this handler runs on the completion registry's owning event loop.
@@ -443,7 +440,6 @@ def register_agent_query_tools(
         if terminal is not None:
             payload = _agent_result_payload(
                 await overlay_live_activity(terminal, ctx.transcript_reader),
-                include_prompt=False,
             )
             return {
                 "success": True,
