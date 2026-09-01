@@ -24,8 +24,23 @@ use runner_adoption::{
 
 pub(crate) const ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM: &str =
     "855576453641152d2ef9199dc418fcc3dd2ad69e78eff924b05a7b3b122cf398";
-pub(crate) const PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM: &str =
-    "a40068605d886d0d0ec4ae71152602266c510be5514dd3d440b54a8b658491e3";
+/// Every `baseline@375` receipt a pre-#19651 hub may hold: the pre-epic
+/// baseline and its in-place text edits, all carrying the legacy per-project
+/// path column. None is schema-equivalent to the current baseline, so a hub
+/// holding one must run the project-checkout cutover campaign. Kept in sync with
+/// `PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS` in
+/// `src/gobby/storage/project_checkout_cutover.py` by a runner test.
+pub(crate) const PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS: &[&str] = &[
+    "84eb875cb839f6f61219f3f3fd54a5befc3abf38f01461d96780e956dc1864d8",
+    "ec222a7f8b3c486abfff05eda4ed02995d272a132ad2fdadb1dd90edbccb2ce1",
+    "ece3754752dbc72aaff4bbd3ebaa91a41305e4899e180012f8429c4f7467b1bf",
+    "8467fc42e29fec1f58986e7ac141c3cdcf8c6a417c61c73ff3cca63241e2a2cf",
+];
+pub(crate) const PROJECT_CHECKOUT_CAMPAIGN_DIRECTIVE: &str = "schema baseline requires project-checkout-cutover; run 'gobby hub-maintenance run project-checkout-cutover'";
+
+pub(crate) fn is_project_checkout_predecessor(checksum: &str) -> bool {
+    PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS.contains(&checksum)
+}
 pub(crate) const PREDECESSOR_BASELINE_CHECKSUM: &str =
     "4e2bb4de8059488a7887b62b5e509ce308c0ebf2d319862c8b3d7c6175cb662e";
 pub(crate) const PARENT_BASELINE_CHECKSUM: &str =
@@ -179,8 +194,7 @@ impl<'a> SchemaRunner<'a> {
             }
             BaselineState::ProjectCheckoutPredecessor => {
                 return Err(SchemaError::Unsupported(
-                    "schema baseline requires project-checkout-cutover; run 'gobby hub-maintenance run project-checkout-cutover'"
-                        .to_owned(),
+                    PROJECT_CHECKOUT_CAMPAIGN_DIRECTIVE.to_owned(),
                 ));
             }
         };
@@ -410,7 +424,16 @@ fn recognized_baseline_receipt(
         return Ok(None);
     }
     let checksum = row.get::<_, Option<String>>(1);
+    // Campaign predecessors are matched before every equivalence
+    // short-circuit so a receipt that needs a campaign can never be masked by
+    // a stale PRIOR_RECEIPT_CHECKSUMS entry.
     Ok(match checksum.as_deref() {
+        Some(ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM) => {
+            Some(BaselineState::AccountIdentityPredecessor)
+        }
+        Some(predecessor) if is_project_checkout_predecessor(predecessor) => {
+            Some(BaselineState::ProjectCheckoutPredecessor)
+        }
         Some(BASELINE_CHECKSUM) => Some(BaselineState::AlreadyBaselined),
         Some(prior) if prior_baseline_receipt(prior) => Some(BaselineState::AlreadyBaselined),
         Some(TOOL_CHAT_OVERLAY_PREDECESSOR_CHECKSUM) => Some(BaselineState::ParentBaseline),
@@ -418,12 +441,6 @@ fn recognized_baseline_receipt(
         Some(PREDECESSOR_BASELINE_CHECKSUM) => Some(BaselineState::PredecessorBaseline),
         Some(PARENT_BASELINE_CHECKSUM) => Some(BaselineState::ParentBaseline),
         Some(WORKTREE_BASELINE_CHECKSUM) => Some(BaselineState::WorktreeBaseline),
-        Some(ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM) => {
-            Some(BaselineState::AccountIdentityPredecessor)
-        }
-        Some(PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM) => {
-            Some(BaselineState::ProjectCheckoutPredecessor)
-        }
         _ => None,
     })
 }

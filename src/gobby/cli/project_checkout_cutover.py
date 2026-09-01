@@ -6,7 +6,11 @@ import uuid
 
 import click
 
-from gobby.cli.hub_maintenance import CampaignExecutor, register_campaign_executor
+from gobby.cli.hub_maintenance import (
+    CampaignExecutor,
+    expected_baseline_checksum,
+    register_campaign_executor,
+)
 from gobby.config.bootstrap import load_bootstrap
 from gobby.storage.maintenance_epoch import (
     DestructiveBatch,
@@ -21,7 +25,7 @@ from gobby.storage.project_checkout_cutover import (
     record_project_checkout_preflight,
     verify_project_checkout_cutover,
 )
-from gobby.storage.schema_contract import expected_schema_identity, verify_schema
+from gobby.storage.schema_contract import verify_schema
 
 
 class ProjectCheckoutCutoverExecutor(CampaignExecutor):
@@ -76,7 +80,4 @@ def _bound_database_url(epoch_id: uuid.UUID) -> str:
 
 
 def _target_checksum() -> str:
-    checksum = expected_schema_identity()["baseline_checksum"]
-    if not isinstance(checksum, str):
-        raise click.ClickException("Expected schema baseline checksum is invalid")
-    return checksum
+    return expected_baseline_checksum()

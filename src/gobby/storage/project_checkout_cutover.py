@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 import psycopg
 from psycopg import sql
+from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from gobby.storage.account_identity_cutover import admit_cutover_campaign
@@ -20,12 +21,40 @@ from gobby.storage.workspace_machine_scope import (
     MachineOwnershipMismatchError,
     require_local_machine_id,
 )
-from gobby.utils.checkout_root import validate_checkout_root
+from gobby.utils.checkout_root import validate_campaign_checkout_root
 
 PROJECT_CHECKOUT_CUTOVER_CAMPAIGN: Literal["project-checkout-cutover"] = "project-checkout-cutover"
-PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM = (
-    "a40068605d886d0d0ec4ae71152602266c510be5514dd3d440b54a8b658491e3"
+# Every baseline@375 receipt a pre-#19651 hub may hold: the pre-epic baseline
+# and its in-place text edits. gcore's PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS
+# is kept identical by a runner test that parses this block.
+PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS: frozenset[str] = frozenset(
+    {
+        "84eb875cb839f6f61219f3f3fd54a5befc3abf38f01461d96780e956dc1864d8",
+        "ec222a7f8b3c486abfff05eda4ed02995d272a132ad2fdadb1dd90edbccb2ce1",
+        "ece3754752dbc72aaff4bbd3ebaa91a41305e4899e180012f8429c4f7467b1bf",
+        "8467fc42e29fec1f58986e7ac141c3cdcf8c6a417c61c73ff3cca63241e2a2cf",
+    }
 )
+_RESOLVED_STATUSES = frozenset({"covered", "excluded", "ready"})
+_PREFLIGHT_REMEDIES: dict[str, str] = {
+    "invalid_checkout_root": (
+        "restore the directory and its .gobby/project.json marker at the legacy root, or "
+        "soft-delete the project (`gobby projects delete <name> --confirm <name>`) so the "
+        "cutover excludes it"
+    ),
+    "no_candidate_machine": (
+        "soft-delete the project (`gobby projects delete <name> --confirm <name>`), or run "
+        "`gobby projects rebind <name> <path>` on the owning machine after the cutover"
+    ),
+    "foreign_machine": (
+        "run the campaign from the owning machine, or run `gobby projects rebind <name> "
+        "<path>` there after the cutover"
+    ),
+    "multiple_candidate_machines": (
+        "run the campaign from the owning machine, or run `gobby projects rebind <name> "
+        "<path>` on each machine after the cutover"
+    ),
+}
 
 
 class ProjectCheckoutCutoverError(RuntimeError):
@@ -71,10 +100,7 @@ class ProjectCheckoutCutoverPreflight:
 
     @property
     def blocked(self) -> bool:
-        return any(
-            project.resolution_status not in {"covered", "excluded", "ready"}
-            for project in self.projects
-        )
+        return any(project.resolution_status not in _RESOLVED_STATUSES for project in self.projects)
 
     def to_json(self) -> dict[str, object]:
         return _preflight_json(self)
@@ -140,7 +166,7 @@ def admit_project_checkout_campaign(connection: psycopg.Connection[Any]) -> None
     """Admit the campaign and bootstrap checkout storage without changing the receipt."""
     admit_cutover_campaign(
         connection,
-        predecessor_checksum=PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM,
+        predecessor_checksum=_require_predecessor_receipt(connection),
     )
     _bootstrap_project_checkouts(connection)
     _verify_project_checkouts_shape(connection)
@@ -344,7 +370,7 @@ def _collect_preflight(db: PostgresHubDatabase) -> ProjectCheckoutCutoverPreflig
     with db.transaction() as connection:
         projects = connection.execute(
             """
-            SELECT id, name, repo_path
+            SELECT id, name, repo_path, deleted_at
             FROM projects
             WHERE repo_path IS NOT NULL
               AND BTRIM(repo_path) <> ''
@@ -367,14 +393,25 @@ def _collect_preflight(db: PostgresHubDatabase) -> ProjectCheckoutCutoverPreflig
             ORDER BY project_id, machine_id, source
             """
         ).fetchall()
-        checkouts = connection.execute(
-            """
-            SELECT machine_id, project_id, root_path
-            FROM project_checkouts
-            ORDER BY project_id, machine_id
-            """
-        ).fetchall()
+        checkouts = _existing_checkout_rows(connection)
     return _build_preflight(db, projects, candidates, checkouts)
+
+
+def _existing_checkout_rows(connection: Any) -> list[Mapping[str, Any]]:
+    """Read project_checkouts, treating the not-yet-bootstrapped table as empty."""
+    relation = connection.execute(
+        "SELECT pg_catalog.to_regclass('project_checkouts') AS relation"
+    ).fetchone()
+    if relation is None or relation["relation"] is None:
+        return []
+    rows: list[Mapping[str, Any]] = connection.execute(
+        """
+        SELECT machine_id, project_id, root_path
+        FROM project_checkouts
+        ORDER BY project_id, machine_id
+        """
+    ).fetchall()
+    return rows
 
 
 def _build_preflight(
@@ -413,10 +450,17 @@ def _build_preflight(
             if machine_id not in {checkout.machine_id for checkout in existing}
         )
         resolution_reason: str | None = None
+        exclusion_reason: str | None = None
         if excluded:
             status = "excluded"
+            exclusion_reason = "checkout_free_sentinel"
         elif not unresolved and existing:
             status = "covered"
+        elif row.get("deleted_at") is not None:
+            # A soft-deleted project without an authoritative checkout never
+            # needs one: no insert, no filesystem access, nothing to block on.
+            status = "excluded"
+            exclusion_reason = "soft_deleted"
         elif not project_candidates:
             status = "no_candidate_machine"
             resolution_reason = "No machine-owned evidence; run `gobby projects rebind`"
@@ -433,7 +477,7 @@ def _build_preflight(
                     resource_kind="project_checkout",
                     resource_id=str(project_id),
                 )
-                root_path = validate_checkout_root(
+                root_path = validate_campaign_checkout_root(
                     db,
                     project_id=str(project_id),
                     machine_id=local_machine_id,
@@ -460,7 +504,7 @@ def _build_preflight(
                     for machine_id, sources in sorted(project_candidates.items())
                 ),
                 existing_checkouts=existing,
-                exclusion_reason="checkout_free_sentinel" if excluded else None,
+                exclusion_reason=exclusion_reason,
                 resolution_status=status,
                 resolution_reason=resolution_reason,
             )
@@ -481,13 +525,7 @@ def apply_project_checkout_cutover(
 ) -> ProjectCheckoutCutoverEvidence:
     """Apply the checkout identity transition in one prompt-free transaction."""
     if preflight.blocked:
-        raise ProjectCheckoutCutoverError(_blocked_preflight_message(preflight))
-    evidence = ProjectCheckoutCutoverEvidence(
-        predecessor_checksum=PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM,
-        target_checksum=target_checksum,
-        projects=preflight.projects,
-        expected_inserts=preflight.expected_inserts,
-    )
+        raise ProjectCheckoutCutoverError(blocked_preflight_message(preflight))
     db = PostgresHubDatabase(database_url)
     try:
         with db.transaction() as connection:
@@ -499,7 +537,13 @@ def apply_project_checkout_cutover(
                 IN SHARE ROW EXCLUSIVE MODE
                 """
             )
-            _require_receipt(connection, PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM)
+            predecessor_checksum = _require_predecessor_receipt(connection)
+            evidence = ProjectCheckoutCutoverEvidence(
+                predecessor_checksum=predecessor_checksum,
+                target_checksum=target_checksum,
+                projects=preflight.projects,
+                expected_inserts=preflight.expected_inserts,
+            )
             _verify_project_checkouts_shape(connection)
             current = _collect_preflight(db)
             if current != preflight:
@@ -567,7 +611,7 @@ def apply_project_checkout_cutover(
                   AND checksum = %s
                 RETURNING version
                 """,
-                (target_checksum, PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM),
+                (target_checksum, predecessor_checksum),
             ).fetchone()
             if updated is None:
                 raise ProjectCheckoutCutoverError("Predecessor receipt changed during cutover")
@@ -623,7 +667,7 @@ def project_checkout_cutover_already_applied(
     try:
         with db.transaction() as connection:
             checksum = _receipt_checksum(connection)
-            if checksum == PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM:
+            if checksum in PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS:
                 return False
             if checksum != target_checksum:
                 raise ProjectCheckoutCutoverError(
@@ -875,36 +919,54 @@ def _replace_resolve_tool_session(connection: Any) -> None:
     )
 
 
-def _require_receipt(connection: Any, expected_checksum: str) -> None:
+def _require_predecessor_receipt(connection: Any) -> str:
+    """Return the observed baseline receipt, which must be a known predecessor."""
     checksum = _receipt_checksum(connection)
     if checksum is None:
-        raise ProjectCheckoutCutoverError("Expected exactly one baseline receipt")
-    if checksum != expected_checksum:
+        raise ProjectCheckoutCutoverError("Baseline receipt baseline@375 is missing")
+    if checksum not in PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS:
         raise ProjectCheckoutCutoverError(
-            f"Project checkout cutover receipt mismatch: expected {expected_checksum}"
+            f"Project checkout cutover receipt mismatch: {checksum} is not a known predecessor"
         )
+    return checksum
 
 
 def _receipt_checksum(connection: Any) -> str | None:
-    rows = connection.execute(
-        "SELECT version, filename, checksum FROM schema_migrations ORDER BY version"
-    ).fetchall()
-    if len(rows) != 1:
-        return None
-    row = rows[0]
-    if int(row["version"]) != 375 or str(row["filename"]) != "baseline@375":
-        return None
-    return str(row["checksum"])
+    row = connection.execute(
+        """
+        SELECT checksum
+        FROM schema_migrations
+        WHERE version = 375
+          AND filename = 'baseline@375'
+        """
+    ).fetchone()
+    return None if row is None else str(row["checksum"])
 
 
-def _blocked_preflight_message(preflight: ProjectCheckoutCutoverPreflight) -> str:
+def read_baseline_receipt_checksum(database_url: str) -> str | None:
+    """Read the baseline@375 receipt over a plain connection; touches nothing else."""
+    with psycopg.connect(
+        database_url,
+        autocommit=True,
+        connect_timeout=5,
+        row_factory=dict_row,
+        application_name="gobby-hub-maintenance-receipt",
+    ) as connection:
+        return _receipt_checksum(connection)
+
+
+def blocked_preflight_message(preflight: ProjectCheckoutCutoverPreflight) -> str:
+    """Name every unresolved project together with the remedy its status calls for."""
     blocked = [
-        f"{project.name} ({project.project_id}): {project.resolution_status}"
+        f"{project.name} ({project.project_id}) {project.resolution_status} at "
+        f"{project.legacy_root}: "
+        + _PREFLIGHT_REMEDIES.get(project.resolution_status, "resolve it before rerunning")
         for project in preflight.projects
-        if project.resolution_status not in {"covered", "excluded", "ready"}
+        if project.resolution_status not in _RESOLVED_STATUSES
     ]
     return (
         "Project checkout cutover preflight is unresolved: "
         + "; ".join(blocked)
-        + ". Run `gobby projects rebind` on each owning daemon."
+        + ". Re-check read-only with `gobby hub-maintenance preflight "
+        f"{PROJECT_CHECKOUT_CUTOVER_CAMPAIGN}`."
     )

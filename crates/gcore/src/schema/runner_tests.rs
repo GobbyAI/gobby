@@ -10,7 +10,9 @@ use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use super::assets::BASELINE_SQL;
-use super::assets::{BASELINE_CHECKSUM, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS};
+use super::assets::{
+    BASELINE_CHECKSUM, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS, PRIOR_RECEIPT_CHECKSUMS,
+};
 use super::baseline_refresh::{
     REFRESH_STATEMENT_PREFIXES, REMOVED_STATEMENT_PREFIXES, RUNTIME_BOUNDARY_REFRESH_PREFIXES,
     RefreshMode, TYPED_DOMAIN_REFRESH_PREFIXES, baseline_refresh_statement,
@@ -23,7 +25,7 @@ use super::gate::{
 };
 use super::runner::{
     ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM, PARENT_BASELINE_CHECKSUM, PREDECESSOR_BASELINE_CHECKSUM,
-    PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM, SchemaRunner, WORKTREE_BASELINE_CHECKSUM,
+    PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS, SchemaRunner, WORKTREE_BASELINE_CHECKSUM,
     auth_schema_for, render_sql_for_schema,
 };
 use super::sql_splitter::split_sql_statements;
@@ -446,27 +448,38 @@ fn project_checkout_predecessor_requires_campaign_without_mutation() -> anyhow::
     };
 
     install_baseline(&mut client)?;
-    client.execute(
-        "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
-        &[&PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM, &BASELINE_VERSION],
-    )?;
+    for predecessor in PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS {
+        client.execute(
+            "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
+            &[predecessor, &BASELINE_VERSION],
+        )?;
 
-    let error = SchemaRunner::new(&mut client, "public")?
-        .apply()
-        .expect_err("project-checkout predecessor requires the dedicated campaign");
-    assert!(
-        error
-            .to_string()
-            .contains("gobby hub-maintenance run project-checkout-cutover"),
-        "{error}"
-    );
-    let checksum: String = client
-        .query_one(
-            "SELECT checksum FROM schema_migrations WHERE version = $1",
-            &[&BASELINE_VERSION],
-        )?
-        .get(0);
-    assert_eq!(checksum, PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM);
+        let apply_error = SchemaRunner::new(&mut client, "public")?
+            .apply()
+            .expect_err("project-checkout predecessor requires the dedicated campaign");
+        assert!(
+            apply_error
+                .to_string()
+                .contains("gobby hub-maintenance run project-checkout-cutover"),
+            "{predecessor}: {apply_error}"
+        );
+        let verify_error = SchemaRunner::new(&mut client, "public")?
+            .verify()
+            .expect_err("verify must name the campaign instead of reporting receipt drift");
+        assert!(
+            verify_error
+                .to_string()
+                .contains("gobby hub-maintenance run project-checkout-cutover"),
+            "{predecessor}: {verify_error}"
+        );
+        let checksum: String = client
+            .query_one(
+                "SELECT checksum FROM schema_migrations WHERE version = $1",
+                &[&BASELINE_VERSION],
+            )?
+            .get(0);
+        assert_eq!(checksum, *predecessor);
+    }
     Ok(())
 }
 
@@ -484,6 +497,39 @@ fn predecessor_checksum_matches_python_cutover_contract() {
         .expect("Python predecessor checksum declaration must contain '='");
 
     assert_eq!(python_checksum, ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM);
+}
+
+#[test]
+fn project_checkout_predecessor_set_matches_python_cutover_contract() {
+    const PYTHON_CUTOVER_SOURCE: &str =
+        include_str!("../../../../src/gobby/storage/project_checkout_cutover.py");
+    let mut lines = PYTHON_CUTOVER_SOURCE.lines();
+    lines
+        .find(|line| line.starts_with("PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS"))
+        .expect("Python cutover must declare its predecessor checksum set");
+    let python_checksums = lines
+        .take_while(|line| line.trim() != ")")
+        .filter_map(|line| line.trim().strip_prefix('"'))
+        .filter_map(|line| line.split('"').next())
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    let rust_checksums = PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS
+        .iter()
+        .map(|checksum| (*checksum).to_owned())
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(python_checksums, rust_checksums);
+    assert_eq!(
+        rust_checksums.len(),
+        PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS.len(),
+        "predecessor checksums must be distinct"
+    );
+    for (version, prior) in PRIOR_RECEIPT_CHECKSUMS {
+        assert!(
+            !rust_checksums.contains(*prior),
+            "v{version} receipt {prior} cannot be both a prior receipt and a campaign predecessor"
+        );
+    }
 }
 
 #[test]
@@ -711,9 +757,15 @@ fn receipt_chain_advances_from_19645_and_lineage_checksums() -> anyhow::Result<(
             &BASELINE_VERSION,
         ],
     )?;
-    let prior_baseline = SchemaRunner::new(&mut client, "public")?.apply()?;
-    assert!(!prior_baseline.baseline_applied);
-    assert_eq!(prior_baseline.migrations_applied, 0);
+    let pre_19651 = SchemaRunner::new(&mut client, "public")?
+        .apply()
+        .expect_err("pre-#19651 receipts must name the project-checkout cutover path");
+    assert!(
+        pre_19651
+            .to_string()
+            .contains("run 'gobby hub-maintenance run project-checkout-cutover'"),
+        "{pre_19651}"
+    );
     let kept_prior: String = client
         .query_one(
             "SELECT checksum FROM schema_migrations WHERE version = $1",

@@ -9,6 +9,7 @@ use super::assets::{
     WORKTREE_PRE_OVERLAY_BASELINE_CHECKSUM,
 };
 use super::error::SchemaError;
+use super::runner::{PROJECT_CHECKOUT_CAMPAIGN_DIRECTIVE, is_project_checkout_predecessor};
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -248,6 +249,14 @@ fn verify_receipts(client: &mut Client, schema: &str) -> Result<usize, SchemaErr
             )
         })
         .collect::<BTreeMap<_, _>>();
+    if let Some((filename, checksum)) = observed.get(&BASELINE_VERSION)
+        && *filename == format!("baseline@{BASELINE_VERSION}")
+        && is_project_checkout_predecessor(checksum)
+    {
+        return Err(SchemaError::Unsupported(
+            PROJECT_CHECKOUT_CAMPAIGN_DIRECTIVE.to_owned(),
+        ));
+    }
     let normalized = observed
         .iter()
         .map(|(version, (filename, checksum))| {

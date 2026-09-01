@@ -13,12 +13,21 @@ from psycopg import sql
 from psycopg.rows import dict_row
 
 import gobby.storage.project_checkout_cutover as cutover
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.project_checkout_cutover import preflight_project_checkout_cutover
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
-from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.storage.projects import (
+    PERSONAL_PROJECT_ID,
+    IsolatedAgentProjectPathError,
+    LocalProjectManager,
+)
 from gobby.storage.schema_contract import apply_schema
+from gobby.storage.sessions import SessionManager
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils.checkout_root import validate_checkout_root
+from gobby.utils.machine_id import get_machine_id
 from tests.fixtures.isolated_checkout import (
     insert_isolated_machine,
     patch_local_machine_id,
@@ -35,6 +44,12 @@ from tests.fixtures.postgres import (
 pytestmark = pytest.mark.integration
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+# The receipt the live hub holds today (a v375 in-place text edit) and the
+# pre-epic merge-base baseline; both must admit the cutover.
+_LIVE_PREDECESSOR_CHECKSUM = "ece3754752dbc72aaff4bbd3ebaa91a41305e4899e180012f8429c4f7467b1bf"
+_MERGE_BASE_PREDECESSOR_CHECKSUM = (
+    "84eb875cb839f6f61219f3f3fd54a5befc3abf38f01461d96780e956dc1864d8"
+)
 
 
 def _install_predecessor_resolver(connection: psycopg.Connection[dict[str, object]]) -> None:
@@ -104,10 +119,11 @@ def predecessor_database(postgres_database_url: str) -> Iterator[str]:
             (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
         )
         with psycopg.connect(scoped_url, autocommit=True) as connection:
-            connection.execute("DELETE FROM schema_migrations WHERE version <> 375")
+            # Keep the full migration ledger: a real hub carries every
+            # numbered receipt alongside baseline@375.
             connection.execute(
                 "UPDATE schema_migrations SET checksum = %s WHERE version = 375",
-                (cutover.PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM,),
+                (_LIVE_PREDECESSOR_CHECKSUM,),
             )
             connection.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS repo_path text")
             connection.execute(
@@ -135,7 +151,7 @@ def test_preflight_records_no_candidate_machine_without_filesystem_access(
         )
 
     monkeypatch.setattr(
-        "gobby.storage.project_checkout_cutover.validate_checkout_root",
+        "gobby.storage.project_checkout_cutover.validate_campaign_checkout_root",
         lambda *_args, **_kwargs: pytest.fail("filesystem validation must not run"),
     )
 
@@ -186,16 +202,16 @@ def test_preflight_authorizes_machine_before_validating_candidate_root(
         return str(machine_id)
 
     def validate_root(*_args: object, **kwargs: object) -> str:
-        calls.append("validate_checkout_root")
+        calls.append("validate_campaign_checkout_root")
         assert kwargs["machine_id"] == str(machine_id)
         return str(root)
 
     monkeypatch.setattr(cutover, "require_local_machine_id", require_local)
-    monkeypatch.setattr(cutover, "validate_checkout_root", validate_root)
+    monkeypatch.setattr(cutover, "validate_campaign_checkout_root", validate_root)
 
     preflight = preflight_project_checkout_cutover(predecessor_database)
 
-    assert calls == ["require_local_machine_id", "validate_checkout_root"]
+    assert calls == ["require_local_machine_id", "validate_campaign_checkout_root"]
     assert preflight.expected_inserts == (
         cutover.ProjectCheckoutInsert(machine_id, project_id, str(root)),
     )
@@ -322,6 +338,12 @@ def test_apply_registers_exact_checkout_then_replaces_legacy_identity(
             """,
             (session_id, "candidate-session", machine_id, "codex", project_id),
         )
+        # A merge-base hub holds the pre-epic baseline receipt rather than
+        # the live in-place edit; the cutover must CAS from whatever it sees.
+        connection.execute(
+            "UPDATE schema_migrations SET checksum = %s WHERE version = 375",
+            (_MERGE_BASE_PREDECESSOR_CHECKSUM,),
+        )
         _install_predecessor_resolver(connection)
         _admit_batch(connection, epoch_id=epoch_id, batch_id=batch_id)
 
@@ -335,6 +357,7 @@ def test_apply_registers_exact_checkout_then_replaces_legacy_identity(
     )
 
     assert evidence.expected_inserts == preflight.expected_inserts
+    assert evidence.predecessor_checksum == _MERGE_BASE_PREDECESSOR_CHECKSUM
     with psycopg.connect(
         predecessor_database,
         autocommit=True,
@@ -381,7 +404,10 @@ def test_apply_registers_exact_checkout_then_replaces_legacy_identity(
             (batch_id,),
         ).fetchone()
         assert batch is not None
-        assert "project_checkout_cutover" in batch["intent"]
+        assert (
+            batch["intent"]["project_checkout_cutover"]["predecessor_checksum"]
+            == _MERGE_BASE_PREDECESSOR_CHECKSUM
+        )
     assert cutover.project_checkout_cutover_already_applied(
         predecessor_database,
         batch_id=batch_id,
@@ -436,7 +462,7 @@ def test_preflight_records_foreign_machine_refusal_before_filesystem_access(
     monkeypatch.setattr(cutover, "require_local_machine_id", reject_foreign)
     monkeypatch.setattr(
         cutover,
-        "validate_checkout_root",
+        "validate_campaign_checkout_root",
         lambda *_args, **_kwargs: pytest.fail("filesystem validation must not run"),
     )
 
@@ -540,7 +566,7 @@ def test_multiple_unresolved_candidates_block_without_filesystem_access(
         db.close()
     monkeypatch.setattr(
         cutover,
-        "validate_checkout_root",
+        "validate_campaign_checkout_root",
         lambda *_args, **_kwargs: pytest.fail("ambiguous candidates touched the filesystem"),
     )
 
@@ -665,14 +691,16 @@ def test_resolver_recreation_failure_rolls_back_every_cutover_write(
         )
         assert connection.execute(
             "SELECT checksum FROM schema_migrations WHERE version = 375"
-        ).fetchone() == {"checksum": cutover.PROJECT_CHECKOUT_PREDECESSOR_CHECKSUM}
+        ).fetchone() == {"checksum": _LIVE_PREDECESSOR_CHECKSUM}
 
 
 def test_soft_deleted_project_and_sentinel_have_explicit_preflight_outcomes(
     predecessor_database: str,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_id = uuid.uuid4()
+    orphan_id = uuid.uuid4()
     epoch_id = uuid.uuid4()
     batch_id = uuid.uuid4()
     root = tmp_path / "deleted-project"
@@ -688,21 +716,48 @@ def test_soft_deleted_project_and_sentinel_have_explicit_preflight_outcomes(
             (project_id, "deleted-project", str(root)),
         )
         LocalProjectCheckoutManager(db).rebind(str(machine_id), str(project_id), str(root))
+        # Soft-deleted, a candidate machine, no checkout row, and a root that
+        # no longer exists: excluded without touching the filesystem.
+        db.execute(
+            """
+            INSERT INTO projects(id, name, repo_path, deleted_at)
+            VALUES (%s, %s, %s, NOW())
+            """,
+            (orphan_id, "orphan-deleted", str(tmp_path / "gone")),
+        )
+        db.execute(
+            """
+            INSERT INTO sessions(id, external_id, machine_id, source, project_id)
+            VALUES (%s, %s, %s, 'codex', %s)
+            """,
+            (uuid.uuid4(), "orphan-session", machine_id, orphan_id),
+        )
         db.execute(
             "UPDATE projects SET repo_path = '/sentinel/legacy' WHERE id = %s",
             (PERSONAL_PROJECT_ID,),
         )
     finally:
         db.close()
+    monkeypatch.setattr(
+        cutover,
+        "validate_campaign_checkout_root",
+        lambda *_args, **_kwargs: pytest.fail(
+            "soft-deleted projects must not touch the filesystem"
+        ),
+    )
 
     preflight = cutover.preflight_project_checkout_cutover(predecessor_database)
 
     by_id = {project.project_id: project for project in preflight.projects}
     assert by_id[project_id].resolution_status == "covered"
+    assert by_id[orphan_id].resolution_status == "excluded"
+    assert by_id[orphan_id].exclusion_reason == "soft_deleted"
+    assert by_id[orphan_id].candidate_machine_ids == (machine_id,)
     personal_id = uuid.UUID(PERSONAL_PROJECT_ID)
     assert by_id[personal_id].resolution_status == "excluded"
     assert by_id[personal_id].exclusion_reason == "checkout_free_sentinel"
     assert preflight.expected_inserts == ()
+    assert not preflight.blocked
     with psycopg.connect(predecessor_database, autocommit=True, row_factory=dict_row) as connection:
         _install_predecessor_resolver(connection)
         _admit_batch(connection, epoch_id=epoch_id, batch_id=batch_id)
@@ -719,13 +774,175 @@ def test_soft_deleted_project_and_sentinel_have_explicit_preflight_outcomes(
             "SELECT deleted_at IS NOT NULL AS preserved FROM projects WHERE id = %s",
             (project_id,),
         ).fetchone() == {"preserved": True}
+        assert connection.execute(
+            "SELECT deleted_at IS NOT NULL AS preserved FROM projects WHERE id = %s",
+            (orphan_id,),
+        ).fetchone() == {"preserved": True}
         assert (
             connection.execute(
-                "SELECT 1 FROM project_checkouts WHERE project_id = %s",
-                (PERSONAL_PROJECT_ID,),
+                "SELECT 1 FROM project_checkouts WHERE project_id IN (%s, %s)",
+                (PERSONAL_PROJECT_ID, orphan_id),
             ).fetchone()
             is None
         )
+
+
+def test_receipt_checksum_reads_baseline_row_from_full_ledger(
+    predecessor_database: str,
+) -> None:
+    with psycopg.connect(predecessor_database, autocommit=True, row_factory=dict_row) as connection:
+        ledger = connection.execute("SELECT count(*) AS receipts FROM schema_migrations").fetchone()
+        assert ledger is not None
+        assert ledger["receipts"] > 1
+        assert cutover._receipt_checksum(connection) == _LIVE_PREDECESSOR_CHECKSUM
+    assert cutover.read_baseline_receipt_checksum(predecessor_database) == (
+        _LIVE_PREDECESSOR_CHECKSUM
+    )
+
+
+def test_every_predecessor_receipt_admits_and_reports_not_applied(
+    predecessor_database: str,
+) -> None:
+    assert {_LIVE_PREDECESSOR_CHECKSUM, _MERGE_BASE_PREDECESSOR_CHECKSUM} <= (
+        cutover.PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS
+    )
+    with psycopg.connect(predecessor_database, autocommit=True, row_factory=dict_row) as connection:
+        for checksum in sorted(cutover.PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS):
+            connection.execute(
+                "UPDATE schema_migrations SET checksum = %s WHERE version = 375",
+                (checksum,),
+            )
+            with connection.transaction():
+                cutover.admit_project_checkout_campaign(connection)
+            assert cutover._receipt_checksum(connection) == checksum
+            assert not cutover.project_checkout_cutover_already_applied(
+                predecessor_database,
+                batch_id=uuid.uuid4(),
+                target_checksum="c" * 64,
+            )
+        connection.execute(
+            "UPDATE schema_migrations SET checksum = %s WHERE version = 375",
+            ("d" * 64,),
+        )
+        with (
+            pytest.raises(cutover.ProjectCheckoutCutoverError, match="not a known predecessor"),
+            connection.transaction(),
+        ):
+            cutover.admit_project_checkout_campaign(connection)
+
+
+def test_preflight_classifies_primary_checkout_despite_ambient_isolated_session(
+    predecessor_database: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id = uuid.uuid4()
+    root = tmp_path / "ordinary-project"
+    write_project_marker(root, project_id=str(project_id), name="ordinary-project")
+    worktree_root = tmp_path / "agent-worktree"
+    worktree_root.mkdir()
+    db = PostgresHubDatabase(predecessor_database)
+    try:
+        # Agent-run and worktree writers resolve the real local machine id
+        # through their own import-time bindings, so register that id here.
+        local_machine_id = get_machine_id()
+        assert local_machine_id is not None
+        machine_id = insert_isolated_machine(db, local_machine_id)
+        patch_local_machine_id(monkeypatch, machine_id)
+        db.execute(
+            "INSERT INTO projects(id, name, repo_path) VALUES (%s, %s, %s)",
+            (project_id, "ordinary-project", str(root)),
+        )
+        sessions = SessionManager(db)
+        parent = sessions.register(
+            external_id="operator-terminal",
+            machine_id=machine_id,
+            source="test",
+            project_id=str(project_id),
+        )
+        child = sessions.register(
+            external_id="isolated-agent",
+            machine_id=machine_id,
+            source="codex",
+            project_id=str(project_id),
+            parent_session_id=parent.id,
+        )
+        runs = LocalAgentRunManager(db)
+        run = runs.create(
+            parent_session_id=parent.id,
+            child_session_id=child.id,
+            provider="codex",
+            prompt="work in isolation",
+        )
+        worktree = LocalWorktreeManager(db).create(
+            project_id=str(project_id),
+            branch_name="task-worktree",
+            worktree_path=str(worktree_root),
+            agent_session_id=child.id,
+        )
+        runs.update_runtime(run.id, worktree_id=worktree.id)
+        # The operator's terminal exports the isolated child's session id.
+        monkeypatch.setenv("GOBBY_SESSION_ID", child.id)
+        assert LocalProjectManager(db)._is_isolated_agent_session()
+        with pytest.raises(IsolatedAgentProjectPathError):
+            validate_checkout_root(
+                db,
+                project_id=str(project_id),
+                machine_id=machine_id,
+                candidate_path=str(root),
+                expected_marker_id=str(project_id),
+            )
+    finally:
+        db.close()
+
+    preflight = cutover.preflight_project_checkout_cutover(predecessor_database)
+
+    by_id = {project.project_id: project for project in preflight.projects}
+    assert by_id[project_id].resolution_status == "ready"
+    assert preflight.expected_inserts == (
+        cutover.ProjectCheckoutInsert(uuid.UUID(machine_id), project_id, str(root)),
+    )
+    assert not preflight.blocked
+
+
+def test_preflight_treats_missing_checkout_table_as_empty_and_names_remedies(
+    predecessor_database: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id = uuid.uuid4()
+    db = PostgresHubDatabase(predecessor_database)
+    try:
+        machine_id = uuid.UUID(insert_isolated_machine(db))
+        db.execute(
+            "INSERT INTO projects(id, name, repo_path) VALUES (%s, %s, %s)",
+            (project_id, "vanished-project", str(tmp_path / "vanished")),
+        )
+        db.execute(
+            """
+            INSERT INTO sessions(id, external_id, machine_id, source, project_id)
+            VALUES (%s, %s, %s, 'codex', %s)
+            """,
+            (uuid.uuid4(), "vanished-session", machine_id, project_id),
+        )
+    finally:
+        db.close()
+    patch_local_machine_id(monkeypatch, str(machine_id))
+    with psycopg.connect(predecessor_database, autocommit=True, row_factory=dict_row) as connection:
+        _install_predecessor_resolver(connection)
+        connection.execute("DROP TABLE project_checkouts")
+
+    preflight = cutover.preflight_project_checkout_cutover(predecessor_database)
+
+    by_id = {project.project_id: project for project in preflight.projects}
+    assert by_id[project_id].resolution_status == "invalid_checkout_root"
+    assert by_id[project_id].existing_checkouts == ()
+    assert preflight.blocked
+    message = cutover.blocked_preflight_message(preflight)
+    assert f"vanished-project ({project_id}) invalid_checkout_root at" in message
+    assert "restore the directory" in message
+    assert "gobby projects delete <name> --confirm <name>" in message
+    assert "gobby hub-maintenance preflight project-checkout-cutover" in message
 
 
 def test_target_schema_assets_are_checkout_only() -> None:

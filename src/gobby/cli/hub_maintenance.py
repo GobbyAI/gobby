@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Protocol
 
 import click
+import psycopg
 from psycopg import ProgrammingError
 from psycopg.conninfo import conninfo_to_dict
 
@@ -27,6 +28,7 @@ from gobby.storage.maintenance_epoch import (
     JsonObject,
     MaintenanceEpoch,
     abort_maintenance_epoch,
+    bind_maintenance_epoch,
     create_destructive_batch,
     discover_active_maintenance_epoch,
     get_destructive_batch,
@@ -37,7 +39,23 @@ from gobby.storage.maintenance_epoch import (
     record_batch_backup,
     release_maintenance_epoch,
 )
+from gobby.storage.project_checkout_cutover import (
+    PROJECT_CHECKOUT_CUTOVER_CAMPAIGN,
+    ProjectCheckoutCutoverPreflight,
+    blocked_preflight_message,
+    preflight_project_checkout_cutover,
+    read_baseline_receipt_checksum,
+)
+from gobby.storage.schema_contract import expected_schema_identity
 from gobby.utils.env import is_test_protect_enabled
+
+_BINARY_INSTALL_INSTRUCTION = (
+    "Install the staged gdaemon and gcode binaries, then start the daemon manually."
+)
+_ABORT_INSTALL_INSTRUCTION = (
+    "Daemon left stopped: install gdaemon and gcode binaries matching the hub's baseline "
+    "receipt, then run `gobby start`."
+)
 
 
 class CampaignExecutor(Protocol):
@@ -86,6 +104,14 @@ def run_campaign(ctx: click.Context, campaign: Campaign) -> None:
     executor = _load_campaign_executor(campaign)
     intent: JsonObject = {"campaign": campaign}
     database_url = _resolve_database_url()
+    _require_rehearsal_database(database_url)
+    if campaign == PROJECT_CHECKOUT_CUTOVER_CAMPAIGN and _project_checkout_cutover_applied(
+        database_url
+    ):
+        click.echo(
+            "Project checkout cutover already applied: the baseline receipt is at the target"
+        )
+        return
     _stop_daemon_before_fence(database_url)
     owner_command = f"hub-maintenance:{campaign}"
     epoch = open_maintenance_epoch(
@@ -158,6 +184,27 @@ def maintenance_status(json_output: bool) -> None:
     click.echo(f"Batch:    {batch.status if batch is not None else 'missing'}")
 
 
+@hub_maintenance.command("preflight")
+@click.argument("campaign", type=click.Choice([PROJECT_CHECKOUT_CUTOVER_CAMPAIGN]))
+def preflight_campaign(campaign: str) -> None:
+    """Classify CAMPAIGN's preconditions read-only and exit 1 when it is blocked.
+
+    No fence, epoch, daemon stop, table creation, or admission: safe while the
+    daemon runs and before the campaign's own storage exists.
+    """
+    database_url = _resolve_database_url()
+    preflight = preflight_project_checkout_cutover(database_url)
+    click.echo(f"Read-only preflight for {campaign}:")
+    for line in _preflight_lines(preflight):
+        click.echo(f"  {line}")
+    if preflight.blocked:
+        raise click.ClickException(blocked_preflight_message(preflight))
+    click.echo(
+        f"Verdict: ready ({len(preflight.expected_inserts)} checkout insert(s) planned); "
+        f"apply with `gobby hub-maintenance run {PROJECT_CHECKOUT_CUTOVER_CAMPAIGN}`"
+    )
+
+
 @hub_maintenance.command("abort")
 @click.option(
     "--disposition",
@@ -172,6 +219,16 @@ def abort_campaign(disposition: str) -> None:
         raise click.ClickException("No maintenance epoch is open")
     batch = get_destructive_batch(database_url, epoch.id)
     state = batch.status if batch is not None else "missing"
+    project_checkout = epoch.campaign == PROJECT_CHECKOUT_CUTOVER_CAMPAIGN
+    # The schema receipt, not the batch ledger, says whether the cutover
+    # transaction committed: an applied receipt can only be verified and released.
+    if project_checkout and _project_checkout_cutover_applied(
+        bind_maintenance_epoch(database_url, epoch.id)
+    ):
+        raise click.ClickException(
+            f"Project checkout cutover already applied in epoch {epoch.id} (batch {state}); "
+            "run `gobby hub-maintenance resume` to verify and release it instead of aborting"
+        )
     click.confirm(
         f"Abort epoch {epoch.id} ({epoch.campaign}, batch {state}) and release the fence?",
         abort=True,
@@ -182,9 +239,11 @@ def abort_campaign(disposition: str) -> None:
         disposition=disposition,
         confirmed=True,
     )
-    if epoch.campaign == "project-checkout-cutover" and state in {"applied", "verified"}:
-        click.echo("Install the staged gdaemon and gcode binaries, then start the daemon manually.")
+    if project_checkout:
+        # Whatever the receipt says, the installed binaries must match it
+        # before a daemon may start; never auto-start here.
         click.echo(f"Maintenance epoch {epoch.id} aborted and released")
+        click.echo(_ABORT_INSTALL_INSTRUCTION)
         return
     _start_daemon()
     click.echo(f"Maintenance epoch {epoch.id} aborted and released")
@@ -197,21 +256,27 @@ def _stop_daemon_before_fence(database_url: str) -> None:
     and then rejects every reconnect, wedging the daemon until restart
     (#19437). The fence must only ever go up over a quiesced hub.
     """
-    if is_test_protect_enabled():
-        try:
-            database_name = conninfo_to_dict(database_url).get("dbname")
-        except ProgrammingError:
-            database_name = None
-        if database_name != "gobby_test":
-            raise click.ClickException(
-                "GOBBY_TEST_PROTECT permits hub maintenance only against the exact "
-                "database name 'gobby_test'; the configured target is missing, malformed, "
-                "or different"
-            )
+    _require_rehearsal_database(database_url)
     if not stop_daemon(shutdown_source="cli_hub_maintenance"):
         raise click.ClickException(
             "Could not stop the running daemon; refusing to open a maintenance "
             "epoch while live clients hold hub connections"
+        )
+
+
+def _require_rehearsal_database(database_url: str) -> None:
+    """Under GOBBY_TEST_PROTECT, refuse every hub touch except the rehearsal database."""
+    if not is_test_protect_enabled():
+        return
+    try:
+        database_name = conninfo_to_dict(database_url).get("dbname")
+    except ProgrammingError:
+        database_name = None
+    if database_name != "gobby_test":
+        raise click.ClickException(
+            "GOBBY_TEST_PROTECT permits hub maintenance only against the exact "
+            "database name 'gobby_test'; the configured target is missing, malformed, "
+            "or different"
         )
 
 
@@ -285,8 +350,8 @@ def _finish_or_report(
         raise click.ClickException(
             f"Maintenance epoch {epoch.id} remains open for resume: {exc}"
         ) from exc
-    if epoch.campaign in {ACCOUNT_IDENTITY_CAMPAIGN, "project-checkout-cutover"}:
-        click.echo("Install the staged gdaemon and gcode binaries, then start the daemon manually.")
+    if epoch.campaign in {ACCOUNT_IDENTITY_CAMPAIGN, PROJECT_CHECKOUT_CUTOVER_CAMPAIGN}:
+        click.echo(_BINARY_INSTALL_INSTRUCTION)
         return
     _start_daemon()
 
@@ -343,7 +408,7 @@ def _load_campaign_executor(campaign: Campaign) -> CampaignExecutor:
 
         install_account_identity_cutover_executor()
         executor = _CAMPAIGN_EXECUTORS.get(campaign)
-    if executor is None and campaign == "project-checkout-cutover":
+    if executor is None and campaign == PROJECT_CHECKOUT_CUTOVER_CAMPAIGN:
         from gobby.cli.project_checkout_cutover import (
             install_project_checkout_cutover_executor,
         )
@@ -359,6 +424,41 @@ def _load_campaign_executor(campaign: Campaign) -> CampaignExecutor:
 
 def _resolve_database_url() -> str:
     return _resolve_backup_database_url(get_gobby_home())
+
+
+def expected_baseline_checksum() -> str:
+    """The baseline receipt every cutover campaign targets."""
+    checksum = expected_schema_identity()["baseline_checksum"]
+    if not isinstance(checksum, str):
+        raise click.ClickException("Expected schema baseline checksum is invalid")
+    return checksum
+
+
+def _project_checkout_cutover_applied(database_url: str) -> bool:
+    """Compare the hub's baseline receipt with the target over a read-only connection."""
+    try:
+        receipt = read_baseline_receipt_checksum(database_url)
+    except psycopg.Error as exc:
+        raise click.ClickException(f"Could not read the hub's baseline receipt: {exc}") from exc
+    return receipt == expected_baseline_checksum()
+
+
+def _preflight_lines(preflight: ProjectCheckoutCutoverPreflight) -> list[str]:
+    planned = {insert.project_id: insert.root_path for insert in preflight.expected_inserts}
+    lines: list[str] = []
+    for project in preflight.projects:
+        if project.resolution_reason is not None:
+            detail = project.resolution_reason
+        elif project.exclusion_reason is not None:
+            detail = project.exclusion_reason
+        elif project.resolution_status == "covered":
+            detail = ", ".join(checkout.root_path for checkout in project.existing_checkouts)
+        else:
+            detail = planned.get(project.project_id, project.legacy_root)
+        lines.append(
+            f"{project.name} ({project.project_id}): {project.resolution_status} - {detail}"
+        )
+    return lines
 
 
 def _epoch_payload(epoch: MaintenanceEpoch) -> dict[str, object]:

@@ -305,20 +305,11 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 
 /// Receipts written before in-place asset edits. Live hubs keep those
-/// checksums; the improved bodies are what new applies stamp.
+/// checksums; the improved bodies are what new applies stamp. Entries here
+/// must be schema-equivalent to the current asset: the pre-#19651 baseline
+/// receipts are campaign predecessors (`PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS`
+/// in `runner.rs`), never prior receipts.
 pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[
-    (
-        375,
-        "ec222a7f8b3c486abfff05eda4ed02995d272a132ad2fdadb1dd90edbccb2ce1",
-    ),
-    (
-        375,
-        "ece3754752dbc72aaff4bbd3ebaa91a41305e4899e180012f8429c4f7467b1bf",
-    ),
-    (
-        375,
-        "8467fc42e29fec1f58986e7ac141c3cdcf8c6a417c61c73ff3cca63241e2a2cf",
-    ),
     (
         377,
         "43b6c25263c1e510f28c540d9cc24e62ffcad67a3a8dddde3645bdb6a5e92821",

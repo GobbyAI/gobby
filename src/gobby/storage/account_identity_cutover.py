@@ -655,19 +655,16 @@ def _require_receipt(connection: psycopg.Connection[Any], expected_checksum: str
 
 
 def _receipt_checksum(connection: psycopg.Connection[Any]) -> str | None:
-    rows = connection.execute(
+    row = connection.execute(
         """
-        SELECT version, filename, checksum
+        SELECT checksum
         FROM schema_migrations
-        ORDER BY version
-        """
-    ).fetchall()
-    if len(rows) != 1:
-        return None
-    row = rows[0]
-    if row["version"] != BASELINE_VERSION or row["filename"] != f"baseline@{BASELINE_VERSION}":
-        return None
-    return str(row["checksum"])
+        WHERE version = %s
+          AND filename = %s
+        """,
+        (BASELINE_VERSION, f"baseline@{BASELINE_VERSION}"),
+    ).fetchone()
+    return None if row is None else str(row["checksum"])
 
 
 def _campaign_constraint_is_known(definition: str) -> bool:

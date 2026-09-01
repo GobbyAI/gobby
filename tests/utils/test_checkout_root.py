@@ -11,11 +11,13 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import OverlayRegistrationRejectedError
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import IsolatedAgentProjectPathError, LocalProjectManager
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.utils.checkout_root import (
     InvalidCheckoutRootError,
     MarkerMismatchError,
+    canonical_checkout_root,
+    validate_campaign_checkout_root,
     validate_checkout_root,
 )
 from tests.fixtures.isolated_checkout import (
@@ -181,6 +183,73 @@ def test_validate_checkout_root_accepts_normalized_absolute(
     validate = validate_checkout_root
     assert (
         validate(
+            temp_db,
+            project_id=isolated.project.id,
+            machine_id=isolated.machine_id,
+            candidate_path=isolated.root_path,
+            expected_marker_id=isolated.project.id,
+        )
+        == isolated.root_path
+    )
+
+
+def test_validate_checkout_root_returns_realpath_for_symlinked_root(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "repo", target_is_directory=True)
+    assert os.path.normpath(str(link)) == str(link)
+    assert str(link) != isolated.root_path
+
+    resolved = validate_checkout_root(
+        temp_db,
+        project_id=isolated.project.id,
+        machine_id=isolated.machine_id,
+        candidate_path=str(link),
+        expected_marker_id=isolated.project.id,
+    )
+
+    assert resolved == isolated.root_path
+    assert resolved == os.path.realpath(str(link))
+
+
+def test_canonical_checkout_root_resolves_symlinks_and_dots(tmp_path: Path) -> None:
+    real = tmp_path / "repo"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    dotted = f"{link}/../{link.name}/."
+
+    assert canonical_checkout_root(dotted) == os.path.realpath(str(real))
+    assert canonical_checkout_root(str(real)) == os.path.realpath(str(real))
+
+
+def test_campaign_validation_ignores_ambient_session_that_ingress_refuses(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    monkeypatch.setenv("GOBBY_SESSION_ID", str(uuid.uuid4()))
+
+    def ambient_isolated_session(_manager: LocalProjectManager) -> bool:
+        return True
+
+    monkeypatch.setattr(LocalProjectManager, "_is_isolated_agent_session", ambient_isolated_session)
+
+    with pytest.raises(IsolatedAgentProjectPathError):
+        validate_checkout_root(
+            temp_db,
+            project_id=isolated.project.id,
+            machine_id=isolated.machine_id,
+            candidate_path=isolated.root_path,
+            expected_marker_id=isolated.project.id,
+        )
+    assert (
+        validate_campaign_checkout_root(
             temp_db,
             project_id=isolated.project.id,
             machine_id=isolated.machine_id,
