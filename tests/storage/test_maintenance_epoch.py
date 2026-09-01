@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -21,6 +23,7 @@ import gobby.runner_init.helpers as runner_helpers
 import gobby.storage.hub.runtime as hub_runtime
 import gobby.storage.maintenance_epoch as maintenance
 from gobby.storage.maintenance_epoch import (
+    CAMPAIGNS,
     MaintenanceEpochActiveError,
     MaintenanceEpochOwnershipError,
     abort_maintenance_epoch,
@@ -34,6 +37,12 @@ from gobby.storage.maintenance_epoch import (
     release_maintenance_epoch,
     release_restored_maintenance_epoch,
     run_receipted_component,
+)
+
+_BASELINE_SQL = Path(__file__).resolve().parents[2] / "crates/gcore/assets/schema/baseline.sql"
+_CAMPAIGN_CHECK_PATTERN = re.compile(
+    r"CONSTRAINT (?P<name>(?:maintenance_epochs|destructive_batches)_campaign_check) "
+    r"CHECK \(\(campaign = ANY \(ARRAY\[(?P<values>[^\]]+)\]\)\)\)"
 )
 
 
@@ -287,6 +296,9 @@ def test_runtime_and_daemon_boot_use_courtesy_admission_check(
         postgres_pool=object(),
     )
 
+    # A managed execution opens the hub through its grant and never reaches the
+    # admission check; the test must run as an operator process.
+    monkeypatch.delenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", raising=False)
     monkeypatch.setattr(hub_runtime, "load_bootstrap", lambda *_args, **_kwargs: config)
     monkeypatch.setattr(
         hub_runtime,
@@ -781,3 +793,23 @@ def test_admitted_database_url_uses_matching_child_epoch(
 
     admitted_options = str(psycopg.conninfo.conninfo_to_dict(admitted).get("options") or "")
     assert str(epoch_id) in admitted_options
+
+
+def test_campaign_registry_is_admitted_by_every_baseline_campaign_check() -> None:
+    """Every runnable campaign must be a value the ledger CHECK constraints admit.
+
+    The CHECK lists may keep retired names (dropping one is a schema delta);
+    the Python registry may never name a campaign the ledgers would reject.
+    """
+    baseline = _BASELINE_SQL.read_text(encoding="utf-8")
+    admitted = {
+        match.group("name"): set(re.findall(r"'([^']+)'::text", match.group("values")))
+        for match in _CAMPAIGN_CHECK_PATTERN.finditer(baseline)
+    }
+
+    assert set(admitted) == {
+        "destructive_batches_campaign_check",
+        "maintenance_epochs_campaign_check",
+    }
+    for constraint_name, values in admitted.items():
+        assert set(CAMPAIGNS) <= values, constraint_name

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import json
 import os
 import threading
 import uuid
@@ -36,6 +38,8 @@ from gobby.storage.projects import (
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.integration
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_checkout_free_project_ids_pin_the_four_sentinels() -> None:
@@ -1066,3 +1070,162 @@ def test_get_and_list_remain_opaque_without_local_machine_check(
     assert loaded == created
     assert [row.root_path for row in manager.list_for_machine(machine_id)] == ["/opaque/root"]
     assert called == []
+
+
+def test_target_schema_assets_are_checkout_only() -> None:
+    baseline = (_REPO_ROOT / "crates/gcore/assets/schema/baseline.sql").read_text()
+    privileges = json.loads(
+        (_REPO_ROOT / "crates/gcode/security/managed_postgres_privileges.json").read_text()
+    )
+
+    assert "CREATE TABLE project_checkouts (" in baseline
+    assert "repo_path text" not in baseline
+    assert "projects.repo_path" not in baseline
+    assert "SELECT(repo_path) ON TABLE projects" not in baseline
+    assert "'project-checkout-cutover'::text" in baseline
+    assert "LEFT JOIN public.project_checkouts AS checkout" in baseline
+    projects = next(item for item in privileges["relations"] if item["relation"] == "projects")
+    assert projects["columns"] == ["id", "name", "deleted_at"]
+
+
+def test_agent_spawn_resolves_machine_checkout_instead_of_logical_project_path() -> None:
+    source = (Path(__file__).parents[2] / "src/gobby/servers/routes/agent_spawn.py").read_text()
+
+    assert "project.repo_path" not in source
+    assert "require_root(task_manager.db, effective_project_id, require_machine_id())" in source
+
+
+def test_identity_repo_path_residue_allowlist() -> None:
+    """Pin the exact gcode residue queries and their narrow historical allowlist."""
+    source_roots = (
+        "src/gobby",
+        "crates/gcore/src",
+        "crates/gcore/tests",
+        "crates/gcode/src",
+        "tests",
+    )
+    source_suffixes = {".json", ".py", ".rs", ".sql"}
+    allowed_qualified_column_paths = {
+        "crates/gcore/tests/schema_contract.rs",
+    }
+    literal_queries: tuple[tuple[str, str, set[str]], ...] = (
+        (
+            "gcode grep -F 'projects.repo_path' src/gobby crates/gcore/src "
+            "crates/gcore/tests crates/gcode/src tests -m 500",
+            "projects.repo_path",
+            allowed_qualified_column_paths,
+        ),
+        (
+            "gcode grep -F 'Project.repo_path' src/gobby crates/gcore/src "
+            "crates/gcore/tests crates/gcode/src tests -m 500",
+            "Project.repo_path",
+            set(),
+        ),
+        (
+            'gcode grep -F "project\'s repo_path" src/gobby -m 50',
+            "project's repo_path",
+            set(),
+        ),
+        (
+            "gcode grep -F 'Project repo_path is required' src/gobby -m 50",
+            "Project repo_path is required",
+            set(),
+        ),
+        (
+            "gcode grep -F 'canonical repo_path' src/gobby -m 50",
+            "canonical repo_path",
+            set(),
+        ),
+    )
+    violations: dict[str, list[str]] = {}
+    residue_test_path = "tests/storage/test_project_checkouts.py"
+    for command, literal, allowed_paths in literal_queries:
+        for root_name in source_roots:
+            root = _REPO_ROOT / root_name
+            for path in root.rglob("*"):
+                if not path.is_file() or path.suffix not in source_suffixes:
+                    continue
+                relative = path.relative_to(_REPO_ROOT).as_posix()
+                if (
+                    literal in path.read_text(errors="replace")
+                    and relative not in allowed_paths
+                    and relative != residue_test_path
+                ):
+                    violations.setdefault(command, []).append(relative)
+
+    fixture_paths = (
+        "crates/gcode/src/config/tests.rs",
+        "tests/e2e/conftest.py",
+        "tests/e2e/test_worktrees_e2e.py",
+        "tests/integration/test_edit_history.py",
+        "tests/integration/test_hub_query.py",
+        "tests/mcp_proxy/test_metrics_manager.py",
+        "tests/mcp_proxy/test_metrics_store.py",
+        "tests/mcp_proxy/test_registries.py",
+        "tests/mcp_proxy/tools/test_apply_persona.py",
+        "tests/mcp_proxy/tools/test_hub.py",
+        "tests/plans/test_plan_coverage_ci.py",
+        "tests/sessions/test_e2e_session_tracking.py",
+        "tests/sessions/test_token_usage.py",
+        "tests/storage/test_checkpoints.py",
+        "tests/storage/test_manager_surface_parity.py",
+        "tests/storage/test_postgres_agent_authorization.py",
+        "tests/storage/test_project_manager.py",
+        "tests/storage/test_project_repo_path_isolation.py",
+        "tests/sync/test_github_issue_sync.py",
+        "tests/workflows/test_pipeline_heartbeat.py",
+    )
+    json_query = (
+        "gcode grep -F '\"repo_path\":' crates/gcode/src/config/tests.rs "
+        + " ".join(fixture_paths[1:])
+        + " -m 500"
+    )
+    for relative in fixture_paths:
+        if '"repo_path":' in (_REPO_ROOT / relative).read_text(errors="replace"):
+            violations.setdefault(json_query, []).append(relative)
+
+    positional_query = (
+        "gcode grep '\\.(create|ensure_exists|update)\\(' "
+        + " ".join(path for path in fixture_paths if path.endswith(".py"))
+        + " -m 500"
+    )
+    positional_limits = {"create": 2, "ensure_exists": 3, "update": 2}
+    manager_names = {"pm", "project_manager", "projects"}
+    for relative in (path for path in fixture_paths if path.endswith(".py")):
+        tree = ast.parse((_REPO_ROOT / relative).read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                value = node.value
+                if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
+                    if value.func.id == "LocalProjectManager":
+                        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                        manager_names.update(
+                            target.id for target in targets if isinstance(target, ast.Name)
+                        )
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            limit = positional_limits.get(node.func.attr)
+            if limit is None or len(node.args) < limit:
+                continue
+            owner = node.func.value
+            direct_manager = (
+                isinstance(owner, ast.Call)
+                and isinstance(owner.func, ast.Name)
+                and owner.func.id == "LocalProjectManager"
+            )
+            named_manager = isinstance(owner, ast.Name) and owner.id in manager_names
+            if direct_manager or named_manager:
+                violations.setdefault(positional_query, []).append(f"{relative}:{node.lineno}")
+
+    privileges = json.loads(
+        (_REPO_ROOT / "crates/gcode/security/managed_postgres_privileges.json").read_text()
+    )
+    projects = next(item for item in privileges["relations"] if item["relation"] == "projects")
+    if projects["columns"] != ["id", "name", "deleted_at"]:
+        violations.setdefault(
+            'gcode grep -F \'"relation": "projects"\' '
+            "crates/gcode/security/managed_postgres_privileges.json -A 12 -m 20",
+            [],
+        ).append(str(projects["columns"]))
+
+    assert not violations, json.dumps(violations, indent=2, sort_keys=True)

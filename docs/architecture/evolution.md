@@ -14,8 +14,9 @@ against those decisions so it is not lost in task history.
   sessions, tasks, memory, workflows, rules, pipelines, agents, MCP proxy.
   Operators start it with `gobby start`. HTTP `:60887`, WS `:60888`.
 - **Data**: PostgreSQL is the runtime hub; FalkorDB graph; Qdrant vectors.
-  Schema authority already lives in Rust — `gcore` embeds baseline 375 and
-  `gdaemon schema apply/verify` owns DDL (`crates/gcore/src/schema/assets.rs`).
+  Schema authority already lives in Rust — `gcore` embeds one flattened
+  `baseline@1` with no stacked migrations, and `gdaemon schema apply/verify`
+  owns DDL (`crates/gcore/src/schema/assets.rs`).
   M0 shared-datastore **code** has landed (leases, remote DSNs, `machine_id`
   scoping). The remaining M0 gate is the real two-machine smoke (#19600).
   Plans: `.gobby/plans/m0-shared-datastores-bridge.md`,
@@ -230,7 +231,8 @@ Not a stage-decision change. Checked `0.5.0` (`9e0730d46e`) and
    current stage. Without a merged native PTY host, stories A–C still die on
    tmux. Do not merge `wt-task-20255-m4` as-is.
 2. **`#19651` project-checkout-identity**, separate worktree. Last #17488
-   identity brick (first leaf `#20303`, `project_checkouts` in baseline 375).
+   identity brick (first leaf `#20303`, `project_checkouts` in the flattened
+   `baseline@1`).
    Unblocks two-machine testing and the wiki grant chain. Do not pair schema
    leaves with herdr P2 — both rewrite `crates/gcore` baseline/catalog
    identity files.
