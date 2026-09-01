@@ -532,7 +532,7 @@
     "workflows/rules/review-learning/inject-qa-reviewer-lessons.yaml": "39303e30b7395467192b759239993dd972feb56513bf28c8fb44ddf10bafdf1d",
     "workflows/rules/review-learning/inject-review-lessons-for-touched-files.yaml": "42311af2a39f6a0760674fdbc842cf2cf27724ce86b0b8cf961a57e97f1c1034",
     "workflows/rules/reviewer-lifecycle/terminal-verdict-after-validation.yaml": "9ac65c51f84737bf505a8477136a8b1a2a73cd5a0316c1f0a7d44b0a13264b01",
-    "workflows/rules/session-feedback/session-feedback.yaml": "07cfc8567b50186450e4c9b30890e469f02b134190f7999f511b6f835d058187",
+    "workflows/rules/session-feedback/session-feedback.yaml": "16b57cdca43086bc66b3516981261bb74f8472cb7753575b1a7907b6d9cd19c0",
     "workflows/rules/skill-discovery/discover-skill-hubs-on-turn-start.yaml": "9ac0eec1ffaa0f9ece65895635fd2cb639a40a23bf98e324a8675af48c345727",
     "workflows/rules/skill-discovery/require-bash-skill.yaml": "02ac3425391f0d1aa23b9d0469f5758a7c8446f005912651f3850400b99b2b29",
     "workflows/rules/skill-discovery/require-c-skill.yaml": "27887a677625e79a1c1fc18066de67ef77373a07b831e59e35aa61f38a6fdc8a",

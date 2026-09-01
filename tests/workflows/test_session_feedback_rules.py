@@ -27,7 +27,7 @@ SESSION_ID = "b62f0102-3ee3-4bb4-9f9d-57a523974726"
 PROJECT_ID = "c1a6d9e2-4b8f-4f0e-9a3d-2f7c6b1e8d05"
 INBOX_PATH = "docs/research/gobby-feedback/inbox"
 SURVEY_RULES = (
-    "rearm-gobby-session-feedback-after-close",
+    "reset-gobby-session-feedback-on-context-reset",
     "mark-gobby-session-feedback-submitted",
     "review-gobby-session-feedback-before-handoff",
     "review-gobby-session-feedback-on-stop",
@@ -138,6 +138,13 @@ def _offloaded_close_task_event(*, success: bool = True, closed: bool = True) ->
     )
 
 
+def _session_start_event(source: str, *, pending_context_reset: bool = False) -> HookEvent:
+    return _event(
+        HookEventType.SESSION_START,
+        {"source": source, "_pending_context_reset": pending_context_reset},
+    )
+
+
 def _sessions_tool_event(tool_name: str, *, after: bool = False) -> HookEvent:
     data: dict[str, object] = {
         "tool_name": "mcp__gobby__call_tool",
@@ -206,11 +213,11 @@ class TestSessionFeedbackRules:
             assert "gobby" in (row.tags or [])
             assert "session-feedback" in (row.tags or [])
 
-        rearm = manager.get_by_name("rearm-gobby-session-feedback-after-close")
-        assert rearm is not None
-        assert rearm.priority == 11
-        rearm_body = RuleDefinitionBody.model_validate(rearm.definition_json)
-        assert rearm_body.event.value == "after_tool"
+        reset = manager.get_by_name("reset-gobby-session-feedback-on-context-reset")
+        assert reset is not None
+        assert reset.priority == 8
+        reset_body = RuleDefinitionBody.model_validate(reset.definition_json)
+        assert reset_body.event.value == "session_start"
 
         stop = manager.get_by_name("review-gobby-session-feedback-on-stop")
         assert stop is not None
@@ -235,7 +242,9 @@ class TestSessionFeedbackRules:
         assert "set_handoff" in (handoff_body.when or "")
         assert "compact_self" not in (handoff_body.when or "")
 
-        assert manager.get_by_name("reset-gobby-session-feedback-on-context-reset") is None
+        # Task closure is not a context boundary: closing N tasks in one epoch
+        # must not re-arm the survey N times.
+        assert manager.get_by_name("rearm-gobby-session-feedback-after-close") is None
 
     @pytest.mark.asyncio
     async def test_evaluate_injects_survey_active_from_config(self, db: HubDatabase) -> None:
@@ -399,29 +408,59 @@ class TestSessionFeedbackRules:
     @pytest.mark.parametrize(
         ("event", "expected_reviewed"),
         [
-            (_close_task_event(), False),
-            (_offloaded_close_task_event(), False),
-            (_offloaded_close_task_event(success=False), True),
-            (_offloaded_close_task_event(closed=False), True),
+            (_session_start_event("compact"), False),
+            (_session_start_event("clear"), False),
+            (_session_start_event("resume", pending_context_reset=True), False),
+            (_session_start_event("resume"), True),
+            (_session_start_event("startup"), True),
         ],
-        ids=("direct-close", "offloaded-close", "failed-call", "preview-only"),
+        ids=("compact", "clear", "resume-after-reset", "plain-resume", "startup"),
     )
-    async def test_close_rearms_only_after_successful_closure(
+    async def test_context_reset_rearms_the_survey(
         self,
         db: HubDatabase,
         event: HookEvent,
         expected_reviewed: bool,
     ) -> None:
         _sync_bundled(db)
-        _enable_rules(db, "rearm-gobby-session-feedback-after-close")
+        _enable_rules(db, "reset-gobby-session-feedback-on-context-reset")
         variables: dict[str, Any] = {
             "project": _project(),
+            "pending_context_reset": bool(event.data.get("_pending_context_reset")),
             "_gobby_feedback_epoch_reviewed": True,
         }
 
         await _engine(db).evaluate(event, SESSION_ID, variables)
 
         assert variables["_gobby_feedback_epoch_reviewed"] is expected_reviewed
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "event",
+        [_close_task_event(), _offloaded_close_task_event()],
+        ids=("direct-close", "offloaded-close"),
+    )
+    async def test_task_closure_never_rearms_the_survey(
+        self, db: HubDatabase, event: HookEvent
+    ) -> None:
+        """One epoch is one survey, however many tasks the epoch closes."""
+        _sync_bundled(db)
+        _enable_rules(db, *SURVEY_RULES)
+        variables: dict[str, Any] = {
+            "project": _project(),
+            "task_claimed": True,
+            "_memory_pending_task_reviews": [{"task_ref": "#42"}],
+            "_gobby_feedback_epoch_reviewed": True,
+        }
+        engine = _engine(db)
+
+        await engine.evaluate(event, SESSION_ID, variables)
+        stop = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, variables)
+        handoff = await engine.evaluate(_sessions_tool_event("set_handoff"), SESSION_ID, variables)
+
+        assert variables["_gobby_feedback_epoch_reviewed"] is True
+        assert stop.decision == "allow"
+        assert handoff.decision == "allow"
 
     @pytest.mark.asyncio
     async def test_successful_feedback_marks_epoch_reviewed(self, db: HubDatabase) -> None:

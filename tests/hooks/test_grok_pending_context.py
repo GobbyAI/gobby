@@ -501,6 +501,20 @@ def test_in_place_compact_clears_queued_context(
     assert stored.get("grok_pending_turn_context") in ([], None)
 
 
+def test_in_place_compact_rearms_the_feedback_survey(
+    session_manager: SessionManager,
+    grok_session_id: str,
+) -> None:
+    """Grok emits no SessionStart(source=compact), so the bundled rearm rule misses it."""
+    variables = SessionVariableManager(session_manager.db)
+    variables.merge_variables(grok_session_id, {"_gobby_feedback_epoch_reviewed": True})
+    handler = SimpleNamespace(_session_manager=session_manager, _task_manager=None)
+
+    apply_in_place_compact_context_loss(handler, grok_session_id)
+
+    assert variables.get_variables(grok_session_id)["_gobby_feedback_epoch_reviewed"] is False
+
+
 def test_grok_pending_context_imports_before_the_event_handler_package() -> None:
     """Importing it first used to hit a half-built module and raise ImportError.
 

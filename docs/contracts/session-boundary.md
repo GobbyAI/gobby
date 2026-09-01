@@ -55,7 +55,11 @@ Projects outside the Gobby repository receive gates only after an operator expli
 selects `all`. The manual feedback tool remains callable from every repository, and
 capture stays on the local machine; email and form delivery are outside this contract.
 The computed flag `_gobby_feedback_survey_active` is injected per event; epoch
-acknowledgment lives in `_gobby_feedback_epoch_reviewed`.
+acknowledgment lives in `_gobby_feedback_epoch_reviewed`. Only a context reset
+re-arms it — SessionStart with source `clear` or `compact`, a `resume` carrying
+`pending_context_reset`, or the equivalent Grok PostCompact closeout. Task closure
+is not a context boundary, so one epoch is surveyed once however many tasks it
+closes.
 
 `summary_markdown` remains the transcript-generated archival summary. It never doubles
 as a live handoff.

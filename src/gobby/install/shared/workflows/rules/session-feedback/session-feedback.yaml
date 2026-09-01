@@ -1,23 +1,16 @@
 tags: [session-feedback, lifecycle, gobby, default]
 
 rules:
-  rearm-gobby-session-feedback-after-close:
-    description: "Rearm the bounded Gobby-experience survey after a successful task closure"
-    event: after_tool
+  reset-gobby-session-feedback-on-context-reset:
+    description: "Rearm the bounded Gobby-experience survey for a fresh context epoch"
+    event: session_start
     enabled: true
-    priority: 11
+    priority: 8
     when: >
-      variables.get('_gobby_feedback_survey_active')
-      and event.data.get('mcp_server') == 'gobby-tasks'
-      and event.data.get('mcp_tool') == 'close_task'
-      and tool_call_succeeded()
-      and isinstance(event.data.get('tool_output'), dict)
-      and (
-        event.data.get('tool_output', {}).get('closed') is True
-        or (
-          isinstance(event.data.get('tool_output', {}).get('result'), dict)
-          and event.data.get('tool_output', {}).get('result', {}).get('closed') is True
-        )
+      event.data.get('source') in ['clear', 'compact']
+      or (
+        event.data.get('source') == 'resume'
+        and variables.get('pending_context_reset')
       )
     effects:
       - type: set_variable

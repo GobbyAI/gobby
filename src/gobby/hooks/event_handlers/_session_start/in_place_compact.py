@@ -35,6 +35,9 @@ def apply_in_place_compact_context_loss(handler: Any, session_id: str | None) ->
         "loaded_skills": [],
         "workflow_requested_skills": [],
         "injected_memory_ids": [],
+        # reset-gobby-session-feedback-on-context-reset rearms the survey from
+        # SessionStart(source=compact), which Grok never emits.
+        "_gobby_feedback_epoch_reviewed": False,
     }
     sv_mgr.merge_variables(session_id, updates)
 
