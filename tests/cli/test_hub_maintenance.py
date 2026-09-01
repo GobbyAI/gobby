@@ -22,37 +22,8 @@ from gobby.storage.maintenance_epoch import (
     DestructiveBatch,
     MaintenanceEpoch,
 )
-from gobby.storage.project_checkout_cutover import (
-    ProjectCheckoutCutoverPreflight,
-    ProjectCheckoutCutoverProjectEvidence,
-    ProjectCheckoutInsert,
-)
 
 command = import_module("gobby.cli.hub_maintenance")
-
-
-def _refuse_side_effect(*_args: object, **_kwargs: object) -> None:
-    pytest.fail("read-only preflight must not stop, fence, or mutate anything")
-
-
-def _project_evidence(
-    name: str,
-    status: str,
-    *,
-    reason: str | None = None,
-    exclusion: str | None = None,
-) -> ProjectCheckoutCutoverProjectEvidence:
-    return ProjectCheckoutCutoverProjectEvidence(
-        project_id=uuid.uuid4(),
-        name=name,
-        legacy_root=f"/srv/{name}",
-        candidate_machine_ids=(),
-        evidence_sources=(),
-        existing_checkouts=(),
-        exclusion_reason=exclusion,
-        resolution_status=status,
-        resolution_reason=reason,
-    )
 
 
 def _record[T](events: list[str], event: str, value: T) -> T:
@@ -121,7 +92,6 @@ def _install_lifecycle_fakes(
         "stop_daemon",
         lambda **_kwargs: _record(events, "stop-daemon", True),
     )
-    monkeypatch.setattr(command, "_project_checkout_cutover_applied", lambda _dsn: False)
     monkeypatch.setattr(
         command,
         "open_maintenance_epoch",
@@ -193,10 +163,9 @@ def _install_lifecycle_fakes(
     "arguments",
     [
         ["hub-maintenance", "run", "purge"],
-        ["hub-maintenance", "run", "project-checkout-cutover"],
         ["hub-maintenance", "resume"],
     ],
-    ids=["run", "run-project-checkout", "resume"],
+    ids=["run", "resume"],
 )
 def test_protected_maintenance_refuses_non_rehearsal_database_before_state_access(
     monkeypatch: pytest.MonkeyPatch,
@@ -214,7 +183,6 @@ def test_protected_maintenance_refuses_non_rehearsal_database_before_state_acces
         lambda: "postgresql://operator:secret@example/gobby",
     )
     monkeypatch.setattr(command, "_load_campaign_executor", lambda _campaign: object())
-    monkeypatch.setattr(command, "read_baseline_receipt_checksum", record_unexpected_call)
     monkeypatch.setattr(command, "stop_daemon", record_unexpected_call)
     monkeypatch.setattr(command, "open_maintenance_epoch", record_unexpected_call)
     monkeypatch.setattr(command, "create_destructive_batch", record_unexpected_call)
@@ -319,44 +287,6 @@ def test_run_owns_open_backup_apply_verify_release_and_restart(
     assert str(epoch.id) in result.output
 
 
-def test_account_identity_cutover_leaves_daemon_stopped_for_binary_install(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[str] = []
-    epoch = _epoch("account-identity-cutover")
-    batch = _batch(epoch)
-    _install_lifecycle_fakes(monkeypatch, epoch=epoch, batch=batch, events=events)
-
-    result = CliRunner().invoke(
-        cli,
-        ["hub-maintenance", "run", "account-identity-cutover"],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert events[-2:] == ["mark-verified", "release"]
-    assert "restart" not in events
-    assert "Install the staged gdaemon and gcode binaries" in result.output
-
-
-def test_project_checkout_cutover_leaves_daemon_stopped_for_binary_install(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[str] = []
-    epoch = _epoch("project-checkout-cutover")
-    batch = _batch(epoch)
-    _install_lifecycle_fakes(monkeypatch, epoch=epoch, batch=batch, events=events)
-
-    result = CliRunner().invoke(
-        cli,
-        ["hub-maintenance", "run", "project-checkout-cutover"],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert events[-2:] == ["mark-verified", "release"]
-    assert "restart" not in events
-    assert "Install the staged gdaemon and gcode binaries" in result.output
-
-
 def test_resume_uses_only_hub_epoch_and_batch_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -392,28 +322,6 @@ def test_resume_uses_only_hub_epoch_and_batch_state(
         "restart",
     ]
     assert "reconcile" in result.output
-
-
-def test_account_identity_cutover_resume_leaves_daemon_stopped(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[str] = []
-    epoch = _epoch("account-identity-cutover")
-    batch = replace(
-        _batch(epoch, status="applied"),
-        backup_manifest_path="/tmp/manifest.json",
-        backup_manifest_sha256="a" * 64,
-    )
-    _install_lifecycle_fakes(monkeypatch, epoch=epoch, batch=batch, events=events)
-    monkeypatch.setattr(command, "discover_active_maintenance_epoch", lambda _dsn: epoch)
-    monkeypatch.setattr(command, "get_destructive_batch", lambda *_args, **_kwargs: batch)
-
-    result = CliRunner().invoke(cli, ["hub-maintenance", "resume"])
-
-    assert result.exit_code == 0, result.output
-    assert "apply" not in events
-    assert events[-2:] == ["mark-verified", "release"]
-    assert "restart" not in events
 
 
 def test_run_aborts_before_fence_when_daemon_stop_fails(
@@ -554,166 +462,6 @@ def test_abort_requires_confirmation_and_records_disposition(
     assert accepted.exit_code == 0, accepted.output
 
 
-@pytest.mark.parametrize("status", ["pending", "applied", "verified"])
-def test_project_checkout_abort_refuses_once_receipt_reaches_target(
-    monkeypatch: pytest.MonkeyPatch,
-    status: BatchStatus,
-) -> None:
-    # The batch ledger may lag the committed receipt (pending here); the
-    # receipt alone decides that the cutover is past the point of abort.
-    epoch = _epoch("project-checkout-cutover")
-    batch = _batch(epoch, status=status)
-    events: list[str] = []
-    monkeypatch.setattr(command, "_resolve_database_url", lambda: "postgresql://example/gobby")
-    monkeypatch.setattr(command, "discover_active_maintenance_epoch", lambda _dsn: epoch)
-    monkeypatch.setattr(command, "get_destructive_batch", lambda *_args, **_kwargs: batch)
-    monkeypatch.setattr(
-        command,
-        "_project_checkout_cutover_applied",
-        lambda dsn: _record(events, f"receipt:{dsn}", True),
-    )
-    monkeypatch.setattr(
-        command,
-        "abort_maintenance_epoch",
-        lambda *_args, **_kwargs: _record(events, "abort", epoch),
-    )
-    monkeypatch.setattr(command, "_start_daemon", lambda: events.append("restart"))
-
-    result = CliRunner().invoke(
-        cli,
-        ["hub-maintenance", "abort", "--disposition", "staged binaries required"],
-        input="y\n",
-    )
-
-    assert result.exit_code != 0
-    assert "already applied" in result.output
-    assert "gobby hub-maintenance resume" in result.output
-    assert len(events) == 1
-    assert events[0].startswith("receipt:")
-    assert f"gobby.maintenance_epoch={epoch.id}" in events[0]
-
-
-def test_project_checkout_abort_never_starts_daemon(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    epoch = _epoch("project-checkout-cutover")
-    batch = _batch(epoch, status="pending")
-    events: list[str] = []
-    monkeypatch.setattr(command, "_resolve_database_url", lambda: "postgresql://example/gobby")
-    monkeypatch.setattr(command, "discover_active_maintenance_epoch", lambda _dsn: epoch)
-    monkeypatch.setattr(command, "get_destructive_batch", lambda *_args, **_kwargs: batch)
-    monkeypatch.setattr(command, "_project_checkout_cutover_applied", lambda _dsn: False)
-    monkeypatch.setattr(
-        command,
-        "abort_maintenance_epoch",
-        lambda *_args, **_kwargs: _record(events, "abort", epoch),
-    )
-    monkeypatch.setattr(command, "_start_daemon", lambda: events.append("restart"))
-
-    result = CliRunner().invoke(
-        cli,
-        ["hub-maintenance", "abort", "--disposition", "preflight only"],
-        input="y\n",
-    )
-
-    assert result.exit_code == 0, result.output
-    assert events == ["abort"]
-    assert f"Maintenance epoch {epoch.id} aborted and released" in result.output
-    assert "Daemon left stopped" in result.output
-    assert "gobby start" in result.output
-
-
-def test_project_checkout_run_exits_before_daemon_stop_when_already_applied(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[str] = []
-    epoch = _epoch("project-checkout-cutover")
-    batch = _batch(epoch)
-    _install_lifecycle_fakes(monkeypatch, epoch=epoch, batch=batch, events=events)
-    monkeypatch.setattr(command, "_project_checkout_cutover_applied", lambda _dsn: True)
-
-    result = CliRunner().invoke(
-        cli,
-        ["hub-maintenance", "run", "project-checkout-cutover"],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert events == []
-    assert "already applied" in result.output
-
-
-def test_preflight_command_is_read_only_and_exits_one_when_blocked(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ready = _project_evidence("ready-project", "ready")
-    covered = _project_evidence("covered-project", "covered")
-    deleted = _project_evidence("deleted-project", "excluded", exclusion="soft_deleted")
-    orphan = _project_evidence(
-        "orphan-project",
-        "no_candidate_machine",
-        reason="No machine-owned evidence",
-    )
-    preflight = ProjectCheckoutCutoverPreflight(
-        projects=(ready, covered, deleted, orphan),
-        expected_inserts=(
-            ProjectCheckoutInsert(uuid.uuid4(), ready.project_id, "/srv/canonical/ready-project"),
-        ),
-    )
-    monkeypatch.setattr(command, "_resolve_database_url", lambda: "postgresql://example/gobby")
-    monkeypatch.setattr(command, "preflight_project_checkout_cutover", lambda _dsn: preflight)
-    for name in (
-        "stop_daemon",
-        "open_maintenance_epoch",
-        "create_destructive_batch",
-        "abort_maintenance_epoch",
-        "_start_daemon",
-    ):
-        monkeypatch.setattr(command, name, _refuse_side_effect)
-
-    result = CliRunner().invoke(
-        cli,
-        ["hub-maintenance", "preflight", "project-checkout-cutover"],
-    )
-
-    assert result.exit_code == 1, result.output
-    assert (
-        f"ready-project ({ready.project_id}): ready - /srv/canonical/ready-project" in result.output
-    )
-    assert f"covered-project ({covered.project_id}): covered - " in result.output
-    assert f"deleted-project ({deleted.project_id}): excluded - soft_deleted" in result.output
-    assert (
-        f"orphan-project ({orphan.project_id}): no_candidate_machine - "
-        "No machine-owned evidence" in result.output
-    )
-    assert "preflight is unresolved" in result.output
-    assert "gobby projects delete <name> --confirm <name>" in result.output
-    assert "gobby hub-maintenance preflight project-checkout-cutover" in result.output
-
-
-def test_preflight_command_exits_zero_when_every_project_resolves(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ready = _project_evidence("ready-project", "ready")
-    preflight = ProjectCheckoutCutoverPreflight(
-        projects=(ready,),
-        expected_inserts=(
-            ProjectCheckoutInsert(uuid.uuid4(), ready.project_id, "/srv/ready-project"),
-        ),
-    )
-    monkeypatch.setattr(command, "_resolve_database_url", lambda: "postgresql://example/gobby")
-    monkeypatch.setattr(command, "preflight_project_checkout_cutover", lambda _dsn: preflight)
-    monkeypatch.setattr(command, "stop_daemon", _refuse_side_effect)
-
-    result = CliRunner().invoke(
-        cli,
-        ["hub-maintenance", "preflight", "project-checkout-cutover"],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert "Verdict: ready (1 checkout insert(s) planned)" in result.output
-    assert "gobby hub-maintenance run project-checkout-cutover" in result.output
-
-
 def test_hub_backup_epoch_refuses_non_orchestrator_invocation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -757,35 +505,3 @@ def test_identity_cutover_campaign_is_retired() -> None:
     assert "'identity-cutover' is not one of" in result.output
     assert "identity-cutover" not in command.CAMPAIGNS
     assert "identity-cutover" not in command._CAMPAIGN_EXECUTORS
-
-
-def test_account_identity_cutover_executor_is_loaded_lazily(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from gobby.cli.account_identity_cutover import AccountIdentityCutoverExecutor
-
-    monkeypatch.delitem(
-        command._CAMPAIGN_EXECUTORS,
-        "account-identity-cutover",
-        raising=False,
-    )
-
-    executor = command._load_campaign_executor("account-identity-cutover")
-
-    assert isinstance(executor, AccountIdentityCutoverExecutor)
-
-
-def test_project_checkout_cutover_executor_is_loaded_lazily(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from gobby.cli.project_checkout_cutover import ProjectCheckoutCutoverExecutor
-
-    monkeypatch.delitem(
-        command._CAMPAIGN_EXECUTORS,
-        "project-checkout-cutover",
-        raising=False,
-    )
-
-    executor = command._load_campaign_executor("project-checkout-cutover")
-
-    assert isinstance(executor, ProjectCheckoutCutoverExecutor)
