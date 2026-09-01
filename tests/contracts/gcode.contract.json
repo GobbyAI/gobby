@@ -1,6 +1,6 @@
 {
   "tool": "gcode",
-  "contract_version": 7,
+  "contract_version": 8,
   "summary": "Fast code index CLI for Gobby.",
   "global_flags": [
     {
@@ -92,6 +92,30 @@
         "commands",
         "error_codes",
         "exit_codes"
+      ]
+    },
+    {
+      "name": "schema-identity",
+      "summary": "Print the embedded schema identity.",
+      "daemon_consumed": false,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--json",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "baseline_version",
+        "latest_version",
+        "baseline_checksum",
+        "latest_checksum",
+        "assets_root_hash",
+        "runner_protocol"
       ]
     },
     {
