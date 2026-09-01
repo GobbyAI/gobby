@@ -759,12 +759,25 @@ class TestWorktreeGitManagerSyncFromMain:
                 stdout="CONFLICT (content): ...",
                 stderr="",
             ),
+            subprocess.CompletedProcess(
+                args=["git", "diff"],
+                returncode=0,
+                stdout="file.py\n",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                args=["git", "rebase", "--abort"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
         ]
 
         result = manager.sync_from_main(worktree_path)
 
         assert result.success is False
         assert "conflicts" in result.message.lower()
+        assert result.output == "file.py"
 
     @patch("subprocess.run")
     def test_sync_handles_fetch_failure(self, mock_run, manager, tmp_path) -> None:
@@ -1428,6 +1441,18 @@ class TestWorktreeGitManagerSyncEdgeCases:
                 stdout="",
                 stderr="CONFLICT (content): Merge conflict in file.py",
             ),
+            subprocess.CompletedProcess(
+                args=["git", "diff"],
+                returncode=0,
+                stdout="file.py\n",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                args=["git", "merge", "--abort"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
         ]
 
         result = manager.sync_from_main(worktree_path, strategy="merge")
@@ -1435,6 +1460,7 @@ class TestWorktreeGitManagerSyncEdgeCases:
         assert result.success is False
         assert "conflicts" in result.message.lower()
         assert "abort" in result.message.lower()
+        assert result.output == "file.py"
 
     @patch("subprocess.run")
     def test_sync_timeout(self, mock_run, manager, tmp_path) -> None:

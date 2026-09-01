@@ -11,12 +11,14 @@ from gobby.mcp_proxy.tools.merge_branch_protection_tool import register_branch_p
 from gobby.mcp_proxy.tools.merge_direct import (
     _GIT_NO_FF_TIER,
     _NO_FF_STRATEGIES,
-    _non_gobby_status_lines,
-    _status_path_is_gobby_only,
     _strategy_requests_no_ff,
 )
 from gobby.mcp_proxy.tools.merge_landscape import register_merge_landscape_tools
 from gobby.mcp_proxy.tools.merge_lifecycle import register_merge_lifecycle_tools
+from gobby.mcp_proxy.tools.worktrees._merge_fallback import (
+    _non_gobby_status_lines,
+    _status_path_is_gobby_only,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
