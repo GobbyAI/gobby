@@ -452,7 +452,10 @@ async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_ro
                 "--quiet",
             ),
             returncode=1,
-            stderr="No gcode project found. Run `gcode init` to initialize this directory.",
+            stderr=(
+                '{"error":"checkout_required","message":"no Gobby project is registered at '
+                f'{root}: .gobby/project.json is missing","recovery":"run `gobby init` in {root}"}}\n'
+            ),
         )
     )
     summarizer = SimpleNamespace(summarize_batch=AsyncMock())

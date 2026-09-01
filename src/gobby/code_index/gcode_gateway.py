@@ -26,7 +26,27 @@ MIN_GCODE_PRUNE_BUDGET_VERSION = "1.7.0"
 GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION = "0.9.5"
 _VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+(?:\.\d+)?)\b")
 _PROJECT_NOT_FOUND_PATTERN = re.compile(r"Project '([^']+)' not found")
-_NO_GCODE_PROJECT_FOUND = "No gcode project found. Run `gcode init`"
+# gcode reports an unregistered or moved checkout as a one-line typed JSON
+# payload on stderr: {"error": "checkout_required" | "checkout_mismatch",
+# "message": ..., "recovery": ...} (since #21444).
+_CHECKOUT_ERROR_CODES = frozenset({"checkout_required", "checkout_mismatch"})
+
+
+def _typed_gcode_error(stderr_text: str) -> dict[str, Any] | None:
+    """Return gcode's typed JSON error payload from stderr, when it printed one."""
+    for line in reversed(stderr_text.strip().splitlines()):
+        candidate = line.strip()
+        if not candidate.startswith("{"):
+            continue
+        try:
+            payload = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(payload, dict) and isinstance(payload.get("error"), str):
+            return payload
+    return None
+
+
 # Stderr signatures for embedding-endpoint transport failures (incident #18196
 # logged: "embedding response was invalid: AI transport failed: error sending
 # request for url (http://localhost:1234/v1/embeddings)").
@@ -221,7 +241,8 @@ def _classify_gcode_command_error(
             match.group(1),
             stdout=stdout_text,
         )
-    if _NO_GCODE_PROJECT_FOUND in stderr_text:
+    payload = _typed_gcode_error(stderr_text)
+    if payload is not None and payload.get("error") in _CHECKOUT_ERROR_CODES:
         project_path = _command_project_path(command)
         if project_path is not None:
             return GcodeProjectNotFoundError(

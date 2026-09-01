@@ -772,7 +772,11 @@ async def test_gateway_classifies_current_project_not_found_stderr(
         FakeProcess(stdout=GCODE_PIN_STDOUT),
         FakeProcess(
             returncode=1,
-            stderr=b"No gcode project found. Run `gcode init` to initialize this directory.",
+            stderr=(
+                b'{"error":"checkout_required","message":"no Gobby project is registered at '
+                b'/tmp/project: .gobby/project.json is missing","recovery":"run `gobby init` '
+                b'in /tmp/project"}\n'
+            ),
         ),
     ]
     _patch_subprocess(monkeypatch, processes)
@@ -857,3 +861,30 @@ async def test_gateway_returns_indexed_file_not_found_skip_response(
         "status": "skipped",
         "reason": "indexed_file_not_found",
     }
+
+
+async def test_gateway_classifies_checkout_mismatch_as_project_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A moved/unregistered primary checkout is typed checkout_mismatch (#21450)."""
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(
+            returncode=2,
+            stderr=(
+                b'{"error":"checkout_mismatch","message":"registered checkout /old/root does '
+                b'not match /tmp/project","recovery":"run `gobby projects rebind '
+                b'<project-id> /tmp/project`"}\n'
+            ),
+        ),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeProjectNotFoundError) as exc_info:
+        await gateway.graph_sync_file(tmp_path, "src/app.py")
+
+    assert exc_info.value.project_path == str(tmp_path)
+    assert exc_info.value.returncode == 2
+    assert "gobby projects rebind" in exc_info.value.stderr
