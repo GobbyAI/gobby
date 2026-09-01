@@ -386,6 +386,83 @@ class TestAgyHandleNativeSynthesis:
             HookEventType.BEFORE_AGENT,
         ]
 
+    def test_session_banner_is_injected_only_on_first_pre_invocation(self) -> None:
+        hook_manager = MagicMock()
+        start_count = 0
+
+        def _handle(event: HookEvent) -> HookResponse:
+            nonlocal start_count
+            if event.event_type is HookEventType.SESSION_START:
+                start_count += 1
+                return HookResponse(
+                    decision="allow",
+                    context="startup context",
+                    system_message="Gobby Session ID: #123",
+                    metadata={"_first_hook_for_session": start_count == 1},
+                )
+            return HookResponse(
+                decision="allow",
+                context="turn context",
+                system_message="turn guidance",
+            )
+
+        hook_manager.handle.side_effect = _handle
+        adapter = AgyAdapter()
+
+        first = adapter.handle_native(_agy_pre_invocation_event(), hook_manager)
+        repeated = adapter.handle_native(_agy_pre_invocation_event(), hook_manager)
+
+        first_blob = "\n".join(_inject_step_values(first))
+        repeated_blob = "\n".join(_inject_step_values(repeated))
+        assert "Gobby Session ID: #123" in first_blob
+        assert "Gobby Session ID: #123" not in repeated_blob
+        assert "startup context" in repeated_blob
+        assert "turn context" in repeated_blob
+        assert "turn guidance" in repeated_blob
+        assert [call.args[0].event_type for call in hook_manager.handle.call_args_list] == [
+            HookEventType.SESSION_START,
+            HookEventType.BEFORE_AGENT,
+            HookEventType.SESSION_START,
+            HookEventType.BEFORE_AGENT,
+        ]
+
+    @pytest.mark.parametrize(
+        ("metadata", "system_message"),
+        [
+            pytest.param(
+                {},
+                "Gobby Session ID: #123",
+                id="missing-first-hook-flag",
+            ),
+            pytest.param(
+                {"_first_hook_for_session": False},
+                "startup guidance",
+                id="non-banner-message",
+            ),
+        ],
+    )
+    def test_start_system_message_is_preserved_without_explicit_repeated_banner(
+        self,
+        metadata: dict[str, Any],
+        system_message: str,
+    ) -> None:
+        hook_manager = MagicMock()
+
+        def _handle(event: HookEvent) -> HookResponse:
+            if event.event_type is HookEventType.SESSION_START:
+                return HookResponse(
+                    decision="allow",
+                    system_message=system_message,
+                    metadata=metadata,
+                )
+            return HookResponse(decision="allow")
+
+        hook_manager.handle.side_effect = _handle
+
+        result = AgyAdapter().handle_native(_agy_pre_invocation_event(), hook_manager)
+
+        assert system_message in _inject_step_values(result)
+
     def test_later_invocation_dispatches_before_model(self) -> None:
         hook_manager = MagicMock()
         hook_manager.handle.return_value = HookResponse(decision="allow")

@@ -14,7 +14,10 @@ from gobby.adapters.agy_contract import (
     apply_agy_payload_aliases,
     get_agy_contract,
 )
-from gobby.adapters.base import normalize_adapter_response_reason
+from gobby.adapters.base import (
+    normalize_adapter_response_reason,
+    system_message_has_session_banner,
+)
 from gobby.adapters.capabilities import ContextChannel
 from gobby.adapters.degradation import truncate_context_for_adapter
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
@@ -117,11 +120,16 @@ class AgyAdapter(ACPHookAdapter):
         self._hook_manager = hook_manager
         start_response = hook_manager.handle(start_event)
         original_response = hook_manager.handle(original)
+        start_system_message = start_response.system_message
+        if start_response.metadata.get(
+            "_first_hook_for_session"
+        ) is False and system_message_has_session_banner(start_system_message):
+            start_system_message = None
         merged = replace(
             original_response,
             context=_join_response_text(start_response.context, original_response.context),
             system_message=_join_response_text(
-                start_response.system_message,
+                start_system_message,
                 original_response.system_message,
             ),
         )
