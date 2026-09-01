@@ -64,8 +64,8 @@ def _seed_agent_run(db: PostgresHubDatabase, machine_id: UUID) -> tuple[UUID, UU
     project_id, session_id, run_id = uuid4(), uuid4(), uuid4()
     with db.transaction() as conn:
         conn.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
-            (project_id, f"auth-isolation-{project_id}", f"/tmp/{project_id}"),
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
+            (project_id, f"auth-isolation-{project_id}"),
         )
         conn.execute(
             """

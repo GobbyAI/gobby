@@ -156,8 +156,8 @@ class TestCreateMemory:
     ) -> None:
         """Test memory creation with all parameters."""
         db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
-            (PROJECT_ID, "test-project", "/tmp/test"),
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
+            (PROJECT_ID, "test-project"),
         )
         now = datetime.now(UTC).isoformat()
         db.execute(
