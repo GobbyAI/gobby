@@ -45,6 +45,8 @@ from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
+_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
 
 @pytest.fixture(autouse=True)
 def _committed_manifest_is_current() -> Iterator[None]:
@@ -74,12 +76,14 @@ def _ctx(task: Task, validator: object = None) -> RegistryContext:
     manager.db = MagicMock()
     manager.get_task.return_value = task
     manager.list_tasks.return_value = []
+    close_session = SimpleNamespace(id=task.claimed_by_session_id, machine_id=_MACHINE_ID)
     return cast(
         RegistryContext,
         SimpleNamespace(
             task_manager=manager,
             task_validator=validator,
             project_manager=MagicMock(),
+            session_manager=SimpleNamespace(get=lambda _session_id: close_session),
             session_var_manager=SimpleNamespace(get_variables=lambda _session_id: {}),
             validation_config=None,
             resolve_session_id=lambda session_id: session_id,
@@ -396,6 +400,110 @@ async def test_ready_leaf_runs_criteria_review_exactly_once() -> None:
     assert evaluation.ready is True
     assert [gate.item for gate in evaluation.gates] == list(range(1, 14))
     linked_paths.assert_called_once_with(task, "/repo", ("base123", "abc123"))
+    review.assert_awaited_once()
+
+
+async def _evaluate_with_tagged_scan(
+    scan: tuple[list[str], list[str]],
+) -> tuple[CloseEvaluation, AsyncMock, AsyncMock, MagicMock]:
+    task = _task()
+    ctx = _ctx(task, validator=object())
+    review = AsyncMock(
+        return_value=ValidationResult(
+            can_close=True,
+            validation_status="valid",
+            validation_feedback="Criteria satisfied.",
+            reset_reason="llm_valid",
+            extra={"verdict": {"status": "valid"}},
+        )
+    )
+    now = datetime(2026, 7, 27, 12, 5, tzinfo=UTC)
+    transcript = TranscriptEvidence(
+        validation_runs=(
+            TranscriptValidationRun(
+                session_id=task.claimed_by_session_id or "",
+                source="codex",
+                command="uv run pytest tests/tasks/test_close_checklist.py -q",
+                categories=("test",),
+                matcher_id="pytest",
+                label="pytest",
+                outcome="success",
+                started_at=now,
+                completed_at=now,
+                order=1,
+                exit_code=0,
+            ),
+        ),
+        sessions=(task.claimed_by_session_id or "",),
+    )
+    derive_transcript = AsyncMock(return_value=transcript)
+    tagged_scan = MagicMock(return_value=(scan, None))
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(close_finalization, "_linked_commit_paths", return_value=frozenset({"a"})),
+        patch.object(close_finalization, "_committable_task_paths", return_value={"a"}),
+        patch.object(lifecycle, "_has_committable_edits", return_value=False),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
+        patch.object(lifecycle, "unlinked_tagged_commits", tagged_scan),
+        patch.object(
+            lifecycle,
+            "validate_commit_requirements",
+            return_value=ValidationResult(can_close=True),
+        ),
+        patch.object(lifecycle, "active_validation_backoff", return_value=None),
+        patch.object(lifecycle, "_derive_close_transcript_evidence", derive_transcript),
+        patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=False),
+        patch("gobby.workflows.task_claim_state.task_edited_file_set", return_value=set()),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="Implemented and tested.",
+            commit_sha="abc123",
+            project_path=None,
+            response_detail="diagnostic",
+        )
+    return evaluation, review, derive_transcript, tagged_scan
+
+
+@pytest.mark.asyncio
+async def test_unlinked_tagged_commit_on_head_fails_gate_seven_before_review() -> None:
+    evaluation, review, derive_transcript, tagged_scan = await _evaluate_with_tagged_scan(
+        (["abc999"], ["def888"])
+    )
+
+    assert evaluation.ready is False
+    assert evaluation.error == "unlinked_tagged_commits"
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 8))
+    assert evaluation.gates[-1].status == "failed"
+    assert "abc999" in (evaluation.message or "")
+    assert "link_commit(task_id, commit_sha)" in (evaluation.action or "")
+    assert "auto_link_commits(task_id, since='2026-07-27T12:00:00+00:00')" in (
+        evaluation.action or ""
+    )
+    assert evaluation.extra["unlinked_tagged_commit_shas"] == ["abc999"]
+    assert evaluation.extra["other_ref_tagged_commit_shas"] == ["def888"]
+    assert tagged_scan.call_args.kwargs["commit_shas"] == ["abc123"]
+    derive_transcript.assert_not_awaited()
+    review.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tagged_commit_only_on_another_ref_is_a_diagnostic_not_a_blocker() -> None:
+    evaluation, review, _derive_transcript, _scan = await _evaluate_with_tagged_scan(
+        ([], ["def888"])
+    )
+
+    assert evaluation.ready is True
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 14))
+    assert evaluation.gates[6].details == {"other_ref_tagged_commit_shas": ["def888"]}
+    assert evaluation.extra["other_ref_tagged_commit_shas"] == ["def888"]
     review.assert_awaited_once()
 
 
@@ -1906,3 +2014,28 @@ def test_fingerprint_differences_name_nested_attribution_fields() -> None:
         "attribution.edited_paths",
     ]
     assert fingerprint_differences(None, fresh) == ["evaluation"]
+
+
+@pytest.mark.asyncio
+async def test_tagged_commit_landing_after_evaluation_returns_stale_without_close() -> None:
+    task = _task()
+    ctx = _ctx(task)
+    evaluation = _ready_evaluation(task)
+
+    with patch.object(
+        close_finalization,
+        "unlinked_tagged_commits",
+        return_value=((["abc999"], []), None),
+    ):
+        result = await _commit_close(
+            ctx,
+            evaluation,
+            reason="completed",
+            skip_validation=False,
+            override_justification=None,
+            commit_sha=None,
+        )
+
+    assert result["error"] == "stale_task_state"
+    assert "not linked" in result["message"]
+    cast(MagicMock, ctx.task_manager.close_task).assert_not_called()

@@ -26,6 +26,7 @@ from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValida
 pytestmark = pytest.mark.unit
 
 SESSION_ID = "00000000-0000-4000-8000-000000000301"
+MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 NOW = datetime(2026, 8, 23, 12, 5, tzinfo=UTC)
 WORKTREE = "/worktrees/wt-101"
 NO_WORKTREE = CloseWorktreeRoot(None, None, "the task has no registered isolation worktree")
@@ -79,12 +80,14 @@ def _ctx(task: Task) -> RegistryContext:
     manager.db = MagicMock()
     manager.get_task.return_value = task
     manager.list_tasks.return_value = []
+    close_session = SimpleNamespace(id=SESSION_ID, machine_id=MACHINE_ID)
     return cast(
         RegistryContext,
         SimpleNamespace(
             task_manager=manager,
             task_validator=object(),
             project_manager=MagicMock(),
+            session_manager=SimpleNamespace(get=lambda _session_id: close_session),
             session_var_manager=SimpleNamespace(get_variables=lambda _session_id: {}),
             validation_config=None,
             resolve_session_id=lambda session_id: session_id,

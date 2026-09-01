@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from gobby.mcp_proxy.tools.tasks._close_evaluation_support import CloseEvaluationFingerprint
+from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
+    CloseEvaluationFingerprint,
+    format_git_since,
+)
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.close_checklist import CloseGateResult
 
@@ -174,6 +177,41 @@ def resolve_close_commit_shas(
         if normalized not in resolved:
             resolved.append(normalized)
     return resolved, None
+
+
+def unlinked_tagged_commits(
+    task_manager: LocalTaskManager,
+    *,
+    task: Task,
+    task_id: str,
+    commit_shas: list[str],
+    cwd: str | None,
+    project_name: str | None,
+) -> tuple[tuple[list[str], list[str]], dict[str, Any] | None]:
+    """Find task-tagged commits since the task's creation that the close would not judge."""
+    if cwd is None:
+        return ([], []), _repo_path_error()
+    try:
+        from gobby.tasks.commits import unlinked_task_tagged_commits
+
+        divergence = unlinked_task_tagged_commits(
+            task_manager,
+            task_id=task_id,
+            since=format_git_since(task.created_at),
+            cwd=cwd,
+            project_name=project_name,
+            project_id=task.project_id,
+            linked=commit_shas,
+        )
+    except Exception:
+        return ([], []), {
+            "error": "tagged_commit_scan_failed",
+            "message": (
+                "close_task could not scan git for commits tagged with this task. "
+                "Fix commit resolution and retry."
+            ),
+        }
+    return divergence, None
 
 
 def link_close_commit_shas(

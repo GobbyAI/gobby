@@ -198,7 +198,7 @@ def _linked_session_windows(ctx: RegistryContext, task_id: str) -> dict[str, str
     for row in rows:
         if (row.get("action") or row.get("session_action")) not in _EVIDENCE_LINK_ACTIONS:
             continue
-        windows[str(row.get("session_id"))] = _format_git_since(
+        windows[str(row.get("session_id"))] = format_git_since(
             row.get("created_at") or row.get("link_created_at")
         )
     return windows
@@ -209,13 +209,29 @@ def claimed_session_window_start(
     task: Any,
     resolved_id: str,
 ) -> str | None:
-    """Return the latest claim window for the owner."""
+    """Return the owner's latest claim window, or the earliest linked window when unowned.
+
+    Escalation (manual or automatic) clears the owner and de-escalation never
+    restores it, so an owner-only rule would stop scanning task-tagged commits
+    for the rest of the task's life (#21531). Without an owner the earliest
+    ``claimed``/``worked_on`` link across the task's sessions bounds the scan the
+    same way transcript evidence is bounded; sessions that never linked to the
+    task still contribute nothing.
+    """
     owner_session_id = get_claimed_session_id(task)
-    return (
-        task_session_window_start(ctx, resolved_id, owner_session_id, claimed_only=True)
-        if owner_session_id
-        else None
-    )
+    if owner_session_id:
+        return task_session_window_start(ctx, resolved_id, owner_session_id, claimed_only=True)
+    try:
+        rows = ctx.session_task_manager.get_task_sessions(resolved_id)
+    except Exception as exc:
+        logger.debug("Failed to load task-session window: %s", exc)
+        return None
+    earliest: Any = None
+    # Rows arrive newest first, so the last evidence link is the earliest.
+    for row in rows:
+        if (row.get("action") or row.get("session_action")) in _EVIDENCE_LINK_ACTIONS:
+            earliest = row.get("created_at") or row.get("link_created_at")
+    return format_git_since(earliest)
 
 
 def task_session_window_start(
@@ -237,11 +253,11 @@ def task_session_window_start(
             str(row.get("session_id")) == session_id
             and (row.get("action") or row.get("session_action")) in allowed
         ):
-            return _format_git_since(row.get("created_at") or row.get("link_created_at"))
+            return format_git_since(row.get("created_at") or row.get("link_created_at"))
     return None
 
 
-def _format_git_since(value: Any) -> str | None:
+def format_git_since(value: Any) -> str | None:
     if value is None:
         return None
     if hasattr(value, "isoformat"):

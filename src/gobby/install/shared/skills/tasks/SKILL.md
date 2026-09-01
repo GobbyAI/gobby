@@ -193,7 +193,11 @@ call_tool("gobby-tasks", "close_task", {
 Blocked calls remain read-only and return the first actionable checklist
 failure. Repair that fact before retrying. Stale task state returns
 `stale_task_state`; it never silently reruns the criteria review. Never call
-`link_commit` merely to close.
+`link_commit` merely to close. The one exception is gate 7 reporting
+`unlinked_tagged_commits`: commits tagged for the task exist on HEAD that the
+close would not judge. The response names the SHAs; link each with
+`link_commit` (or `auto_link_commits` since the task's creation), unlink any
+that do not belong, and retry.
 
 The criteria review runs once per evidence state, not once per attempt: its
 verdict is memoized against the review and evidence fingerprints, so retrying

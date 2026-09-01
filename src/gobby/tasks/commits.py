@@ -8,6 +8,7 @@ import os
 import re
 import subprocess  # nosec B404 # internal git commands
 import tempfile
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -597,14 +598,20 @@ def _task_tagged_git_history(
     since: str | None,
     cwd: str | Path | None,
     project_name: str | None,
+    revs: Sequence[str] | None = None,
 ) -> list[_TaggedCommit]:
-    """Return parsed task refs from the requested git history."""
+    """Return parsed task refs from the requested git history.
+
+    ``revs`` names the exact revisions (or ``--all``) to log; when omitted the
+    task's isolation branch plus HEAD is scanned.
+    """
     working_dir = Path(cwd) if cwd else Path.cwd()
     resolved_project_name = project_name or get_current_project_name()
     git_cmd = ["git", "log", "--reverse", "--pretty=format:%h|%s"]
-    branch = _resolve_branch_for_task(task_manager, task_id) if task_id else None
     since_args = [f"--since={since}"] if since else []
-    if branch:
+    if revs is not None:
+        log_output = run_git_command([*git_cmd, *revs, *since_args], cwd=working_dir)
+    elif branch := (_resolve_branch_for_task(task_manager, task_id) if task_id else None):
         # The isolation branch carries worktree-era commits, but its row outlives the
         # branch: an ancestor epic's worktree record still named wt-epic-19651 after
         # that branch had merged into 0.5.0, so a log confined to it missed every
@@ -656,6 +663,55 @@ def resolve_task_tagged_commits(
         for commit in history
         if any(task_ref in accepted_refs for task_ref in commit.task_refs)
     ]
+
+
+def _shares_sha_prefix(sha: str, linked: Collection[str]) -> bool:
+    # Linked SHAs are stored in ``rev-parse --short`` form and ``%h`` prints the
+    # same, but the abbreviation length grows with the repository.
+    return any(known.startswith(sha) or sha.startswith(known) for known in linked)
+
+
+def unlinked_task_tagged_commits(
+    task_manager: "LocalTaskManager",
+    *,
+    task_id: str,
+    since: str | None,
+    cwd: str | Path | None,
+    project_name: str | None,
+    project_id: str | None,
+    linked: Collection[str],
+) -> tuple[list[str], list[str]]:
+    """Return task-tagged commits absent from ``linked``, split by reachability.
+
+    The first list holds commits reachable from HEAD, the second those reachable
+    only from other refs. Neither owner window applies: the scan starts at
+    ``since`` (the task's creation) so a commit tagged for the task before its
+    current claim still surfaces (#21531). A failed log scans as empty.
+    """
+    task_filter = _resolve_task_filter(task_manager, task_id, project_id)
+    if task_filter is None:
+        return [], []
+    accepted_refs, task = task_filter
+
+    def tagged(*revs: str) -> list[str]:
+        history = _task_tagged_git_history(
+            task_manager,
+            task_id=task.id,
+            since=since,
+            cwd=cwd,
+            project_name=project_name,
+            revs=revs,
+        )
+        return [
+            commit.sha
+            for commit in history
+            if any(task_ref in accepted_refs for task_ref in commit.task_refs)
+            and not _shares_sha_prefix(commit.sha, linked)
+        ]
+
+    on_head = tagged("HEAD")
+    elsewhere = [sha for sha in tagged("--all") if sha not in on_head]
+    return on_head, elsewhere
 
 
 def auto_link_commits(

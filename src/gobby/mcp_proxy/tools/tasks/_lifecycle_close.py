@@ -17,7 +17,10 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
     resolve_close_worktree_root,
     resolve_task_repo_path,
 )
-from gobby.mcp_proxy.tools.tasks._close_evaluation_support import CloseEvaluationFingerprint
+from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
+    CloseEvaluationFingerprint,
+    format_git_since,
+)
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     closes_as_structural_parent as _closes_as_structural_parent,
 )
@@ -45,6 +48,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
     CloseEvaluation,
     resolve_close_commit_shas,
+    unlinked_tagged_commits,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import (
     SubmittedCloseReview,
@@ -379,6 +383,42 @@ async def _evaluate_close(
             str(commit_error["error"]),
             str(commit_error["message"]),
         )
+    # Fail fast on tagged commits the review would never see: in #21451 five
+    # review failures and an escalation stood in for this one git scan.
+    (unlinked_on_head, tagged_elsewhere), tagged_error = await asyncio.to_thread(
+        unlinked_tagged_commits,
+        ctx.task_manager,
+        task=task,
+        task_id=resolved_id,
+        commit_shas=commit_shas,
+        cwd=repo_path,
+        project_name=ctx.get_current_project_name(),
+    )
+    if tagged_error:
+        return evaluation.fail(
+            7, "linked_commits", str(tagged_error["error"]), str(tagged_error["message"])
+        )
+    tagged_details = (
+        {"other_ref_tagged_commit_shas": tagged_elsewhere} if tagged_elsewhere else None
+    )
+    if tagged_details:
+        evaluation.extra.update(tagged_details)
+    if unlinked_on_head:
+        return evaluation.fail(
+            7,
+            "linked_commits",
+            "unlinked_tagged_commits",
+            f"Commits tagged for this task are not linked: {', '.join(unlinked_on_head)}. "
+            "The criteria review would judge an incomplete diff.",
+            action=(
+                "Link each listed commit with link_commit(task_id, commit_sha), or run "
+                f"auto_link_commits(task_id, since={format_git_since(task.created_at)!r}) "
+                "and unlink_commit any linked commit that does not belong; then retry "
+                "close_task."
+            ),
+            details=tagged_details,
+            extra={"unlinked_tagged_commit_shas": unlinked_on_head},
+        )
 
     try:
         attribution = await _capture_attribution(
@@ -458,6 +498,7 @@ async def _evaluate_close(
         "Attributed edits have a linked commit."
         if evaluation.had_attributed_edits
         else "No attributed committable edits require a commit.",
+        details=tagged_details,
         skipped=not evaluation.had_attributed_edits,
     )
 

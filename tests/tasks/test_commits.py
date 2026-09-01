@@ -11,6 +11,7 @@ from gobby.tasks.commits import (
     auto_link_commits,
     extract_task_ids_from_message,
     resolve_task_tagged_commits,
+    unlinked_task_tagged_commits,
 )
 
 pytestmark = pytest.mark.unit
@@ -918,3 +919,80 @@ class TestExtractMentionedSymbols:
         result = extract_mentioned_symbols(task)
         # Should extract the method or full reference
         assert "validate_task" in result or "ExternalValidator.validate_task" in result
+
+
+class TestUnlinkedTaskTaggedCommits:
+    """Tests for the gate-7 divergence scan."""
+
+    SINCE = "2026-07-01T00:00:00+00:00"
+
+    def test_splits_missing_tagged_commits_by_reachability(self) -> None:
+        manager = MagicMock()
+        manager.get_task.return_value = MagicMock(id="task-uuid", seq_num=42)
+        branch_lookup = MagicMock(return_value="feature")
+
+        with (
+            patch("gobby.tasks.commits._resolve_branch_for_task", branch_lookup),
+            patch("gobby.tasks.commits.run_git_command") as mock_git,
+        ):
+            mock_git.side_effect = [
+                "aaa1111|[gobby-#42] linked\n"
+                "bbb2222|[gobby-#42] on head\n"
+                "ccc3333|[gobby-#43] other task\n",
+                "aaa1111|[gobby-#42] linked\n"
+                "bbb2222|[gobby-#42] on head\n"
+                "ddd4444|[gobby-#42] only on a branch\n",
+            ]
+
+            result = unlinked_task_tagged_commits(
+                manager,
+                task_id="task-uuid",
+                since=self.SINCE,
+                cwd="/tmp/repo",
+                project_name="gobby",
+                project_id=None,
+                linked=["aaa1111deadbeef"],
+            )
+
+        assert result == (["bbb2222"], ["ddd4444"])
+        assert [call.args[0] for call in mock_git.call_args_list] == [
+            ["git", "log", "--reverse", "--pretty=format:%h|%s", "HEAD", f"--since={self.SINCE}"],
+            ["git", "log", "--reverse", "--pretty=format:%h|%s", "--all", f"--since={self.SINCE}"],
+        ]
+        branch_lookup.assert_not_called()
+
+    def test_failed_scan_reports_no_divergence(self) -> None:
+        manager = MagicMock()
+        manager.get_task.return_value = MagicMock(id="task-uuid", seq_num=42)
+
+        with patch("gobby.tasks.commits.run_git_command", return_value=None) as mock_git:
+            result = unlinked_task_tagged_commits(
+                manager,
+                task_id="task-uuid",
+                since=self.SINCE,
+                cwd="/tmp/repo",
+                project_name="gobby",
+                project_id=None,
+                linked=[],
+            )
+
+        assert result == ([], [])
+        assert mock_git.call_count == 2
+
+    def test_unknown_task_skips_git(self) -> None:
+        manager = MagicMock()
+        manager.get_task.side_effect = TaskNotFoundError("missing")
+
+        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+            result = unlinked_task_tagged_commits(
+                manager,
+                task_id="task-uuid",
+                since=self.SINCE,
+                cwd="/tmp/repo",
+                project_name="gobby",
+                project_id=None,
+                linked=[],
+            )
+
+        assert result == ([], [])
+        mock_git.assert_not_called()

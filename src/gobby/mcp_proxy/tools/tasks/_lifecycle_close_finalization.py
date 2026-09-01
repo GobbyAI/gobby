@@ -28,6 +28,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
     CloseEvaluation,
     link_close_commit_shas,
     resolve_close_commit_shas,
+    unlinked_tagged_commits,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import determine_close_outcome
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
@@ -220,6 +221,21 @@ async def commit_close(
             "The prospective commit set changed after evaluation; retry close_task.",
         )
     if not fresh_skip_leaf_checks:
+        # The evaluation's gate-7 divergence scan, repeated against fresh git state.
+        (unlinked_on_head, _elsewhere), tagged_error = await asyncio.to_thread(
+            unlinked_tagged_commits,
+            ctx.task_manager,
+            task=fresh,
+            task_id=task.id,
+            commit_shas=commit_shas,
+            cwd=evaluation.repo_path,
+            project_name=ctx.get_current_project_name(),
+        )
+        if tagged_error or unlinked_on_head:
+            return stale_close_response(
+                evaluation,
+                "Task-tagged commits landed after evaluation and are not linked; retry close_task.",
+            )
         try:
             fresh_scope = await asyncio.to_thread(
                 evaluate_task_scope,
