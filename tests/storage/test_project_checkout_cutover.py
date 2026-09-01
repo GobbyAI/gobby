@@ -18,7 +18,13 @@ import gobby.cli.project_checkout_cutover as executor_module
 import gobby.storage.project_checkout_cutover as cutover
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
-from gobby.storage.maintenance_epoch import DestructiveBatch, MaintenanceEpoch
+from gobby.storage.maintenance_epoch import (
+    DestructiveBatch,
+    MaintenanceEpoch,
+    mark_batch_applied,
+    mark_batch_verified,
+    release_maintenance_epoch,
+)
 from gobby.storage.project_checkout_cutover import preflight_project_checkout_cutover
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.projects import (
@@ -1229,8 +1235,19 @@ def test_v417_hub_stamps_shadowed_migration_after_campaign_apply(
         "apply_schema",
         functools.partial(apply_schema, schema=_search_path_schema(predecessor_database)),
     )
+    # Same sequence as hub_maintenance._continue_campaign / _finish_or_report.
+    mark_batch_applied(predecessor_database, epoch_id, batch_id)
     executor_module.ProjectCheckoutCutoverExecutor().verify(epoch, batch)
+    verified = mark_batch_verified(predecessor_database, epoch_id, batch_id)
+    released = release_maintenance_epoch(
+        predecessor_database,
+        epoch_id,
+        owner_command="test",
+        released_by_command="test",
+    )
 
+    assert verified.status == "verified"
+    assert released.released_at is not None
     with psycopg.connect(predecessor_database, autocommit=True, row_factory=dict_row) as connection:
         assert connection.execute(
             "SELECT checksum FROM schema_migrations WHERE version = %s",
