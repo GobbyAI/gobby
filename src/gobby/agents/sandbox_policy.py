@@ -391,6 +391,12 @@ def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
     return canonical_paths([str(path) for path in paths])
 
 
+def gcode_runtime_write_exceptions(env: Mapping[str, str]) -> list[str]:
+    """Allow renewal writes only inside this run's generated gcode home."""
+    runtime_home = env.get("GOBBY_CODE_INDEX_RUNTIME_HOME")
+    return canonical_paths([runtime_home]) if runtime_home else []
+
+
 def mcp_config_read_exceptions(workspace: Path) -> list[str]:
     """Return project roots the workspace's own MCP servers resolve from.
 
