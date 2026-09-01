@@ -73,7 +73,8 @@ privacy stance (#20203).
   modes: `standalone` (default; hub + node capabilities on one box — story
   A), `hub` (semantic authority, auth/API keys, datastore ownership), `node`
   (registers to a hub; owns machine-local duties: gterm host supervision,
-  worktrees, agent spawning). The interactive product people run is `gobby`
+  worktrees, agent spawning, hook ingress and its envelope ledger). The
+  interactive product people run is `gobby`
   (package `gobby-client`). One service container assembled per daemon mode; `gcore`
   stays the shared library. Rationale: the roles share ~90% of their
   substance — a binary split would fork identical semantics or hide a library
@@ -194,7 +195,12 @@ compare/delegation mechanics stand — `:60890` is the Stage-1 `gdaemon`
 sidecar port — and the destination daemon is `gdaemon` in standalone mode,
 not a permanently distinct sidecar product.
 Schema authority (done), config runtime (done, `GOBBY_RUNTIME_MODE`), then
-route families per the roadmap. The terminal stack is untouched by
+route families per the roadmap. When the hook-ingress route family moves, the
+envelope claim/dedupe ledger (`~/.gobby/hooks/inbox/processed/` markers today)
+becomes a `gdaemon`-owned node-local store — PostgreSQL only where standalone
+mode makes the local hub the node's own store — and never hub data (decision
+9). The `ghook` spool is untouched: it is the transport buffer for a
+credential-free sandboxed writer. The terminal stack is untouched by
 construction: the new daemon adopts the same gterm host over the same
 protocols.
 
@@ -282,6 +288,20 @@ vLLM and clear-self already landed on `0.5.0`; they do not unlock Stages 1–3.
    the hub files_home surfaces. Hub chat bytes live at
    `files_home/attachments/<project-id>/`, not under `_personal`.
    Project/CodeWiki vaults stay checkout-adjacent until #18779.
+9. **The hook-envelope ledger stays node-local; move it at the Stage 1
+   hook-route port, not before** (2026-09-01). The `ghook` inbox spool stays
+   on the filesystem permanently: its writer runs inside the SRT sandbox with
+   no datastore credentials and write access to exactly `hooks/inbox`. The
+   daemon-side claim/dedupe/replay/STOP-epoch ledger is machine-local
+   transport state that no other machine reads; a hub-PostgreSQL table would
+   put a hub round trip on every tool call in story B and has no home in
+   story C, and a Python port retires at Stage 2. Nothing is broken today
+   (#20851), so the migration-419 proposal was declined (#21490). The settled
+   semantics the port carries live in project memory: atomic
+   claim/renew/finalize/release on the 15s lease, the 409/503
+   `{"status":"retry"}` duplicate and backpressure contracts, the per-machine
+   STOP replay epoch, 24h retention, boot release of this machine's
+   `processing` rows under the daemon singleton, and batched drain lookups.
 
 ## Citations
 
@@ -303,3 +323,4 @@ vLLM and clear-self already landed on `0.5.0`; they do not unlock Stages 1–3.
 | `.gobby/plans/shared-remote-stack.md` | Stage 3 remote-stack strategy |
 | `docs/architecture/hub-owned-files-home.md`, #20238 | Hub-owned `USER.md`, wiki home, `_personal` life-admin, and `attachments/`; destination HTTP under `/api/hub/...` |
 | `ROADMAP.md` | Release-line what/when; the 0.6.0 sidecar on `:60890` is the transition vehicle; destination daemon is `gdaemon` |
+| #21490 | Hook-envelope ledger deferral (decision 9) |
