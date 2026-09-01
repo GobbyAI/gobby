@@ -89,12 +89,9 @@ def test_force_close_auto_closes_parent_without_open_siblings(
     assert not _open(manager, grand.id)
 
 
-def _manager(temp_db: HubDatabase, tmp_path: Path) -> tuple[LocalTaskManager, str]:
-    repo = tmp_path / "repo"
-    repo.mkdir()
+def _manager(temp_db: HubDatabase, _tmp_path: Path) -> tuple[LocalTaskManager, str]:
     project = LocalProjectManager(temp_db).create(
         name="ancestor-close",
-        repo_path=str(repo),
     )
     return LocalTaskManager(temp_db), project.id
 

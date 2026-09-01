@@ -1611,16 +1611,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/cli/test_tasks_cli.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 2417,
-      "message": "Missing type parameters for generic type \"tuple\"",
-      "occurrences": 2,
-      "path": "tests/cli/test_tasks_cli.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/cli/test_tasks_commits.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 14,
