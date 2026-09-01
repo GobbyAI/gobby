@@ -447,3 +447,47 @@ def test_predecessor_service_runtime_reads_only_service_fields_and_honors_overri
     assert runtime.environment["GOBBY_FALKORDB_PORT"] == "60992"
     assert runtime.environment["GOBBY_FALKORDB_PASSWORD"] == "scratch-override"
     assert len(database.fetchall.call_args.args) == 1
+
+
+def test_predecessor_service_runtime_applies_config_defaults_for_absent_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """ConfigStore elides default-valued keys, so absent service rows resolve to defaults.
+
+    A hub that never overrode the Qdrant or FalkorDB endpoints stores only the
+    password reference; the epoch backup must still restart those services.
+    """
+    from gobby.config.persistence import FalkorConfig, QdrantConfig
+
+    database = MagicMock()
+    database.fetchall.return_value = [
+        {"key": "databases.falkordb.password", "value": '"$secret:falkordb_password"'},
+    ]
+
+    @contextmanager
+    def open_database(
+        _config_file: str | None = None,
+        *,
+        apply_migrations: bool = True,
+    ) -> Iterator[MagicMock]:
+        assert apply_migrations is False
+        yield database
+
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", open_database)
+
+    runtime = compose_env.resolve_predecessor_service_runtime(
+        tmp_path,
+        compose_env.ComposeRuntime(
+            environment={"GOBBY_FALKORDB_PASSWORD": "scratch-override"},
+            profiles=("postgres",),
+        ),
+    )
+
+    qdrant_port = QdrantConfig().port
+    falkordb = FalkorConfig()
+    assert runtime.profiles == ("postgres", "qdrant", "falkordb")
+    assert runtime.environment["GOBBY_QDRANT_HTTP_PORT"] == str(qdrant_port)
+    assert runtime.environment["GOBBY_QDRANT_GRPC_PORT"] == str(qdrant_port + 1)
+    assert runtime.environment["GOBBY_FALKORDB_HOST"] == falkordb.host
+    assert runtime.environment["GOBBY_FALKORDB_PORT"] == str(falkordb.port)

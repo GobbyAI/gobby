@@ -73,8 +73,11 @@ def resolve_predecessor_service_runtime(
     A maintenance-epoch cutover brings services up while the predecessor auth rows are
     still present, so this reads the four `databases.*` keys straight out of
     `config_store` instead of going through `ConfigRepository` the way
-    `_service_environment` does. Values already carried by `postgres_runtime` win.
+    `_service_environment` does. ConfigStore elides default-valued keys, so an absent
+    row resolves to the config model default. Values already carried by
+    `postgres_runtime` win.
     """
+    from gobby.config.persistence import FalkorConfig, QdrantConfig
     from gobby.storage.config_repository import decode_config_value
     from gobby.storage.hub.runtime import runtime_hub_database
     from gobby.storage.secrets import SecretStore
@@ -99,13 +102,18 @@ def resolve_predecessor_service_runtime(
         values = {
             str(row["key"]): decode_config_value(str(row["key"]), str(row["value"])) for row in rows
         }
-        qdrant_port = _positive_port(values.get("databases.qdrant.port"), "databases.qdrant.port")
+        qdrant_defaults = QdrantConfig()
+        falkordb_defaults = FalkorConfig()
+        qdrant_port = _positive_port(
+            values.get("databases.qdrant.port", qdrant_defaults.port), "databases.qdrant.port"
+        )
         if qdrant_port == 65535:
             raise ComposeEnvironmentError("databases.qdrant.port must leave room for gRPC")
         falkordb_port = _positive_port(
-            values.get("databases.falkordb.port"), "databases.falkordb.port"
+            values.get("databases.falkordb.port", falkordb_defaults.port),
+            "databases.falkordb.port",
         )
-        falkordb_host = values.get("databases.falkordb.host")
+        falkordb_host = values.get("databases.falkordb.host", falkordb_defaults.host)
         if not isinstance(falkordb_host, str) or not falkordb_host.strip():
             raise ComposeEnvironmentError("databases.falkordb.host must be a non-empty string")
 
