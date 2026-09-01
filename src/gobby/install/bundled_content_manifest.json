@@ -517,7 +517,7 @@
     "workflows/rules/monolith-enforcement/require-same-session-decomposition.yaml": "3cdaa771d104e3e0ca6741a4a98866eaf1b293c9a06722b1669f574f6331b6c4",
     "workflows/rules/pipeline-enforcement/auto-run-pipeline.yaml": "76622980982aa2e37fdbc9731ce3f4784f632bbe873e282ebf36f4dad4978f75",
     "workflows/rules/plan-mode/block-edits-plan-mode.yaml": "1dd8c88954ac4216a164ad359e7a977e4039a98a46cbf4c21d044afe9d97d03c",
-    "workflows/rules/plan-mode/handle-plan-mode-entry.yaml": "5a07332b58d01eac42977779a14a80736325874d8eb835b2c99c056747f9c84c",
+    "workflows/rules/plan-mode/handle-plan-mode-entry.yaml": "8a43b5d403f575ea410ffc5197349b5487011cbf908861b45e3e804de59c1333",
     "workflows/rules/plan-mode/handle-plan-mode-exit.yaml": "52ca5e17ac20045242567954ed9f1d59a825ac0f8ab78bfb5804419d95a8433b",
     "workflows/rules/plan-mode/reset-plan-mode-on-session-start.yaml": "3cc96dc2a26befeafc798799acdde2343da1c1915de3cf94b55e67dd94597869",
     "workflows/rules/progressive-discovery/require-current-context-schema-before-call.yaml": "b7bed7027e6867c242d32b0d4791f2570a94ef173e1472dc1ad19aa19769d87f",

@@ -29,7 +29,7 @@ rules:
           - Always recommend **Lightweight** for bug fixes and maintenance, regardless of breadth, risk, affected subsystems, API/schema/security involvement, or coordination needs.
           - Recommend **Full** only for complex new features and complex refactors, reworks, or migrations.
           - **Full:** artifact-first plan, validation, enhancement, separately approved adversarial review, and optional build handoff.
-          - **Lightweight:** Gobby elicitation, a decision-complete plan artifact, and base validation; enhancement and adversarial review are skipped by default, with optional build handoff still available.
+          - **Lightweight:** Gobby elicitation and a conversational, decision-complete plan; artifact-free — no `.gobby/plans/` file, validation, enhancement, adversarial review, or build handoff. Switch to Full when an artifact is wanted.
 
           Do not load the `plan` skill until the user chooses Gobby planning or explicitly invokes `$gobby plan` or `/gobby plan`.
       - type: set_variable
