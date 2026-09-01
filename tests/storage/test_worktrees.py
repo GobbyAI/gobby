@@ -2,8 +2,8 @@
 
 import threading
 import uuid
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -17,6 +17,10 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree, WorktreeStatus
 from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import (
+    install_isolated_checkout_project,
+    patch_local_machine_id,
+)
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
@@ -24,9 +28,23 @@ MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
 
 @pytest.fixture(autouse=True)
-def _local_machine_identity() -> Iterator[None]:
-    with patch("gobby.utils.machine_id.get_machine_id", return_value=MACHINE_ID):
-        yield
+def _local_machine_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the cache and both imported require_machine_id bindings to MACHINE_ID."""
+    patch_local_machine_id(monkeypatch, MACHINE_ID)
+
+
+@pytest.fixture
+def sample_project(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> dict[str, Any]:
+    """The root fixture pins a random machine; this module's sessions live on MACHINE_ID."""
+    isolated = install_isolated_checkout_project(
+        temp_db,
+        tmp_path / "isolated-checkout",
+        machine_id=MACHINE_ID,
+        monkeypatch=monkeypatch,
+    )
+    return isolated.project.to_dict()
 
 
 class TestWorktreeStatus:
