@@ -26,6 +26,7 @@ from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
 from gobby.servers.routes.mcp.endpoints.request_context import request_mcp_scope
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 from gobby.utils.datetime import to_json_safe
+from gobby.utils.project_context import set_project_context
 from gobby.utils.session_context import get_current_session_id
 
 if TYPE_CHECKING:
@@ -77,14 +78,22 @@ def _success_response_payload(result: Any, response_time_ms: float) -> dict[str,
 
 
 def _http_request_scope(request: Request, server: "HTTPServer", ctx_token: Any, body: Any) -> str:
-    """Sessionless HTTP fallback is always the global project."""
+    """Resolve HTTP scope and seed an explicit body project for sessionless calls."""
     payload = body if isinstance(body, dict) else {}
-    return request_mcp_scope(
+    scope_project = request_mcp_scope(
         request,
         server,
         payload,
         session_project_id=getattr(ctx_token, "resolved_project_id", None),
     )
+    if (
+        getattr(ctx_token, "resolved_project_id", None) is None
+        and isinstance(payload.get("project_id"), str)
+        and payload["project_id"].strip()
+    ):
+        ctx_token.resolved_project_id = scope_project
+        ctx_token.project_token = set_project_context({"id": scope_project})
+    return scope_project
 
 
 def _timeout_response_payload(timeout: float, response_time_ms: float) -> dict[str, Any]:
@@ -605,6 +614,12 @@ async def call_mcp_tool(
         arguments = body.get("arguments", {})
         raw_intent = body.get("intent")
         intent = raw_intent if isinstance(raw_intent, str) and raw_intent else None
+        offload = body.get("offload", True)
+        if not isinstance(offload, bool):
+            raise HTTPException(
+                status_code=400,
+                detail={"success": False, "error": "offload must be a boolean"},
+            )
 
         if (not server_name and not server_id) or not tool_name:
             raise HTTPException(
@@ -663,6 +678,7 @@ async def call_mcp_tool(
                     wrapper_originated=True,
                     intent=intent,
                     project_id=scope_project,
+                    offload=offload,
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)

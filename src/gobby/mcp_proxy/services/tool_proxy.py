@@ -272,6 +272,7 @@ class ToolProxyService:
         intent: str | None = None,
         project_id: str | None = None,
         scope: str | None = None,
+        offload: bool = True,
     ) -> Any:
         """Execute a tool with optional pre-validation."""
         operation_context = (
@@ -293,6 +294,7 @@ class ToolProxyService:
                 intent,
                 project_id=project_id,
                 scope=scope,
+                offload=offload,
             )
 
     async def read_resource(

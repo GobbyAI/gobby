@@ -298,6 +298,8 @@ def call_tool(
         "tool_name": tool_name,
         "arguments": arguments,
     }
+    if raw:
+        call_payload["offload"] = False
     project_id = _cwd_project_id()
     if project_id:
         call_payload["project_id"] = project_id

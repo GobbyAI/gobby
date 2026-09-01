@@ -1007,6 +1007,8 @@ def test_call_tool_raw_output(cli_runner, mock_daemon_client, mock_config) -> No
         assert result.exit_code == 0
         output_json = json.loads(result.output)
         assert output_json == mock_response
+        json_data = mock_daemon_client.call_http_api.call_args.kwargs["json_data"]
+        assert json_data["offload"] is False
 
 
 def test_call_tool_failure(cli_runner, mock_daemon_client, mock_config) -> None:

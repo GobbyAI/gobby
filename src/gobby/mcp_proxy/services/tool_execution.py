@@ -288,6 +288,7 @@ async def call_tool(
     intent: str | None = None,
     project_id: str | None = None,
     scope: str | None = None,
+    offload: bool = True,
 ) -> Any:
     """Execute a tool with optional pre-validation."""
     outcome = await _call_tool_impl(
@@ -303,6 +304,7 @@ async def call_tool(
         intent,
         project_id=project_id,
         scope=scope,
+        offload=offload,
     )
     try:
         sv_mgr = _tracking_variable_manager(service)
@@ -339,6 +341,7 @@ async def _call_tool_impl(
     intent: str | None = None,
     project_id: str | None = None,
     scope: str | None = None,
+    offload: bool = True,
 ) -> _CallToolOutcome:
     """Execute one proxy route and return its structural outcome."""
     requested_project_id = project_id
@@ -405,6 +408,7 @@ async def _call_tool_impl(
                 intent=intent,
                 project_id=requested_project_id,
                 scope=scope,
+                offload=offload,
             )
         result = {
             "success": False,
@@ -622,6 +626,7 @@ async def _call_tool_impl(
         timeout=timeout,
         wrapper_originated=wrapper_originated,
         intent=intent,
+        offload=offload,
     )
     return _CallToolOutcome(
         result,
@@ -645,6 +650,7 @@ async def _execute_tool_dispatch(
     timeout: float | None,
     wrapper_originated: bool,
     intent: str | None,
+    offload: bool = True,
     dispatch_id: str | None = None,
 ) -> Any:
     result = await _execute_tool(
@@ -680,7 +686,7 @@ async def _execute_tool_dispatch(
                 server_name,
                 tool_name,
             )
-    if wrapper_originated and service._result_offloader is not None:
+    if offload and wrapper_originated and service._result_offloader is not None:
         result = await service._result_offloader.maybe_offload(
             server_name=server_name,
             tool_name=tool_name,
