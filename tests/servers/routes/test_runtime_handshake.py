@@ -634,3 +634,45 @@ def _config_server(grants: GrantService, token_file: Path) -> Any:
     auth._legacy_authenticated = _accept
     auth._credential_accepted = _accept
     return server
+
+
+def test_maintenance_admits_soft_deleted_purge_targets_the_operator_path_refuses() -> None:
+    """A soft-deleted project being purged is granted only as a maintenance target (#21458)."""
+    soft_deleted = "5b2d9f0e-3c4a-4d6e-8f1a-2b3c4d5e6f70"
+    handshake = _handshake(
+        admitted_maintenance_targets=lambda project_id: project_id == soft_deleted
+    )
+
+    grant = handshake.issue_for_maintenance(
+        machine_id=LOCAL_MACHINE_ID,
+        project_id=soft_deleted,
+        execution_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+    )
+    assert grant.principal.kind == "maintenance"
+    assert grant.principal.project_id == soft_deleted
+
+    with pytest.raises(HandshakeRejection) as operator_rejected:
+        handshake.issue_for_operator(
+            machine_id=LOCAL_MACHINE_ID,
+            project_id=soft_deleted,
+            session_id=SESSION_ID,
+        )
+    assert operator_rejected.value.code == "claims_mismatch"
+
+
+def test_maintenance_target_admission_query_covers_indexed_and_soft_deleted_projects() -> None:
+    """The daemon's admission query names both the code-index identity and soft-deleted rows."""
+    from unittest.mock import MagicMock
+
+    from gobby.runner_init.servers import maintenance_target_admitted
+
+    database = MagicMock()
+    database.fetchone.return_value = {"?column?": 1}
+    assert maintenance_target_admitted(database, "p1") is True
+    sql, params = database.fetchone.call_args.args
+    assert "FROM code_indexed_projects WHERE id = %s" in sql
+    assert "FROM projects WHERE id = %s AND deleted_at IS NOT NULL" in sql
+    assert params == ("p1", "p1")
+
+    database.fetchone.return_value = None
+    assert maintenance_target_admitted(database, "p1") is False

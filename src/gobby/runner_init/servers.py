@@ -551,27 +551,7 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
         return row is not None
 
     def _indexed_project_admitted(project_id: str) -> bool:
-        # Maintenance targets: any shared code-index identity, registered or not,
-        # so orphaned path-derived projects can be granted for projection purge,
-        # plus soft-deleted projects, whose purge runs gwiki/gcode cleanup under a
-        # maintenance grant after their checkouts were released.
-        try:
-            row = database.fetchone(
-                """
-                SELECT 1 FROM code_indexed_projects WHERE id = %s
-                UNION ALL
-                SELECT 1 FROM projects WHERE id = %s AND deleted_at IS NOT NULL
-                LIMIT 1
-                """,
-                (project_id, project_id),
-            )
-        except psycopg.Error as exc:
-            logger.warning(
-                "indexed project admission query failed",
-                extra={"project_id": project_id, "error": str(exc)},
-            )
-            return False
-        return row is not None
+        return maintenance_target_admitted(database, project_id)
 
     def _managed_bootstrap_dsn(bootstrap_path: object) -> str:
         payload = json.loads(Path(str(bootstrap_path)).read_text())
@@ -652,3 +632,30 @@ def _bind_proxy_frame_opener(runner: GobbyRunner) -> None:
         return FrameClient(reader, writer)
 
     server.open_proxy_frame = open_proxy_frame
+
+
+def maintenance_target_admitted(database: Any, project_id: str) -> bool:
+    """Admit a maintenance-grant target.
+
+    Any shared code-index identity qualifies, registered or not, so orphaned
+    path-derived projects can be granted for projection purge; so does a
+    soft-deleted project, whose purge runs gwiki/gcode cleanup under a
+    maintenance grant after its checkouts were released (#21458).
+    """
+    try:
+        row = database.fetchone(
+            """
+            SELECT 1 FROM code_indexed_projects WHERE id = %s
+            UNION ALL
+            SELECT 1 FROM projects WHERE id = %s AND deleted_at IS NOT NULL
+            LIMIT 1
+            """,
+            (project_id, project_id),
+        )
+    except psycopg.Error as exc:
+        logger.warning(
+            "maintenance target admission query failed",
+            extra={"project_id": project_id, "error": str(exc)},
+        )
+        return False
+    return row is not None
