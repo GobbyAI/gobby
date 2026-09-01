@@ -65,6 +65,13 @@ __all__ = [
 ]
 
 
+def _canonical_path(path: str) -> str:
+    # Same rule as gobby.utils.checkout_root.canonical_checkout_root (realpath of
+    # normpath); the requested path, the primary root, the overlay lookup, and the
+    # authorized path all compare in this one form.
+    return os.path.realpath(os.path.normpath(path))
+
+
 class ManagedCredentialManager(InteractiveCredentialMixin):
     """Own scoped role issuance, private bootstrap files, and revocation retries."""
 
@@ -332,13 +339,13 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
             resource_kind="project_checkout",
             resource_id=str(project_id),
         )
-        requested_path = Path(requested_project_path).resolve()
+        requested_path = _canonical_path(requested_project_path)
         checkout_root = _row_value(resolved, "root_path")
         overlay_path: str | None
-        if checkout_root is not None and Path(str(checkout_root)).resolve() == requested_path:
+        if checkout_root is not None and _canonical_path(str(checkout_root)) == requested_path:
             overlay_path = None
         else:
-            overlay_path = requested_project_path
+            overlay_path = requested_path
         try:
             authorized_path = resolve_operation_root(
                 cast("HubDatabase", self._database),
@@ -360,7 +367,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         return ManagedToolCredential(
             credential=credential,
             project_id=project_id,
-            project_path=str(Path(authorized_path).resolve()),
+            project_path=_canonical_path(authorized_path),
         )
 
     def rotate_due(self) -> list[ManagedCredential]:

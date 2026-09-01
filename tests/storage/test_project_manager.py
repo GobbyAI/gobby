@@ -423,6 +423,63 @@ class TestSoftDelete:
         assert project_manager.soft_delete(project.id) is True
         assert project_manager.soft_delete(project.id) is False
 
+    def test_soft_delete_releases_checkouts_on_every_machine(
+        self, project_manager: LocalProjectManager, tmp_path: Path
+    ) -> None:
+        """Soft-delete drops the project's checkout rows so its roots are free again."""
+        from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+        from tests.fixtures.isolated_checkout import insert_isolated_machine
+
+        checkouts = LocalProjectCheckoutManager(project_manager.db)
+        local = insert_isolated_machine(project_manager.db)
+        remote = insert_isolated_machine(project_manager.db)
+        project = project_manager.create(name="release-roots")
+        root = str(tmp_path / "root")
+        checkouts.register(local, project.id, root)
+        checkouts.register(remote, project.id, "/remote/root")
+
+        assert project_manager.soft_delete(project.id) is True
+
+        assert checkouts.get(local, project.id) is None
+        assert checkouts.get(remote, project.id) is None
+        successor = project_manager.create(name="release-roots-successor")
+        _, created = checkouts.register(local, successor.id, root)
+        assert created is True
+
+    def test_soft_delete_rolls_back_when_checkout_release_fails(
+        self,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """deleted_at and the checkout rows change together or not at all."""
+        from gobby.storage.hub.protocol import Transaction
+        from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+        from tests.fixtures.isolated_checkout import insert_isolated_machine
+
+        checkouts = LocalProjectCheckoutManager(project_manager.db)
+        machine_id = insert_isolated_machine(project_manager.db)
+        project = project_manager.create(name="atomic-delete")
+        checkouts.register(machine_id, project.id, str(tmp_path / "root"))
+        original = LocalProjectCheckoutManager._delete_project_checkouts
+
+        def _delete_then_fail(conn: Transaction, project_id: str) -> int:
+            original(conn, project_id)
+            raise RuntimeError("release failed")
+
+        monkeypatch.setattr(
+            LocalProjectCheckoutManager,
+            "_delete_project_checkouts",
+            staticmethod(_delete_then_fail),
+        )
+        with pytest.raises(RuntimeError, match="release failed"):
+            project_manager.soft_delete(project.id)
+
+        stored = project_manager.get(project.id)
+        assert stored is not None
+        assert stored.deleted_at is None
+        assert checkouts.get(machine_id, project.id) is not None
+
 
 class TestResolveRef:
     """Tests for resolve_ref."""

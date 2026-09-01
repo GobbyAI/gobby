@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 import click
+from psycopg.errors import ForeignKeyViolation
 
 from gobby.cli.runtime import require_cli_database
 from gobby.storage.project_checkouts import (
@@ -47,6 +48,11 @@ from gobby.utils.json_helpers import json_dumps
 from gobby.utils.project_context import find_project_root, get_project_context
 from gobby.utils.project_init import refresh_marker_expected_id
 from gobby.utils.uuid_validation import parse_uuid_reference
+
+_REBIND_CACHE_HINT = (
+    "Note: a running daemon caches each project's root until it restarts; "
+    "run `gobby restart` so it uses the new checkout."
+)
 
 _CHECKOUT_CLI_ERRORS = (
     AmbiguousProjectRefError,
@@ -124,6 +130,26 @@ def _optional_checkout(manager: LocalProjectManager, project_id: str) -> Project
         )
     except (TypeError, ValueError, KeyError):
         return None
+
+
+def _rebind_checkout(
+    manager: LocalProjectManager, machine_id: str, project: Project, root: str
+) -> ProjectCheckout:
+    """Rebind through the manager, turning hub-reference and invariant failures into CLI errors."""
+    try:
+        return LocalProjectCheckoutManager(manager.db).rebind(machine_id, project.id, root)
+    except ForeignKeyViolation as exc:
+        detail = exc.diag.message_detail or exc.diag.message_primary or str(exc)
+        click.echo(
+            f"Rebind failed: the hub has no row for machine {machine_id} or project "
+            f"{project.id} to attach the checkout to ({detail}). Start the daemon on this "
+            "machine so it registers itself, then retry.",
+            err=True,
+        )
+        raise SystemExit(1) from exc
+    except RuntimeError as exc:
+        click.echo(f"Rebind failed: {exc}. Retry the rebind.", err=True)
+        raise SystemExit(1) from exc
 
 
 def resolve_rebind_project(
@@ -394,8 +420,9 @@ def rebind_project(project_ref: str, path: str | None) -> None:
             candidate_path=candidate,
             expected_marker_id=project.id,
         )
-        checkout = LocalProjectCheckoutManager(manager.db).rebind(machine_id, project.id, root)
+        checkout = _rebind_checkout(manager, machine_id, project, root)
     click.echo(f"Rebound {project.name} ({project.id}) to {checkout.root_path}")
+    click.echo(_REBIND_CACHE_HINT)
 
 
 @projects.command("update")

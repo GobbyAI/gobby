@@ -1674,6 +1674,55 @@ def test_issue_tool_request_accepts_registered_overlay_without_primary(  # tdd-r
         manager.close()
 
 
+def test_issue_tool_request_resolves_symlinked_overlay_to_registered_path(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A symlink to a registered overlay authorizes; the lease carries the registered path."""
+    fixture = authorization_fixture
+    overlay = tmp_path / "overlay-real"
+    overlay.mkdir()
+    link = tmp_path / "overlay-link"
+    link.symlink_to(overlay, target_is_directory=True)
+    registered_path = os.path.realpath(overlay)
+    monkeypatch.setattr(
+        "gobby.storage.workspace_machine_scope.require_machine_id",
+        lambda: str(fixture.machine_id),
+    )
+    with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+        admin.execute(
+            """
+            INSERT INTO public.worktrees (
+                id, project_id, machine_id, branch_name, worktree_path
+            ) VALUES (%s, %s, %s, %s, %s)
+            """,
+            (uuid4(), fixture.project_id, fixture.machine_id, "overlay-link", registered_path),
+        )
+    manager = _manager(fixture, tmp_path / "managed")
+    lease: ManagedToolCredential | None = None
+    try:
+        lease = manager.issue_tool_request(
+            session_id=fixture.session_id,
+            requested_project_path=str(link),
+            expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        )
+        assert lease.project_id == fixture.project_id
+        assert lease.project_path == registered_path
+    finally:
+        if lease is not None:
+            manager.revoke(
+                lease.credential.managed_execution_id,
+                reason="symlink-overlay-finally",
+            )
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                "DELETE FROM public.worktrees WHERE project_id = %s",
+                (fixture.project_id,),
+            )
+        manager.close()
+
+
 def test_issue_tool_request_rejects_unregistered_overlay(  # tdd-red window
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,

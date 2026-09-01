@@ -855,7 +855,7 @@ class TestInitializeProject:
         project = LocalProjectManager(temp_db).get(project_id)
         assert result.already_existed is True
         assert project is not None
-        assert project.repo_path in (None, "")
+        assert not hasattr(project, "repo_path")
         assert _checkout_root(temp_db, machine_id, project_id) == str(tmp_path)
         content = json.loads(project_file.read_text(encoding="utf-8"))
         assert set(content).isdisjoint(
@@ -960,7 +960,7 @@ class TestInitializeProject:
         project = LocalProjectManager(temp_db).get(result.project_id)
         assert project is not None
         assert project.name == tmp_path.name
-        assert project.repo_path in (None, "")
+        assert not hasattr(project, "repo_path")
         assert result.project_name == tmp_path.name
         assert result.already_existed is False
         assert _checkout_root(temp_db, machine_id, result.project_id) == str(tmp_path)
@@ -1075,7 +1075,7 @@ class TestMarkerAuthoritativeInit:
         assert project is not None
         assert project.deleted_at is None
         assert project.name == "fresh-init"
-        assert project.repo_path in (None, "")
+        assert not hasattr(project, "repo_path")
         assert marker["id"] == result.project_id
         assert marker["name"] == "fresh-init"
         assert _checkout_root(temp_db, machine_id, result.project_id) == str(tmp_path)
@@ -1095,7 +1095,7 @@ class TestMarkerAuthoritativeInit:
         assert _checkout_root(temp_db, machine_id, project.id) == str(tmp_path)
         stored = LocalProjectManager(temp_db).get(project.id)
         assert stored is not None
-        assert stored.repo_path in (None, "")
+        assert not hasattr(stored, "repo_path")
 
     def test_reject_existing_name_without_marker(
         self,
@@ -1207,7 +1207,7 @@ class TestMarkerAuthoritativeInit:
             manager.get_or_create(name="attach-me", repo_path=str(tmp_path))
         stored = manager.get(existing.id)
         assert stored is not None
-        assert stored.repo_path in (None, "")
+        assert not hasattr(stored, "repo_path")
         assert LocalProjectCheckoutManager(temp_db).get(machine_id, existing.id) is None
         assert not (tmp_path / ".gobby" / "project.json").exists()
 
@@ -1602,6 +1602,77 @@ class TestMarkerAuthoritativeInit:
         with pytest.raises(OverlayRegistrationRejectedError):
             initialize_project(tmp_path, name="overlay-validate-race", db=temp_db)
         assert not (tmp_path / ".gobby" / "project.json").exists()
+
+    def test_existing_marker_survives_name_reject(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A pre-existing marker stays intact when its name is already taken."""
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        LocalProjectManager(temp_db).create(name="checked-in-name")
+        marker_id = str(uuid.uuid4())
+        write_project_marker(tmp_path, project_id=marker_id, name="checked-in-name")
+        marker_path = tmp_path / ".gobby" / "project.json"
+        before = marker_path.read_bytes()
+
+        with pytest.raises(_name_attach_error()):
+            initialize_project(tmp_path, db=temp_db)
+
+        assert marker_path.read_bytes() == before
+        assert LocalProjectManager(temp_db).get(marker_id) is None
+        assert _checkout_root(temp_db, machine_id, marker_id) is None
+
+    def test_existing_marker_survives_root_taken(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A pre-existing marker stays intact when another project owns the root."""
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        other = LocalProjectManager(temp_db).create(name="root-owner")
+        LocalProjectCheckoutManager(temp_db).register(machine_id, other.id, str(tmp_path))
+        marker_id = str(uuid.uuid4())
+        write_project_marker(tmp_path, project_id=marker_id, name="checked-in-root")
+        marker_path = tmp_path / ".gobby" / "project.json"
+        before = marker_path.read_bytes()
+
+        with pytest.raises(CheckoutRootTakenError):
+            initialize_project(tmp_path, db=temp_db)
+
+        assert marker_path.read_bytes() == before
+        assert LocalProjectManager(temp_db).get(marker_id) is None
+        assert _checkout_root(temp_db, machine_id, other.id) == str(tmp_path)
+
+    def test_existing_marker_survives_overlay_reject(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A pre-existing marker stays intact when the root is a registered overlay."""
+        machine_id = _pin_machine(temp_db, monkeypatch)
+        overlay_owner = LocalProjectManager(temp_db).create(name="overlay-owner-kept")
+        insert_overlay(
+            temp_db,
+            project_id=overlay_owner.id,
+            machine_id=machine_id,
+            path=str(tmp_path),
+            kind="worktree",
+        )
+        marker_id = str(uuid.uuid4())
+        write_project_marker(tmp_path, project_id=marker_id, name="checked-in-overlay")
+        marker_path = tmp_path / ".gobby" / "project.json"
+        before = marker_path.read_bytes()
+
+        with pytest.raises(OverlayRegistrationRejectedError):
+            initialize_project(tmp_path, db=temp_db)
+
+        assert marker_path.read_bytes() == before
+        assert LocalProjectManager(temp_db).get(marker_id) is None
+        assert _checkout_root(temp_db, machine_id, marker_id) is None
 
     def test_stale_marker_name_does_not_update_projects_name(
         self,

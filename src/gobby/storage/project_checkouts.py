@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -100,11 +101,16 @@ class LocalProjectCheckoutManager:
     def register(
         self, machine_id: str, project_id: str, root_path: str
     ) -> tuple[ProjectCheckout, bool]:
-        """Insert or return the same-root checkout. Different roots conflict."""
+        """Insert or return the same-root checkout. Different roots conflict.
+
+        The insert runs under a savepoint so a root-taken violation rolls back
+        to it and the surrounding (possibly ambient) transaction stays usable.
+        """
         self._reject_sentinel(project_id)
-        try:
-            with self.db.transaction() as conn:
-                self._reject_overlay(conn, machine_id, root_path)
+        with self.db.transaction() as conn:
+            self._reject_overlay(conn, machine_id, root_path)
+            savepoint = conn.savepoint("project_checkout_register")
+            try:
                 inserted = conn.execute(
                     """
                     INSERT INTO project_checkouts (machine_id, project_id, root_path)
@@ -114,20 +120,22 @@ class LocalProjectCheckoutManager:
                     """,
                     (machine_id, project_id, root_path),
                 ).fetchone()
-                if inserted is not None:
-                    return ProjectCheckout.from_row(inserted), True
-                existing = self._lock_checkout(conn, machine_id, project_id)
-                if existing.root_path == root_path:
-                    return existing, False
-                raise CheckoutConflictError(
-                    f"checkout for machine {machine_id} project {project_id} "
-                    f"is already {existing.root_path}"
-                )
-        except UniqueViolation as exc:
-            raced = self.get(machine_id, project_id)
-            if raced is not None and raced.root_path == root_path:
-                return raced, False
-            self._raise_root_taken(exc, machine_id, root_path)
+            except UniqueViolation as exc:
+                savepoint.rollback()
+                raced = self._fetch_checkout(conn, machine_id, project_id)
+                if raced is not None and raced.root_path == root_path:
+                    return raced, False
+                self._raise_root_taken(exc, machine_id, root_path)
+            savepoint.release()
+            if inserted is not None:
+                return ProjectCheckout.from_row(inserted), True
+            existing = self._lock_checkout(conn, machine_id, project_id)
+            if existing.root_path == root_path:
+                return existing, False
+            raise CheckoutConflictError(
+                f"checkout for machine {machine_id} project {project_id} "
+                f"is already {existing.root_path}"
+            )
 
     def rebind(self, machine_id: str, project_id: str, root_path: str) -> ProjectCheckout:
         """Insert when absent, no-op the same root, or move to a different root."""
@@ -177,6 +185,26 @@ class LocalProjectCheckoutManager:
         except UniqueViolation as exc:
             self._raise_root_taken(exc, machine_id, root_path)
 
+    def unregister_project(self, project_id: str, *, conn: Transaction | None = None) -> int:
+        """Delete the project's checkout rows on every machine; return how many went.
+
+        Mirrors purge, whose `projects` delete cascades through
+        `project_checkouts_project_id_fkey`, so a soft-deleted project frees its
+        roots everywhere. Runs inside `conn` when the caller owns the transaction.
+        """
+        if conn is None:
+            with self.db.transaction() as owned:
+                return self._delete_project_checkouts(owned, project_id)
+        return self._delete_project_checkouts(conn, project_id)
+
+    @staticmethod
+    def _delete_project_checkouts(conn: Transaction, project_id: str) -> int:
+        cursor = conn.execute(
+            "DELETE FROM project_checkouts WHERE project_id = %s",
+            (project_id,),
+        )
+        return cursor.rowcount
+
     @staticmethod
     def _reject_sentinel(project_id: str) -> None:
         if project_id in CHECKOUT_FREE_PROJECT_IDS:
@@ -220,6 +248,20 @@ class LocalProjectCheckoutManager:
         )
 
     @staticmethod
+    def _fetch_checkout(
+        conn: Transaction, machine_id: str, project_id: str
+    ) -> ProjectCheckout | None:
+        row = conn.execute(
+            """
+            SELECT machine_id, project_id, root_path, created_at, updated_at
+            FROM project_checkouts
+            WHERE machine_id = %s AND project_id = %s
+            """,
+            (machine_id, project_id),
+        ).fetchone()
+        return ProjectCheckout.from_row(row) if row is not None else None
+
+    @staticmethod
     def _lock_checkout(conn: Transaction, machine_id: str, project_id: str) -> ProjectCheckout:
         row = conn.execute(
             """
@@ -258,21 +300,29 @@ def _reject_checkout_sentinel(project_id: str) -> None:
         )
 
 
-def _is_registered_operation_overlay(
+def _canonical_path(path: str) -> str:
+    # Same rule as gobby.utils.checkout_root.canonical_checkout_root (realpath of
+    # normpath), applied locally so a symlinked caller path matches the registered root.
+    return os.path.realpath(os.path.normpath(path))
+
+
+def _registered_operation_overlay(
     db: HubDatabase, machine_id: str, project_id: str, overlay_path: str
-) -> bool:
+) -> str | None:
+    """Return the registered overlay path matching `overlay_path` canonical or raw."""
+    candidates = list(dict.fromkeys((_canonical_path(overlay_path), overlay_path)))
     row = db.fetchone(
         """
-        SELECT 1 FROM worktrees
-        WHERE machine_id = %s AND project_id = %s AND worktree_path = %s
+        SELECT worktree_path AS path FROM worktrees
+        WHERE machine_id = %s AND project_id = %s AND worktree_path = ANY(%s)
         UNION ALL
-        SELECT 1 FROM clones
-        WHERE machine_id = %s AND project_id = %s AND clone_path = %s
+        SELECT clone_path AS path FROM clones
+        WHERE machine_id = %s AND project_id = %s AND clone_path = ANY(%s)
         LIMIT 1
         """,
-        (machine_id, project_id, overlay_path, machine_id, project_id, overlay_path),
+        (machine_id, project_id, candidates, machine_id, project_id, candidates),
     )
-    return row is not None
+    return None if row is None else str(row["path"])
 
 
 def require_root(db: HubDatabase, project_id: str, machine_id: str | None) -> str:
@@ -298,7 +348,12 @@ def resolve_operation_root(
     *,
     overlay_path: str | None = None,
 ) -> str:
-    """Return an overlay path when registered locally, otherwise the primary checkout."""
+    """Return the registered overlay path when one matches, else the primary checkout.
+
+    `overlay_path` is matched canonically (realpath of normpath) as well as raw,
+    and the registered spelling is returned, so a symlinked cwd resolves to the
+    overlay registered under its canonical path.
+    """
     local_machine_id = _session_machine_id(project_id, machine_id)
     _reject_checkout_sentinel(project_id)
     if overlay_path is None:
@@ -308,8 +363,9 @@ def resolve_operation_root(
                 f"no checkout for machine {local_machine_id} project {project_id}"
             )
         return checkout.root_path
-    if _is_registered_operation_overlay(db, local_machine_id, project_id, overlay_path):
-        return overlay_path
+    registered = _registered_operation_overlay(db, local_machine_id, project_id, overlay_path)
+    if registered is not None:
+        return registered
     raise OverlayRegistrationRejectedError(
         f"overlay {overlay_path} is not a registered worktree or clone "
         f"for machine {local_machine_id} project {project_id}"

@@ -657,17 +657,28 @@ class LocalProjectManager:
         return project.name in SYSTEM_PROJECT_NAMES
 
     def soft_delete(self, project_id: str) -> bool:
-        """Soft-delete a project by setting deleted_at timestamp.
+        """Soft-delete a project and release its checkouts on every machine.
+
+        Both writes share one transaction, mirroring purge's cascade, so the
+        project's roots are free for a fresh init as soon as the delete lands;
+        restore or init re-registers a checkout on next use.
 
         Returns:
             True if updated, False if not found
         """
+        from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+
         now = utc_now()
-        cursor = self.db.execute(
-            "UPDATE projects SET deleted_at = %s, updated_at = %s WHERE id = %s AND deleted_at IS NULL",
-            (now, now, project_id),
-        )
-        return cursor.rowcount > 0
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE projects SET deleted_at = %s, updated_at = %s "
+                "WHERE id = %s AND deleted_at IS NULL",
+                (now, now, project_id),
+            )
+            if cursor.rowcount == 0:
+                return False
+            LocalProjectCheckoutManager(self.db).unregister_project(project_id, conn=conn)
+        return True
 
     def restore(self, project_id: str) -> Project | None:
         """Restore a soft-deleted project."""

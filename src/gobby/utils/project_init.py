@@ -338,11 +338,15 @@ def _init_with_marker(
     marker: dict[str, Any],
     github_url: str | None,
 ) -> InitResult:
+    """Attach `root` to the project named by an existing marker.
+
+    The marker predates this call (checked in, or published by another
+    writer), so a hub refusal propagates and never unlinks it; only
+    `_init_no_marker` removes the marker it published itself.
+    """
     from gobby.storage.project_checkouts import (
-        CheckoutRootTakenError,
         CheckoutSentinelRejectedError,
         LocalProjectCheckoutManager,
-        OverlayRegistrationRejectedError,
     )
     from gobby.storage.projects import (
         CHECKOUT_FREE_PROJECT_IDS,
@@ -365,18 +369,13 @@ def _init_with_marker(
     manager = LocalProjectManager(db)
     project = manager.get(project_id)
 
-    try:
-        validate_checkout_root(
-            db,
-            project_id=project_id,
-            machine_id=machine_id,
-            candidate_path=root_str,
-            expected_marker_id=project_id,
-        )
-    except OverlayRegistrationRejectedError:
-        if project is None:
-            _unlink_still_matching_marker(root, project_id, "overlay_validate")
-        raise
+    validate_checkout_root(
+        db,
+        project_id=project_id,
+        machine_id=machine_id,
+        candidate_path=root_str,
+        expected_marker_id=project_id,
+    )
     if project is not None and project.deleted_at is not None:
         active = manager.get_by_name(project.name)
         if active is not None and active.id != project.id:
@@ -393,7 +392,6 @@ def _init_with_marker(
         marker_name = str(marker.get("name") or root.name)
         taken = manager.get_by_name(marker_name, include_deleted=True)
         if taken is not None and taken.id != project_id:
-            _unlink_still_matching_marker(root, project_id, "name_reject")
             raise NameAttachRejectedError(
                 f"project name {marker_name!r} already exists; init is marker-authoritative"
             )
@@ -402,16 +400,9 @@ def _init_with_marker(
                 manager.ensure_exists(project_id, marker_name)
                 LocalProjectCheckoutManager(db).register(machine_id, project_id, root_str)
         except UniqueViolation as exc:
-            _unlink_still_matching_marker(root, project_id, "name_reject")
             raise NameAttachRejectedError(
                 f"project name {marker_name!r} already exists; init is marker-authoritative"
             ) from exc
-        except CheckoutRootTakenError:
-            _unlink_still_matching_marker(root, project_id, "root_taken")
-            raise
-        except OverlayRegistrationRejectedError:
-            _unlink_still_matching_marker(root, project_id, "overlay_recheck")
-            raise
         project = manager.get(project_id)
         if project is None:
             raise RuntimeError(f"Project {project_id} not found after ID-targeted create")

@@ -585,7 +585,7 @@ def _checkout_root(db: object, machine_id: str, project_id: str) -> str | None:
 
 def _project_row(db: object, project_id: str) -> dict[str, Any]:
     row = _hub(db).fetchone(
-        "SELECT repo_path, deleted_at, name FROM projects WHERE id = %s",
+        "SELECT deleted_at, name FROM projects WHERE id = %s",
         (project_id,),
     )
     assert row is not None
@@ -638,9 +638,9 @@ class TestProjectRebindCli:
         result = _invoke_projects(runner, temp_db, ["rebind", name, str(second)])
 
         assert result.exit_code == 0
+        assert "gobby restart" in result.output
         assert _checkout_root(temp_db, machine_id, project.id) == str(second)
         assert _checkout_root(temp_db, foreign_machine, project.id) == "/foreign/root"
-        assert _project_row(temp_db, project.id)["repo_path"] is None
         mismatch = tmp_path / "other"
         mismatch.mkdir()
         write_project_marker(mismatch, project_id=_unique_name("not-uuid"), name="other")
@@ -735,7 +735,6 @@ class TestProjectRebindCli:
         assert by_name.exit_code == 0
         stored = _project_row(temp_db, project.id)
         assert stored["deleted_at"] is not None
-        assert stored["repo_path"] is None
         assert _checkout_root(temp_db, machine_id, project.id) == str(root)
 
         moved = tmp_path / "deleted-moved"
@@ -790,6 +789,72 @@ class TestProjectRebindCli:
         assert _checkout_root(temp_db, machine_id, first.id) == str(first_root)
         assert _project_row(temp_db, first.id)["deleted_at"] is not None
 
+    def test_rebind_reports_unregistered_machine_without_traceback(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A machine the hub does not know yields a typed message, not a psycopg traceback."""
+        import uuid
+
+        from psycopg.errors import ForeignKeyViolation
+
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import patch_local_machine_id, write_project_marker
+
+        unregistered_machine = str(uuid.uuid4())
+        patch_local_machine_id(monkeypatch, unregistered_machine)
+        name = _unique_name("fk-rebind")
+        root = tmp_path / "root"
+        root.mkdir()
+        project = LocalProjectManager(_hub(temp_db)).create(name=name)
+        write_project_marker(root, project_id=project.id, name=name)
+
+        result = _invoke_projects(runner, temp_db, ["rebind", name, str(root)])
+
+        assert result.exit_code == 1
+        assert not isinstance(result.exception, ForeignKeyViolation)
+        text = _cli_text(result)
+        assert "Rebind failed" in text
+        assert unregistered_machine in text
+        assert _checkout_root(temp_db, unregistered_machine, project.id) is None
+
+    def test_rebind_reports_manager_invariant_failure(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        temp_db: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A RuntimeError from the checkout manager exits 1 with a message, not a traceback."""
+        from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+        from gobby.storage.projects import LocalProjectManager
+        from tests.fixtures.isolated_checkout import write_project_marker
+
+        _pin_cli_machine(temp_db, monkeypatch)
+        name = _unique_name("lost-rebind")
+        root = tmp_path / "root"
+        root.mkdir()
+        project = LocalProjectManager(_hub(temp_db)).create(name=name)
+        write_project_marker(root, project_id=project.id, name=name)
+
+        def _lost(
+            self: LocalProjectCheckoutManager, machine_id: str, project_id: str, root_path: str
+        ) -> Any:
+            raise RuntimeError(
+                f"checkout disappeared for machine {machine_id} project {project_id}"
+            )
+
+        monkeypatch.setattr(LocalProjectCheckoutManager, "rebind", _lost)
+
+        result = _invoke_projects(runner, temp_db, ["rebind", name, str(root)])
+
+        assert result.exit_code == 1
+        assert not isinstance(result.exception, RuntimeError)
+        assert "Rebind failed: checkout disappeared" in _cli_text(result)
+
 
 class TestProjectRepairCheckout:
     """§ 2.3.3 repair checkout/marker drift."""
@@ -822,7 +887,6 @@ class TestProjectRepairCheckout:
         assert fixed.exit_code == 0
         assert "creat" in _cli_text(fixed).lower()
         assert _checkout_root(temp_db, machine_id, project.id) == str(root)
-        assert _project_row(temp_db, project.id)["repo_path"] is None
 
     def test_repair_refuses_overlay_without_persist(
         self,
@@ -853,7 +917,6 @@ class TestProjectRepairCheckout:
         )
         assert result.exit_code == 1
         assert _checkout_root(temp_db, machine_id, project.id) is None
-        assert _project_row(temp_db, project.id)["repo_path"] is None
 
     def test_repair_refuses_sentinel_without_persist(
         self,
@@ -932,7 +995,6 @@ class TestProjectRepairCheckout:
         assert result.exit_code == 1
         assert "not a platform-local normalized absolute path" in _cli_text(result)
         assert _checkout_root(temp_db, machine_id, project.id) is None
-        assert _project_row(temp_db, project.id)["repo_path"] is None
 
     def test_repair_refuses_different_root_and_tells_user_to_rebind(
         self,
@@ -962,7 +1024,6 @@ class TestProjectRepairCheckout:
         assert result.exit_code == 1
         assert "rebind" in _cli_text(result).lower()
         assert _checkout_root(temp_db, machine_id, project.id) == str(registered)
-        assert _project_row(temp_db, project.id)["repo_path"] is None
 
     def test_repair_same_root_existing_reports_no_drift(
         self,
@@ -989,7 +1050,6 @@ class TestProjectRepairCheckout:
         assert result.exit_code == 0
         assert "no drift" in _cli_text(result).lower() or "no issues" in _cli_text(result).lower()
         assert _checkout_root(temp_db, machine_id, project.id) == str(root)
-        assert _project_row(temp_db, project.id)["repo_path"] is None
 
 
 class TestProjectRenameCheckout:
@@ -1013,10 +1073,6 @@ class TestProjectRenameCheckout:
         manager = LocalProjectManager(_hub(temp_db))
         project = manager.create(name=name)
         write_project_marker(stale, project_id=project.id, name=name)
-        _hub(temp_db).execute(
-            "UPDATE projects SET repo_path = %s WHERE id = %s",
-            (str(stale), project.id),
-        )
 
         result = _invoke_projects(runner, temp_db, ["rename", name, new_name])
         assert result.exit_code == 0
@@ -1051,10 +1107,6 @@ class TestProjectRenameCheckout:
         payload["extra_field"] = "keep-me"
         marker.write_text(json.dumps(payload), encoding="utf-8")
         LocalProjectCheckoutManager(_hub(temp_db)).register(machine_id, project.id, str(root))
-        _hub(temp_db).execute(
-            "UPDATE projects SET repo_path = %s WHERE id = %s",
-            (str(stale), project.id),
-        )
 
         result = _invoke_projects(runner, temp_db, ["rename", name, new_name])
         assert result.exit_code == 0

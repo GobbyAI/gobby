@@ -75,7 +75,7 @@ class TestLocalProjectManager:
 
         assert project.id is not None
         assert project.name == "my-project"
-        assert project.repo_path is None
+        assert not hasattr(project, "repo_path")
         assert project.github_url == "https://github.com/user/repo"
 
     def test_create_project_minimal(self, project_manager: LocalProjectManager) -> None:
@@ -84,7 +84,7 @@ class TestLocalProjectManager:
 
         assert project.id is not None
         assert project.name == "minimal-project"
-        assert project.repo_path is None
+        assert not hasattr(project, "repo_path")
         assert project.github_url is None
 
     def test_create_duplicate_name_raises(self, project_manager: LocalProjectManager) -> None:
@@ -144,7 +144,7 @@ class TestLocalProjectManager:
         result = project_manager.get_or_create(name="new-project")
 
         assert result.name == "new-project"
-        assert result.repo_path in (None, "")
+        assert not hasattr(result, "repo_path")
 
     def test_get_or_create_is_atomic_for_concurrent_calls(
         self,
@@ -192,7 +192,7 @@ class TestLocalProjectManager:
 
         assert ensured.id == project_id
         assert ensured.name == "old-name"
-        assert ensured.repo_path is None
+        assert not hasattr(ensured, "repo_path")
 
     def test_list_projects(self, project_manager: LocalProjectManager) -> None:
         """Test listing all projects."""
@@ -226,7 +226,7 @@ class TestLocalProjectManager:
 
         assert updated is not None
         assert updated.name == "updated"
-        assert updated.repo_path is None
+        assert not hasattr(updated, "repo_path")
 
     def test_update_linear_project_id(self, project_manager: LocalProjectManager) -> None:
         """Test updating the Linear project binding."""
@@ -248,7 +248,7 @@ class TestLocalProjectManager:
 
         assert updated is not None
         assert updated.name == "partial"  # unchanged
-        assert updated.repo_path is None
+        assert not hasattr(updated, "repo_path")
         assert updated.github_url == "https://github.com/new/url"
 
     def test_update_nonexistent(self, project_manager: LocalProjectManager) -> None:
@@ -317,12 +317,7 @@ def test_create_writes_checkout_not_repo_path(
     monkeypatch.setattr("gobby.storage.projects.uuid.uuid4", lambda: uuid.UUID(project_id))
     project = project_manager.create(name="checkout-create", repo_path=str(root))
     assert project.id == project_id
-    assert project.repo_path is None
-    stored = project_manager.db.fetchone(
-        "SELECT repo_path FROM projects WHERE id = %s", (project.id,)
-    )
-    assert stored is not None
-    assert stored["repo_path"] in (None, "")
+    assert not hasattr(project, "repo_path")
     checkout = _checkout_row(project_manager.db, machine_id, project.id)
     assert checkout is not None
     assert checkout["root_path"] == str(root)
@@ -341,7 +336,7 @@ def test_ensure_exists_writes_checkout_not_repo_path(
     write_project_marker(root, project_id=project_id, name="checkout-ensure")
     project = project_manager.ensure_exists(project_id, "checkout-ensure", str(root))
     assert project.id == project_id
-    assert project.repo_path is None
+    assert not hasattr(project, "repo_path")
     checkout = _checkout_row(project_manager.db, machine_id, project.id)
     assert checkout is not None
     assert checkout["root_path"] == str(root)
@@ -360,7 +355,7 @@ def test_update_writes_checkout_not_repo_path(
     write_project_marker(root, project_id=created.id, name="checkout-update")
     updated = project_manager.update(created.id, repo_path=str(root))
     assert updated is not None
-    assert updated.repo_path is None
+    assert not hasattr(updated, "repo_path")
     checkout = _checkout_row(project_manager.db, machine_id, created.id)
     assert checkout is not None
     assert checkout["root_path"] == str(root)

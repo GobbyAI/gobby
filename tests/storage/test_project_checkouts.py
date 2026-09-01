@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import uuid
 from datetime import UTC, datetime
@@ -30,6 +31,7 @@ from gobby.storage.projects import (
     MIGRATED_PROJECT_ID,
     ORPHANED_PROJECT_ID,
     PERSONAL_PROJECT_ID,
+    LocalProjectManager,
 )
 from tests.fixtures.postgres import TEST_USER_ID
 
@@ -195,6 +197,55 @@ def test_register_raises_when_another_project_owns_the_root(
     with pytest.raises(CheckoutRootTakenError):
         manager.register(machine_id, other.id, "/shared/root")
     assert manager.get(machine_id, other.id) is None
+
+
+def test_register_root_taken_inside_outer_transaction_raises_typed_error(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """A root-taken register nested in a caller's transaction still raises the typed error."""
+    manager = _manager(temp_db)
+    machine_id = str(uuid.uuid4())
+    _insert_machine(temp_db, machine_id)
+    other = LocalProjectManager(temp_db).create(name=f"root-owner-{uuid.uuid4().hex[:8]}")
+    manager.register(machine_id, other.id, "/shared/root")
+
+    with pytest.raises(CheckoutRootTakenError), temp_db.transaction():
+        manager.register(machine_id, sample_project["id"], "/shared/root")
+
+    assert manager.get(machine_id, sample_project["id"]) is None
+    assert manager.get(machine_id, other.id) is not None
+
+
+def test_unregister_project_releases_roots_on_every_machine(
+    temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path
+) -> None:
+    """unregister_project drops the project's rows on every machine and frees the roots."""
+    manager = _manager(temp_db)
+    first_machine = str(uuid.uuid4())
+    second_machine = str(uuid.uuid4())
+    _insert_machine(temp_db, first_machine)
+    _insert_machine(temp_db, second_machine)
+    root = str(tmp_path / "shared-root")
+    manager.register(first_machine, sample_project["id"], root)
+    manager.register(second_machine, sample_project["id"], "/second/root")
+    other = LocalProjectManager(temp_db).create(name=f"other-{uuid.uuid4().hex[:8]}")
+    with pytest.raises(CheckoutRootTakenError):
+        manager.register(first_machine, other.id, root)
+    before = temp_db.fetchone(
+        "SELECT count(*) AS n FROM project_checkouts WHERE project_id = %s",
+        (sample_project["id"],),
+    )
+    assert before is not None
+    assert int(before["n"]) >= 2
+
+    assert manager.unregister_project(sample_project["id"]) == int(before["n"])
+
+    assert manager.get(first_machine, sample_project["id"]) is None
+    assert manager.get(second_machine, sample_project["id"]) is None
+    reclaimed, created = manager.register(first_machine, other.id, root)
+    assert created is True
+    assert reclaimed.root_path == root
+    assert manager.unregister_project(sample_project["id"]) == 0
 
 
 @pytest.mark.parametrize("sentinel_id", sorted(CHECKOUT_FREE_PROJECT_IDS))
@@ -708,10 +759,6 @@ def test_require_root_does_not_fall_back_to_projects_repo_path(
         temp_db, tmp_path / "repo", monkeypatch=monkeypatch
     )
     temp_db.execute(
-        "UPDATE projects SET repo_path = %s WHERE id = %s",
-        ("/legacy/column", isolated.project.id),
-    )
-    temp_db.execute(
         "DELETE FROM project_checkouts WHERE machine_id = %s AND project_id = %s",
         (isolated.machine_id, isolated.project.id),
     )
@@ -834,6 +881,41 @@ def test_resolve_operation_root_registered_clone_wins_without_primary(
         temp_db, project_id=project_id, machine_id=machine_id, path=overlay, kind="clone"
     )
     assert resolve_operation_root(temp_db, project_id, machine_id, overlay_path=overlay) == overlay
+
+
+def test_resolve_operation_root_resolves_symlinked_overlay_to_registered_path(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A symlinked overlay path resolves to the overlay registered under its realpath."""
+    from tests.fixtures.isolated_checkout import (
+        insert_isolated_machine,
+        insert_overlay,
+        patch_local_machine_id,
+    )
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project_id = sample_project_id(temp_db)
+    real = tmp_path / "real-wt"
+    real.mkdir()
+    link = tmp_path / "link-wt"
+    link.symlink_to(real, target_is_directory=True)
+    registered = os.path.realpath(real)
+    insert_overlay(
+        temp_db, project_id=project_id, machine_id=machine_id, path=registered, kind="worktree"
+    )
+
+    resolved = resolve_operation_root(temp_db, project_id, machine_id, overlay_path=str(link))
+
+    assert resolved == registered
+    assert (
+        resolve_operation_root(temp_db, project_id, machine_id, overlay_path=registered)
+        == registered
+    )
+    with pytest.raises(OverlayRegistrationRejectedError):
+        resolve_operation_root(
+            temp_db, project_id, machine_id, overlay_path=str(tmp_path / "unregistered-wt")
+        )
 
 
 def test_resolve_operation_root_refuses_unregistered_overlay(
