@@ -280,6 +280,23 @@ async def test_run_review_empty_backlog_creates_no_run_row(temp_db: HubDatabase)
     assert count is not None and count["count"] == 0
 
 
+@pytest.mark.asyncio
+async def test_marked_temporary_checkout_reaches_digest(
+    temp_db: HubDatabase, session_id: str
+) -> None:
+    observation_id = _insert_feedback(temp_db, session_id)
+    llm = _FakeLLM(
+        response={"clusters": [_cluster([observation_id], classification="noise", theme="fixture")]}
+    )
+
+    result = await _service(temp_db, llm, _FakeTaskManager()).run_review()
+
+    run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
+    assert run is not None
+    assert run.digest_md is not None
+    assert "**fixture** [noise, 1 obs]" in run.digest_md
+
+
 async def test_run_review_dedupes_open_titles_and_in_batch_duplicates(
     temp_db: HubDatabase, session_id: str
 ) -> None:
