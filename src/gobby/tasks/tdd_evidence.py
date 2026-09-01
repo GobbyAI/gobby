@@ -23,6 +23,13 @@ _ASSERTION_DETAIL_RE = re.compile(
     r"AssertionError|assertion failed|\bassert\b|panicked at",
     re.IGNORECASE,
 )
+_PYTEST_BODY_FRAME_RE = re.compile(
+    r"^\s*(?P<path>\S+\.py):\d+: in (?P<symbol>[A-Za-z_][A-Za-z0-9_]*(?:\.\.\.)?)\s*$"
+)
+_PYTHON_EXCEPTION_DETAIL_RE = re.compile(
+    r"^\s*E\s+(?:[A-Za-z_][A-Za-z0-9_.]*)(?:Error|Exception):",
+    re.MULTILINE,
+)
 _PASS_STATUS_RE = re.compile(r"\b(?:PASSED|SKIPPED|XFAIL|XPASS)\b", re.IGNORECASE)
 _FAILURE_SECTION_BOUNDARY_RE = re.compile(
     r"^(?:_{2,}\s+\S.*\s+_{2,}|(?:FAILED|ERROR|PASSED|SKIPPED)\s+\S.*|"
@@ -219,14 +226,16 @@ def _find_red_run(
             continue
         if not validation_run_names_test(run.command, run.output, test):
             continue
-        if _has_named_assertion_failure(run.output, test):
+        if _has_named_red_failure(run.command, run.output, test):
             return run
     return None
 
 
-def _has_named_assertion_failure(output: str | None, test: AcceptanceTest) -> bool:
+def _has_named_red_failure(command: str, output: str | None, test: AcceptanceTest) -> bool:
     if not output:
         return False
+    if validation_run_names_test(command, None, test) and _has_pytest_body_failure(output, test):
+        return True
     symbols = (
         test.symbol,
         test.symbol.replace(".", "::"),
@@ -241,15 +250,45 @@ def _has_named_assertion_failure(output: str | None, test: AcceptanceTest) -> bo
             continue
         if _PASS_STATUS_RE.search(line):
             continue
-        end = min(len(lines), index + 120)
-        for boundary in range(index + 1, end):
-            if _FAILURE_SECTION_BOUNDARY_RE.match(lines[boundary]):
-                end = boundary
-                break
-        section = "\n".join(lines[index:end])
+        section = _failure_section(lines, index)
         if _ASSERTION_DETAIL_RE.search(section) and is_assertion_failure(section):
             return True
     return False
+
+
+def _has_pytest_body_failure(output: str, test: AcceptanceTest) -> bool:
+    """Recognize a failure raised from a targeted pytest body, including RTK summaries."""
+    if not is_assertion_failure(output):
+        return False
+    expected_symbol = test.symbol.replace("::", ".").rsplit(".", maxsplit=1)[-1]
+    expected_is_method = expected_symbol.startswith("test_")
+    expected_path_parts = PurePosixPath(test.path).parts
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        match = _PYTEST_BODY_FRAME_RE.match(line)
+        if match is None:
+            continue
+        reported_path_parts = PurePosixPath(match.group("path")).parts
+        if reported_path_parts[-len(expected_path_parts) :] != expected_path_parts:
+            continue
+        reported_symbol = match.group("symbol").removesuffix("...")
+        if expected_is_method and not expected_symbol.startswith(reported_symbol):
+            continue
+        if not expected_is_method and not reported_symbol.startswith("test_"):
+            continue
+        section = _failure_section(lines, index)
+        if _ASSERTION_DETAIL_RE.search(section) or _PYTHON_EXCEPTION_DETAIL_RE.search(section):
+            return True
+    return False
+
+
+def _failure_section(lines: list[str], start: int) -> str:
+    end = min(len(lines), start + 120)
+    for boundary in range(start + 1, end):
+        if _FAILURE_SECTION_BOUNDARY_RE.match(lines[boundary]):
+            end = boundary
+            break
+    return "\n".join(lines[start:end])
 
 
 def _is_test_execution_run(run: TranscriptValidationRun) -> bool:

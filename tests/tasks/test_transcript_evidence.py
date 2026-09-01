@@ -13,7 +13,9 @@ import pytest
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.storage.session_models import Session
 from gobby.tasks import transcript_outcomes
+from gobby.tasks.acceptance_artifacts import AcceptanceTest
 from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence import (
     WINDOW_LOOKBACK,
     TranscriptEdit,
@@ -415,6 +417,163 @@ async def test_codex_authoritative_exec_supersedes_successful_outer_wrapper(
     assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
         (rewritten, "failure", 1)
     ]
+
+
+async def test_codex_tdd_gate_accepts_targeted_test_body_exception_before_production_edit(
+    tmp_path: Path,
+) -> None:
+    """RTK's Codex summary names the method frame, while the artifact names its class."""
+    transcript = tmp_path / "codex-tdd.jsonl"
+    test_path = "tests/hooks/test_session_coordinator.py"
+    source_path = "src/gobby/hooks/session_coordinator.py"
+    node_id = (
+        f"{test_path}::TestAgentRunCompletion::"
+        "test_complete_agent_run_uses_transcript_activity_and_persists_counts"
+    )
+    command = f"uv run pytest {node_id} -q"
+    rewritten = f"uv run rtk pytest {node_id} -q"
+    red_output = """\
+Pytest: 0 passed, 1 failed
+
+Failures:
+     tests/hooks/test_session_coordinator.py:606: in test_complete_agent_run_uses_transcript_activity_...
+     E   TypeError: SessionCoordinator.__init__() got an unexpected keyword argument 'transcript_reader'
+"""
+    test_patch = (
+        "*** Begin Patch\n"
+        f"*** Update File: /deleted/worktree/{test_path}\n"
+        "@@\n"
+        "-        pass\n"
+        "+        assert updated.status == 'success'\n"
+        "*** End Patch\n"
+    )
+    source_patch = (
+        "*** Begin Patch\n"
+        f"*** Update File: /deleted/worktree/{source_path}\n"
+        "@@\n"
+        "-        self.session_storage = session_storage\n"
+        "+        self.session_storage = session_storage\n"
+        "+        self.transcript_reader = transcript_reader\n"
+        "*** End Patch\n"
+    )
+    _write_jsonl(
+        transcript,
+        [
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "test-edit",
+                    "name": "exec",
+                    "input": (
+                        f"const patch = {json.dumps(test_patch)}; await tools.apply_patch(patch);"
+                    ),
+                },
+                BASE_TIME,
+            ),
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "test-edit",
+                    "output": "Done!",
+                },
+                BASE_TIME + timedelta(seconds=1),
+            ),
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "red-run",
+                    "name": "exec",
+                    "input": (
+                        f"const r = await tools.exec_command({{cmd:{json.dumps(command)}}}); "
+                        "text(r.output);"
+                    ),
+                },
+                BASE_TIME + timedelta(seconds=2),
+            ),
+            {
+                "type": "event_msg",
+                "timestamp": (BASE_TIME + timedelta(seconds=3)).isoformat(),
+                "payload": {
+                    "type": "item_completed",
+                    "item": {
+                        "type": "CommandExecution",
+                        "id": "red-native",
+                        "command": ["/bin/zsh", "-lc", rewritten],
+                        "status": "failed",
+                        "exit_code": 1,
+                        "aggregated_output": red_output,
+                    },
+                },
+            },
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "red-run",
+                    "output": red_output,
+                },
+                BASE_TIME + timedelta(seconds=4),
+            ),
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "source-edit",
+                    "name": "exec",
+                    "input": (
+                        f"const patch = {json.dumps(source_patch)}; await tools.apply_patch(patch);"
+                    ),
+                },
+                BASE_TIME + timedelta(seconds=5),
+            ),
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "source-edit",
+                    "output": "Done!",
+                },
+                BASE_TIME + timedelta(seconds=6),
+            ),
+            _codex_response_item(
+                {
+                    "type": "function_call",
+                    "call_id": "green-run",
+                    "name": "exec_command",
+                    "arguments": json.dumps({"cmd": command}),
+                },
+                BASE_TIME + timedelta(seconds=7),
+            ),
+            _codex_response_item(
+                {
+                    "type": "function_call_output",
+                    "call_id": "green-run",
+                    "output": {"exit_code": 0, "output": "Pytest: 1 passed"},
+                },
+                BASE_TIME + timedelta(seconds=8),
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {test_path, source_path},
+        str(tmp_path),
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::TestAgentRunCompletion",
+        path=test_path,
+        symbol="TestAgentRunCompletion",
+        body="class TestAgentRunCompletion: ...",
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    test_edit = next(edit for edit in evidence.edits if edit.path == test_path)
+    source_edit = next(edit for edit in evidence.edits if edit.path == source_path)
+    red = next(run for run in evidence.validation_runs if run.outcome == "failure")
+    green = next(run for run in evidence.validation_runs if run.outcome == "success")
+
+    assert test_edit.order < red.order < source_edit.order < green.order
+    assert result.passed is True, result
+    assert result.red_runs == (rewritten,)
 
 
 @pytest.mark.asyncio
