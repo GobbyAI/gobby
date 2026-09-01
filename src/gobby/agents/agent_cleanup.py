@@ -6,7 +6,9 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents import terminal_delivery
+from gobby.agents.completion_stats import resolve_completion_stats
 from gobby.agents.terminal_cleanup import TerminalResourceCleaner
+from gobby.sessions.transcript_reader import TranscriptReader
 
 if TYPE_CHECKING:
     from gobby.agents.loop_tracker import LoopTracker
@@ -28,7 +30,6 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
-SESSION_STATS_LOOKUP_TIMEOUT_SECONDS = 2.0
 
 
 class AgentCleanupHandler:
@@ -122,44 +123,16 @@ class AgentCleanupHandler:
         return await self._resource_cleaner.cleanup_terminal_tmux_sessions()
 
     async def _completion_stats_for_run(self, run: AgentRun) -> tuple[int, int]:
-        tool_calls_count = run.tool_calls_count or 0
-        turns_used = run.turns_used or 0
-        if not run.child_session_id or (tool_calls_count and turns_used):
-            return tool_calls_count, turns_used
-
         session_manager = self._get_session_manager()
-        if session_manager is None:
-            return tool_calls_count, turns_used
-
-        try:
-            session = await asyncio.wait_for(
-                self._run_db(session_manager.get, run.child_session_id),
-                timeout=SESSION_STATS_LOOKUP_TIMEOUT_SECONDS,
-            )
-        except TimeoutError:
-            logger.debug("Timed out reading session stats for agent %s", run.id)
-            return tool_calls_count, turns_used
-        except Exception:
-            logger.debug("Failed to read session stats for agent %s", run.id, exc_info=True)
-            return tool_calls_count, turns_used
-        if session is None:
-            return tool_calls_count, turns_used
-
-        session_tool_calls = getattr(session, "tool_call_count", None)
-        session_turns = getattr(session, "turn_count", None)
-        if (
-            isinstance(session_tool_calls, int)
-            and not isinstance(session_tool_calls, bool)
-            and tool_calls_count == 0
-        ):
-            tool_calls_count = session_tool_calls
-        if (
-            isinstance(session_turns, int)
-            and not isinstance(session_turns, bool)
-            and turns_used == 0
-        ):
-            turns_used = session_turns
-        return tool_calls_count, turns_used
+        transcript_reader = (
+            TranscriptReader(session_manager) if session_manager is not None else None
+        )
+        return await resolve_completion_stats(
+            run,
+            session_manager=session_manager,
+            transcript_reader=transcript_reader,
+            run_db=self._run_db,
+        )
 
     async def _run_capture_policy(
         self,
