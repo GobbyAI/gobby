@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -21,6 +20,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.agents.test_lifecycle_monitor import _fake_terminal_services, _pane_text, _runtime_of
+from tests.fixtures.isolated_checkout import patch_local_machine_id
 
 from .detection_test_support import BundledDetectionRegistry
 
@@ -31,9 +31,8 @@ LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
 
 @pytest.fixture(autouse=True)
-def _local_machine_identity() -> Iterator[None]:
-    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
-        yield
+def _local_machine_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_local_machine_id(monkeypatch, LOCAL_MACHINE_ID)
 
 
 @pytest.fixture
