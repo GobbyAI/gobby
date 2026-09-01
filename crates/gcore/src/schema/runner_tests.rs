@@ -533,6 +533,39 @@ fn project_checkout_predecessor_set_matches_python_cutover_contract() {
 }
 
 #[test]
+fn prior_receipts_name_in_place_edited_embedded_migrations() {
+    let mut seen = BTreeSet::new();
+    for (version, prior) in PRIOR_RECEIPT_CHECKSUMS {
+        assert!(
+            seen.insert((*version, *prior)),
+            "v{version} lists prior receipt {prior} twice"
+        );
+        let current = if *version == BASELINE_VERSION {
+            BASELINE_CHECKSUM
+        } else {
+            MIGRATIONS
+                .iter()
+                .find(|migration| migration.version == *version)
+                .unwrap_or_else(|| panic!("prior receipt v{version} names no embedded migration"))
+                .checksum
+        };
+        assert_ne!(
+            *prior, current,
+            "v{version} prior receipt must differ from the current checksum"
+        );
+    }
+    // Hubs stamped 384 before epic #19651 edited it in place (commit 436674e6e1)
+    // carry this receipt; verify_receipts must keep accepting it.
+    assert!(
+        PRIOR_RECEIPT_CHECKSUMS.contains(&(
+            384,
+            "0f7a499e1b7216a7a2426dc5c04064eae97440a1ee1a4d5134a0dd7a8cf6ebef"
+        )),
+        "the pre-epic migration 384 receipt must remain a recognized prior receipt"
+    );
+}
+
+#[test]
 fn predecessor_fixture_matches_pinned_checksum() {
     const PREDECESSOR_BASELINE_SQL: &str =
         include_str!("../../tests/fixtures/schema/predecessor_baseline.sql");

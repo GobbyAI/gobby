@@ -25,7 +25,7 @@ from gobby.storage.project_checkout_cutover import (
     record_project_checkout_preflight,
     verify_project_checkout_cutover,
 )
-from gobby.storage.schema_contract import verify_schema
+from gobby.storage.schema_contract import apply_schema, verify_schema
 
 
 class ProjectCheckoutCutoverExecutor(CampaignExecutor):
@@ -62,6 +62,10 @@ class ProjectCheckoutCutoverExecutor(CampaignExecutor):
             batch_id=batch.id,
             target_checksum=_target_checksum(),
         )
+        # The campaign applied the checkout DDL itself, so the numbered migration
+        # carrying the same change is still unstamped; the hub stays fenced to this
+        # epoch, so the stamp must happen here before verify_schema sees the hub.
+        apply_schema(database_url)
         verify_schema(database_url)
 
 

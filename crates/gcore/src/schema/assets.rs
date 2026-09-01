@@ -315,6 +315,10 @@ pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[
         "43b6c25263c1e510f28c540d9cc24e62ffcad67a3a8dddde3645bdb6a5e92821",
     ),
     (
+        384,
+        "0f7a499e1b7216a7a2426dc5c04064eae97440a1ee1a4d5134a0dd7a8cf6ebef",
+    ),
+    (
         387,
         "0831490e4169d0e778575761a3463d19bb2ac68b1f73940c00f716447adfed0b",
     ),
