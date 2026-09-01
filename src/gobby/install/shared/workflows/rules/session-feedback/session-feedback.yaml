@@ -72,11 +72,15 @@ rules:
 
           This survey is about Gobby (the daemon, rules, tools, and harness),
           not the current repository's product. Concrete defects in the current
-          repo remain Found Work — and so is an actionable Gobby defect you
-          observed: file its task in-line per the found-work ladder before
-          surveying, record disposition 'filed-task', and put the ref in
-          evidence. Defects surveyed as 'worked-around'/'noted' are flagged as
-          shirked found work in the nightly digest. Then retry
+          repo remain Found Work, as does an actionable Gobby defect you observed.
+          'fixed' means you created the task claimed and closed it, or it remains
+          claimed and in progress; put its #N ref in evidence. 'escalated' means
+          you handed it to its active owner via send_message; put the owner session
+          ref in evidence. 'filed-task' is rung 3 only: the #N task carries
+          needs-decision or clean-window and its description explains why rungs 1
+          and 2 do not apply. An unlabeled or unclaimed filing is shirked found
+          work: the stop gate blocks on it and the nightly digest flags it. Every
+          other disposition for a defect is shirked. Then retry
           `gobby-sessions:set_handoff` without duplicating the same
           observations in `gobby_feedback`.
 
@@ -104,9 +108,13 @@ rules:
           `observations: []`; that is valid and writes no rows.
 
           This survey is about Gobby, not the current repository's product.
-          Concrete defects in the current repo remain Found Work — and so is an
-          actionable Gobby defect you observed: file its task in-line per the
-          found-work ladder before surveying, record disposition 'filed-task',
-          and put the ref in evidence. Defects surveyed as 'worked-around' or
-          'noted' are flagged as shirked found work in the nightly digest. Omit
-          secrets, private user content, and transcript dumps.
+          Concrete defects in the current repo remain Found Work, as does an
+          actionable Gobby defect you observed. 'fixed' means you created the task
+          claimed and closed it, or it remains claimed and in progress; put its
+          #N ref in evidence. 'escalated' means you handed it to its active owner
+          via send_message; put the owner session ref in evidence. 'filed-task'
+          is rung 3 only: the #N task carries needs-decision or clean-window and
+          its description explains why rungs 1 and 2 do not apply. An unlabeled
+          or unclaimed filing is shirked found work: the stop gate blocks on it
+          and the nightly digest flags it. Every other disposition for a defect
+          is shirked. Omit secrets, private user content, and transcript dumps.

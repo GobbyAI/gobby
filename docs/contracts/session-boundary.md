@@ -38,6 +38,15 @@ requires `kind_other_label` (a short label naming the unlisted kind, rejected wh
 it restates a listed kind); every other kind forbids it. Empty feedback writes no
 rows. Both feedback entry points use the same transactional batch writer.
 
+An actionable Gobby defect follows the Found Work ladder. `fixed` requires a `#N`
+task the observing session claimed and closed or still has claimed in progress.
+`escalated` requires the active owner session reference after `send_message`.
+`filed-task` is rung 3 only: the observing session created the referenced `#N` task,
+it carries `needs-decision` or `clean-window`, and its description explains why
+rungs 1 and 2 do not apply. Unlabeled or unclaimed filings and every other defect
+disposition are shirked found work; intake validation rejects invalid ladder claims,
+the stop gate blocks unclaimed filings, and the nightly digest flags them.
+
 Bundled ask-once survey gates prompt in-scope sessions to call
 `gobby-sessions:feedback` before `set_handoff` and after completed work on stop.
 Daemon config `session_feedback.survey` is `gobby` (default; only exact

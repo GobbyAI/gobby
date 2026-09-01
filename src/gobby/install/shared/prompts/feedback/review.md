@@ -1,5 +1,6 @@
 ---
 description: Cluster session feedback and propose deduplicated follow-up tasks
+version: "2.0"
 required_variables:
   - observations
   - max_tasks
@@ -17,6 +18,14 @@ missing-affordance | useful | other, with `kind_other_label` naming an unlisted
 kind), `evidence`, `impact`, `frequency` (once | repeated | always), and optional
 `suggestion` and `disposition` (worked-around | filed-task | fixed | escalated |
 noted).
+
+For an actionable Gobby defect, read dispositions through the found-work ladder:
+`fixed` includes a #N task the observer claimed and closed or still has claimed in
+progress; `escalated` includes the active owner session ref after `send_message`;
+`filed-task` is rung 3 only and includes a #N task carrying `needs-decision` or
+`clean-window`, with its description explaining why rungs 1 and 2 do not apply.
+Unlabeled or unclaimed filings, plus every other defect disposition, are shirked
+found work.
 
 ```json
 {{ observations }}
@@ -36,10 +45,11 @@ noted).
    - `praise`: `useful` observations worth keeping visible; never a task.
 3. Propose a task (`proposed_task`) only for `defect` and `guidance-gap` clusters
    that are actionable now. Respect dispositions: a cluster whose observations are
-   already `fixed` or `filed-task` gets `proposed_task: null` — mention the
-   existing resolution (and any task refs like `#12345` found in the text) in
-   `digest_note` instead. Propose at most {{ max_tasks }} tasks; prioritize by
-   frequency and impact.
+   already has a ladder-compliant `fixed` or `filed-task` disposition gets
+   `proposed_task: null` — mention the existing resolution and any task refs like
+   `#12345` in `digest_note`. Treat an unclaimed or unlabeled `filed-task` ref as
+   unresolved; deterministic digest code verifies the task state. Propose at most
+   {{ max_tasks }} tasks; prioritize by frequency and impact.
 4. Task titles must be imperative, specific, and self-contained (they are
    deduplicated against open tasks by exact title). Descriptions must carry the
    evidence: what happened, where, how often, and the suggested direction if the

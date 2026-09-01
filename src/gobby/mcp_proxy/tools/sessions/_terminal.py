@@ -15,7 +15,10 @@ from uuid import uuid4
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.hooks.grok_pending_context import clear_queued_context
-from gobby.mcp_proxy.tools.sessions._handoff import FEEDBACK_OBSERVATION_INPUT_SCHEMA
+from gobby.mcp_proxy.tools.sessions._handoff import (
+    FEEDBACK_OBSERVATION_INPUT_SCHEMA,
+    build_feedback_task_resolver,
+)
 from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
     _CLI_COMPACT_COMMANDS,
     _CLI_COMPACT_INTERRUPT_KEYS,
@@ -70,6 +73,7 @@ if TYPE_CHECKING:
     from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
+    from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
 
@@ -332,6 +336,7 @@ def register_terminal_tools(
     terminal_manager: Any | None = None,
     terminal_runtime_registry: Any | None = None,
     write_coordinator: Any | None = None,
+    task_manager: LocalTaskManager | None = None,
 ) -> None:
     """Register terminal control and structured handoff tools."""
 
@@ -427,6 +432,15 @@ def register_terminal_tools(
         clear_session: bool = False,
     ) -> dict[str, Any]:
         try:
+            from gobby.utils.session_context import get_current_session_id
+
+            current_ref = get_current_session_id()
+            resolved_session_id: str | None = None
+            if current_ref:
+                try:
+                    resolved_session_id = session_manager.resolve_session_reference(current_ref)
+                except ValueError:
+                    resolved_session_id = None
             markdown = render_handoff_markdown(
                 current_state=current_state,
                 next_steps=next_steps,
@@ -435,7 +449,19 @@ def register_terminal_tools(
                 notes=notes or (),
                 references=references or (),
             )
-            observations = normalize_feedback_observations(gobby_feedback)
+            observations = normalize_feedback_observations(
+                gobby_feedback,
+                resolve_task=(
+                    build_feedback_task_resolver(
+                        session_manager,
+                        task_manager,
+                        resolved_session_id,
+                    )
+                    if resolved_session_id is not None
+                    else None
+                ),
+                session_id=resolved_session_id,
+            )
         except ValueError as exc:
             return {"success": False, "error": str(exc), "error_code": "invalid_handoff"}
 

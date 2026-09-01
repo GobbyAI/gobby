@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
     from gobby.sessions.transcript_reader import TranscriptReader
     from gobby.storage.sessions import SessionManager
+    from gobby.storage.tasks import LocalTaskManager
 
 __all__ = ["create_session_messages_registry"]
 
@@ -35,6 +36,7 @@ def create_session_messages_registry(
     startup_config: DaemonConfig | None = None,
     config_resolver: Callable[[], DaemonConfig | None] | None = None,
     db: Any | None = None,
+    task_manager: LocalTaskManager | None = None,
     worktree_manager: Any | None = None,
     inter_session_message_manager: Any | None = None,
     transcript_reader: TranscriptReader | None = None,
@@ -78,7 +80,7 @@ def create_session_messages_registry(
     # --- Handoff Tools ---
     # Only register if session_manager is available
     if session_manager is not None:
-        register_handoff_tools(registry, session_manager)
+        register_handoff_tools(registry, session_manager, task_manager)
 
     # --- Session CRUD Tools ---
     # Only register if session_manager is available
@@ -120,6 +122,7 @@ def create_session_messages_registry(
             terminal_manager=terminal_manager,
             terminal_runtime_registry=terminal_runtime_registry,
             write_coordinator=write_coordinator,
+            task_manager=task_manager,
         )
 
     return registry
