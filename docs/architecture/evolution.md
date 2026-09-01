@@ -15,7 +15,7 @@ against those decisions so it is not lost in task history.
   Operators start it with `gobby start`. HTTP `:60887`, WS `:60888`.
 - **Data**: PostgreSQL is the runtime hub; FalkorDB graph; Qdrant vectors.
   Schema authority already lives in Rust — `gcore` embeds one flattened
-  `baseline@419` with no stacked migrations, and `gdaemon schema apply/verify`
+  `baseline@420` with no stacked migrations, and `gdaemon schema apply/verify`
   owns DDL (`crates/gcore/src/schema/assets.rs`).
   M0 shared-datastore **code** has landed (leases, remote DSNs, `machine_id`
   scoping). The remaining M0 gate is the real two-machine smoke (#19600).
@@ -30,12 +30,12 @@ against those decisions so it is not lost in task history.
   port. gcode/gwiki daemon-native grants (#18902) and checkout grants
   (#19651 P4, #20300) closed. Grant-surface reservation: the
   `gobby_gcode_capability` role keeps `SELECT` on `projects(id, name,
-  deleted_at)` in `baseline@419` although landed gcode reads none of it —
+  deleted_at)` in `baseline@420` although landed gcode reads none of it —
   project resolution goes through the daemon's `/api/projects` and the index
   write fence keys on `project_checkouts.root_path`. Kept on purpose for the
   wiki information-model redesign (#19664): #21504 (`needs-decision`, the
   #21438 follow-up) settles consume-or-drop, and a drop lands as a migration
-  ≥ 420, never a baseline edit.
+  ≥ 421, never a baseline edit.
 - **Product that landed on `0.5.0` and is off the architecture spine**:
   class-hierarchy graph views (#17680, including P3), clear-self durable
   handoff (#20539), vLLM runtime support (#20488) plus follow-up parity
@@ -245,7 +245,7 @@ Not a stage-decision change. Checked `0.5.0` (`9e0730d46e`) and
    current stage. Without a merged native PTY host, stories A–C still die on
    tmux. Do not merge `wt-task-20255-m4` as-is.
 2. **`#19651` project-checkout-identity** — closed 2026-09-01 (last #17488
-   identity brick; `project_checkouts` lives in the flattened `baseline@419`;
+   identity brick; `project_checkouts` lives in the canonical `baseline@420`;
    review findings under #21459). Two-machine testing and the wiki grant
    chain are unblocked. Do not pair schema leaves with herdr P2 — both
    rewrite `crates/gcore` baseline/catalog identity files.

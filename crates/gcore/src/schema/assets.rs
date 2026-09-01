@@ -1,9 +1,9 @@
 use sha2::{Digest, Sha256};
 
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
-pub const BASELINE_VERSION: i32 = 419;
+pub const BASELINE_VERSION: i32 = 420;
 pub const BASELINE_CHECKSUM: &str =
-    "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81";
+    "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55";
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");
@@ -22,11 +22,24 @@ pub(crate) struct EmbeddedMigration {
 }
 
 pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[];
-// Numbered migrations after flattened baseline@419 land here.
+// Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 
-/// No pre-flatten receipt aliases remain after baseline@419.
-pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[];
+/// Schema-equivalent receipts written before an identity-only baseline refresh.
+pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[(
+    419,
+    "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81",
+)];
+
+pub(crate) fn is_prior_baseline_receipt(version: i32, filename: &str, checksum: &str) -> bool {
+    version < BASELINE_VERSION
+        && filename == format!("baseline@{version}")
+        && PRIOR_RECEIPT_CHECKSUMS
+            .iter()
+            .any(|(prior_version, prior_checksum)| {
+                *prior_version == version && *prior_checksum == checksum
+            })
+}
 
 pub(crate) fn root_hash() -> String {
     let mut digest = Sha256::new();

@@ -5,7 +5,8 @@ Each binary applies its embedded assets to its own scratch database on an
 isolated hub and verifies the result. Both databases are dumped with
 ``pg_dump`` including owners and privileges; the dumps must be identical
 after removing dump noise and database names. The dumps, receipts, and a
-``gobby_*`` role snapshot land in ``--output-dir`` as the evidence record.
+``gobby_*`` role snapshot land in ``--output-dir`` as the evidence record for
+the canonical baseline refresh.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ else:
     from schema_diff import _postgres_client_connection, _run_postgres_client
 
 DEFAULT_DATABASE_URL = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
-DEFAULT_OUTPUT_DIR = Path("docs/evidence/flatten-baseline-419")
+DEFAULT_OUTPUT_DIR = Path("docs/evidence/flatten-baseline-420")
 _DUMP_SCHEMAS = ("public", "gobby_agent_auth")
 _GDAEMON_TIMEOUT_SECONDS = 600
 _ROLES_QUERY = """
@@ -193,8 +194,11 @@ def write_evidence(output_dir: Path, old: Snapshot, new: Snapshot) -> tuple[str,
     (output_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    diff_path = output_dir / "dump.diff"
     if diff:
-        (output_dir / "dump.diff").write_text("\n".join(diff) + "\n", encoding="utf-8")
+        diff_path.write_text("\n".join(diff) + "\n", encoding="utf-8")
+    else:
+        diff_path.unlink(missing_ok=True)
     return diff
 
 

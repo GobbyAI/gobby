@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::assets::{
     BASELINE_CHECKSUM, BASELINE_VERSION, CATALOG_MANIFEST_JSON, MIGRATIONS,
-    PRIOR_RECEIPT_CHECKSUMS, SEED_MANIFEST_JSON, baseline_filename,
+    PRIOR_RECEIPT_CHECKSUMS, SEED_MANIFEST_JSON, baseline_filename, is_prior_baseline_receipt,
 };
 use super::error::SchemaError;
 
@@ -247,6 +247,12 @@ fn verify_receipts(client: &mut Client, schema: &str) -> Result<usize, SchemaErr
     let normalized = observed
         .iter()
         .map(|(version, (filename, checksum))| {
+            if is_prior_baseline_receipt(*version, filename, checksum) {
+                return (
+                    BASELINE_VERSION,
+                    (baseline_filename(), BASELINE_CHECKSUM.to_owned()),
+                );
+            }
             let checksum = expected
                 .get(version)
                 .filter(|(expected_filename, expected_checksum)| {

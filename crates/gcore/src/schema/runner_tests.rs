@@ -18,44 +18,48 @@ use super::gate::{
 use super::runner::{SchemaRunner, auth_schema_for, render_sql_for_schema};
 
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
-    version: 420,
-    filename: "420_recovery_probe.sql",
+    version: 421,
+    filename: "421_recovery_probe.sql",
     checksum: "d63e14df78da3519a30caf2dac74341ab5f0c9aa05f7bec58174ec0adf383159",
     sql: "-- gobby:non-transactional\nCREATE UNIQUE INDEX CONCURRENTLY schema_recovery_idx ON recovery_values(id);\n",
 };
 static RECOVERY_MIGRATIONS: &[EmbeddedMigration] = &[RECOVERY_MIGRATION];
 
 static DESTRUCTIVE_MIGRATION: EmbeddedMigration = EmbeddedMigration {
-    version: 420,
-    filename: "420_destructive_probe.sql",
+    version: 421,
+    filename: "421_destructive_probe.sql",
     checksum: "c10820fc8be4c2bceab1610fd8372c8d864fd7c4a8985773cf903bae450b19e9",
     sql: "-- gobby:destructive\nCREATE TABLE gate_probe (id integer);\n",
 };
 static DESTRUCTIVE_MIGRATIONS: &[EmbeddedMigration] = &[DESTRUCTIVE_MIGRATION];
 
 static GUARDED_MIGRATION: EmbeddedMigration = EmbeddedMigration {
-    version: 420,
-    filename: "420_guarded_probe.sql",
+    version: 421,
+    filename: "421_guarded_probe.sql",
     checksum: "8d86f80f785ac4f918ce34ea7f0dca860266e91dbba95d8a2be0965a9cdd147a",
     sql: "DO $guard$\nBEGIN\n  IF to_regclass('legacy_probe_source') IS NOT NULL THEN\n    CREATE TABLE IF NOT EXISTS guarded_probe_copied (id integer);\n  END IF;\nEND\n$guard$;\n",
 };
 static GUARDED_MIGRATIONS: &[EmbeddedMigration] = &[GUARDED_MIGRATION];
 
 static COPY_THEN_FENCE: EmbeddedMigration = EmbeddedMigration {
-    version: 420,
-    filename: "420_copy_probe.sql",
+    version: 421,
+    filename: "421_copy_probe.sql",
     checksum: "7ec5f3b7cf557fcee6903676bc89a7ff89ed0c1100e44775e5df1a01d3c38689",
     sql: "CREATE TABLE copy_probe (id integer);\n",
 };
 static DESTRUCTIVE_AFTER_COPY: EmbeddedMigration = EmbeddedMigration {
-    version: 421,
-    filename: "421_destructive_probe.sql",
+    version: 422,
+    filename: "422_destructive_probe.sql",
     checksum: "c5824af6e3aa4151609e330dca97948d7ba3a22293248883d5fc4d335165638e",
     sql: "-- gobby:destructive\nCREATE TABLE drop_probe (id integer);\n",
 };
 static COPY_THEN_DESTRUCTIVE: &[EmbeddedMigration] = &[COPY_THEN_FENCE, DESTRUCTIVE_AFTER_COPY];
 
 static DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+const PRIOR_BASELINE_VERSION: i32 = 419;
+const PRIOR_BASELINE_CHECKSUM: &str =
+    "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81";
 
 const GCODE_RLS_TABLES: [&str; 11] = [
     "code_indexed_projects",
@@ -1045,7 +1049,7 @@ fn unrecognized_receipt_still_rejects() -> anyhow::Result<()> {
     );
 
     client.execute(
-        "UPDATE schema_migrations SET filename = 'unexpected@419', checksum = $1 WHERE version = $2",
+        "UPDATE schema_migrations SET filename = 'unexpected@420', checksum = $1 WHERE version = $2",
         &[&BASELINE_CHECKSUM, &BASELINE_VERSION],
     )?;
     let error = SchemaRunner::new(&mut client, "public")?
@@ -1056,6 +1060,34 @@ fn unrecognized_receipt_still_rejects() -> anyhow::Result<()> {
             .to_string()
             .contains("recreate from a verified backup")
     );
+    Ok(())
+}
+
+#[test]
+fn prior_canonical_baseline_receipt_is_accepted() -> anyhow::Result<()> {
+    assert_eq!(BASELINE_VERSION, PRIOR_BASELINE_VERSION + 1);
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+    client.execute(
+        "UPDATE schema_migrations SET version = $1, filename = $2, checksum = $3 \
+         WHERE version = $4",
+        &[
+            &PRIOR_BASELINE_VERSION,
+            &format!("baseline@{PRIOR_BASELINE_VERSION}"),
+            &PRIOR_BASELINE_CHECKSUM,
+            &BASELINE_VERSION,
+        ],
+    )?;
+
+    let report = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(!report.baseline_applied);
+    assert_eq!(report.migrations_applied, 0);
+    SchemaRunner::new(&mut client, "public")?.verify()?;
     Ok(())
 }
 
@@ -1267,7 +1299,7 @@ fn migrations_directory_exists_and_registry_is_empty_after_flatten() {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/schema/migrations");
     assert!(
         migrations_dir.is_dir(),
-        "crates/gcore/assets/schema/migrations must exist for versions after baseline@419"
+        "crates/gcore/assets/schema/migrations must exist for versions after baseline@420"
     );
     assert!(MIGRATIONS.is_empty());
     assert!(
@@ -1309,7 +1341,7 @@ fn fresh_destructive_migration_is_receipt_stamped_without_executing() -> anyhow:
     );
     let receipt_count: i64 = client
         .query_one(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version = 420 AND filename = $1 AND checksum = $2",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 421 AND filename = $1 AND checksum = $2",
             &[&DESTRUCTIVE_MIGRATION.filename, &DESTRUCTIVE_MIGRATION.checksum],
         )?
         .get(0);
@@ -1650,7 +1682,11 @@ fn code_inheritance_adoption_rejects_pre_inheritance_and_keeps_existing() -> any
     let error = SchemaRunner::new(&mut client, "public")?
         .apply()
         .expect_err("flattened baseline adoption must reject a partial schema");
-    assert!(matches!(error, SchemaError::Postgres(_)));
+    assert!(matches!(
+        error,
+        SchemaError::Unsupported(message)
+            if message.starts_with("cannot adopt code_inheritance; missing required columns:")
+    ));
 
     let Some((_database2, mut existing)) = scratch_database()? else {
         return Ok(());
