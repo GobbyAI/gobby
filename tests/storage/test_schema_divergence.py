@@ -7,6 +7,7 @@ import json
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -50,6 +51,23 @@ def _database_returning(head: object) -> MagicMock:
     cursor.fetchone.return_value = {"head": head}
     database.transaction.return_value.__enter__.return_value.execute.return_value = cursor
     return database
+
+
+def _stub_config_projection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer the config projection without querying the schema-head stub database.
+
+    ``CliRuntime`` binds its repository factory as an ``__init__`` default, so patching
+    the module attribute would leave the real repository in place for a runtime the CLI
+    constructs itself. Patching the two methods covers both construction paths.
+    """
+    monkeypatch.setattr(
+        "gobby.storage.config_repository.ConfigRepository.read",
+        lambda self, resolve_secrets=False: SimpleNamespace(overrides={}, secret_bindings={}),
+    )
+    monkeypatch.setattr(
+        "gobby.storage.config_repository.ConfigRepository.runtime_candidate",
+        lambda self, overrides, bindings: DaemonConfig(),
+    )
 
 
 def test_agreeing_heads_render_without_a_divergence_marker() -> None:
@@ -274,30 +292,64 @@ def test_fail_closed_paths_still_call_the_identity_gate(relative_path: str, expe
     assert expected in source, relative_path
 
 
+@dataclass(frozen=True)
+class _Gate:
+    """One real schema-gate rejection, with the inputs that produce it."""
+
+    installed_latest: int
+    live_head: int
+    message: str
+
+
+def _gate_cases() -> list[Any]:
+    pin = schema_divergence._checkout_version()
+    assert pin is not None
+    return [
+        pytest.param(
+            _Gate(
+                installed_latest=pin + 1,
+                live_head=pin,
+                message="expected schema identity does not match embedded identity",
+            ),
+            id="gate1-checkout-pin-behind-installed-binary",
+        ),
+        pytest.param(
+            _Gate(
+                installed_latest=pin,
+                live_head=pin + 4,
+                message=f"database schema v{pin + 4} is newer than this runner (v{pin})",
+            ),
+            id="gate2-live-hub-ahead-of-runner",
+        ),
+    ]
+
+
 @pytest.fixture
-def diverged(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> SchemaHeads:
-    """Force one of the two gate divergences through the collector both commands use."""
-    heads: SchemaHeads = request.param
-    monkeypatch.setattr("gobby.storage.schema_divergence.collect_schema_heads", lambda _db: heads)
-    return heads
+def gated(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> _Gate:
+    """Make the real gate reject any hub open that applies schema, and only that.
+
+    Nothing about divergence is injected: the installed identity comes back through
+    ``installed_schema_identity`` and the live head through ``live_schema_version``,
+    so ``collect_schema_heads`` computes the disagreement from production inputs.
+    """
+    gate: _Gate = request.param
+    identity = {**_IDENTITY, "latest_version": gate.installed_latest}
+
+    monkeypatch.setattr(schema_divergence, "resolve_native_bin", lambda name: "/bin/gdaemon")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _completed(json.dumps(identity)))
+
+    @contextmanager
+    def gated_hub(_config_file: object, *, apply_migrations: bool) -> Iterator[MagicMock]:
+        if apply_migrations:
+            raise SchemaContractError(gate.message)
+        yield _database_returning(gate.live_head)
+
+    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", gated_hub)
+    _stub_config_projection(monkeypatch)
+    return gate
 
 
-_GATE_CASES = [
-    pytest.param(
-        SchemaHeads(checkout_version=413, installed_version=414, live_version=413),
-        id="gate1-checkout-behind-installed-binary",
-    ),
-    pytest.param(
-        SchemaHeads(checkout_version=413, installed_version=413, live_version=417),
-        id="gate2-live-hub-ahead-of-runner",
-    ),
-]
-
-
-@pytest.mark.parametrize("diverged", _GATE_CASES, indirect=True)
-def test_status_surfaces_divergence_and_exits_zero(
-    monkeypatch: pytest.MonkeyPatch, diverged: SchemaHeads
-) -> None:
+def _live_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "gobby.cli.daemon.probe_daemon_lock",
         lambda _path: SimpleNamespace(state=ProbeState.DAEMON, pid=4321),
@@ -306,31 +358,30 @@ def test_status_surfaces_divergence_and_exits_zero(
     monkeypatch.setattr("gobby.cli.daemon._is_process_alive", lambda _pid: True)
     monkeypatch.setattr("gobby.cli.daemon.get_port_listener_pid", lambda _port: 4321)
     monkeypatch.setattr("gobby.cli.daemon.get_service_status", dict)
-    monkeypatch.setattr(
-        CliRuntime, "read_only_operational_config", lambda self: DaemonConfig(), raising=True
-    )
-    monkeypatch.setattr("gobby.cli.runtime.require_cli_database", lambda *a, **k: MagicMock())
+
+
+@pytest.mark.parametrize("gated", _gate_cases(), indirect=True)
+def test_status_survives_the_gate_and_names_the_divergence(
+    monkeypatch: pytest.MonkeyPatch, gated: _Gate
+) -> None:
+    _live_daemon(monkeypatch)
+    pin = schema_divergence._checkout_version()
 
     result = CliRunner().invoke(cli, ["status"])
 
     assert result.exit_code == 0, result.output
-    assert "DIVERGED" in result.output
-    assert diverged.describe() in result.output
+    assert gated.message not in result.output
+    assert (
+        f"checkout pins v{pin} · installed gdaemon v{gated.installed_latest} · "
+        f"live hub v{gated.live_head} — DIVERGED"
+    ) in result.output
 
 
-@pytest.mark.parametrize("diverged", _GATE_CASES, indirect=True)
-def test_health_surfaces_divergence_and_exits_zero(
-    monkeypatch: pytest.MonkeyPatch, diverged: SchemaHeads
+@pytest.mark.parametrize("gated", _gate_cases(), indirect=True)
+def test_health_survives_the_gate_and_names_the_divergence(
+    monkeypatch: pytest.MonkeyPatch, gated: _Gate
 ) -> None:
-    monkeypatch.setattr(
-        "gobby.cli.daemon.probe_daemon_lock",
-        lambda _path: SimpleNamespace(state=ProbeState.DAEMON, pid=4321),
-    )
-    monkeypatch.setattr("gobby.cli.daemon._is_process_alive", lambda _pid: True)
-    monkeypatch.setattr(
-        CliRuntime, "read_only_operational_config", lambda self: DaemonConfig(), raising=True
-    )
-    monkeypatch.setattr("gobby.cli.runtime.require_cli_database", lambda *a, **k: MagicMock())
+    _live_daemon(monkeypatch)
     monkeypatch.setattr(
         "gobby.cli.daemon.httpx.get",
         lambda *a, **k: SimpleNamespace(status_code=200, json=lambda: {"status": "ok"}),
@@ -341,20 +392,46 @@ def test_health_surfaces_divergence_and_exits_zero(
     assert result.exit_code == 0, result.output
     assert "DIVERGED" in result.output
     assert "Gobby daemon: healthy" in result.output
+    assert gated.message not in result.output
 
 
-def test_healthy_agreement_leaves_health_a_one_liner(monkeypatch: pytest.MonkeyPatch) -> None:
-    agreed = SchemaHeads(checkout_version=413, installed_version=413, live_version=413)
-    monkeypatch.setattr("gobby.storage.schema_divergence.collect_schema_heads", lambda _db: agreed)
+@pytest.mark.parametrize("gated", _gate_cases(), indirect=True)
+def test_a_migrating_config_read_still_raises_under_the_same_gate(gated: _Gate) -> None:
+    """The accessor gobby start uses must keep failing closed on both divergences."""
+    runtime = CliRuntime(config_file=None)
+
+    with pytest.raises(SchemaContractError) as excinfo:
+        assert runtime.operational_config
+
+    assert gated.message in str(excinfo.value)
+    runtime.close()
+
+
+@pytest.mark.parametrize("gated", _gate_cases(), indirect=True)
+def test_the_read_only_accessor_passes_the_same_gate(gated: _Gate) -> None:
+    runtime = CliRuntime(config_file=None)
+
+    assert isinstance(runtime.read_only_operational_config(), DaemonConfig)
+    runtime.close()
+
+
+def test_health_stays_a_one_liner_when_every_head_agrees(monkeypatch: pytest.MonkeyPatch) -> None:
+    pin = schema_divergence._checkout_version()
+    assert pin is not None
+    monkeypatch.setattr(schema_divergence, "resolve_native_bin", lambda name: "/bin/gdaemon")
     monkeypatch.setattr(
-        "gobby.cli.daemon.probe_daemon_lock",
-        lambda _path: SimpleNamespace(state=ProbeState.DAEMON, pid=4321),
+        subprocess,
+        "run",
+        lambda *a, **k: _completed(json.dumps({**_IDENTITY, "latest_version": pin})),
     )
-    monkeypatch.setattr("gobby.cli.daemon._is_process_alive", lambda _pid: True)
-    monkeypatch.setattr(
-        CliRuntime, "read_only_operational_config", lambda self: DaemonConfig(), raising=True
-    )
-    monkeypatch.setattr("gobby.cli.runtime.require_cli_database", lambda *a, **k: MagicMock())
+
+    @contextmanager
+    def hub(_config_file: object, *, apply_migrations: bool) -> Iterator[MagicMock]:
+        yield _database_returning(pin)
+
+    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", hub)
+    _stub_config_projection(monkeypatch)
+    _live_daemon(monkeypatch)
     monkeypatch.setattr(
         "gobby.cli.daemon.httpx.get",
         lambda *a, **k: SimpleNamespace(status_code=200, json=lambda: {"status": "ok"}),
@@ -369,7 +446,7 @@ def test_healthy_agreement_leaves_health_a_one_liner(monkeypatch: pytest.MonkeyP
 def test_mutating_schema_apply_still_raises_on_identity_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The identity gate a diverged binary trips must keep failing writes closed."""
+    """The gdaemon-side gate a diverged binary trips must keep failing writes closed."""
     monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/bin/gdaemon")
     monkeypatch.setattr(
         subprocess,
