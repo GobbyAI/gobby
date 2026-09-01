@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -23,6 +24,9 @@ from gobby.utils.machine_id import require_machine_id
 from gobby.utils.uuid_validation import parse_uuid_reference
 
 logger = logging.getLogger(__name__)
+
+# A prefix of a canonical UUID's text form: hex digits and dashes only.
+_UUID_TEXT_PREFIX_RE = re.compile(r"[0-9a-fA-F-]+")
 
 
 def _escape_like_prefix(prefix: str) -> str:
@@ -215,9 +219,10 @@ class LocalWorktreeManager:
         A full UUID is returned canonicalised without a lookup so ``get`` keeps
         owning the not-found and foreign-machine outcomes. Anything else is an
         id prefix: exactly one match resolves, more than one is ambiguous, and
-        no match -- including text that is not a UUID at all -- is not found.
-        The prefix never reaches the uuid column, so psycopg's
-        ``invalid input syntax for type uuid`` cannot surface.
+        no match is not found. Text that cannot prefix a UUID (anything beyond
+        hex digits and dashes) is not found without a query. The prefix never
+        reaches the uuid column, so psycopg's ``invalid input syntax for type
+        uuid`` cannot surface.
 
         Raises:
             ValueError: If the reference is ambiguous or matches no worktree.
@@ -226,7 +231,7 @@ class LocalWorktreeManager:
         uuid_obj = parse_uuid_reference(ref)
         if uuid_obj is not None:
             return str(uuid_obj)
-        if not ref:
+        if _UUID_TEXT_PREFIX_RE.fullmatch(ref) is None:
             raise ValueError(f"Worktree '{ref}' not found")
 
         rows = self.db.fetchall(

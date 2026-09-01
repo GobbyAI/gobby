@@ -98,8 +98,8 @@ def test_ambiguous_prefix_names_the_matches(temp_db: HubDatabase, project_id: st
 
 @pytest.mark.parametrize(
     "ref",
-    ["deadbeef", "not-a-uuid!", "", "%", "_"],
-    ids=["unknown-prefix", "garbage", "empty", "like-percent", "like-underscore"],
+    ["deadbeef", "not-a-uuid!", "", "%", "_", "0a0a0a0a zz"],
+    ids=["unknown-prefix", "garbage", "empty", "like-percent", "like-underscore", "non-hex-tail"],
 )
 def test_unmatched_reference_is_not_found(temp_db: HubDatabase, project_id: str, ref: str) -> None:
     manager = LocalWorktreeManager(temp_db)
