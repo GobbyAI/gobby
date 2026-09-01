@@ -191,7 +191,7 @@ fn read_cache_bytes(path: &Path) -> Result<Vec<u8>, GrantError> {
         if error.kind() == std::io::ErrorKind::NotFound {
             GrantError::Malformed(format!("grant file missing: {}", path.display()))
         } else {
-            GrantError::Io(error.to_string())
+            GrantError::Io(format!("grant file {}: {error}", path.display()))
         }
     })
 }
@@ -240,15 +240,19 @@ pub fn try_lock(path: &Path) -> Result<Option<GrantFileLock>, GrantError> {
         Ok(mut file) => {
             let now = unix_now();
             let body = format!("{}\n{now}\n", std::process::id());
-            file.write_all(body.as_bytes())
-                .map_err(|error| GrantError::Io(error.to_string()))?;
+            file.write_all(body.as_bytes()).map_err(|error| {
+                GrantError::Io(format!("grant lock {}: {error}", path.display()))
+            })?;
             let _ = file.sync_all();
             Ok(Some(GrantFileLock {
                 path: path.to_path_buf(),
             }))
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
-        Err(error) => Err(GrantError::Io(error.to_string())),
+        Err(error) => Err(GrantError::Io(format!(
+            "grant lock {}: {error}",
+            path.display()
+        ))),
     }
 }
 
