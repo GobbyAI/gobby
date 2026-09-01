@@ -77,7 +77,7 @@ fn embedded_runner_applies_fresh_and_idempotently() -> anyhow::Result<()> {
 
     let first = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(first.baseline_applied);
-    assert_eq!(first.migrations_applied, 42);
+    assert_eq!(first.migrations_applied, 43);
 
     let second = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(!second.baseline_applied);
