@@ -1,7 +1,10 @@
+from pathlib import Path
+
 import pytest
 
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
 from gobby.storage.worktrees import LocalWorktreeManager
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -20,11 +23,13 @@ def _local_test_machine(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("session_ref_kind", ["hash", "uuid"], ids=["hash-ref", "uuid-ref"])
 async def test_claim_worktree_resolves_session_refs(
-    temp_db, project_manager, session_manager, session_ref_kind: str
+    temp_db, session_manager, session_ref_kind: str, tmp_path: Path
 ) -> None:
     """claim_worktree resolves shorthand and UUID session references before claiming."""
     worktree_storage = LocalWorktreeManager(temp_db)
-    project = project_manager.create(name="test-project", repo_path="/tmp/test-project")
+    project = install_isolated_checkout_project(
+        temp_db, tmp_path / "isolated-checkout", machine_id=_SEEDED_TEST_MACHINE_ID
+    ).project
     session = session_manager.register(
         machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
