@@ -1,9 +1,8 @@
 //! Process detachment, cross-platform.
 //!
 //! Unix: single `setsid(2)` to escape the controlling terminal and the
-//! parent's process group. Mirrors `start_new_session=True` in the
-//! dispatcher (`hook_dispatcher.py:697`) — no double-fork, no daemonize
-//! tricks.
+//! parent's process group. That is the whole mechanism — no double-fork,
+//! no daemonize tricks.
 //!
 //! Windows: `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` would be the
 //! parallel, but those flags apply at `CreateProcess` time, not to the
@@ -15,9 +14,8 @@
 /// Detach the current process from its controlling TTY and process group.
 ///
 /// Unix: `setsid()`. On failure (already a session leader, etc.) we log
-/// nothing and continue — the dispatcher's Python parallel is also
-/// best-effort (subprocess `start_new_session=True` just requests the
-/// child leads a session).
+/// nothing and continue: detachment is best-effort, and a hook that is
+/// already free of the caller's session has nothing left to escape.
 ///
 /// Windows: `FreeConsole()` — best effort, no-op if not attached.
 pub fn detach() {

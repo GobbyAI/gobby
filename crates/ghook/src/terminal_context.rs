@@ -1,10 +1,10 @@
 //! Terminal/process context enrichment.
 //!
-//! Port of `hook_dispatcher.py:181-223` — captures the caller's PID, TTY,
-//! tmux pane, `TERM_PROGRAM`, and `GOBBY_*` env vars so the daemon can
-//! reconcile spawned-terminal agents across lifecycle hooks.
+//! Captures the caller's PID, TTY, tmux pane, `TERM_PROGRAM`, and `GOBBY_*`
+//! env vars so the daemon can reconcile spawned-terminal agents across
+//! lifecycle hooks.
 //!
-//! Sharp edge (dispatcher `:205`): `TMUX_PANE` is inherited by children
+//! Sharp edge: `TMUX_PANE` is inherited by children
 //! spawned into *other* terminals (e.g. Ghostty), so emitting it when
 //! `TMUX` is not set would point `kill_agent` at the *parent's* pane. We
 //! always emit process context, but tmux fields are populated only when
@@ -194,8 +194,8 @@ fn is_valid_tmux_pane(pane: &str) -> bool {
 }
 
 /// Extract the socket path from the `TMUX` env var. Mirror of
-/// `gobby.sessions.tmux_context.parse_tmux_socket_path` and the inline
-/// copy at `hook_dispatcher.py:43-53`.
+/// `gobby.sessions.tmux_context.parse_tmux_socket_path`; the two must agree
+/// or the daemon resolves a different tmux server than the hook reported.
 fn parse_tmux_socket_path(tmux_env: &str) -> Option<String> {
     let head = tmux_env.split(',').next()?.trim();
     if head.is_empty() {

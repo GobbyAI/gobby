@@ -105,7 +105,7 @@ pub struct Envelope {
 | `hook_type` | Opaque — exact identifier the host CLI's hook system uses (`session-start`, `PreToolUse`, etc.). |
 | `input_data` | Original stdin with dispatch-owned enrichment. `machine_id` + `os` are stamped from local Gobby machine identity, or `machine_id_error` is emitted when unavailable. Lifecycle hooks receive captured `terminal_context`; existing provider fields remain, and `gobby_agent_run_id` is replaced with the trusted environment value. |
 | `source` | Recognized CLI → canonical name from `CliConfig::source`. Unknown CLI → the `--cli` value verbatim, so future CLIs route correctly without code changes. |
-| `headers` | Mirrors what ghook sent (or would have sent) on the POST. Omitted headers are absent keys; **empty-string values are never emitted** — this matches `hook_dispatcher.py:695-700` behavior and is enforced by the schema (`additionalProperties.minLength: 1`). |
+| `headers` | Mirrors what ghook sent (or would have sent) on the POST. Omitted headers are absent keys; **empty-string values are never emitted** — enforced by the schema (`additionalProperties.minLength: 1`). |
 
 ### Standard Headers
 

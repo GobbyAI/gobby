@@ -5,9 +5,9 @@
 //! against `schemas/inbox-envelope.v1.schema.json`.
 //!
 //! Omitted headers (no project id, no session id) are absent from the
-//! `headers` object — never emitted as empty strings. This matches the
-//! dispatcher's `_context_headers.setdefault` behavior where the key simply
-//! isn't inserted (`hook_dispatcher.py:695-700`).
+//! `headers` object — never emitted as empty strings. The schema enforces
+//! this with `additionalProperties.minLength: 1`, so an empty value is a
+//! validation failure rather than a header the daemon has to special-case.
 
 use serde::Serialize;
 use serde_json::Value;
