@@ -65,9 +65,9 @@ fn output_keys(contract: &Value, name: &str) -> Vec<String> {
 }
 
 #[test]
-fn contract_is_version_seven_without_codewiki() {
+fn contract_is_version_eight_without_codewiki() {
     let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
-    assert_eq!(contract["contract_version"], serde_json::json!(7));
+    assert_eq!(contract["contract_version"], serde_json::json!(8));
     assert!(
         contract["error_codes"]
             .as_array()

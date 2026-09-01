@@ -12,6 +12,22 @@ pub(super) fn run() -> ExitCode {
     let quiet = invocation.quiet();
     init_logger(quiet, invocation.verbose());
 
+    if let Some(json) = invocation.schema_identity_json() {
+        if !json {
+            eprintln!("gwiki: schema-identity requires --json");
+            return ExitCode::from(2);
+        }
+        let mut stdout = std::io::stdout().lock();
+        if let Err(error) = output::print_json(
+            &mut stdout,
+            &gobby_core::schema::SchemaIdentityContract::embedded(),
+        ) {
+            eprintln!("gwiki: {error}");
+            return ExitCode::from(1);
+        }
+        return ExitCode::SUCCESS;
+    }
+
     if invocation.is_contract() {
         let mut stdout = std::io::stdout().lock();
         let result = match format {

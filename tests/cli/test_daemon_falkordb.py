@@ -50,6 +50,14 @@ def test_config_repository_resolves_falkordb_secret(
 def test_services_start_uses_falkordb_config_store_password(
     tmp_path, monkeypatch: pytest.MonkeyPatch, postgres_db: HubDatabase
 ) -> None:
+    files_home = tmp_path / "files"
+    files_home.mkdir()
+    bootstrap = tmp_path / "bootstrap.yaml"
+    bootstrap.write_text(
+        f"datastore_mode: local\nfiles_home: {files_home}\n",
+        encoding="utf-8",
+    )
+    bootstrap.chmod(0o600)
     services_dir = tmp_path / "services"
     services_dir.mkdir(parents=True)
     (services_dir / "docker-compose.yml").write_text(

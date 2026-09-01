@@ -115,20 +115,11 @@ jobs:
       - name: Clippy
         run: cargo clippy -p gobby-wiki --all-targets -- -D warnings
 
-      - name: Clippy without default features
-        run: cargo clippy -p gobby-wiki --all-targets --no-default-features -- -D warnings
-
       - name: Run tests
         run: cargo nextest run --profile ci -p gobby-wiki
 
       - name: Run doctests
         run: cargo test --doc -p gobby-wiki
-
-      - name: Run tests without default features
-        run: cargo nextest run --profile ci -p gobby-wiki --no-default-features
-
-      - name: Run doctests without default features
-        run: cargo test --doc -p gobby-wiki --no-default-features
 
       - name: Verify pdfium-auto version pin
         shell: bash

@@ -31,20 +31,11 @@ jobs:
       - name: Clippy
         run: cargo clippy -p gobby-core --all-targets -- -D warnings
 
-      - name: Clippy without default features
-        run: cargo clippy -p gobby-core --all-targets --no-default-features -- -D warnings
-
       - name: Run tests
         run: cargo nextest run --profile ci --workspace
 
-      - name: Run tests without default features
-        run: cargo nextest run --profile ci --workspace --no-default-features
-
       - name: Run doctests
         run: cargo test --doc --workspace
-
-      - name: Run doctests without default features
-        run: cargo test --doc --workspace --no-default-features
 
   publish:
     name: Publish

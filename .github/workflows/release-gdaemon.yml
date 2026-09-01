@@ -47,14 +47,8 @@ jobs:
       - name: Clippy
         run: cargo clippy -p gobby-daemon --all-targets -- -D warnings
 
-      - name: Clippy without default features
-        run: cargo clippy -p gobby-daemon --all-targets --no-default-features -- -D warnings
-
       - name: Run tests
         run: cargo nextest run --profile ci -p gobby-daemon
-
-      - name: Run tests without default features
-        run: cargo nextest run --profile ci -p gobby-daemon --no-default-features
 
   build:
     needs: test

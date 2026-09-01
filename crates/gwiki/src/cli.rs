@@ -12,6 +12,7 @@ use code::CodeArgs;
 const CLI_SUBCOMMANDS: &[&str] = &[
     "init",
     "contract",
+    "schema-identity",
     "index",
     "collect",
     "code",
@@ -111,6 +112,13 @@ impl Invocation {
         matches!(self.command, CliCommand::Contract)
     }
 
+    pub(super) fn schema_identity_json(&self) -> Option<bool> {
+        match self.command {
+            CliCommand::SchemaIdentity { json } => Some(json),
+            _ => None,
+        }
+    }
+
     pub(super) fn into_command(self) -> Result<Command, WikiError> {
         mapping::command_from_cli_with_runtime(
             self.command,
@@ -125,6 +133,11 @@ impl Invocation {
 enum CliCommand {
     /// Emit the CLI contract for daemon conformance tests.
     Contract,
+    /// Print the embedded schema identity.
+    SchemaIdentity {
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Initialize a wiki vault.
     Init,

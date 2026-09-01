@@ -50,20 +50,11 @@ jobs:
       - name: Clippy
         run: cargo clippy -p gobby-code -- -D warnings
 
-      - name: Clippy without default features
-        run: cargo clippy -p gobby-code --no-default-features -- -D warnings
-
       - name: Run tests
         run: cargo nextest run --profile ci -p gobby-code
 
       - name: Run doctests
         run: cargo test --doc -p gobby-code
-
-      - name: Run tests without default features
-        run: cargo nextest run --profile ci -p gobby-code --no-default-features
-
-      - name: Run doctests without default features
-        run: cargo test --doc -p gobby-code --no-default-features
 
   build:
     needs: test

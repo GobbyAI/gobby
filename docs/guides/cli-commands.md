@@ -292,11 +292,15 @@ a Gobby source checkout:
 gobby cutover [--path PATH]
 ```
 
-The command builds `gcode`, `gdaemon`, `ghook`, and `gwiki` in release mode,
-installs all four through new inodes, regenerates the packaged schema identity
-pin from the installed `gdaemon`, restarts the daemon, and runs an installed-`gcode`
-grant smoke. A failed promotion, restart, or smoke restores the prior binaries
-and pin before restarting the prior daemon.
+The command runs one locked release build for `gcode`, `gdaemon`, `ghook`, and
+`gwiki`, then promotes all four through the shared workspace installer. That
+path signs staged binaries when required, installs through new inodes, writes
+version and install sidecars, and writes the installed schema identity pin only
+after all four binaries promote. Before restart, cutover verifies that the exact
+`gdaemon` resolved for daemon startup matches the installed pin; a mismatch
+fails closed with the all-four rebuild remedy. Promotion failures name the
+members already promoted and those still unpromoted. Cutover does not claim to
+restore binaries after a partial promotion.
 
 ### `gobby auth`
 

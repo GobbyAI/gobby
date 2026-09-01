@@ -7,6 +7,7 @@ from typing import Any
 
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_models import compare_versions
+from gobby.install.bin_set_coherence import promote_workspace_binary_set
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.install.version_probe import probe_native_bin_version
 
@@ -124,10 +125,7 @@ def install_gwiki_from_submodule(module: Any, bin_dir: Path) -> bool:
         if not src_bin.exists():
             return False
 
-        bin_dir.mkdir(parents=True, exist_ok=True)
-        dest = bin_dir / module._GWIKI_BIN_NAME
-        module.copy2(str(src_bin), str(dest))
-        dest.chmod(0o755)
+        promote_workspace_binary_set({"gwiki": src_bin}, bin_dir=bin_dir)
         return True
     except (FileNotFoundError, module.subprocess.TimeoutExpired, OSError) as e:
         module.logger.warning("gwiki: local workspace build failed: %s", e)

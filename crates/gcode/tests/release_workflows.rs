@@ -34,11 +34,14 @@ fn release_upload_marker(workflow: &str) -> Option<usize> {
 }
 
 #[test]
-fn release_workflows_have_one_default_and_one_no_default_check() {
-    // Crates with a library target run doctests with and without default
-    // features. The binary-only crate (gobby-hooks) has no lib target, so
-    // `cargo test --doc -p <pkg>` errors
-    // with "no library targets found" and must NOT appear in their workflows.
+fn release_workflows_check_each_crate_with_its_default_features() {
+    // Every shipped binary is built with its default feature set, and that is
+    // the only configuration the workflows check: the set members (gcode,
+    // ghook, gwiki, gdaemon) all depend on a postgres-backed daemon, so a
+    // `--no-default-features` build proves nothing we ship (#21533). The
+    // binary-only crate (gobby-hooks) has no lib target, so
+    // `cargo test --doc -p <pkg>` errors with "no library targets found" and
+    // must NOT appear in its workflow.
     let lib_cases = [(
         include_str!("../../../.github/workflows/release-gcode.yml"),
         "gobby-code",
@@ -60,26 +63,10 @@ fn release_workflows_have_one_default_and_one_no_default_check() {
         assert_eq!(
             count_run_step(
                 workflow,
-                &format!("cargo clippy -p {package} --no-default-features -- -D warnings")
-            ),
-            1,
-            "{package} no-default clippy step count"
-        );
-        assert_eq!(
-            count_run_step(
-                workflow,
                 &format!("cargo nextest run --profile ci -p {package}")
             ),
             1,
             "{package} default test step count"
-        );
-        assert_eq!(
-            count_run_step(
-                workflow,
-                &format!("cargo nextest run --profile ci -p {package} --no-default-features")
-            ),
-            1,
-            "{package} no-default test step count"
         );
     }
 
@@ -89,14 +76,6 @@ fn release_workflows_have_one_default_and_one_no_default_check() {
             1,
             "{package} default doctest step count"
         );
-        assert_eq!(
-            count_run_step(
-                workflow,
-                &format!("cargo test --doc -p {package} --no-default-features")
-            ),
-            1,
-            "{package} no-default doctest step count"
-        );
     }
 
     for (workflow, package) in bin_cases {
@@ -105,13 +84,29 @@ fn release_workflows_have_one_default_and_one_no_default_check() {
             0,
             "{package} is binary-only and must not run doctests"
         );
-        assert_eq!(
-            count_run_step(
-                workflow,
-                &format!("cargo test --doc -p {package} --no-default-features")
-            ),
-            0,
-            "{package} is binary-only and must not run doctests (no default features)"
+    }
+}
+
+#[test]
+fn no_workflow_builds_without_default_features() {
+    let workflows = [
+        (
+            "rust-ci",
+            include_str!("../../../.github/workflows/rust-ci.yml"),
+        ),
+        (
+            "release-gcore",
+            include_str!("../../../.github/workflows/release-gcore.yml"),
+        ),
+        (
+            "release-gdaemon",
+            include_str!("../../../.github/workflows/release-gdaemon.yml"),
+        ),
+    ];
+    for (name, workflow) in workflows.iter().copied().chain(RELEASE_WORKFLOWS) {
+        assert!(
+            !workflow.contains("--no-default-features"),
+            "{name}.yml still builds without default features"
         );
     }
 }
@@ -129,38 +124,14 @@ fn release_gcore_uses_workspace_validation() {
         "gobby-core release default clippy step count"
     );
     assert_eq!(
-        count_run_step(
-            workflow,
-            "cargo clippy -p gobby-core --all-targets --no-default-features -- -D warnings"
-        ),
-        1,
-        "gobby-core release no-default clippy step count"
-    );
-    assert_eq!(
         count_run_step(workflow, "cargo nextest run --profile ci --workspace"),
         1,
         "gobby-core release default test step count"
     );
     assert_eq!(
-        count_run_step(
-            workflow,
-            "cargo nextest run --profile ci --workspace --no-default-features"
-        ),
-        1,
-        "gobby-core release no-default test step count"
-    );
-    assert_eq!(
         count_run_step(workflow, "cargo test --doc --workspace"),
         1,
         "gobby-core release default doctest step count"
-    );
-    assert_eq!(
-        count_run_step(
-            workflow,
-            "cargo test --doc --workspace --no-default-features"
-        ),
-        1,
-        "gobby-core release no-default doctest step count"
     );
 }
 

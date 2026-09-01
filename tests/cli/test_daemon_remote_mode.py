@@ -40,7 +40,7 @@ def test_start_skips_services_in_remote_mode(tmp_path: Path) -> None:
     assert result.outcome == "skipped"
     assert "100.64.0.10" in result.detail
 
-    runtime = SimpleNamespace(config=config, operational_config=config)
+    runtime = SimpleNamespace(config=config, read_only_operational_config=lambda: config)
     with (
         patch("gobby.cli.runtime.get_cli_runtime", return_value=runtime),
         patch("gobby.cli.daemon.get_service_status", return_value={}),
@@ -55,7 +55,7 @@ def test_start_skips_services_in_remote_mode(tmp_path: Path) -> None:
 def test_restart_skips_services_in_remote_mode(tmp_path: Path) -> None:
     bootstrap_path = _write_remote_bootstrap(tmp_path)
     config = DaemonConfig.model_validate(load_bootstrap(str(bootstrap_path)).to_config_dict())
-    runtime = SimpleNamespace(config=config, operational_config=config)
+    runtime = SimpleNamespace(config=config, read_only_operational_config=lambda: config)
 
     with (
         patch("gobby.cli.runtime.get_cli_runtime", return_value=runtime),

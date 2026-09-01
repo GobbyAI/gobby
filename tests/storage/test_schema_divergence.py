@@ -39,6 +39,17 @@ _IDENTITY = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _isolated_native_bin_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keep the installed-set view (#21507) off the developer's real ~/.gobby/bin.
+
+    ``start``/``restart``/``status`` probe every installed set member; an empty
+    managed dir makes that view coherent so these tests exercise only the head
+    divergence they stage.
+    """
+    monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(tmp_path / "native-bin"))
+
+
 def _completed(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(
         args=["gdaemon"], returncode=returncode, stdout=stdout, stderr=""
@@ -261,12 +272,15 @@ def _config_accessors_by_function(source: str) -> dict[str, set[str]]:
 
 
 def test_observability_commands_read_config_without_applying_schema() -> None:
-    source = Path("src/gobby/cli/daemon.py").read_text(encoding="utf-8")
+    daemon_source = Path("src/gobby/cli/daemon.py").read_text(encoding="utf-8")
+    health_source = Path("src/gobby/cli/daemon_health.py").read_text(encoding="utf-8")
 
-    accessors = _config_accessors_by_function(source)
+    daemon_accessors = _config_accessors_by_function(daemon_source)
+    health_accessors = _config_accessors_by_function(health_source)
 
-    for command in ("status", "health", "_do_stop"):
-        assert accessors[command] == {"read_only_operational_config"}, command
+    for command in ("status", "_do_stop"):
+        assert daemon_accessors[command] == {"read_only_operational_config"}, command
+    assert health_accessors["health"] == {"read_only_operational_config"}
 
 
 def test_start_still_applies_schema_before_running() -> None:
@@ -349,12 +363,14 @@ def gated(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> _G
 
 
 def _live_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "gobby.cli.daemon.probe_daemon_lock",
-        lambda _path: SimpleNamespace(state=ProbeState.DAEMON, pid=4321),
-    )
+    def probe(_path: object) -> SimpleNamespace:
+        return SimpleNamespace(state=ProbeState.DAEMON, pid=4321)
+
+    monkeypatch.setattr("gobby.cli.daemon.probe_daemon_lock", probe)
+    monkeypatch.setattr("gobby.cli.daemon_health.probe_daemon_lock", probe)
     monkeypatch.setattr("gobby.cli.daemon._read_pid_file", lambda: 4321)
     monkeypatch.setattr("gobby.cli.daemon._is_process_alive", lambda _pid: True)
+    monkeypatch.setattr("gobby.cli.daemon_health._is_process_alive", lambda _pid: True)
     monkeypatch.setattr("gobby.cli.daemon.get_port_listener_pid", lambda _port: 4321)
     monkeypatch.setattr("gobby.cli.daemon.get_service_status", dict)
 
@@ -382,7 +398,7 @@ def test_health_survives_the_gate_and_names_the_divergence(
 ) -> None:
     _live_daemon(monkeypatch)
     monkeypatch.setattr(
-        "gobby.cli.daemon.httpx.get",
+        "gobby.cli.daemon_health.httpx.get",
         lambda *a, **k: SimpleNamespace(status_code=200, json=lambda: {"status": "ok"}),
     )
 
@@ -432,7 +448,7 @@ def test_health_stays_a_one_liner_when_every_head_agrees(monkeypatch: pytest.Mon
     _stub_config_projection(monkeypatch)
     _live_daemon(monkeypatch)
     monkeypatch.setattr(
-        "gobby.cli.daemon.httpx.get",
+        "gobby.cli.daemon_health.httpx.get",
         lambda *a, **k: SimpleNamespace(status_code=200, json=lambda: {"status": "ok"}),
     )
 

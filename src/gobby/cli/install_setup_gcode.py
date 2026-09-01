@@ -6,9 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
-from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
 from gobby.install.bin_freshness_models import compare_versions
-from gobby.install.bin_freshness_promotion import stage_and_promote_binary_file
+from gobby.install.bin_set_coherence import promote_workspace_binary_set
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.install.version_probe import probe_native_bin_version
 
@@ -137,13 +136,7 @@ def install_gcode_from_submodule(module: Any, bin_dir: Path) -> bool:
         if not src_bin.exists():
             return False
 
-        dest = bin_dir / module._GCODE_BIN_NAME
-        lock = try_acquire_native_bin_lock("gcode", bin_dir=bin_dir)
-        if lock is None:
-            module.logger.warning("gcode: native binary update is already in progress")
-            return False
-        with lock:
-            stage_and_promote_binary_file(src_bin, destination=dest)
+        promote_workspace_binary_set({"gcode": src_bin}, bin_dir=bin_dir)
         return True
     except (FileNotFoundError, module.subprocess.TimeoutExpired, OSError) as e:
         module.logger.warning("gcode: local workspace build failed: %s", e)

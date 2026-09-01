@@ -5,7 +5,13 @@ The machine-readable contract lives at `crates/gcode/contract/gcode.contract.jso
 
 ## Version
 
-`contract_version`: 7
+`contract_version`: 8
+
+Version 8 adds `schema-identity --json`, which prints the schema identity embedded
+in the binary (`baseline_version`, `latest_version`, `baseline_checksum`,
+`latest_checksum`, `assets_root_hash`, `runner_protocol`) — the same JSON
+`gdaemon schema version --json` prints — so the installer can prove that every
+native binary in `~/.gobby/bin` was built from one schema.
 
 Version 7 gives public path inputs explicit scope semantics, adds repeatable
 `tree [PATH]...` filters, and replaces the ambiguous graph-view positional seed

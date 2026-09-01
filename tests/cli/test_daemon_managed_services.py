@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, call
 import pytest
 
 from gobby.cli import _daemon_services as daemon_services
-from gobby.cli import daemon
+from gobby.cli import daemon, datastores
 from gobby.cli.installers import postgres as postgres_installer
 from gobby.cli.installers.compose_env import (
     MANAGED_SERVICE_PROFILES,
@@ -27,8 +27,8 @@ def _hub_schema_apply(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     """Stub the hub schema apply; record the homes it was invoked for."""
     applied: list[Path] = []
     monkeypatch.setattr(
-        daemon_services,
-        "_apply_hub_schema_contract",
+        datastores,
+        "apply_hub_schema_contract",
         lambda gobby_home: applied.append(gobby_home),
     )
     return applied
@@ -273,8 +273,8 @@ def test_schema_contract_applies_after_postgres_up_and_before_full_resolve(
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     monkeypatch.setattr(
-        daemon_services,
-        "_apply_hub_schema_contract",
+        datastores,
+        "apply_hub_schema_contract",
         lambda gobby_home: events.append("apply-schema"),
     )
     monkeypatch.setattr(daemon, "resolve_compose_runtime", _resolve)
@@ -313,7 +313,7 @@ def test_schema_contract_failure_fails_start_before_full_resolve(
     def _apply(gobby_home: Path) -> None:
         raise RuntimeError("hub is unreachable")
 
-    monkeypatch.setattr(daemon_services, "_apply_hub_schema_contract", _apply)
+    monkeypatch.setattr(datastores, "apply_hub_schema_contract", _apply)
     monkeypatch.setattr(daemon, "resolve_compose_runtime", _resolve)
     monkeypatch.setattr(subprocess, "run", _run)
 

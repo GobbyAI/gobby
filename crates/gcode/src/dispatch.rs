@@ -166,6 +166,7 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
             }
         }
         Command::Contract
+        | Command::SchemaIdentity { .. }
         | Command::Init
         | Command::Projects
         | Command::SearchText { .. }
@@ -197,6 +198,14 @@ fn dispatch_early_command(cli: &Cli, format: output::Format) -> anyhow::Result<b
                 output::Format::Json => output::print_json(&crate::contract::contract())?,
                 output::Format::Text => output::print_text("gcode CLI contract v1")?,
             }
+            Ok(true)
+        }
+        Command::SchemaIdentity { json } => {
+            anyhow::ensure!(*json, "schema-identity requires --json");
+            println!(
+                "{}",
+                serde_json::to_string(&gobby_core::schema::SchemaIdentityContract::embedded())?
+            );
             Ok(true)
         }
         Command::Projects => {
@@ -350,7 +359,11 @@ fn run() -> anyhow::Result<()> {
     match cli.command {
         // These commands are handled before Context::resolve(); this arm keeps the
         // exhaustive match explicit if the early-dispatch block returns normally.
-        Command::Contract | Command::Init | Command::Projects | Command::Prune { .. } => Ok(()),
+        Command::Contract
+        | Command::SchemaIdentity { .. }
+        | Command::Init
+        | Command::Projects
+        | Command::Prune { .. } => Ok(()),
         Command::Index {
             path,
             files,

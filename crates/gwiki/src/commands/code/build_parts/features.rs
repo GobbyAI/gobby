@@ -82,6 +82,10 @@ fn resolve_handler(binary: &str, command: &str) -> (&'static str, &'static str) 
 fn resolve_gcode_handler(command: &str) -> (&'static str, &'static str) {
     match command {
         "contract" => ("crates/gcode/src/contract.rs", "contract::contract"),
+        "schema-identity" => (
+            "crates/gcode/src/dispatch.rs",
+            "dispatch::dispatch_early_command",
+        ),
         "init" => ("crates/gcode/src/commands/init.rs", "commands::init::run"),
         "setup" => ("crates/gcode/src/commands/setup.rs", "commands::setup::run"),
         "index" => ("crates/gcode/src/commands/index.rs", "commands::index::run"),

@@ -9,7 +9,7 @@ use schema::*;
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gcode",
-        contract_version: 7,
+        contract_version: 8,
         summary: "Fast code index CLI for Gobby.",
         global_flags: vec![
             FlagContract::value("--project", "ROOT"),
@@ -30,6 +30,19 @@ pub fn contract() -> CliContract {
                 flags: vec![format_flag()],
                 json_output_keys: contract_keys(),
                 ..CommandContract::new("contract", "Emit this CLI contract.")
+            },
+            CommandContract {
+                positionals: vec![],
+                flags: vec![FlagContract::switch("--json")],
+                json_output_keys: vec![
+                    "baseline_version",
+                    "latest_version",
+                    "baseline_checksum",
+                    "latest_checksum",
+                    "assets_root_hash",
+                    "runner_protocol",
+                ],
+                ..CommandContract::new("schema-identity", "Print the embedded schema identity.")
             },
             CommandContract {
                 positionals: vec![],
