@@ -7,10 +7,8 @@ use postgres::{Client, GenericClient};
 
 use super::assets::{
     BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS,
-    PRIOR_RECEIPT_CHECKSUMS, TOOL_CHAT_OVERLAY_PREDECESSOR_CHECKSUM,
-    WORKTREE_PRE_OVERLAY_BASELINE_CHECKSUM, sha256_hex,
+    PRIOR_RECEIPT_CHECKSUMS, baseline_filename, sha256_hex,
 };
-use super::baseline_refresh::{RefreshMode, baseline_refresh_statement_for_mode};
 use super::error::SchemaError;
 use super::gate::{SourceIdentity, VerifiedBackupManifest};
 use super::sql_splitter::split_sql_statements;
@@ -21,32 +19,6 @@ mod runner_adoption;
 use runner_adoption::{
     GCORE_CODE_INDEX_CORE_TABLES, GCORE_CODE_INDEX_TABLES, adopted_column_contracts,
 };
-
-pub(crate) const ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM: &str =
-    "855576453641152d2ef9199dc418fcc3dd2ad69e78eff924b05a7b3b122cf398";
-/// Every `baseline@375` receipt a pre-#19651 hub may hold: the pre-epic
-/// baseline and its in-place text edits, all carrying the legacy per-project
-/// path column. None is schema-equivalent to the current baseline, so a hub
-/// holding one must run the project-checkout cutover campaign. Kept in sync with
-/// `PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS` in
-/// `src/gobby/storage/project_checkout_cutover.py` by a runner test.
-pub(crate) const PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS: &[&str] = &[
-    "84eb875cb839f6f61219f3f3fd54a5befc3abf38f01461d96780e956dc1864d8",
-    "ec222a7f8b3c486abfff05eda4ed02995d272a132ad2fdadb1dd90edbccb2ce1",
-    "ece3754752dbc72aaff4bbd3ebaa91a41305e4899e180012f8429c4f7467b1bf",
-    "8467fc42e29fec1f58986e7ac141c3cdcf8c6a417c61c73ff3cca63241e2a2cf",
-];
-pub(crate) const PROJECT_CHECKOUT_CAMPAIGN_DIRECTIVE: &str = "schema baseline requires project-checkout-cutover; run 'gobby hub-maintenance run project-checkout-cutover'";
-
-pub(crate) fn is_project_checkout_predecessor(checksum: &str) -> bool {
-    PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS.contains(&checksum)
-}
-pub(crate) const PREDECESSOR_BASELINE_CHECKSUM: &str =
-    "4e2bb4de8059488a7887b62b5e509ce308c0ebf2d319862c8b3d7c6175cb662e";
-pub(crate) const PARENT_BASELINE_CHECKSUM: &str =
-    "4a476c5d0177ea09c21ad7d4627e3d2d74f4cea36ce65f8a257170f84d74a9a9";
-pub(crate) const WORKTREE_BASELINE_CHECKSUM: &str =
-    "8d1ce43a829b982ead6bcb382471a6e593f47effff27ac56e0ee2cbffcb127c9";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ApplyReport {
@@ -171,10 +143,7 @@ impl<'a> SchemaRunner<'a> {
             BaselineState::Fresh
             | BaselineState::FreshWithInstallInfra
             | BaselineState::GcoreCodeIndex
-            | BaselineState::GwikiStandalone
-            | BaselineState::PredecessorBaseline
-            | BaselineState::ParentBaseline
-            | BaselineState::WorktreeBaseline => {
+            | BaselineState::GwikiStandalone => {
                 require_pg_search(self.client)?;
                 verify_adopted_columns(self.client, &self.schema, state)?;
                 apply_baseline(self.client, &self.schema, state)?;
@@ -182,19 +151,7 @@ impl<'a> SchemaRunner<'a> {
             }
             BaselineState::CorruptPartial => {
                 return Err(SchemaError::Unsupported(
-                    "unrecognized or pre-375 schema lineage; recreate from a verified backup"
-                        .to_owned(),
-                ));
-            }
-            BaselineState::AccountIdentityPredecessor => {
-                return Err(SchemaError::Unsupported(
-                    "schema baseline requires account-identity-cutover; run 'gobby hub-maintenance run account-identity-cutover'"
-                        .to_owned(),
-                ));
-            }
-            BaselineState::ProjectCheckoutPredecessor => {
-                return Err(SchemaError::Unsupported(
-                    PROJECT_CHECKOUT_CAMPAIGN_DIRECTIVE.to_owned(),
+                    "unrecognized schema lineage; recreate from a verified backup".to_owned(),
                 ));
             }
         };
@@ -219,11 +176,6 @@ enum BaselineState {
     GcoreCodeIndex,
     GwikiStandalone,
     AlreadyBaselined,
-    AccountIdentityPredecessor,
-    ProjectCheckoutPredecessor,
-    PredecessorBaseline,
-    ParentBaseline,
-    WorktreeBaseline,
     CorruptPartial,
 }
 
@@ -239,23 +191,7 @@ impl BaselineState {
     }
 
     fn stamps_destructive_migrations(self) -> bool {
-        self.is_fresh_lineage() || matches!(self, Self::ParentBaseline)
-    }
-
-    fn updates_baseline_receipt(self) -> bool {
-        matches!(
-            self,
-            Self::PredecessorBaseline | Self::ParentBaseline | Self::WorktreeBaseline
-        )
-    }
-
-    fn refresh_mode(self) -> Option<RefreshMode> {
-        match self {
-            Self::PredecessorBaseline => Some(RefreshMode::TypedDomainAndRuntime),
-            Self::ParentBaseline => Some(RefreshMode::RuntimeOnly),
-            Self::WorktreeBaseline => Some(RefreshMode::TypedDomainOnly),
-            _ => None,
-        }
+        self.is_fresh_lineage()
     }
 }
 
@@ -402,12 +338,6 @@ fn classify_baseline_state(
     Ok(BaselineState::CorruptPartial)
 }
 
-fn prior_baseline_receipt(checksum: &str) -> bool {
-    PRIOR_RECEIPT_CHECKSUMS
-        .iter()
-        .any(|(version, prior)| *version == BASELINE_VERSION && *prior == checksum)
-}
-
 fn recognized_baseline_receipt(
     client: &mut Client,
     schema: &str,
@@ -420,29 +350,15 @@ fn recognized_baseline_receipt(
     let Some(row) = row else {
         return Ok(None);
     };
-    if row.get::<_, Option<String>>(0).as_deref() != Some("baseline@375") {
+    if row.get::<_, Option<String>>(0) != Some(baseline_filename()) {
         return Ok(None);
     }
-    let checksum = row.get::<_, Option<String>>(1);
-    // Campaign predecessors are matched before every equivalence
-    // short-circuit so a receipt that needs a campaign can never be masked by
-    // a stale PRIOR_RECEIPT_CHECKSUMS entry.
-    Ok(match checksum.as_deref() {
-        Some(ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM) => {
-            Some(BaselineState::AccountIdentityPredecessor)
-        }
-        Some(predecessor) if is_project_checkout_predecessor(predecessor) => {
-            Some(BaselineState::ProjectCheckoutPredecessor)
-        }
-        Some(BASELINE_CHECKSUM) => Some(BaselineState::AlreadyBaselined),
-        Some(prior) if prior_baseline_receipt(prior) => Some(BaselineState::AlreadyBaselined),
-        Some(TOOL_CHAT_OVERLAY_PREDECESSOR_CHECKSUM) => Some(BaselineState::ParentBaseline),
-        Some(WORKTREE_PRE_OVERLAY_BASELINE_CHECKSUM) => Some(BaselineState::PredecessorBaseline),
-        Some(PREDECESSOR_BASELINE_CHECKSUM) => Some(BaselineState::PredecessorBaseline),
-        Some(PARENT_BASELINE_CHECKSUM) => Some(BaselineState::ParentBaseline),
-        Some(WORKTREE_BASELINE_CHECKSUM) => Some(BaselineState::WorktreeBaseline),
-        _ => None,
-    })
+    // Only the exact embedded baseline is recognized; any other checksum is an
+    // unrecognized lineage the caller reports as CorruptPartial.
+    Ok(
+        (row.get::<_, Option<String>>(1).as_deref() == Some(BASELINE_CHECKSUM))
+            .then_some(BaselineState::AlreadyBaselined),
+    )
 }
 
 fn read_schema_head(client: &mut Client, schema: &str) -> Result<i32, SchemaError> {
@@ -501,24 +417,13 @@ fn apply_baseline(
             transaction.batch_execute(&render_sql_for_schema(&statement, schema))?;
         }
     }
-    let filename = format!("baseline@{BASELINE_VERSION}");
-    if state.updates_baseline_receipt() {
-        transaction.execute(
-            &format!(
-                "UPDATE {receipt_table} SET filename = $1, checksum = $2, applied_at = NOW() \
-                 WHERE version = $3"
-            ),
-            &[&filename, &BASELINE_CHECKSUM, &BASELINE_VERSION],
-        )?;
-    } else {
-        transaction.execute(
-            &format!(
-                "INSERT INTO {receipt_table}(version, filename, checksum, applied_at) \
-                 VALUES ($1, $2, $3, NOW())"
-            ),
-            &[&BASELINE_VERSION, &filename, &BASELINE_CHECKSUM],
-        )?;
-    }
+    transaction.execute(
+        &format!(
+            "INSERT INTO {receipt_table}(version, filename, checksum, applied_at) \
+             VALUES ($1, $2, $3, NOW())"
+        ),
+        &[&BASELINE_VERSION, &baseline_filename(), &BASELINE_CHECKSUM],
+    )?;
     transaction.commit()?;
     Ok(())
 }
@@ -550,9 +455,6 @@ pub(super) fn render_sql_for_schema<'a>(sql: &'a str, schema: &str) -> Cow<'a, s
 }
 
 fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option<String> {
-    if let Some(mode) = state.refresh_mode() {
-        return baseline_refresh_statement_for_mode(statement, mode).then(|| statement.to_owned());
-    }
     if !matches!(
         state,
         BaselineState::GcoreCodeIndex | BaselineState::GwikiStandalone
@@ -780,7 +682,7 @@ fn apply_pending_migrations(
         let filename = row.get::<_, Option<String>>(1).unwrap_or_default();
         let checksum = row.get::<_, Option<String>>(2).unwrap_or_default();
         let expected = if version == BASELINE_VERSION {
-            Some((format!("baseline@{BASELINE_VERSION}"), BASELINE_CHECKSUM))
+            Some((baseline_filename(), BASELINE_CHECKSUM))
         } else {
             migrations
                 .iter()

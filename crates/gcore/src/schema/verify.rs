@@ -5,11 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use super::assets::{
     BASELINE_CHECKSUM, BASELINE_VERSION, CATALOG_MANIFEST_JSON, MIGRATIONS,
-    PRIOR_RECEIPT_CHECKSUMS, SEED_MANIFEST_JSON, TOOL_CHAT_OVERLAY_PREDECESSOR_CHECKSUM,
-    WORKTREE_PRE_OVERLAY_BASELINE_CHECKSUM,
+    PRIOR_RECEIPT_CHECKSUMS, SEED_MANIFEST_JSON, baseline_filename,
 };
 use super::error::SchemaError;
-use super::runner::{PROJECT_CHECKOUT_CAMPAIGN_DIRECTIVE, is_project_checkout_predecessor};
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -226,10 +224,7 @@ fn verify_receipts(client: &mut Client, schema: &str) -> Result<usize, SchemaErr
     )?;
     let mut expected = BTreeMap::from([(
         BASELINE_VERSION,
-        (
-            format!("baseline@{BASELINE_VERSION}"),
-            BASELINE_CHECKSUM.to_owned(),
-        ),
+        (baseline_filename(), BASELINE_CHECKSUM.to_owned()),
     )]);
     for migration in MIGRATIONS {
         expected.insert(
@@ -249,14 +244,6 @@ fn verify_receipts(client: &mut Client, schema: &str) -> Result<usize, SchemaErr
             )
         })
         .collect::<BTreeMap<_, _>>();
-    if let Some((filename, checksum)) = observed.get(&BASELINE_VERSION)
-        && *filename == format!("baseline@{BASELINE_VERSION}")
-        && is_project_checkout_predecessor(checksum)
-    {
-        return Err(SchemaError::Unsupported(
-            PROJECT_CHECKOUT_CAMPAIGN_DIRECTIVE.to_owned(),
-        ));
-    }
     let normalized = observed
         .iter()
         .map(|(version, (filename, checksum))| {
@@ -265,8 +252,6 @@ fn verify_receipts(client: &mut Client, schema: &str) -> Result<usize, SchemaErr
                 .filter(|(expected_filename, expected_checksum)| {
                     filename == expected_filename
                         && (checksum == expected_checksum
-                            || checksum == TOOL_CHAT_OVERLAY_PREDECESSOR_CHECKSUM
-                            || checksum == WORKTREE_PRE_OVERLAY_BASELINE_CHECKSUM
                             || PRIOR_RECEIPT_CHECKSUMS.iter().any(
                                 |(prior_version, prior_checksum)| {
                                     prior_version == version && prior_checksum == checksum

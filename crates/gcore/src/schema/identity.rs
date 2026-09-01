@@ -1,13 +1,14 @@
 use serde::Serialize;
 
 use super::assets::{
-    BASELINE_CHECKSUM, BASELINE_VERSION, MIGRATIONS, RUNNER_PROTOCOL_VERSION, root_hash,
+    BASELINE_CHECKSUM, BASELINE_VERSION, MIGRATIONS, RUNNER_PROTOCOL_VERSION, baseline_filename,
+    root_hash,
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AssetIdentity {
     pub version: i32,
-    pub filename: &'static str,
+    pub filename: String,
     pub checksum: &'static str,
 }
 
@@ -22,16 +23,17 @@ pub struct SchemaIdentity {
 pub fn schema_identity() -> SchemaIdentity {
     let baseline = AssetIdentity {
         version: BASELINE_VERSION,
-        filename: "baseline@375",
+        filename: baseline_filename(),
         checksum: BASELINE_CHECKSUM,
     };
-    let latest_asset = MIGRATIONS
-        .last()
-        .map_or(baseline, |migration| AssetIdentity {
+    let latest_asset = MIGRATIONS.last().map_or_else(
+        || baseline.clone(),
+        |migration| AssetIdentity {
             version: migration.version,
-            filename: migration.filename,
+            filename: migration.filename.to_owned(),
             checksum: migration.checksum,
-        });
+        },
+    );
     SchemaIdentity {
         runner_protocol_version: RUNNER_PROTOCOL_VERSION,
         baseline,

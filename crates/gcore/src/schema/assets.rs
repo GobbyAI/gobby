@@ -7,10 +7,11 @@ pub const BASELINE_CHECKSUM: &str =
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");
-pub(crate) const TOOL_CHAT_OVERLAY_PREDECESSOR_CHECKSUM: &str =
-    "d19810005e6c931219781941ab1c63ecc057973dfe60e2d4a8b6a69f460c6dd0";
-pub(crate) const WORKTREE_PRE_OVERLAY_BASELINE_CHECKSUM: &str =
-    "7477af06f3e54121b97f6af26e68efab79712d187bef7f1773a80e023a4faee6";
+
+/// Receipt filename of the embedded baseline (`baseline@<BASELINE_VERSION>`).
+pub(crate) fn baseline_filename() -> String {
+    format!("baseline@{BASELINE_VERSION}")
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct EmbeddedMigration {
@@ -304,11 +305,9 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 
-/// Receipts written before in-place asset edits. Live hubs keep those
+/// Receipts written before in-place migration edits. Live hubs keep those
 /// checksums; the improved bodies are what new applies stamp. Entries here
-/// must be schema-equivalent to the current asset: the pre-#19651 baseline
-/// receipts are campaign predecessors (`PROJECT_CHECKOUT_PREDECESSOR_CHECKSUMS`
-/// in `runner.rs`), never prior receipts.
+/// must be schema-equivalent to the current asset.
 pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[
     (
         377,
@@ -346,7 +345,7 @@ pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[
 
 pub(crate) fn root_hash() -> String {
     let mut digest = Sha256::new();
-    hash_part(&mut digest, "baseline@375", BASELINE_CHECKSUM);
+    hash_part(&mut digest, &baseline_filename(), BASELINE_CHECKSUM);
     for migration in MIGRATIONS {
         hash_part(&mut digest, migration.filename, migration.checksum);
     }

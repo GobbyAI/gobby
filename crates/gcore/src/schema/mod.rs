@@ -5,7 +5,6 @@
 
 mod assets;
 mod attached;
-mod baseline_refresh;
 mod error;
 mod external;
 mod gate;
