@@ -46,12 +46,15 @@ def test_lock_close_error_does_not_mask_unlock_error(
     def fail_close(_fd: int) -> None:
         raise OSError("close failed")
 
-    monkeypatch.setattr(freshness_locks, "_fcntl", FailingFcntl())
-    monkeypatch.setattr(freshness_locks.os, "close", fail_close)
-    lock = NativeBinFileLock(tmp_path / "lock", 123)
+    # freshness_locks.os is the os module: scope the close patch to release() so
+    # fixture teardown (temp-dir cleanup) sees the real os.close.
+    with monkeypatch.context() as patched:
+        patched.setattr(freshness_locks, "_fcntl", FailingFcntl())
+        patched.setattr(freshness_locks.os, "close", fail_close)
+        lock = NativeBinFileLock(tmp_path / "lock", 123)
 
-    with pytest.raises(OSError, match="unlock failed") as exc_info:
-        lock.release()
+        with pytest.raises(OSError, match="unlock failed") as exc_info:
+            lock.release()
 
     assert exc_info.value is unlock_error
 

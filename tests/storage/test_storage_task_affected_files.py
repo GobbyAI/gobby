@@ -21,8 +21,8 @@ def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
     """Create a fresh database with task rows for FK constraints."""
     database = temp_db
     database.execute(
-        "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
-        (PROJECT_ID, "test-project", "/tmp/test"),
+        "INSERT INTO projects (id, name) VALUES (%s, %s)",
+        (PROJECT_ID, "test-project"),
     )
     for tid in (TASK_1, TASK_2, TASK_3):
         database.execute(

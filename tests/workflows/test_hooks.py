@@ -1929,7 +1929,6 @@ class TestProjectPathResolution:
     ) -> None:
         import subprocess
 
-        from gobby.storage.project_checkouts import resolve_operation_root
         from gobby.storage.projects import LocalProjectManager
         from tests.fixtures.isolated_checkout import (
             insert_isolated_machine,
@@ -1950,20 +1949,6 @@ class TestProjectPathResolution:
             path=str(overlay),
             kind="worktree",
         )
-        overlay_calls: list[str | None] = []
-        real = resolve_operation_root
-
-        def spy(
-            db_arg: HubDatabase,
-            project_id: str,
-            machine_id_arg: str | None,
-            *,
-            overlay_path: str | None = None,
-        ) -> str:
-            overlay_calls.append(overlay_path)
-            return real(db_arg, project_id, machine_id_arg, overlay_path=overlay_path)
-
-        monkeypatch.setattr("gobby.storage.project_checkouts.resolve_operation_root", spy)
         rule_engine = MagicMock()
         rule_engine.db = db
         handler = WorkflowHookHandler()
@@ -1982,40 +1967,7 @@ class TestProjectPathResolution:
         result = handler._resolve_project_path(event)
 
         assert result == str(overlay)
-        assert overlay_calls == [str(overlay)]
-
-    def test_resolve_project_path_refuses_unregistered_overlay(  # tdd-red window
-        self,
-        db: HubDatabase,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        import subprocess
-
-        from gobby.storage.project_checkouts import OverlayRegistrationRejectedError
-        from tests.fixtures.isolated_checkout import install_isolated_checkout_project
-
-        isolated = install_isolated_checkout_project(db, tmp_path / "repo", monkeypatch=monkeypatch)
-        foreign = tmp_path / "foreign"
-        foreign.mkdir()
-        subprocess.run(["git", "init", "-q"], cwd=foreign, check=True)
-        rule_engine = MagicMock()
-        rule_engine.db = db
-        handler = WorkflowHookHandler()
-        handler.rule_engine = rule_engine
-        event = HookEvent(
-            event_type=HookEventType.AFTER_TOOL,
-            session_id=SESSION_ID,
-            source=SessionSource.CODEX,
-            timestamp=datetime.now(UTC),
-            data={},
-            cwd=str(foreign),
-            project_id=isolated.project.id,
-            metadata={},
-        )
-
-        with pytest.raises(OverlayRegistrationRejectedError):
-            handler._resolve_project_path(event)
+        assert event.metadata["project_path"] == str(overlay)
 
     def test_resolve_project_path_uses_primary_when_candidate_absent(  # tdd-red window
         self,

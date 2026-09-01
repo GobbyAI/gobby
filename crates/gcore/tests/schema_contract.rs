@@ -10,33 +10,26 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     // Identity pin for the checkout-only project schema after cutover.
     let identity = schema_identity();
 
-    assert_eq!(BASELINE_VERSION, 375);
+    assert_eq!(BASELINE_VERSION, 419);
     assert_eq!(
         BASELINE_CHECKSUM,
-        "58524c140b36a49ef115bb7c9a83e9dedf8aeb59e0d53b280537fe564c3464ac"
+        "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81"
     );
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 418);
-    assert_eq!(identity.latest_asset.filename, "418_project_checkouts.sql");
+    assert_eq!(identity.latest_asset.version, 419);
+    assert_eq!(identity.latest_asset.filename, "baseline@419");
     assert_eq!(
         identity.latest_asset.checksum,
-        "42c0684fb86430e525b325f2dcc57e7f41eb684515f2ce63be5a491821005243"
+        "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81"
     );
     assert_eq!(
         identity.root_hash,
-        "2e36a3047225b768e5bda46b0dc8b36ce6be1461cc914cd3813168aea4617da5"
+        "c6936c9dd3df2741655c6df0c1b037a0a8d3be50fc05474152310326312a2d16"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
-}
-
-#[test]
-fn latest_asset_is_project_checkouts_hop() {
-    let identity = schema_identity();
-    assert_eq!(identity.latest_asset.version, 418);
-    assert_eq!(identity.latest_asset.filename, "418_project_checkouts.sql");
 }
 
 #[test]

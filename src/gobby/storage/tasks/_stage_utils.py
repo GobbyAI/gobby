@@ -11,6 +11,9 @@ from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.tasks._models import TaskHasOpenChildrenError, TaskStaleStateError
 from gobby.utils.datetime import utc_now
 
+_LEGACY_VALIDATION_CRITERIA = (
+    "Legacy task: validation criteria were not recorded before they became required."
+)
 _TERMINAL_PARENT_CLOSE_REASONS = frozenset({"completed", "obsolete"})
 
 
@@ -90,6 +93,12 @@ def _close_task_in_txn(
                validation_fail_count = CASE WHEN %s THEN 0 ELSE validation_fail_count END,
                validation_status = COALESCE(%s, validation_status),
                validation_feedback = COALESCE(%s, validation_feedback),
+               validation_criteria = CASE
+                   WHEN task_type = 'epic'
+                        OR NULLIF(btrim(validation_criteria), '') IS NOT NULL
+                   THEN validation_criteria
+                   ELSE %s
+               END,
                updated_at = %s
          WHERE id = %s
            AND closed_at IS NULL
@@ -104,6 +113,7 @@ def _close_task_in_txn(
             reset_validation_fail_count,
             validation_status,
             validation_feedback,
+            _LEGACY_VALIDATION_CRITERIA,
             now,
             task_id,
             expected_updated_at,
@@ -377,9 +387,22 @@ def _cascade_close_descendants(
                closed_in_session_id = %s,
                closed_commit_sha = %s,
                claimed_by_session_id = NULL,
+               validation_criteria = CASE
+                   WHEN task_type = 'epic'
+                        OR NULLIF(btrim(validation_criteria), '') IS NOT NULL
+                   THEN validation_criteria
+                   ELSE %s
+               END,
                updated_at = %s
          WHERE id IN (SELECT id FROM subtree)
            AND closed_at IS NULL
         """,
-        (task_id, closed_at, closed_in_session_id, commit_sha, closed_at),
+        (
+            task_id,
+            closed_at,
+            closed_in_session_id,
+            commit_sha,
+            _LEGACY_VALIDATION_CRITERIA,
+            closed_at,
+        ),
     )

@@ -28,8 +28,13 @@ import pytest
 
 # This import should fail initially (red phase) - module doesn't exist yet
 from gobby.hooks.session_coordinator import SessionCoordinator
+from gobby.hooks.session_types import HookSessionManager
+from gobby.sessions.processor_lifecycle import SessionFlushResult
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from tests.agents.terminal_fixtures import make_live_terminal
+from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -37,6 +42,12 @@ pytestmark = pytest.mark.unit
 PROJECT_ID = "eeeeeeee-0000-4000-8000-000000000001"
 PARENT_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000002"
 CHILD_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000003"
+
+
+def _run_absent_tmux(command: list[str], **_kwargs: object) -> SimpleNamespace:
+    if "capture-pane" in command:
+        return SimpleNamespace(returncode=0, stdout="captured", stderr="")
+    return SimpleNamespace(returncode=1, stdout="", stderr="")
 
 
 def _create_session_row(db: HubDatabase, session_id: str) -> None:
@@ -575,6 +586,140 @@ class TestAgentRunCompletion:
             turns_used=1,
         )
 
+    @pytest.mark.asyncio
+    async def test_complete_agent_run_uses_transcript_activity_and_persists_counts(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        _create_session_row(temp_db, PARENT_SESSION_ID)
+        _create_session_row(temp_db, CHILD_SESSION_ID)
+        run_manager = LocalAgentRunManager(temp_db)
+        run = run_manager.create(
+            parent_session_id=PARENT_SESSION_ID,
+            provider="codex",
+            prompt="finish the task",
+            child_session_id=CHILD_SESSION_ID,
+        )
+        terminal = make_live_terminal(
+            run,
+            db=temp_db,
+            session_name="gobby-transcript-fallback",
+        )
+        run_manager.start(run.id)
+        transcript_reader = MagicMock()
+        transcript_reader.get_activity_counts = AsyncMock(
+            return_value={"message_count": 11, "tool_call_count": 7, "turn_count": 3}
+        )
+        coordinator = SessionCoordinator(
+            session_storage=cast(HookSessionManager, SessionManager(temp_db)),
+            agent_run_manager=run_manager,
+            transcript_reader=transcript_reader,
+            terminal_manager=MemoryTerminalStore(
+                make_memory_terminal(
+                    terminal_id=terminal.id,
+                    session_name="gobby-transcript-fallback",
+                )
+            ),
+        )
+        coordinator.set_completion_registry(MagicMock())
+        session = SimpleNamespace(
+            id=CHILD_SESSION_ID,
+            agent_run_id=run.id,
+            summary_markdown="Done",
+            last_assistant_content="",
+            tool_call_count=0,
+            turn_count=0,
+        )
+
+        with (
+            patch("gobby.agents.tmux.get_configured_tmux_command_prefix", return_value=["tmux"]),
+            patch("subprocess.run", side_effect=_run_absent_tmux),
+        ):
+            await asyncio.to_thread(coordinator.complete_agent_run, session)
+
+        updated = run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "success"
+        assert updated.error is None
+        assert updated.tool_calls_count == 7
+        assert updated.turns_used == 3
+        transcript_reader.get_activity_counts.assert_awaited_once_with(CHILD_SESSION_ID)
+
+    @pytest.mark.asyncio
+    async def test_complete_agent_run_warns_when_flush_does_not_run(
+        self,
+        temp_db: HubDatabase,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        _create_session_row(temp_db, PARENT_SESSION_ID)
+        _create_session_row(temp_db, CHILD_SESSION_ID)
+        run_manager = LocalAgentRunManager(temp_db)
+        run = run_manager.create(
+            parent_session_id=PARENT_SESSION_ID,
+            provider="codex",
+            prompt="finish the task",
+            child_session_id=CHILD_SESSION_ID,
+        )
+        terminal = make_live_terminal(
+            run,
+            db=temp_db,
+            session_name="gobby-flush-fallback",
+        )
+        run_manager.start(run.id)
+        message_processor = MagicMock()
+        message_processor.flush_session = AsyncMock(
+            return_value=SessionFlushResult(
+                flushed=False,
+                error="session is not registered",
+            )
+        )
+        transcript_reader = MagicMock()
+        transcript_reader.get_activity_counts = AsyncMock(
+            return_value={"message_count": 5, "tool_call_count": 4, "turn_count": 2}
+        )
+        coordinator = SessionCoordinator(
+            session_storage=cast(HookSessionManager, SessionManager(temp_db)),
+            message_processor_resolver=lambda: message_processor,
+            agent_run_manager=run_manager,
+            transcript_reader=transcript_reader,
+            terminal_manager=MemoryTerminalStore(
+                make_memory_terminal(
+                    terminal_id=terminal.id,
+                    session_name="gobby-flush-fallback",
+                )
+            ),
+        )
+        coordinator.set_completion_registry(MagicMock())
+        session = SimpleNamespace(
+            id=CHILD_SESSION_ID,
+            agent_run_id=run.id,
+            summary_markdown="Done",
+            last_assistant_content="",
+            tool_call_count=0,
+            turn_count=0,
+        )
+
+        with (
+            caplog.at_level(logging.WARNING, logger="gobby.hooks.session_coordinator"),
+            patch("gobby.agents.tmux.get_configured_tmux_command_prefix", return_value=["tmux"]),
+            patch("subprocess.run", side_effect=_run_absent_tmux),
+        ):
+            await asyncio.to_thread(coordinator.complete_agent_run, session)
+
+        warnings = [
+            record
+            for record in caplog.records
+            if record.levelno == logging.WARNING
+            and CHILD_SESSION_ID in record.getMessage()
+            and "session is not registered" in record.getMessage()
+        ]
+        assert len(warnings) == 1
+        updated = run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "success"
+        assert updated.tool_calls_count == 4
+        assert updated.turns_used == 2
+
     def test_complete_agent_run_updates_status(self) -> None:
         """Test completing an agent run updates its status."""
         mock_agent_run_manager = MagicMock()
@@ -586,6 +731,8 @@ class TestAgentRunCompletion:
         mock_session = MagicMock()
         mock_session.agent_run_id = "run-123"
         mock_session.summary_markdown = "Summary"
+        mock_session.tool_call_count = 1
+        mock_session.turn_count = 1
 
         coordinator.complete_agent_run(mock_session)
 

@@ -5,6 +5,7 @@ import click
 from gobby.cli.runtime import get_cli_runtime, require_cli_database
 from gobby.cli.utils import resolve_project_ref
 from gobby.config.app import DaemonConfig
+from gobby.memory.facade import AmbiguousMemoryReferenceError
 from gobby.memory.manager import MemoryManager
 
 from .common import _get_daemon_client
@@ -29,24 +30,16 @@ def resolve_memory_id(
         memory_ref: UUID or prefix to resolve
         project_id: If provided, scope lookup to this project
     """
-    # Try exact match first
-    # Optimization: check 36 chars?
-    if len(memory_ref) == 36 and manager.get_memory(memory_ref, project_id=project_id):
-        return memory_ref
-
-    # Try prefix match using MemoryManager method
-    memories = manager.find_by_prefix(memory_ref, limit=5, project_id=project_id)
-
-    if not memories:
-        raise click.ClickException(f"Memory not found: {memory_ref}")
-
-    if len(memories) > 1:
+    try:
+        memory_id = manager.resolve_memory_id(memory_ref, project_id=project_id)
+    except AmbiguousMemoryReferenceError as exc:
         click.echo(f"Ambiguous memory reference '{memory_ref}' matches:", err=True)
-        for mem in memories:
-            click.echo(f"  {mem.id}", err=True)
-        raise click.ClickException(f"Ambiguous memory reference: {memory_ref}")
-
-    return memories[0].id
+        for candidate in exc.candidates:
+            click.echo(f"  {candidate}", err=True)
+        raise click.ClickException(f"Ambiguous memory reference: {memory_ref}") from exc
+    if memory_id is None:
+        raise click.ClickException(f"Memory not found: {memory_ref}")
+    return memory_id
 
 
 __all__ = [

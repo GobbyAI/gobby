@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess  # nosec B404 # subprocess.TimeoutExpired re-raised from runner
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
@@ -408,6 +409,7 @@ def sync_from_main(
     base_branch: str = "main",
     strategy: Literal["rebase", "merge"] = "rebase",
     source_branch: str | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> GitOperationResult:
     """
     Sync worktree with base branch.
@@ -417,6 +419,7 @@ def sync_from_main(
         base_branch: Branch to sync from when source_branch is not provided
         strategy: Sync strategy (rebase or merge)
         source_branch: Explicit source branch/ref to sync from. Defaults to base_branch.
+        env: Environment variables to add or override for the sync command.
 
     Returns:
         GitOperationResult with success status and message
@@ -463,23 +466,38 @@ def sync_from_main(
                 ["rebase", sync_source],
                 cwd=worktree_path,
                 timeout=120,
+                env=env,
             )
         else:
             sync_result = runner._run_git(
                 ["merge", sync_source, "--no-edit"],
                 cwd=worktree_path,
                 timeout=120,
+                env=env,
             )
 
         if sync_result.returncode != 0:
+            has_conflicts = "CONFLICT" in sync_result.stdout or "CONFLICT" in sync_result.stderr
+            conflicted_files: list[str] = []
+            if has_conflicts:
+                conflict_result = runner._run_git(
+                    ["diff", "--name-only", "--diff-filter=U"],
+                    cwd=worktree_path,
+                    timeout=10,
+                )
+                if conflict_result.returncode == 0:
+                    conflicted_files = [
+                        path.strip() for path in conflict_result.stdout.splitlines() if path.strip()
+                    ]
             aborted, abort_error = abort_sync()
             abort_detail = "; aborted" if aborted else f"; abort failed: {abort_error}"
 
             # Check if there are conflicts
-            if "CONFLICT" in sync_result.stdout or "CONFLICT" in sync_result.stderr:
+            if has_conflicts:
                 return GitOperationResult(
                     success=False,
                     message=f"Sync failed due to conflicts{abort_detail}",
+                    output="\n".join(conflicted_files),
                     error=sync_result.stderr or sync_result.stdout,
                 )
             return GitOperationResult(

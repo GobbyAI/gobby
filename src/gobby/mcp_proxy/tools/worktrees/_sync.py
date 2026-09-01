@@ -12,6 +12,12 @@ from typing import Any, Literal, cast
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
+from gobby.mcp_proxy.tools.worktrees._merge_fallback import (
+    _non_gobby_dirty_paths,
+    _non_gobby_status_lines,
+    land_by_fast_forward,
+    staged_paths,
+)
 from gobby.utils.git import (
     get_checkout_mutation_lock,
     new_stash_marker,
@@ -24,38 +30,6 @@ from gobby.utils.git import (
 logger = logging.getLogger(__name__)
 
 MERGE_COMMAND_TIMEOUT_SECONDS = 240
-
-
-def _status_path_is_gobby_only(pathspec: str) -> bool:
-    paths = [part.strip() for part in pathspec.split(" -> ")]
-    return all(path == ".gobby" or path.startswith(".gobby/") for path in paths)
-
-
-def _porcelain_pathspec(line: str) -> str:
-    if len(line) >= 3 and line[2] == " ":
-        return line[3:]
-    if len(line) >= 2 and line[1] == " ":
-        return line[2:]
-    return line[3:] if len(line) > 3 else line
-
-
-def _non_gobby_status_lines(status_output: str) -> list[str]:
-    dirty: list[str] = []
-    for line in status_output.splitlines():
-        if not line:
-            continue
-        pathspec = _porcelain_pathspec(line)
-        if not _status_path_is_gobby_only(pathspec):
-            dirty.append(line)
-    return dirty
-
-
-def _non_gobby_dirty_paths(status_output: str) -> set[str]:
-    paths: set[str] = set()
-    for line in _non_gobby_status_lines(status_output):
-        pathspec = _porcelain_pathspec(line)
-        paths.update(part.strip() for part in pathspec.split(" -> ") if part.strip())
-    return paths
 
 
 def _worktree_path_for_branch(git_manager: Any, branch_name: str) -> str | None:
@@ -503,7 +477,24 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "source_branch": effective_source,
                     "target_branch": merge_target,
                 }
-            dirty_paths = _non_gobby_dirty_paths(status_result.stdout)
+            try:
+                target_staged_paths = await asyncio.to_thread(
+                    staged_paths,
+                    resolved_git_mgr,
+                    merge_cwd,
+                )
+            except RuntimeError as error:
+                return {
+                    "success": False,
+                    "error": str(error),
+                    "step": "inspect-staged",
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                }
+            dirty_paths = _non_gobby_dirty_paths(status_result.stdout) | target_staged_paths
             if dirty_paths:
                 incoming_result = await run_thread_to_completion(
                     resolved_git_mgr.run_git_command,
@@ -647,45 +638,85 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "target_branch": merge_target,
                 }
 
-            # Git can leave MERGE_HEAD/index state behind even when the command
-            # raises instead of returning a nonzero result (for example, timeout).
-            # Treat the transaction as cleanup-required before starting merge and
-            # clear the flag only after Git proves the merge command succeeded.
-            merge_cleanup_required = True
-            merge_env = {"GOBBY_MERGE": "1"}
-            merge_result = await run_thread_to_completion(
-                resolved_git_mgr.run_git_command,
-                ["merge", source_ref, "--no-ff", "--no-edit"],
-                cwd=merge_cwd,
-                timeout=MERGE_COMMAND_TIMEOUT_SECONDS,
-                env=merge_env,
-            )
-            if merge_result.returncode == 0:
-                merge_cleanup_required = False
-            if merge_result.returncode != 0:
-                # Detect unmerged (conflicted) files via git index — more reliable
-                # than parsing human-readable merge output for "CONFLICT" strings
-                conflicted_files = await run_thread_to_completion(
-                    resolved_git_mgr.get_unmerged_files, cwd=merge_cwd
+            landing = "merge"
+            if target_staged_paths:
+                fallback_result = await asyncio.to_thread(
+                    land_by_fast_forward,
+                    resolved_git_mgr,
+                    source_cwd=wt_path,
+                    target_cwd=merge_cwd,
+                    source_ref=source_ref,
+                    target_ref=target_ref,
                 )
-                if conflicted_files:
-                    # The transaction cleanup below aborts before the checkout
-                    # lock is released.
+                if not fallback_result.success:
+                    conflicted_files = list(fallback_result.conflicted_files)
+                    if conflicted_files:
+                        return {
+                            "success": False,
+                            "has_conflicts": True,
+                            "merged": False,
+                            "conflicted_files": conflicted_files,
+                            "step": fallback_result.step,
+                            "worktree_path": wt_path,
+                            "project_path": repo_path,
+                            "target_worktree_path": target_worktree_path,
+                            "source_branch": effective_source,
+                            "target_branch": merge_target,
+                            "message": (
+                                f"Merge conflicts detected in {len(conflicted_files)} file(s). "
+                                "Use gobby-merge tools to resolve."
+                            ),
+                        }
                     return {
                         "success": False,
-                        "has_conflicts": True,
-                        "merged": False,
-                        "conflicted_files": conflicted_files,
+                        "has_conflicts": False,
                         "worktree_path": wt_path,
                         "project_path": repo_path,
                         "target_worktree_path": target_worktree_path,
-                        "message": (
-                            f"Merge conflicts detected in {len(conflicted_files)} file(s). "
-                            "Use gobby-merge tools to resolve."
-                        ),
+                        "source_branch": effective_source,
+                        "target_branch": merge_target,
+                        "step": fallback_result.step,
+                        "error": fallback_result.error or "Fast-forward landing failed",
                     }
+                landing = "fast-forward"
+            else:
+                # Git can leave MERGE_HEAD/index state behind even when the command
+                # raises instead of returning a nonzero result (for example, timeout).
+                # Treat the transaction as cleanup-required before starting merge and
+                # clear the flag only after Git proves the merge command succeeded.
+                merge_cleanup_required = True
+                merge_result = await run_thread_to_completion(
+                    resolved_git_mgr.run_git_command,
+                    ["merge", source_ref, "--no-ff", "--no-edit"],
+                    cwd=merge_cwd,
+                    timeout=MERGE_COMMAND_TIMEOUT_SECONDS,
+                    env={"GOBBY_MERGE": "1"},
+                )
+                if merge_result.returncode == 0:
+                    merge_cleanup_required = False
+                if merge_result.returncode != 0:
+                    # Detect unmerged (conflicted) files via git index — more reliable
+                    # than parsing human-readable merge output for "CONFLICT" strings
+                    conflicted_files = await run_thread_to_completion(
+                        resolved_git_mgr.get_unmerged_files, cwd=merge_cwd
+                    )
+                    if conflicted_files:
+                        # The transaction cleanup below aborts before the checkout
+                        # lock is released.
+                        return {
+                            "success": False,
+                            "has_conflicts": True,
+                            "merged": False,
+                            "conflicted_files": conflicted_files,
+                            "worktree_path": wt_path,
+                            "project_path": repo_path,
+                            "target_worktree_path": target_worktree_path,
+                            "message": (
+                                f"Merge conflicts detected in {len(conflicted_files)} file(s). "
+                                "Use gobby-merge tools to resolve."
+                            ),
+                        }
 
-                else:
                     merge_output = "\n".join(
                         output.strip()
                         for output in (merge_result.stdout, merge_result.stderr)
@@ -706,7 +737,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     ctx.worktree_storage.mark_merged(worktree_id)
                 target_sha_result = await run_thread_to_completion(
                     resolved_git_mgr.run_git_command,
-                    ["rev-parse", "HEAD"],
+                    ["rev-parse", target_ref],
                     cwd=merge_cwd,
                     timeout=10,
                 )
@@ -741,6 +772,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "target_worktree_path": target_worktree_path,
                 "source_branch": effective_source,
                 "target_branch": merge_target,
+                "landing": landing,
                 "merged": git_merged,
                 "pushed": False,
             }

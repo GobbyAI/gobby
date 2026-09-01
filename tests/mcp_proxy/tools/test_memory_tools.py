@@ -97,6 +97,8 @@ def mock_memory_manager() -> MagicMock:
     manager.delete_memory_scoped = AsyncMock(return_value=True)
     manager.list_memories = MagicMock(return_value=[MockMemory()])
     manager.get_memory = MagicMock(return_value=MockMemory())
+    # Identity resolution passes refs through unchanged unless a test overrides it.
+    manager.resolve_memory_id = MagicMock(side_effect=lambda ref, project_id=None: ref)
     manager.get_related = AsyncMock(return_value=[MockMemory()])
     manager.update_memory = AsyncMock(return_value=MockMemory())
     manager.update_memory_scoped = AsyncMock(return_value=MockMemory())
@@ -1025,6 +1027,111 @@ class TestGetMemory:
 
         assert result["success"] is False
         assert "Get error" in result["error"]
+
+
+_FULL_ID = "c12fce9e-11c0-5112-8f03-fbf794031f6f"
+_SIBLING_ID = "c12fce9e-0000-5000-8000-000000000000"
+_PROJECT_ID = "11111111-1111-4111-8111-111111110001"
+
+# (tool, extra arguments, downstream manager method, positional index or kwarg name
+# of the memory id that method receives)
+_PREFIX_REF_CASES: list[tuple[str, dict[str, Any], str, int | str]] = [
+    ("update_memory", {"tags": ["baseline-419"]}, "update_memory_scoped", "memory_id"),
+    ("delete_memory", {}, "delete_memory_scoped", 0),
+    ("restore_memory", {}, "restore_memory", 0),
+    ("promote_memory_to_global", {}, "promote_memory", 0),
+    ("demote_memory_from_global", {}, "demote_memory", 0),
+    ("move_memory", {"new_project_id": _PROJECT_ID}, "move_memory", 0),
+    ("get_related_memories", {}, "get_related", "memory_id"),
+]
+
+
+class TestMemoryRefResolution:
+    """Every memory_id argument goes through MemoryManager.resolve_memory_id first."""
+
+    @pytest.mark.asyncio
+    async def test_get_memory_resolves_unique_prefix(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        mock_memory_manager.resolve_memory_id.side_effect = None
+        mock_memory_manager.resolve_memory_id.return_value = _FULL_ID
+        mock_memory_manager.get_memory.return_value = MockMemory(id=_FULL_ID)
+
+        with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
+            mock_ctx.return_value = {"id": _PROJECT_ID, "name": "Project"}
+            result = await memory_registry.call("get_memory", {"memory_id": "c12fce9e"})
+
+        assert result["success"] is True
+        assert result["memory"]["id"] == _FULL_ID
+        mock_memory_manager.resolve_memory_id.assert_called_once_with(
+            "c12fce9e", project_id=_PROJECT_ID
+        )
+        mock_memory_manager.get_memory.assert_called_once_with(_FULL_ID, project_id=_PROJECT_ID)
+
+    @pytest.mark.asyncio
+    async def test_get_memory_rejects_ambiguous_prefix(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        from gobby.memory.facade import AmbiguousMemoryReferenceError
+
+        mock_memory_manager.resolve_memory_id.side_effect = AmbiguousMemoryReferenceError(
+            "c12f", [_FULL_ID, _SIBLING_ID]
+        )
+
+        result = await memory_registry.call("get_memory", {"memory_id": "c12f"})
+
+        assert result["success"] is False
+        assert _FULL_ID in result["error"]
+        assert _SIBLING_ID in result["error"]
+        mock_memory_manager.get_memory.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_memory_malformed_ref_is_not_found(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        mock_memory_manager.resolve_memory_id.side_effect = None
+        mock_memory_manager.resolve_memory_id.return_value = None
+
+        result = await memory_registry.call("get_memory", {"memory_id": "not-a-uuid"})
+
+        assert result == {"success": False, "error": "Memory not-a-uuid not found"}
+        assert "invalid input syntax" not in result["error"]
+        # The raw ref never reaches a repository lookup.
+        mock_memory_manager.get_memory.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool", "extra_args", "downstream", "id_position"),
+        _PREFIX_REF_CASES,
+        ids=[case[0] for case in _PREFIX_REF_CASES],
+    )
+    async def test_write_tools_resolve_prefix_refs(
+        self,
+        memory_registry: InternalToolRegistry,
+        mock_memory_manager: MagicMock,
+        tool: str,
+        extra_args: dict[str, Any],
+        downstream: str,
+        id_position: int | str,
+    ) -> None:
+        mock_memory_manager.resolve_memory_id.side_effect = None
+        mock_memory_manager.resolve_memory_id.return_value = _FULL_ID
+        mock_memory_manager.get_memory.return_value = MockMemory(id=_FULL_ID)
+        mock_memory_manager.restore_memory = MagicMock(return_value=True)
+        mock_memory_manager.restore_memory_indices = AsyncMock(return_value=None)
+        mock_memory_manager.demote_memory = AsyncMock(return_value=MagicMock())
+        mock_memory_manager.move_memory = AsyncMock(return_value=MagicMock())
+
+        result = await memory_registry.call(tool, {"memory_id": "c12fce9e", **extra_args})
+
+        assert result["success"] is True, result
+        mock_memory_manager.resolve_memory_id.assert_called_once()
+        assert mock_memory_manager.resolve_memory_id.call_args.args[0] == "c12fce9e"
+        call = getattr(mock_memory_manager, downstream).call_args
+        received = (
+            call.kwargs[id_position] if isinstance(id_position, str) else call.args[id_position]
+        )
+        assert received == _FULL_ID
 
 
 class TestGetRelatedMemories:

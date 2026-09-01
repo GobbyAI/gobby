@@ -27,6 +27,7 @@ from gobby.mcp_proxy.tools.memory_review import register_memory_review_tools
 from gobby.mcp_proxy.tools.memory_scope import (
     get_current_project_id,
     memory_owned_by_current_project,
+    resolve_current_memory_id,
 )
 from gobby.mcp_proxy.tools.memory_write import register_memory_write_tools
 from gobby.memory.manager import MemoryManager
@@ -295,10 +296,13 @@ def create_memory_registry(
             memory_id: The ID of the memory to promote
         """
         try:
-            existing = _memory_manager().get_memory(memory_id, visibility="all")
+            resolved_id = resolve_current_memory_id(_memory_manager(), memory_id)
+            if resolved_id is None:
+                return {"success": False, "error": f"Memory {memory_id} not found"}
+            existing = _memory_manager().get_memory(resolved_id, visibility="all")
             if not memory_owned_by_current_project(existing):
                 return {"success": False, "error": f"Memory {memory_id} not found"}
-            memory = await _memory_manager().promote_memory(memory_id)
+            memory = await _memory_manager().promote_memory(resolved_id)
             return {
                 "success": True,
                 "memory": {
@@ -317,10 +321,13 @@ def create_memory_registry(
     )
     async def demote_memory_from_global(memory_id: str) -> dict[str, Any]:
         try:
-            existing = _memory_manager().get_memory(memory_id, visibility="all")
+            resolved_id = resolve_current_memory_id(_memory_manager(), memory_id)
+            if resolved_id is None:
+                return {"success": False, "error": f"Memory {memory_id} not found"}
+            existing = _memory_manager().get_memory(resolved_id, visibility="all")
             if not memory_owned_by_current_project(existing):
                 return {"success": False, "error": f"Memory {memory_id} not found"}
-            memory = await _memory_manager().demote_memory(memory_id)
+            memory = await _memory_manager().demote_memory(resolved_id)
             return {"success": True, "memory": memory.to_dict()}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -331,10 +338,13 @@ def create_memory_registry(
     )
     async def move_memory(memory_id: str, new_project_id: str) -> dict[str, Any]:
         try:
-            existing = _memory_manager().get_memory(memory_id, visibility="all")
+            resolved_id = resolve_current_memory_id(_memory_manager(), memory_id)
+            if resolved_id is None:
+                return {"success": False, "error": f"Memory {memory_id} not found"}
+            existing = _memory_manager().get_memory(resolved_id, visibility="all")
             if not memory_owned_by_current_project(existing):
                 return {"success": False, "error": f"Memory {memory_id} not found"}
-            memory = await _memory_manager().move_memory(memory_id, new_project_id)
+            memory = await _memory_manager().move_memory(resolved_id, new_project_id)
             return {"success": True, "memory": memory.to_dict()}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -406,7 +416,10 @@ def create_memory_registry(
             memory_id: The ID of the memory to retrieve
         """
         try:
-            memory = _memory_manager().get_memory(memory_id, project_id=get_current_project_id())
+            resolved_id = resolve_current_memory_id(_memory_manager(), memory_id)
+            if resolved_id is None:
+                return {"success": False, "error": f"Memory {memory_id} not found"}
+            memory = _memory_manager().get_memory(resolved_id, project_id=get_current_project_id())
             if memory:
                 return {
                     "success": True,
@@ -452,15 +465,18 @@ def create_memory_registry(
             min_similarity: Minimum similarity threshold (0.0-1.0)
         """
         try:
+            resolved_id = resolve_current_memory_id(_memory_manager(), memory_id)
+            if resolved_id is None:
+                return {"success": False, "error": f"Memory {memory_id} not found"}
             memories = await _memory_manager().get_related(
-                memory_id=memory_id,
+                memory_id=resolved_id,
                 limit=limit,
                 min_similarity=min_similarity,
                 project_id=get_current_project_id(),
             )
             return {
                 "success": True,
-                "memory_id": memory_id,
+                "memory_id": resolved_id,
                 "related": [
                     {
                         "id": m.id,

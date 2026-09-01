@@ -19,16 +19,19 @@ import time
 from collections.abc import Callable
 from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakValueDictionary
 
 from gobby.agents.capture import TerminationErrorCode, capture_then_kill_sync
+from gobby.agents.completion_stats import merge_completion_stats, resolve_completion_stats
 from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
+from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.storage.agents import TerminalAction
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
     from gobby.storage.worktrees import LocalWorktreeManager
 
 
@@ -97,6 +100,7 @@ class SessionCoordinator:
         worktree_manager: LocalWorktreeManager | None = None,
         logger: logging.Logger | None = None,
         completion_registry: Any | None = None,
+        transcript_reader: TranscriptReader | None = None,
         terminal_manager: Any | None = None,
         terminal_runtime_registry: Any | None = None,
         write_coordinator: Any | None = None,
@@ -119,6 +123,9 @@ class SessionCoordinator:
         self._worktree_manager = worktree_manager
         self.logger = logger or logging.getLogger(__name__)
         self._completion_registry = completion_registry
+        self._transcript_reader = transcript_reader
+        if self._transcript_reader is None and session_storage is not None:
+            self._transcript_reader = TranscriptReader(cast("SessionManager", session_storage))
         self._terminal_manager = terminal_manager
         self._terminal_runtime_registry = terminal_runtime_registry
         self._write_coordinator = write_coordinator
@@ -650,7 +657,13 @@ class SessionCoordinator:
                         message_processor.flush_session(session_id),
                         self._event_loop,
                     )
-                    flush_future.result(timeout=5)
+                    flush_result = flush_future.result(timeout=5)
+                    if getattr(flush_result, "flushed", True) is False:
+                        self.logger.warning(
+                            "Session stats flush did not complete for %s: %s",
+                            session_id,
+                            getattr(flush_result, "error", None) or "unknown error",
+                        )
                 except Exception as e:
                     self.logger.warning(
                         "Failed to flush session stats for %s: %s",
@@ -659,7 +672,7 @@ class SessionCoordinator:
                         exc_info=True,
                     )
 
-                # Re-fetch session from DB to get updated stats
+                # Re-fetch session from DB to get updated stats.
                 refreshed = self._session_manager.get(session_id) if self._session_manager else None
                 if refreshed:
                     session = refreshed
@@ -669,9 +682,28 @@ class SessionCoordinator:
                         or result
                     )
 
-            # Count tool calls and turns from session stats
-            tool_calls_count = getattr(session, "tool_call_count", 0)
-            turns_used = getattr(session, "turn_count", 0)
+            tool_calls_count, turns_used = merge_completion_stats(agent_run, session=session)
+            if self._transcript_reader is not None:
+                try:
+                    if not self._event_loop or not self._event_loop.is_running():
+                        raise RuntimeError("daemon event loop is not available")
+                    stats_future = asyncio.run_coroutine_threadsafe(
+                        resolve_completion_stats(
+                            agent_run,
+                            session=session,
+                            transcript_reader=self._transcript_reader,
+                            session_id=session_id,
+                        ),
+                        self._event_loop,
+                    )
+                    tool_calls_count, turns_used = stats_future.result(timeout=5)
+                except Exception as e:
+                    self.logger.warning(
+                        "Failed to resolve completion stats for %s: %s",
+                        session_id,
+                        e,
+                        exc_info=True,
+                    )
 
             incomplete_workflow_error = self._incomplete_step_workflow_error(session_id)
             if incomplete_workflow_error:

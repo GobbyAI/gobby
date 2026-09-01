@@ -21,6 +21,7 @@ from gobby.storage.pipeline_subscribers import (
     PipelineSubscriberStorageError,
 )
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.isolated_checkout import patch_local_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -36,7 +37,8 @@ def _create_agent_run(
     status: str = "pending",
 ) -> tuple[str, str, LocalAgentRunManager]:
     run_manager = LocalAgentRunManager(db)
-    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+    with pytest.MonkeyPatch.context() as identity_patch:
+        patch_local_machine_id(identity_patch, LOCAL_MACHINE_ID)
         session = session_manager.register(
             external_id=external_id,
             machine_id=LOCAL_MACHINE_ID,
@@ -258,7 +260,8 @@ def test_has_active_agent_wait_rejects_missing_foreign_and_orphan_subscriptions(
         sample_project,
         external_id="active-agent-wait-owner",
     )
-    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+    with pytest.MonkeyPatch.context() as identity_patch:
+        patch_local_machine_id(identity_patch, LOCAL_MACHINE_ID)
         foreign_session = session_manager.register(
             external_id="active-agent-wait-foreign",
             machine_id=LOCAL_MACHINE_ID,

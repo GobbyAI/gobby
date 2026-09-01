@@ -8,6 +8,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.merge_git_state import rev_parse_head
 from gobby.mcp_proxy.tools.merge_github_protection import git_output
+from gobby.mcp_proxy.tools.worktrees._merge_fallback import _non_gobby_status_lines
 from gobby.worktrees.git import WorktreeGitManager
 
 logger = logging.getLogger("gobby.mcp_proxy.tools.merge")
@@ -18,22 +19,6 @@ _GIT_NO_FF_TIER = "git_no_ff"
 
 def _strategy_requests_no_ff(strategy: str) -> bool:
     return strategy.strip().lower() in _NO_FF_STRATEGIES
-
-
-def _status_path_is_gobby_only(pathspec: str) -> bool:
-    paths = [part.strip() for part in pathspec.split(" -> ")]
-    return all(path == ".gobby" or path.startswith(".gobby/") for path in paths)
-
-
-def _non_gobby_status_lines(status_output: str) -> list[str]:
-    dirty: list[str] = []
-    for line in status_output.splitlines():
-        if not line:
-            continue
-        pathspec = line[3:] if len(line) > 3 else line
-        if not _status_path_is_gobby_only(pathspec):
-            dirty.append(line)
-    return dirty
 
 
 async def _dirty_worktree_result(
@@ -202,6 +187,5 @@ __all__ = [
     "_complete_direct_merge",
     "_dirty_worktree_result",
     "_non_gobby_status_lines",
-    "_status_path_is_gobby_only",
     "_strategy_requests_no_ff",
 ]

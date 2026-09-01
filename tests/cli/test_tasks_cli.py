@@ -1384,7 +1384,11 @@ class TestCloseTaskCommand:
 
         assert result.exit_code == 0
         assert f"Closed task #1 ({reason})" in result.output
-        mock_manager.close_task.assert_called_once_with(mock_task.id, reason=reason)
+        mock_manager.close_task.assert_called_once_with(
+            mock_task.id,
+            reason=reason,
+            closed_ancestors=[],
+        )
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -2414,7 +2418,7 @@ class TestFormatTaskList:
 
         mock_db = MagicMock()
 
-        def fake_fetchall(sql: str, params: tuple) -> list:
+        def fake_fetchall(sql: str, params: tuple[Any, ...]) -> list[dict[str, str]]:
             if "FROM sessions" in sql:
                 return []
             if "FROM projects" in sql:

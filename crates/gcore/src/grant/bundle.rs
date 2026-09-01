@@ -12,13 +12,13 @@ pub const EXPECTED_API_CONTRACT: i64 = 1;
 
 #[cfg(not(feature = "postgres"))]
 const GOLDEN_BASELINE_CHECKSUM: &str =
-    "ec222a7f8b3c486abfff05eda4ed02995d272a132ad2fdadb1dd90edbccb2ce1";
+    "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81";
 #[cfg(not(feature = "postgres"))]
 const GOLDEN_LATEST_CHECKSUM: &str =
-    "5970bfeb313dbd58545c3d4ebe824f2de8d6e140ecec4fc6e02f0078856f6231";
+    "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81";
 #[cfg(not(feature = "postgres"))]
 const GOLDEN_ASSETS_ROOT_HASH: &str =
-    "b96a8557afb286964394a9187f3c84356f3cd84b30a5c14e874e0c0759f2e62b";
+    "c6936c9dd3df2741655c6df0c1b037a0a8d3be50fc05474152310326312a2d16";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -213,9 +213,9 @@ pub fn expected_schema_identity() -> GrantSchemaIdentity {
     {
         GrantSchemaIdentity {
             runner_protocol: 1,
-            baseline_version: 375,
+            baseline_version: 419,
             baseline_checksum: GOLDEN_BASELINE_CHECKSUM.to_string(),
-            latest_version: 403,
+            latest_version: 419,
             latest_checksum: GOLDEN_LATEST_CHECKSUM.to_string(),
             assets_root_hash: GOLDEN_ASSETS_ROOT_HASH.to_string(),
         }

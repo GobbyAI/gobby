@@ -1175,9 +1175,9 @@ fn expected_schema_identity_tracks_catalog_head() {
     // With the postgres feature the identity is the live embedded catalog;
     // without it, the frozen golden fixture identity.
     #[cfg(feature = "postgres")]
-    assert_eq!(expected_schema_identity().latest_version, 418);
+    assert_eq!(expected_schema_identity().latest_version, 419);
     #[cfg(not(feature = "postgres"))]
-    assert_eq!(expected_schema_identity().latest_version, 403);
+    assert_eq!(expected_schema_identity().latest_version, 419);
 }
 
 #[test]

@@ -17,6 +17,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory_scope import (
     get_current_project_id,
     memory_owned_by_current_project,
+    resolve_current_memory_id,
 )
 from gobby.memory.embedding_text import memory_embedding_text
 from gobby.memory.scoring import undecay
@@ -331,8 +332,11 @@ def register_memory_write_tools(
             canonical_memory_type = (
                 validate_memory_type(memory_type) if memory_type is not None else None
             )
+            resolved_id = resolve_current_memory_id(memory_manager(), memory_id)
+            if resolved_id is None:
+                return {"success": False, "error": f"Memory {memory_id} not found"}
             memory = await memory_manager().update_memory_scoped(
-                memory_id=memory_id,
+                memory_id=resolved_id,
                 project_id=get_current_project_id() or PERSONAL_PROJECT_ID,
                 content=content,
                 tags=tags,
@@ -370,8 +374,11 @@ def register_memory_write_tools(
             memory_id: The ID of the memory to delete
         """
         try:
+            resolved_id = resolve_current_memory_id(memory_manager(), memory_id)
+            if resolved_id is None:
+                return {"success": False, "error": f"Memory {memory_id} not found"}
             success = await memory_manager().delete_memory_scoped(
-                memory_id,
+                resolved_id,
                 get_current_project_id() or PERSONAL_PROJECT_ID,
             )
             if success:
@@ -396,10 +403,13 @@ def register_memory_write_tools(
             memory_id: The ID of the memory to restore
         """
         try:
-            memory = memory_manager().get_memory(memory_id, visibility="all")
+            resolved_id = resolve_current_memory_id(memory_manager(), memory_id)
+            if resolved_id is None:
+                return {"success": False, "error": f"Memory {memory_id} not found"}
+            memory = memory_manager().get_memory(resolved_id, visibility="all")
             if memory is None or not memory_owned_by_current_project(memory):
                 return {"success": False, "error": f"Memory {memory_id} not found"}
-            await asyncio.to_thread(memory_manager().restore_memory, memory_id)
+            await asyncio.to_thread(memory_manager().restore_memory, resolved_id)
             await memory_manager().restore_memory_indices(
                 memory.id,
                 memory.content,
