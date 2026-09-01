@@ -270,6 +270,29 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
             assert_ne!(predicate.trim().to_ascii_lowercase(), "true");
         }
     }
+    // project_checkouts is read-only for gcode: SELECT plus the UPDATE policy
+    // that authorizes SELECT ... FOR SHARE under FORCE RLS while denying writes.
+    let checkout_policies = actual
+        .remove("project_checkouts")
+        .expect("project_checkouts must carry the scoped gcode read/update policies");
+    let checkout_operations: Vec<(String, String)> = checkout_policies
+        .iter()
+        .map(|(name, command, _, _)| (name.clone(), command.clone()))
+        .collect();
+    assert_eq!(
+        checkout_operations,
+        [
+            ("gobby_gcode_project_read".to_owned(), "SELECT".to_owned()),
+            ("gobby_gcode_project_update".to_owned(), "UPDATE".to_owned()),
+        ]
+    );
+    for (name, _, using_expression, check_expression) in checkout_policies {
+        assert!(using_expression.contains("current_project_id"));
+        assert!(using_expression.contains("current_machine_id"));
+        if name == "gobby_gcode_project_update" {
+            assert_eq!(check_expression, "false");
+        }
+    }
     assert!(
         actual.is_empty(),
         "unexpected gcode RLS policies: {actual:?}"
