@@ -109,12 +109,20 @@ def _create_registry(
 ):
     from gobby.mcp_proxy.tools.merge import create_merge_registry
     from gobby.storage.merge_resolutions import MergeResolutionManager
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.worktrees import LocalWorktreeManager
+    from gobby.utils.machine_id import get_machine_id
     from gobby.worktrees.git import WorktreeGitManager
     from gobby.worktrees.merge import MergeResolver
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
-    project = LocalProjectManager(temp_db).create("merge-direct", repo_path=str(repo))
+    machine_id = get_machine_id()
+    assert machine_id is not None
+    project = install_isolated_checkout_project(
+        temp_db,
+        repo,
+        name="merge-direct",
+        machine_id=machine_id,
+    ).project
     worktree_manager = LocalWorktreeManager(temp_db)
     worktree = worktree_manager.create(
         project_id=project.id,
@@ -645,7 +653,10 @@ async def test_merge_apply_allows_gobby_sync_file_dirty_after_direct_merge(
     assert result["direct_merge"] is True
     assert result["merge_sha"] == feature_sha
     assert _git(repo, "rev-parse", "main") == feature_sha
-    assert _git(repo, "status", "--short") == "M .gobby/tasks.jsonl"
+    assert set(_git(repo, "status", "--short").splitlines()) == {
+        "M .gobby/tasks.jsonl",
+        "?? .gobby/project.json",
+    }
 
 
 @pytest.mark.asyncio

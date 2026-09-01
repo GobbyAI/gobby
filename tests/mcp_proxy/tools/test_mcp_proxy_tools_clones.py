@@ -1586,8 +1586,9 @@ class TestMergeCloneToTarget:
             [
                 "fetch",
                 "/tmp/clones/test",
-                "feature/test:refs/heads/clone-merge/feature/test",
+                "refs/heads/feature/test:refs/heads/clone-merge/feature/test",
             ],
+            ["status", "--porcelain"],
             ["branch", "-D", "clone-merge/feature/test"],
         ]
         mock_git_manager.merge_branch.assert_not_called()
@@ -1601,6 +1602,7 @@ class TestMergeCloneToTarget:
         """A stash process failure returns its own result and still cleans up."""
         mock_clone_storage.get.return_value = _merge_test_clone()
         mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
             _git_result(),
             _git_result(),
             OSError("stash executable unavailable"),
@@ -1628,6 +1630,7 @@ class TestMergeCloneToTarget:
         """A nonzero stash command stops before the merge and still cleans up."""
         mock_clone_storage.get.return_value = _merge_test_clone()
         mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
             _git_result(),
             _git_result(stdout=""),
             _git_result(returncode=1, stderr="cannot write index"),
@@ -1687,6 +1690,7 @@ class TestMergeCloneToTarget:
         mock_clone_storage.get.return_value = _merge_test_clone()
         mock_git_manager.run_git_command.side_effect = [
             _git_result(),
+            _git_result(),
             _git_result(stdout=""),
             _git_result(),
             _git_result(stdout=""),
@@ -1717,6 +1721,7 @@ class TestMergeCloneToTarget:
         """A stash-pop timeout preserves the primary merge-conflict result."""
         mock_clone_storage.get.return_value = _merge_test_clone()
         mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
             _git_result(),
             _git_result(stdout=""),
             _git_result(),
@@ -1755,6 +1760,7 @@ class TestMergeCloneToTarget:
         mock_clone_storage.get.return_value = _merge_test_clone()
         mock_git_manager.run_git_command.side_effect = [
             _git_result(),
+            _git_result(),
             _git_result(stdout="previous"),
             _git_result(),
             _git_result(
@@ -1785,6 +1791,7 @@ class TestMergeCloneToTarget:
         """A successful merge is reported incomplete when exact stash restore fails."""
         mock_clone_storage.get.return_value = _merge_test_clone()
         mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
             _git_result(),
             _git_result(stdout=""),
             _git_result(),

@@ -18,6 +18,11 @@ from gobby.build.controls import cleanup_successful_merge_artifacts
 from gobby.build.workspaces import ensure_task_parent_integration_workspace
 from gobby.dispatch.actions import MergeWorkspaceAction
 from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
+from gobby.mcp_proxy.tools.worktrees._merge_fallback import (
+    _non_gobby_dirty_paths,
+    land_by_fast_forward,
+    staged_paths,
+)
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase, IntegrationWorkspaceMutex
 from gobby.storage.project_checkouts import require_root
@@ -28,6 +33,7 @@ from gobby.storage.tasks._stage_states import StageStatesManager
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.project_init import WORKTREE_LOCAL_PROJECT_KEYS
+from gobby.worktrees.git import WorktreeGitManager
 
 WorkspaceBackend = Literal["worktree", "clone"]
 MERGE_HOLDER = "dispatcher-merge"
@@ -94,12 +100,59 @@ def _execute_merge_workspace_sync(
             _ensure_branch(paths.source_path, source_branch, "source")
             _ensure_branch(paths.target_path, action.target_branch, "target")
             _recover_stale_merge_state(paths.target_path, "target integration workspace")
-            source_commit = _git_stdout(paths.source_path, ["rev-parse", "HEAD"])
-            _ensure_target_merge_safe(
+            source_ref = f"refs/heads/{source_branch}"
+            target_ref = f"refs/heads/{action.target_branch}"
+            source_commit = _git_stdout(paths.source_path, ["rev-parse", source_ref])
+            target_staged_paths = _ensure_target_merge_safe(
                 paths.target_path, source_commit, "target integration workspace"
             )
             if _is_ancestor(paths.target_path, source_commit):
-                merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
+                merge_sha = _git_stdout(paths.target_path, ["rev-parse", target_ref])
+                if action.backend == "clone" and not paths.target_is_local:
+                    _sync_source_repo_branch(
+                        db,
+                        action.task_id,
+                        paths.target_path,
+                        action.target_branch,
+                    )
+                _mark_source_merged(action, db=db, source_id=paths.source_id)
+                _complete_merge_stage(db, action.task_id, merge_sha)
+                return merge_sha
+
+            if target_staged_paths:
+                runner = WorktreeGitManager(paths.target_path)
+                separate_repositories = action.backend == "clone"
+                landing_ref = (
+                    f"refs/heads/workspace-merge/{action.task_id}"
+                    if separate_repositories
+                    else source_ref
+                )
+                fallback_result = land_by_fast_forward(
+                    runner,
+                    source_cwd=paths.source_path,
+                    target_cwd=paths.target_path,
+                    source_ref=source_ref,
+                    target_ref=target_ref,
+                    landing_ref=landing_ref,
+                    separate_repositories=separate_repositories,
+                )
+                if separate_repositories:
+                    cleanup_ref = _git(Path(paths.target_path), ["update-ref", "-d", landing_ref])
+                    if cleanup_ref.returncode != 0:
+                        logger.warning(
+                            "Failed to delete workspace merge ref %s: %s",
+                            landing_ref,
+                            cleanup_ref.stderr.strip(),
+                        )
+                if not fallback_result.success:
+                    detail_files = list(fallback_result.conflicted_files)
+                    detail = "\n".join(detail_files) or fallback_result.error or "unknown"
+                    reason = f"merge_conflict:{detail}"
+                    _mark_workspace_merge_conflict_for_recovery(db, action.task_id, reason)
+                    _fail_merge_stage(db, action.task_id, reason, needs_human=False)
+                    return None
+
+                merge_sha = _git_stdout(paths.target_path, ["rev-parse", target_ref])
                 if action.backend == "clone" and not paths.target_is_local:
                     _sync_source_repo_branch(
                         db,
@@ -141,7 +194,7 @@ def _execute_merge_workspace_sync(
                 _fail_merge_stage(db, action.task_id, reason, needs_human=False)
                 return None
 
-            merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
+            merge_sha = _git_stdout(paths.target_path, ["rev-parse", target_ref])
             if action.backend == "clone" and not paths.target_is_local:
                 _sync_source_repo_branch(
                     db,
@@ -365,11 +418,12 @@ def _recover_stale_merge_state(path: str, label: str) -> None:
     )
 
 
-def _ensure_target_merge_safe(path: str, source_commit: str, label: str) -> None:
+def _ensure_target_merge_safe(path: str, source_commit: str, label: str) -> set[str]:
     status = _git_ok(path, ["status", "--porcelain"]).stdout
-    dirty_paths = _non_gobby_dirty_paths(status)
+    target_staged_paths = staged_paths(WorktreeGitManager(path), path)
+    dirty_paths = _non_gobby_dirty_paths(status) | target_staged_paths
     if not dirty_paths:
-        return
+        return set()
     incoming_paths = set(
         _git_stdout(path, ["diff", "--name-only", "HEAD", source_commit]).splitlines()
     )
@@ -377,38 +431,7 @@ def _ensure_target_merge_safe(path: str, source_commit: str, label: str) -> None
     if overlapping:
         joined = ", ".join(overlapping)
         raise RuntimeError(f"{label} dirty paths overlap merge: {joined}")
-
-
-def _status_path_is_gobby_only(pathspec: str) -> bool:
-    paths = [part.strip() for part in pathspec.split(" -> ")]
-    return all(path == ".gobby" or path.startswith(".gobby/") for path in paths)
-
-
-def _non_gobby_dirty_paths(status_output: str) -> set[str]:
-    paths: set[str] = set()
-    for line in _non_gobby_status_lines(status_output):
-        pathspec = _porcelain_pathspec(line)
-        paths.update(part.strip() for part in pathspec.split(" -> ") if part.strip())
-    return paths
-
-
-def _non_gobby_status_lines(status_output: str) -> list[str]:
-    dirty: list[str] = []
-    for line in status_output.splitlines():
-        if not line:
-            continue
-        pathspec = _porcelain_pathspec(line)
-        if not _status_path_is_gobby_only(pathspec):
-            dirty.append(line)
-    return dirty
-
-
-def _porcelain_pathspec(line: str) -> str:
-    if len(line) >= 3 and line[2] == " ":
-        return line[3:]
-    if len(line) >= 2 and line[1] == " ":
-        return line[2:]
-    return line[3:] if len(line) > 3 else line
+    return target_staged_paths
 
 
 def _is_ancestor(target_path: str, commit_sha: str) -> bool:

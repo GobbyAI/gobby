@@ -14,10 +14,10 @@ from gobby.dispatch.actions import MergeWorkspaceAction
 from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
 from gobby.dispatch.workspace_merge import (
     _acquire_integration_mutex,
-    _non_gobby_status_lines,
     _sync_source_repo_branch,
     execute_merge_workspace,
 )
+from gobby.mcp_proxy.tools.worktrees._merge_fallback import _non_gobby_status_lines
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase, IntegrationWorkspaceMutex
 from gobby.storage.projects import LocalProjectManager, Project
@@ -1084,6 +1084,91 @@ async def test_execute_merge_workspace_allows_disjoint_registered_target_dirt(
     assert stage is not None
     assert stage.state == "done"
     assert (integration_path / "dirty.txt").read_text() == "dirty\n"
+    _assert_worktree_removed(worktrees, source.id, task_path)
+
+
+@pytest.mark.asyncio
+async def test_execute_merge_workspace_fast_forwards_with_disjoint_staged_target_dirt(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "integration"
+    task_path = tmp_path / "task"
+    repo.mkdir()
+    _init_repo(repo)
+
+    _git(repo, "worktree", "add", "-b", "integration/root", str(integration_path), "main")
+    _git(repo, "worktree", "add", "-b", "task/leaf", str(task_path), "integration/root")
+    (integration_path / "staged.txt").write_text("staged\n")
+    _git(integration_path, "add", "staged.txt")
+    (task_path / "feature.txt").write_text("feature\n")
+    _git(task_path, "add", "feature.txt")
+    _git(task_path, "commit", "-m", "feature")
+    source_head = _git(task_path, "rev-parse", "refs/heads/task/leaf")
+
+    project = _merge_checkout(temp_db, repo, monkeypatch)
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Leaf",
+        parent_task_id=parent.id,
+        category="code",
+        task_type="task",
+        validation_criteria="Test task completion is observable.",
+    )
+    task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
+    task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
+
+    worktrees = LocalWorktreeManager(temp_db)
+    worktrees.create(
+        project_id=project.id,
+        branch_name="integration/root",
+        worktree_path=str(integration_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    source = worktrees.create(
+        project_id=project.id,
+        branch_name="task/leaf",
+        worktree_path=str(task_path),
+        base_branch="integration/root",
+        task_id=leaf.id,
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        leaf.id,
+        worktree_path=str(task_path),
+        worktree_id=source.id,
+        base_commit_sha=_git(repo, "rev-parse", "refs/heads/main"),
+        target_branch="integration/root",
+    )
+
+    merge_sha = await execute_merge_workspace(
+        MergeWorkspaceAction(
+            task_id=leaf.id,
+            task_ref=f"#{leaf.seq_num}",
+            backend="worktree",
+            target_branch="integration/root",
+            source_workspace_id=source.id,
+        ),
+        db=temp_db,
+    )
+
+    stage = task_manager.stage_states.get(leaf.id, "merge")
+    assert merge_sha == source_head
+    assert merge_sha == _git(integration_path, "rev-parse", "refs/heads/integration/root")
+    assert stage is not None
+    assert stage.state == "done"
+    assert _git(integration_path, "diff", "--cached", "--name-only") == "staged.txt"
+    assert (integration_path / "staged.txt").read_text() == "staged\n"
     _assert_worktree_removed(worktrees, source.id, task_path)
 
 

@@ -3,6 +3,8 @@
 import asyncio
 import subprocess
 import threading
+from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -100,6 +102,7 @@ def _local_merge_side_effect(
     merge_result: MagicMock | None = None,
     unmerged_stdout: str = "",
     status_stdout: str = "",
+    staged_stdout: str = "",
     incoming_stdout: str = "feature.txt\n",
     source_already_merged: bool = False,
     preexisting_ancestor_pairs: set[tuple[str, str]] | None = None,
@@ -115,6 +118,8 @@ def _local_merge_side_effect(
             return _make_git_result(0)
         if args == ["status", "--porcelain"]:
             return _make_git_result(0, stdout=status_stdout)
+        if args == ["diff", "--name-only", "--cached"]:
+            return _make_git_result(0, stdout=staged_stdout)
         if args == ["diff", "--name-only", "HEAD", f"refs/heads/{source}"]:
             return _make_git_result(0, stdout=incoming_stdout)
         if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
@@ -1012,7 +1017,7 @@ async def test_merge_worktree_non_conflict_error_returns_worktree_path():
 
 @pytest.mark.asyncio
 async def test_merge_worktree_allows_disjoint_target_dirt():
-    """Target checkout dirt is allowed when incoming merge does not touch it."""
+    """Unstaged target dirt is allowed when the incoming merge does not touch it."""
     from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
 
     ctx = _make_registry_context()
@@ -1034,6 +1039,47 @@ async def test_merge_worktree_allows_disjoint_target_dirt():
     assert result["merged"] is True
     assert result["merge_sha"] == "abc123def456"
     ctx.worktree_storage.mark_merged.assert_called_once_with("wt-123")
+
+
+async def test_merge_worktree_uses_fast_forward_fallback_for_disjoint_staged_dirt():
+    """Staged target dirt syncs the target into the source before fast-forwarding."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+    from gobby.worktrees.git._models import GitOperationResult
+
+    ctx = _make_registry_context()
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect(
+        status_stdout="M  staged.txt\n",
+        staged_stdout="staged.txt\n",
+        incoming_stdout="src/gobby/cli/postgres.py\n",
+    )
+    ctx.git_manager.sync_from_main.return_value = GitOperationResult(
+        success=True,
+        message="synced",
+    )
+
+    registry = create_sync_registry(ctx)
+    merge_tool = registry.get_tool("merge_worktree")
+
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
+        return_value=(ctx.git_manager, "test-project", None),
+    ):
+        result = await merge_tool("wt-123")
+
+    assert result["success"] is True
+    assert result["landing"] == "fast-forward"
+    ctx.git_manager.sync_from_main.assert_called_once_with(
+        "/tmp/wt",
+        strategy="merge",
+        source_branch="refs/heads/main",
+        env={"GOBBY_MERGE": "1"},
+    )
+    ff_call = next(
+        call
+        for call in ctx.git_manager.run_git_command.call_args_list
+        if call.args[0] == ["merge", "--ff-only", "refs/heads/feat"]
+    )
+    assert ff_call.kwargs["cwd"] == "/tmp/repo"
 
 
 @pytest.mark.asyncio
@@ -1167,7 +1213,12 @@ async def test_merge_worktree_stash_restore_failure_is_surfaced():
     regular_git = _local_merge_side_effect()
     stash_head_calls = 0
 
-    def failing_restore(args, cwd=None, timeout=30, check=False):
+    def failing_restore(
+        args: list[str],
+        cwd: str | Path | None = None,
+        timeout: int = 30,
+        check: bool = False,
+    ) -> MagicMock:
         nonlocal stash_head_calls
         if args == ["stash", "list", "-1", "--format=%H"]:
             stash_head_calls += 1
@@ -1181,10 +1232,11 @@ async def test_merge_worktree_stash_restore_failure_is_surfaced():
             return _make_git_result(0, stdout="stash@{0}\x00stash-ours\n")
         if args == ["stash", "pop", "stash@{0}"]:
             return _make_git_result(1, stderr="restore conflict")
-        return regular_git(args, cwd=cwd, timeout=timeout, check=check)
+        return cast(MagicMock, regular_git(args, cwd=cwd, timeout=timeout, check=check))
 
     ctx.git_manager._run_git.side_effect = failing_restore
     merge_tool = create_sync_registry(ctx).get_tool("merge_worktree")
+    assert merge_tool is not None
 
     with pytest.raises(RuntimeError, match="restore conflict"):
         await merge_tool("wt-123")
