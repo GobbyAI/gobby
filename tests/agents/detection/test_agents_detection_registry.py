@@ -149,10 +149,10 @@ def test_detection_manifest_migration_applies(temp_db: HubDatabase) -> None:
     }
     receipt = temp_db.fetchone(
         "SELECT version, filename FROM schema_migrations WHERE version = %s AND filename = %s",
-        (419, "baseline@419"),
+        (420, "baseline@420"),
     )
 
-    assert receipt == {"version": 419, "filename": "baseline@419"}
+    assert receipt == {"version": 420, "filename": "baseline@420"}
     assert {
         "provider_id",
         "version",

@@ -69,15 +69,14 @@ def test_production_python_has_no_persistent_postgres_ddl() -> None:
 
 def test_baseline_seals_four_column_interactive_principal() -> None:
     baseline = (_REPO_ROOT / "crates/gcore/assets/schema/baseline.sql").read_text()
-    assert "DROP FUNCTION IF EXISTS gobby_agent_auth.issue_or_reuse_interactive_principal(" in (
-        baseline
-    )
-    start = baseline.index(
-        "CREATE OR REPLACE FUNCTION gobby_agent_auth.issue_or_reuse_interactive_principal("
-    )
+    function = "CREATE FUNCTION gobby_agent_auth.issue_or_reuse_interactive_principal("
+    assert baseline.count(function) == 1
+    start = baseline.index(function)
     returns = baseline[start : start + 800]
-    assert "managed_execution_id UUID" in returns
-    assert "reused BOOLEAN" in returns
+    assert (
+        "RETURNS TABLE(role_name name, credential_generation integer, reused boolean, "
+        "managed_execution_id uuid)" in returns
+    )
 
 
 def test_sweep_pins_database_in_child_environment(monkeypatch: pytest.MonkeyPatch) -> None:

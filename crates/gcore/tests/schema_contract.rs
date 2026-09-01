@@ -10,23 +10,23 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     // Identity pin for the checkout-only project schema after cutover.
     let identity = schema_identity();
 
-    assert_eq!(BASELINE_VERSION, 419);
+    assert_eq!(BASELINE_VERSION, 420);
     assert_eq!(
         BASELINE_CHECKSUM,
-        "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81"
+        "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55"
     );
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 419);
-    assert_eq!(identity.latest_asset.filename, "baseline@419");
+    assert_eq!(identity.latest_asset.version, 420);
+    assert_eq!(identity.latest_asset.filename, "baseline@420");
     assert_eq!(
         identity.latest_asset.checksum,
-        "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81"
+        "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55"
     );
     assert_eq!(
         identity.root_hash,
-        "c6936c9dd3df2741655c6df0c1b037a0a8d3be50fc05474152310326312a2d16"
+        "9090c5dc8e5ac62c602aad6d061c2e4e18cffa4d6b801917b4eca4539c2720a9"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
@@ -36,7 +36,7 @@ fn embedded_assets_publish_a_complete_schema_identity() {
 fn baseline_resolve_tool_session_returns_checkout_columns() {
     let sql = gobby_core::schema::BASELINE_SQL;
     assert!(sql.contains(
-        "RETURNS TABLE(session_id UUID, project_id UUID, machine_id UUID, root_path TEXT)"
+        "RETURNS TABLE(session_id uuid, project_id uuid, machine_id uuid, root_path text)"
     ));
     assert!(sql.contains("LEFT JOIN public.project_checkouts AS checkout"));
     assert!(!sql.contains("SELECT session.id, project.id, project.repo_path"));

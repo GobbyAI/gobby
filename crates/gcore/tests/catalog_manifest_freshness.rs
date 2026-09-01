@@ -79,7 +79,7 @@ fn embedded_runner_applies_fresh_and_idempotently() -> anyhow::Result<()> {
     assert!(first.baseline_applied);
     assert_eq!(first.migrations_applied, 0);
     let baseline_receipts: i64 = client.query_one(
-        "SELECT COUNT(*) FROM schema_migrations WHERE version = 419 AND filename = 'baseline@419'",
+        "SELECT COUNT(*) FROM schema_migrations WHERE version = 420 AND filename = 'baseline@420'",
         &[],
     )?.get(0);
     assert_eq!(baseline_receipts, 1);
@@ -415,7 +415,7 @@ fn verify_contract_detects_catalog_seed_and_bookkeeping_drift() -> anyhow::Resul
 
     client.batch_execute("BEGIN")?;
     client.execute(
-        "UPDATE schema_migrations SET checksum = 'bad' WHERE version = 419",
+        "UPDATE schema_migrations SET checksum = 'bad' WHERE version = 420",
         &[],
     )?;
     let receipt_error = SchemaRunner::new(&mut client, "public")?
@@ -436,7 +436,7 @@ fn guard_test_rejects_a_database_newer_than_the_embedded_runner() -> anyhow::Res
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
     client.execute(
-        "INSERT INTO schema_migrations(version, filename, checksum) VALUES (420, '420_future.sql', $1)",
+        "INSERT INTO schema_migrations(version, filename, checksum) VALUES (421, '421_future.sql', $1)",
         &[&"f".repeat(64)],
     )?;
 

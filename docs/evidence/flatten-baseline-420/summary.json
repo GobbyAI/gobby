@@ -1,0 +1,98 @@
+{
+  "dumps_identical": true,
+  "new": {
+    "dump_sha256": "29e7558106e06bdf3e154858f80d18464c236c713bdd1bf28adb8811523bb150",
+    "identity": {
+      "assets_root_hash": "9090c5dc8e5ac62c602aad6d061c2e4e18cffa4d6b801917b4eca4539c2720a9",
+      "baseline_checksum": "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55",
+      "baseline_version": 420,
+      "latest_checksum": "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55",
+      "latest_version": 420,
+      "runner_protocol": 1
+    }
+  },
+  "old": {
+    "dump_sha256": "29e7558106e06bdf3e154858f80d18464c236c713bdd1bf28adb8811523bb150",
+    "identity": {
+      "assets_root_hash": "c6936c9dd3df2741655c6df0c1b037a0a8d3be50fc05474152310326312a2d16",
+      "baseline_checksum": "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81",
+      "baseline_version": 419,
+      "latest_checksum": "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81",
+      "latest_version": 419,
+      "runner_protocol": 1
+    }
+  },
+  "roles": [
+    {
+      "member_of": [
+        "gobby_gcode_capability",
+        "gobby_ix_072106077482c794_1",
+        "gobby_ix_072106077482c794_2",
+        "gobby_ix_072106077482c794_3",
+        "pg_signal_backend"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": false,
+      "rolcreaterole": true,
+      "rolinherit": true,
+      "rolname": "gobby_agent_issuer"
+    },
+    {
+      "member_of": [],
+      "rolbypassrls": false,
+      "rolcanlogin": false,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_daemon_runtime"
+    },
+    {
+      "member_of": [],
+      "rolbypassrls": false,
+      "rolcanlogin": false,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_gcode_capability"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_072106077482c794_1"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_072106077482c794_2"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_072106077482c794_3"
+    },
+    {
+      "member_of": [
+        "gobby_daemon_runtime"
+      ],
+      "rolbypassrls": true,
+      "rolcanlogin": true,
+      "rolcreaterole": true,
+      "rolinherit": true,
+      "rolname": "gobby_test"
+    }
+  ],
+  "roles_identical": true
+}

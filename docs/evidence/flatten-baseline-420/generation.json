@@ -1,0 +1,15 @@
+{
+  "baseline_path": "crates/gcore/assets/schema/baseline.sql",
+  "baseline_sha256": "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55",
+  "baseline_version": 420,
+  "normalized_ddl_sha256": "0868f5ded54257458f11ba5bf125576f5d5bf2ffb7fbfd2957411424625d927c",
+  "seed_sql_sha256": "0a8df490bb98a588e02e4444baf56f382069ee45bbe28ac3d85ddd96902c69ed",
+  "source_identity": {
+    "assets_root_hash": "c6936c9dd3df2741655c6df0c1b037a0a8d3be50fc05474152310326312a2d16",
+    "baseline_checksum": "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81",
+    "baseline_version": 419,
+    "latest_checksum": "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81",
+    "latest_version": 419,
+    "runner_protocol": 1
+  }
+}

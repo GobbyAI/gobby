@@ -7,7 +7,7 @@ use postgres::{Client, GenericClient};
 
 use super::assets::{
     BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS,
-    PRIOR_RECEIPT_CHECKSUMS, baseline_filename, sha256_hex,
+    PRIOR_RECEIPT_CHECKSUMS, baseline_filename, is_prior_baseline_receipt, sha256_hex,
 };
 use super::error::SchemaError;
 use super::gate::{SourceIdentity, VerifiedBackupManifest};
@@ -347,18 +347,35 @@ fn recognized_baseline_receipt(
         &format!("SELECT filename, checksum FROM {table} WHERE version = $1"),
         &[&BASELINE_VERSION],
     )?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    if row.get::<_, Option<String>>(0) != Some(baseline_filename()) {
-        return Ok(None);
+    if let Some(row) = row {
+        if row.get::<_, Option<String>>(0) != Some(baseline_filename()) {
+            return Ok(None);
+        }
+        return Ok(
+            (row.get::<_, Option<String>>(1).as_deref() == Some(BASELINE_CHECKSUM))
+                .then_some(BaselineState::AlreadyBaselined),
+        );
     }
-    // Only the exact embedded baseline is recognized; any other checksum is an
-    // unrecognized lineage the caller reports as CorruptPartial.
-    Ok(
-        (row.get::<_, Option<String>>(1).as_deref() == Some(BASELINE_CHECKSUM))
-            .then_some(BaselineState::AlreadyBaselined),
-    )
+    let rows = client.query(
+        &format!(
+            "SELECT version, filename, checksum FROM {table} WHERE version < $1 ORDER BY version"
+        ),
+        &[&BASELINE_VERSION],
+    )?;
+    Ok(rows
+        .into_iter()
+        .any(|row| {
+            is_prior_baseline_receipt(
+                row.get(0),
+                row.get::<_, Option<String>>(1)
+                    .as_deref()
+                    .unwrap_or_default(),
+                row.get::<_, Option<String>>(2)
+                    .as_deref()
+                    .unwrap_or_default(),
+            )
+        })
+        .then_some(BaselineState::AlreadyBaselined))
 }
 
 fn read_schema_head(client: &mut Client, schema: &str) -> Result<i32, SchemaError> {
@@ -646,9 +663,6 @@ fn verify_adopted_columns(
             .into_iter()
             .map(|row| row.get::<_, String>(0))
             .collect::<BTreeSet<_>>();
-        if actual.is_empty() && *table == "code_inheritance" {
-            continue;
-        }
         let missing = contracts[*table]
             .iter()
             .filter(|column| !actual.contains(**column))
@@ -681,6 +695,10 @@ fn apply_pending_migrations(
         let version: i32 = row.get(0);
         let filename = row.get::<_, Option<String>>(1).unwrap_or_default();
         let checksum = row.get::<_, Option<String>>(2).unwrap_or_default();
+        if is_prior_baseline_receipt(version, &filename, &checksum) {
+            applied.insert(BASELINE_VERSION);
+            continue;
+        }
         let expected = if version == BASELINE_VERSION {
             Some((baseline_filename(), BASELINE_CHECKSUM))
         } else {
