@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1090,6 +1090,32 @@ class TestClaimedTaskHelpers:
         mock_svm.set_variable.assert_any_call("session-5867", "claimed_tasks", {})
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_escalated_task_still_claimed_by_session_is_listed(
+        self, mock_svm_cls: MagicMock
+    ) -> None:
+        """Escalation awaits the operator; a claim taken to work the close stays listed (#21535)."""
+        handler = _TestHandler()
+        mock_svm = mock_svm_cls.return_value
+        mock_svm.get_variables.return_value = {
+            "task_claimed": True,
+            "claimed_tasks": {"uuid-21507": "#21507"},
+        }
+        task = MagicMock()
+        task.seq_num = 21507
+        task.status = "ready"
+        task.title = "Make workspace binary installs set-coherent"
+        task.claimed_by_session_id = "sess-1"
+        task.is_escalated = True
+        task.escalated_at = "2026-09-01T22:00:00+00:00"
+        task.closed_at = None
+        cast(MagicMock, handler._task_manager).get_task.return_value = task
+
+        result = handler._get_claimed_task_info("sess-1", "proj-1")
+
+        assert result == [("#21507", "escalated", "Make workspace binary installs set-coherent")]
+        mock_svm.set_variable.assert_not_called()
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_db_fallback_rebuilds_review_claims(self, mock_svm_cls: MagicMock) -> None:
         handler = _TestHandler()
         mock_svm = mock_svm_cls.return_value
@@ -1219,7 +1245,7 @@ class TestClaimedTaskHelpers:
         task.status = "in_progress"
         task.title = "Fix auth bug"
         task.claimed_by_session_id = "sess-1"
-        handler._task_manager.get_task.return_value = task
+        cast(MagicMock, handler._task_manager).get_task.return_value = task
 
         ctx = handler._build_claimed_task_context("sess-1", "proj-1")
         assert ctx is not None

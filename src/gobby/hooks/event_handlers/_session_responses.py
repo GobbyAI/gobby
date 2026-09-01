@@ -12,7 +12,10 @@ from typing import TYPE_CHECKING, Any, Protocol
 from gobby.hooks.events import HookResponse
 from gobby.tasks.state_semantics import (
     ACTIVE_STAGE_STATES,
+    get_claimed_session_id,
     is_task_actively_claimed,
+    is_task_closed,
+    is_task_escalated,
     serialize_task_state,
 )
 
@@ -40,6 +43,22 @@ def _set_claimed_task_reconciliation(
         sv_mgr.set_variable(session_id, "claimed_tasks", claimed_tasks)
     except Exception as e:
         _logger.debug("Failed to persist claimed task reconciliation for %s: %s", session_id, e)
+
+
+def _session_holds_claim(task: Any, session_id: str) -> bool:
+    """Whether the persisted claim is still this session's.
+
+    An escalated task is not actionable stage work, but a claim taken on it
+    (the operator working its close) is still the session's; only a close or a
+    live owner change prunes the entry (#21535).
+    """
+    if is_task_actively_claimed(task, session_id):
+        return True
+    return (
+        is_task_escalated(task)
+        and not is_task_closed(task)
+        and get_claimed_session_id(task) == session_id
+    )
 
 
 def _task_state_label(task: Any) -> str:
@@ -121,7 +140,7 @@ def get_claimed_task_info(
     for task_uuid in list(claimed_tasks):
         try:
             task = handler._task_manager.get_task(task_uuid, project_id=project_id)
-            if not is_task_actively_claimed(task, session_id):
+            if not _session_holds_claim(task, session_id):
                 _logger.info(
                     "Pruning stale claimed task %s from session %s; live owner differs",
                     task_uuid[:8],
