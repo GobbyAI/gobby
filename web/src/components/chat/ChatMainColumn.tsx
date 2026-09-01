@@ -7,6 +7,7 @@ import type { VoiceInputMode } from "../../hooks/useSettings";
 import { modelSupportsImageInput } from "../../lib/providerModels";
 import { showActivityTab } from "../activity/activityEvents";
 import { AgentStatusBar } from "./AgentStatusBar";
+import { CheckoutRequiredBanner } from "./CheckoutRequiredBanner";
 import { ChatInput } from "./ChatInput";
 import { CommandBar } from "./CommandBar";
 import { MessageList, type MessageListHandle } from "./MessageList";
@@ -29,6 +30,8 @@ interface ChatMainColumnProps extends AgentPickerProps {
   chat: ChatState;
   voice: VoiceProps;
   projectId?: string | null;
+  /** False when this machine has no checkout of the selected project. */
+  projectHasCheckout?: boolean;
   panelVisible: boolean;
   effectiveSessionRef: string | null;
   activeTitle: string | null;
@@ -52,6 +55,7 @@ export function ChatMainColumn({
   chat,
   voice,
   projectId,
+  projectHasCheckout,
   panelVisible,
   effectiveSessionRef,
   activeTitle,
@@ -106,6 +110,10 @@ export function ChatMainColumn({
     effectiveInputProvider,
     effectiveInputModel,
   );
+  // Either the project list says this machine has no checkout, or the server
+  // already refused the session with a checkout_required frame.
+  const showCheckoutBanner =
+    projectHasCheckout === false || chat.checkoutRequired === true;
 
   return (
     <div
@@ -182,6 +190,7 @@ export function ChatMainColumn({
         planPendingVariant={planPendingVariant}
       />
 
+      {showChatInput && showCheckoutBanner && <CheckoutRequiredBanner />}
       {showChatInput && (
         <ChatInput
           onSend={chat.onSend}

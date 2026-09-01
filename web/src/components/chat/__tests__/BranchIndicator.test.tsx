@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { NO_CHECKOUT_MESSAGE } from "../../../lib/projectCheckout";
 import {
   createMockFetch,
   type MockFetchInstance,
@@ -136,11 +137,76 @@ describe("BranchIndicator", () => {
   it("renders a path-free state when the project has no checkout", async () => {
     mockBranchPickerData({ projectCheckout: null });
 
-    await openBranchPicker(vi.fn(), null);
+    const { user, onWorktreeChange } = await openBranchPicker(vi.fn(), null);
 
     const status = await screen.findByRole("status");
-    expect(status).toHaveTextContent("No checkout registered for this project");
+    expect(status).toHaveTextContent(NO_CHECKOUT_MESSAGE);
     expect(status).not.toHaveTextContent("/repo");
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    // The listbox holds only options and groups; notices sit beside it.
+    const listbox = screen.getByRole("listbox");
+    expect(within(listbox).queryByRole("status")).toBeNull();
+    for (const child of Array.from(listbox.children)) {
+      expect(["group", "option"]).toContain(child.getAttribute("role"));
+    }
+
+    // A branch switch has nowhere to run, so it is refused with the same copy.
+    await user.click(screen.getByRole("option", { name: /feature/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      NO_CHECKOUT_MESSAGE,
+    );
+    expect(onWorktreeChange).not.toHaveBeenCalled();
+    expect(
+      fetchMock.fn.mock.calls.some(([input]) =>
+        String(input).includes("/api/source-control/branches/checkout"),
+      ),
+    ).toBe(false);
+  });
+
+  it("shows a neutral placeholder while the checkout lookup is pending", async () => {
+    mockBranchPickerData();
+    const routed = fetchMock.fn.getMockImplementation();
+    if (!routed) throw new Error("mock fetch has no implementation");
+    fetchMock.fn.mockImplementation((input: RequestInfo | URL) =>
+      String(input).includes("/checkouts")
+        ? new Promise<Response>(() => {})
+        : routed(input),
+    );
+
+    await openBranchPicker();
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Looking up checkout...");
+    expect(status).not.toHaveTextContent(NO_CHECKOUT_MESSAGE);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      within(screen.getByRole("listbox")).queryByRole("status"),
+    ).toBeNull();
+  });
+
+  it("reports a failed checkout lookup instead of claiming there is none", async () => {
+    // Registered first so it wins over the default 200 route.
+    fetchMock.mockJsonResponse(
+      /\/api\/projects\/proj-1\/checkouts$/,
+      {
+        detail: {
+          error: "MissingMachineContextError",
+          message: "machine context missing",
+        },
+      },
+      { status: 409 },
+    );
+    mockBranchPickerData();
+
+    await openBranchPicker();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("machine context missing");
+    expect(alert).toHaveClass("text-destructive-foreground");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByText(NO_CHECKOUT_MESSAGE)).toBeNull();
+    expect(within(screen.getByRole("listbox")).queryByRole("alert")).toBeNull();
   });
 
   it("does not render remote-only branches as switch targets", async () => {

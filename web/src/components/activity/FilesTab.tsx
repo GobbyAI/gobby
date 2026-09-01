@@ -19,6 +19,11 @@ import {
   detectLanguageFromPath,
   useEditableContent,
 } from "../shared/editableContent";
+import {
+  NO_CHECKOUT_MESSAGE,
+  isNoCheckoutErrorText,
+  responseReportsNoCheckout,
+} from "../../lib/projectCheckout";
 import { cn } from "../../lib/utils";
 import { ActivityPanelEmpty, FilesEmptyIcon } from "./ActivityPanelEmpty";
 import {
@@ -58,6 +63,11 @@ function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || "";
 }
 
+const FILE_LOAD_FAILED = "Failed to load file";
+
+/** A read failure whose message is safe to show in the viewer. */
+class FileLoadError extends Error {}
+
 const FilesTabProject = memo(function FilesTabProject({
   projectId,
   onAddToChat,
@@ -66,6 +76,8 @@ const FilesTabProject = memo(function FilesTabProject({
   const isMobile = useIsMobile();
   const useHorizontal = layout === "responsive-split" && !isMobile;
   const [rootEntries, setRootEntries] = useState<FileEntry[]>([]);
+  // Why the tree is empty when the API refused it (no checkout here).
+  const [treeNotice, setTreeNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [childrenMap, setChildrenMap] = useState<Map<string, FileEntry[]>>(
@@ -182,6 +194,7 @@ const FilesTabProject = memo(function FilesTabProject({
   useEffect(() => {
     if (!projectId) {
       setRootEntries([]);
+      setTreeNotice(null);
       setLoading(false);
       return;
     }
@@ -194,13 +207,24 @@ const FilesTabProject = memo(function FilesTabProject({
         signal: controller.signal,
       },
     )
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data) => {
-        if (!controller.signal.aborted)
-          setRootEntries(Array.isArray(data) ? data : []);
+      .then(async (res) => {
+        if (res.ok) return { entries: await res.json(), notice: null };
+        return {
+          entries: [],
+          notice: (await responseReportsNoCheckout(res))
+            ? NO_CHECKOUT_MESSAGE
+            : null,
+        };
+      })
+      .then(({ entries, notice }) => {
+        if (controller.signal.aborted) return;
+        setRootEntries(Array.isArray(entries) ? entries : []);
+        setTreeNotice(notice);
       })
       .catch(() => {
-        if (!controller.signal.aborted) setRootEntries([]);
+        if (controller.signal.aborted) return;
+        setRootEntries([]);
+        setTreeNotice(null);
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -280,9 +304,13 @@ const FilesTabProject = memo(function FilesTabProject({
           signal: controller.signal,
         },
       )
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.json();
+        .then(async (res) => {
+          if (res.ok) return res.json();
+          throw new FileLoadError(
+            (await responseReportsNoCheckout(res))
+              ? NO_CHECKOUT_MESSAGE
+              : FILE_LOAD_FAILED,
+          );
         })
         .then((data) => {
           if (controller.signal.aborted) return;
@@ -290,10 +318,12 @@ const FilesTabProject = memo(function FilesTabProject({
             throw new Error("File response has no content");
           setFileContent(data.content);
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           if (controller.signal.aborted) return;
           setFileContent(null);
-          setFileError("Failed to load file");
+          setFileError(
+            error instanceof FileLoadError ? error.message : FILE_LOAD_FAILED,
+          );
         })
         .finally(() => {
           if (!controller.signal.aborted) setFileLoading(false);
@@ -442,7 +472,11 @@ const FilesTabProject = memo(function FilesTabProject({
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       console.error(`Move failed (${response.status}):`, detail);
-      setMoveError(detail || `Move failed (${response.status})`);
+      setMoveError(
+        isNoCheckoutErrorText(detail)
+          ? NO_CHECKOUT_MESSAGE
+          : detail || `Move failed (${response.status})`,
+      );
       return;
     }
     const parentPath = moving.path.includes("/")
@@ -552,7 +586,9 @@ const FilesTabProject = memo(function FilesTabProject({
           <ActivityPanelEmpty
             icon={<FilesEmptyIcon />}
             heading="Files"
-            body="Project files appear here once a project is loaded"
+            body={
+              treeNotice ?? "Project files appear here once a project is loaded"
+            }
           />
         ) : (
           <FilesTabTree

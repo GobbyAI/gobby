@@ -225,6 +225,12 @@ export interface AcpAvailableCommand {
 export interface ProjectOption {
   id: string;
   name: string;
+  /**
+   * False when this machine has no checkout of the project, so chat and file
+   * surfaces cannot run against it here. Omitted (or true) for Personal and
+   * checked-out projects.
+   */
+  hasCheckout?: boolean;
 }
 
 export interface ContextUsage {
@@ -279,6 +285,8 @@ export interface ChatState {
   isLoadingMessages?: boolean;
   isConnected: boolean;
   isReconnecting: boolean;
+  /** Server refused the session with a `checkout_required` error frame. */
+  checkoutRequired?: boolean;
   contextUsage?: ContextUsage;
   contextUsageUpdatedAt?: number | null;
   onSend: (

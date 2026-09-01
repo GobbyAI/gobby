@@ -26,6 +26,44 @@ describe("useAppProjectSelection", () => {
     vi.restoreAllMocks();
   });
 
+  it("flags projects without a checkout on this machine and never flags Personal", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ revision: 1, desired: {} }),
+        } as Response),
+      ),
+    );
+
+    const { result } = renderHook(() =>
+      useAppProjectSelection({
+        allProjects: [
+          { id: "personal", name: "_personal", checkout: null },
+          {
+            id: "local",
+            name: "local",
+            checkout: { machine_id: "m-1", root_path: "/repo" },
+          },
+          { id: "remote", name: "remote", checkout: null },
+        ] as ProjectWithStats[],
+        onProjectSelect: vi.fn(),
+        selectedProvider: null,
+        setSelectedProvider: vi.fn(),
+        startNewChat: vi.fn(),
+        setProjectIdRef: vi.fn(),
+        sendProjectChange: vi.fn(),
+      }),
+    );
+
+    expect(result.current.projectOptions).toEqual([
+      { id: "personal", name: "Personal", hasCheckout: true },
+      { id: "local", name: "local", hasCheckout: true },
+      { id: "remote", name: "remote", hasCheckout: false },
+    ]);
+  });
+
   it("persists project selection through the universal config patch", async () => {
     const settingsResponse = deferred<Record<string, unknown>>();
     const fetchMock = vi.fn(

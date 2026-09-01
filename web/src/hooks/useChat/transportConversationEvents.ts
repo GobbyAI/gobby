@@ -1,3 +1,4 @@
+import { CHECKOUT_REQUIRED_CODE } from "../../lib/projectCheckout";
 import { normalizeChatMode } from "../../types/chat";
 import type {
   AcpAvailableCommand,
@@ -372,6 +373,9 @@ export function handleTransportError(
       ctx.clearContinuationRollback();
       ctx.restoreContinuationState(rollback);
     }
+  }
+  if (data.code === CHECKOUT_REQUIRED_CODE) {
+    ctx.setCheckoutRequired(true);
   }
   const errorMessage =
     typeof data.message === "string" ? data.message : "Unknown error";

@@ -46,6 +46,8 @@ export interface ChatPageProps
   voice: VoiceProps;
   projectId?: string | null;
   projectName?: string | null;
+  /** False when this machine has no checkout of the selected project. */
+  projectHasCheckout?: boolean;
   showPlanRef?: MutableRefObject<(() => void) | null>;
   currentModel?: string;
   onModelChange?: (model: string) => void;

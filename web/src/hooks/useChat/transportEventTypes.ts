@@ -226,6 +226,8 @@ export interface SessionContinuedMessage {
 export interface TransportErrorMessage {
   type: "error";
   message?: string;
+  /** Machine-readable reason, e.g. `checkout_required`. */
+  code?: string;
 }
 
 export interface ConnectionEstablishedMessage {

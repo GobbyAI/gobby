@@ -62,6 +62,9 @@ export function useAppProjectSelection({
         .map((p) => ({
           id: p.id,
           name: p.name === "_personal" ? "Personal" : p.display_name || p.name,
+          // Personal is checkout-free by design; every other project needs a
+          // checkout on this machine before chat or files can run against it.
+          hasCheckout: p.name === "_personal" || p.checkout !== null,
         })),
     [allProjects],
   );

@@ -23,6 +23,7 @@ export function ChatPage({
   voice,
   projectId,
   projectName,
+  projectHasCheckout,
   showPlanRef,
   agentDefinitions = [],
   agentGlobalDefs = [],
@@ -158,6 +159,7 @@ export function ChatPage({
             chat={chat}
             voice={voice}
             projectId={projectId}
+            projectHasCheckout={projectHasCheckout}
             panelVisible={panelVisible}
             effectiveSessionRef={routing.effectiveSessionRef}
             activeTitle={routing.activeTitle}

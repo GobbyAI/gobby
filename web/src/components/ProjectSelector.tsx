@@ -21,6 +21,12 @@ type PickerRestoreFocus = false | "compact" | "search";
 /** Width of the project picker in pixels (matches Tailwind w-48). */
 const PICKER_WIDTH = 192;
 
+/** Sub-label for a project this machine has no checkout of. */
+const NOT_CHECKED_OUT_LABEL = "not checked out on this machine";
+
+const isOptionAvailable = (project: ProjectOption) =>
+  project.hasCheckout !== false;
+
 interface ProjectSelectorProps {
   projects: ProjectOption[];
   selectedProjectId: string | null;
@@ -166,7 +172,10 @@ export function ProjectSelector({
       closePicker();
       return;
     }
-    if (nonPersonalProjects.length === 1) {
+    if (
+      nonPersonalProjects.length === 1 &&
+      isOptionAvailable(nonPersonalProjects[0])
+    ) {
       onProjectChange(nonPersonalProjects[0].id);
     } else {
       setActiveOptionIndex(0);
@@ -210,7 +219,9 @@ export function ProjectSelector({
       if (options.preventEnterDefault) {
         e.preventDefault();
       }
-      onSelect();
+      if (isOptionAvailable(pickerOptions[boundedActiveOptionIndex])) {
+        onSelect();
+      }
       return true;
     }
     return false;
@@ -364,36 +375,53 @@ export function ProjectSelector({
               }
               tabIndex={showCompactMenu ? -1 : undefined}
             >
-              {pickerOptions.map((p, index) => (
-                <Button
-                  key={p.id}
-                  id={`${listboxId}-option-${index}`}
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  dense
-                  role="option"
-                  aria-selected={isOptionSelected(p)}
-                  tabIndex={-1}
-                  className={cn(
-                    "min-h-0 w-full justify-start rounded-none border-0 px-2 py-1 text-left text-xs font-normal",
-                    coarseHitAreaCls,
-                    isOptionSelected(p) && "bg-accent/20 text-accent",
-                    (showProjectSearch || showCompactMenu) &&
-                      index === boundedActiveOptionIndex &&
-                      "bg-muted",
-                  )}
-                  onClick={() => handleProjectSelect(p.id)}
-                >
-                  {p.name}
-                </Button>
-              ))}
-              {pickerOptions.length === 0 && (
-                <div className="px-2 py-1 text-xs text-muted-foreground">
-                  No projects found
-                </div>
-              )}
+              {pickerOptions.map((p, index) => {
+                const available = isOptionAvailable(p);
+                return (
+                  <Button
+                    key={p.id}
+                    id={`${listboxId}-option-${index}`}
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    dense
+                    role="option"
+                    aria-selected={isOptionSelected(p)}
+                    aria-disabled={available ? undefined : true}
+                    tabIndex={-1}
+                    className={cn(
+                      "min-h-0 w-full justify-start rounded-none border-0 px-2 py-1 text-left text-xs font-normal",
+                      coarseHitAreaCls,
+                      isOptionSelected(p) && "bg-accent/20 text-accent",
+                      !available && "cursor-not-allowed text-muted-foreground",
+                      (showProjectSearch || showCompactMenu) &&
+                        index === boundedActiveOptionIndex &&
+                        "bg-muted",
+                    )}
+                    onClick={() => {
+                      if (available) handleProjectSelect(p.id);
+                    }}
+                  >
+                    {available ? (
+                      p.name
+                    ) : (
+                      <span className="flex min-w-0 flex-col items-start">
+                        <span className="max-w-full truncate">{p.name}</span>
+                        <span className="text-[length:var(--text-2xs)] leading-tight text-muted-foreground/80">
+                          {NOT_CHECKED_OUT_LABEL}
+                        </span>
+                      </span>
+                    )}
+                  </Button>
+                );
+              })}
             </div>
+            {/* Outside the listbox so it only ever contains options. */}
+            {pickerOptions.length === 0 && (
+              <div className="px-2 py-1 text-xs text-muted-foreground">
+                No projects found
+              </div>
+            )}
           </div>,
           document.body,
         )}

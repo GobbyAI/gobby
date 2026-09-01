@@ -185,4 +185,107 @@ describe("ProjectSelector", () => {
 
     expect(onProjectChange).toHaveBeenCalledWith("project-gobby");
   });
+
+  it("keeps the empty-search notice outside the listbox", () => {
+    renderSelector();
+    const group = screen.getByRole("radiogroup", { name: "Project scope" });
+    fireEvent.click(within(group).getByRole("radio", { name: "gobby" }));
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "zzz" },
+    });
+
+    const listbox = screen.getByRole("listbox", {
+      name: "Project search results",
+    });
+    expect(within(listbox).queryAllByRole("option")).toHaveLength(0);
+    expect(within(listbox).queryByText("No projects found")).toBeNull();
+    expect(screen.getByText("No projects found")).toBeInTheDocument();
+  });
+});
+
+describe("ProjectSelector without a checkout on this machine", () => {
+  const PROJECTS_WITH_MISSING: ProjectOption[] = [
+    { id: "personal", name: "Personal" },
+    { id: "project-gobby", name: "gobby", hasCheckout: true },
+    { id: "project-remote", name: "remote", hasCheckout: false },
+  ];
+
+  function renderMissing(selectedProjectId: string) {
+    const onProjectChange = vi.fn();
+    render(
+      <ProjectSelector
+        projects={PROJECTS_WITH_MISSING}
+        selectedProjectId={selectedProjectId}
+        onProjectChange={onProjectChange}
+      />,
+    );
+    return { onProjectChange };
+  }
+
+  it("marks the project disabled in the compact listbox and refuses a click", () => {
+    const { onProjectChange } = renderMissing("project-gobby");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Project scope: gobby" }),
+    );
+    const listbox = screen.getByRole("listbox", {
+      name: "Project scope options",
+    });
+    const remote = within(listbox).getByRole("option", { name: /remote/ });
+    expect(remote).toHaveAttribute("aria-disabled", "true");
+    expect(remote).toHaveTextContent("not checked out on this machine");
+    expect(
+      within(listbox).getByRole("option", { name: "gobby" }),
+    ).not.toHaveAttribute("aria-disabled");
+
+    fireEvent.click(remote);
+    expect(onProjectChange).not.toHaveBeenCalled();
+  });
+
+  it("does not select the disabled project from the keyboard", async () => {
+    const { onProjectChange } = renderMissing("personal");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Project scope: Personal" }),
+    );
+    const listbox = screen.getByRole("listbox", {
+      name: "Project scope options",
+    });
+    await waitFor(() => expect(listbox).toHaveFocus());
+
+    fireEvent.keyDown(listbox, { key: "ArrowDown" });
+    fireEvent.keyDown(listbox, { key: "ArrowDown" });
+    expect(listbox).toHaveAttribute(
+      "aria-activedescendant",
+      within(listbox).getByRole("option", { name: /remote/ }).id,
+    );
+
+    fireEvent.keyDown(listbox, { key: "Enter" });
+    expect(onProjectChange).not.toHaveBeenCalled();
+  });
+
+  it("opens the search picker instead of auto-selecting the only project when it is not checked out", () => {
+    const onProjectChange = vi.fn();
+    render(
+      <ProjectSelector
+        projects={[
+          { id: "personal", name: "Personal" },
+          { id: "project-remote", name: "remote", hasCheckout: false },
+        ]}
+        selectedProjectId="personal"
+        onProjectChange={onProjectChange}
+      />,
+    );
+    const group = screen.getByRole("radiogroup", { name: "Project scope" });
+
+    fireEvent.click(within(group).getByRole("radio", { name: "Project" }));
+
+    expect(onProjectChange).not.toHaveBeenCalled();
+    const listbox = screen.getByRole("listbox", {
+      name: "Project search results",
+    });
+    expect(
+      within(listbox).getByRole("option", { name: /remote/ }),
+    ).toHaveAttribute("aria-disabled", "true");
+  });
 });

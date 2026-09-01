@@ -96,6 +96,7 @@ export interface StateSetters {
   setAcpAvailableCommands: Setter<AcpAvailableCommand[]>;
   setAttachedSessionId: Setter<string | null>;
   setAttachedSessionMeta: Setter<SessionObservationMeta | null>;
+  setCheckoutRequired: Setter<boolean>;
   setContextUsage: Setter<ContextUsage>;
   setConversationId: Setter<string>;
   setCurrentBranch: Setter<string | null>;

@@ -55,10 +55,14 @@ export function useChat({ connectionEnabled = true }: UseChatOptions = {}) {
   >([]);
   const [transportError, setTransportError] =
     useState<TransportErrorNotice | null>(null);
+  // Set by a `checkout_required` error frame; a project change resets it so
+  // the next project is judged on its own.
+  const [checkoutRequired, setCheckoutRequired] = useState(false);
 
   // Keep a ref so onopen/reconnect can read the current project
   const projectIdRef = useRef<string | null>(null);
   const setProjectIdRef = useCallback((id: string | null) => {
+    if (projectIdRef.current !== id) setCheckoutRequired(false);
     projectIdRef.current = id;
   }, []);
 
@@ -450,6 +454,7 @@ export function useChat({ connectionEnabled = true }: UseChatOptions = {}) {
     setAcpAvailableCommands,
     setAttachedSessionId,
     setAttachedSessionMeta,
+    setCheckoutRequired,
     setContextUsage,
     setConversationId,
     setCurrentBranch,
@@ -694,6 +699,7 @@ export function useChat({ connectionEnabled = true }: UseChatOptions = {}) {
     isThinking,
     isLoadingMessages,
     transportError,
+    checkoutRequired,
     contextUsage,
     contextUsageUpdatedAt,
     acpAvailableCommands,

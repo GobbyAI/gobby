@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { WorktreeInfo } from "../../hooks/useSourceControl";
+import { NO_CHECKOUT_MESSAGE } from "../../lib/projectCheckout";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/Button";
 import { coarseHitAreaCls } from "../ui/controlStyles";
@@ -25,9 +26,10 @@ function truncateLabel(value: string, maxChars: number): string {
   return value.length > maxChars ? `${value.slice(0, maxChars)}...` : value;
 }
 
-async function readCheckoutError(
+/** Read a FastAPI error `detail` (string or `{ message }`) off a failed response. */
+async function readErrorMessage(
   response: Response,
-  branchName: string,
+  fallback: string,
 ): Promise<string> {
   try {
     const data: unknown = await response.json();
@@ -35,26 +37,42 @@ async function readCheckoutError(
     if (typeof detail === "string" && detail.trim()) {
       return detail;
     }
+    if (detail && typeof detail === "object" && "message" in detail) {
+      const message = detail.message;
+      if (typeof message === "string" && message.trim()) return message;
+    }
   } catch {
     // Fall through to status text.
   }
-  return response.statusText || `Failed to switch to ${branchName}`;
+  return response.statusText || fallback;
 }
 
-function readCheckoutRoot(data: unknown): string | null {
+/**
+ * Result of GET /api/projects/{id}/checkouts. Only a 200 whose `checkout` is
+ * null means "none"; every other failure is an error the user should see.
+ */
+type CheckoutLookup =
+  | { status: "loading" }
+  | { status: "ready"; rootPath: string }
+  | { status: "none" }
+  | { status: "error"; message: string };
+
+const LOADING_LOOKUP: CheckoutLookup = { status: "loading" };
+
+function readCheckoutLookup(data: unknown): CheckoutLookup {
   if (typeof data !== "object" || data === null || !("checkout" in data)) {
-    return null;
+    return { status: "error", message: "Unexpected checkout response" };
   }
   const checkout = data.checkout;
+  if (checkout === null) return { status: "none" };
   if (
-    typeof checkout !== "object" ||
-    checkout === null ||
-    !("root_path" in checkout) ||
-    typeof checkout.root_path !== "string"
+    typeof checkout === "object" &&
+    "root_path" in checkout &&
+    typeof checkout.root_path === "string"
   ) {
-    return null;
+    return { status: "ready", rootPath: checkout.root_path };
   }
-  return checkout.root_path;
+  return { status: "error", message: "Unexpected checkout response" };
 }
 
 export function BranchIndicator({
@@ -71,8 +89,8 @@ export function BranchIndicator({
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [checkoutState, setCheckoutState] = useState<{
     projectId: string | null;
-    rootPath: string | null;
-  }>({ projectId: null, rootPath: null });
+    lookup: CheckoutLookup;
+  }>({ projectId: null, lookup: LOADING_LOOKUP });
   const [apiBranch, setApiBranch] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -83,16 +101,41 @@ export function BranchIndicator({
     return params;
   }, [projectId]);
 
-  const fetchProjectCheckout = useCallback(async (): Promise<string | null> => {
-    if (!projectId) return null;
-    const response = await fetch(
-      `/api/projects/${encodeURIComponent(projectId)}/checkouts`,
-    );
-    if (!response.ok) return null;
-    return readCheckoutRoot(await response.json());
-  }, [projectId]);
+  // Never throws: every outcome is a CheckoutLookup the dropdown can render.
+  const fetchProjectCheckout =
+    useCallback(async (): Promise<CheckoutLookup> => {
+      if (!projectId) return { status: "none" };
+      try {
+        const response = await fetch(
+          `/api/projects/${encodeURIComponent(projectId)}/checkouts`,
+        );
+        if (!response.ok) {
+          return {
+            status: "error",
+            message: await readErrorMessage(
+              response,
+              `HTTP ${response.status}`,
+            ),
+          };
+        }
+        return readCheckoutLookup(await response.json());
+      } catch (error) {
+        return {
+          status: "error",
+          message:
+            error instanceof Error && error.message
+              ? error.message
+              : "Checkout lookup failed",
+        };
+      }
+    }, [projectId]);
+  // A lookup for a different project is stale, so the current one is loading.
+  const checkoutLookup: CheckoutLookup =
+    checkoutState.projectId === projectId
+      ? checkoutState.lookup
+      : LOADING_LOOKUP;
   const mainRepoPath =
-    checkoutState.projectId === projectId ? checkoutState.rootPath : undefined;
+    checkoutLookup.status === "ready" ? checkoutLookup.rootPath : null;
 
   // Eagerly fetch current branch on mount / project change
   useEffect(() => {
@@ -104,13 +147,9 @@ export function BranchIndicator({
         if (data.current_branch) setApiBranch(data.current_branch);
       })
       .catch(() => {});
-    fetchProjectCheckout()
-      .then((rootPath) => {
-        if (!stale) setCheckoutState({ projectId, rootPath });
-      })
-      .catch(() => {
-        if (!stale) setCheckoutState({ projectId, rootPath: null });
-      });
+    void fetchProjectCheckout().then((lookup) => {
+      if (!stale) setCheckoutState({ projectId, lookup });
+    });
     return () => {
       stale = true;
     };
@@ -134,11 +173,11 @@ export function BranchIndicator({
   // Fetch worktrees + branches when dropdown opens
   const fetchDropdownData = useCallback(async () => {
     const params = buildParams();
-    const [wtRes, brRes, statusRes, checkoutRes] = await Promise.allSettled([
+    const checkoutPromise = fetchProjectCheckout();
+    const [wtRes, brRes, statusRes] = await Promise.allSettled([
       fetch(`/api/source-control/worktrees?${params}`),
       fetch(`/api/source-control/branches?${params}`),
       fetch(`/api/source-control/status?${params}`),
-      fetchProjectCheckout(),
     ]);
 
     if (wtRes.status === "fulfilled" && wtRes.value.ok) {
@@ -155,10 +194,7 @@ export function BranchIndicator({
       const data = await statusRes.value.json();
       if (data.current_branch) setApiBranch(data.current_branch);
     }
-    setCheckoutState({
-      projectId,
-      rootPath: checkoutRes.status === "fulfilled" ? checkoutRes.value : null,
-    });
+    setCheckoutState({ projectId, lookup: await checkoutPromise });
   }, [buildParams, fetchProjectCheckout, projectId]);
 
   const handleToggle = () => {
@@ -179,7 +215,11 @@ export function BranchIndicator({
   const handleSelectBranch = async (branchName: string) => {
     setCheckoutError(null);
     if (!mainRepoPath) {
-      setCheckoutError("Repository path unavailable");
+      setCheckoutError(
+        checkoutLookup.status === "none"
+          ? NO_CHECKOUT_MESSAGE
+          : "Repository path unavailable",
+      );
       return;
     }
 
@@ -195,7 +235,9 @@ export function BranchIndicator({
       );
 
       if (!response.ok) {
-        setCheckoutError(await readCheckoutError(response, branchName));
+        setCheckoutError(
+          await readErrorMessage(response, `Failed to switch to ${branchName}`),
+        );
         return;
       }
 
@@ -267,11 +309,9 @@ export function BranchIndicator({
       </Button>
 
       {isOpen && (
-        <div
-          className="absolute right-0 bottom-full z-20 mb-1 max-h-72 w-64 overflow-y-auto rounded-md border border-border bg-background shadow-lg"
-          role="listbox"
-          aria-label="Switch branch or worktree"
-        >
+        <div className="absolute right-0 bottom-full z-20 mb-1 max-h-72 w-64 overflow-y-auto rounded-md border border-border bg-background shadow-lg">
+          {/* Notices sit beside the listbox, never inside it: a listbox may
+              only contain options and groups. */}
           {checkoutError && (
             <div
               role="alert"
@@ -281,86 +321,110 @@ export function BranchIndicator({
             </div>
           )}
 
-          {mainRepoPath === null && (
+          {checkoutLookup.status === "loading" && (
             <div
               role="status"
               className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground"
             >
-              No checkout registered for this project
+              Looking up checkout...
+            </div>
+          )}
+          {checkoutLookup.status === "none" && (
+            <div
+              role="status"
+              className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground"
+            >
+              {NO_CHECKOUT_MESSAGE}
+            </div>
+          )}
+          {checkoutLookup.status === "error" && (
+            <div
+              role="alert"
+              className="border-b border-border px-3 py-1.5 text-xs text-destructive-foreground"
+            >
+              Checkout lookup failed: {checkoutLookup.message}
             </div>
           )}
 
-          {/* Worktrees */}
-          {worktrees.length > 0 && (
-            <>
-              <div className="border-b border-border px-3 py-1 text-[length:var(--text-2xs)] tracking-wider text-muted-foreground/50 uppercase">
-                Worktrees
+          <div role="listbox" aria-label="Switch branch or worktree">
+            {/* Worktrees */}
+            {worktrees.length > 0 && (
+              <div role="group" aria-label="Worktrees">
+                <div
+                  aria-hidden="true"
+                  className="border-b border-border px-3 py-1 text-[length:var(--text-2xs)] tracking-wider text-muted-foreground/50 uppercase"
+                >
+                  Worktrees
+                </div>
+                {worktrees.map((wt) => {
+                  const isActive = worktreePath === wt.worktree_path;
+                  return (
+                    <Button
+                      key={wt.id}
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      dense
+                      role="option"
+                      aria-selected={isActive}
+                      className={cn(
+                        coarseHitAreaCls,
+                        "flex min-h-0 w-full items-center justify-start gap-2 rounded-none border-0 px-3 py-1.5 text-left text-xs font-normal whitespace-normal hover:bg-muted",
+                        isActive && "bg-accent/20 text-accent",
+                      )}
+                      onClick={() =>
+                        handleSelectWorktree(wt.worktree_path, wt.id)
+                      }
+                      title={wt.worktree_path}
+                    >
+                      <WorktreeIcon />
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">
+                          {wt.branch_name ?? "detached"}
+                        </div>
+                        <div className="truncate text-[length:var(--text-2xs)] text-muted-foreground/60">
+                          {wt.worktree_path}
+                        </div>
+                      </div>
+                    </Button>
+                  );
+                })}
               </div>
-              {worktrees.map((wt) => {
-                const isActive = worktreePath === wt.worktree_path;
-                return (
+            )}
+
+            {/* Branches */}
+            {standaloneBranches.length > 0 && (
+              <div role="group" aria-label="Branches">
+                <div
+                  aria-hidden="true"
+                  className="border-b border-border px-3 py-1 text-[length:var(--text-2xs)] tracking-wider text-muted-foreground/50 uppercase"
+                >
+                  Branches
+                </div>
+                {standaloneBranches.map((b) => (
                   <Button
-                    key={wt.id}
+                    key={b.name}
                     type="button"
                     variant="ghost"
                     size="sm"
                     dense
                     role="option"
-                    aria-selected={isActive}
+                    aria-selected={false}
                     className={cn(
                       coarseHitAreaCls,
-                      "flex min-h-0 w-full items-center justify-start gap-2 rounded-none border-0 px-3 py-1.5 text-left text-xs font-normal whitespace-normal hover:bg-muted",
-                      isActive && "bg-accent/20 text-accent",
+                      "flex min-h-0 w-full items-center justify-start gap-2 rounded-none border-0 px-3 py-1.5 text-left text-xs font-normal hover:bg-muted",
                     )}
-                    onClick={() =>
-                      handleSelectWorktree(wt.worktree_path, wt.id)
-                    }
-                    title={wt.worktree_path}
+                    onClick={() => {
+                      void handleSelectBranch(b.name);
+                    }}
                   >
-                    <WorktreeIcon />
-                    <div className="min-w-0">
-                      <div className="truncate font-medium">
-                        {wt.branch_name ?? "detached"}
-                      </div>
-                      <div className="truncate text-[length:var(--text-2xs)] text-muted-foreground/60">
-                        {wt.worktree_path}
-                      </div>
-                    </div>
+                    <BranchIcon />
+                    <span className="truncate">{b.name}</span>
                   </Button>
-                );
-              })}
-            </>
-          )}
-
-          {/* Branches */}
-          {standaloneBranches.length > 0 && (
-            <>
-              <div className="border-b border-border px-3 py-1 text-[length:var(--text-2xs)] tracking-wider text-muted-foreground/50 uppercase">
-                Branches
+                ))}
               </div>
-              {standaloneBranches.map((b) => (
-                <Button
-                  key={b.name}
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  dense
-                  role="option"
-                  aria-selected={false}
-                  className={cn(
-                    coarseHitAreaCls,
-                    "flex min-h-0 w-full items-center justify-start gap-2 rounded-none border-0 px-3 py-1.5 text-left text-xs font-normal hover:bg-muted",
-                  )}
-                  onClick={() => {
-                    void handleSelectBranch(b.name);
-                  }}
-                >
-                  <BranchIcon />
-                  <span className="truncate">{b.name}</span>
-                </Button>
-              ))}
-            </>
-          )}
+            )}
+          </div>
 
           {worktrees.length === 0 && standaloneBranches.length === 0 && (
             <div className="px-3 py-2 text-xs text-muted-foreground">

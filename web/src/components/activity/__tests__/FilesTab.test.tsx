@@ -637,4 +637,84 @@ describe("FilesTab", () => {
       );
     }
   });
+
+  describe("without a checkout on this machine", () => {
+    const noCheckout = () =>
+      Response.json(
+        {
+          detail: {
+            error: "CheckoutNotFoundError",
+            message: "no checkout for machine m-1 project test-project",
+          },
+        },
+        { status: 409 },
+      );
+
+    it("names the missing checkout when the file read is refused", async () => {
+      vi.mocked(useIsMobile).mockReturnValue(false);
+      fetchMock.mockImplementation(async (input?: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/files/git-status"))
+          return Response.json({ files: {} });
+        if (url.includes("/api/files/read")) return noCheckout();
+        if (url.includes("/api/files/tree")) {
+          return Response.json([
+            { name: "a.ts", path: "a.ts", is_dir: false, extension: "ts" },
+          ]);
+        }
+        return Response.json([]);
+      });
+
+      render(<FilesTab projectId="test-project" />);
+      fireEvent.click(await screen.findByText("a.ts"));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(
+        "No checkout for this project on this machine",
+      );
+      expect(screen.queryByText("Failed to load file")).toBeNull();
+      expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
+    });
+
+    it("explains the empty tree when the root listing is refused", async () => {
+      vi.mocked(useIsMobile).mockReturnValue(false);
+      fetchMock.mockImplementation(async (input?: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/files/git-status"))
+          return Response.json({ files: {} });
+        if (url.includes("/api/files/tree")) return noCheckout();
+        return Response.json([]);
+      });
+
+      render(<FilesTab projectId="test-project" />);
+
+      expect(
+        await screen.findByText("No checkout for this project on this machine"),
+      ).toBeInTheDocument();
+      expect(screen.queryAllByRole("treeitem")).toHaveLength(0);
+    });
+
+    it("keeps the generic empty state for other tree failures", async () => {
+      vi.mocked(useIsMobile).mockReturnValue(false);
+      fetchMock.mockImplementation(async (input?: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/files/git-status"))
+          return Response.json({ files: {} });
+        if (url.includes("/api/files/tree"))
+          return new Response("boom", { status: 500 });
+        return Response.json([]);
+      });
+
+      render(<FilesTab projectId="test-project" />);
+
+      expect(
+        await screen.findByText(
+          "Project files appear here once a project is loaded",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("No checkout for this project on this machine"),
+      ).toBeNull();
+    });
+  });
 });

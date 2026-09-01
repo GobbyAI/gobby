@@ -79,6 +79,7 @@ export default function App() {
     isLoadingMessages,
     acpAvailableCommands,
     transportError,
+    checkoutRequired,
     contextUsage,
     sendMessage,
     ensureMainSession,
@@ -571,6 +572,11 @@ export default function App() {
                 (project) => project.id === effectiveProjectId,
               )?.name ?? null
             }
+            projectHasCheckout={
+              projectOptions.find(
+                (project) => project.id === effectiveProjectId,
+              )?.hasCheckout !== false
+            }
             showPlanRef={showPlanRef}
             planPendingVariant={settings.planPendingVariant}
             chat={{
@@ -584,6 +590,7 @@ export default function App() {
               isLoadingMessages,
               isConnected,
               isReconnecting,
+              checkoutRequired,
               contextUsage,
               onSend: handleSendMessage,
               addSystemMessage,

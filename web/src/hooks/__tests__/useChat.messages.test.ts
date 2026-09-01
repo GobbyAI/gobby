@@ -1212,4 +1212,40 @@ describe("useChat message and conversation state", () => {
     expect(result.current.dbSessionId).toBe("db-session-continued");
     expect(result.current.selectedProvider).toBe("codex");
   });
+
+  it("flags a checkout_required error frame until the project changes", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+    act(() => result.current.setProjectIdRef("proj-a"));
+    expect(result.current.checkoutRequired).toBe(false);
+
+    act(() => {
+      ws.simulateMessage({ type: "error", message: "unrelated failure" });
+    });
+    expect(result.current.checkoutRequired).toBe(false);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "error",
+        code: "checkout_required",
+        message: "No checkout for this project on this machine",
+      });
+    });
+    expect(result.current.checkoutRequired).toBe(true);
+    expect(
+      result.current.messages.some(
+        (message) =>
+          message.role === "system" &&
+          message.content === "No checkout for this project on this machine",
+      ),
+    ).toBe(true);
+
+    // Re-asserting the same project keeps the flag; a new project resets it.
+    act(() => result.current.setProjectIdRef("proj-a"));
+    expect(result.current.checkoutRequired).toBe(true);
+    act(() => result.current.setProjectIdRef("proj-b"));
+    expect(result.current.checkoutRequired).toBe(false);
+  });
 });
