@@ -27,7 +27,11 @@ def _stub_non_schema_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     monkeypatch.setattr(
         sync_registry,
         "sync_bundled_content_to_db",
-        lambda db: {"total_synced": 0, "errors": []},
+        lambda db, *, only=None, skip_types=None: {
+            "total_synced": 0,
+            "errors": [],
+            "details": {},
+        },
     )
     monkeypatch.setattr(
         install_setup_srt,
