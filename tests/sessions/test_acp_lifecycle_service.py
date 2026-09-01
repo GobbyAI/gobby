@@ -25,6 +25,12 @@ from gobby.sessions.acp_lifecycle import (
     ACPWorkspaceIdentityError,
     session_confinement_roots,
 )
+from gobby.storage.project_checkouts import (
+    CheckoutNotFoundError,
+    CheckoutSentinelRejectedError,
+    MissingMachineContextError,
+)
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 
 pytestmark = pytest.mark.unit
 
@@ -372,6 +378,79 @@ def test_default_confinement_roots_come_from_project_and_worktree_storage() -> N
     (list_kwargs,) = [call[1] for call in calls if call[0] == "list"]
     assert list_kwargs["project_id"] == "proj-9"
     assert list_kwargs["limit"] >= 1000
+
+
+_UNRESOLVED_CHECKOUT_ERRORS: tuple[Exception, ...] = (
+    CheckoutNotFoundError("no checkout for machine m-1 project proj-9"),
+    CheckoutSentinelRejectedError("checkout-free sentinel project cannot own a checkout"),
+    MissingMachineContextError("machine_id is required to resolve a checkout"),
+    MachineOwnershipMismatchError(
+        resource_kind="project_checkout",
+        resource_id="proj-9",
+        owner_machine_id="machine-a",
+        current_machine_id="machine-b",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "checkout_error", _UNRESOLVED_CHECKOUT_ERRORS, ids=lambda exc: type(exc).__name__
+)
+def test_default_confinement_roots_fail_closed_when_checkout_is_unresolved(
+    checkout_error: Exception,
+) -> None:
+    worktree_lookups: list[object] = []
+
+    def _require_root(_db: object, _project_id: str, _machine_id: str) -> str:
+        raise checkout_error
+
+    class _Worktrees:
+        def __init__(self, db: object) -> None:
+            worktree_lookups.append(db)
+
+        def list_worktrees(self, **_kwargs: Any) -> list[SimpleNamespace]:
+            return [SimpleNamespace(worktree_path="/repo/worktrees/a")]
+
+    with (
+        patch.object(acp_lifecycle, "require_root", _require_root),
+        patch.object(acp_lifecycle, "LocalWorktreeManager", _Worktrees),
+        pytest.raises(ACPWorkspaceIdentityError) as exc_info,
+    ):
+        session_confinement_roots(
+            cast(Any, SimpleNamespace(db=object())),
+            cast(Any, _FakeSession(project_id="proj-9")),
+        )
+
+    assert exc_info.value.__cause__ is checkout_error
+    assert str(checkout_error) in str(exc_info.value)
+    assert worktree_lookups == []
+
+
+class _StorageBackedFakeSessionManager(_FakeSessionManager):
+    db: object = object()
+
+
+@pytest.mark.asyncio
+async def test_close_fails_closed_when_session_checkout_is_unresolved() -> None:
+    session_manager = _StorageBackedFakeSessionManager(_FakeSession())
+    backend = _FakeBackend(capabilities={"close": True})
+    service = ACPSessionLifecycleService(
+        session_manager=cast(Any, session_manager),
+        runtime_manager=cast(Any, _FakeRuntimeManager(backend)),
+    )
+
+    def _missing(_db: object, _project_id: str, _machine_id: str) -> str:
+        raise CheckoutNotFoundError("no checkout for machine m-1 project proj-1")
+
+    with (
+        patch.object(acp_lifecycle, "require_root", _missing),
+        pytest.raises(ACPWorkspaceIdentityError, match="cannot be resolved"),
+    ):
+        await service.close("sess-1")
+
+    assert backend.clients == []
+    assert backend.closed == []
+    assert session_manager.events == []
 
 
 def test_service_defaults_to_storage_backed_confinement() -> None:

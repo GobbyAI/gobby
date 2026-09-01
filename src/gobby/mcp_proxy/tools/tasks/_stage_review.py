@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.build.coordinator import summary_allows_cross_project_coordinator
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._context import (
+    CHECKOUT_RESOLUTION_ERRORS,
+    RegistryContext,
+    checkout_unresolved_error,
+)
 from gobby.mcp_proxy.tools.tasks._dispatch_mutex_release import (
     _current_agent_dispatch_mutex_run_id,
     _release_current_agent_dispatch_mutex,
@@ -261,6 +265,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                 ),
                 scope_justification=scope_justification,
             )
+        except CHECKOUT_RESOLUTION_ERRORS as exc:
+            return checkout_unresolved_error(exc)
         except RuntimeError as exc:
             return {
                 "success": False,

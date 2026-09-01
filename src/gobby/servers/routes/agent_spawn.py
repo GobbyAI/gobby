@@ -18,7 +18,13 @@ from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.agents.sandbox import web_chat_sandbox_policy_hash
 from gobby.providers.capabilities.apply import SpeedResultData
 from gobby.servers.routes.configuration_context import require_config_snapshot
+from gobby.storage.project_checkouts import (
+    CheckoutNotFoundError,
+    CheckoutSentinelRejectedError,
+    MissingMachineContextError,
+)
 from gobby.storage.task_dependencies import TaskDependencyManager
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 from gobby.telemetry.instruments import inc_counter
 
@@ -27,6 +33,15 @@ if TYPE_CHECKING:
     from gobby.storage.tasks._models import Task
 
 logger = logging.getLogger(__name__)
+
+# Checkout resolution failures `require_root` raises; each is a client-fixable
+# request problem (register the checkout), not a server fault.
+_CHECKOUT_RESOLUTION_ERRORS: tuple[type[Exception], ...] = (
+    CheckoutNotFoundError,
+    CheckoutSentinelRejectedError,
+    MissingMachineContextError,
+    MachineOwnershipMismatchError,
+)
 
 # ---------------------------------------------------------------------------
 # Request / Response models
@@ -322,7 +337,13 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         from gobby.storage.project_checkouts import require_root
         from gobby.utils.machine_id import require_machine_id
 
-        project_path = require_root(task_manager.db, effective_project_id, require_machine_id())
+        try:
+            project_path = require_root(task_manager.db, effective_project_id, require_machine_id())
+        except _CHECKOUT_RESOLUTION_ERRORS as exc:
+            logger.info(
+                "Agent spawn refused for task %s: checkout unresolved: %s", req.task_id, exc
+            )
+            return AgentSpawnResponse(success=False, error=f"checkout_unresolved: {exc}")
 
         result = await spawn_agent_impl(
             prompt=effective_prompt,

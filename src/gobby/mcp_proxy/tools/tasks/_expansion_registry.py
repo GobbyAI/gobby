@@ -8,7 +8,11 @@ from typing import Any
 
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._context import (
+    CHECKOUT_RESOLUTION_ERRORS,
+    RegistryContext,
+    checkout_unresolved_error,
+)
 from gobby.mcp_proxy.tools.tasks._expansion_runtime import (
     _build_expansion_service,
     _summarize_run,
@@ -273,6 +277,8 @@ def _register_start_tool(registry: InternalToolRegistry, ctx: RegistryContext) -
                 plan_file,
                 reset_output=reset_output,
             )
+        except CHECKOUT_RESOLUTION_ERRORS as exc:
+            return checkout_unresolved_error(exc)
         except (TaskNotFoundError, ValueError) as exc:
             return {"error": str(exc)}
 
@@ -660,10 +666,13 @@ def _register_qa_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> 
         if run is None:
             return {"ok": False, "error": f"Expansion run {run_id} not found"}
         repo_project_id = project_id or run.project_id
-        repo_path = ctx.get_project_repo_path(
-            repo_project_id,
-            ctx.checkout_machine_id(repo_project_id, get_current_session_id()),
-        )
+        try:
+            repo_path = ctx.get_project_repo_path(
+                repo_project_id,
+                ctx.checkout_machine_id(repo_project_id, get_current_session_id()),
+            )
+        except CHECKOUT_RESOLUTION_ERRORS as exc:
+            return {"ok": False, **checkout_unresolved_error(exc)}
         return run_qa_coverage(
             task_manager=ctx.task_manager,
             run=run,
@@ -755,10 +764,13 @@ def _register_plan_validation_tool(registry: InternalToolRegistry, ctx: Registry
         expected_project_id = ctx.get_current_project_id()
         project_context = get_project_context()
         if project_context is None and expected_project_id:
-            repo_path = ctx.get_project_repo_path(
-                expected_project_id,
-                ctx.checkout_machine_id(expected_project_id, get_current_session_id()),
-            )
+            try:
+                repo_path = ctx.get_project_repo_path(
+                    expected_project_id,
+                    ctx.checkout_machine_id(expected_project_id, get_current_session_id()),
+                )
+            except CHECKOUT_RESOLUTION_ERRORS as exc:
+                return checkout_unresolved_error(exc)
             project_context = {
                 "id": expected_project_id,
                 "project_path": repo_path,

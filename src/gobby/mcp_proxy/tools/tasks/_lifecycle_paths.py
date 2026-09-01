@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._context import (
+    CHECKOUT_RESOLUTION_ERRORS,
+    RegistryContext,
+    checkout_unresolved_error,
+)
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.project_checkouts import OverlayRegistrationRejectedError, resolve_operation_root
@@ -52,7 +56,11 @@ def _lifecycle_checkout_root(
     overlay_path: str | None,
 ) -> str | None:
     session = ctx.session_manager.get(session_id)
-    machine_id = ctx.checkout_machine_id(project_id, session.id if session is not None else None)
+    machine_id = (
+        ctx.session_checkout_machine_id(project_id, session, session_ref=session_id)
+        if session is not None
+        else ctx.checkout_machine_id(project_id)
+    )
     if overlay_path:
         try:
             return resolve_operation_root(
@@ -157,6 +165,8 @@ def register_release_task_paths(
                     project_id=project_id,
                 ),
             )
+        except CHECKOUT_RESOLUTION_ERRORS as exc:
+            return checkout_unresolved_error(exc)
         except ValueError as exc:
             return task_error(str(exc), TaskToolErrorCode.TASK_INVALID_STATUS)
         if checkout_root is None:
@@ -281,6 +291,8 @@ def register_release_task_paths(
                 project_id=task.project_id,
                 overlay_path=session_worktree_path or artifacts.worktree_path,
             )
+        except CHECKOUT_RESOLUTION_ERRORS as exc:
+            return checkout_unresolved_error(exc)
         except ValueError as exc:
             return task_error(str(exc), TaskToolErrorCode.TASK_INVALID_STATUS)
         if repo_path is None:

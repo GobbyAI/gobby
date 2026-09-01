@@ -411,6 +411,36 @@ class TestSpawnAgent:
         assert "sandbox" not in kwargs
         assert "Counter agent_spawns_total not registered" not in caplog.text
 
+    def test_terminal_spawn_without_checkout_returns_400(
+        self,
+        client: TestClient,
+        server: HTTPServer,
+        task_manager: LocalTaskManager,
+        project_manager: Any,
+    ) -> None:
+        """A project with no checkout on this machine is a client error, not a 500."""
+        project = project_manager.create(name="spawn-no-checkout")
+        task = _create_task(task_manager, project.id, "Task without a checkout")
+        server.services.agent_runner = MagicMock()
+
+        with (
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"id": project.id},
+            ),
+            patch("gobby.workflows.agent_resolver.resolve_agent", return_value=None),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+                new=AsyncMock(),
+            ) as mock_spawn,
+        ):
+            response = client.post("/api/agents/spawn", json={"task_id": task.id})
+
+        assert response.status_code == 400
+        assert "checkout_unresolved" in response.json()["detail"]
+        assert "no checkout for machine" in response.json()["detail"]
+        mock_spawn.assert_not_awaited()
+
     def test_spawn_route_supplies_owning_completion_registry(
         self,
         client: TestClient,

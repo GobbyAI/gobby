@@ -4304,6 +4304,7 @@ async def test_dispatch_spawn_fails_closed_without_checkout(  # tdd-red window
     sync_bundled_agents(temp_db)
     machine_id = insert_isolated_machine(temp_db)
     patch_local_machine_id(monkeypatch, machine_id)
+    monkeypatch.setattr("gobby.agents.launcher_session.require_machine_id", lambda: machine_id)
     project = LocalProjectManager(temp_db).create("spawn-missing-checkout")
     task_manager = LocalTaskManager(temp_db)
     task = task_manager.create_task(
@@ -4323,12 +4324,82 @@ async def test_dispatch_spawn_fails_closed_without_checkout(  # tdd-red window
         agent_runner=SimpleNamespace(),
     )
 
-    with pytest.raises((CheckoutNotFoundError, DispatchSpawnFailed)):
+    with pytest.raises(DispatchSpawnFailed) as exc_info:
         await spawn_agent(
             SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go"),
             db=temp_db,
             services=services,
         )
+
+    assert str(exc_info.value).startswith("checkout_unresolved:")
+    assert isinstance(exc_info.value.__cause__, CheckoutNotFoundError)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_spawn_resolves_checkout_root_once_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import spawn as dispatch_spawn
+    from gobby.dispatch.spawn import spawn_agent
+    from gobby.storage.sessions import SessionManager
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    sync_bundled_agents(temp_db)
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    monkeypatch.setattr(
+        "gobby.agents.launcher_session.require_machine_id", lambda: isolated.machine_id
+    )
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=isolated.project.id,
+        title="Spawn resolves the checkout once",
+        task_type="task",
+        category="code",
+        allow_automation=True,
+        isolation="none",
+        validation_criteria="Test task completion is observable.",
+    )
+    loop_thread = threading.get_ident()
+    resolver_threads: list[int] = []
+    real_resolve = dispatch_spawn._spawn_operation_root
+
+    def recording_resolve(db: HubDatabase, project_id: str, artifacts: object) -> str:
+        resolver_threads.append(threading.get_ident())
+        return real_resolve(db, project_id, artifacts)
+
+    monkeypatch.setattr(dispatch_spawn, "_spawn_operation_root", recording_resolve)
+    captured: dict[str, object] = {}
+
+    async def fake_spawn_agent_impl(**kwargs: Any) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"success": True, "run_id": "bb37aedd-eea4-5c79-a039-aa80a4a17196"}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=SessionManager(temp_db),
+        agent_runner=SimpleNamespace(),
+    )
+
+    run_id = await spawn_agent(
+        SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go"),
+        db=temp_db,
+        services=services,
+    )
+
+    assert run_id == "bb37aedd-eea4-5c79-a039-aa80a4a17196"
+    assert captured["project_path"] == isolated.root_path
+    assert len(resolver_threads) == 1
+    assert resolver_threads[0] != loop_thread
 
 
 @pytest.mark.asyncio

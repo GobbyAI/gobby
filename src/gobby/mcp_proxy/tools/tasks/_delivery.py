@@ -13,7 +13,11 @@ import psycopg
 
 from gobby.build.delivery import normalize_github_repo, resolve_project_source_repo
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._context import (
+    CHECKOUT_RESOLUTION_ERRORS,
+    CHECKOUT_UNRESOLVED,
+    RegistryContext,
+)
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.delivery import TaskDeliveryStateManager
 
@@ -304,7 +308,10 @@ def create_delivery_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     target_branch=target_branch,
                     last_error=message,
                 )
-            return {"ok": False, "task_id": resolved_id, "error": message}
+            failure: dict[str, Any] = {"ok": False, "task_id": resolved_id, "error": message}
+            if isinstance(exc, CHECKOUT_RESOLUTION_ERRORS):
+                failure["error_type"] = CHECKOUT_UNRESOLVED
+            return failure
 
     registry.register(
         name="open_delivery_pr",

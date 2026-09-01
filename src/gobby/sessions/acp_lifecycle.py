@@ -27,7 +27,13 @@ from gobby.sessions.acp_session_mapping import (
     normalize_additional_directories,
     status_for_close,
 )
-from gobby.storage.project_checkouts import require_root
+from gobby.storage.project_checkouts import (
+    CheckoutNotFoundError,
+    CheckoutSentinelRejectedError,
+    MissingMachineContextError,
+    require_root,
+)
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.storage.worktrees import LocalWorktreeManager
 
 if TYPE_CHECKING:
@@ -43,6 +49,15 @@ type ConfinementRoots = Callable[["Session"], Sequence[str]]
 # Every worktree row of the project participates in confinement; the storage
 # default of 50 would silently drop older registrations.
 _CONFINEMENT_WORKTREE_LIMIT = 10_000
+
+# Checkout resolution failures `require_root` raises. Each one means the session's
+# confinement cannot be proven, so the lifecycle fails closed on them.
+_CHECKOUT_RESOLUTION_ERRORS: tuple[type[Exception], ...] = (
+    CheckoutNotFoundError,
+    CheckoutSentinelRejectedError,
+    MissingMachineContextError,
+    MachineOwnershipMismatchError,
+)
 
 
 class ACPLifecycleError(Exception):
@@ -87,7 +102,13 @@ def _realpath(path: str) -> Path:
 def session_confinement_roots(session_manager: SessionManager, session: Session) -> tuple[str, ...]:
     """Return the project root plus every worktree registered for the session's project."""
     db = session_manager.db
-    roots = [require_root(db, session.project_id, session.machine_id)]
+    try:
+        project_root = require_root(db, session.project_id, session.machine_id)
+    except _CHECKOUT_RESOLUTION_ERRORS as exc:
+        raise ACPWorkspaceIdentityError(
+            f"session checkout for project {session.project_id} cannot be resolved: {exc}"
+        ) from exc
+    roots = [project_root]
     worktrees = LocalWorktreeManager(db).list_worktrees(
         project_id=session.project_id, limit=_CONFINEMENT_WORKTREE_LIMIT
     )

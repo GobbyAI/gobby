@@ -36,6 +36,18 @@ from gobby.dispatch.spawn_errors import DispatchSpawnFailed, DispatchSpawnUnavai
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import (
+    CheckoutNotFoundError,
+    CheckoutSentinelRejectedError,
+    MissingMachineContextError,
+    OverlayRegistrationRejectedError,
+    require_root,
+    resolve_operation_root,
+)
+from gobby.storage.workspace_machine_scope import (
+    MachineOwnershipMismatchError,
+    require_local_machine_id,
+)
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -124,10 +136,18 @@ def _prepare_plan_adversary_evidence(
     return transport, service, prepared.evidence_id
 
 
-def _spawn_operation_root(db: HubDatabase, project_id: str, artifacts: object) -> str:
-    from gobby.storage.project_checkouts import require_root, resolve_operation_root
-    from gobby.storage.workspace_machine_scope import require_local_machine_id
+# Checkout resolution failures are terminal for the spawn: retrying the heartbeat
+# cannot register a checkout, so they escalate as `DispatchSpawnFailed`.
+_CHECKOUT_RESOLUTION_ERRORS: tuple[type[Exception], ...] = (
+    CheckoutNotFoundError,
+    OverlayRegistrationRejectedError,
+    CheckoutSentinelRejectedError,
+    MissingMachineContextError,
+    MachineOwnershipMismatchError,
+)
 
+
+def _spawn_operation_root(db: HubDatabase, project_id: str, artifacts: object) -> str:
     machine_id = require_local_machine_id(
         None, resource_kind="project_checkout", resource_id=project_id
     )
@@ -135,6 +155,14 @@ def _spawn_operation_root(db: HubDatabase, project_id: str, artifacts: object) -
     if overlay:
         return resolve_operation_root(db, project_id, machine_id, overlay_path=str(overlay))
     return require_root(db, project_id, machine_id)
+
+
+async def _resolve_spawn_operation_root(db: HubDatabase, project_id: str, artifacts: object) -> str:
+    """Resolve the spawn root off the event loop; an unresolved checkout is terminal."""
+    try:
+        return await asyncio.to_thread(_spawn_operation_root, db, project_id, artifacts)
+    except _CHECKOUT_RESOLUTION_ERRORS as exc:
+        raise DispatchSpawnFailed(f"checkout_unresolved:{exc}") from exc
 
 
 def _expire_failed_adversary_spawn(
@@ -212,7 +240,6 @@ async def spawn_agent(
         raise DispatchSpawnFailed("project_id_missing")
 
     from gobby.agents.launcher_session import get_or_create_launcher_session
-    from gobby.storage.tasks._artifacts import TaskArtifactManager
     from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
 
     try:
@@ -235,10 +262,6 @@ async def spawn_agent(
     if skill_composition.failure_reason is not None:
         raise DispatchSpawnFailed(skill_composition.failure_reason)
     agent_body = _with_skill_allowed_tools(agent_body, skill_composition.allowed_tools)
-
-    project_path = _spawn_operation_root(
-        db, project_id, TaskArtifactManager(db).get_artifacts(action.task_id)
-    )
 
     parent_session_id = get_or_create_launcher_session(
         session_manager,
@@ -311,7 +334,7 @@ async def spawn_agent(
         artifacts=artifacts,
         isolation=effective_isolation,
     )
-    project_path = _spawn_operation_root(db, project_id, artifacts)
+    project_path = await _resolve_spawn_operation_root(db, project_id, artifacts)
     worktree_id, clone_id = _spawn_workspace_ids(
         task=task,
         action=action,

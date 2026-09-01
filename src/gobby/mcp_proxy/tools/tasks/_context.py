@@ -7,9 +7,15 @@ used across task tool modules.
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from gobby.storage.project_checkouts import require_root
+from gobby.storage.project_checkouts import (
+    CheckoutNotFoundError,
+    CheckoutSentinelRejectedError,
+    MissingMachineContextError,
+    OverlayRegistrationRejectedError,
+    require_root,
+)
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
@@ -31,7 +37,25 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.review_learning.service import ReviewLearningService
     from gobby.storage.hub.protocol import HubDatabase
+    from gobby.storage.session_models import Session
     from gobby.tasks.validation import TaskValidator
+
+CHECKOUT_UNRESOLVED = "checkout_unresolved"
+
+# Checkout resolution failures a tool body turns into its typed envelope.
+# `MachineOwnershipMismatchError` is deliberately absent: `InternalToolRegistry.call`
+# already returns its `to_dict()` envelope at the tool boundary.
+CHECKOUT_RESOLUTION_ERRORS: tuple[type[ValueError], ...] = (
+    CheckoutNotFoundError,
+    OverlayRegistrationRejectedError,
+    CheckoutSentinelRejectedError,
+    MissingMachineContextError,
+)
+
+
+def checkout_unresolved_error(exc: ValueError) -> dict[str, Any]:
+    """Return the typed tool failure for a checkout that cannot be resolved."""
+    return {"success": False, "error": str(exc), "error_type": CHECKOUT_UNRESOLVED}
 
 
 @dataclass
@@ -127,22 +151,29 @@ class RegistryContext:
 
     def checkout_machine_id(self, project_id: str, session_ref: str | None = None) -> str:
         """Return the session machine when present, else the local daemon machine."""
-        if session_ref:
-            session_id = self.resolve_session_id(session_ref)
-            session = self.session_manager.get(session_id)
-            if session is None or not session.machine_id:
-                from gobby.storage.project_checkouts import MissingMachineContextError
-
-                raise MissingMachineContextError(
-                    f"session {session_ref} has no machine_id for project checkout"
-                )
+        if not session_ref:
             return require_local_machine_id(
-                session.machine_id,
-                resource_kind="project_checkout",
-                resource_id=project_id,
+                None, resource_kind="project_checkout", resource_id=project_id
+            )
+        session = self.session_manager.get(self.resolve_session_id(session_ref))
+        return self.session_checkout_machine_id(project_id, session, session_ref=session_ref)
+
+    def session_checkout_machine_id(
+        self,
+        project_id: str,
+        session: "Session | None",
+        *,
+        session_ref: str | None = None,
+    ) -> str:
+        """Return the checkout machine for a session row the caller already holds."""
+        if session is None or not session.machine_id:
+            raise MissingMachineContextError(
+                f"session {session_ref or '<unknown>'} has no machine_id for project checkout"
             )
         return require_local_machine_id(
-            None, resource_kind="project_checkout", resource_id=project_id
+            session.machine_id,
+            resource_kind="project_checkout",
+            resource_id=project_id,
         )
 
     def get_current_project_id(self) -> str | None:
