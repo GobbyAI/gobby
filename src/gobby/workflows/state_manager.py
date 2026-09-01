@@ -223,6 +223,31 @@ class SessionVariableManager:
 
         return self._mutate_variables(session_id, mutate)
 
+    def merge_existing_variables(self, session_id: str, updates: dict[str, Any]) -> bool:
+        """Atomically merge updates without creating a missing session row."""
+        if not updates:
+            return False
+
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
+            row = conn.execute(
+                "SELECT variables FROM session_variables WHERE session_id = %s",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return False
+
+            variables = _decode_variables_payload(row["variables"])
+            merged = {**variables, **updates}
+            if merged == variables:
+                return False
+
+            conn.execute(
+                "UPDATE session_variables SET variables = %s, updated_at = %s "
+                "WHERE session_id = %s",
+                (_encode_variables_payload(merged), datetime.now(UTC).isoformat(), session_id),
+            )
+            return True
+
     def adjust_counter_and_derive_boolean(
         self,
         session_id: str,
