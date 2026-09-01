@@ -188,6 +188,7 @@ class AgentLifecycleMonitor:
             run_db=self._run_db,
             terminal_manager=self._terminal_services.manager,
             runtime_registry=self._terminal_services.registry,
+            session_manager=self._session_manager,
             spawn_in_doubt_seconds=150.0,
         )
         self._health_monitor = AgentHealthMonitor(
