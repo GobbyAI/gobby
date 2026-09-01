@@ -493,10 +493,52 @@ class TestAutoLinkCommits:
             "--reverse",
             "--pretty=format:%h|%s",
             "feature",
+            "HEAD",
             "--since=2026-07-01T00:00:00+00:00",
         ]
         mock_task_manager.link_commit.assert_not_called()
         mock_task_manager.update_task.assert_not_called()
+
+    def test_missing_isolation_branch_falls_back_to_head(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        task = MagicMock(id="task-uuid", seq_num=42, commits=[])
+        mock_task_manager.get_task.return_value = task
+
+        with (
+            patch("gobby.tasks.commits._resolve_branch_for_task", return_value="wt-epic-gone"),
+            patch("gobby.tasks.commits.run_git_command") as mock_git,
+        ):
+            # The epic's worktree row outlived its branch: the first log fails outright.
+            mock_git.side_effect = [None, "head111|[gobby-#42] on the checkout\n"]
+
+            result = resolve_task_tagged_commits(
+                mock_task_manager,
+                task_id="task-uuid",
+                since="2026-07-01T00:00:00+00:00",
+                cwd="/tmp/repo",
+                project_name="gobby",
+            )
+
+        assert result == ["head111"]
+        assert [call.args[0] for call in mock_git.call_args_list] == [
+            [
+                "git",
+                "log",
+                "--reverse",
+                "--pretty=format:%h|%s",
+                "wt-epic-gone",
+                "HEAD",
+                "--since=2026-07-01T00:00:00+00:00",
+            ],
+            [
+                "git",
+                "log",
+                "--reverse",
+                "--pretty=format:%h|%s",
+                "--since=2026-07-01T00:00:00+00:00",
+            ],
+        ]
 
     def test_uuid_task_filter_accepts_matching_seq_ref(
         self,

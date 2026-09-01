@@ -48,3 +48,7 @@ class RegistryContext:
         from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 
         return resolve_task_id_for_mcp(self.task_manager, ref)
+
+    def resolve_worktree_id(self, ref: str) -> str:
+        """Resolve worktree reference (UUID or unique id prefix) to UUID."""
+        return self.worktree_storage.resolve_reference(ref)

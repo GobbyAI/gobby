@@ -602,14 +602,20 @@ def _task_tagged_git_history(
     working_dir = Path(cwd) if cwd else Path.cwd()
     resolved_project_name = project_name or get_current_project_name()
     git_cmd = ["git", "log", "--reverse", "--pretty=format:%h|%s"]
-    if task_id:
-        branch = _resolve_branch_for_task(task_manager, task_id)
-        if branch:
-            git_cmd.append(branch)
-    if since:
-        git_cmd.append(f"--since={since}")
-
-    log_output = run_git_command(git_cmd, cwd=working_dir)
+    branch = _resolve_branch_for_task(task_manager, task_id) if task_id else None
+    since_args = [f"--since={since}"] if since else []
+    if branch:
+        # The isolation branch carries worktree-era commits, but its row outlives the
+        # branch: an ancestor epic's worktree record still named wt-epic-19651 after
+        # that branch had merged into 0.5.0, so a log confined to it missed every
+        # [gobby-#21451] commit made on the base checkout (#21530). Union HEAD in;
+        # the task-ref filter below already keeps foreign commits out.
+        log_output = run_git_command([*git_cmd, branch, "HEAD", *since_args], cwd=working_dir)
+        if log_output is None:
+            # A deleted branch fails the whole log; the checkout is still worth scanning.
+            log_output = run_git_command([*git_cmd, *since_args], cwd=working_dir)
+    else:
+        log_output = run_git_command([*git_cmd, *since_args], cwd=working_dir)
     if not log_output:
         return []
 

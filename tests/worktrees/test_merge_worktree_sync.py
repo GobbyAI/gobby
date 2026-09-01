@@ -70,6 +70,7 @@ def _make_registry_context(
 ):
     """Create a mock RegistryContext with worktree storage and git manager."""
     ctx = MagicMock()
+    ctx.resolve_worktree_id.side_effect = lambda ref: ref
     wt = MagicMock()
     wt.worktree_path = worktree_path
     wt.branch_name = branch

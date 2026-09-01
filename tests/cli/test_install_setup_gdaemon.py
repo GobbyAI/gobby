@@ -27,7 +27,7 @@ def _stub_non_schema_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     from gobby.cli.installers import ide_config, tmux_config
 
     def sync_bundled(*args: object, **kwargs: object) -> dict[str, object]:
-        return {"total_synced": 0, "errors": []}
+        return {"total_synced": 0, "errors": [], "details": {}}
 
     monkeypatch.setattr(
         sync_registry,
