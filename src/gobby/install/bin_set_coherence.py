@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Mapping
 from contextlib import ExitStack
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from gobby.install import bin_freshness_promotion
 from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
+from gobby.install.bin_freshness_models import managed_bin_specs
+from gobby.install.version_probe import probe_native_bin_version
 from gobby.storage.schema_identity_pin import (
     SchemaIdentityError,
     stamp_bytes,
@@ -27,6 +33,14 @@ _PROBE_TIMEOUT_SECONDS = 10
 
 class BinarySetCoherenceError(RuntimeError):
     """Raised when a workspace binary promotion would create a mixed set."""
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspacePromotionMetadata:
+    """Install provenance written after a complete workspace set promotes."""
+
+    install_method: str
+    target: str
 
 
 def probe_set_member_identity(binary: Path, member: str) -> dict[str, int | str]:
@@ -68,6 +82,7 @@ def promote_workspace_binary_set(
     candidates: Mapping[str, Path],
     *,
     bin_dir: Path,
+    metadata: WorkspacePromotionMetadata | None = None,
 ) -> None:
     """Promote a coherent partial or complete workspace binary set."""
     ordered = _validate_candidates(candidates)
@@ -75,6 +90,10 @@ def promote_workspace_binary_set(
         member: probe_set_member_identity(candidates[member], member) for member in ordered
     }
     complete_set = tuple(ordered) == SET_MEMBERS
+    if metadata is not None and not complete_set:
+        raise BinarySetCoherenceError(
+            "workspace promotion metadata requires all four binary set members"
+        )
     if complete_set:
         _require_candidate_agreement(identities)
     else:
@@ -93,9 +112,12 @@ def promote_workspace_binary_set(
                 bin_freshness_promotion.stage_and_promote_binary_file(
                     candidates[member],
                     destination=bin_dir / native_bin_name(member),
+                    prepare_staged=_codesign_workspace_binary,
                 )
                 promoted.append(member)
             if complete_set:
+                if metadata is not None:
+                    _write_promotion_metadata(bin_dir, metadata)
                 _write_identity_stamp(bin_dir, identities[SET_MEMBERS[0]])
     except Exception as exc:
         unpromoted = [member for member in ordered if member not in promoted]
@@ -104,6 +126,54 @@ def promote_workspace_binary_set(
             f"promoted: {_member_list(promoted)}; "
             f"unpromoted: {_member_list(unpromoted)}; cause: {exc}"
         ) from exc
+
+
+def _codesign_workspace_binary(binary: Path) -> None:
+    """Ad-hoc sign a staged workspace binary before inode promotion on macOS."""
+    if sys.platform != "darwin" or shutil.which("codesign") is None:
+        return
+    try:
+        result = subprocess.run(  # nosec B603 - fixed platform-tool arguments
+            ["codesign", "-f", "-s", "-", str(binary)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise BinarySetCoherenceError(
+            f"{binary.name} ad-hoc signing timed out after 30 seconds"
+        ) from exc
+    except OSError as exc:
+        raise BinarySetCoherenceError(
+            f"{binary.name} ad-hoc signing could not start: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise BinarySetCoherenceError(f"{binary.name} ad-hoc signing failed: {detail}")
+
+
+def _write_promotion_metadata(bin_dir: Path, metadata: WorkspacePromotionMetadata) -> None:
+    installed_at = datetime.now(UTC).isoformat()
+    specs = {spec.name: spec for spec in managed_bin_specs()}
+    for member in SET_MEMBERS:
+        version = probe_native_bin_version(bin_dir / native_bin_name(member))
+        if version is None:
+            raise BinarySetCoherenceError(f"installed {member} did not report a version")
+        spec = specs[member]
+        sidecar = {
+            "install_method": metadata.install_method,
+            "install_source_url": None,
+            "installed_version": version,
+            "installed_at": installed_at,
+            "target": metadata.target,
+        }
+        _write_atomic_bytes(bin_dir / spec.stamp_name, f"{version}\n".encode(), mode=0o644)
+        _write_atomic_bytes(
+            bin_dir / spec.sidecar_name,
+            (json.dumps(sidecar, sort_keys=True) + "\n").encode(),
+            mode=0o644,
+        )
 
 
 def _validate_candidates(candidates: Mapping[str, Path]) -> list[str]:
@@ -176,18 +246,22 @@ def _installed_identity(bin_dir: Path) -> dict[str, int | str] | None:
 
 
 def _write_identity_stamp(bin_dir: Path, identity: dict[str, int | str]) -> None:
+    _write_atomic_bytes(bin_dir / IDENTITY_STAMP_NAME, stamp_bytes(identity), mode=0o644)
+
+
+def _write_atomic_bytes(path: Path, content: bytes, *, mode: int) -> None:
     fd, temporary = tempfile.mkstemp(
-        dir=str(bin_dir),
-        prefix=".gdaemon-schema-identity-",
+        dir=str(path.parent),
+        prefix=f".{path.name}-",
         suffix=".tmp",
     )
     try:
         with os.fdopen(fd, "wb") as fileobj:
-            fileobj.write(stamp_bytes(identity))
+            fileobj.write(content)
             fileobj.flush()
             os.fsync(fileobj.fileno())
-        os.chmod(temporary, 0o644)
-        os.replace(temporary, bin_dir / IDENTITY_STAMP_NAME)
+            os.fchmod(fileobj.fileno(), mode)
+        os.replace(temporary, path)
     except Exception:
         Path(temporary).unlink(missing_ok=True)
         raise

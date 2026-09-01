@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -168,10 +169,15 @@ def test_mid_set_failure_reports_promoted_and_unpromoted_members(
         (bin_dir / name).write_text(f"old-{name}", encoding="utf-8")
     real_promote = bin_freshness_promotion.stage_and_promote_binary_file
 
-    def fail_on_ghook(source: Path, *, destination: Path) -> None:
+    def fail_on_ghook(
+        source: Path,
+        *,
+        destination: Path,
+        prepare_staged: Callable[[Path], None] | None = None,
+    ) -> None:
         if destination.name == "ghook":
             raise OSError("synthetic promote failure")
-        real_promote(source, destination=destination)
+        real_promote(source, destination=destination, prepare_staged=prepare_staged)
 
     monkeypatch.setattr(bin_freshness_promotion, "stage_and_promote_binary_file", fail_on_ghook)
 

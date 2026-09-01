@@ -39,12 +39,19 @@ def stage_and_promote_release_binary(
     _stage_and_promote(binary_name, bin_dir=bin_dir, write_staged=write_staged)
 
 
-def stage_and_promote_binary_file(source: Path, *, destination: Path) -> None:
+def stage_and_promote_binary_file(
+    source: Path,
+    *,
+    destination: Path,
+    prepare_staged: Callable[[Path], None] | None = None,
+) -> None:
     """Copy a local binary to staging and atomically promote it."""
 
     def write_staged(staged_binary: Path) -> None:
         with source.open("rb") as fileobj:
             _write_staged_binary(staged_binary, fileobj)
+        if prepare_staged is not None:
+            prepare_staged(staged_binary)
 
     _stage_and_promote(destination.name, bin_dir=destination.parent, write_staged=write_staged)
 
