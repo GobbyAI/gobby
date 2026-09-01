@@ -10,6 +10,12 @@ from typing import Any, Literal
 from gobby.clones import git as clone_git
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.worktrees._merge_fallback import (
+    _non_gobby_dirty_paths,
+    _non_gobby_status_lines,
+    land_by_fast_forward,
+    staged_paths,
+)
 from gobby.storage.clones import Clone, CloneStatus
 from gobby.storage.projects import LocalProjectManager
 from gobby.utils.git import (
@@ -357,8 +363,59 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         # This avoids pushing to origin (which fails on divergent branches).
         ctx.clone_storage.mark_syncing(clone_id)
         temp_ref = f"clone-merge/{clone.branch_name}"
+        source_ref = f"refs/heads/{clone.branch_name}"
+        target_ref = f"refs/heads/{target_branch}"
+        temp_branch_ref = f"refs/heads/{temp_ref}"
         mutation_lock = get_checkout_mutation_lock(git_manager.repo_path)
         merge_succeeded = False
+
+        async def _delete_temp_branch() -> str | None:
+            try:
+                delete_result = await run_thread_to_completion(
+                    git_manager.run_git_command,
+                    ["branch", "-D", temp_ref],
+                    cwd=git_manager.repo_path,
+                    timeout=10,
+                )
+            except (subprocess.TimeoutExpired, OSError) as error:
+                return f"Failed to delete temporary branch {temp_ref}: {error}"
+            if delete_result.returncode == 0:
+                return None
+            detail = (
+                delete_result.stderr
+                or delete_result.stdout
+                or f"git exited with status {delete_result.returncode}"
+            )
+            return f"Failed to delete temporary branch {temp_ref}: {detail}"
+
+        async def _success_result(landing: str) -> dict[str, Any]:
+            nonlocal merge_succeeded
+            cleanup_after = (datetime.now(UTC) + timedelta(days=7)).isoformat()
+            ctx.clone_storage.mark_merged(
+                clone_id,
+                cleanup_after=cleanup_after,
+            )
+            merge_succeeded = True
+            merge_sha = ""
+            try:
+                sha_result = await run_thread_to_completion(
+                    git_manager.run_git_command,
+                    ["rev-parse", target_ref],
+                    cwd=git_manager.repo_path,
+                    timeout=10,
+                )
+            except (subprocess.TimeoutExpired, OSError):
+                sha_result = None
+            if sha_result is not None and sha_result.returncode == 0:
+                merge_sha = sha_result.stdout.strip()
+            return {
+                "success": True,
+                "message": f"Successfully merged {clone.branch_name} into {target_branch}",
+                "cleanup_after": cleanup_after,
+                "merge_sha": merge_sha,
+                "landing": landing,
+            }
+
         await mutation_lock.acquire()
         try:
             if cancellation_requested is not None and cancellation_requested.is_set():
@@ -369,7 +426,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                     [
                         "fetch",
                         str(clone.clone_path),
-                        f"{clone.branch_name}:refs/heads/{temp_ref}",
+                        f"{source_ref}:{temp_branch_ref}",
                     ],
                     cwd=git_manager.repo_path,
                     timeout=120,
@@ -384,13 +441,110 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                     "step": "fetch",
                 }
 
+            primary_result: dict[str, Any]
+            status_result = await run_thread_to_completion(
+                git_manager.run_git_command,
+                ["status", "--porcelain"],
+                cwd=git_manager.repo_path,
+                timeout=10,
+            )
+            if status_result.returncode != 0:
+                primary_result = {
+                    "success": False,
+                    "error": f"Failed to inspect target checkout: {status_result.stderr.strip()}",
+                    "step": "inspect-target",
+                }
+                warning = await _delete_temp_branch()
+                if warning:
+                    primary_result["warnings"] = [warning]
+                return primary_result
+            status_lines = _non_gobby_status_lines(status_result.stdout)
+            has_staged_status = any(line[0] not in {" ", "?"} for line in status_lines)
+            target_staged_paths: set[str] = set()
+            if has_staged_status:
+                try:
+                    target_staged_paths = await asyncio.to_thread(
+                        staged_paths,
+                        git_manager,
+                        git_manager.repo_path,
+                    )
+                except RuntimeError as error:
+                    primary_result = {
+                        "success": False,
+                        "error": str(error),
+                        "step": "inspect-staged",
+                    }
+                    warning = await _delete_temp_branch()
+                    if warning:
+                        primary_result["warnings"] = [warning]
+                    return primary_result
+
+            dirty_paths = _non_gobby_dirty_paths(status_result.stdout) | target_staged_paths
+            if dirty_paths:
+                incoming_result = await run_thread_to_completion(
+                    git_manager.run_git_command,
+                    ["diff", "--name-only", target_ref, temp_branch_ref],
+                    cwd=git_manager.repo_path,
+                    timeout=10,
+                )
+                if incoming_result.returncode != 0:
+                    primary_result = {
+                        "success": False,
+                        "error": (
+                            "Failed to inspect incoming merge paths: "
+                            f"{incoming_result.stderr.strip()}"
+                        ),
+                        "step": "inspect-target",
+                    }
+                    warning = await _delete_temp_branch()
+                    if warning:
+                        primary_result["warnings"] = [warning]
+                    return primary_result
+                incoming_paths = {
+                    path.strip() for path in incoming_result.stdout.splitlines() if path.strip()
+                }
+                overlapping = sorted(dirty_paths & incoming_paths)
+                if overlapping:
+                    primary_result = {
+                        "success": False,
+                        "error": "Target checkout has uncommitted changes that overlap merge",
+                        "dirty_files": _non_gobby_status_lines(status_result.stdout),
+                        "overlapping_dirty_paths": overlapping,
+                        "step": "inspect-target",
+                    }
+                    warning = await _delete_temp_branch()
+                    if warning:
+                        primary_result["warnings"] = [warning]
+                    return primary_result
+
+            if target_staged_paths:
+                current_branch = await run_thread_to_completion(
+                    git_manager.run_git_command,
+                    ["rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=git_manager.repo_path,
+                    timeout=10,
+                )
+                if current_branch.returncode != 0 or current_branch.stdout.strip() != target_branch:
+                    observed = current_branch.stdout.strip() or "unknown"
+                    primary_result = {
+                        "success": False,
+                        "error": (
+                            f"Target checkout is on '{observed}'; expected '{target_branch}' "
+                            "for staged-index landing"
+                        ),
+                        "step": "inspect-target",
+                    }
+                    warning = await _delete_temp_branch()
+                    if warning:
+                        primary_result["warnings"] = [warning]
+                    return primary_result
+
             # Step 2: Stash dirty .gobby/ sync files to prevent merge conflicts.
             # Record the stash object created by this call so later stashes cannot
             # change which entry is restored.
             stash_oid: str | None = None
             warnings: list[str] = []
             stash_restore_error: str | None = None
-            primary_result: dict[str, Any]
             try:
                 ctx.clone_storage.record_sync(clone_id)
                 try:
@@ -466,83 +620,75 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                     primary_result = _git_exception_result("stash", error)
                 else:
                     # Step 3: Merge the fetched ref into target branch.
-                    try:
-                        merge_result = await run_thread_to_completion(
-                            git_manager.merge_branch,
-                            source_branch=temp_ref,
-                            target_branch=target_branch,
-                            source_is_local=True,
-                        )
-                    except (subprocess.TimeoutExpired, OSError) as error:
-                        primary_result = _git_exception_result("merge", error)
-                    else:
-                        if not merge_result.success:
-                            if merge_result.error == "merge_conflict":
-                                conflicted_files = (
-                                    merge_result.output.split("\n") if merge_result.output else []
-                                )
-                                primary_result = {
-                                    "success": False,
-                                    "has_conflicts": True,
-                                    "conflicted_files": conflicted_files,
-                                    "error": merge_result.message,
-                                    "step": "merge",
-                                    "message": (
-                                        f"Merge conflicts detected in {len(conflicted_files)} files. "
-                                        "Use gobby-merge tools to resolve."
-                                    ),
-                                }
-                            else:
-                                primary_result = {
-                                    "success": False,
-                                    "has_conflicts": False,
-                                    "error": merge_result.error or merge_result.message,
-                                    "step": "merge",
-                                }
-                        else:
-                            cleanup_after = (datetime.now(UTC) + timedelta(days=7)).isoformat()
-                            ctx.clone_storage.mark_merged(
-                                clone_id,
-                                cleanup_after=cleanup_after,
+                    if target_staged_paths:
+                        try:
+                            fallback_result = await asyncio.to_thread(
+                                land_by_fast_forward,
+                                git_manager,
+                                source_cwd=clone.clone_path,
+                                target_cwd=git_manager.repo_path,
+                                source_ref=source_ref,
+                                target_ref=target_ref,
+                                landing_ref=temp_branch_ref,
+                                separate_repositories=True,
                             )
-                            merge_succeeded = True
-                            merge_sha = ""
-                            try:
-                                sha_result = await run_thread_to_completion(
-                                    git_manager.run_git_command,
-                                    ["rev-parse", target_branch],
-                                    cwd=git_manager.repo_path,
-                                    timeout=10,
-                                )
-                            except (subprocess.TimeoutExpired, OSError):
-                                sha_result = None
-                            if sha_result is not None and sha_result.returncode == 0:
-                                merge_sha = sha_result.stdout.strip()
-                            primary_result = {
-                                "success": True,
-                                "message": (
-                                    f"Successfully merged {clone.branch_name} into {target_branch}"
-                                ),
-                                "cleanup_after": cleanup_after,
-                                "merge_sha": merge_sha,
-                            }
+                        except (subprocess.TimeoutExpired, OSError) as error:
+                            primary_result = _git_exception_result("merge", error)
+                        else:
+                            if fallback_result.success:
+                                primary_result = await _success_result("fast-forward")
+                            else:
+                                conflicted_files = list(fallback_result.conflicted_files)
+                                primary_result = {
+                                    "success": False,
+                                    "has_conflicts": bool(conflicted_files),
+                                    "conflicted_files": conflicted_files,
+                                    "error": fallback_result.error or "Fast-forward landing failed",
+                                    "step": fallback_result.step,
+                                }
+                    else:
+                        try:
+                            merge_result = await run_thread_to_completion(
+                                git_manager.merge_branch,
+                                source_branch=temp_branch_ref,
+                                target_branch=target_branch,
+                                source_is_local=True,
+                            )
+                        except (subprocess.TimeoutExpired, OSError) as error:
+                            primary_result = _git_exception_result("merge", error)
+                        else:
+                            if not merge_result.success:
+                                if merge_result.error == "merge_conflict":
+                                    conflicted_files = (
+                                        merge_result.output.split("\n")
+                                        if merge_result.output
+                                        else []
+                                    )
+                                    primary_result = {
+                                        "success": False,
+                                        "has_conflicts": True,
+                                        "conflicted_files": conflicted_files,
+                                        "error": merge_result.message,
+                                        "step": "merge",
+                                        "message": (
+                                            "Merge conflicts detected in "
+                                            f"{len(conflicted_files)} files. "
+                                            "Use gobby-merge tools to resolve."
+                                        ),
+                                    }
+                                else:
+                                    primary_result = {
+                                        "success": False,
+                                        "has_conflicts": False,
+                                        "error": merge_result.error or merge_result.message,
+                                        "step": "merge",
+                                    }
+                            else:
+                                primary_result = await _success_result("merge")
             finally:
-                try:
-                    delete_result = await run_thread_to_completion(
-                        git_manager.run_git_command,
-                        ["branch", "-D", temp_ref],
-                        cwd=git_manager.repo_path,
-                        timeout=10,
-                    )
-                    if delete_result.returncode != 0:
-                        detail = (
-                            delete_result.stderr
-                            or delete_result.stdout
-                            or f"git exited with status {delete_result.returncode}"
-                        )
-                        warnings.append(f"Failed to delete temporary branch {temp_ref}: {detail}")
-                except (subprocess.TimeoutExpired, OSError) as error:
-                    warnings.append(f"Failed to delete temporary branch {temp_ref}: {error}")
+                temp_branch_warning = await _delete_temp_branch()
+                if temp_branch_warning:
+                    warnings.append(temp_branch_warning)
 
                 if stash_oid:
                     try:

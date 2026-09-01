@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
@@ -60,6 +61,7 @@ class WorktreeGitManager(GitRunner):
         base_branch: str = "main",
         strategy: Literal["rebase", "merge"] = "rebase",
         source_branch: str | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> GitOperationResult:
         return _lifecycle.sync_from_main(
             self,
@@ -67,6 +69,7 @@ class WorktreeGitManager(GitRunner):
             base_branch=base_branch,
             strategy=strategy,
             source_branch=source_branch,
+            env=env,
         )
 
     def get_worktree_status(
