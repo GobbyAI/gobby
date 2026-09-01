@@ -619,6 +619,11 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
                 code_gateway=GcodeGateway(),
                 vector_cleaner=lambda: _resolve_project_vector_cleaner(runner),
                 graph_cleaner=lambda: _resolve_project_graph_cleaner(runner),
+                # The handshake factory attaches the maintenance launch factory to
+                # the indexer after servers start; resolve it lazily at purge time.
+                launch_factory=lambda: getattr(
+                    getattr(runner, "code_indexer", None), "launch_factory", None
+                ),
             )
             register_project_purge_cron(
                 runner.cron_storage,

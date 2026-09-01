@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable, Sequence
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, Protocol, TypedDict
 
+from gobby.code_index.maintenance_launch import MaintenanceLaunchFactory, open_launch_async
 from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron_models import CronJob
 from gobby.storage.embedding_generation_state import EmbeddingGenerationState
@@ -103,11 +104,15 @@ class GwikiDrainBarrier(Protocol):
 
 
 class WikiGateway(Protocol):
-    async def purge_project_scope(self, project_id: str, *, timeout: float) -> Any: ...
+    async def purge_project_scope(
+        self, project_id: str, *, timeout: float, env: Mapping[str, str] | None = None
+    ) -> Any: ...
 
 
 class CodeGateway(Protocol):
-    async def invalidate_project_by_id(self, project_id: str, *, timeout: float) -> Any: ...
+    async def invalidate_project_by_id(
+        self, project_id: str, *, timeout: float, env: Mapping[str, str] | None = None
+    ) -> Any: ...
 
 
 class VectorCleaner(Protocol):
@@ -147,6 +152,7 @@ class ProjectPurgeService:
         code_gateway: CodeGateway,
         vector_cleaner: Callable[[], VectorCleaner],
         graph_cleaner: Callable[[], GraphCleaner],
+        launch_factory: Callable[[], MaintenanceLaunchFactory | None] | None = None,
         drain_timeout: float = 120.0,
         command_timeout: float = 120.0,
     ) -> None:
@@ -161,6 +167,20 @@ class ProjectPurgeService:
         self.graph_cleaner = graph_cleaner
         self.drain_timeout = drain_timeout
         self.command_timeout = command_timeout
+        self.launch_factory = launch_factory
+
+    @asynccontextmanager
+    async def _maintenance_env(self, project_id: str) -> AsyncIterator[dict[str, str] | None]:
+        """Grant gwiki/gcode a maintenance launch: the project is soft-deleted, so an
+        interactive grant is refused and its checkouts are already released."""
+        factory = self.launch_factory() if self.launch_factory is not None else None
+        if factory is None:
+            yield None
+            return
+        async with open_launch_async(
+            factory, project_id, timeout_seconds=self.command_timeout
+        ) as launch:
+            yield launch.env
 
     async def purge_project(self, project_id: str) -> PurgeOutcome:
         try:
@@ -214,16 +234,18 @@ class ProjectPurgeService:
             await asyncio.sleep(min(0.05, max(deadline - time.monotonic(), 0)))
 
     async def _purge_wiki(self, project_id: str) -> None:
-        result = await self.wiki_gateway.purge_project_scope(
-            project_id, timeout=self.command_timeout
-        )
+        async with self._maintenance_env(project_id) as env:
+            result = await self.wiki_gateway.purge_project_scope(
+                project_id, timeout=self.command_timeout, env=env
+            )
         if not bool(result.success):
             raise ProjectPurgeError(_command_failure("gwiki purge", result))
 
     async def _invalidate_code(self, project_id: str) -> None:
-        result = await self.code_gateway.invalidate_project_by_id(
-            project_id, timeout=self.command_timeout
-        )
+        async with self._maintenance_env(project_id) as env:
+            result = await self.code_gateway.invalidate_project_by_id(
+                project_id, timeout=self.command_timeout, env=env
+            )
         if not bool(result.success):
             raise ProjectPurgeError(_command_failure("gcode invalidate", result))
 

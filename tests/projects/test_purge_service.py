@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -20,6 +21,7 @@ from gobby.projects.purge import (
     create_project_purge_handler,
     register_project_purge_cron,
 )
+from gobby.runtime_grants.launch import ManagedLaunch
 
 
 @dataclass
@@ -159,10 +161,14 @@ class FakeWikiGateway:
     def __init__(self, events: list[str], *, success: bool = True) -> None:
         self.events = events
         self.success = success
+        self.envs: list[Mapping[str, str] | None] = []
 
-    async def purge_project_scope(self, project_id: str, *, timeout: float) -> SimpleNamespace:
+    async def purge_project_scope(
+        self, project_id: str, *, timeout: float, env: Mapping[str, str] | None = None
+    ) -> SimpleNamespace:
         del project_id, timeout
         self.events.append("wiki:purge")
+        self.envs.append(env)
         return SimpleNamespace(success=self.success, stderr="wiki failed")
 
 
@@ -170,11 +176,42 @@ class FakeCodeGateway:
     def __init__(self, events: list[str], *, success: bool = True) -> None:
         self.events = events
         self.success = success
+        self.envs: list[Mapping[str, str] | None] = []
 
-    async def invalidate_project_by_id(self, project_id: str, *, timeout: float) -> SimpleNamespace:
+    async def invalidate_project_by_id(
+        self, project_id: str, *, timeout: float, env: Mapping[str, str] | None = None
+    ) -> SimpleNamespace:
         del project_id, timeout
         self.events.append("code:invalidate")
+        self.envs.append(env)
         return SimpleNamespace(success=self.success, stderr="code failed")
+
+
+class FakeLaunchFactory:
+    """Maintenance launch factory that records every grant it opens."""
+
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+        self.opened: list[str] = []
+
+    @contextmanager
+    def open(
+        self,
+        project_id: str,
+        *,
+        timeout_seconds: float,
+        code_overlay_project_id: str | None = None,
+    ) -> Iterator[ManagedLaunch]:
+        del timeout_seconds, code_overlay_project_id
+        self.opened.append(project_id)
+        self.events.append("launch:open")
+        try:
+            yield ManagedLaunch(
+                grant_path=Path("/nonexistent/grant.json"),
+                env={"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": f"/grants/{project_id}.json"},
+            )
+        finally:
+            self.events.append("launch:close")
 
 
 class FakeVectorCleaner:
@@ -204,11 +241,13 @@ def make_service(
     wiki_success: bool = True,
     code_success: bool = True,
     active_cron: bool = False,
+    launch_factory: FakeLaunchFactory | None = None,
 ) -> tuple[ProjectPurgeService, FakeProjects, FakeVectorCleaner, list[str]]:
     events: list[str] = []
     projects = FakeProjects(project)
     vectors = FakeVectorCleaner(events)
     service = ProjectPurgeService(
+        launch_factory=(lambda: launch_factory) if launch_factory is not None else None,
         db=FakeDB(events, projects),
         projects=projects,
         cron=FakeCron(events, active=active_cron),
@@ -410,3 +449,48 @@ def test_purge_cron_registration_preserves_disabled_state_and_wakes_enabled_null
     storage.job.enabled = True
     register_project_purge_cron(storage, executor, SimpleNamespace())
     assert storage.woke
+
+
+@pytest.mark.asyncio
+async def test_purge_runs_projection_cleanup_under_a_maintenance_launch() -> None:
+    """A soft-deleted project has no checkout and is refused an interactive grant.
+
+    gwiki purge and gcode invalidate therefore run inside a maintenance launch,
+    whose grant bootstrap env is handed to each child and released afterwards.
+    """
+    events: list[str] = []
+    factory = FakeLaunchFactory(events)
+    service, projects, _vectors, events = make_service(
+        FakeProject("p1", "app"), launch_factory=factory
+    )
+    factory.events = events
+
+    result = await service.purge_project("p1")
+
+    assert result.success
+    assert projects.get("p1") is None
+    assert factory.opened == ["p1", "p1"]
+    wiki = cast(FakeWikiGateway, service.wiki_gateway)
+    code = cast(FakeCodeGateway, service.code_gateway)
+    assert wiki.envs == [{"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/grants/p1.json"}]
+    assert code.envs == [{"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/grants/p1.json"}]
+    purge_window = events[events.index("gwiki:drain:exit") + 1 : events.index("vectors:clear")]
+    assert purge_window == [
+        "launch:open",
+        "wiki:purge",
+        "launch:close",
+        "launch:open",
+        "code:invalidate",
+        "launch:close",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_purge_without_a_launch_factory_passes_no_grant_env() -> None:
+    service, _projects, _vectors, _events = make_service(FakeProject("p1", "app"))
+
+    result = await service.purge_project("p1")
+
+    assert result.success
+    assert cast(FakeWikiGateway, service.wiki_gateway).envs == [None]
+    assert cast(FakeCodeGateway, service.code_gateway).envs == [None]

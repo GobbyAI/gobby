@@ -553,12 +553,14 @@ class GcodeGateway:
         project_id: str,
         *,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
         """Invalidate one indexed project without requiring its former repo root."""
         project_id = _validate_user_gcode_value("project_id", project_id)
         binary = await self._ensure_version()
         return await self._run_command_result(
             [binary, "invalidate", "--project-id", project_id, "--force"],
+            env=env,
             timeout=timeout,
         )
 

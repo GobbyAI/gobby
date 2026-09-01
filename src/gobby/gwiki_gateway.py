@@ -446,11 +446,13 @@ class GwikiGateway:
         project_id: str,
         *,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> GwikiCommandResult:
         binary = await self._resolve_binary()
         return await self._run_command_result(
             [binary, "purge", "--project-id", project_id, "--yes"],
             timeout=timeout,
+            env=env,
         )
 
     async def _run_json(
@@ -639,12 +641,17 @@ class GwikiGateway:
         command: Sequence[str],
         *,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> GwikiCommandResult:
         proc: asyncio.subprocess.Process | None = None
         started_at = datetime.now(UTC).isoformat()
         started = time.perf_counter()
         timeout_seconds = self._timeout_seconds if timeout is None else timeout
-        env, pass_fds = _subprocess_env_and_pass_fds(self._child_env)
+        child_env, pass_fds = _subprocess_env_and_pass_fds(self._child_env)
+        if env is not None:
+            # A maintenance launch's grant bootstrap overrides the inherited env.
+            child_env = {**(child_env if child_env is not None else dict(os.environ)), **env}
+        env = child_env
         try:
             if pass_fds:
                 proc = await asyncio.create_subprocess_exec(

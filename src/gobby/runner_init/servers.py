@@ -552,11 +552,18 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
 
     def _indexed_project_admitted(project_id: str) -> bool:
         # Maintenance targets: any shared code-index identity, registered or not,
-        # so orphaned path-derived projects can be granted for projection purge.
+        # so orphaned path-derived projects can be granted for projection purge,
+        # plus soft-deleted projects, whose purge runs gwiki/gcode cleanup under a
+        # maintenance grant after their checkouts were released.
         try:
             row = database.fetchone(
-                "SELECT 1 FROM code_indexed_projects WHERE id = %s",
-                (project_id,),
+                """
+                SELECT 1 FROM code_indexed_projects WHERE id = %s
+                UNION ALL
+                SELECT 1 FROM projects WHERE id = %s AND deleted_at IS NOT NULL
+                LIMIT 1
+                """,
+                (project_id, project_id),
             )
         except psycopg.Error as exc:
             logger.warning(
