@@ -105,7 +105,8 @@ gcode is installed automatically as part of the [Gobby](https://github.com/Gobby
 ## Usage
 
 ```bash
-# Initialize and index a project (one step)
+# Index a Gobby-registered checkout and install the gcode skill
+# (run `gobby init` in the checkout first; gcode never creates identities)
 gcode init
 
 # Search
@@ -195,7 +196,8 @@ the graph projection is synced.
 
 ## AI CLI Skill Installation
 
-For non-Gobby-managed projects, `gcode init` installs the bundled `gcode` skill
+For isolated roots and linked worktrees (anything other than a
+`.gobby/project.json` project), `gcode init` installs the bundled `gcode` skill
 for every supported project-local AI CLI target:
 
 | CLI | Project-local files |
@@ -270,7 +272,7 @@ Get started with Gobby at [github.com/GobbyAI/gobby](https://github.com/GobbyAI/
 | Qdrant down | Search loses semantic boost. BM25 + graph still work. |
 | Embeddings API unavailable | Semantic embeddings disabled. BM25 + graph still work. |
 | PostgreSQL hub unavailable | Runtime index/search commands fail with a bootstrap or connection error. |
-| No index yet | Commands error with `Run gcode init to initialize`. |
+| No registered checkout | Primary index writes fail with `checkout_required` (no row) or `checkout_mismatch` (this machine registers another root); run `gobby init` in the checkout or `gobby projects rebind <project> <path>`, then `gcode index`. |
 
 Read-side graph commands and graph lifecycle depend on FalkorDB. Vector
 lifecycle depends on Qdrant plus embeddings for sync/rebuild. All code-index

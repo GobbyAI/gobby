@@ -85,16 +85,17 @@ mod serial_db {
         std::fs::create_dir_all(project.path().join("src")).expect("create src");
         std::fs::write(project.path().join(FILE_PATH), "pub fn indexed() {}\n")
             .expect("write source file");
+        // gcode resolves only Gobby-registered identities; a standalone
+        // gcode.json would fail with checkout_required before the command runs.
         std::fs::write(
-            project.path().join(".gobby/gcode.json"),
+            project.path().join(".gobby/project.json"),
             serde_json::json!({
                 "id": PROJECT_ID,
-                "name": "projection-stale",
-                "created_at": "2026-06-17T00:00:00Z"
+                "name": "projection-stale"
             })
             .to_string(),
         )
-        .expect("write gcode identity");
+        .expect("write project identity");
 
         seed_indexed_file(&mut conn, PROJECT_ID, FILE_PATH);
         let machine_id = local_machine_uuid();
