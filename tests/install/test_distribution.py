@@ -99,7 +99,9 @@ def test_homebrew_helper_detection_fails_with_brew_guidance_when_stale(tmp_path:
 
 def test_homebrew_helper_detection_accepts_valid_local_helpers_before_stale_path(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("GOBBY_NATIVE_BIN_DIR", raising=False)
     bin_dir = tmp_path / ".gobby" / "bin"
     bin_dir.mkdir(parents=True)
     for binary in HOMEBREW_HELPERS:
