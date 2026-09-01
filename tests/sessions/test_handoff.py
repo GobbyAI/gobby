@@ -214,6 +214,24 @@ def test_filed_task_requires_a_task_ref_and_labeled_current_session_task() -> No
     assert accepted.disposition == "filed-task"
 
 
+def test_task_refs_accept_short_seq_numbers() -> None:
+    labeled = _feedback_task(labels=["needs-decision"])
+    seen: list[str] = []
+
+    def resolve(ref: str) -> Task:
+        seen.append(ref)
+        return labeled
+
+    [accepted] = normalize_feedback_observations(
+        [_observation(disposition="filed-task", evidence="Filed #42")],
+        resolve_task=resolve,
+        session_id="session-current",
+    )
+
+    assert accepted.disposition == "filed-task"
+    assert seen == ["#42"]
+
+
 def test_fixed_requires_a_task_owned_by_current_session() -> None:
     foreign = _feedback_task(claimed_by_session_id="session-other")
 

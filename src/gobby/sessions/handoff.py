@@ -26,7 +26,7 @@ _OPTIONAL_FEEDBACK_FIELDS = ("suggestion", "disposition")
 FEEDBACK_KINDS = ("friction", "bug", "noise", "surprise", "missing-affordance", "useful", "other")
 FEEDBACK_FREQUENCIES = ("once", "repeated", "always")
 FEEDBACK_DISPOSITIONS = ("worked-around", "filed-task", "fixed", "escalated", "noted")
-FEEDBACK_TASK_REF_RE = re.compile(r"#(\d{3,6})")
+FEEDBACK_TASK_REF_RE = re.compile(r"#(\d+)")
 _FEEDBACK_SESSION_REF_RE = re.compile(
     r"(?:\b[\w.-]+-S#\d+\b|(?<![\w#])#\d+\b|"
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
