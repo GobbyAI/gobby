@@ -918,7 +918,8 @@ def status(ctx: click.Context) -> None:
 @click.pass_context
 def health(ctx: click.Context) -> None:
     """Quick one-line daemon health check."""
-    from gobby.cli.runtime import get_cli_runtime
+    from gobby.cli.runtime import get_cli_runtime, require_cli_database
+    from gobby.storage.schema_divergence import collect_schema_heads
 
     pid_file = get_gobby_home() / "gobby.pid"
     probe = probe_daemon_lock(pid_file)
@@ -929,6 +930,14 @@ def health(ctx: click.Context) -> None:
     config = get_cli_runtime(ctx).read_only_operational_config()
     http_port = config.daemon_port
     pid = probe.pid
+
+    try:
+        schema_heads = collect_schema_heads(require_cli_database(ctx, apply_migrations=False))
+    except Exception:
+        logger.debug("Failed to collect schema heads", exc_info=True)
+        schema_heads = collect_schema_heads(None)
+    if schema_heads.diverged:
+        click.echo(f"Schema: {schema_heads.describe()}")
 
     if pid is None:
         svc = get_service_status()
