@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -14,10 +15,16 @@ from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 from gobby.mcp_proxy.tools.results import create_results_registry
-from gobby.servers.routes.mcp.endpoints.execution import call_mcp_tool, mcp_proxy
+from gobby.servers.routes.mcp.endpoints.execution import (
+    _http_request_scope,
+    call_mcp_tool,
+    mcp_proxy,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tool_results import ToolResultStore
+from gobby.utils.project_context import get_project_context, set_project_context
+from gobby.utils.session_context import SeededContextTokens, reset_seeded_contexts
 from tests.mcp_proxy.result_offload_test_support import TEST_MAX_ENVELOPE_CHARS
 
 pytestmark = pytest.mark.unit
@@ -152,6 +159,29 @@ async def test_call_route_can_bypass_result_offload(
     assert inline["result"] == payload
     assert default["result"]["offloaded"] is True
     assert default["result"]["result_id"]
+
+
+def test_body_project_scope_releases_the_earlier_seeded_project_token(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    server, _ = _offload_server(temp_db)
+    body = {"project_id": sample_project["id"]}
+
+    def scenario() -> tuple[str, dict[str, Any] | None, dict[str, Any] | None, bool]:
+        before = get_project_context()
+        tokens = SeededContextTokens()
+        tokens.project_token = set_project_context({"id": "session-derived-project"})
+        scope_project = _http_request_scope(_request(body), server, tokens, body)
+        seeded = get_project_context()
+        reset_seeded_contexts(tokens)
+        return scope_project, seeded, get_project_context(), get_project_context() == before
+
+    scope_project, seeded, restored, restored_to_before = contextvars.copy_context().run(scenario)
+
+    assert seeded == {"id": scope_project}
+    assert restored != {"id": "session-derived-project"}
+    assert restored_to_before
 
 
 @pytest.mark.asyncio

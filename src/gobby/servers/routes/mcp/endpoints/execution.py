@@ -26,7 +26,7 @@ from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
 from gobby.servers.routes.mcp.endpoints.request_context import request_mcp_scope
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 from gobby.utils.datetime import to_json_safe
-from gobby.utils.project_context import set_project_context
+from gobby.utils.project_context import reset_project_context, set_project_context
 from gobby.utils.session_context import get_current_session_id
 
 if TYPE_CHECKING:
@@ -91,6 +91,9 @@ def _http_request_scope(request: Request, server: "HTTPServer", ctx_token: Any, 
         and isinstance(payload.get("project_id"), str)
         and payload["project_id"].strip()
     ):
+        previous_token = getattr(ctx_token, "project_token", None)
+        if previous_token is not None:
+            reset_project_context(previous_token)
         ctx_token.resolved_project_id = scope_project
         ctx_token.project_token = set_project_context({"id": scope_project})
     return scope_project
