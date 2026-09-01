@@ -18,38 +18,38 @@ use super::gate::{
 use super::runner::{SchemaRunner, auth_schema_for, render_sql_for_schema};
 
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
-    version: 376,
-    filename: "376_recovery_probe.sql",
+    version: 420,
+    filename: "420_recovery_probe.sql",
     checksum: "d63e14df78da3519a30caf2dac74341ab5f0c9aa05f7bec58174ec0adf383159",
     sql: "-- gobby:non-transactional\nCREATE UNIQUE INDEX CONCURRENTLY schema_recovery_idx ON recovery_values(id);\n",
 };
 static RECOVERY_MIGRATIONS: &[EmbeddedMigration] = &[RECOVERY_MIGRATION];
 
 static DESTRUCTIVE_MIGRATION: EmbeddedMigration = EmbeddedMigration {
-    version: 376,
-    filename: "376_destructive_probe.sql",
+    version: 420,
+    filename: "420_destructive_probe.sql",
     checksum: "c10820fc8be4c2bceab1610fd8372c8d864fd7c4a8985773cf903bae450b19e9",
     sql: "-- gobby:destructive\nCREATE TABLE gate_probe (id integer);\n",
 };
 static DESTRUCTIVE_MIGRATIONS: &[EmbeddedMigration] = &[DESTRUCTIVE_MIGRATION];
 
 static GUARDED_MIGRATION: EmbeddedMigration = EmbeddedMigration {
-    version: 376,
-    filename: "376_guarded_probe.sql",
+    version: 420,
+    filename: "420_guarded_probe.sql",
     checksum: "8d86f80f785ac4f918ce34ea7f0dca860266e91dbba95d8a2be0965a9cdd147a",
     sql: "DO $guard$\nBEGIN\n  IF to_regclass('legacy_probe_source') IS NOT NULL THEN\n    CREATE TABLE IF NOT EXISTS guarded_probe_copied (id integer);\n  END IF;\nEND\n$guard$;\n",
 };
 static GUARDED_MIGRATIONS: &[EmbeddedMigration] = &[GUARDED_MIGRATION];
 
 static COPY_THEN_FENCE: EmbeddedMigration = EmbeddedMigration {
-    version: 376,
-    filename: "376_copy_probe.sql",
+    version: 420,
+    filename: "420_copy_probe.sql",
     checksum: "7ec5f3b7cf557fcee6903676bc89a7ff89ed0c1100e44775e5df1a01d3c38689",
     sql: "CREATE TABLE copy_probe (id integer);\n",
 };
 static DESTRUCTIVE_AFTER_COPY: EmbeddedMigration = EmbeddedMigration {
-    version: 377,
-    filename: "377_destructive_probe.sql",
+    version: 421,
+    filename: "421_destructive_probe.sql",
     checksum: "c5824af6e3aa4151609e330dca97948d7ba3a22293248883d5fc4d335165638e",
     sql: "-- gobby:destructive\nCREATE TABLE drop_probe (id integer);\n",
 };
@@ -1045,7 +1045,7 @@ fn unrecognized_receipt_still_rejects() -> anyhow::Result<()> {
     );
 
     client.execute(
-        "UPDATE schema_migrations SET filename = 'unexpected@375', checksum = $1 WHERE version = $2",
+        "UPDATE schema_migrations SET filename = 'unexpected@419', checksum = $1 WHERE version = $2",
         &[&BASELINE_CHECKSUM, &BASELINE_VERSION],
     )?;
     let error = SchemaRunner::new(&mut client, "public")?
@@ -1262,149 +1262,14 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
 }
 
 #[test]
-fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
+fn migrations_directory_exists_and_registry_is_empty_after_flatten() {
     let migrations_dir =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/schema/migrations");
     assert!(
         migrations_dir.is_dir(),
-        "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
+        "crates/gcore/assets/schema/migrations must exist for versions after baseline@419"
     );
-    assert_eq!(MIGRATIONS.len(), 43);
-    assert_eq!(MIGRATIONS[0].version, 376);
-    assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
-    assert_eq!(MIGRATIONS[1].version, 377);
-    assert_eq!(MIGRATIONS[1].filename, "377_copy_agent_step_instances.sql");
-    assert_eq!(MIGRATIONS[4].version, 380);
-    assert_eq!(MIGRATIONS[4].filename, "380_copy_pipeline_definitions.sql");
-    assert_eq!(MIGRATIONS[5].version, 381);
-    assert_eq!(
-        MIGRATIONS[5].filename,
-        "381_drop_legacy_workflow_tables.sql"
-    );
-    assert_eq!(MIGRATIONS[6].version, 382);
-    assert_eq!(
-        MIGRATIONS[6].filename,
-        "382_grant_gwiki_tables_to_capability.sql"
-    );
-    assert_eq!(MIGRATIONS[7].version, 383);
-    assert_eq!(
-        MIGRATIONS[7].filename,
-        "383_refresh_reused_interactive_principal.sql"
-    );
-    assert_eq!(MIGRATIONS[8].version, 384);
-    assert_eq!(
-        MIGRATIONS[8].filename,
-        "384_grant_projects_liveness_to_capability.sql"
-    );
-    assert_eq!(MIGRATIONS[9].version, 385);
-    assert_eq!(
-        MIGRATIONS[9].filename,
-        "385_issue_maintenance_principal.sql"
-    );
-    assert_eq!(MIGRATIONS[10].version, 386);
-    assert_eq!(
-        MIGRATIONS[10].filename,
-        "386_interactive_principal_role_hash.sql"
-    );
-    assert_eq!(MIGRATIONS[11].version, 387);
-    assert_eq!(
-        MIGRATIONS[11].filename,
-        "387_interactive_principal_role_helper.sql"
-    );
-    assert_eq!(MIGRATIONS[12].version, 388);
-    assert_eq!(
-        MIGRATIONS[12].filename,
-        "388_grant_interactive_role_name.sql"
-    );
-    assert_eq!(MIGRATIONS[13].version, 389);
-    assert_eq!(
-        MIGRATIONS[13].filename,
-        "389_sweep_interactive_orphan_roles.sql"
-    );
-    assert_eq!(MIGRATIONS[14].version, 390);
-    assert_eq!(
-        MIGRATIONS[14].filename,
-        "390_retain_interactive_credential_material.sql"
-    );
-    assert_eq!(MIGRATIONS[15].version, 391);
-    assert_eq!(
-        MIGRATIONS[15].filename,
-        "391_session_last_activity_and_creation_defaults.sql"
-    );
-    assert_eq!(MIGRATIONS[16].version, 392);
-    assert_eq!(
-        MIGRATIONS[16].filename,
-        "392_chat_attachments_deletion_lease.sql"
-    );
-    assert_eq!(MIGRATIONS[17].version, 393);
-    assert_eq!(
-        MIGRATIONS[17].filename,
-        "393_interactive_principal_hardening.sql"
-    );
-    assert_eq!(MIGRATIONS[18].version, 394);
-    assert_eq!(
-        MIGRATIONS[18].filename,
-        "394_sessions_status_last_activity_index.sql"
-    );
-    assert_eq!(MIGRATIONS[19].version, 395);
-    assert_eq!(MIGRATIONS[19].filename, "395_code_inheritance.sql");
-    assert_eq!(MIGRATIONS[20].version, 396);
-    assert_eq!(
-        MIGRATIONS[20].filename,
-        "396_memory_rationale_and_provenance.sql"
-    );
-    assert_eq!(MIGRATIONS[21].version, 397);
-    assert_eq!(
-        MIGRATIONS[21].filename,
-        "397_memories_source_task_index.sql"
-    );
-    assert_eq!(MIGRATIONS[22].version, 398);
-    assert_eq!(
-        MIGRATIONS[22].filename,
-        "398_code_indexed_project_states_indexer_version.sql"
-    );
-    assert_eq!(MIGRATIONS[23].version, 399);
-    assert_eq!(
-        MIGRATIONS[23].filename,
-        "399_drain_orphan_binding_alias.sql"
-    );
-    assert_eq!(MIGRATIONS[24].version, 400);
-    assert_eq!(
-        MIGRATIONS[24].filename,
-        "400_drop_vision_extract_config_rows.sql"
-    );
-    assert_eq!(MIGRATIONS[25].version, 401);
-    assert_eq!(MIGRATIONS[25].filename, "401_model_metadata_reasoning.sql");
-    assert_eq!(MIGRATIONS[35].version, 411);
-    assert_eq!(MIGRATIONS[35].filename, "411_terminals.sql");
-    assert_eq!(MIGRATIONS[36].version, 412);
-    assert_eq!(
-        MIGRATIONS[36].filename,
-        "412_mcp_templates_project_secrets.sql"
-    );
-    assert_eq!(MIGRATIONS[37].version, 413);
-    assert_eq!(MIGRATIONS[37].filename, "413_session_feedback_review.sql");
-    assert_eq!(MIGRATIONS[38].version, 414);
-    assert_eq!(MIGRATIONS[38].filename, "414_sessions_workspace_path.sql");
-    assert_eq!(MIGRATIONS[39].version, 415);
-    assert_eq!(
-        MIGRATIONS[39].filename,
-        "415_sessions_startup_claim_generation.sql"
-    );
-    assert_eq!(MIGRATIONS[40].version, 416);
-    assert_eq!(MIGRATIONS[40].filename, "416_hook_receipt_effects.sql");
-    assert_eq!(MIGRATIONS[41].version, 417);
-    assert_eq!(
-        MIGRATIONS[41].filename,
-        "417_provider_capacity_snapshots.sql"
-    );
-    assert!(MIGRATIONS[5].sql.contains("-- gobby:destructive"));
-    for migration in MIGRATIONS {
-        assert_eq!(
-            super::assets::sha256_hex(migration.sql.as_bytes()),
-            migration.checksum
-        );
-    }
+    assert!(MIGRATIONS.is_empty());
     assert!(
         DESTRUCTIVE_MIGRATION.version > BASELINE_VERSION
             && GUARDED_MIGRATION.version > BASELINE_VERSION,
@@ -1444,7 +1309,7 @@ fn fresh_destructive_migration_is_receipt_stamped_without_executing() -> anyhow:
     );
     let receipt_count: i64 = client
         .query_one(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version = 376 AND filename = $1 AND checksum = $2",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 420 AND filename = $1 AND checksum = $2",
             &[&DESTRUCTIVE_MIGRATION.filename, &DESTRUCTIVE_MIGRATION.checksum],
         )?
         .get(0);
@@ -1764,7 +1629,7 @@ fn code_inheritance_is_in_gcode_postgres_objects() {
 }
 
 #[test]
-fn code_inheritance_adoption_preserves_pre_inheritance_and_skips_existing() -> anyhow::Result<()> {
+fn code_inheritance_adoption_rejects_pre_inheritance_and_keeps_existing() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1782,11 +1647,10 @@ fn code_inheritance_adoption_preserves_pre_inheritance_and_skips_existing() -> a
         .query_one("SELECT to_regclass('code_inheritance') IS NOT NULL", &[])?
         .get(0);
     assert!(!before, "pre-inheritance schema must omit code_inheritance");
-    SchemaRunner::new(&mut client, "public")?.apply()?;
-    let after: bool = client
-        .query_one("SELECT to_regclass('code_inheritance') IS NOT NULL", &[])?
-        .get(0);
-    assert!(after, "adoption must apply the code_inheritance hop");
+    let error = SchemaRunner::new(&mut client, "public")?
+        .apply()
+        .expect_err("flattened baseline adoption must reject a partial schema");
+    assert!(matches!(error, SchemaError::Postgres(_)));
 
     let Some((_database2, mut existing)) = scratch_database()? else {
         return Ok(());
