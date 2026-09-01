@@ -296,6 +296,9 @@ def test_runtime_and_daemon_boot_use_courtesy_admission_check(
         postgres_pool=object(),
     )
 
+    # A managed execution opens the hub through its grant and never reaches the
+    # admission check; the test must run as an operator process.
+    monkeypatch.delenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", raising=False)
     monkeypatch.setattr(hub_runtime, "load_bootstrap", lambda *_args, **_kwargs: config)
     monkeypatch.setattr(
         hub_runtime,
