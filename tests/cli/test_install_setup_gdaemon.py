@@ -24,10 +24,13 @@ def _stub_non_schema_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     from gobby.cli import install_setup_impeccable, install_setup_srt
     from gobby.cli.installers import ide_config, tmux_config
 
+    def sync_bundled(*args: object, **kwargs: object) -> dict[str, object]:
+        return {"total_synced": 0, "errors": []}
+
     monkeypatch.setattr(
         sync_registry,
         "sync_bundled_content_to_db",
-        lambda db: {"total_synced": 0, "errors": []},
+        sync_bundled,
     )
     monkeypatch.setattr(
         install_setup_srt,
