@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -16,9 +17,8 @@ from gobby.hooks.session_materialize import activate_deferred_session
 from gobby.sessions.clear_continuation import stage_clear_attempt
 from gobby.sessions.handoff import consume_pending_handoff, render_handoff_markdown
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -163,10 +163,16 @@ def test_startup_source_with_clear_resolution_binds_without_prompt(
     _mock_expire: MagicMock,
     _mock_classify: MagicMock,
     temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """First-activity materialization binds parentage without typing a second prompt."""
-    machine_id = require_machine_id()
-    project = LocalProjectManager(temp_db).create(name="clear-bind", repo_path="/tmp/clear-bind")
+    checkout = install_isolated_checkout_project(
+        temp_db, tmp_path / "clear-bind", name="clear-bind", monkeypatch=monkeypatch
+    )
+    machine_id = checkout.machine_id
+    project = checkout.project
+    root = checkout.root_path
     sessions = SessionManager(temp_db)
     term = {
         "tmux_pane": "%100",
@@ -215,7 +221,7 @@ def test_startup_source_with_clear_resolution_binds_without_prompt(
         {
             "source": "startup",
             "skip_default_agent_activation": True,
-            "cwd": "/tmp/clear-bind",
+            "cwd": root,
         }
     )
     event.task_id = None
@@ -264,12 +270,16 @@ def test_clear_session_start_types_pull_prompt_only_when_none_is_in_flight(
     cli: SessionSource,
     session_start_types_prompt: bool,
     temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Codex SessionStart fires on the successor's first submitted prompt, so one is already in flight."""
-    machine_id = require_machine_id()
-    project = LocalProjectManager(temp_db).create(
-        name=f"clear-{cli.value}", repo_path=f"/tmp/clear-{cli.value}"
+    checkout = install_isolated_checkout_project(
+        temp_db, tmp_path / f"clear-{cli.value}", name=f"clear-{cli.value}", monkeypatch=monkeypatch
     )
+    machine_id = checkout.machine_id
+    project = checkout.project
+    root = checkout.root_path
     sessions = SessionManager(temp_db)
     term = {
         "tmux_pane": "%101",
@@ -315,7 +325,7 @@ def test_clear_session_start_types_pull_prompt_only_when_none_is_in_flight(
         {
             "source": "clear",
             "skip_default_agent_activation": True,
-            "cwd": f"/tmp/clear-{cli.value}",
+            "cwd": root,
         },
         source=cli,
     )
