@@ -1807,7 +1807,7 @@ async def test_compound_run_records_every_segment_with_its_categories(tmp_path: 
 
 
 async def test_edits_in_another_checkout_match_task_files_by_suffix(tmp_path: Path) -> None:
-    """Edits made in a worktree count when the close resolves the main checkout."""
+    """Worktree edits count when the close resolves a different checkout root."""
     repo_path = tmp_path / "main"
     worktree = tmp_path / "worktrees" / "task-1"
     patch = (
