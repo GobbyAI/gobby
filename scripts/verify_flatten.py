@@ -30,10 +30,14 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 
 from gobby.storage.schema_contract import DATABASE_URL_ENV, EXPECTED_IDENTITY_ENV
-from scripts.schema_diff import _postgres_client_connection, _run_postgres_client
+
+if __package__:
+    from scripts.schema_diff import _postgres_client_connection, _run_postgres_client
+else:
+    from schema_diff import _postgres_client_connection, _run_postgres_client
 
 DEFAULT_DATABASE_URL = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
-DEFAULT_OUTPUT_DIR = Path("docs/evidence/flatten-baseline-1")
+DEFAULT_OUTPUT_DIR = Path("docs/evidence/flatten-baseline-419")
 _DUMP_SCHEMAS = ("public", "gobby_agent_auth")
 _GDAEMON_TIMEOUT_SECONDS = 600
 _ROLES_QUERY = """

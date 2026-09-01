@@ -1,0 +1,222 @@
+[
+  {
+    "version": 375,
+    "filename": "baseline@375",
+    "checksum": "58524c140b36a49ef115bb7c9a83e9dedf8aeb59e0d53b280537fe564c3464ac"
+  },
+  {
+    "version": 376,
+    "filename": "376_copy_agent_definitions.sql",
+    "checksum": "d736ad1aa1f182a7569fcb7aae129cdf2cdaf89b46e898212a3269251295d4f1"
+  },
+  {
+    "version": 377,
+    "filename": "377_copy_agent_step_instances.sql",
+    "checksum": "bdcd4738d51cf4a099825fa43dcd1509ce6e6be5330abded423b679d1fc3cc14"
+  },
+  {
+    "version": 378,
+    "filename": "378_copy_rule_definitions.sql",
+    "checksum": "5fe2bcea79afa5876fc12fb1087a764bbe3bb262c23f5abbc3b1b9b83b1ed4e7"
+  },
+  {
+    "version": 379,
+    "filename": "379_copy_session_variable_defaults.sql",
+    "checksum": "ea1ffe7eec95b90901b2818fe734e4128433c8f7e4b05060fee5ac3acbda4896"
+  },
+  {
+    "version": 380,
+    "filename": "380_copy_pipeline_definitions.sql",
+    "checksum": "6c4c0b827117c7667b2b1b5b540f56aca81c04304d274bd4d34983947ca9e86c"
+  },
+  {
+    "version": 381,
+    "filename": "381_drop_legacy_workflow_tables.sql",
+    "checksum": "029f44aeeaf260d617e981ec77a558f21e2f8cb1af2e49e1d14adbc3458cc2e8"
+  },
+  {
+    "version": 382,
+    "filename": "382_grant_gwiki_tables_to_capability.sql",
+    "checksum": "658527b69d99dfc0c2de99e0d3c9c47d6b5f1172e784fd7980f5c9f76d7cec4e"
+  },
+  {
+    "version": 383,
+    "filename": "383_refresh_reused_interactive_principal.sql",
+    "checksum": "6a9b479e68847bc240e54ace9d4a4c80e1acf79b1d7568dc8e3eb4fe84477696"
+  },
+  {
+    "version": 384,
+    "filename": "384_grant_projects_liveness_to_capability.sql",
+    "checksum": "e72f299424484dd52131a1cbca1a7664bb402ccdf50027971116ead50cde37fb"
+  },
+  {
+    "version": 385,
+    "filename": "385_issue_maintenance_principal.sql",
+    "checksum": "2d666ea0917211806be00cde6a854b45c181ea6344b312f729cd8e37a9aa72f6"
+  },
+  {
+    "version": 386,
+    "filename": "386_interactive_principal_role_hash.sql",
+    "checksum": "8570f08f0f90b1c17bf14f45a4d4cfd4b7b85a56a5aa5ce430442fb03f160799"
+  },
+  {
+    "version": 387,
+    "filename": "387_interactive_principal_role_helper.sql",
+    "checksum": "89fbe7978fbd565510b2698e06f15adddad3eec273ee2665e5d17144ef1ebd69"
+  },
+  {
+    "version": 388,
+    "filename": "388_grant_interactive_role_name.sql",
+    "checksum": "bb45c887073a2a2a7b77077ff5cc96b30c9476030883111a083e54f1dbc72502"
+  },
+  {
+    "version": 389,
+    "filename": "389_sweep_interactive_orphan_roles.sql",
+    "checksum": "a86978cd9afd129b3d8cfb4f38d3d9efc096309543c3e08aacc8ea773575283f"
+  },
+  {
+    "version": 390,
+    "filename": "390_retain_interactive_credential_material.sql",
+    "checksum": "e2cc73155a4c4d13ae0bb18cf93d95bd745da2cf0ce8dcb423cd40608a61b9a5"
+  },
+  {
+    "version": 391,
+    "filename": "391_session_last_activity_and_creation_defaults.sql",
+    "checksum": "775a2f0622a1866984d01a85158c2d85235fd13698728ca23f41d797ad3ae675"
+  },
+  {
+    "version": 392,
+    "filename": "392_chat_attachments_deletion_lease.sql",
+    "checksum": "4d3f2e9652a958f4ad7f0f64410e622e4e4629b8388b1610527170e0bac83598"
+  },
+  {
+    "version": 393,
+    "filename": "393_interactive_principal_hardening.sql",
+    "checksum": "199d27292b0c3e48c0beb0e5aad2a8748a2a78f82e31f0647b8c0973564633da"
+  },
+  {
+    "version": 394,
+    "filename": "394_sessions_status_last_activity_index.sql",
+    "checksum": "449a7e2e482c086b063fb066e93019c043703ce970ed1a0c7c30f46e7050d097"
+  },
+  {
+    "version": 395,
+    "filename": "395_code_inheritance.sql",
+    "checksum": "717946c2093e4db2bffa21e6427964fc88ee2e6d90893af7fc2737248205feb0"
+  },
+  {
+    "version": 396,
+    "filename": "396_memory_rationale_and_provenance.sql",
+    "checksum": "67f01619b6ae8f637c868ff9b8e86c8a2f6e7168299bd506551e2b366266c79f"
+  },
+  {
+    "version": 397,
+    "filename": "397_memories_source_task_index.sql",
+    "checksum": "72104d71d3c69a8c277e206cf1d8932570c532899bed45dc006ecec02e4cdddd"
+  },
+  {
+    "version": 398,
+    "filename": "398_code_indexed_project_states_indexer_version.sql",
+    "checksum": "1dbe00b375b252d2ab283e1a0c1ef66f5bcd79b1f2a9618a4452f7a1ab153da2"
+  },
+  {
+    "version": 399,
+    "filename": "399_drain_orphan_binding_alias.sql",
+    "checksum": "0043823579b2457d3a7df5d0697dfbe080aaff3aed4fe735166ec14e28acaefe"
+  },
+  {
+    "version": 400,
+    "filename": "400_drop_vision_extract_config_rows.sql",
+    "checksum": "07fac33f96b083fc98efa7f6c41d903b7c65f5362d214851b0bd712a4c36a387"
+  },
+  {
+    "version": 401,
+    "filename": "401_model_metadata_reasoning.sql",
+    "checksum": "909c433d9398fdadb734c619e81bbb22f17d12329f9f7d060a0dd821142c1a35"
+  },
+  {
+    "version": 402,
+    "filename": "402_task_close_reviews.sql",
+    "checksum": "10593cb9a01e8cf411e55993bc6cd679a211a3685c2a74f8d89c5f23db02b82f"
+  },
+  {
+    "version": 403,
+    "filename": "403_interactive_overlay_principal.sql",
+    "checksum": "5970bfeb313dbd58545c3d4ebe824f2de8d6e140ecec4fc6e02f0078856f6231"
+  },
+  {
+    "version": 404,
+    "filename": "404_scope_rotation_sweep_to_managed_principals.sql",
+    "checksum": "76976c81b1bf18bab99fc158aa9bdc1ad043dea2b53e7d024450b0f6c4e543a3"
+  },
+  {
+    "version": 405,
+    "filename": "405_maintenance_overlay_principal.sql",
+    "checksum": "66f92eeb9603f89303a7c5628ab68aa3f3f3971ffc3d0cedf21c04154d9d7d93"
+  },
+  {
+    "version": 406,
+    "filename": "406_interactive_generation_roll.sql",
+    "checksum": "95a19015d5804ef3f82390739898f5019ced3572135fe8ce6f8a55b5b26ca3cb"
+  },
+  {
+    "version": 407,
+    "filename": "407_interactive_session_id_nullable.sql",
+    "checksum": "16d605b267c6f21c9d3ec5499acdc99a96c865504133eaf55d0485daf513931d"
+  },
+  {
+    "version": 408,
+    "filename": "408_structured_session_handoffs.sql",
+    "checksum": "d97ade871e8581eeca2199114a874b673ff9f937b8772c1fb9f58d0d9267061a"
+  },
+  {
+    "version": 409,
+    "filename": "409_remove_digest_config.sql",
+    "checksum": "6d091a00162b4b8b5178bd559eda220fedc9f082430007132e2299f8d9fe3ff5"
+  },
+  {
+    "version": 410,
+    "filename": "410_normalize_session_feedback_constraints.sql",
+    "checksum": "1c5c9f07ff0ae970a97ce158672204844558053e5b5a9eef3c5a4be496af3c97"
+  },
+  {
+    "version": 411,
+    "filename": "411_terminals.sql",
+    "checksum": "d70abddeec801fab9845861c18610efcb0ecb7b84b2eec9d27e78ac2ae5ed34a"
+  },
+  {
+    "version": 412,
+    "filename": "412_mcp_templates_project_secrets.sql",
+    "checksum": "f126ac50673377e92ef8a157410ed6fce1c5f386f7c1b733dca1e9f6121cf5c9"
+  },
+  {
+    "version": 413,
+    "filename": "413_session_feedback_review.sql",
+    "checksum": "1656e75273f931a4aa2aabef4bf5c280022c5f124d90315a1e1089601211c67a"
+  },
+  {
+    "version": 414,
+    "filename": "414_sessions_workspace_path.sql",
+    "checksum": "db1bbb0381f3a0f1e2effdec66475e5a22b59e3930ba37d8145ba7c5ccedba58"
+  },
+  {
+    "version": 415,
+    "filename": "415_sessions_startup_claim_generation.sql",
+    "checksum": "f5e3623d0907ecc5dba6ccc79be0f3ad6e9ff96dbee406f747bf79e48958a8fa"
+  },
+  {
+    "version": 416,
+    "filename": "416_hook_receipt_effects.sql",
+    "checksum": "1eb825f0cdefb3b3fcc88d33388748260fe0f91ad7ec6156026fbf6bc00fd185"
+  },
+  {
+    "version": 417,
+    "filename": "417_provider_capacity_snapshots.sql",
+    "checksum": "7397e2d9f59cc4d4573d58d546c430abf34b2f6614afe3f5ac7bd2e9a7a0fea9"
+  },
+  {
+    "version": 418,
+    "filename": "418_project_checkouts.sql",
+    "checksum": "42c0684fb86430e525b325f2dcc57e7f41eb684515f2ce63be5a491821005243"
+  }
+]

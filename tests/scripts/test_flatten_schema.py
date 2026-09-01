@@ -43,11 +43,11 @@ def test_flatten_concatenates_in_order_and_rewrites_transactional_hazards(
 ) -> None:
     schema_dir = _schema_dir(tmp_path)
 
-    text, digest = flatten_schema.flatten(schema_dir, version=1, write=False)
+    text, digest = flatten_schema.flatten(schema_dir, version=419, write=False)
 
     assert text == (
         f"{_HEADER}"
-        "-- baseline@1: flattened from baseline@375 + migrations 376-378.\n"
+        "-- baseline@419: flattened from baseline@375 + migrations 376-378.\n"
         "\n"
         "CREATE TABLE a (id integer);\n"
         "\n-- flattened migration 376_add_b.sql\n"
@@ -65,7 +65,7 @@ def test_flatten_concatenates_in_order_and_rewrites_transactional_hazards(
 def test_write_replaces_baseline_and_removes_migrations(tmp_path: Path) -> None:
     schema_dir = _schema_dir(tmp_path)
 
-    text, digest = flatten_schema.flatten(schema_dir, version=1, write=True)
+    text, digest = flatten_schema.flatten(schema_dir, version=419, write=True)
 
     assert (schema_dir / "baseline.sql").read_text(encoding="utf-8") == text
     assert sorted(path.name for path in (schema_dir / "migrations").iterdir()) == [".gitkeep"]
@@ -77,17 +77,18 @@ def test_non_contiguous_migrations_are_rejected(tmp_path: Path) -> None:
     (schema_dir / "migrations" / "380_gap.sql").write_text("SELECT 1;\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="not contiguous"):
-        flatten_schema.flatten(schema_dir, version=1, write=False)
+        flatten_schema.flatten(schema_dir, version=419, write=False)
 
 
 def test_main_reports_the_checksum_of_the_assembled_text(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     schema_dir = _schema_dir(tmp_path)
-    text, digest = flatten_schema.flatten(schema_dir, version=1, write=False)
+    text, digest = flatten_schema.flatten(schema_dir, version=419, write=False)
 
-    assert flatten_schema.main(["--schema-dir", str(schema_dir), "--version", "1"]) == 0
+    assert flatten_schema.main(["--schema-dir", str(schema_dir)]) == 0
 
     assert (
-        f"dry run baseline@1 lines={text.count(chr(10))} sha256={digest}" in capsys.readouterr().out
+        f"dry run baseline@419 lines={text.count(chr(10))} sha256={digest}"
+        in capsys.readouterr().out
     )

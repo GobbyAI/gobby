@@ -1,0 +1,395 @@
+{
+  "dumps_identical": true,
+  "new": {
+    "dump_sha256": "29e7558106e06bdf3e154858f80d18464c236c713bdd1bf28adb8811523bb150",
+    "identity": {
+      "assets_root_hash": "c6936c9dd3df2741655c6df0c1b037a0a8d3be50fc05474152310326312a2d16",
+      "baseline_checksum": "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81",
+      "baseline_version": 419,
+      "latest_checksum": "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81",
+      "latest_version": 419,
+      "runner_protocol": 1
+    }
+  },
+  "old": {
+    "dump_sha256": "29e7558106e06bdf3e154858f80d18464c236c713bdd1bf28adb8811523bb150",
+    "identity": {
+      "assets_root_hash": "2e36a3047225b768e5bda46b0dc8b36ce6be1461cc914cd3813168aea4617da5",
+      "baseline_checksum": "58524c140b36a49ef115bb7c9a83e9dedf8aeb59e0d53b280537fe564c3464ac",
+      "baseline_version": 375,
+      "latest_checksum": "42c0684fb86430e525b325f2dcc57e7f41eb684515f2ce63be5a491821005243",
+      "latest_version": 418,
+      "runner_protocol": 1
+    }
+  },
+  "roles": [
+    {
+      "member_of": [
+        "gobby_gcode_capability",
+        "gobby_ix_3cf2c838c924cc6d_1",
+        "gobby_ix_3cf2c838c924cc6d_2",
+        "gobby_ix_3cf2c838c924cc6d_3",
+        "gobby_ix_45ee903d0a7467ef_1",
+        "gobby_ix_45ee903d0a7467ef_2",
+        "gobby_ix_45ee903d0a7467ef_3",
+        "gobby_ix_625dfcf7c23b2ac0_1",
+        "gobby_ix_625dfcf7c23b2ac0_2",
+        "gobby_ix_625dfcf7c23b2ac0_3",
+        "gobby_ix_6830c7ceaf89e1a0_1",
+        "gobby_ix_6830c7ceaf89e1a0_2",
+        "gobby_ix_6830c7ceaf89e1a0_3",
+        "gobby_ix_715b3841fd5d0adb_1",
+        "gobby_ix_715b3841fd5d0adb_2",
+        "gobby_ix_715b3841fd5d0adb_3",
+        "gobby_ix_cf014f7dffb940bd_1",
+        "gobby_ix_cf014f7dffb940bd_2",
+        "gobby_ix_cf014f7dffb940bd_3",
+        "gobby_ix_d1cfb31d4e56df4c_1",
+        "gobby_ix_d1cfb31d4e56df4c_2",
+        "gobby_ix_d1cfb31d4e56df4c_3",
+        "gobby_ix_dce2c6bde486e0ac_1",
+        "gobby_ix_dce2c6bde486e0ac_2",
+        "gobby_ix_dce2c6bde486e0ac_3",
+        "gobby_ix_dd3b8739880f6b8f_1",
+        "gobby_ix_dd3b8739880f6b8f_2",
+        "gobby_ix_dd3b8739880f6b8f_3",
+        "gobby_ix_f44ce1c00f9b26bd_1",
+        "gobby_ix_f44ce1c00f9b26bd_2",
+        "gobby_ix_f44ce1c00f9b26bd_3",
+        "pg_signal_backend"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": false,
+      "rolcreaterole": true,
+      "rolinherit": true,
+      "rolname": "gobby_agent_issuer"
+    },
+    {
+      "member_of": [],
+      "rolbypassrls": false,
+      "rolcanlogin": false,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_daemon_runtime"
+    },
+    {
+      "member_of": [],
+      "rolbypassrls": false,
+      "rolcanlogin": false,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_gcode_capability"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_3cf2c838c924cc6d_1"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_3cf2c838c924cc6d_2"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_3cf2c838c924cc6d_3"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_45ee903d0a7467ef_1"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_45ee903d0a7467ef_2"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_45ee903d0a7467ef_3"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_625dfcf7c23b2ac0_1"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_625dfcf7c23b2ac0_2"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_625dfcf7c23b2ac0_3"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_6830c7ceaf89e1a0_1"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_6830c7ceaf89e1a0_2"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_6830c7ceaf89e1a0_3"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_715b3841fd5d0adb_1"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_715b3841fd5d0adb_2"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_715b3841fd5d0adb_3"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_cf014f7dffb940bd_1"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_cf014f7dffb940bd_2"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_cf014f7dffb940bd_3"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_d1cfb31d4e56df4c_1"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_d1cfb31d4e56df4c_2"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_d1cfb31d4e56df4c_3"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_dce2c6bde486e0ac_1"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_dce2c6bde486e0ac_2"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_dce2c6bde486e0ac_3"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_dd3b8739880f6b8f_1"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_dd3b8739880f6b8f_2"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_dd3b8739880f6b8f_3"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_f44ce1c00f9b26bd_1"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_f44ce1c00f9b26bd_2"
+    },
+    {
+      "member_of": [
+        "gobby_gcode_capability"
+      ],
+      "rolbypassrls": false,
+      "rolcanlogin": true,
+      "rolcreaterole": false,
+      "rolinherit": true,
+      "rolname": "gobby_ix_f44ce1c00f9b26bd_3"
+    },
+    {
+      "member_of": [
+        "gobby_daemon_runtime"
+      ],
+      "rolbypassrls": true,
+      "rolcanlogin": true,
+      "rolcreaterole": true,
+      "rolinherit": true,
+      "rolname": "gobby_test"
+    }
+  ],
+  "roles_identical": true
+}
