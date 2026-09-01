@@ -22,7 +22,7 @@ from gobby.storage.projects import (
     IsolatedAgentProjectPathError,
     LocalProjectManager,
 )
-from gobby.storage.schema_contract import apply_schema
+from gobby.storage.schema_contract import apply_schema, expected_schema_identity
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -1108,3 +1108,98 @@ def test_identity_repo_path_residue_allowlist() -> None:
         ).append(str(projects["columns"]))
 
     assert not violations, json.dumps(violations, indent=2, sort_keys=True)
+
+
+def _search_path_schema(scoped_url: str) -> str:
+    options = dict(parse_qsl(urlsplit(scoped_url).query, keep_blank_values=True))["options"]
+    return options.removeprefix("-csearch_path=")
+
+
+def test_v417_hub_stamps_shadowed_migration_after_campaign_apply(
+    predecessor_database: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hub whose ledger stops at 417 verifies without manual intervention.
+
+    The campaign applies the checkout DDL itself, so after apply the numbered
+    migration that carries the same change is still unstamped. The executor
+    stamps it with apply_schema before verify_schema (#21451); this proves that
+    stamp succeeds on the campaign-shaped schema and records the pinned checksum.
+    """
+    project_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    epoch_id = uuid.uuid4()
+    batch_id = uuid.uuid4()
+    identity = expected_schema_identity()
+    latest_version = int(identity["latest_version"])
+    target_checksum = str(identity["baseline_checksum"])
+    root = tmp_path / "v417-project"
+    write_project_marker(root, project_id=str(project_id), name="v417-project")
+    db = PostgresHubDatabase(predecessor_database)
+    try:
+        machine_id = uuid.UUID(insert_isolated_machine(db))
+    finally:
+        db.close()
+    patch_local_machine_id(monkeypatch, str(machine_id))
+    with psycopg.connect(
+        predecessor_database,
+        autocommit=True,
+        row_factory=dict_row,
+    ) as connection:
+        connection.execute(
+            "INSERT INTO projects(id, name, repo_path) VALUES (%s, %s, %s)",
+            (project_id, "v417-project", str(root)),
+        )
+        connection.execute(
+            """
+            INSERT INTO sessions(id, external_id, machine_id, source, project_id)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (session_id, "v417-session", machine_id, "codex", project_id),
+        )
+        # A v417 hub never stamped the checkout migration.
+        connection.execute(
+            "DELETE FROM schema_migrations WHERE version = %s",
+            (latest_version,),
+        )
+        _install_predecessor_resolver(connection)
+        _admit_batch(connection, epoch_id=epoch_id, batch_id=batch_id)
+
+    preflight = cutover.preflight_project_checkout_cutover(predecessor_database)
+    cutover.apply_project_checkout_cutover(
+        predecessor_database,
+        epoch_id=epoch_id,
+        batch_id=batch_id,
+        preflight=preflight,
+        target_checksum=target_checksum,
+    )
+    cutover.verify_project_checkout_cutover(
+        predecessor_database,
+        batch_id=batch_id,
+        target_checksum=target_checksum,
+    )
+    with psycopg.connect(predecessor_database, autocommit=True, row_factory=dict_row) as connection:
+        assert (
+            connection.execute(
+                "SELECT 1 FROM schema_migrations WHERE version = %s",
+                (latest_version,),
+            ).fetchone()
+            is None
+        )
+
+    apply_schema(predecessor_database, schema=_search_path_schema(predecessor_database))
+
+    with psycopg.connect(predecessor_database, autocommit=True, row_factory=dict_row) as connection:
+        assert connection.execute(
+            "SELECT checksum FROM schema_migrations WHERE version = %s",
+            (latest_version,),
+        ).fetchone() == {"checksum": identity["latest_checksum"]}
+        assert connection.execute(
+            "SELECT checksum FROM schema_migrations WHERE version = 375"
+        ).fetchone() == {"checksum": target_checksum}
+    assert cutover.project_checkout_cutover_already_applied(
+        predecessor_database,
+        batch_id=batch_id,
+        target_checksum=target_checksum,
+    )
