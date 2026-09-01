@@ -278,6 +278,7 @@ def compute_sandbox_paths(
         credential_env_vars,
         default_write_paths,
         deny_paths,
+        gcode_runtime_write_exceptions,
         gobby_read_exceptions,
         mcp_config_read_exceptions,
         provider_read_exceptions,
@@ -299,6 +300,7 @@ def compute_sandbox_paths(
         [
             *default_write_paths(config, workspace),
             *git_paths,
+            *gcode_runtime_write_exceptions(policy_env),
             *(provider_write_exceptions(provider) if provider else []),
             *(tuple(str(path) for path in rtk_paths.write_paths) if rtk_paths else ()),
         ]

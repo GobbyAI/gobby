@@ -925,6 +925,7 @@ class TestComputeSandboxPaths:
                 for sensitive in map(Path, resolved_protected)
             )
         assert str(runtime_home.resolve()) in paths.read_paths
+        assert str(runtime_home.resolve()) in paths.write_paths
         assert str(workspace.resolve()) in paths.write_paths
 
     @pytest.mark.parametrize(
