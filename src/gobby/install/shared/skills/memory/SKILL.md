@@ -1,7 +1,7 @@
 ---
 name: memory
 description: Use Gobby's persistent memory for durable cross-session knowledge, search-first retrieval, and stale-memory maintenance while keeping tasks, plans, code, and git authoritative for their own concerns.
-version: "1.2.1"
+version: "1.2.2"
 category: core
 alwaysApply: false
 triggers: remember, recall, forget, memory
@@ -59,6 +59,12 @@ why a future unrelated session should receive the memory; it is different from a
 summary of the content. One-time outcomes, run IDs, and dated status rarely support a
 durable rationale. The rationale is embedded with the content, so it also decides
 which searches find the memory.
+
+Content is capped at 3,000 characters. `create_memory` and `update_memory` reject a
+longer body with `content_too_long`; nothing is ever truncated. The cap protects the
+recall injection budget, so there is no split affordance (decision #21483): a memory
+that no longer fits is two subjects wearing one tag. Compress it, or move the new fact
+into its own memory and say in the `rationale` what was condensed.
 
 Prevent duplicates. Search first, review `similar_existing`, update the existing
 memory when its identity remains valid, or supersede stale entries when a durable
