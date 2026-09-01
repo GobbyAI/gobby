@@ -154,8 +154,7 @@ async def test_open_delivery_pr_returns_checkout_unresolved(no_checkout: _NoChec
 
     assert result["ok"] is False
     assert result["task_id"] == no_checkout.task.id
-    assert result["error_type"] == "checkout_unresolved"
-    assert "no checkout for machine" in result["error"]
+    _assert_checkout_unresolved(result)
 
 
 @pytest.mark.asyncio

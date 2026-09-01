@@ -29,6 +29,7 @@ from gobby.storage.project_checkouts import (
     CheckoutNotFoundError,
     CheckoutSentinelRejectedError,
     MissingMachineContextError,
+    OverlayRegistrationRejectedError,
 )
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 
@@ -382,6 +383,9 @@ def test_default_confinement_roots_come_from_project_and_worktree_storage() -> N
 
 _UNRESOLVED_CHECKOUT_ERRORS: tuple[Exception, ...] = (
     CheckoutNotFoundError("no checkout for machine m-1 project proj-9"),
+    OverlayRegistrationRejectedError(
+        "overlay /repo/worktrees/x is not a registered worktree or clone for machine m-1"
+    ),
     CheckoutSentinelRejectedError("checkout-free sentinel project cannot own a checkout"),
     MissingMachineContextError("machine_id is required to resolve a checkout"),
     MachineOwnershipMismatchError(

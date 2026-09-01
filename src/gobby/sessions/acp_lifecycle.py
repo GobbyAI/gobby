@@ -31,6 +31,7 @@ from gobby.storage.project_checkouts import (
     CheckoutNotFoundError,
     CheckoutSentinelRejectedError,
     MissingMachineContextError,
+    OverlayRegistrationRejectedError,
     require_root,
 )
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
@@ -50,10 +51,11 @@ type ConfinementRoots = Callable[["Session"], Sequence[str]]
 # default of 50 would silently drop older registrations.
 _CONFINEMENT_WORKTREE_LIMIT = 10_000
 
-# Checkout resolution failures `require_root` raises. Each one means the session's
-# confinement cannot be proven, so the lifecycle fails closed on them.
+# Every checkout resolution failure the checkout resolvers raise. Each one means the
+# session's confinement cannot be proven, so the lifecycle fails closed on them.
 _CHECKOUT_RESOLUTION_ERRORS: tuple[type[Exception], ...] = (
     CheckoutNotFoundError,
+    OverlayRegistrationRejectedError,
     CheckoutSentinelRejectedError,
     MissingMachineContextError,
     MachineOwnershipMismatchError,
