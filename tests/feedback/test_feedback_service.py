@@ -19,6 +19,7 @@ from gobby.prompts.sync import sync_bundled_prompts
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.isolated_checkout import write_project_marker
 
 pytestmark = pytest.mark.unit
 
@@ -38,7 +39,11 @@ def session_id(temp_db: HubDatabase, tmp_path: Path) -> str:
     sync_bundled_prompts(temp_db)
     checkout = tmp_path / "gobby"
     checkout.mkdir()
-    project = LocalProjectManager(temp_db).create(name="gobby", repo_path=str(checkout))
+    project_id = str(uuid4())
+    write_project_marker(checkout, project_id=project_id, name="gobby")
+    project = LocalProjectManager(temp_db).create(
+        name="gobby", repo_path=str(checkout), project_id=project_id
+    )
     SessionManager(temp_db).register_session(
         external_id="feedback-service-session",
         machine_id=MACHINE_ID,
