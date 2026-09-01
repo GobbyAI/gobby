@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
+from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
@@ -85,6 +86,25 @@ class TestPrefixRefsActOnTheMatchingWorktree:
         assert abandoned.status == WorktreeStatus.ABANDONED.value
 
     @pytest.mark.asyncio
+    async def test_mark_worktree_merged_accepts_a_prefix(
+        self, storage: LocalWorktreeManager
+    ) -> None:
+        git_manager = MagicMock()
+        git_manager.repo_path = "/tmp/repo"
+        git_manager.run_git_command.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        registry = create_worktrees_registry(worktree_storage=storage, git_manager=git_manager)
+
+        result = await registry.call("mark_worktree_merged", {"worktree_id": _PREFIX})
+
+        assert result["success"] is True, result
+        git_manager.run_git_command.assert_called_once()
+        assert git_manager.run_git_command.call_args.args[0][:2] == ["merge-base", "--is-ancestor"]
+        merged = storage.get(_FULL_ID)
+        assert merged is not None
+        assert merged.status == WorktreeStatus.MERGED.value
+        assert merged.merged_at is not None
+
+    @pytest.mark.asyncio
     async def test_unknown_prefix_is_a_clean_not_found(self, storage: LocalWorktreeManager) -> None:
         registry = create_worktrees_registry(worktree_storage=storage)
 
@@ -95,12 +115,19 @@ class TestPrefixRefsActOnTheMatchingWorktree:
         assert "invalid input syntax" not in result["error"]
 
 
-def _prefix_only_storage() -> MagicMock:
-    """Storage whose resolver is the only method that understands the prefix."""
+def _recording_storage(events: list[tuple[str, str]]) -> MagicMock:
+    """Storage that records every id it is asked about and knows no worktree."""
     stub = MagicMock(spec=LocalWorktreeManager)
-    stub.resolve_reference = MagicMock(return_value=_FULL_ID)
-    stub.get = MagicMock(return_value=None)
-    stub.claim_if_available = MagicMock(return_value=None)
+
+    def _lookup(name: str) -> Any:
+        def record(worktree_id: str, *args: Any, **kwargs: Any) -> None:
+            events.append((name, worktree_id))
+            return None
+
+        return record
+
+    stub.get = MagicMock(side_effect=_lookup("get"))
+    stub.claim_if_available = MagicMock(side_effect=_lookup("claim_if_available"))
     return stub
 
 
@@ -124,11 +151,17 @@ _TOOL_ARGUMENTS: list[tuple[str, dict[str, Any]]] = [
     ("tool", "arguments"), _TOOL_ARGUMENTS, ids=[tool for tool, _ in _TOOL_ARGUMENTS]
 )
 async def test_every_worktree_id_tool_resolves_before_storage_lookup(
-    tool: str, arguments: dict[str, Any]
+    tool: str, arguments: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    stub = _prefix_only_storage()
+    events: list[tuple[str, str]] = []
+
+    def resolve_worktree_id(self: RegistryContext, ref: str) -> str:
+        events.append(("resolve_worktree_id", ref))
+        return _FULL_ID
+
+    monkeypatch.setattr(RegistryContext, "resolve_worktree_id", resolve_worktree_id)
     registry = create_worktrees_registry(
-        worktree_storage=stub,
+        worktree_storage=_recording_storage(events),
         git_manager=MagicMock(),
         project_id="project-a",
         worktree_delete_executor=None,
@@ -136,17 +169,19 @@ async def test_every_worktree_id_tool_resolves_before_storage_lookup(
 
     await registry.call(tool, {"worktree_id": _PREFIX, **arguments})
 
-    stub.resolve_reference.assert_called_once_with(_PREFIX)
-    lookups = [call.args[0] for call in stub.get.call_args_list]
-    lookups += [call.args[0] for call in stub.claim_if_available.call_args_list]
+    assert events[0] == ("resolve_worktree_id", _PREFIX), events
+    lookups = events[1:]
     assert lookups, f"{tool} never consulted storage"
-    assert all(lookup == _FULL_ID for lookup in lookups), lookups
+    assert all(name != "resolve_worktree_id" for name, _ in lookups), events
+    assert all(worktree_id == _FULL_ID for _, worktree_id in lookups), events
 
 
 @pytest.mark.asyncio
 async def test_resolver_error_is_returned_verbatim() -> None:
-    stub = _prefix_only_storage()
-    stub.resolve_reference.side_effect = ValueError("Ambiguous worktree '0b' matches: a, b")
+    stub = MagicMock(spec=LocalWorktreeManager)
+    stub.resolve_reference = MagicMock(
+        side_effect=ValueError("Ambiguous worktree '0b' matches: a, b")
+    )
     registry = create_worktrees_registry(worktree_storage=stub)
 
     result = await registry.call("get_worktree", {"worktree_id": "0b"})
