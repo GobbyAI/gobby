@@ -54,7 +54,7 @@ class CompletedTurnRecoveryHost(Protocol):
 
     async def _session_made_successful_mcp_call(self, run: AgentRun) -> bool | None: ...
 
-    async def _complete_if_step_workflow_finished(self, run: AgentRun) -> bool: ...
+    async def _complete_if_work_finished(self, run: AgentRun) -> bool: ...
 
     async def _log_transcript_snapshot(
         self,
@@ -188,12 +188,13 @@ async def recover_completed_turn(
     if decision == "duplicate":
         return 0
     if decision == "exhausted":
-        # A run parked on a satisfied exit condition has no workflow progress
-        # left to make, so failing it would report finished work as an error.
-        if await host._complete_if_step_workflow_finished(run):
+        # A run parked on a satisfied exit condition, or whose task was closed
+        # or handed back, has no progress left to make, so failing it would
+        # report finished work as an error.
+        if await host._complete_if_work_finished(run):
             await host._log_transcript_snapshot(
                 run,
-                reason="completing idle agent parked on a satisfied workflow exit condition",
+                reason="completing idle agent whose work already finished",
                 snapshot=snapshot,
                 level=logging.INFO,
             )

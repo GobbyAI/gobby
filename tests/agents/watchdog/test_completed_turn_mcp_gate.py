@@ -117,7 +117,7 @@ class _FakeHost:
     async def _fail_idle_agent(self, run: AgentRun, reason: str) -> None:
         self.failures.append(reason)
 
-    async def _complete_if_step_workflow_finished(self, run: AgentRun) -> bool:
+    async def _complete_if_work_finished(self, run: AgentRun) -> bool:
         return False
 
     async def _log_transcript_snapshot(

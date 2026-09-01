@@ -361,6 +361,7 @@ def _make_idle_monitor_run(
     session_age_seconds: int = 120,
     task_manager: LocalTaskManager | None = None,
     max_reprompt_attempts: int = 2,
+    task_id: str | None = None,
 ) -> tuple[AgentLifecycleMonitor, AgentRun]:
     config = TmuxConfig(
         idle_check_enabled=True,
@@ -400,6 +401,7 @@ def _make_idle_monitor_run(
         child_session_id=child.id,
         run_id=run_id,
         terminal_id=f"gobby-{run_id[-4:]}",
+        task_id=task_id,
     )
     return monitor, run
 

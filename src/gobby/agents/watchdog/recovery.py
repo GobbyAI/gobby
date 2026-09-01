@@ -17,6 +17,7 @@ from gobby.agents.watchdog.completed_turn_recovery import (
 )
 from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
 from gobby.storage.terminals import Terminal
+from gobby.tasks.state_semantics import projected_task_state
 from gobby.terminals.error_classification import is_vanished_terminal_target
 from gobby.terminals.runtime import Delivered, TerminalWriteError
 from gobby.terminals.write_coordinator import WriteCoordinator, WriteRequest
@@ -584,8 +585,6 @@ class WatchdogRecoveryCoordinator:
             return
 
         try:
-            from gobby.tasks.state_semantics import projected_task_state
-
             state = projected_task_state(task)
         except Exception:
             state = "agent_watchdog"
@@ -675,34 +674,69 @@ class WatchdogRecoveryCoordinator:
         self._idle_detector.clear_state(run.id)
         self.discard(run.id)
 
-    async def _complete_if_step_workflow_finished(self, run: AgentRun) -> bool:
-        """Complete an idle agent whose step workflow already reached its exit condition.
+    async def _complete_if_work_finished(self, run: AgentRun) -> bool:
+        """Complete an idle agent whose work already finished.
 
-        Every bundled agent's terminate step allows only the four gobby MCP
+        Failing such an agent would report finished work as an error (#19097).
+        Two signals prove the work is over: the step workflow reached its exit
+        condition (every bundled terminate step allows only the four gobby MCP
         proxy tools, so an agent whose proxy never started has no permitted
-        action left once the workflow is over. Failing it there would report
-        finished work as an error (#19097). Returns whether the run was
+        action left), or the run's task was closed or handed back — escalation
+        releases the claim, so a workflow-less implementer that escalated and
+        then idled has nothing left to do (#21516). Returns whether the run was
         terminalized as a completion.
         """
         step_context, _lookup_succeeded = await self._load_step_workflow_context(run)
-        if step_context is None or not await self._step_workflow_exit_condition_met(run):
-            return False
+        if step_context is not None and await self._step_workflow_exit_condition_met(run):
+            logger.info(
+                "Agent %s is idle at step %s/%s with its exit condition already satisfied — "
+                "completing instead of failing",
+                run.id,
+                step_context.workflow_name,
+                step_context.current_step,
+            )
+            await self._complete_idle_agent(
+                run,
+                reason=(
+                    f"step workflow '{step_context.workflow_name}' reached its exit condition "
+                    f"at step '{step_context.current_step}' but the agent never called "
+                    "end_agent_run"
+                ),
+            )
+            return True
 
+        task_state = await self._finished_task_state(run)
+        if task_state is None:
+            return False
+        outcome = "closed" if task_state == "closed" else "handed back (escalated and unclaimed)"
         logger.info(
-            "Agent %s is idle at step %s/%s with its exit condition already satisfied — "
-            "completing instead of failing",
+            "Agent %s is idle with its task %s already %s — completing instead of failing",
             run.id,
-            step_context.workflow_name,
-            step_context.current_step,
+            run.task_id,
+            outcome,
         )
         await self._complete_idle_agent(
             run,
-            reason=(
-                f"step workflow '{step_context.workflow_name}' reached its exit condition at "
-                f"step '{step_context.current_step}' but the agent never called end_agent_run"
-            ),
+            reason=f"task {run.task_id} was {outcome} but the agent never called end_agent_run",
         )
         return True
+
+    async def _finished_task_state(self, run: AgentRun) -> str | None:
+        """Return ``closed``/``escalated`` when the run's task no longer has work, else None."""
+        if self._task_manager is None or not run.task_id:
+            return None
+        try:
+            task = await self._run_db(self._task_manager.get_task, run.task_id)
+        except (psycopg.Error, ValueError):
+            logger.warning(
+                "Failed to load task %s while completing idle run %s",
+                run.task_id,
+                run.id,
+                exc_info=True,
+            )
+            return None
+        state = projected_task_state(task)
+        return state if state in {"closed", "escalated"} else None
 
     async def _complete_idle_agent(self, run: AgentRun, reason: str) -> None:
         """Complete an idle agent whose step workflow already finished."""
