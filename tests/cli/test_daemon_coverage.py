@@ -14,10 +14,10 @@ from gobby.cli._daemon_services import ServiceStartResult
 from gobby.cli.daemon import (
     _services_start,
     _services_stop,
-    health,
     status,
     stop,
 )
+from gobby.cli.daemon_health import health
 from gobby.cli.installers.compose_env import ComposeEnvironmentError, ComposeRuntime
 from gobby.cli.runtime import CliRuntime
 from gobby.utils.status import EndpointProbeFailure, RichStatusProbe
@@ -603,10 +603,10 @@ class TestStatusCommand:
 
 
 class TestHealthCommand:
-    @patch("gobby.cli.daemon.httpx.get")
-    @patch("gobby.cli.daemon._is_process_alive", return_value=True)
-    @patch("gobby.cli.daemon.probe_daemon_lock")
-    @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.daemon_health.httpx.get")
+    @patch("gobby.cli.daemon_health._is_process_alive", return_value=True)
+    @patch("gobby.cli.daemon_health.probe_daemon_lock")
+    @patch("gobby.cli.daemon_health.get_gobby_home")
     def test_health_surfaces_hook_runtime_degradation(
         self,
         mock_home: MagicMock,
@@ -638,8 +638,8 @@ class TestHealthCommand:
         assert "hook runtime: schema_mismatch" in result.output
 
     @patch("gobby.cli.runtime.get_cli_runtime")
-    @patch("gobby.cli.daemon.httpx.get")
-    @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.daemon_health.httpx.get")
+    @patch("gobby.cli.daemon_health.get_gobby_home")
     def test_health_reports_maintenance_without_runtime_or_http(
         self,
         mock_home: MagicMock,

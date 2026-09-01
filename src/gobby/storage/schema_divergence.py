@@ -14,11 +14,18 @@ import logging
 import os
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
+from gobby.install.bin_set_coherence import (
+    IDENTITY_STAMP_NAME,
+    SET_MEMBERS,
+    BinarySetCoherenceError,
+    probe_set_member_identity,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.schema_contract import SchemaContractError, expected_schema_identity
 from gobby.storage.schema_identity_pin import SchemaIdentityError, validate_identity
-from gobby.utils.native_bin import resolve_native_bin
+from gobby.utils.native_bin import native_bin_dir, native_bin_name, resolve_native_bin
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +64,94 @@ class SchemaHeads:
         if self.diverged:
             return f"{summary} — DIVERGED"
         return summary
+
+
+@dataclass(frozen=True)
+class InstalledBinaryMismatch:
+    """One installed set member whose embedded identity does not match the pin."""
+
+    member: str
+    identity: dict[str, int | str]
+
+
+@dataclass(frozen=True)
+class InstalledBinarySet:
+    """Read-only coherence view of the managed native binary set."""
+
+    pin_identity: dict[str, int | str] | None
+    mismatches: tuple[InstalledBinaryMismatch, ...] = ()
+    unreadable_members: tuple[str, ...] = ()
+    pin_error: str | None = None
+
+    @property
+    def mixed(self) -> bool:
+        return bool(self.mismatches or self.unreadable_members or self.pin_error)
+
+    def describe(self) -> str:
+        """Render the set mismatch with every affected member and identity."""
+        details = [
+            f"{mismatch.member} identity {_render_identity(mismatch.identity)}; "
+            f"installed pin {_render_identity(self.pin_identity)}"
+            for mismatch in self.mismatches
+        ]
+        details.extend(f"{member} identity unreadable" for member in self.unreadable_members)
+        if self.pin_error is not None:
+            details.append(self.pin_error)
+        return "mixed installed binary set: " + "; ".join(details)
+
+
+def collect_installed_binary_set(bin_dir: Path | None = None) -> InstalledBinarySet:
+    """Probe installed set members and compare their identities with the pin."""
+    root = native_bin_dir() if bin_dir is None else bin_dir
+    installed = tuple(
+        (member, root / native_bin_name(member))
+        for member in SET_MEMBERS
+        if (root / native_bin_name(member)).is_file()
+    )
+    if not installed:
+        return InstalledBinarySet(pin_identity=None)
+
+    stamp = root / IDENTITY_STAMP_NAME
+    try:
+        parsed: object = json.loads(stamp.read_text(encoding="utf-8"))
+        pin = validate_identity(parsed)
+    except (OSError, json.JSONDecodeError, SchemaIdentityError) as exc:
+        return InstalledBinarySet(
+            pin_identity=None,
+            pin_error=f"installed schema identity pin is unreadable: {exc}",
+        )
+
+    mismatches: list[InstalledBinaryMismatch] = []
+    unreadable: list[str] = []
+    for member, binary in installed:
+        try:
+            identity = probe_set_member_identity(binary, member)
+        except BinarySetCoherenceError:
+            logger.debug("Failed to probe installed %s schema identity", member, exc_info=True)
+            unreadable.append(member)
+            continue
+        if identity != pin:
+            mismatches.append(InstalledBinaryMismatch(member=member, identity=identity))
+    return InstalledBinarySet(
+        pin_identity=pin,
+        mismatches=tuple(mismatches),
+        unreadable_members=tuple(unreadable),
+    )
+
+
+def binary_set_apply_refusal(bin_dir: Path | None = None) -> str | None:
+    """Return the installed-set divergence that makes start unsafe, if any."""
+    view = collect_installed_binary_set(bin_dir)
+    if not view.mixed:
+        return None
+    return f"{view.describe()}; rebuild and install all four together"
+
+
+def _render_identity(identity: dict[str, int | str] | None) -> str:
+    if identity is None:
+        return "unreadable"
+    contract = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    return f"v{identity['latest_version']} {contract}"
 
 
 def installed_schema_identity() -> dict[str, int | str] | None:
