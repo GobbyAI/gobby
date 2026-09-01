@@ -416,6 +416,58 @@ PYEOF"""
             assert response.decision == expected_decision
 
     @pytest.mark.asyncio
+    async def test_interpreter_heredoc_without_dash_operand_is_classified_from_its_body(
+        self, db: HubDatabase
+    ) -> None:
+        """``python3 <<EOF`` reads its program from stdin exactly like ``python3 - <<EOF``."""
+        _sync_bundled(db)
+        mutation = "from pathlib import Path\nPath('src/gobby/x.py').write_text('changed')\n"
+        variables = {
+            "require_task_before_edit": True,
+            "task_claimed": False,
+            "loaded_skills": ["python", "tasks"],
+            "brevity_disabled": True,
+            "skill_discovery_instructions_shown": True,
+        }
+
+        for command, expected_kind, expected_decision, expected_paths in (
+            (f"python3 <<'EOF'\n{mutation}EOF", "write", "block", ["src/gobby/x.py"]),
+            (f"uv run python <<'EOF'\n{mutation}EOF", "write", "block", ["src/gobby/x.py"]),
+            (f"python3 -u <<'EOF'\n{mutation}EOF", "write", "block", ["src/gobby/x.py"]),
+            ("python3 <<'EOF'\nimport sys\nprint(sys.version)\nEOF", "execute", "allow", None),
+            (
+                "node <<'EOF'\nrequire('fs').writeFileSync('src/x.js', 'hi')\nEOF",
+                "write",
+                "block",
+                None,
+            ),
+            ("ruby <<'EOF'\nFile.write('src/x.rb', 'hi')\nEOF", "write", "block", None),
+        ):
+            data: dict[str, object] = {
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+            }
+            normalize_tool_fields(data)
+            event = HookEvent(
+                event_type=HookEventType.BEFORE_TOOL,
+                session_id=SESSION_ID,
+                source=SessionSource.CODEX,
+                timestamp=datetime.now(UTC),
+                data=data,
+            )
+
+            response = await RuleEngine(db).evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=variables,
+            )
+
+            assert data["canonical_tool_kind"] == expected_kind, command
+            assert response.decision == expected_decision, command
+            if expected_paths is not None:
+                assert data["canonical_file_paths"] == expected_paths, command
+
+    @pytest.mark.asyncio
     async def test_indeterminate_aws_mcp_diagnostic_does_not_require_task(
         self, db: HubDatabase
     ) -> None:

@@ -437,6 +437,27 @@ def has_mutating_output_redirection(tokens: list[ShellToken]) -> bool:
     return False
 
 
+def strip_input_redirections(tokens: list[ShellToken]) -> list[ShellToken]:
+    """Drop input-redirection operators and their immediate operands from tokens.
+
+    Heredoc delimiters and redirected input files never name the command's own
+    operands, so an interpreter with nothing left after the strip reads its
+    program from stdin.
+    """
+    stripped: list[ShellToken] = []
+    skip_next = False
+    for idx, token in enumerate(tokens):
+        if skip_next:
+            skip_next = False
+            continue
+        if is_shell_input_redirection_token(token):
+            if idx + 1 < len(tokens) and not is_unquoted_shell_control_token(tokens[idx + 1]):
+                skip_next = True
+            continue
+        stripped.append(token)
+    return stripped
+
+
 def strip_output_redirections(tokens: list[ShellToken]) -> list[ShellToken]:
     """Drop output-redirection operators and their immediate targets from tokens.
 

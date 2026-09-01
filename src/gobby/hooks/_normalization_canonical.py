@@ -35,6 +35,7 @@ from gobby.hooks._normalization_shell import (
     is_shell_input_redirection_token,
     is_unquoted_shell_control_token,
     shell_token_values,
+    strip_input_redirections,
     strip_output_redirections,
     tokenize_shell_command,
 )
@@ -471,6 +472,14 @@ def _classify_shell_segment(
         if len(plain_tokens) == len(tokens)
         else _strip_shell_wrappers(shell_token_values(plain_tokens))
     )
+    # An interpreter with no script operand reads its program from stdin whether
+    # or not a literal ``-`` is present, so decide that from parts with every
+    # redirection removed: ``python3 <<EOF`` must classify like ``python3 - <<EOF``.
+    stdin_parts = (
+        plain_parts
+        if not has_shell_input_redirection(tokens)
+        else _strip_shell_wrappers(shell_token_values(strip_input_redirections(plain_tokens)))
+    )
 
     gcode_metadata = gcode_navigation_metadata(plain_parts)
     if gcode_metadata and not (
@@ -503,11 +512,11 @@ def _classify_shell_segment(
 
     if input_paths:
         base_metadata = _classify_shell_segment_without_redirection(plain_parts, cwd)
-        if _interpreter_reads_program_from_stdin(plain_parts):
+        if _interpreter_reads_program_from_stdin(stdin_parts):
             base_metadata = _ShellSegmentMetadata(
                 "write",
                 repo_mutation=True,
-                stdin_python_program=_stdin_program_is_python(plain_parts),
+                stdin_python_program=_stdin_program_is_python(stdin_parts),
                 cwd=cwd,
             )
         base_paths = list(base_metadata.paths)
@@ -524,11 +533,11 @@ def _classify_shell_segment(
         )
 
     if has_shell_input_redirection(tokens):
-        if _interpreter_reads_program_from_stdin(plain_parts):
+        if _interpreter_reads_program_from_stdin(stdin_parts):
             return _ShellSegmentMetadata(
                 "write",
                 repo_mutation=True,
-                stdin_python_program=_stdin_program_is_python(plain_parts),
+                stdin_python_program=_stdin_program_is_python(stdin_parts),
                 cwd=cwd,
             )
         return _ShellSegmentMetadata("execute")
