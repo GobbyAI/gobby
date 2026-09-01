@@ -285,34 +285,16 @@ pub enum ProjectIndexScope {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MissingIdentity {
-    Error,
-    Generate,
-}
-
-#[derive(Debug)]
-struct MissingProjectIdentity;
-
-impl fmt::Display for MissingProjectIdentity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(
-            "No gcode project found. Run `gcode init` to initialize, \
-             or use `--project <path>` to specify a project directory.",
-        )
-    }
-}
-
-impl std::error::Error for MissingProjectIdentity {}
-
+/// Where a resolved identity came from. Every variant is a root Gobby
+/// registers in `project_checkouts`; a root without one (no
+/// `.gobby/project.json`, or only a retired standalone `.gobby/gcode.json`)
+/// resolves to a `checkout_required` error instead of a generated identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectIdentitySource {
     ProjectJson,
-    GcodeJson,
     IsolatedRoot,
     IsolatedOverlay,
     LinkedWorktree,
-    Generated,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -321,7 +303,6 @@ pub struct ProjectIdentity {
     pub root: PathBuf,
     pub source: ProjectIdentitySource,
     pub warning: Option<String>,
-    pub should_write_gcode_json: bool,
     pub index_scope: ProjectIndexScope,
 }
 
@@ -461,17 +442,21 @@ pub(super) fn identity_for_resolved_root(
     project_root: &Path,
     explicit_root: bool,
 ) -> anyhow::Result<ProjectIdentity> {
-    match resolve_project_identity(project_root, MissingIdentity::Error) {
+    match resolve_project_identity(project_root) {
         Ok(identity) => Ok(identity),
-        Err(error) if !explicit_root && is_missing_project_identity(&error) => {
+        Err(error) if !explicit_root && is_checkout_required(&error) => {
             Err(error.context(CliError::project_required()))
         }
         Err(error) => Err(error),
     }
 }
 
-fn is_missing_project_identity(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<MissingProjectIdentity>().is_some()
+/// An implicit (cwd-derived) root without a registered identity reports
+/// `project_required`; the `checkout_required` detail stays in the chain.
+fn is_checkout_required(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<CliError>()
+        .is_some_and(|error| error.code == CliError::CHECKOUT_REQUIRED)
 }
 
 fn services_from_acquired_settings(
@@ -500,10 +485,13 @@ fn resolve_override_root(project_override: &str) -> anyhow::Result<PathBuf> {
     resolve_project_by_name(project_override)
 }
 
-pub fn resolve_project_identity(
-    project_root: &Path,
-    missing: MissingIdentity,
-) -> anyhow::Result<ProjectIdentity> {
+/// Resolve the identity Gobby registers for `project_root`.
+///
+/// gcode never generates identities: primary index writes are fenced on this
+/// machine's `project_checkouts` row, which only `gobby init` (or
+/// `gobby projects rebind`) creates, so a root without a registered identity
+/// fails with `checkout_required`.
+pub fn resolve_project_identity(project_root: &Path) -> anyhow::Result<ProjectIdentity> {
     let root = project_root
         .canonicalize()
         .unwrap_or_else(|_| absolute_fallback(project_root));
@@ -517,7 +505,7 @@ pub fn resolve_project_identity(
         }
 
         if is_self_referential_isolation_marker(&marker, &root) {
-            return resolve_non_isolated_project_identity(root, missing);
+            return resolve_non_isolated_project_identity(root);
         }
 
         if let (Some(parent_project_path), Some(parent_project_id)) = (
@@ -532,7 +520,6 @@ pub fn resolve_project_identity(
                 root: root.clone(),
                 source: ProjectIdentitySource::IsolatedOverlay,
                 warning: None,
-                should_write_gcode_json: false,
                 index_scope: ProjectIndexScope::Overlay {
                     overlay_project_id,
                     overlay_root: root,
@@ -547,18 +534,14 @@ pub fn resolve_project_identity(
             root,
             source: ProjectIdentitySource::IsolatedRoot,
             warning: None,
-            should_write_gcode_json: false,
             index_scope: ProjectIndexScope::Single,
         });
     }
 
-    resolve_non_isolated_project_identity(root, missing)
+    resolve_non_isolated_project_identity(root)
 }
 
-fn resolve_non_isolated_project_identity(
-    root: PathBuf,
-    missing: MissingIdentity,
-) -> anyhow::Result<ProjectIdentity> {
+fn resolve_non_isolated_project_identity(root: PathBuf) -> anyhow::Result<ProjectIdentity> {
     let worktree = git::worktree_info(&root)?;
     if worktree.kind == WorktreeKind::Linked {
         let project_id = crate::project::code_index_id_for_root(&worktree.top_level);
@@ -568,7 +551,6 @@ fn resolve_non_isolated_project_identity(
             root: worktree.top_level,
             source: ProjectIdentitySource::LinkedWorktree,
             warning: None,
-            should_write_gcode_json: false,
             index_scope: ProjectIndexScope::Single,
         });
     }
@@ -580,32 +562,31 @@ fn resolve_non_isolated_project_identity(
             root,
             source: ProjectIdentitySource::ProjectJson,
             warning: None,
-            should_write_gcode_json: false,
             index_scope: ProjectIndexScope::Single,
         });
     }
     if gobby_dir.join("gcode.json").exists() {
-        return Ok(ProjectIdentity {
-            project_id: crate::project::read_gcode_json(&root)?,
-            root,
-            source: ProjectIdentitySource::GcodeJson,
-            warning: None,
-            should_write_gcode_json: false,
-            index_scope: ProjectIndexScope::Single,
-        });
+        return Err(CliError::checkout_required(
+            &root,
+            None,
+            format!(
+                "{} carries only a standalone .gobby/gcode.json identity, \
+                 which Gobby never registers as a checkout",
+                root.display()
+            ),
+        )
+        .into());
     }
 
-    match missing {
-        MissingIdentity::Generate => Ok(ProjectIdentity {
-            project_id: crate::project::code_index_id_for_root(&root),
-            root,
-            source: ProjectIdentitySource::Generated,
-            warning: None,
-            should_write_gcode_json: true,
-            index_scope: ProjectIndexScope::Single,
-        }),
-        MissingIdentity::Error => Err(MissingProjectIdentity.into()),
-    }
+    Err(CliError::checkout_required(
+        &root,
+        None,
+        format!(
+            "no Gobby project is registered at {}: .gobby/project.json is missing",
+            root.display()
+        ),
+    )
+    .into())
 }
 
 use gobby_core::project::{is_self_referential_isolation_marker, resolve_parent_project_root};
@@ -672,7 +653,8 @@ pub(super) fn resolve_project_by_name(name: &str) -> anyhow::Result<PathBuf> {
 /// Detect project root by walking up the directory tree.
 ///
 /// Resolution order:
-/// 1. `.gobby/project.json` or `.gobby/gcode.json` (identity file)
+/// 1. `.gobby/project.json` (a retired `.gobby/gcode.json` also anchors the
+///    root so `checkout_required` names the directory to run `gobby init` in)
 /// 2. VCS root (`.git` or `.hg`)
 /// 3. Current working directory
 pub fn detect_project_root() -> anyhow::Result<PathBuf> {
@@ -718,15 +700,10 @@ pub fn detect_project_root_from(start: &Path) -> anyhow::Result<PathBuf> {
     }
 }
 
-/// Resolve project ID from identity files or generate deterministically.
-///
-/// Resolution order:
-/// 1. `.gobby/project.json` — gobby's file (reads `"id"`, falls back to `"project_id"`)
-/// 2. `.gobby/gcode.json` — gcode's standalone identity
-/// 3. Generate deterministic UUID5 from canonical path (no filesystem writes)
+/// Resolve the registered project ID for `project_root` (test helper).
 #[cfg(test)]
 pub(super) fn resolve_project_id(project_root: &Path) -> anyhow::Result<String> {
-    Ok(resolve_project_identity(project_root, MissingIdentity::Error)?.project_id)
+    Ok(resolve_project_identity(project_root)?.project_id)
 }
 
 fn absolute_fallback(path: &Path) -> PathBuf {

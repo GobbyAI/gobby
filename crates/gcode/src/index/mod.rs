@@ -1,6 +1,7 @@
 pub mod api;
 #[cfg(test)]
 mod api_tests;
+pub(crate) mod checkout_fence;
 pub mod chunker;
 pub mod hasher;
 pub mod import_resolution;

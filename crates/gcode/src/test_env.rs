@@ -128,11 +128,11 @@ fn provision_code_index_schema(database_url: &str) -> Result<(), String> {
         .map_err(|error| format!("connect to the test database: {error:#}"))?;
     {
         let mut runner = gobby_core::schema::SchemaRunner::new(&mut client, "public")
-            .map_err(|error| format!("schema runner: {error}"))?;
+            .map_err(|error| format!("schema runner: {error:#}"))?;
         runner
             .apply()
             .map(|_| ())
-            .map_err(|error| format!("gdaemon schema apply: {error}"))?;
+            .map_err(|error| format!("gdaemon schema apply: {error:#}"))?;
     }
     let machine_id = gobby_core::machine::read_local_machine_id()
         .map_err(|error| format!("read local machine id: {error:#}"))?;
@@ -165,6 +165,41 @@ pub fn seed_test_machine(client: &mut postgres::Client, machine_id: &str) -> Res
             &[&machine_id, &owner_id],
         )
         .map_err(|error| format!("seed local machine row: {error}"))?;
+    Ok(())
+}
+
+/// Register `root` as this machine's checkout for `project_id`, creating the
+/// registry project row when needed. Primary index writes are fenced on this
+/// row, so every test that indexes a root in Primary mode registers it first.
+/// Idempotent: a re-run with a fresh temp root rebinds the same project id.
+pub fn seed_test_checkout(
+    client: &mut postgres::Client,
+    project_id: &str,
+    root: &std::path::Path,
+) -> Result<(), String> {
+    let machine_id = gobby_core::machine::read_local_machine_id()
+        .map_err(|error| format!("read local machine id: {error:#}"))?;
+    let machine_id = uuid::Uuid::parse_str(&machine_id)
+        .map_err(|error| format!("parse local machine id {machine_id:?}: {error}"))?;
+    let project_uuid = uuid::Uuid::parse_str(project_id)
+        .map_err(|error| format!("parse test project id {project_id:?}: {error}"))?;
+    client
+        .execute(
+            "INSERT INTO projects (id, name) VALUES ($1, $2)
+             ON CONFLICT (id) DO NOTHING",
+            &[&project_uuid, &format!("gcode-test-{project_id}")],
+        )
+        .map_err(|error| format!("seed registry project row: {error}"))?;
+    client
+        .execute(
+            "INSERT INTO project_checkouts (machine_id, project_id, root_path)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (machine_id, project_id) DO UPDATE SET
+                root_path = EXCLUDED.root_path,
+                updated_at = now()",
+            &[&machine_id, &project_uuid, &root.to_string_lossy()],
+        )
+        .map_err(|error| format!("seed local checkout row: {error}"))?;
     Ok(())
 }
 

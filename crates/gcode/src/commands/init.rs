@@ -5,25 +5,21 @@ use crate::db;
 use crate::index::api;
 use crate::index_lock::{self, IndexLockPolicy, IndexLockResult};
 use crate::output::{self, Format};
-use crate::project;
 use crate::skill;
 
 pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<()> {
-    let identity =
-        config::resolve_project_identity(project_root, config::MissingIdentity::Generate)?;
+    // Primary index writes are fenced on this machine's registered checkout,
+    // so a root without a Gobby identity fails here (`checkout_required`)
+    // instead of generating an identity Gobby would never register.
+    let identity = config::resolve_project_identity(project_root)?;
     config::warn_project_identity(&identity, quiet);
-    let (project_id, was_created) = if identity.should_write_gcode_json {
-        project::ensure_gcode_json(project_root)?
-    } else {
-        (identity.project_id.clone(), false)
-    };
+    let project_id = identity.project_id.clone();
 
     let status = match identity.source {
         config::ProjectIdentitySource::IsolatedRoot => "isolated",
         config::ProjectIdentitySource::LinkedWorktree => "linked-worktree",
         config::ProjectIdentitySource::ProjectJson => "gobby",
-        config::ProjectIdentitySource::Generated if was_created => "initialized",
-        _ => "existing",
+        config::ProjectIdentitySource::IsolatedOverlay => "existing",
     };
 
     // Install AI CLI skills (skip if Gobby manages this project)
@@ -116,13 +112,6 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
         Format::Text => {
             if !quiet {
                 match status {
-                    "initialized" => {
-                        eprintln!(
-                            "Initialized project at {}\nProject ID: {}",
-                            project_root.display(),
-                            project_id
-                        );
-                    }
                     "gobby" => {
                         eprintln!(
                             "Using gobby project: {} ({})",

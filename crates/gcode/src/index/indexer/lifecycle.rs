@@ -58,11 +58,13 @@ pub(super) fn refresh_project_stats(
     elapsed_ms: u64,
     total_eligible_files: Option<usize>,
     indexer_version: Option<&str>,
-) {
+) -> anyhow::Result<()> {
     let total_files = count_machine_rows(conn, machine_id, target.project_id, false);
     let total_symbols = count_machine_rows(conn, machine_id, target.project_id, true);
 
-    if let Err(error) = api::upsert_project_stats(
+    // A failed checkout fence here means the checkout moved under a running
+    // index; the run must fail instead of reporting stale stats as success.
+    api::upsert_project_stats(
         conn,
         machine_id,
         &IndexedProject {
@@ -76,13 +78,14 @@ pub(super) fn refresh_project_stats(
             indexer_version: indexer_version.map(ToOwned::to_owned),
         },
         target.mode,
-    ) {
-        eprintln!(
-            "Warning: refresh_project_stats failed to upsert project stats for project {} at {}: {error}",
+    )
+    .with_context(|| {
+        format!(
+            "failed to refresh project stats for project {} at {}",
             target.project_id,
             target.root_path.display()
-        );
-    }
+        )
+    })
 }
 
 pub(super) fn get_stale_files(

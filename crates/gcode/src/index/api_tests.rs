@@ -680,6 +680,31 @@ fn project_seed_modes_require_primary_checkout_and_allow_overlay() {
     )
     .expect_err("stale primary root");
     assert!(stale.to_string().contains("checkout"));
+    let stale_cli = stale
+        .downcast_ref::<crate::cli_error::CliError>()
+        .expect("typed fence error");
+    assert_eq!(stale_cli.code, "checkout_mismatch");
+    assert!(
+        stale_cli.message.contains("/tmp/stale-checkout"),
+        "{}",
+        stale_cli.message
+    );
+    assert!(
+        stale_cli
+            .message
+            .contains("(registered: /tmp/primary-checkout)"),
+        "{}",
+        stale_cli.message
+    );
+    assert!(
+        stale_cli.recovery.as_deref().is_some_and(|recovery| {
+            recovery.contains(&format!(
+                "gobby projects rebind {project_id} /tmp/stale-checkout"
+            ))
+        }),
+        "{:?}",
+        stale_cli.recovery
+    );
     let matching_stats = IndexedProject {
         id: project_id.clone(),
         root_path: root.display().to_string(),
@@ -796,6 +821,93 @@ fn project_seed_modes_require_primary_checkout_and_allow_overlay() {
         api::IndexWriteMode::Overlay,
     )
     .expect("overlay seed without checkout");
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+fn primary_writes_without_registered_checkout_fail_before_writing_project_rows() {
+    let (mut conn, database_url) = connect_test_db();
+    let project_id = unique_test_project_id("gcode-unregistered-checkout");
+    cleanup_project(&mut conn, &project_id).expect("pre-clean unregistered rows");
+    let _cleanup = ProjectCleanup {
+        database_url,
+        project_id: project_id.clone(),
+    };
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("machine id");
+    let root = std::path::Path::new("/tmp/unregistered-checkout");
+    let project_uuid = db::id_param(&project_id).expect("project uuid");
+    let expected_rebind = format!("gobby projects rebind {project_id} /tmp/unregistered-checkout");
+
+    let seed_error = api::upsert_project_seed(
+        &mut conn,
+        &machine_id,
+        &project_id,
+        root,
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("seed without a registered checkout");
+    let seed_cli = seed_error
+        .downcast_ref::<crate::cli_error::CliError>()
+        .expect("typed fence error");
+    assert_eq!(seed_cli.code, "checkout_required");
+    assert!(
+        seed_cli.message.contains(&project_id),
+        "{}",
+        seed_cli.message
+    );
+    assert!(
+        seed_cli
+            .message
+            .contains("gcode computed root /tmp/unregistered-checkout"),
+        "{}",
+        seed_cli.message
+    );
+    let recovery = seed_cli.recovery.as_deref().expect("recovery hint");
+    assert!(recovery.contains("`gobby init`"), "{recovery}");
+    assert!(recovery.contains(&expected_rebind), "{recovery}");
+
+    let stats_error = api::upsert_project_stats(
+        &mut conn,
+        &machine_id,
+        &IndexedProject {
+            id: project_id.clone(),
+            root_path: root.display().to_string(),
+            total_files: 1,
+            total_symbols: 1,
+            last_indexed_at: String::new(),
+            index_duration_ms: 1,
+            total_eligible_files: None,
+            indexer_version: None,
+        },
+        api::IndexWriteMode::Primary,
+    )
+    .expect_err("stats without a registered checkout");
+    assert_eq!(
+        stats_error
+            .downcast_ref::<crate::cli_error::CliError>()
+            .map(|error| error.code),
+        Some("checkout_required"),
+        "{stats_error:?}"
+    );
+
+    // The fence runs before the shared code_indexed_projects insert, so a
+    // failed fence leaves nothing behind for the unregistered project.
+    let project_rows: i64 = conn
+        .query_one(
+            "SELECT COUNT(*)::BIGINT FROM code_indexed_projects WHERE id = $1",
+            &[&project_uuid],
+        )
+        .expect("count project rows")
+        .get(0);
+    assert_eq!(project_rows, 0);
+    let state_rows: i64 = conn
+        .query_one(
+            "SELECT COUNT(*)::BIGINT FROM code_indexed_project_states WHERE project_id = $1",
+            &[&project_uuid],
+        )
+        .expect("count project state rows")
+        .get(0);
+    assert_eq!(state_rows, 0);
 }
 
 #[test]

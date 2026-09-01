@@ -294,7 +294,7 @@ pub(super) fn index_overlay_files(
         start.elapsed().as_millis() as u64,
         Some(ast_by_rel.len() + content_by_rel.len()),
         None,
-    );
+    )?;
     outcome.durations.stats_ms = stats_start.elapsed().as_millis() as u64;
     outcome.durations.total_ms = start.elapsed().as_millis() as u64;
 

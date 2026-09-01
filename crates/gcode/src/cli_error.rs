@@ -32,6 +32,54 @@ impl CliError {
         }
     }
 
+    pub const CHECKOUT_REQUIRED: &str = "checkout_required";
+    pub const CHECKOUT_MISMATCH: &str = "checkout_mismatch";
+
+    /// `root` has no checkout registered on this machine, so gcode cannot
+    /// write a primary index for it. `message` states why: no identity file,
+    /// a retired standalone identity, or a project this machine never
+    /// registered.
+    pub fn checkout_required(
+        root: &std::path::Path,
+        project_id: Option<&str>,
+        message: String,
+    ) -> Self {
+        let root = root.display();
+        let project = project_id.unwrap_or("<project>");
+        Self {
+            code: Self::CHECKOUT_REQUIRED,
+            message,
+            recovery: Some(format!(
+                "run `gobby init` in {root} to register this checkout on this machine, \
+                 or `gobby projects rebind {project} {root}` for a project Gobby already knows"
+            )),
+            exit_status: 2,
+        }
+    }
+
+    /// This machine registers `project_id` under other root(s) than the one
+    /// gcode computed; the primary index refuses to write until they agree.
+    pub fn checkout_mismatch(
+        project_id: &str,
+        root: &std::path::Path,
+        registered: &[String],
+    ) -> Self {
+        let root = root.display();
+        Self {
+            code: Self::CHECKOUT_MISMATCH,
+            message: format!(
+                "primary index root {root} is not the checkout registered for project \
+                 {project_id} on this machine (registered: {})",
+                registered.join(", ")
+            ),
+            recovery: Some(format!(
+                "run `gobby projects rebind {project_id} {root}` to move this machine's \
+                 checkout to the root gcode computed"
+            )),
+            exit_status: 2,
+        }
+    }
+
     pub fn capability_unavailable(capability: &str) -> Self {
         Self {
             code: "capability_unavailable",
@@ -169,6 +217,62 @@ mod tests {
         assert_eq!(
             value["recovery"],
             "rerun with `--project /workspace/other` to select that project"
+        );
+    }
+
+    #[test]
+    fn checkout_required_names_root_and_points_at_gobby_init() {
+        let rendered = CliError::checkout_required(
+            std::path::Path::new("/repo/main"),
+            None,
+            "no Gobby project is registered at /repo/main".to_string(),
+        );
+
+        assert_eq!(rendered.code, "checkout_required");
+        assert_eq!(rendered.exit_status, 2);
+        let payload = rendered.json_payload();
+        assert_eq!(payload["error"], "checkout_required");
+        assert_eq!(
+            payload["message"],
+            "no Gobby project is registered at /repo/main"
+        );
+        let recovery = payload["recovery"].as_str().expect("recovery string");
+        assert!(
+            recovery.contains("`gobby init` in /repo/main"),
+            "{recovery}"
+        );
+        assert!(
+            recovery.contains("gobby projects rebind <project> /repo/main"),
+            "{recovery}"
+        );
+        assert!(!recovery.contains("gcode init"), "{recovery}");
+    }
+
+    #[test]
+    fn checkout_mismatch_lists_registered_roots_and_rebind_command() {
+        let rendered = CliError::checkout_mismatch(
+            "0f1f5df6-7f37-4a7f-9115-5b473f22934e",
+            std::path::Path::new("/repo/moved"),
+            &["/repo/main".to_string()],
+        );
+
+        assert_eq!(rendered.code, "checkout_mismatch");
+        assert!(
+            rendered.message.contains("primary index root /repo/moved"),
+            "{}",
+            rendered.message
+        );
+        assert!(
+            rendered.message.contains("(registered: /repo/main)"),
+            "{}",
+            rendered.message
+        );
+        assert_eq!(
+            rendered.recovery.as_deref(),
+            Some(
+                "run `gobby projects rebind 0f1f5df6-7f37-4a7f-9115-5b473f22934e /repo/moved` \
+                 to move this machine's checkout to the root gcode computed"
+            )
         );
     }
 

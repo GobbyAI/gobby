@@ -1,84 +1,18 @@
-//! Project identity resolution for gcode standalone mode.
+//! Project identity helpers shared with gobby-core.
 //!
-//! Resolution order: .gobby/project.json (gobby) > .gobby/gcode.json (gcode-owned identity) > generate on-the-fly.
-//! gcode never writes to project.json — that's gobby's file.
+//! gcode never writes identity files: `.gobby/project.json` is gobby's, and
+//! primary index writes are fenced on the checkout `gobby init` registers.
 
 use std::path::Path;
 
-use anyhow::Context as _;
-use gobby_core::project::read_project_id;
 // Overlay identity is shared with the grant handshake so the overlay a worktree
 // indexes under is, by construction, the overlay its interactive principal binds.
 pub use gobby_core::project::{code_index_id_for_root, read_isolation_marker};
-
-/// Read project ID from `.gobby/gcode.json`.
-pub fn read_gcode_json(project_root: &Path) -> anyhow::Result<String> {
-    let path = project_root.join(".gobby").join("gcode.json");
-    let contents = std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
-    let json: serde_json::Value = serde_json::from_str(&contents)?;
-    json.get("id")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .context("'id' field not found in .gobby/gcode.json")
-}
-
-/// Ensure a gcode identity file exists. Non-destructive:
-/// - If `project.json` exists, reads its ID (gobby owns this project)
-/// - If `gcode.json` exists, reads its ID
-/// - If neither exists, creates `gcode.json`
-///
-/// Returns `(project_id, was_created)`.
-pub fn ensure_gcode_json(project_root: &Path) -> anyhow::Result<(String, bool)> {
-    // Gobby's file takes priority
-    let project_json = project_root.join(".gobby").join("project.json");
-    if project_json.exists() {
-        return Ok((read_project_id(project_root)?, false));
-    }
-
-    // Already initialized by gcode
-    let gcode_json = project_root.join(".gobby").join("gcode.json");
-    if gcode_json.exists() {
-        return Ok((read_gcode_json(project_root)?, false));
-    }
-
-    // Create .gobby/ directory and gcode.json
-    let gobby_dir = project_root.join(".gobby");
-    std::fs::create_dir_all(&gobby_dir)
-        .with_context(|| format!("failed to create {}", gobby_dir.display()))?;
-
-    let project_id = code_index_id_for_root(project_root);
-    let project_name = project_root
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    let created_at = now_iso8601();
-
-    let content = serde_json::json!({
-        "id": project_id,
-        "name": project_name,
-        "created_at": created_at
-    });
-
-    let json_str = serde_json::to_string_pretty(&content)?;
-    std::fs::write(&gcode_json, &json_str)
-        .with_context(|| format!("failed to write {}", gcode_json.display()))?;
-
-    Ok((project_id, true))
-}
 
 /// Check whether any identity file exists for this project root.
 pub fn has_identity_file(project_root: &Path) -> bool {
     let gobby_dir = project_root.join(".gobby");
     gobby_dir.join("project.json").exists() || gobby_dir.join("gcode.json").exists()
-}
-
-// ── Internal helpers ────────────────────────────────────────────────
-
-/// Format current UTC time as ISO 8601.
-fn now_iso8601() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
 }
 
 #[cfg(test)]
@@ -131,77 +65,6 @@ mod tests {
 
         assert_eq!(marker.parent_project_path.as_deref(), Some("/parent/root"));
         assert_eq!(marker.parent_project_id.as_deref(), Some("parent-id"));
-    }
-
-    #[test]
-    fn test_ensure_gcode_json_creates_new() {
-        let dir = tempfile::tempdir().unwrap();
-        let (id, created) = ensure_gcode_json(dir.path()).unwrap();
-        assert!(created);
-        assert!(uuid::Uuid::parse_str(&id).is_ok());
-
-        // Verify file exists with correct content
-        let path = dir.path().join(".gobby").join("gcode.json");
-        assert!(path.exists());
-        let contents: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(contents["id"].as_str().unwrap(), id);
-
-        // ID should match deterministic generation
-        assert_eq!(id, code_index_id_for_root(dir.path()));
-    }
-
-    #[test]
-    fn test_ensure_gcode_json_skips_when_project_json_exists() {
-        let dir = tempfile::tempdir().unwrap();
-        let gobby_dir = dir.path().join(".gobby");
-        std::fs::create_dir_all(&gobby_dir).unwrap();
-
-        // Write a gobby project.json
-        let project_json = serde_json::json!({
-            "id": "gobby-owned-id-123",
-            "name": "test-project"
-        });
-        std::fs::write(
-            gobby_dir.join("project.json"),
-            serde_json::to_string_pretty(&project_json).unwrap(),
-        )
-        .unwrap();
-
-        let (id, created) = ensure_gcode_json(dir.path()).unwrap();
-        assert!(!created);
-        assert_eq!(id, "gobby-owned-id-123");
-
-        // gcode.json should NOT exist
-        assert!(!gobby_dir.join("gcode.json").exists());
-    }
-
-    #[test]
-    fn test_ensure_gcode_json_reads_existing() {
-        let dir = tempfile::tempdir().unwrap();
-
-        // Create gcode.json first
-        let (id1, created1) = ensure_gcode_json(dir.path()).unwrap();
-        assert!(created1);
-
-        // Second call should read, not overwrite
-        let original_bytes = std::fs::read(dir.path().join(".gobby").join("gcode.json")).unwrap();
-        let (id2, created2) = ensure_gcode_json(dir.path()).unwrap();
-        assert!(!created2);
-        assert_eq!(id1, id2);
-
-        // File should be byte-identical
-        let after_bytes = std::fs::read(dir.path().join(".gobby").join("gcode.json")).unwrap();
-        assert_eq!(original_bytes, after_bytes);
-    }
-
-    #[test]
-    fn test_now_iso8601_format() {
-        let ts = now_iso8601();
-        // Should match YYYY-MM-DDTHH:MM:SS.ffffffZ
-        assert!(ts.len() >= 27, "timestamp too short: {ts}");
-        assert!(ts.ends_with('Z'));
-        assert!(ts.contains('T'));
     }
 
     #[test]

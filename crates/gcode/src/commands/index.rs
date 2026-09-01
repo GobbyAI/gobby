@@ -327,10 +327,7 @@ fn resolve_index_context(
     let target_root = crate::config::detect_project_root_from(&target)?;
     let target_filter = path_filter_for(&target_root, &target);
     if target_root != ctx.project_root {
-        let identity = crate::config::resolve_project_identity(
-            &target_root,
-            crate::config::MissingIdentity::Generate,
-        )?;
+        let identity = crate::config::resolve_project_identity(&target_root)?;
         crate::config::warn_project_identity(&identity, ctx.quiet);
         if !ctx.quiet {
             eprintln!(
@@ -339,9 +336,6 @@ fn resolve_index_context(
                 short_id(&identity.project_id),
                 short_id(&ctx.project_id)
             );
-        }
-        if identity.should_write_gcode_json {
-            crate::project::ensure_gcode_json(&target_root)?;
         }
         let mut conn = crate::db::connect_readonly(&ctx.database_url)?;
         crate::config::validate_parent_code_index(&mut conn, &identity.index_scope)?;

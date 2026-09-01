@@ -519,13 +519,20 @@ fn test_resolve_project_id_requires_project_context() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let err = resolve_project_id(tmp.path()).expect_err("missing project context must fail");
 
+    let cli = err
+        .downcast_ref::<crate::cli_error::CliError>()
+        .expect("typed checkout_required error");
+    assert_eq!(cli.code, "checkout_required");
     assert!(
-        err.to_string().contains("No gcode project found"),
+        err.to_string().contains(".gobby/project.json is missing"),
         "unexpected error: {err}"
     );
     assert!(
-        err.to_string().contains("gcode init"),
-        "unexpected error: {err}"
+        cli.recovery
+            .as_deref()
+            .is_some_and(|recovery| recovery.contains("`gobby init`")),
+        "unexpected recovery: {:?}",
+        cli.recovery
     );
 }
 
@@ -541,7 +548,7 @@ fn main_repo_keeps_project_json_id() {
         }),
     );
 
-    let identity = resolve_project_identity(tmp.path(), MissingIdentity::Error).expect("identity");
+    let identity = resolve_project_identity(tmp.path()).expect("identity");
 
     assert_eq!(identity.project_id, project_id);
     assert_eq!(
@@ -549,7 +556,6 @@ fn main_repo_keeps_project_json_id() {
         project_id
     );
     assert_eq!(identity.source, ProjectIdentitySource::ProjectJson);
-    assert!(!identity.should_write_gcode_json);
     assert!(identity.warning.is_none());
 }
 
@@ -572,11 +578,10 @@ fn self_referential_parent_marker_keeps_project_json_id() {
         }),
     );
 
-    let identity = resolve_project_identity(&root, MissingIdentity::Error).expect("identity");
+    let identity = resolve_project_identity(&root).expect("identity");
 
     assert_eq!(identity.project_id, "main-project-id");
     assert_eq!(identity.source, ProjectIdentitySource::ProjectJson);
-    assert!(!identity.should_write_gcode_json);
     assert!(identity.warning.is_none());
 }
 
@@ -602,7 +607,7 @@ fn isolated_marker_with_parent_metadata_resolves_overlay_scope() {
         }),
     );
 
-    let identity = resolve_project_identity(&worktree, MissingIdentity::Error).expect("identity");
+    let identity = resolve_project_identity(&worktree).expect("identity");
 
     assert_eq!(
         identity.project_id,
@@ -618,7 +623,6 @@ fn isolated_marker_with_parent_metadata_resolves_overlay_scope() {
             parent_root: parent.canonicalize().unwrap(),
         }
     );
-    assert!(!identity.should_write_gcode_json);
     assert!(identity.warning.is_none());
 }
 
@@ -638,8 +642,8 @@ fn isolated_marker_without_complete_parent_metadata_is_rejected() {
         }),
     );
 
-    let err = resolve_project_identity(tmp.path(), MissingIdentity::Error)
-        .expect_err("incomplete parent metadata should fail");
+    let err =
+        resolve_project_identity(tmp.path()).expect_err("incomplete parent metadata should fail");
 
     let message = err.to_string();
     assert!(message.contains("invalid isolation marker in"), "{message}");
@@ -666,8 +670,8 @@ fn isolated_marker_rejects_missing_parent_path() {
         }),
     );
 
-    let err = resolve_project_identity(tmp.path(), MissingIdentity::Error)
-        .expect_err("incomplete parent metadata should fail");
+    let err =
+        resolve_project_identity(tmp.path()).expect_err("incomplete parent metadata should fail");
 
     assert!(err.to_string().contains("must be set together"));
 }
@@ -677,7 +681,7 @@ fn linked_worktree_uses_path_id_and_ignores_copied_project_id() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let (_repo, linked) = create_linked_worktree(&tmp);
 
-    let identity = resolve_project_identity(&linked, MissingIdentity::Error).expect("identity");
+    let identity = resolve_project_identity(&linked).expect("identity");
 
     assert_eq!(
         identity.project_id,
@@ -685,7 +689,6 @@ fn linked_worktree_uses_path_id_and_ignores_copied_project_id() {
     );
     assert_eq!(identity.source, ProjectIdentitySource::LinkedWorktree);
     assert!(identity.warning.is_none());
-    assert!(!identity.should_write_gcode_json);
 
     write_project_json(
         &linked,
@@ -694,8 +697,7 @@ fn linked_worktree_uses_path_id_and_ignores_copied_project_id() {
             "name": "linked"
         }),
     );
-    let copied =
-        resolve_project_identity(&linked, MissingIdentity::Error).expect("copied identity");
+    let copied = resolve_project_identity(&linked).expect("copied identity");
 
     assert_eq!(copied.source, ProjectIdentitySource::LinkedWorktree);
     assert_eq!(
@@ -703,21 +705,72 @@ fn linked_worktree_uses_path_id_and_ignores_copied_project_id() {
         crate::project::code_index_id_for_root(&linked)
     );
     assert!(copied.warning.is_none());
-    assert!(!copied.should_write_gcode_json);
 }
 
 #[test]
-fn generated_identity_writes_only_for_non_isolated_roots() {
+fn missing_identity_is_checkout_required_pointing_at_gobby_init() {
     let tmp = tempfile::tempdir().expect("tempdir");
 
-    let identity =
-        resolve_project_identity(tmp.path(), MissingIdentity::Generate).expect("identity");
+    let err = resolve_project_identity(tmp.path()).expect_err("no identity file");
 
-    assert_eq!(identity.source, ProjectIdentitySource::Generated);
-    assert!(identity.should_write_gcode_json);
+    let cli = err
+        .downcast_ref::<crate::cli_error::CliError>()
+        .expect("typed checkout_required error");
+    assert_eq!(cli.code, "checkout_required");
+    assert!(
+        cli.message.contains(".gobby/project.json is missing"),
+        "{}",
+        cli.message
+    );
+    let recovery = cli.recovery.as_deref().expect("recovery hint");
+    assert!(recovery.contains("`gobby init`"), "{recovery}");
+    assert!(!recovery.contains("gcode init"), "{recovery}");
+    assert!(
+        !tmp.path().join(".gobby").exists(),
+        "resolution must not write an identity file"
+    );
+}
+
+#[test]
+fn standalone_gcode_json_identity_is_checkout_required() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let gobby_dir = tmp.path().join(".gobby");
+    std::fs::create_dir_all(&gobby_dir).expect("create .gobby");
+    std::fs::write(
+        gobby_dir.join("gcode.json"),
+        r#"{"id":"00000000-0000-4000-8000-000000000099"}"#,
+    )
+    .expect("write gcode.json");
+
+    let err = resolve_project_identity(tmp.path())
+        .expect_err("a standalone gcode.json is not a registered identity");
+
+    let cli = err
+        .downcast_ref::<crate::cli_error::CliError>()
+        .expect("typed checkout_required error");
+    assert_eq!(cli.code, "checkout_required");
+    assert!(cli.message.contains(".gobby/gcode.json"), "{}", cli.message);
+    assert!(
+        cli.recovery
+            .as_deref()
+            .is_some_and(|recovery| recovery.contains("`gobby init`")),
+        "{:?}",
+        cli.recovery
+    );
+}
+
+#[test]
+fn identity_for_explicit_root_surfaces_checkout_required() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+
+    let err = super::context::identity_for_resolved_root(tmp.path(), true)
+        .expect_err("explicit root without identity");
+
     assert_eq!(
-        identity.project_id,
-        crate::project::code_index_id_for_root(tmp.path())
+        err.downcast_ref::<crate::cli_error::CliError>()
+            .map(|error| error.code),
+        Some("checkout_required"),
+        "{err:?}"
     );
 }
 
@@ -794,8 +847,11 @@ fn identity_for_cwd_maps_missing_project_to_project_required() {
         .expect("project_required");
     assert_eq!(cli.code, "project_required");
     assert!(
-        err.source()
-            .is_some_and(|source| source.to_string().starts_with("No gcode project found")),
+        err.source().is_some_and(|source| {
+            source
+                .to_string()
+                .contains(".gobby/project.json is missing")
+        }),
         "{err:?}"
     );
 }

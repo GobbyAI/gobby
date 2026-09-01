@@ -49,7 +49,7 @@ pub(crate) enum Command {
     Contract,
 
     // ── Project Setup ────────────────────────────────────────────────
-    /// Initialize project context (.gobby/gcode.json)
+    /// Index this machine's registered Gobby checkout and install gcode skills
     Init,
     /// Index a directory (full or incremental). Writes symbols, files, and chunks to PostgreSQL hub
     Index {

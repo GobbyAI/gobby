@@ -192,6 +192,10 @@ impl IndexedFixture {
         .to_string();
         let database_url =
             crate::test_env::postgres_test_database_url("codewiki facts facade tests");
+        // Primary index writes are fenced on this machine's registered checkout.
+        let mut conn = crate::db::connect_readwrite(&database_url)?;
+        crate::test_env::seed_test_checkout(&mut conn, &project_id, root.path())
+            .map_err(anyhow::Error::msg)?;
         let ctx = Context {
             database_url: database_url.clone(),
             project_root: root.path().to_path_buf(),
@@ -269,5 +273,10 @@ impl Drop for IndexedFixture {
             "DELETE FROM code_indexed_projects WHERE id = $1",
             &[&project_id],
         );
+        let _ = conn.execute(
+            "DELETE FROM project_checkouts WHERE project_id = $1",
+            &[&project_id],
+        );
+        let _ = conn.execute("DELETE FROM projects WHERE id = $1", &[&project_id]);
     }
 }

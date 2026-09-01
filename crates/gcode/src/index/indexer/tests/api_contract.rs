@@ -1,6 +1,9 @@
+use super::super::lifecycle::refresh_project_stats;
+use super::super::types::IndexTarget;
 use super::super::{
     IndexDegradation, IndexDurations, IndexOptions, IndexOutcome, IndexRequest, index_files,
 };
+use crate::cli_error::CliError;
 use crate::config::{CodeVectorSettings, Context, ProjectIndexScope};
 use crate::db;
 use crate::index::api;
@@ -154,7 +157,86 @@ fn primary_pipelines_reject_stale_checkout_roots() {
             error.to_string().contains("checkout"),
             "unexpected stale-root error: {error:#}"
         );
+        let cli = error
+            .downcast_ref::<CliError>()
+            .expect("pipeline surfaces the typed fence error");
+        assert_eq!(cli.code, "checkout_mismatch");
+        assert!(
+            cli.message
+                .contains(&committed_root.path().to_string_lossy().to_string()),
+            "{}",
+            cli.message
+        );
     }
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn refresh_project_stats_propagates_checkout_fence_failure() {
+    let (mut conn, database_url) = connect_contract_db();
+    let project_id = unique_contract_project_id("gcode-stats-fence-contract");
+    cleanup_contract_project(&mut conn, &project_id).expect("pre-clean stats rows");
+    let _cleanup = ContractProjectCleanup {
+        database_url,
+        project_id: project_id.clone(),
+    };
+    let committed_root = tempfile::tempdir().expect("create committed checkout");
+    let stale_root = tempfile::tempdir().expect("create stale checkout");
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("read machine id");
+    seed_contract_checkout(&mut conn, &project_id, committed_root.path());
+
+    let error = refresh_project_stats(
+        &mut conn,
+        &machine_id,
+        IndexTarget {
+            project_id: &project_id,
+            root_path: stale_root.path(),
+            mode: api::IndexWriteMode::Primary,
+        },
+        1,
+        None,
+        None,
+    )
+    .expect_err("a failed stats fence must fail the index run");
+    let cli = error
+        .downcast_ref::<CliError>()
+        .expect("typed fence error survives the stats context");
+    assert_eq!(cli.code, "checkout_mismatch");
+    assert!(
+        cli.message
+            .contains(&committed_root.path().to_string_lossy().to_string()),
+        "{}",
+        cli.message
+    );
+    let project_rows: i64 = conn
+        .query_one(
+            "SELECT COUNT(*)::BIGINT FROM code_indexed_projects WHERE id = $1",
+            &[&db::id_param(&project_id).expect("project uuid")],
+        )
+        .expect("count project rows")
+        .get(0);
+    assert_eq!(
+        project_rows, 0,
+        "a failed fence must not seed the project row"
+    );
+
+    refresh_project_stats(
+        &mut conn,
+        &machine_id,
+        IndexTarget {
+            project_id: &project_id,
+            root_path: committed_root.path(),
+            mode: api::IndexWriteMode::Primary,
+        },
+        1,
+        None,
+        None,
+    )
+    .expect("committed checkout root refreshes stats");
 }
 
 #[test]

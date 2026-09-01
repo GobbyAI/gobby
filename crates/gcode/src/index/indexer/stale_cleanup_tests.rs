@@ -256,6 +256,10 @@ fn connect_test_db() -> (postgres::Client, String) {
 }
 
 fn test_context(database_url: String, project_root: PathBuf, project_id: String) -> Context {
+    let mut conn =
+        db::connect_readwrite(&database_url).expect("connect to register the test checkout");
+    crate::test_env::seed_test_checkout(&mut conn, &project_id, &project_root)
+        .expect("register stale cleanup test checkout");
     Context {
         database_url,
         project_root,
@@ -356,6 +360,11 @@ fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Res
         "DELETE FROM code_indexed_projects WHERE id = $1",
         &[&project_id],
     )?;
+    tx.execute(
+        "DELETE FROM project_checkouts WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    tx.execute("DELETE FROM projects WHERE id = $1", &[&project_id])?;
     tx.commit()?;
     Ok(())
 }

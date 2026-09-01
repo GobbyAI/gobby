@@ -15,7 +15,9 @@ pub fn projects(format: Format) -> anyhow::Result<()> {
         Format::Json => output::print_json(&all_projects),
         Format::Text => {
             if all_projects.is_empty() {
-                eprintln!("No indexed projects. Run `gcode init` in a project directory.");
+                eprintln!(
+                    "No indexed projects. Run `gobby init` in a project directory, then `gcode index`."
+                );
             } else {
                 let mut text = String::new();
                 for p in &all_projects {
@@ -87,8 +89,7 @@ pub(super) fn stale_projects(projects: &[IndexedProject]) -> Vec<StaleProject<'_
         if entries.len() < 2 {
             continue;
         }
-        let Ok(identity) = config::resolve_project_identity(&root, config::MissingIdentity::Error)
-        else {
+        let Ok(identity) = config::resolve_project_identity(&root) else {
             continue;
         };
         if !entries

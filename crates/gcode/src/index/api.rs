@@ -6,6 +6,7 @@ pub use crate::index::indexer::{
     UnsupportedFileType, index_files, project_changed_since,
 };
 
+use super::checkout_fence;
 use crate::db::{id_param, id_params, opt_id_param};
 use crate::models::{
     CallRelation, ContentChunk, ImportRelation, IndexedFile, IndexedProject, InheritanceRelation,
@@ -289,6 +290,11 @@ pub fn upsert_project_seed(
     let machine_id = id_param(machine_id)?;
     let project_id = id_param(project_id)?;
     let root_path = root_path.to_string_lossy().to_string();
+    // Fence before the shared project row exists so a failed fence writes
+    // nothing; the write below re-checks atomically and holds the share lock.
+    if mode == IndexWriteMode::Primary {
+        checkout_fence::require_registered_checkout(conn, &machine_id, &project_id, &root_path)?;
+    }
     conn.execute(
         "INSERT INTO code_indexed_projects (id) VALUES ($1)
          ON CONFLICT(id) DO UPDATE SET updated_at=NOW()",
@@ -324,9 +330,12 @@ pub fn upsert_project_seed(
         )?,
     };
     if written == 0 {
-        anyhow::bail!(
-            "primary index root {root_path} does not match the committed checkout for project {project_id}"
-        );
+        return Err(checkout_fence::mismatch_error(
+            conn,
+            &machine_id,
+            &project_id,
+            &root_path,
+        ));
     }
     Ok(())
 }
@@ -376,10 +385,12 @@ pub fn upsert_file_state(
             ],
         )?;
         if !row.get::<_, bool>(0) {
-            anyhow::bail!(
-                "primary index root {root_path} does not match the committed checkout for project {}",
-                file.project_id
-            );
+            return Err(checkout_fence::mismatch_error(
+                conn,
+                &machine_id,
+                &project_id,
+                &root_path,
+            ));
         }
         return Ok(());
     }
@@ -462,9 +473,12 @@ pub fn adopt_file_state(
             ],
         )?;
         if !row.get::<_, bool>(0) {
-            anyhow::bail!(
-                "primary index root {root_path} does not match the committed checkout for project {project_id}"
-            );
+            return Err(checkout_fence::mismatch_error(
+                conn,
+                &machine_id,
+                &project_id,
+                &root_path,
+            ));
         }
         return Ok(row.get(1));
     }
@@ -524,9 +538,12 @@ pub fn delete_file_state(
             &[&machine_id, &project_id, &file_path, &root_path],
         )?;
         if !row.get::<_, bool>(0) {
-            anyhow::bail!(
-                "primary index root {root_path} does not match the committed checkout for project {project_id}"
-            );
+            return Err(checkout_fence::mismatch_error(
+                conn,
+                &machine_id,
+                &project_id,
+                &root_path,
+            ));
         }
         return Ok(row.get(1));
     }
@@ -576,6 +593,14 @@ pub fn upsert_project_stats(
 ) -> anyhow::Result<()> {
     let machine_id = id_param(machine_id)?;
     let project_id = id_param(&project.id)?;
+    if mode == IndexWriteMode::Primary {
+        checkout_fence::require_registered_checkout(
+            conn,
+            &machine_id,
+            &project_id,
+            &project.root_path,
+        )?;
+    }
     conn.execute(
         "INSERT INTO code_indexed_projects (id) VALUES ($1)
          ON CONFLICT(id) DO UPDATE SET updated_at=NOW()",
@@ -636,11 +661,12 @@ pub fn upsert_project_stats(
         ],
     )?;
     if written == 0 {
-        anyhow::bail!(
-            "primary index root {} does not match the committed checkout for project {}",
-            project.root_path,
-            project.id
-        );
+        return Err(checkout_fence::mismatch_error(
+            conn,
+            &machine_id,
+            &project_id,
+            &project.root_path,
+        ));
     }
     Ok(())
 }
