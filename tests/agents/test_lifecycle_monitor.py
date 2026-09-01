@@ -51,6 +51,7 @@ from gobby.terminals.services import TerminalServices
 from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
+from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.terminals.fakes import (
     FakeRuntime,
     runtime_registry,
@@ -77,9 +78,8 @@ REMOTE_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
 
 
 @pytest.fixture(autouse=True)
-def _local_machine_identity() -> Iterator[None]:
-    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
-        yield
+def _local_machine_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_local_machine_id(monkeypatch, LOCAL_MACHINE_ID)
 
 
 def _rid(label: str) -> str:

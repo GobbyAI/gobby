@@ -23,6 +23,7 @@ from gobby.storage.terminals import TerminalManager
 from gobby.terminals.discovery import seed_external_terminal
 from tests.agents.test_lifecycle_monitor import LifecycleRuntime
 from tests.agents.test_lifecycle_monitor_extra import _memory_terminal_services
+from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.terminals.fakes import runtime_registry
 
 from .detection_test_support import BundledDetectionRegistry
@@ -77,7 +78,8 @@ def _interactive_session(
     sample_project: dict[str, Any],
 ) -> SimpleNamespace:
     """A registered session whose external pane is a live terminals row."""
-    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+    with pytest.MonkeyPatch.context() as identity_patch:
+        patch_local_machine_id(identity_patch, LOCAL_MACHINE_ID)
         row = session_manager.register(
             external_id="interactive-session",
             machine_id=LOCAL_MACHINE_ID,

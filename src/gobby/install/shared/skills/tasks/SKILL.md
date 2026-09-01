@@ -161,8 +161,10 @@ Follow this order exactly:
 5. Call `close_task` once with `task_id`, `commit_sha`, `changes_summary`, and
    `preview=true`. Include exact validation commands and results in `changes_summary`.
    A ready call links the commit and closes atomically.
-6. Call `review_task_memories` after `closed=true`, passing the closed task and
-   the same `changes_summary`; create, update, or delete only valuable durable facts.
+6. Call `review_task_memories` on the `gobby-memory` server after `closed=true`
+   (`call_tool("gobby-memory", "review_task_memories", {...})`), passing the closed
+   task and the same `changes_summary`; create, update, or delete only valuable
+   durable facts.
 
 Stage and commit only the files for this task:
 
@@ -214,4 +216,4 @@ Autonomous agents use the stage-specific tools on `gobby-tasks-ops`.
 Use `gobby-memory` for durable codebase facts, decisions, conventions, and stale
 memory cleanup. A bug you find becomes a claimed task you fix now — a task, never
 a memory. Task-specific review follows successful `close_task` because
-`review_task_memories` requires a closed task.
+`gobby-memory:review_task_memories` requires a closed task.

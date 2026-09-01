@@ -9,7 +9,9 @@ from typing import Any, cast
 
 from gobby.agents.agent_cleanup import AgentCleanupHandler
 from gobby.agents.capture import TerminationErrorCode, terminate_managed_runtime_async
+from gobby.agents.completion_stats import resolve_completion_stats
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.storage.agents import (
     AgentRun,
     AgentRunTerminalReason,
@@ -58,6 +60,8 @@ class LifecycleReconciliation:
         run_db: Callable[..., Awaitable[Any]],
         terminal_manager: Any | None = None,
         runtime_registry: Any | None = None,
+        session_manager: Any | None = None,
+        transcript_reader: TranscriptReader | None = None,
         spawn_in_doubt_seconds: float = 150.0,
     ) -> None:
         self._agent_run_manager = agent_run_manager
@@ -68,6 +72,10 @@ class LifecycleReconciliation:
         self._dispatch_refresh_cursor = 0
         self._terminal_manager = terminal_manager
         self._runtime_registry = runtime_registry
+        self._session_manager = session_manager
+        self._transcript_reader = transcript_reader
+        if self._transcript_reader is None and session_manager is not None:
+            self._transcript_reader = TranscriptReader(session_manager)
         self._spawn_in_doubt_seconds = spawn_in_doubt_seconds
 
     async def reconcile_pending_terminations(self, *, machine_id: str) -> int:
@@ -84,6 +92,15 @@ class LifecycleReconciliation:
                     run.id,
                 )
                 continue
+
+            tool_calls_count, turns_used = await resolve_completion_stats(
+                run,
+                session_manager=self._session_manager,
+                transcript_reader=self._transcript_reader,
+                run_db=self._run_db,
+            )
+            run.tool_calls_count = tool_calls_count
+            run.turns_used = turns_used
 
             action_value = run.pending_terminal_action
             if action_value in {"complete", "fail", "timeout", "cancel"}:
