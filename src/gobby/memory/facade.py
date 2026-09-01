@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+import uuid
+from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.memory.protocol import MemoryRecord
@@ -47,12 +48,24 @@ def _memory_scope(project_id: str | None, *, include_global: bool = True) -> Mem
     return MemoryScope.project_only(project_id)
 
 
+class AmbiguousMemoryReferenceError(LookupError):
+    """A memory id prefix matches more than one memory."""
+
+    def __init__(self, ref: str, candidates: Sequence[str]) -> None:
+        self.ref = ref
+        self.candidates = tuple(candidates)
+        super().__init__(
+            f"Memory reference {ref!r} is ambiguous; candidates: {', '.join(self.candidates)}"
+        )
+
+
 __all__ = [
     "DEFAULT_GRAPH_LIMIT",
     "DEFAULT_LIST_LIMIT",
     "DEFAULT_RELATIONSHIP_LIMIT",
     "DEFAULT_SEARCH_LIMIT",
     "MAX_REINDEX_LIMIT",
+    "AmbiguousMemoryReferenceError",
     "MemoryManagerFacadeMethods",
 ]
 
@@ -482,6 +495,28 @@ class MemoryManagerFacadeMethods:
         project_id: str | None = None,
     ) -> list[Memory]:
         return self._repository.find_by_prefix(prefix, limit, _memory_scope(project_id))
+
+    def resolve_memory_id(self, ref: str, project_id: str | None = None) -> str | None:
+        """Resolve a full UUID or a unique id prefix to the stored memory id.
+
+        Returns ``None`` when nothing matches — including a malformed ref, which
+        is only ever compared as a text prefix and never reaches the uuid column.
+        Raises :class:`AmbiguousMemoryReferenceError` when a prefix matches
+        several memories.
+        """
+        try:
+            exact = str(uuid.UUID(ref))
+        except ValueError:
+            exact = None
+        if exact is not None:
+            memory = self.get_memory(exact, project_id=project_id, visibility="all")
+            return None if memory is None else memory.id
+        matches = self.find_by_prefix(ref, limit=5, project_id=project_id)
+        if not matches:
+            return None
+        if len(matches) > 1:
+            raise AmbiguousMemoryReferenceError(ref, [memory.id for memory in matches])
+        return matches[0].id
 
     async def update_memory(
         self,

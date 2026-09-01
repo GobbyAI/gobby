@@ -7,9 +7,12 @@ resolution so neither tool module has to import the other.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+
+if TYPE_CHECKING:
+    from gobby.memory.manager import MemoryManager
 
 
 def get_current_project_id() -> str | None:
@@ -28,3 +31,13 @@ def memory_owned_by_current_project(memory: Any) -> bool:
         return False
     current_project_id = get_current_project_id() or PERSONAL_PROJECT_ID
     return bool(memory.project_id == current_project_id)
+
+
+def resolve_current_memory_id(manager: MemoryManager, ref: str) -> str | None:
+    """Resolve a memory id or unique prefix within the caller's current-project scope.
+
+    Returns ``None`` for a miss; an ambiguous prefix raises
+    ``AmbiguousMemoryReferenceError``, which the tools surface through their
+    error envelope. Resolving first keeps malformed refs away from the uuid column.
+    """
+    return manager.resolve_memory_id(ref, project_id=get_current_project_id())

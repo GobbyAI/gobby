@@ -1397,6 +1397,47 @@ class TestFindByPrefix:
         assert results == []
 
 
+class TestResolveMemoryId:
+    """resolve_memory_id turns a full UUID or unique prefix into the stored id."""
+
+    @pytest.mark.asyncio
+    async def test_resolve_memory_id_accepts_full_uuid_and_unique_prefix(
+        self, memory_manager: MemoryManager
+    ) -> None:
+        memory = await memory_manager.create_memory(content="Resolver target")
+
+        assert memory_manager.resolve_memory_id(memory.id) == memory.id
+        assert memory_manager.resolve_memory_id(memory.id[:8]) == memory.id
+        assert memory_manager.resolve_memory_id(str(uuid.uuid4())) is None
+
+    def test_resolve_memory_id_malformed_ref_returns_none(
+        self, memory_manager: MemoryManager
+    ) -> None:
+        """A non-UUID ref is a prefix miss; the uuid column never sees it."""
+        assert memory_manager.resolve_memory_id("not-a-uuid") is None
+        assert memory_manager.resolve_memory_id("zzz") is None
+
+    def test_resolve_memory_id_ambiguous_prefix_raises(
+        self, memory_manager: MemoryManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.memory.facade import AmbiguousMemoryReferenceError
+
+        first = MagicMock(id="c12fce9e-11c0-5112-8f03-fbf794031f6f")
+        second = MagicMock(id="c12fce9e-0000-5000-8000-000000000000")
+        monkeypatch.setattr(
+            memory_manager,
+            "find_by_prefix",
+            lambda prefix, limit=5, project_id=None: [first, second],
+        )
+
+        with pytest.raises(AmbiguousMemoryReferenceError) as exc_info:
+            memory_manager.resolve_memory_id("c12fce9e")
+
+        assert exc_info.value.candidates == (first.id, second.id)
+        assert first.id in str(exc_info.value)
+        assert second.id in str(exc_info.value)
+
+
 # =============================================================================
 # Test: count_memories
 # =============================================================================

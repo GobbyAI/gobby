@@ -1090,68 +1090,53 @@ class TestMemoryRestoreCommand:
 
 
 class TestResolveMemoryId:
-    """Tests for resolve_memory_id function."""
+    """resolve_memory_id delegates to the facade resolver and owns the CLI messages."""
 
-    @patch("gobby.cli.memory.get_memory_manager")
-    def test_resolve_exact_match(self, mock_get_manager: MagicMock) -> None:
-        """Test resolving exact UUID match."""
+    def test_resolve_memory_id_uses_facade_resolver(self) -> None:
         from gobby.cli.memory import resolve_memory_id
 
         mock_manager = MagicMock()
-        mock_mem = MagicMock()
-        mock_mem.id = "12345678-1234-1234-1234-123456789012"
-        mock_manager.get_memory.return_value = mock_mem
-        mock_get_manager.return_value = mock_manager
+        mock_manager.resolve_memory_id.return_value = "12345678-1234-1234-1234-123456789012"
 
-        result = resolve_memory_id(mock_manager, "12345678-1234-1234-1234-123456789012")
+        result = resolve_memory_id(mock_manager, "12345678", project_id="project-a")
+
         assert result == "12345678-1234-1234-1234-123456789012"
-
-    @patch("gobby.cli.memory.get_memory_manager")
-    def test_resolve_prefix_match(self, mock_get_manager: MagicMock) -> None:
-        """Test resolving prefix match."""
-        from gobby.cli.memory import resolve_memory_id
-
-        mock_manager = MagicMock()
-        mock_manager.get_memory.return_value = None  # Not exact match
-        mock_mem = MagicMock()
-        mock_mem.id = "mem-123456789"
-        mock_manager.find_by_prefix.return_value = [mock_mem]
-        mock_get_manager.return_value = mock_manager
-
-        result = resolve_memory_id(mock_manager, "mem-12")
-        assert result == "mem-123456789"
+        mock_manager.resolve_memory_id.assert_called_once_with("12345678", project_id="project-a")
+        mock_manager.get_memory.assert_not_called()
+        mock_manager.find_by_prefix.assert_not_called()
 
     def test_resolve_not_found(self) -> None:
-        """Test resolving non-existent memory."""
+        """A miss keeps the ClickException message."""
         import click
 
         from gobby.cli.memory import resolve_memory_id
 
         mock_manager = MagicMock()
-        mock_manager.get_memory.return_value = None
-        mock_manager.find_by_prefix.return_value = []
+        mock_manager.resolve_memory_id.return_value = None
 
         with pytest.raises(click.ClickException) as exc_info:
             resolve_memory_id(mock_manager, "nonexistent")
-        assert "Memory not found" in str(exc_info.value)
+        assert str(exc_info.value) == "Memory not found: nonexistent"
 
-    def test_resolve_ambiguous(self) -> None:
-        """Test resolving ambiguous prefix."""
+    def test_resolve_ambiguous(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """An ambiguous prefix echoes the candidates and keeps the ClickException message."""
         import click
 
         from gobby.cli.memory import resolve_memory_id
+        from gobby.memory.facade import AmbiguousMemoryReferenceError
 
         mock_manager = MagicMock()
-        mock_manager.get_memory.return_value = None
-        mock_mem1 = MagicMock()
-        mock_mem1.id = "mem-123a"
-        mock_mem2 = MagicMock()
-        mock_mem2.id = "mem-123b"
-        mock_manager.find_by_prefix.return_value = [mock_mem1, mock_mem2]
+        mock_manager.resolve_memory_id.side_effect = AmbiguousMemoryReferenceError(
+            "mem-123", ["mem-123a", "mem-123b"]
+        )
 
         with pytest.raises(click.ClickException) as exc_info:
             resolve_memory_id(mock_manager, "mem-123")
-        assert "Ambiguous memory reference" in str(exc_info.value)
+
+        assert str(exc_info.value) == "Ambiguous memory reference: mem-123"
+        captured = capsys.readouterr()
+        assert "mem-123a" in captured.err
+        assert "mem-123b" in captured.err
 
 
 class TestMemoryDeleteNotFound:
