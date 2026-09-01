@@ -39,6 +39,17 @@ _IDENTITY = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _isolated_native_bin_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keep the installed-set view (#21507) off the developer's real ~/.gobby/bin.
+
+    ``start``/``restart``/``status`` probe every installed set member; an empty
+    managed dir makes that view coherent so these tests exercise only the head
+    divergence they stage.
+    """
+    monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(tmp_path / "native-bin"))
+
+
 def _completed(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(
         args=["gdaemon"], returncode=returncode, stdout=stdout, stderr=""

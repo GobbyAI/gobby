@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -13,6 +14,7 @@ import click
 import pytest
 
 from gobby.cli import install_setup, install_setup_gdaemon
+from gobby.install import bin_set_coherence
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.storage import schema_contract
 
@@ -179,3 +181,50 @@ def test_codesign_timeout_is_reported_as_install_failure(
         match="gdaemon ad-hoc signing timed out",
     ):
         install_setup_gdaemon._codesign(binary)
+
+
+def test_workspace_set_refusal_is_reported_as_install_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A mixed-set refusal surfaces as the install error the CLI already renders."""
+    manifest = tmp_path / "workspace" / "Cargo.toml"
+    source = manifest.parent / "target" / "release" / "gdaemon"
+    source.parent.mkdir(parents=True)
+    manifest.write_text("[workspace]\n", encoding="utf-8")
+    built_identity = {**schema_contract.expected_schema_identity(), "latest_checksum": "f" * 64}
+    source.write_text(
+        f"#!/bin/sh\nprintf '%s\\n' '{json.dumps(built_identity)}'\n", encoding="utf-8"
+    )
+    source.chmod(0o755)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    installed = bin_dir / "gdaemon"
+    installed.write_bytes(b"installed-gdaemon")
+    (bin_dir / ".gdaemon-schema-identity.json").write_text(
+        schema_contract.expected_schema_identity_json(), encoding="utf-8"
+    )
+    monkeypatch.setattr(install_setup_gdaemon, "_workspace_manifest", lambda: manifest)
+    monkeypatch.setattr(
+        install_setup_gdaemon,
+        "shutil",
+        SimpleNamespace(which=lambda command: "/usr/bin/cargo"),
+    )
+    monkeypatch.setattr(
+        install_setup_gdaemon,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+            TimeoutExpired=subprocess.TimeoutExpired,
+        ),
+    )
+
+    with pytest.raises(install_setup_gdaemon.GdaemonInstallError) as exc_info:
+        install_setup_gdaemon._install_from_workspace(installed)
+
+    message = str(exc_info.value)
+    assert "workspace binary set promotion refused" in message
+    assert "gdaemon embedded identity" in message
+    assert "rebuild and install all four together" in message
+    assert isinstance(exc_info.value.__cause__, bin_set_coherence.BinarySetCoherenceError)
+    assert installed.read_bytes() == b"installed-gdaemon"

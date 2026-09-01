@@ -11,7 +11,10 @@ from pathlib import Path
 from typing import cast
 
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
-from gobby.install.bin_set_coherence import promote_workspace_binary_set
+from gobby.install.bin_set_coherence import (
+    BinarySetCoherenceError,
+    promote_workspace_binary_set,
+)
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.storage.schema_contract import (
     expected_schema_identity,
@@ -103,7 +106,10 @@ def _install_from_workspace(binary: Path) -> bool:
     source = manifest.parent / "target" / "release" / _BINARY_NAME
     if result.returncode != 0 or not source.is_file():
         return False
-    promote_workspace_binary_set({"gdaemon": source}, bin_dir=binary.parent)
+    try:
+        promote_workspace_binary_set({"gdaemon": source}, bin_dir=binary.parent)
+    except BinarySetCoherenceError as exc:
+        raise GdaemonInstallError(str(exc)) from exc
     return True
 
 
