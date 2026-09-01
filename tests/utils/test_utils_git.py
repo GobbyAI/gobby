@@ -793,7 +793,22 @@ class TestLogging:
 
                 run_git_command(["git", "status"], temp_dir)
 
-        assert "not found" in caplog.text
+        assert "not found in PATH" in caplog.text
+
+    def test_run_git_command_logs_missing_working_directory(
+        self, temp_dir: Path, caplog: pytest.LogCaptureFixture, enable_log_propagation: None
+    ) -> None:
+        """A vanished cwd raises the same FileNotFoundError and must not blame PATH."""
+        missing = temp_dir / "gone"
+        with caplog.at_level(logging.DEBUG, logger="gobby.utils.git"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.side_effect = FileNotFoundError()
+
+                result = run_git_command(["git", "status"], missing)
+
+        assert result is None
+        assert f"working directory does not exist: {missing}" in caplog.text
+        assert "not found in PATH" not in caplog.text
 
     def test_run_git_command_logs_generic_error(
         self, temp_dir: Path, caplog, enable_log_propagation

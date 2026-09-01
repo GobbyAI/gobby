@@ -194,7 +194,11 @@ def run_git_command(command: list[str], cwd: str | Path, timeout: int = 5) -> st
         logger.warning("Git command timed out after %ss: %s", timeout, " ".join(command))
         return None
     except FileNotFoundError:
-        logger.warning("Git executable not found in PATH")
+        # subprocess raises the same error for a missing executable and a missing cwd.
+        if not Path(cwd).is_dir():
+            logger.warning("Git working directory does not exist: %s", cwd)
+        else:
+            logger.warning("Git executable not found in PATH")
         return None
     except Exception as e:
         logger.exception("Git command error: %s, error: %s", " ".join(command), e)
