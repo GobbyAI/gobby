@@ -709,6 +709,55 @@ async def test_claude_tdd_gate_accepts_default_pytest_test_body_exception(
     assert result.red_runs == (command,)
 
 
+@pytest.mark.parametrize(
+    "selection",
+    [
+        pytest.param("tests/hooks/test_session_coordinator.py", id="file-selection"),
+        pytest.param(
+            "tests/hooks/test_session_coordinator.py::TestAgentRunCompletion",
+            id="class-selection",
+        ),
+        pytest.param(
+            "tests/hooks/test_session_coordinator.py -k test_activity_direct",
+            id="keyword-selection",
+        ),
+    ],
+)
+async def test_claude_tdd_gate_attributes_default_pytest_header_without_node_selection(
+    tmp_path: Path,
+    selection: str,
+) -> None:
+    """The FAILURES header names the test exactly; the command need not select its node."""
+    test_path = "tests/hooks/test_session_coordinator.py"
+    command = f"uv run pytest {selection} -q"
+    red_output = """\
+__________ TestAgentRunCompletion.test_activity_direct __________
+    def test_activity_direct() -> None:
+>       raise TypeError("direct")
+E       TypeError: direct
+/deleted/worktree/tests/hooks/test_session_coordinator.py:620: TypeError
+=========================== short test summary info ============================
+FAILED tests/hooks/test_session_coordinator.py::TestAgentRunCompletion::test_activity_direct
+"""
+    evidence = await _derive_claude_tdd_cycle(
+        tmp_path,
+        red_command=command,
+        red_output=red_output,
+        green_command=command,
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::TestAgentRunCompletion.test_activity_direct",
+        path=test_path,
+        symbol="TestAgentRunCompletion.test_activity_direct",
+        body="def test_activity_direct(self) -> None: ...",
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is True, result
+    assert result.red_runs == (command,)
+
+
 async def test_tdd_gate_does_not_borrow_default_pytest_exception_from_sibling_test(
     tmp_path: Path,
 ) -> None:
@@ -736,6 +785,39 @@ FAILED tests/hooks/test_session_coordinator.py::TestOther::test_sibling
         red_command=command,
         red_output=sibling_output,
         green_command=f"uv run pytest {target} -q",
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is False
+    assert result.red_runs == ()
+
+
+async def test_tdd_gate_does_not_borrow_sibling_header_from_file_selection(
+    tmp_path: Path,
+) -> None:
+    test_path = "tests/hooks/test_session_coordinator.py"
+    command = f"uv run pytest {test_path} -q"
+    sibling_output = """\
+________________________ TestOther.test_sibling _________________________
+    def test_sibling() -> None:
+>       raise TypeError("sibling")
+E       TypeError: sibling
+/deleted/worktree/tests/hooks/test_session_coordinator.py:700: TypeError
+=========================== short test summary info ============================
+FAILED tests/hooks/test_session_coordinator.py::TestOther::test_sibling
+"""
+    test = AcceptanceTest(
+        reference=f"{test_path}::TestAgentRunCompletion",
+        path=test_path,
+        symbol="TestAgentRunCompletion",
+        body="class TestAgentRunCompletion: ...",
+    )
+    evidence = await _derive_claude_tdd_cycle(
+        tmp_path,
+        red_command=command,
+        red_output=sibling_output,
+        green_command=command,
     )
 
     result = evaluate_tdd_evidence((test,), evidence)

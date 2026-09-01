@@ -237,7 +237,7 @@ def _find_red_run(
 def _has_named_red_failure(command: str, output: str | None, test: AcceptanceTest) -> bool:
     if not output:
         return False
-    if validation_run_names_test(command, None, test) and _has_pytest_body_failure(
+    if validation_run_names_test(command, output, test) and _has_pytest_body_failure(
         command, output, test
     ):
         return True
@@ -266,18 +266,21 @@ def _has_pytest_body_failure(command: str, output: str, test: AcceptanceTest) ->
     if not is_assertion_failure(output):
         return False
     artifact_nodes, same_file_nodes = _selected_pytest_nodes(command, test)
-    if not artifact_nodes:
-        return False
     lines = output.splitlines()
     for index, line in enumerate(lines):
         header = _PYTEST_FAILURE_HEADER_RE.match(line)
-        if header is None or not _selected_node_matches(
-            header.group("name"), artifact_nodes, same_file_nodes
+        if header is None or not _header_names_artifact(
+            header.group("name"), test, artifact_nodes, same_file_nodes
         ):
             continue
         section = _failure_section(lines, index)
         if _section_has_artifact_location(section, test) and _section_has_failure_detail(section):
             return True
+    if not artifact_nodes:
+        # Location-only shapes (RTK, --tb=short) carry no failure header, so an
+        # unqualified frame symbol is attributable only through explicit node
+        # selection on the command line.
+        return False
     for index, line in enumerate(lines):
         match = _PYTEST_LOCATION_RE.match(line)
         if match is None:
@@ -345,6 +348,26 @@ def _selected_node_matches(
     ):
         return reported.startswith("test_")
     return False
+
+
+def _header_names_artifact(
+    reported: str,
+    test: AcceptanceTest,
+    artifact_nodes: tuple[str, ...],
+    same_file_nodes: tuple[str, ...],
+) -> bool:
+    """Match a FAILURES section header to the acceptance artifact.
+
+    pytest prints the qualified test name (``TestClass.test_method`` or
+    ``test_function``) in the header, so a file, class, or ``-k`` selection on
+    the command line still attributes exactly; explicit node selection keeps
+    its stricter same-file disambiguation.
+    """
+    if artifact_nodes:
+        return _selected_node_matches(reported, artifact_nodes, same_file_nodes)
+    name = reported.split("[", maxsplit=1)[0]
+    artifact = test.symbol.replace("::", ".")
+    return name == artifact or name.startswith(f"{artifact}.")
 
 
 def _node_leaf_matches(node: str, reported: str, *, truncated: bool) -> bool:
