@@ -394,13 +394,20 @@ def test_http_wiring_threads_live_resolvers_and_archive_override(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_results_schema_stays_pinned_and_live_bound_error_is_visible() -> None:
+async def test_results_schema_stays_pinned_and_live_bound_clamps_the_slice() -> None:
     configs = [
         ToolResultOffloadConfig(max_envelope_chars=3_000),
         ToolResultOffloadConfig(max_envelope_chars=2_000),
     ]
     active = {"index": 0}
     store = MagicMock()
+    store.get_slice.return_value = {
+        "content": "y" * 100,
+        "offset": 0,
+        "next_offset": 100,
+        "total_chars": 400,
+        "stored_chars": 400,
+    }
     initial_limit = configs[0].max_envelope_chars - _WRAPPER_MUTATION_RESERVE
     live_limit = configs[1].max_envelope_chars - _WRAPPER_MUTATION_RESERVE
     with (
@@ -416,7 +423,7 @@ async def test_results_schema_stays_pinned_and_live_bound_error_is_visible() -> 
     schema = registry.get_schema("get_tool_result")
     assert schema is not None
     # The advertised maximum is pinned to the static slice ceiling; the live
-    # envelope bound is enforced per call below (#20158).
+    # envelope bound clamps each call below (#20158, #21532).
     assert schema["inputSchema"]["properties"]["limit"]["maximum"] == _MAX_SLICE_CHARS
 
     active["index"] = 1
@@ -428,11 +435,14 @@ async def test_results_schema_stays_pinned_and_live_bound_error_is_visible() -> 
         },
     )
 
-    assert result == {
-        "success": False,
-        "error": f"limit exceeds current live maximum of {live_limit}",
-    }
-    store.get_slice.assert_not_called()
+    store.get_slice.assert_called_once_with(
+        "11111111-1111-4111-8111-111111111111",
+        "11111111-1111-4111-8111-111111111111",
+        offset=0,
+        limit=live_limit,
+    )
+    assert result["content"] == "y" * 100
+    assert result["next_offset"] == 100
 
 
 @pytest.mark.asyncio

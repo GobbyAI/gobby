@@ -151,11 +151,6 @@ def create_results_registry(
         validation_error = _validate_slice_arguments(offset=offset, limit=limit)
         if validation_error is not None:
             return validation_error
-        if limit > response_limit:
-            return _bounded_error(
-                f"limit exceeds current live maximum of {response_limit}",
-                response_limit,
-            )
 
         project_id = current_project_id()
         if project_id is None:
@@ -166,7 +161,9 @@ def create_results_registry(
                 canonical_id,
                 project_id,
                 offset=offset,
-                limit=limit,
+                # The live envelope budget is dynamic, so a limit above it is
+                # clamped rather than rejected; next_offset drives paging.
+                limit=min(limit, response_limit),
             )
         except Exception:
             logger.exception("Failed to read stored tool result")
@@ -177,7 +174,10 @@ def create_results_registry(
 
     registry.register(
         name="get_tool_result",
-        description="Read a bounded character slice from one stored oversized tool result.",
+        description=(
+            "Read a bounded character slice from one stored oversized tool result. "
+            "A limit above the live maximum is clamped to it; page with next_offset."
+        ),
         input_schema={
             "type": "object",
             "properties": {
