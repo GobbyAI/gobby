@@ -6,17 +6,25 @@ const DEFAULT_MAX_INBOX_ITEM_BYTES: u64 = 500_000_000;
 use crate::error::WikiError;
 use gobby_core::config::FalkorConfig;
 use gobby_core::grant::{
-    AcquiredGrant, FalkorCapability, GrantBundle, GrantError, PostgresCapability, acquire,
+    AcquireRequest, AcquiredGrant, FalkorCapability, GrantBundle, GrantError, PostgresCapability,
+    acquire, acquire_with,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
 
 thread_local! {
     static ACTIVE_PROJECT_ROOT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static ACTIVE_PROJECT_ID: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn set_active_project_root(root: Option<PathBuf>) {
     ACTIVE_PROJECT_ROOT.with(|slot| *slot.borrow_mut() = root);
+}
+
+/// Pin the grant to an explicit project id (`gwiki purge --project-id`): the
+/// target's root may no longer exist, so identity must not come from a root.
+pub(crate) fn set_active_project_id(project_id: Option<String>) {
+    ACTIVE_PROJECT_ID.with(|slot| *slot.borrow_mut() = project_id);
 }
 
 pub(crate) fn database_url() -> anyhow::Result<Option<String>> {
@@ -44,6 +52,9 @@ pub(crate) fn database_url_for(command: &str) -> Result<Option<String>, WikiErro
 }
 
 fn acquire_runtime_grant() -> Result<AcquiredGrant, GrantError> {
+    if let Some(project_id) = ACTIVE_PROJECT_ID.with(|slot| slot.borrow().clone()) {
+        return acquire_with(&AcquireRequest::from_process_for_project_id(&project_id));
+    }
     let root = project_root_for_grant().ok_or(GrantError::DaemonRequired)?;
     acquire(root)
 }

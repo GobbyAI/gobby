@@ -311,6 +311,17 @@ async def test_purge_orders_quiescence_projections_cleanup_and_hub_transaction()
         "hub:begin",
         "hub:commit",
         "hub:begin",
+        # Cross-project references are detached (or dropped) before the deletes;
+        # the fake names each statement by its first FROM table.
+        "sql:tasks",
+        "sql:sessions",
+        "sql:sessions",
+        "sql:sessions",
+        "sql:sessions",
+        "sql:workflow_audit_log",
+        "sql:agent_runs",
+        "sql:sessions",
+        "sql:sessions",
         "sql:tasks",
         "sql:plans",
         "sql:sessions",

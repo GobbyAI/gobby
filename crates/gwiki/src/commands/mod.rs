@@ -43,6 +43,15 @@ use crate::{
 
 pub(crate) fn run(command: Command, run_options: RunOptions) -> Result<CommandOutcome, WikiError> {
     crate::support::env::set_active_project_root(command_project_root(&command));
+    // `purge --project-id` targets a project whose root may no longer exist, so
+    // every grant (including the admission lock's) is keyed by that id.
+    crate::support::env::set_active_project_id(match &command {
+        Command::Purge {
+            target: crate::PurgeTarget::ProjectId(project_id),
+            ..
+        } => Some(project_id.to_string()),
+        _ => None,
+    });
     let project_lock = project_admission::acquire_command_lock(&command)?;
     run_with_project_lock(project_lock, || dispatch(command, run_options))
 }
