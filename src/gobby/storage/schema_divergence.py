@@ -127,3 +127,34 @@ def collect_schema_heads(database: HubDatabase | None) -> SchemaHeads:
         installed_version=installed_version if isinstance(installed_version, int) else None,
         live_version=None if database is None else live_schema_version(database),
     )
+
+
+def schema_apply_refusal(database: HubDatabase | None) -> str | None:
+    """Name the divergence that would make a schema apply fail, or None.
+
+    This is deliberately narrower than ``verify_schema``, which compares the live
+    catalog against the packaged manifest and therefore fails on the ordinary upgrade
+    path where the checkout adds a migration the hub has not applied yet. Only the two
+    conditions no apply can resolve count: an installed binary whose embedded identity
+    is not this checkout's, and a hub already ahead of this checkout. Anything
+    unreadable is not a refusal — let the apply itself decide.
+    """
+    installed = installed_schema_identity()
+    if installed is not None:
+        try:
+            expected = expected_schema_identity()
+        except SchemaContractError as exc:
+            logger.debug("Packaged schema identity is unreadable: %s", exc)
+            return None
+        if installed != expected:
+            return (
+                f"installed gdaemon carries schema identity v{installed['latest_version']} "
+                f"({str(installed['latest_checksum'])[:12]}), which is not this checkout's "
+                f"v{expected['latest_version']} ({str(expected['latest_checksum'])[:12]})"
+            )
+
+    checkout = _checkout_version()
+    live = None if database is None else live_schema_version(database)
+    if checkout is not None and live is not None and live > checkout:
+        return f"live hub schema v{live} is newer than this checkout (v{checkout})"
+    return None

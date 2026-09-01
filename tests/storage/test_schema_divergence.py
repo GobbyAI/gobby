@@ -463,3 +463,111 @@ def test_mutating_schema_apply_still_raises_on_identity_mismatch(
         schema_contract.apply_schema("postgresql://example/db")
 
     assert "expected schema identity does not match embedded identity" in str(excinfo.value)
+
+
+def _restart_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    installed: dict[str, object] | None,
+    live_head: int,
+) -> list[str]:
+    """Stage a restart whose stop step records instead of running, and return that record."""
+    monkeypatch.setattr(
+        schema_divergence,
+        "resolve_native_bin",
+        lambda name: None if installed is None else "/bin/gdaemon",
+    )
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _completed(json.dumps(installed)))
+
+    @contextmanager
+    def hub(_config_file: object, *, apply_migrations: bool) -> Iterator[MagicMock]:
+        yield _database_returning(live_head)
+
+    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", hub)
+    _stub_config_projection(monkeypatch)
+    monkeypatch.setattr("gobby.cli.daemon.worktree_daemon_refusal", lambda: None)
+
+    stopped: list[str] = []
+
+    def record_stop(*_args: Any, shutdown_intent: str = "stop", **_kwargs: Any) -> bool:
+        stopped.append(shutdown_intent)
+        return False
+
+    monkeypatch.setattr("gobby.cli.daemon._do_stop", record_stop)
+    return stopped
+
+
+def test_restart_refuses_before_stopping_when_the_installed_binary_is_foreign(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Equal versions with different checksums is the real case: two branches, one number."""
+    expected = schema_contract.expected_schema_identity()
+    stopped = _restart_preflight(
+        monkeypatch,
+        installed={**expected, "latest_checksum": "f" * 64},
+        live_head=int(expected["latest_version"]),
+    )
+
+    result = CliRunner().invoke(cli, ["restart"])
+
+    assert result.exit_code == 1, result.output
+    assert "Refusing to restart" in result.output
+    assert "is not this checkout's" in result.output
+    assert stopped == [], "the daemon must still be running after a refusal"
+
+
+def test_restart_refuses_before_stopping_when_the_hub_is_ahead(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = schema_contract.expected_schema_identity()
+    pin = int(expected["latest_version"])
+    stopped = _restart_preflight(monkeypatch, installed=dict(expected), live_head=pin + 4)
+
+    result = CliRunner().invoke(cli, ["restart"])
+
+    assert result.exit_code == 1, result.output
+    assert f"live hub schema v{pin + 4} is newer than this checkout (v{pin})" in result.output
+    assert stopped == []
+
+
+def test_restart_proceeds_when_the_hub_merely_owes_a_migration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ordinary upgrade path: this checkout adds a migration the hub has not applied."""
+    expected = schema_contract.expected_schema_identity()
+    stopped = _restart_preflight(
+        monkeypatch,
+        installed=dict(expected),
+        live_head=int(expected["latest_version"]) - 1,
+    )
+
+    result = CliRunner().invoke(cli, ["restart"])
+
+    assert result.exit_code == 1, result.output
+    assert "Refusing to restart" not in result.output
+    assert stopped == ["restart"]
+
+
+def test_restart_proceeds_when_the_installed_identity_is_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = schema_contract.expected_schema_identity()
+    stopped = _restart_preflight(
+        monkeypatch, installed=None, live_head=int(expected["latest_version"])
+    )
+
+    result = CliRunner().invoke(cli, ["restart"])
+
+    assert result.exit_code == 1, result.output
+    assert "Refusing to restart" not in result.output
+    assert stopped == ["restart"]
+
+
+def test_schema_apply_refusal_is_silent_without_a_readable_hub(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = schema_contract.expected_schema_identity()
+    monkeypatch.setattr(schema_divergence, "resolve_native_bin", lambda name: "/bin/gdaemon")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _completed(json.dumps(dict(expected))))
+
+    assert schema_divergence.schema_apply_refusal(None) is None

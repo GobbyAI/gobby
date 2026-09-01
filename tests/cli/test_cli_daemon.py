@@ -1558,6 +1558,7 @@ class TestRestartCommand:
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
             patch("gobby.cli.daemon.get_service_status", return_value={"installed": False}),
+            patch("gobby.cli.daemon._schema_restart_refusal", return_value=None),
         ):
             gobby_dir = temp_dir / ".gobby"
             gobby_dir.mkdir(parents=True, exist_ok=True)
@@ -1639,6 +1640,7 @@ class TestRestartCommand:
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
             patch("gobby.cli.daemon.get_service_status", return_value={"installed": False}),
+            patch("gobby.cli.daemon._schema_restart_refusal", return_value=None),
         ):
             gobby_dir = temp_dir / ".gobby"
             gobby_dir.mkdir(parents=True, exist_ok=True)

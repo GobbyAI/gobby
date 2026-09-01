@@ -665,6 +665,24 @@ def stop(ctx: click.Context, docker_flag: bool, force: bool, wait: bool) -> None
     sys.exit(0 if _do_stop(ctx, docker_flag, force=force, wait=wait) else 1)
 
 
+def _schema_restart_refusal(ctx: click.Context) -> str | None:
+    """Report a divergence that would fail the start half of a restart, or None.
+
+    The stop half reads config without applying schema, so it now survives a gate that
+    the start half still fails. Without this check a restart would take the daemon down
+    and be unable to bring it back.
+    """
+    from gobby.cli.runtime import require_cli_database
+    from gobby.storage.schema_divergence import schema_apply_refusal
+
+    try:
+        database = require_cli_database(ctx, apply_migrations=False)
+    except Exception:
+        logger.debug("Schema restart preflight could not open the hub", exc_info=True)
+        database = None
+    return schema_apply_refusal(database)
+
+
 @click.command()
 @click.option(
     "--verbose",
@@ -705,6 +723,11 @@ def restart(
     # Check before stopping: refusing after the stop would leave no daemon.
     if refusal := worktree_daemon_refusal():
         _step(refusal, error=True)
+        sys.exit(1)
+
+    if refusal := _schema_restart_refusal(ctx):
+        _step(f"Refusing to restart: {refusal}", error=True)
+        _step("The running daemon was left alone. Reinstall gdaemon from this checkout.")
         sys.exit(1)
 
     if not _do_stop(ctx, docker_flag, shutdown_intent="restart", force=force, wait=wait):
