@@ -490,7 +490,12 @@ async def prepare_sandbox_launch(
         _resolve_provider_executable(provider, env) if config.backend == "srt" else None
     )
 
-    run_paths = prepare_sandbox_run_paths(run_id, env)
+    run_paths = await asyncio.to_thread(
+        prepare_sandbox_run_paths,
+        run_id,
+        env,
+        workspace=Path(workspace_path),
+    )
     run_environment = run_paths.environment(provider)
     prompt_file = env.get("GOBBY_PROMPT_FILE")
     if prompt_file and Path(prompt_file).is_file():
