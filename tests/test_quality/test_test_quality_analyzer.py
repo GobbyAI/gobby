@@ -723,12 +723,18 @@ def test_discovery_excludes_generated_build_output(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    for requested_path in (build_test, tmp_path):
+    for requested_path, warning_path in (
+        (build_test, "build/test_generated.py"),
+        (tmp_path, "."),
+    ):
         report = audit_paths([requested_path], root=tmp_path)
 
         assert report.files_scanned == 0
         assert report.tests_scanned == 0
-        assert [warning.code for warning in report.warnings] == ["NO_ANALYZABLE_FILES"]
+        assert [(warning.code, warning.path) for warning in report.warnings] == [
+            ("NO_ANALYZABLE_FILES", None),
+            ("UNRESOLVED_PATH", warning_path),
+        ]
 
 
 @pytest.mark.parametrize(
@@ -1046,8 +1052,39 @@ def test_zero_file_audit_warns_for_unmatched_paths(tmp_path: Path, requested_pat
 
     assert report.files_scanned == 0
     assert [(warning.code, warning.path) for warning in report.warnings] == [
-        ("NO_ANALYZABLE_FILES", None)
+        ("NO_ANALYZABLE_FILES", None),
+        ("UNRESOLVED_PATH", requested_path),
     ]
+
+
+def test_discovery_warns_for_each_unresolved_path_in_a_mixed_scan(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    test_path = _write_test(
+        root,
+        """
+def test_sample():
+    assert 1 == 1
+""",
+    )
+    missing_path = root / "tests" / "missing.py"
+    excluded_path = root / ".venv" / "test_hidden.py"
+    excluded_path.parent.mkdir()
+    excluded_path.write_text("def test_hidden(): assert True\n", encoding="utf-8")
+    outside_path = tmp_path / "test_outside.py"
+    outside_path.write_text("def test_outside(): assert True\n", encoding="utf-8")
+
+    report = audit_paths(
+        [test_path, missing_path, excluded_path, outside_path],
+        root=root,
+    )
+
+    assert report.files_scanned == 1
+    assert {(warning.code, warning.path) for warning in report.warnings} == {
+        ("UNRESOLVED_PATH", "tests/missing.py"),
+        ("UNRESOLVED_PATH", ".venv/test_hidden.py"),
+        ("UNRESOLVED_PATH", outside_path.as_posix()),
+    }
 
 
 def test_zero_delay_sleep_is_a_cooperative_yield_not_sleep_based_timing(
