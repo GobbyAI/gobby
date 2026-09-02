@@ -964,7 +964,7 @@ class TestCanonicalToolMetadata:
     def test_exec_command_git_grep_sets_broad_search(self) -> None:
         data = {
             "tool_name": "exec_command",
-            "tool_input": {"command": "git grep TaskValidator src"},
+            "tool_input": {"command": "git grep TaskValidator -- src"},
         }
 
         normalize_tool_fields(data)
@@ -972,8 +972,25 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "search"
         assert data["canonical_code_navigation_action"] == "search"
         assert data["canonical_code_navigation_broad"] is True
+        assert "canonical_search_revision_scoped" not in data
 
-    def test_exec_command_find_sets_broad_search(self) -> None:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git grep -n P 0.5.0 -- src/",
+            "git grep -n P HEAD~1",
+            "git grep -e P HEAD~1",
+        ],
+    )
+    def test_exec_command_git_grep_marks_revision_scope(self, command: str) -> None:
+        data = {"tool_name": "exec_command", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_search_revision_scoped"] is True
+
+    def test_exec_command_find_sets_enumeration_metadata(self) -> None:
         data = {
             "tool_name": "exec_command",
             "tool_input": {"command": "find src -name '*.py'"},
@@ -981,24 +998,43 @@ class TestCanonicalToolMetadata:
 
         normalize_tool_fields(data)
 
-        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_tool_kind"] == "execute"
         assert data["canonical_file_path"] == "src"
-        assert data["canonical_code_navigation_action"] == "search"
+        assert data["canonical_code_navigation_action"] == "enumerate"
         assert data["canonical_code_navigation_broad"] is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "find . -name '*.pyc' -delete",
+            "find src -name '*.py' -exec rm {} +",
+            "find src -name '*.py' -execdir rm {} +",
+            "find src -name '*.py' -ok rm {} +",
+            "find src -name '*.py' -okdir rm {} +",
+        ],
+    )
+    def test_exec_command_find_mutation_predicates_mark_repo_mutation(self, command: str) -> None:
+        data = {"tool_name": "exec_command", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert data["canonical_code_navigation_action"] == "enumerate"
+        assert data["canonical_repo_mutation"] is True
 
     def test_exec_command_search_populates_visible_paths(self) -> None:
         examples = [
-            ("rg foo .claude/memory", ".claude/memory"),
-            ("grep foo .claude/memory/file.md", ".claude/memory/file.md"),
-            ("git grep foo -- .claude/memory", ".claude/memory"),
-            ("find .claude/memory -type f", ".claude/memory"),
+            ("rg foo .claude/memory", ".claude/memory", "search"),
+            ("grep foo .claude/memory/file.md", ".claude/memory/file.md", "search"),
+            ("git grep foo -- .claude/memory", ".claude/memory", "search"),
+            ("find .claude/memory -type f", ".claude/memory", "execute"),
         ]
-        for command, expected_path in examples:
+        for command, expected_path, expected_kind in examples:
             data = {"tool_name": "exec_command", "tool_input": {"command": command}}
 
             normalize_tool_fields(data)
 
-            assert data["canonical_tool_kind"] == "search"
+            assert data["canonical_tool_kind"] == expected_kind
             assert data["canonical_file_path"] == expected_path
 
     def test_exec_command_search_over_non_source_files_is_not_code_navigation(self) -> None:
@@ -1183,7 +1219,7 @@ class TestCanonicalToolMetadata:
         ("command", "expected_kind"),
         [
             ("grep -r pattern src 2>/dev/null", "search"),
-            ("find src -name '*.py' 2>/dev/null", "search"),
+            ("find src -name '*.py' 2>/dev/null", "execute"),
             ("cat src/app.py > /dev/null", "read"),
             ("rg pattern src >/dev/null 2>&1", "search"),
             ("rg pattern src >&/dev/null", "search"),
@@ -2006,7 +2042,7 @@ class TestStringArgumentCoercion:
 
     def test_string_arguments_coerced_to_dict(self) -> None:
         """call_tool with JSON string arguments → parsed to dict + flag set."""
-        data = {
+        data: dict[str, Any] = {
             "tool_name": "mcp__gobby__call_tool",
             "tool_input": {
                 "server_name": "gobby-tasks",
@@ -2084,7 +2120,7 @@ class TestStringArgumentCoercion:
 
     def test_coercion_through_normalize_tool_fields(self) -> None:
         """Full pipeline: camelCase-style stringified args through normalize_tool_fields."""
-        data = {
+        data: dict[str, Any] = {
             "toolName": "mcp__gobby__call_tool",
             "toolArgs": '{"server_name": "gobby-tasks", "tool_name": "create_task", "arguments": "{\\"title\\": \\"Test\\"}"}',
         }

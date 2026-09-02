@@ -3648,6 +3648,7 @@ class TestRequireCodeIndexSkillStructure:
         expected = {
             "reset-code-index-navigation",
             "track-code-index-navigation",
+            "track-turn-written-paths",
             "prefer-gcode-for-code-search",
             "prefer-gcode-for-source-read",
         }
@@ -3684,6 +3685,7 @@ class TestCodeIndexNavigationRules:
             "loaded_skills": ["code-index"] if loaded else [],
             "code_index_available": True,
             "code_index_navigation_used_this_turn": used,
+            "turn_written_paths": [],
             "brevity_disabled": True,
             "skill_discovery_instructions_shown": True,
         }
@@ -3946,6 +3948,134 @@ class TestCodeIndexNavigationRules:
             )
 
             assert response.decision == expected_decision
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "find . -maxdepth 1",
+            "find docs -type d",
+            "find crates -newer Cargo.toml -name '*.rs'",
+            "find crates -path '*migrations*' -name '*.sql'",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_find_enumeration_bypasses_code_index_rules(
+        self, db: HubDatabase, command: str
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = self._normalized_bash_event(command)
+
+        assert event.data["canonical_tool_kind"] == "execute"
+        assert event.data["canonical_code_navigation_action"] == "enumerate"
+        assert event.data["canonical_code_navigation_broad"] is True
+        for loaded in (False, True):
+            response = await engine.evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=self._variables(loaded=loaded),
+            )
+            assert response.decision == "allow", (loaded, command)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git grep -n P 0.5.0 -- src/",
+            "git grep -n P HEAD~1",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_revision_scoped_git_grep_bypasses_code_index_rules(
+        self, db: HubDatabase, command: str
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = self._normalized_bash_event(command)
+
+        assert event.data["canonical_search_revision_scoped"] is True
+        for loaded in (False, True):
+            response = await engine.evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=self._variables(loaded=loaded),
+            )
+            assert response.decision == "allow", (loaded, command)
+
+    @pytest.mark.asyncio
+    async def test_worktree_git_grep_still_uses_code_index_rules(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = self._normalized_bash_event("git grep -n P -- src/")
+
+        assert "canonical_search_revision_scoped" not in event.data
+        for loaded in (False, True):
+            response = await engine.evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=self._variables(loaded=loaded),
+            )
+            assert response.decision == "block", loaded
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "rg foo",
+            "grep -rn foo src/",
+            "grep -rn foo docs/",
+            "git grep -n foo",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_ordinary_repo_searches_still_use_code_index_rules(
+        self, db: HubDatabase, command: str
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = self._normalized_bash_event(command)
+
+        for loaded in (False, True):
+            response = await engine.evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=self._variables(loaded=loaded),
+            )
+            assert response.decision == "block", (loaded, command)
+
+    @pytest.mark.asyncio
+    async def test_same_turn_written_path_bypasses_search_and_read_rules(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = self._variables(loaded=True)
+        write = self._event(
+            HookEventType.AFTER_TOOL,
+            {
+                "tool_name": "Write",
+                "tool_input": {"file_path": "src/app.py"},
+                "canonical_tool_kind": "write",
+                "canonical_file_paths": ["src/app.py"],
+            },
+        )
+
+        await engine.evaluate(write, session_id=SESSION_ID, variables=variables)
+
+        assert variables["turn_written_paths"] == ["src/app.py"]
+        for command in ("grep -n X src/app.py", "cat src/app.py"):
+            event = self._normalized_bash_event(command)
+            allowed = await engine.evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=variables,
+            )
+            blocked = await engine.evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=self._variables(loaded=True),
+            )
+
+            assert allowed.decision == "allow", command
+            assert blocked.decision == "block", command
 
     @pytest.mark.asyncio
     async def test_gcode_fail_open_allows_fallback_search(self, db) -> None:
@@ -4356,11 +4486,13 @@ class TestCodeIndexNavigationRules:
     async def test_turn_start_resets_gcode_navigation_flag(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=True, used=True)
+        variables["turn_written_paths"] = ["src/app.py"]
         event = self._event(HookEventType.BEFORE_AGENT, {"prompt": "continue"})
 
         await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["code_index_navigation_used_this_turn"] is False
+        assert variables["turn_written_paths"] == []
 
     @pytest.mark.asyncio
     async def test_broad_cat_blocks_but_tight_line_read_allows(self, db: HubDatabase) -> None:

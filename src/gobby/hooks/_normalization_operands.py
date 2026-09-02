@@ -175,6 +175,29 @@ def _git_restore_positional_args_after(parts: list[str], start: int) -> list[str
     ]
 
 
+_FIND_MUTATION_PREDICATES = frozenset({"-delete", "-exec", "-execdir", "-ok", "-okdir"})
+
+
+def _find_has_mutation_predicate(parts: list[str]) -> bool:
+    """Return whether a find invocation may mutate matched paths."""
+    return any(part in _FIND_MUTATION_PREDICATES for part in parts[1:])
+
+
+def _git_grep_is_revision_scoped(parts: list[str]) -> bool:
+    """Return whether git grep names a revision before its path separator."""
+    before_paths = parts[: parts.index("--")] if "--" in parts else parts
+    pattern_from_option = any(
+        part in {"-e", "--regexp", "-f", "--file"}
+        or (part.startswith("-e") and not part.startswith("--") and part != "-e")
+        or (part.startswith("-f") and not part.startswith("--") and part != "-f")
+        or part.startswith("--regexp=")
+        or part.startswith("--file=")
+        for part in before_paths[2:]
+    )
+    positional = _shell_positional_args_after(before_paths, 2)
+    return bool(positional) if pattern_from_option else len(positional) > 1
+
+
 def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
     if cmd in {"rg", "grep"}:
         positional = _shell_positional_args_after(parts, 1)
@@ -191,6 +214,8 @@ def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
         if "--" in parts:
             separator_index = parts.index("--")
             return [path for path in parts[separator_index + 1 :] if _looks_path_target(path)]
+        if _git_grep_is_revision_scoped(parts):
+            return []
         positional = _shell_positional_args_after(parts, 2)
         return [path for path in positional[1:] if _looks_path_target(path)]
 
