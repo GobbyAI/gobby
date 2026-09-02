@@ -62,7 +62,6 @@ async def finalize_executed_spawn(
     agent_body: Any,
     effective_initial_variables: Any,
     reasoning: Any,
-    speed_payload: Any,
 ) -> dict[str, Any]:
     """Persist runtime, verify liveness, start the run, auto-claim, and build the response."""
     tmux_session_name, tmux_socket_name, tmux_socket_path = _tmux_runtime_metadata(spawn_result)
@@ -99,7 +98,6 @@ async def finalize_executed_spawn(
                 "success": False,
                 "error": error,
                 "run_id": run_id,
-                "speed": speed_payload,
             }
 
     tmux_spawn = bool(
@@ -136,7 +134,6 @@ async def finalize_executed_spawn(
                 "success": False,
                 "error": spawn_result.error,
                 "run_id": run_id,
-                "speed": speed_payload,
             }
 
     if spawn_result.success and spawn_result.child_session_id is not None:
@@ -245,7 +242,6 @@ async def finalize_executed_spawn(
                     "success": False,
                     "error": error,
                     "run_id": run_id,
-                    "speed": speed_payload,
                 }
 
         if spawn_result.terminal_type == "tmux" and tmux_session_name:
@@ -280,7 +276,6 @@ async def finalize_executed_spawn(
             "success": False,
             "error": spawn_result.error or "Failed to spawn agent",
             "reasoning": reasoning.to_dict(),
-            "speed": speed_payload,
         }
 
     response = _build_spawn_success_response(
@@ -297,5 +292,4 @@ async def finalize_executed_spawn(
         ),
         reasoning=reasoning,
     )
-    response["speed"] = speed_payload
     return response

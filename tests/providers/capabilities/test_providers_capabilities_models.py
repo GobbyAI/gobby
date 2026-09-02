@@ -1,20 +1,16 @@
 """Tests for typed provider capability domain models."""
 
 from datetime import UTC, datetime
-from decimal import Decimal
 
 import pytest
 
 from gobby.providers.capabilities.models import (
-    ActivationDescriptor,
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
     SourceHealth,
     SourceState,
-    SpeedMode,
 )
 
 pytestmark = pytest.mark.unit
@@ -29,16 +25,6 @@ def _snapshot(supported_efforts: tuple[str, ...] | None) -> ProviderSnapshot:
             observed_at=observed_at,
         )
     }
-    route = ModelRoute(
-        speed_mode=SpeedMode.FAST,
-        selector="model-fast",
-        available=True,
-        usage_multiplier=Decimal("1.5"),
-        throughput_multiplier=Decimal("4"),
-        latency_class="fastest",
-        activations=(ActivationDescriptor(kind="model_selector", surface="spawn-cli", params={}),),
-        provenance=provenance,
-    )
     model = ModelCapability(
         canonical_model="model",
         display_name="Model",
@@ -54,7 +40,6 @@ def _snapshot(supported_efforts: tuple[str, ...] | None) -> ProviderSnapshot:
         latency_class="moderate",
         input_modalities=("text", "image"),
         supports_tools=True,
-        routes=(route,),
         provenance=provenance,
     )
     source = SourceHealth(

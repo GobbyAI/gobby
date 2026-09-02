@@ -2,7 +2,6 @@
 
 from dataclasses import replace
 from datetime import UTC, datetime
-from decimal import Decimal
 
 import pytest
 from psycopg.errors import UniqueViolation
@@ -10,12 +9,10 @@ from psycopg.errors import UniqueViolation
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
     SourceHealth,
     SourceState,
-    SpeedMode,
 )
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -38,16 +35,6 @@ def _snapshot(
             observed_at=observed_at,
         )
     }
-    route = ModelRoute(
-        speed_mode=SpeedMode.STANDARD,
-        selector=model_name,
-        available=True,
-        usage_multiplier=Decimal("1"),
-        throughput_multiplier=None,
-        latency_class="normal",
-        activations=(),
-        provenance=provenance,
-    )
     model = ModelCapability(
         canonical_model=model_name,
         display_name=f"{provider.title()} Test",
@@ -63,7 +50,6 @@ def _snapshot(
         latency_class="normal",
         input_modalities=("text", "image"),
         supports_tools=True,
-        routes=(route,),
         provenance=provenance,
     )
     source = SourceHealth(
@@ -91,12 +77,12 @@ def test_failed_replace_retains_last_good_rows(postgres_db: HubDatabase) -> None
     assert before is not None
 
     replacement = _snapshot(model_name="gpt-broken")
-    route = replacement.models[0].routes[0]
-    duplicate_route = replace(route, selector="duplicate-selector")
-    broken_model = replace(replacement.models[0], routes=(route, duplicate_route))
+    duplicate_model = replace(replacement.models[0], display_name="Duplicate")
 
     with pytest.raises(UniqueViolation):
-        store.replace_provider_snapshot(replace(replacement, models=(broken_model,)))
+        store.replace_provider_snapshot(
+            replace(replacement, models=(replacement.models[0], duplicate_model))
+        )
 
     assert store.get_provider_snapshot("codex") == before
 

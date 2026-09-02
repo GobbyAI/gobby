@@ -7,17 +7,11 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol
 
-from gobby.providers.capabilities.activation import (
-    ActivationValidationError,
-    validate_activation,
-)
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     SourceState,
-    SpeedMode,
 )
 
 
@@ -32,10 +26,6 @@ class SourceSpec:
     source_key: str
     url: str | None
     required: bool
-    fast_only_selectors: frozenset[str] = frozenset()
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "fast_only_selectors", frozenset(self.fast_only_selectors))
 
 
 class CapabilityCollector(Protocol):
@@ -71,12 +61,6 @@ _OPTIONAL_MODEL_FACTS = (
     "input_modalities",
     "supports_tools",
 )
-_ROUTE_FACTS = frozenset({"speed_mode", "selector", "available", "activations"})
-_OPTIONAL_ROUTE_FACTS = (
-    "usage_multiplier",
-    "throughput_multiplier",
-    "latency_class",
-)
 
 
 def register_collector(collector: CapabilityCollector) -> None:
@@ -105,15 +89,12 @@ def validate_snapshot(
 
     _validate_source_health(snapshot, source_specs)
     seen_models: set[str] = set()
-    fast_only_selectors = frozenset().union(
-        *(spec.fast_only_selectors for spec in source_specs.values())
-    )
     for model in snapshot.models:
         model_name = _normalized(model.canonical_model, "canonical model")
         if model_name in seen_models:
             raise SnapshotValidationError(f"Duplicate canonical model: {model_name!r}")
         seen_models.add(model_name)
-        _validate_model(model, source_specs, fast_only_selectors)
+        _validate_model(model, source_specs)
     return snapshot
 
 
@@ -125,8 +106,6 @@ def _source_specs(sources: tuple[SourceSpec, ...]) -> dict[str, SourceSpec]:
         source_key = _normalized(source.source_key, "source key")
         if source_key in result:
             raise SnapshotValidationError(f"Duplicate source key: {source_key!r}")
-        for selector in source.fast_only_selectors:
-            _normalized(selector, "fast-only selector")
         result[source_key] = source
     return result
 
@@ -161,12 +140,8 @@ def _validate_source_health(
 def _validate_model(
     model: ModelCapability,
     source_specs: Mapping[str, SourceSpec],
-    fast_only_selectors: frozenset[str],
 ) -> None:
     _normalized(model.display_name, f"display name for {model.canonical_model!r}")
-    if not model.routes:
-        raise SnapshotValidationError(f"Model {model.canonical_model!r} requires a route")
-
     model_facts = set(_MODEL_FACTS)
     model_facts.update(fact for fact in _OPTIONAL_MODEL_FACTS if getattr(model, fact) is not None)
     _validate_provenance(
@@ -175,48 +150,6 @@ def _validate_model(
         source_specs,
         f"model {model.canonical_model!r}",
     )
-
-    routes_by_mode: dict[SpeedMode, ModelRoute] = {}
-    for route in model.routes:
-        if route.speed_mode in routes_by_mode:
-            raise SnapshotValidationError(
-                f"Model {model.canonical_model!r} has duplicate {route.speed_mode.value!r} routes"
-            )
-        routes_by_mode[route.speed_mode] = route
-        _validate_route(route, model.canonical_model, source_specs)
-
-    fast_route = routes_by_mode.get(SpeedMode.FAST)
-    if (
-        fast_route is not None
-        and SpeedMode.STANDARD not in routes_by_mode
-        and fast_route.selector not in fast_only_selectors
-    ):
-        raise SnapshotValidationError(
-            f"Fast route {fast_route.selector!r} requires a standard route or source declaration"
-        )
-
-
-def _validate_route(
-    route: ModelRoute,
-    model_name: str,
-    source_specs: Mapping[str, SourceSpec],
-) -> None:
-    _normalized(route.selector, f"route selector for {model_name!r}")
-    route_facts = set(_ROUTE_FACTS)
-    route_facts.update(fact for fact in _OPTIONAL_ROUTE_FACTS if getattr(route, fact) is not None)
-    _validate_provenance(
-        route.provenance,
-        frozenset(route_facts),
-        source_specs,
-        f"route {route.selector!r}",
-    )
-    for activation in route.activations:
-        try:
-            validate_activation(activation)
-        except ActivationValidationError as error:
-            raise SnapshotValidationError(
-                f"Invalid activation on route {route.selector!r}: {error}"
-            ) from error
 
 
 def _validate_provenance(

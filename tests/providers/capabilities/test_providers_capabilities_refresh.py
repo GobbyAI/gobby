@@ -5,7 +5,6 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
-from decimal import Decimal
 from pathlib import Path
 from typing import cast
 
@@ -23,12 +22,10 @@ from gobby.providers.capabilities.coverage import ModelMetadataCoverageAuditor
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
     SourceHealth,
     SourceState,
-    SpeedMode,
 )
 from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.store import ProviderCapabilityStore
@@ -69,10 +66,6 @@ def _snapshot(
             "latency_class",
             "input_modalities",
             "supports_tools",
-            "speed_mode",
-            "selector",
-            "activations",
-            "usage_multiplier",
         ),
         fact,
     )
@@ -92,18 +85,6 @@ def _snapshot(
             latency_class="normal",
             input_modalities=("text",),
             supports_tools=True,
-            routes=(
-                ModelRoute(
-                    speed_mode=SpeedMode.STANDARD,
-                    selector=model_name,
-                    available=True,
-                    usage_multiplier=Decimal("1"),
-                    throughput_multiplier=None,
-                    latency_class="normal",
-                    activations=(),
-                    provenance=provenance,
-                ),
-            ),
             provenance=provenance,
         )
         for index, model_name in enumerate(model_names)

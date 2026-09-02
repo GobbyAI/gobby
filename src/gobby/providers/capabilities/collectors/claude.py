@@ -15,12 +15,10 @@ from gobby.providers.capabilities.collectors.base import SourceSpec
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
     SourceHealth,
     SourceState,
-    SpeedMode,
 )
 
 MODELS_OVERVIEW_URL = "https://platform.claude.com/docs/en/about-claude/models/overview.md"
@@ -43,7 +41,6 @@ _MODEL_BASE_FACTS = frozenset(
         "reasoning",
     }
 )
-_ROUTE_BASE_FACTS = frozenset({"speed_mode", "selector", "available", "activations"})
 
 FetchText = Callable[[str], Awaitable[str]]
 Clock = Callable[[], datetime]
@@ -325,18 +322,6 @@ def _build_model(
         model_sources["supported_efforts"] = "effort-docs"
         model_sources["default_effort"] = "effort-docs"
 
-    route_sources = dict.fromkeys(_ROUTE_BASE_FACTS, "models-overview")
-    route_sources["latency_class"] = "models-overview"
-    route = ModelRoute(
-        speed_mode=SpeedMode.STANDARD,
-        selector=model.canonical_model,
-        available=True,
-        usage_multiplier=None,
-        throughput_multiplier=None,
-        latency_class=model.latency_class,
-        activations=(),
-        provenance=_provenance(route_sources, observed_at),
-    )
     return ModelCapability(
         canonical_model=model.canonical_model,
         display_name=model.display_name,
@@ -352,7 +337,6 @@ def _build_model(
         latency_class=model.latency_class,
         input_modalities=("text", "image"),
         supports_tools=None,
-        routes=(route,),
         provenance=_provenance(model_sources, observed_at),
     )
 

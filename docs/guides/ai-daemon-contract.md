@@ -245,15 +245,8 @@ Each request resolves capability, provider, and model in this order:
 
 When `routing=daemon`, the CLI forwards the requested capability where the route requires it, any resolved provider/model values, and `project_id` when available. The daemon owns final provider selection for daemon-routed work.
 
-Provider-model execution requests may set
-`speed_mode: "standard" | "fast"`; omission means `standard`. This field is
-request-scoped. It is accepted by agent spawn, WebSocket chat,
-chat-completions, and tool-chat, and it is not stored in launch defaults,
-resume metadata, or chat session state. Result metadata includes
-`speed: { requested, effective, status, reason }`. The status is `standard`,
-`fast_configured`, `fast_applied`, `fast_unavailable`, or `fast_degraded`.
-Provider-confirmed fallback preserves output and returns `fast_degraded`;
-`fast_unavailable` fails before dispatch.
+Provider-model execution requests carry no speed parameter. Speed is model
+selection: see [Providers And Models](providers-and-models.md#speed-is-model-selection-not-a-mode).
 
 ## Capability Error Semantics
 

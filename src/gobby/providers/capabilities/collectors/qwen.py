@@ -19,12 +19,10 @@ from gobby.providers.capabilities.collectors.base import SourceSpec
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
     SourceHealth,
     SourceState,
-    SpeedMode,
 )
 from gobby.servers.provider_model_discovery import (
     discover_acp_models,
@@ -49,7 +47,6 @@ _MODEL_BASE_FACTS = frozenset(
         "reasoning",
     }
 )
-_ROUTE_FACTS = frozenset({"speed_mode", "selector", "available", "activations"})
 
 type RawModel = Mapping[str, object]
 type DiscoverModels = Callable[[], Awaitable[Sequence[RawModel]]]
@@ -170,7 +167,6 @@ def _build_model(raw: RawModel, observed_at: datetime, index: int) -> ModelCapab
         latency_class=None,
         input_modalities=None,
         supports_tools=None,
-        routes=(_standard_route(canonical_model, observed_at),),
         provenance=_provenance(model_facts, observed_at),
     )
 
@@ -202,19 +198,6 @@ def _reasoning(
     if supported_efforts == () and default_effort is None:
         return ReasoningSupport.UNSUPPORTED, supported_efforts, None
     return ReasoningSupport.KNOWN, supported_efforts, default_effort
-
-
-def _standard_route(selector: str, observed_at: datetime) -> ModelRoute:
-    return ModelRoute(
-        speed_mode=SpeedMode.STANDARD,
-        selector=selector,
-        available=True,
-        usage_multiplier=None,
-        throughput_multiplier=None,
-        latency_class=None,
-        activations=(),
-        provenance=_provenance(_ROUTE_FACTS, observed_at),
-    )
 
 
 def _context_length(value: object, canonical_model: str) -> int | None:

@@ -16,7 +16,6 @@ from pydantic import BaseModel, field_validator
 from gobby.agents.launcher_session import aget_or_create_launcher_session
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.agents.sandbox import web_chat_sandbox_policy_hash
-from gobby.providers.capabilities.apply import SpeedResultData
 from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.storage.project_checkouts import (
     CheckoutNotFoundError,
@@ -69,7 +68,6 @@ class AgentSpawnRequest(ReasoningEffortMixin):
     isolation: Literal["none", "worktree", "clone"] | None = None
     provider: str | None = None
     model: str | None = None
-    speed_mode: Literal["standard", "fast"] = "standard"
     reasoning_effort: str | None = None
     reasoning_required: bool | None = None
     workflow: str | None = None
@@ -92,7 +90,6 @@ class AgentSpawnResponse(BaseModel):
     pid: int | None = None
     message: str | None = None
     reasoning: dict[str, Any] | None = None
-    speed: SpeedResultData | None = None
     error: str | None = None
 
 
@@ -362,7 +359,6 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             workflow=effective_workflow,
             provider=req.provider,
             model=req.model,
-            speed_mode=req.speed_mode,
             reasoning_effort=req.reasoning_effort,
             reasoning_required=req.reasoning_required,
             timeout=req.timeout,
@@ -395,13 +391,11 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 pid=result.get("pid"),
                 message=result.get("message"),
                 reasoning=result.get("reasoning"),
-                speed=result.get("speed"),
             )
         else:
             return AgentSpawnResponse(
                 success=False,
                 error=result.get("error", "Unknown spawn error"),
-                speed=result.get("speed"),
             )
 
     def _broadcast_task_update(server: HTTPServer, task_id: str) -> None:

@@ -5,17 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TypedDict
-
-
-class SpeedMode(StrEnum):
-    """Execution speed requested for a model route."""
-
-    STANDARD = "standard"
-    FAST = "fast"
 
 
 class ReasoningSupport(StrEnum):
@@ -41,23 +33,6 @@ class FactProvenanceData(TypedDict):
     observed_at: str
 
 
-class ActivationDescriptorData(TypedDict):
-    kind: str
-    surface: str
-    params: dict[str, str]
-
-
-class ModelRouteData(TypedDict):
-    speed_mode: str
-    selector: str
-    available: bool
-    usage_multiplier: str | None
-    throughput_multiplier: str | None
-    latency_class: str | None
-    activations: list[ActivationDescriptorData]
-    provenance: dict[str, FactProvenanceData]
-
-
 class ModelCapabilityData(TypedDict):
     canonical_model: str
     display_name: str
@@ -73,7 +48,6 @@ class ModelCapabilityData(TypedDict):
     latency_class: str | None
     input_modalities: list[str] | None
     supports_tools: bool | None
-    routes: list[ModelRouteData]
     provenance: dict[str, FactProvenanceData]
 
 
@@ -120,83 +94,6 @@ class FactProvenance:
 
 
 @dataclass(frozen=True)
-class ActivationDescriptor:
-    """Validated instruction for applying a model route on one surface."""
-
-    kind: str
-    surface: str
-    params: Mapping[str, str]
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "params", MappingProxyType(dict(self.params)))
-
-    def to_dict(self) -> ActivationDescriptorData:
-        return {"kind": self.kind, "surface": self.surface, "params": dict(self.params)}
-
-    @classmethod
-    def from_dict(cls, data: ActivationDescriptorData) -> ActivationDescriptor:
-        return cls(kind=data["kind"], surface=data["surface"], params=data["params"])
-
-
-@dataclass(frozen=True)
-class ModelRoute:
-    """One selectable route for a canonical provider model."""
-
-    speed_mode: SpeedMode
-    selector: str
-    available: bool
-    usage_multiplier: Decimal | None
-    throughput_multiplier: Decimal | None
-    latency_class: str | None
-    activations: tuple[ActivationDescriptor, ...]
-    provenance: Mapping[str, FactProvenance]
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "activations", tuple(self.activations))
-        object.__setattr__(self, "provenance", MappingProxyType(dict(self.provenance)))
-
-    def to_dict(self) -> ModelRouteData:
-        return {
-            "speed_mode": self.speed_mode.value,
-            "selector": self.selector,
-            "available": self.available,
-            "usage_multiplier": (
-                str(self.usage_multiplier) if self.usage_multiplier is not None else None
-            ),
-            "throughput_multiplier": (
-                str(self.throughput_multiplier) if self.throughput_multiplier is not None else None
-            ),
-            "latency_class": self.latency_class,
-            "activations": [activation.to_dict() for activation in self.activations],
-            "provenance": {
-                name: provenance.to_dict() for name, provenance in self.provenance.items()
-            },
-        }
-
-    @classmethod
-    def from_dict(cls, data: ModelRouteData) -> ModelRoute:
-        usage_multiplier = data["usage_multiplier"]
-        throughput_multiplier = data["throughput_multiplier"]
-        return cls(
-            speed_mode=SpeedMode(data["speed_mode"]),
-            selector=data["selector"],
-            available=data["available"],
-            usage_multiplier=(Decimal(usage_multiplier) if usage_multiplier is not None else None),
-            throughput_multiplier=(
-                Decimal(throughput_multiplier) if throughput_multiplier is not None else None
-            ),
-            latency_class=data["latency_class"],
-            activations=tuple(
-                ActivationDescriptor.from_dict(activation) for activation in data["activations"]
-            ),
-            provenance={
-                name: FactProvenance.from_dict(provenance)
-                for name, provenance in data["provenance"].items()
-            },
-        )
-
-
-@dataclass(frozen=True)
 class ModelCapability:
     """Canonical capability facts and execution routes for one model."""
 
@@ -214,7 +111,6 @@ class ModelCapability:
     latency_class: str | None
     input_modalities: tuple[str, ...] | None
     supports_tools: bool | None
-    routes: tuple[ModelRoute, ...]
     provenance: Mapping[str, FactProvenance]
 
     def __post_init__(self) -> None:
@@ -223,7 +119,6 @@ class ModelCapability:
             object.__setattr__(self, "supported_efforts", tuple(self.supported_efforts))
         if self.input_modalities is not None:
             object.__setattr__(self, "input_modalities", tuple(self.input_modalities))
-        object.__setattr__(self, "routes", tuple(self.routes))
         object.__setattr__(self, "provenance", MappingProxyType(dict(self.provenance)))
 
     def to_dict(self) -> ModelCapabilityData:
@@ -246,7 +141,6 @@ class ModelCapability:
                 list(self.input_modalities) if self.input_modalities is not None else None
             ),
             "supports_tools": self.supports_tools,
-            "routes": [route.to_dict() for route in self.routes],
             "provenance": {
                 name: provenance.to_dict() for name, provenance in self.provenance.items()
             },
@@ -271,7 +165,6 @@ class ModelCapability:
             latency_class=data["latency_class"],
             input_modalities=(tuple(input_modalities) if input_modalities is not None else None),
             supports_tools=data["supports_tools"],
-            routes=tuple(ModelRoute.from_dict(route) for route in data["routes"]),
             provenance={
                 name: FactProvenance.from_dict(provenance)
                 for name, provenance in data["provenance"].items()

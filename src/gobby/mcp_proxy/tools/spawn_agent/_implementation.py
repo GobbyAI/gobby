@@ -21,7 +21,7 @@ from gobby.agents.isolation import (
     provider_mcp_config_error,
     repair_isolation_environment,
 )
-from gobby.agents.reasoning import resolve_spawn_reasoning, resolve_spawn_speed
+from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.resume_metadata import build_resume_metadata
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn import cleanup_unlaunched_spawn, prepare_terminal_spawn
@@ -29,7 +29,6 @@ from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
 from gobby.agents.spawn_models import SpawnRequest, resolve_terminal_backend
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
-from gobby.providers.capabilities.apply import SpeedUnavailableError, apply_speed, speed_result
 from gobby.providers.version_gate import peek_agy_support
 from gobby.tasks.state_semantics import (
     get_claimed_session_id,
@@ -109,7 +108,6 @@ async def spawn_agent_impl(
     workflow: str | None = None,
     provider: str | None = None,
     model: str | None = None,
-    speed_mode: Literal["standard", "fast"] = "standard",
     reasoning_effort: str | None = None,
     reasoning_required: bool | None = None,
     # Limits
@@ -223,13 +221,6 @@ async def spawn_agent_impl(
             "reasoning": reasoning.to_dict(),
         }
 
-    speed = resolve_spawn_speed(
-        provider=effective_provider,
-        model=effective_model,
-        speed_mode=speed_mode,
-    )
-    speed_payload = speed_result(speed)
-
     # Resolve api_base/api_token from agent definition (with ${ENV_VAR} expansion)
     effective_api_base: str | None = None
     effective_api_token: str | None = None
@@ -259,25 +250,11 @@ async def spawn_agent_impl(
             runtime_provider=effective_provider,
         )
     except ValueError as e:
-        return {"success": False, "error": str(e), "speed": speed_payload}
+        return {"success": False, "error": str(e)}
     effective_model = endpoint_resolution.model
     effective_api_base = endpoint_resolution.api_base
     effective_api_token = endpoint_resolution.api_token
     is_local_run = endpoint_resolution.is_local
-    try:
-        speed_application = apply_speed(
-            speed,
-            model=effective_model,
-            codex_config_overrides=endpoint_resolution.codex_config_overrides,
-        )
-    except SpeedUnavailableError as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "reasoning": reasoning.to_dict(),
-            "speed": e.speed,
-        }
-    effective_model = speed_application.model
 
     effective_timeout = timeout
     if effective_timeout is None and agent_body and agent_body.timeout:
@@ -649,7 +626,6 @@ async def spawn_agent_impl(
                 "success": False,
                 "error": str(exc),
                 "reasoning": reasoning.to_dict(),
-                "speed": speed_payload,
             }
         if db is not None and agent_body is not None and agent_body.step_workflow is not None:
             try:
@@ -677,7 +653,6 @@ async def spawn_agent_impl(
                     "success": False,
                     "error": str(exc),
                     "reasoning": reasoning.to_dict(),
-                    "speed": speed_payload,
                 }
         spawn_request = SpawnRequest(
             prompt=enhanced_prompt,
@@ -703,7 +678,7 @@ async def spawn_agent_impl(
             model=effective_model,
             is_local=is_local_run,
             codex_oss_provider=endpoint_resolution.codex_oss_provider,
-            codex_config_overrides=speed_application.codex_config_overrides,
+            codex_config_overrides=endpoint_resolution.codex_config_overrides,
             api_base=effective_api_base,
             api_token=effective_api_token,
             requested_reasoning_effort=reasoning.requested_effort,
@@ -711,7 +686,6 @@ async def spawn_agent_impl(
             reasoning_required=reasoning.reasoning_required,
             reasoning_status=reasoning.status,
             reasoning_message=reasoning.message,
-            speed_resolution=speed,
             sandbox_config=effective_sandbox_config,
             extra_env={
                 **(endpoint_resolution.child_env or {}),
@@ -756,7 +730,6 @@ async def spawn_agent_impl(
                 "success": False,
                 "error": str(exc),
                 "reasoning": reasoning.to_dict(),
-                "speed": speed_payload,
             }
         return await finalize_executed_spawn(
             runner=runner,
@@ -780,5 +753,4 @@ async def spawn_agent_impl(
             agent_body=agent_body,
             effective_initial_variables=effective_initial_variables,
             reasoning=reasoning,
-            speed_payload=speed_payload,
         )

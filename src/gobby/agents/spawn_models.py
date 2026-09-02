@@ -13,8 +13,6 @@ if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
     from gobby.agents.spawn import PreparedSpawn
     from gobby.config.app import DaemonConfig
-    from gobby.providers.capabilities.apply import SpeedResultData
-    from gobby.providers.capabilities.resolve import SpeedResolution
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.terminals import AttachLocator, TerminalManager
     from gobby.terminals import TerminalRuntimeRegistry
@@ -76,7 +74,6 @@ class SpawnRequest:
     reasoning_required: bool = False
     reasoning_status: str = "not_requested"
     reasoning_message: str | None = None
-    speed_resolution: SpeedResolution | None = None
     sandbox_config: SandboxConfig | None = None
     sandbox_args: list[str] | None = None
     sandbox_env: dict[str, str] | None = None
@@ -115,4 +112,3 @@ class SpawnResult:
     tmux_socket_path: str | None = None
     terminal_id: str | None = None
     locator: AttachLocator | None = None
-    speed: SpeedResultData | None = None

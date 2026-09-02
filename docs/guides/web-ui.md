@@ -114,20 +114,14 @@ The main React owners are `web/src/hooks/useChat/*`,
 `web/src/components/chat/`.
 
 `/api/providers/models` returns provider entries with canonical model facts,
-`standard`/`fast` route maps, fact provenance, and
-`refresh: { generation, sources }`. The UI treats `refresh.sources[].state` as
-source freshness (`pending`, `ok`, `stale`, or `error`) while continuing to use
-last-good models. Route multipliers are decimal strings or `null`; the UI must
-not infer speed from a model ID.
+fact provenance, and `refresh: { generation, sources }`. The UI treats
+`refresh.sources[].state` as source freshness (`pending`, `ok`, `stale`, or
+`error`) while continuing to use last-good models.
 Bundled Claude and Droid seeds cover an empty store until provider collectors
 replace them atomically during startup or the 24-hour refresh cycle.
 
-Each chat send may include `speed_mode: "standard" | "fast"`. It is per-send
-state: an omitted value selects `standard`, and a fast send does not change the
-next message or persisted chat settings. Completion metadata reports
-`speed: { requested, effective, status, reason }`. `fast_degraded` preserves the
-provider output and explains a confirmed fallback; `fast_unavailable` is shown
-before dispatch.
+A chat send carries no speed parameter. Droid's `-fast` ids are ordinary rows in
+that response and are picked through the model control like any other model.
 
 ### Chat Attachments
 
