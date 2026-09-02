@@ -1,6 +1,7 @@
 """Canonical tool metadata inference."""
 
 import json
+import os
 import posixpath
 import re
 from collections.abc import Mapping
@@ -24,6 +25,7 @@ from gobby.hooks._normalization_paths import (
 from gobby.hooks._normalization_shell import (
     _SHELL_CHAIN_TOKENS,
     ShellToken,
+    _contains_unexpanded_shell_reference,
     _get_command_text,
     _has_perl_inplace_option,
     _has_sed_inplace_option,
@@ -105,9 +107,9 @@ _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
 # Characters in echo arguments that imply command substitution rather than a plain marker.
 _ECHO_UNSAFE_CHARS = frozenset({"$", "`"})
 
-# `$` opening a variable (`$VAR`, `${VAR}`), command substitution (`$(cmd)`),
-# positional parameter (`$1`), or special parameter — anything expanded at runtime.
-_UNEXPANDED_SHELL_REFERENCE = re.compile(r"\$[\w{(@*?#$!-]")
+_KNOWN_NAVIGATION_SHELL_REFERENCE = re.compile(
+    r"(?<![\\$])\$(?:\{(?P<braced>HOME|PWD|TMPDIR)\}|(?P<bare>HOME|PWD|TMPDIR)(?!\w))"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,18 +253,22 @@ def _rebase_shell_path(path: str, cwd: str | None) -> str:
     return posixpath.normpath(posixpath.join(cwd, path))
 
 
-def _contains_unexpanded_shell_reference(path: str) -> bool:
-    """Detect ``$VAR``, ``${VAR}``, ``$(cmd)``, and positional-parameter tokens.
-
-    Shell-extracted path tokens keep their source text, so a token containing
-    an unexpanded reference names an unknowable location; recording it verbatim
-    fabricates attribution and rule-match paths.
-    """
-    return _UNEXPANDED_SHELL_REFERENCE.search(path) is not None
-
-
 def _rebase_shell_paths(paths: list[str], cwd: str | None) -> list[str]:
     return [_rebase_shell_path(path, cwd) for path in paths]
+
+
+def _rebase_navigation_shell_paths(paths: list[str], cwd: str | None) -> list[str]:
+    def replace_reference(match: re.Match[str]) -> str:
+        name = match.group("braced") or match.group("bare")
+        if name == "PWD":
+            return "."
+        return os.environ.get(name, match.group(0))
+
+    expanded = [
+        posixpath.normpath(_KNOWN_NAVIGATION_SHELL_REFERENCE.sub(replace_reference, path))
+        for path in paths
+    ]
+    return _rebase_shell_paths(expanded, cwd)
 
 
 def _apply_cd(cwd: str | None, target: str) -> str:
@@ -328,8 +334,15 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     paths: list[str] = []
     mutation_paths: list[str] = []
     mutation_scope_unknown = False
+    navigation_scope_unknown = False
     for item in active:
         resolvable = [path for path in item.paths if not _contains_unexpanded_shell_reference(path)]
+        if (
+            item.extra
+            and item.extra.get("canonical_code_navigation_action")
+            and len(resolvable) != len(item.paths)
+        ):
+            navigation_scope_unknown = True
         if item.repo_mutation and any(
             _contains_unexpanded_shell_reference(path) for path in item.paths
         ):
@@ -359,6 +372,8 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         extra = _without_code_index_navigation(extra)
     if mutation_scope_unknown:
         extra["_canonical_repo_mutation_scope_unknown"] = True
+    if navigation_scope_unknown and not paths:
+        extra["_canonical_code_navigation_scope_unknown"] = True
 
     # A write command's paths are the ones it writes. Segments that only name
     # paths — a `for <var> in <words>` header, a read on the same line — are
@@ -474,7 +489,7 @@ def _classify_shell_segment(
     cwd: str | None,
 ) -> _ShellSegmentMetadata:
     redirection_paths = _rebase_shell_paths(extract_redirection_paths(tokens), cwd)
-    input_paths = _rebase_shell_paths(_input_redirection_paths(tokens), cwd)
+    input_paths = _rebase_navigation_shell_paths(_input_redirection_paths(tokens), cwd)
 
     # Classify the base command without redirection operators/targets so a
     # redirect target never masquerades as a positional file argument.
@@ -498,7 +513,7 @@ def _classify_shell_segment(
         has_shell_input_redirection(tokens) or has_mutating_output_redirection(tokens)
     ):
         kind, extra = gcode_metadata
-        gcode_paths = _rebase_shell_paths(
+        gcode_paths = _rebase_navigation_shell_paths(
             [path for path in plain_parts[2:] if _looks_file_like(path)],
             cwd,
         )
@@ -686,7 +701,7 @@ def _classify_shell_segment_without_redirection(
         return _ShellSegmentMetadata("execute")
 
     if cmd == "find":
-        paths = _rebase_shell_paths(_search_command_paths(cmd, parts), cwd)
+        paths = _rebase_navigation_shell_paths(_search_command_paths(cmd, parts), cwd)
         return _ShellSegmentMetadata(
             "execute",
             paths=tuple(paths),
@@ -697,7 +712,7 @@ def _classify_shell_segment_without_redirection(
     if cmd in {"rg", "grep", "git"}:
         if cmd == "git" and (len(parts) <= 1 or parts[1] != "grep"):
             return _ShellSegmentMetadata("execute")
-        paths = _rebase_shell_paths(_search_command_paths(cmd, parts), cwd)
+        paths = _rebase_navigation_shell_paths(_search_command_paths(cmd, parts), cwd)
         extra = search_navigation_metadata(paths)
         if cmd == "git" and _git_grep_is_revision_scoped(parts):
             extra["canonical_search_revision_scoped"] = True
@@ -709,8 +724,12 @@ def _classify_shell_segment_without_redirection(
 
     if cmd in {"cat", "head", "tail", "bat", "nl"}:
         positional = _shell_positional_args(parts)
-        paths = _rebase_shell_paths(
-            [candidate for candidate in positional if _looks_file_like(candidate)],
+        paths = _rebase_navigation_shell_paths(
+            [
+                candidate
+                for candidate in positional
+                if _looks_file_like(candidate) or _contains_unexpanded_shell_reference(candidate)
+            ],
             cwd,
         )
         line_count = count_option_line_count(parts) if cmd in {"head", "tail"} else None
@@ -735,8 +754,12 @@ def _classify_shell_segment_without_redirection(
                 paths=tuple(_rebase_shell_paths(paths, cwd)),
                 repo_mutation=True,
             )
-        paths = _rebase_shell_paths(
-            [item for item in positional if _looks_file_like(item)],
+        paths = _rebase_navigation_shell_paths(
+            [
+                item
+                for item in positional
+                if _looks_file_like(item) or _contains_unexpanded_shell_reference(item)
+            ],
             cwd,
         )
         line_count = sed_line_count(parts, positional)

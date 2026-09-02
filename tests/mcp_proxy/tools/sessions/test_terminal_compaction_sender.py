@@ -21,30 +21,25 @@ _SETTLE = 0.02
 
 
 class _ComposerPane:
-    """PaneIO fake whose prompt line shows the residue plus whatever was typed."""
+    """PaneIO fake that records keys and typed text."""
 
     backend = "native"
     target = "term-1"
 
-    def __init__(self, *, residue: str = "") -> None:
-        self.residue = residue
-        self.line = ""
+    def __init__(self) -> None:
         self.keys: list[str] = []
         self.typed: list[str] = []
 
     async def send_key(self, key: str) -> tuple[bool, str | None]:
         self.keys.append(key)
-        if key == "backspace" and self.line:
-            self.line = self.line[:-1]
         return True, None
 
     async def type_text(self, text: str) -> tuple[bool, str | None]:
         self.typed.append(text)
-        self.line += text
         return True, None
 
     async def snapshot(self, lines: int = 12) -> str | None:
-        return f"output\n> {self.residue}{self.line}"
+        return "output\n> "
 
 
 async def _send(
@@ -69,13 +64,13 @@ async def _send(
 
 
 @pytest.mark.asyncio
-async def test_confirmed_interrupt_clears_verifies_then_submits_once() -> None:
+async def test_confirmed_interrupt_drains_then_submits_once() -> None:
     pane = _ComposerPane()
 
     result, mark, clear = await _send(pane, lambda: True)
 
     assert result == (True, None, True, None)
-    assert pane.keys == ["escape", "ctrl_l", "enter"]
+    assert pane.keys == ["escape", *composer_clear_sequence("claude"), "enter"]
     assert pane.typed == ["/clear"]
     mark.assert_called_once()
     clear.assert_not_called()
@@ -122,27 +117,6 @@ async def test_lost_observation_fails_closed_before_typing() -> None:
     assert detail["error_code"] == "interrupt_observation_unavailable"
     assert pane.keys == ["escape"]
     assert pane.typed == []
-    clear.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_prompt_line_mismatch_backs_the_command_out() -> None:
-    pane = _ComposerPane(residue="draft")
-
-    result, _mark, clear = await _send(pane, lambda: True)
-
-    ok, reason, pending, detail = result
-    assert ok is False
-    assert reason == "composer did not show /clear cleanly before submit"
-    assert pending is False
-    assert detail == {
-        "error_code": "composer_not_clean",
-        "continuation_pending": False,
-        "prompt_line": "> draft/clear",
-    }
-    assert "enter" not in pane.keys
-    assert pane.keys.count("backspace") == len("/clear")
-    assert pane.line == ""
     clear.assert_called_once()
 
 

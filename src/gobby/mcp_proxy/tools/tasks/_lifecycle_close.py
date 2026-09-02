@@ -484,48 +484,52 @@ async def _evaluate_close(
             scope_justification=scope_justification,
         )
     except RuntimeError as exc:
-        return evaluation.fail(
+        evaluation.collect_failure(
             8,
             "task_scope",
             "task_scope_unavailable",
             f"Task scope cannot be evaluated: {exc}",
         )
-    evaluation.scope_snapshot = scope.snapshot()
-    evaluation.scope_justification = scope.scope_justification
-    if not scope.accepted:
-        return evaluation.fail(
-            8,
-            "task_scope",
-            "task_scope_mismatch",
-            scope.justification_error or "Task changes exceed the declared scope.",
-            action=(
-                "Pass a specific scope_justification between 20 and 1000 characters "
-                "that explains why the listed paths belong in this task."
-            ),
-            details=scope.details(),
-            extra=scope.details(),
-        )
-    evaluation.pass_gate(
-        8,
-        "task_scope",
-        "Out-of-scope paths have a recorded justification."
-        if scope.has_mismatch
-        else "Delivered paths stay within the declared task scope.",
-        details=scope.details(),
-        skipped=not scope.declared_paths,
-    )
+        scope = None
+    if scope is not None:
+        evaluation.scope_snapshot = scope.snapshot()
+        evaluation.scope_justification = scope.scope_justification
+        if not scope.accepted:
+            evaluation.collect_failure(
+                8,
+                "task_scope",
+                "task_scope_mismatch",
+                scope.justification_error or "Task changes exceed the declared scope.",
+                action=(
+                    "Pass a specific scope_justification between 20 and 1000 characters "
+                    "that explains why the listed paths belong in this task."
+                ),
+                details=scope.details(),
+                extra=scope.details(),
+            )
+        else:
+            evaluation.pass_gate(
+                8,
+                "task_scope",
+                "Out-of-scope paths have a recorded justification."
+                if scope.has_mismatch
+                else "Delivered paths stay within the declared task scope.",
+                details=scope.details(),
+                skipped=not scope.declared_paths,
+            )
 
     has_dirty_edits = bool(evaluation.edited_paths) and await asyncio.to_thread(
         _has_committable_edits, evaluation.edited_paths, repo_path
     )
     if has_dirty_edits:
-        return evaluation.fail(
+        evaluation.collect_failure(
             9,
             "uncommitted_task_edits",
             "uncommitted_task_edits",
             "Task-attributed files still have uncommitted changes. Commit them and retry.",
         )
-    evaluation.pass_gate(9, "uncommitted_task_edits", "No task-attributed files are dirty.")
+    else:
+        evaluation.pass_gate(9, "uncommitted_task_edits", "No task-attributed files are dirty.")
 
     transcript = TranscriptEvidence()
     command_gate = replace(
@@ -637,7 +641,7 @@ async def _evaluate_close(
         )
         acceptance_details = artifacts.details()
         if not artifacts.passed:
-            return evaluation.fail(
+            evaluation.collect_failure(
                 11,
                 "acceptance_artifacts",
                 "acceptance_artifacts_invalid",
@@ -652,14 +656,18 @@ async def _evaluate_close(
                 details=acceptance_details,
                 extra={"acceptance_artifacts": acceptance_details},
             )
-        evaluation.pass_gate(
-            11,
-            "acceptance_artifacts",
-            "Named acceptance artifacts passed deterministic checks.",
-            details=acceptance_details,
-            skipped=not artifacts.tests and not artifacts.evidence_files,
-        )
-        test_bodies = render_acceptance_test_bodies(artifacts.tests)
+        else:
+            evaluation.pass_gate(
+                11,
+                "acceptance_artifacts",
+                "Named acceptance artifacts passed deterministic checks.",
+                details=acceptance_details,
+                skipped=not artifacts.tests and not artifacts.evidence_files,
+            )
+            test_bodies = render_acceptance_test_bodies(artifacts.tests)
+
+        if evaluation.error is not None:
+            return evaluation
 
         if task_requires_tdd(
             labels=task.labels or (),

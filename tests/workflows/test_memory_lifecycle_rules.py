@@ -383,7 +383,6 @@ class TestLayeredMemoryGuidance:
             "is_spawned_agent": False,
             "parent_turn_seq": 0,
             "loaded_skills": [],
-            "workflow_requested_skills": [],
             "open_tool_errors": [],
         }
         event = HookEvent(
@@ -397,7 +396,6 @@ class TestLayeredMemoryGuidance:
         response = await RuleEngine(db).evaluate(event, event.session_id, variables)
 
         assert skill_fetch_directive("memory") in (response.context or "")
-        assert "memory" in variables["workflow_requested_skills"]
 
     @pytest.mark.asyncio
     async def test_initial_turn_skips_memory_skill_while_handoff_pull_pending(
@@ -410,7 +408,6 @@ class TestLayeredMemoryGuidance:
             "is_spawned_agent": False,
             "parent_turn_seq": 0,
             "loaded_skills": [],
-            "workflow_requested_skills": [],
             "open_tool_errors": [],
         }
         event = HookEvent(
@@ -424,7 +421,6 @@ class TestLayeredMemoryGuidance:
         response = await RuleEngine(db).evaluate(event, event.session_id, variables)
 
         assert skill_fetch_directive("memory") not in (response.context or "")
-        assert "memory" not in variables.get("workflow_requested_skills", [])
 
     def test_initial_turn_end_gate_sets_flag_only_when_passed_or_acknowledged(
         self, db: HubDatabase, manager: RuleDefinitionManager

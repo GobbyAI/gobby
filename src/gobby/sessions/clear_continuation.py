@@ -327,7 +327,7 @@ def _resolve_bound_unpulled_successor(
                AND child.status IN ('active', 'paused')
                AND child_vars.variables ? %s
                AND jsonb_typeof(parent_vars.variables -> %s) = 'object'
-               AND (parent_vars.variables -> %s ->> 'consumed_by') = child.id
+               AND (parent_vars.variables -> %s ->> 'consumed_by') = child.id::text
              ORDER BY child.updated_at DESC, child.id DESC
              LIMIT %s
             """,

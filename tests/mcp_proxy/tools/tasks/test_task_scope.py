@@ -22,7 +22,7 @@ from gobby.storage.tasks import LocalTaskManager, Task
 pytestmark = pytest.mark.unit
 
 
-def _task(description: str = "") -> Task:
+def _task(description: str = "", validation_criteria: str | None = None) -> Task:
     now = datetime(2026, 8, 6, 12, tzinfo=UTC)
     return Task(
         id="00000000-0000-4000-8000-000000000101",
@@ -34,6 +34,7 @@ def _task(description: str = "") -> Task:
         created_at=now,
         updated_at=now,
         description=description,
+        validation_criteria=validation_criteria,
     )
 
 
@@ -44,6 +45,7 @@ def _annotation(path: str, source: str) -> SimpleNamespace:
 def _evaluate(
     *,
     description: str = "",
+    validation_criteria: str | None = None,
     annotations: list[SimpleNamespace],
     actual_paths: set[str],
     justification: str | None = None,
@@ -51,12 +53,58 @@ def _evaluate(
     with patch.object(TaskAffectedFileManager, "get_files", return_value=annotations):
         return evaluate_task_scope(
             db=MagicMock(),
-            task=_task(description),
+            task=_task(description, validation_criteria),
             commit_shas=(),
             attributed_paths=actual_paths,
             repo_path=None,
             scope_justification=justification,
         )
+
+
+def test_tests_mirror_of_declared_source_stays_in_scope() -> None:
+    evaluation = _evaluate(
+        annotations=[_annotation("src/gobby/terminals/native_runtime.py", "manual")],
+        actual_paths={
+            "src/gobby/terminals/native_runtime.py",
+            "tests/cli/test_cli_daemon.py",
+        },
+    )
+
+    assert evaluation.accepted is True
+    assert evaluation.out_of_scope_paths == ()
+
+
+def test_criteria_test_references_expand_declared_scope() -> None:
+    evaluation = _evaluate(
+        validation_criteria=(
+            "- test: `tests/mcp_proxy/tools/tasks/test_task_scope.py::test_criteria`\n"
+            "- file: `docs/evidence/task-scope.md`"
+        ),
+        annotations=[],
+        actual_paths={
+            "tests/mcp_proxy/tools/tasks/test_task_scope.py",
+            "docs/evidence/task-scope.md",
+        },
+    )
+
+    assert evaluation.declared_paths == (
+        "docs/evidence/task-scope.md",
+        "tests/mcp_proxy/tools/tasks/test_task_scope.py",
+    )
+    assert evaluation.out_of_scope_paths == ()
+
+
+def test_bundled_manifest_in_scope_when_shared_tree_changes() -> None:
+    evaluation = _evaluate(
+        annotations=[_annotation("src/gobby/install/shared/skills/tasks/SKILL.md", "manual")],
+        actual_paths={
+            "src/gobby/install/bundled_content_manifest.json",
+            "src/gobby/install/shared/skills/tasks/SKILL.md",
+        },
+    )
+
+    assert evaluation.accepted is True
+    assert evaluation.out_of_scope_paths == ()
 
 
 def test_production_refactor_exceeds_test_only_scope() -> None:

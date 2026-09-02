@@ -42,6 +42,8 @@ class CloseEvaluation:
     error: str | None = None
     message: str | None = None
     action: str | None = None
+    blocking_reasons: list[str] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -78,6 +80,28 @@ class CloseEvaluation:
         details: dict[str, Any] | None = None,
         extra: dict[str, Any] | None = None,
     ) -> CloseEvaluation:
+        self.collect_failure(
+            item,
+            name,
+            error,
+            message,
+            action=action,
+            details=details,
+            extra=extra,
+        )
+        return self
+
+    def collect_failure(
+        self,
+        item: int,
+        name: str,
+        error: str,
+        message: str,
+        *,
+        action: str | None = None,
+        details: dict[str, Any] | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
         self.gates.append(
             CloseGateResult(
                 item=item,
@@ -87,12 +111,15 @@ class CloseEvaluation:
                 details=details or {},
             )
         )
-        self.error = error
-        self.message = message
-        self.action = action or message
+        required_action = action or message
+        if self.error is None:
+            self.error = error
+            self.message = message
+            self.action = required_action
+        self.blocking_reasons.append(message)
+        self.required_actions.append(required_action)
         if extra:
             self.extra.update(extra)
-        return self
 
     def response(self, *, preview: bool, closed: bool = False) -> dict[str, Any]:
         response: dict[str, Any] = {
@@ -104,12 +131,14 @@ class CloseEvaluation:
             "commit_shas": list(self.commit_shas),
         }
         if self.error:
+            blocking_reasons = self.blocking_reasons or ([self.message] if self.message else [])
+            required_actions = self.required_actions or ([self.action] if self.action else [])
             response.update(
                 {
                     "error": self.error,
                     "message": self.message,
-                    "blocking_reasons": [self.message] if self.message else [],
-                    "required_actions": [self.action] if self.action else [],
+                    "blocking_reasons": blocking_reasons,
+                    "required_actions": required_actions,
                 }
             )
         if self.validation_status:

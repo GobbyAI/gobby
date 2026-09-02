@@ -573,3 +573,40 @@ def test_fail_on_new_rejects_zero_file_audits(requested_path: str) -> None:
     assert result.exit_code == 1
     assert "Files scanned: 0" in result.output
     assert "NO_ANALYZABLE_FILES" in result.output
+
+
+def test_zero_file_audit_fails_without_fail_on_new() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            quality_command,
+            ["audit", "tests/test_sample.py tests/helper.py"],
+        )
+
+    assert result.exit_code == 1
+    assert "Files scanned: 0" in result.output
+    assert "NO_ANALYZABLE_FILES" in result.output
+
+
+def test_audit_warns_for_unresolved_path_among_valid_paths() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as cwd:
+        root = Path(cwd)
+        test_path = _write_test(
+            root,
+            """
+def test_sample():
+    assert 1 == 1
+""",
+        )
+        missing_path = Path("tests/does_not_exist.py")
+
+        result = runner.invoke(
+            quality_command,
+            ["audit", test_path.relative_to(root).as_posix(), missing_path.as_posix()],
+        )
+
+    assert result.exit_code == 0
+    assert "Files scanned: 1" in result.output
+    assert "UNRESOLVED_PATH" in result.output
+    assert missing_path.as_posix() in result.output

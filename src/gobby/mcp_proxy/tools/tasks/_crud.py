@@ -381,7 +381,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "validation_criteria": {
                     "type": "string",
-                    "description": "Acceptance criteria for task completion. REQUIRED for every task_type except 'epic' — creation fails without it, whatever the category. Describe what 'done' looks like — validate_task checks the diff against this.",
+                    "description": "Acceptance criteria for task completion. REQUIRED for every task_type except 'epic' — creation fails without it, whatever the category. Describe what 'done' looks like — validate_task checks the diff against this. Reference named tests as `test: path::test_symbol` and evidence files as `file: path`.",
                     "default": None,
                 },
                 "implementation_domain": {
@@ -639,7 +639,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "validation_criteria": {
                     "type": "string",
-                    "description": "Acceptance criteria for validating task completion. Cannot be cleared on any task_type except 'epic'.",
+                    "description": "Acceptance criteria for validating task completion. Cannot be cleared on any task_type except 'epic'. Reference named tests as `test: path::test_symbol` and evidence files as `file: path`.",
                     "default": None,
                 },
                 "parent_task_id": {

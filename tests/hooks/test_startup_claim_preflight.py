@@ -28,6 +28,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
+from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -507,19 +508,21 @@ class TestBoundedPreflight:
                 )
             invalidate.assert_not_called()
             gate.set()
-            for _ in range(200):
-                if invalidate.call_args_list:
-                    break
-                await asyncio.sleep(0.01)
+            await wait_for_async_condition(
+                lambda: invalidate.call_args_list,
+                description="late lease invalidation",
+            )
             invalidate.assert_called_once_with(hook_manager, lease)
 
     @pytest.mark.asyncio
     async def test_cancelled_request_invalidates_late_lease(self) -> None:
         gate = threading.Event()
+        started = threading.Event()
         lease = StartupClaimLease("sess-cancel", 1, "owner-cancel")
         hook_manager = SimpleNamespace(session_manager=None)
 
         def slow_preflight(_payload: dict[str, Any], _hook_manager: Any) -> StartupClaimLease:
+            started.set()
             assert gate.wait(timeout=5)
             return lease
 
@@ -537,13 +540,13 @@ class TestBoundedPreflight:
                     timeout_seconds=5.0,
                 )
             )
-            await asyncio.sleep(0.02)
+            await wait_for_async_condition(started.is_set, description="preflight worker start")
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
             gate.set()
-            for _ in range(200):
-                if invalidate.call_args_list:
-                    break
-                await asyncio.sleep(0.01)
+            await wait_for_async_condition(
+                lambda: invalidate.call_args_list,
+                description="cancelled lease invalidation",
+            )
             invalidate.assert_called_once_with(hook_manager, lease)

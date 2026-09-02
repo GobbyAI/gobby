@@ -413,8 +413,6 @@ These are set during execution, not initialized from definitions:
 | `session_edited_files` | list | Files edited by this session |
 | `set_handoff_pending` | object | One-shot attempt marker written only by `set_handoff` and consumed by `get_handoff`. |
 | `handoff_pull_pending` | bool | Defer turn-start meta skill loads until `get_handoff` consumes. Set on compact stage and clear-successor bind. |
-| `compact_resume_required_skills` | list | Required skill tier returned with the pulled handoff. |
-| `compact_resume_advisory_skills` | list | Advisory skill tier returned with the pulled handoff. |
 | `grok_pending_briefing` | list | Ordered, id-deduplicated context components waiting for acknowledged Grok PreToolUse/Stop delivery. |
 | `grok_pending_turn_context` | list | Bounded per-turn context components; oldest entries drop at 32 components or 16,384 serialized UTF-8 bytes. |
 | `grok_pending_delivery` | object | Briefing components claimed by one durable ghook inbox envelope until acknowledgment settles. |

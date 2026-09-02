@@ -12,12 +12,7 @@ from gobby.sessions.compact_continuation import (
     consume_compact_handoff_marker,
 )
 from gobby.sessions.compact_identity import resolve_compact_continuation
-from gobby.sessions.compact_markers import (
-    COMPACT_NOTIFICATION_STARTED_AT_VARIABLE,
-    COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE,
-    COMPACT_RESUME_EXCLUDED_SKILLS,
-    COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
-)
+from gobby.sessions.compact_markers import COMPACT_NOTIFICATION_STARTED_AT_VARIABLE
 from gobby.sessions.handoff_identity import terminal_contexts_match
 from gobby.sessions.tmux_context import parse_terminal_context_value
 
@@ -454,7 +449,7 @@ def prepare_compact_continuation_variables(
     session_id: str | None,
     session_source: str,
 ) -> None:
-    """Normalize skill tiers and consume the provider compact identity marker."""
+    """Stamp the compact notification time and consume the provider compact marker."""
     if session_source != "compact" or not session_id or not handler._session_manager:
         return
 
@@ -462,43 +457,9 @@ def prepare_compact_continuation_variables(
 
     db = handler._session_manager.db
     sv_mgr = SessionVariableManager(db)
-    current_vars = sv_mgr.get_variables(session_id)
     sv_mgr.set_variable(
         session_id,
         COMPACT_NOTIFICATION_STARTED_AT_VARIABLE,
         datetime.now(UTC).isoformat(),
     )
-    _normalize_compact_resume_required_skills(sv_mgr, session_id, current_vars)
     consume_compact_handoff_marker(db, session_id)
-
-
-def _normalize_compact_resume_required_skills(
-    sv_mgr: Any,
-    session_id: str,
-    current_vars: dict[str, Any],
-) -> None:
-    updates: dict[str, Any] = {}
-    for variable in (
-        COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
-        COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE,
-    ):
-        raw_skills = current_vars.get(variable)
-        if not isinstance(raw_skills, list):
-            continue
-
-        skills: list[str] = []
-        seen: set[str] = set()
-        for value in raw_skills:
-            if not isinstance(value, str):
-                continue
-            skill = value.strip()
-            if not skill or skill in seen or skill in COMPACT_RESUME_EXCLUDED_SKILLS:
-                continue
-            seen.add(skill)
-            skills.append(skill)
-
-        if skills != raw_skills:
-            updates[variable] = skills
-
-    if updates:
-        sv_mgr.merge_variables(session_id, updates)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import stat
 import tomllib
@@ -18,6 +17,7 @@ from gobby.config.terminals import TerminalConfig
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import Terminal, TerminalManager, native_locator_key
 from gobby.utils.machine_id import require_machine_id
+from tests._timing import wait_for_condition
 from tests.terminals.host_fakes import (
     FakeControlClient,
     FakeHostProcess,
@@ -514,14 +514,14 @@ async def test_reconcile_does_not_exit_inflight_spawn(
     assert promoted.state == "live"
 
     overdue = _pending(terminals, sample_project["id"])
-    await asyncio.sleep(0.02)
     host_overdue = _host(
         tmp_path,
         terminals,
         FakeControlClient(host_epoch=epoch, host_pid=7001, terminals=[]),
         spawn_in_doubt_seconds=0.001,
     )
-    await host_overdue.reconcile()
+    with patch("gobby.terminals.host_reconcile._age_seconds", return_value=1.0):
+        await host_overdue.reconcile()
     assert _loaded(terminals, overdue.id).state == "exited"
 
 
@@ -536,6 +536,29 @@ async def test_host_crash_reaps_sighup_ignoring_tree(
 
     from gobby.terminals.host_protocol import write_pidfile
 
+    def park_until_signalled() -> None:
+        # A forked copy of pytest must never hold the runner's stdio: a leaked
+        # child that keeps the output pipe open wedges the invoking shell until
+        # it dies. Detach, then bound the lifetime so a skipped cleanup cannot
+        # leave the tree behind forever.
+        devnull = os.open(os.devnull, os.O_RDWR)
+        for fd in (0, 1, 2):
+            os.dup2(devnull, fd)
+        os.close(devnull)
+        signal.alarm(30)
+        signal.pause()
+        os._exit(0)
+
+    def reap_process_group(pgid: int) -> None:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            os.waitpid(pgid, 0)
+        except ChildProcessError:
+            pass
+
     terminals = TerminalManager(temp_db)
     epoch = str(uuid.uuid4())
     ready_r, ready_w = os.pipe()
@@ -547,49 +570,55 @@ async def test_host_crash_reaps_sighup_ignoring_tree(
         child = os.fork()
         if child == 0:
             signal.signal(signal.SIGHUP, signal.SIG_IGN)
-            time.sleep(30)
-            os._exit(0)
+            park_until_signalled()
         os.write(ready_w, b"ok")
         os.close(ready_w)
-        time.sleep(30)
-        os._exit(0)
+        park_until_signalled()
 
     os.close(ready_w)
-    os.read(ready_r, 2)
-    os.close(ready_r)
-    start_time = time.time()
-    row = _pending(terminals, sample_project["id"])
-    recorded = terminals.record_process(
-        row.id,
-        {"pgid": leader, "start_time": start_time},
-    )
-    assert recorded is not None
-    live = terminals.promote_to_live(
-        row.id,
-        locator={"host_terminal_id": "ht-tree"},
-        locator_key=native_locator_key(epoch, "ht-tree"),
-        host_epoch=epoch,
-    )
-    assert live is not None
-
-    client = FakeControlClient(host_epoch=epoch, host_pid=os.getpid())
-    write_pidfile(tmp_path, os.getpid())
-    host = _host(tmp_path, terminals, client)
-    await host.handle_host_death()
-    host.reap_recorded_process({"pgid": os.getpid(), "start_time": 0.0})
-    deadline = time.time() + 1.2
-    while time.time() < deadline:
-        try:
-            os.kill(leader, 0)
-            time.sleep(0.05)
-        except ProcessLookupError:
-            break
     try:
-        os.waitpid(leader, os.WNOHANG)
-    except ChildProcessError:
-        pass
-    with pytest.raises(ProcessLookupError):
-        os.kill(leader, 0)
+        os.read(ready_r, 2)
+        os.close(ready_r)
+        start_time = time.time()
+        row = _pending(terminals, sample_project["id"])
+        recorded = terminals.record_process(
+            row.id,
+            {"pgid": leader, "start_time": start_time},
+        )
+        assert recorded is not None
+        live = terminals.promote_to_live(
+            row.id,
+            locator={"host_terminal_id": "ht-tree"},
+            locator_key=native_locator_key(epoch, "ht-tree"),
+            host_epoch=epoch,
+        )
+        assert live is not None
+
+        client = FakeControlClient(host_epoch=epoch, host_pid=os.getpid())
+        write_pidfile(tmp_path, os.getpid())
+        host = _host(tmp_path, terminals, client)
+        await host.handle_host_death()
+        host.reap_recorded_process({"pgid": os.getpid(), "start_time": 0.0})
+
+        def leader_reaped() -> bool:
+            try:
+                reaped_pid, _status = os.waitpid(leader, os.WNOHANG)
+            except ChildProcessError:
+                return True
+            return reaped_pid == leader
+
+        wait_for_condition(
+            leader_reaped,
+            timeout=1.2,
+            interval=0.05,
+            description="SIGHUP-ignoring process group exit",
+        )
+        with pytest.raises(ProcessLookupError):
+            os.kill(leader, 0)
+    finally:
+        # Whatever the reaper did, the test owns this process group: kill and
+        # reap it so a failed assertion never leaks a SIGHUP-ignoring tree.
+        reap_process_group(leader)
 
 
 @pytest.mark.asyncio
