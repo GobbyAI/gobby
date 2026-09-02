@@ -64,8 +64,8 @@ deferral:
 
 ```yaml
 deferral:
-  task_ref: "#17488"
-  reason: "Telegram receive-side files and cron-vs-Telegram routing are Stage 3 machine-local execution, not hub user documents."
+  task_ref: "#21576"
+  reason: "Telegram receive-side files and cron-vs-Telegram routing are Stage 3 machine-local execution, not hub user documents. Re-pointed 2026-09-01 from retired umbrella #17488, which closed duplicate of #21576."
   owner: "remote-stack"
   original_acceptance_items:
     - D3.1

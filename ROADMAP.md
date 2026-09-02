@@ -5,7 +5,7 @@ task graphs, workflows, hooks, MCP proxying, agents, memory, and deterministic
 automation around the tools developers already use.
 
 Last refreshed: 2026-09-01. This document is the roadmap and the architecture
-decision record. The live tracker is epic {{ROOT}}.
+decision record. The live tracker is epic #21542.
 
 ## Where we are (2026-09-01)
 
@@ -32,17 +32,31 @@ decision record. The live tracker is epic {{ROOT}}.
 
 ## Naming
 
-The switch happens at S3.2, as soon as the Rust client carries the daily
-operator verbs — not at Python retirement.
+Today, `gobby` is the Python daemon and the CLI that operates it. That is the
+one name that changes hands, and it changes hands once, at S3.2 — well into
+Stage 3, after the front door has landed and while Stage 2 absorption is still
+in flight. Until that moment `gobby` means what it means today.
 
-| Today | Destination |
-| --- | --- |
-| `gobby` — Python daemon and its CLI | `gobby` — the Rust client and the interface people run all the time (package `gobby-client`) |
-| `gclient` — herdr-derived terminal client binary | gone; renamed to `gobby` |
-| `gdaemon` — Rust bridgehead binary | `gdaemon` — the daemon, in `standalone`, `hub`, or `node` mode (package `gobby-daemon`) |
-| `gterm` — PTY host | `gterm` — unchanged, permanently a separate supervised process (package `gobby-terminal`) |
-| — | `gobby-backend` — the transitional name of the Python package from S3.2 until it retires at S3.4 |
-| `gcode`, `gwiki`, `ghook` | unchanged |
+At S3.2 the Rust client takes the name. `gclient` — the herdr-derived terminal
+client, package `gobby-client`, built through Stage 0 under #21334 — ships as
+`gobby` and becomes the interface people run all the time: the terminal
+workspace plus the daily operator verbs, carried over the public API. The
+`gclient` binary name disappears at that point. The gate is capability, not a
+date: the client must genuinely carry the verbs first, which is why S3.2 depends
+on S3.1.
+
+The Python package steps aside rather than disappearing. Its console script and
+entry point rename to `gobby-backend`; `gdaemon` spawns and supervises it as an
+internal backend, and humans stop typing it in normal use. Operator-only Python
+commands the Rust client has not absorbed yet stay reachable as
+`gobby-backend <cmd>`. That transitional name lives from S3.2 until S3.4 removes
+the package entirely.
+
+Nothing else moves. `gdaemon` (package `gobby-daemon`) is the Rust daemon
+throughout, growing from today's bridgehead into the front door at Stage 1 and
+into `standalone`/`hub`/`node` modes across Stages 1 and 4. `gterm` (package
+`gobby-terminal`) is the herdr-based PTY host, permanently a separate supervised
+process. `gcode`, `gwiki`, and `ghook` keep their names unchanged.
 
 ## Destination
 
@@ -109,7 +123,7 @@ authentication are prerequisites and are not yet tasks.
 | Hub wiki (personal, topic; project vaults after #18779) | `/api/hub/wiki/*` | `/api/wiki/*` with topic or personal scope | Hub `files_home/wiki/` |
 | Project / CodeWiki vault | `/api/wiki/*` with a real project id until #18779, then `/api/hub/wiki/*` | `/api/wiki/*` with project scope | `<checkout>/wiki` until #18779, then `files_home/wiki/<project.name>` |
 | Hub chat uploads | `/api/hub/chat/attachments` | `/api/chat/attachments` | Hub `files_home/attachments/<project-id>/...` |
-| Telegram inbound media | hub `files_home` at {{S4.8}} | machine-local | `~/.gobby/comms_attachments` until then |
+| Telegram inbound media | hub `files_home` at S4.8 | machine-local | `~/.gobby/comms_attachments` until then |
 
 Destination on-disk tree on the hub host (`$GOBBY_HOME/files` standalone;
 `/var/lib/gobby/files` allowed on a dedicated server):
@@ -135,7 +149,7 @@ transitional.
 
 ## The path
 
-Live tracker: epic {{ROOT}}. Nothing in this tree is dispatched by
+Live tracker: epic #21542. Nothing in this tree is dispatched by
 `gobby build`; every task carries `allow_automation=false`.
 
 Two standards apply to every stage and are stated once here:
@@ -151,21 +165,21 @@ Two standards apply to every stage and are stated once here:
 Filed as `found-work` leaves under the #21363 feedback burndown, which is the
 stability feed for the checkpoint and is never itself a dependency.
 
-- {{FW.1}} — scope the daemon singleton lease to the shared database. Today it
+- #21548 — scope the daemon singleton lease to the shared database. Today it
   is `$GOBBY_HOME`-path-scoped, so two Macs at `/Users/josh/.gobby` collide and
   a Mac and a Linux hub both run active.
-- {{FW.2}} — machine-scope terminal list, get, and `attach_locator`. Files are
+- #21549 — machine-scope terminal list, get, and `attach_locator`. Files are
   owned by the #21334 worktree; coordinate.
-- {{FW.3}} — remove the dormant hook `machine_id` fallbacks (does not gate the
+- #21550 — remove the dormant hook `machine_id` fallbacks (does not gate the
   smoke).
-- {{CHK}} — manual daemon stability checkpoint before the hub-PC move, closed by
+- #21547 — manual daemon stability checkpoint before the hub-PC move, closed by
   a human after the #21363 burndown.
 
 **M0: shared datastores bridge and two-machine acceptance (#19585).** #19600 is
 its only open deliverable: the physical smoke per
-`docs/guides/hub-pc-datastore-move.md` R0–R7 and
-`docs/guides/remote-docker-acceptance.md` Phases 1–9. `blocked_by` {{CHK}},
-{{FW.1}}, {{FW.2}}.
+`.gobby/plans/hub-pc-datastore-move.md` R0–R7 and
+`docs/guides/remote-docker-acceptance.md` Phases 1–9. `blocked_by` #21547,
+#21548, #21549.
 
 ### Stage 0 — terminal client and native PTY runtime (#21334)
 
@@ -176,7 +190,7 @@ host, the `gclient` workspace, a durable `terminals` resource, and a
 backend-neutral `TerminalRuntime` with tmux wrapped first and native launches
 behind an evidence-gated default flip.
 
-### Stage 1 — the gdaemon front door owns the network boundary ({{S1}})
+### Stage 1 — the gdaemon front door owns the network boundary (#21543)
 
 The front door comes **first**. `gdaemon` takes `:60887`/`:60888`, reverse-
 proxies HTTP and WS to the Python daemon on an internal loopback port, and owns
@@ -188,68 +202,81 @@ wrapper, no mismatch latch. Compare mode is a proxy feature.
 
 | Ref | Scope |
 | --- | --- |
-| {{S1.1}} | `gdaemon serve`: axum front door on `:60887`/`:60888` proxying HTTP and WS to Python on loopback; native `GET /api/health`; bearer pass-through; the WS proxy passes the `terminal_ws_golden` corpus and chat WS unchanged |
-| {{S1.2}} | Mode enum `standalone`/`hub`/`node` and the mode-assembled service container; boundary semantics only, duties come in Stage 4 |
-| {{S1.3}} | Singleton lease and Python backend lifecycle in Rust; retires the Python lease modules; `hub` and `standalone` lease, a node registers instead |
-| {{S1.4}} | Node registration over WS and machine API keys; `machines` gains platform/capabilities/heartbeat/endpoint columns; `/api/machines` |
-| {{S1.5}} | HTTP contract corpus for the proxied surface (`tests/contracts/http/`), dual-consumed by pytest and Rust; the parity gate for every Stage 2 takeover |
-| {{S1.6}} | Datastore tunnel for node mode: loopback PostgreSQL, Qdrant, and FalkorDB multiplexed over the authenticated channel to the hub, which connects as a machine-scoped PostgreSQL role under row-level security |
+| **S1.1** · #21551 | `gdaemon serve`: axum front door on `:60887`/`:60888` proxying HTTP and WS to Python on loopback; native `GET /api/health`; bearer pass-through; the WS proxy passes the `terminal_ws_golden` corpus and chat WS unchanged |
+| **S1.2** · #21553 | Mode enum `standalone`/`hub`/`node` and the mode-assembled service container; boundary semantics only, duties come in Stage 4 |
+| **S1.3** · #21554 | Singleton lease and Python backend lifecycle in Rust; retires the Python lease modules; `hub` and `standalone` lease, a node registers instead |
+| **S1.4** · #21555 | Node registration over WS and machine API keys; `machines` gains platform/capabilities/heartbeat/endpoint columns; `/api/machines` |
+| **S1.5** · #21552 | HTTP contract corpus for the proxied surface (`tests/contracts/http/`), dual-consumed by pytest and Rust; the parity gate for every Stage 2 takeover |
+| **S1.6** · #21556 | Datastore tunnel for node mode: loopback PostgreSQL, Qdrant, and FalkorDB multiplexed over the authenticated channel to the hub, which connects as a machine-scoped PostgreSQL role under row-level security |
 
-Edges: `{{S1.2}}` ← `{{S1.1}}`; `{{S1.3}}` ← `{{S1.2}}`, `{{FW.1}}`;
-`{{S1.4}}` ← `{{S1.2}}`; `{{S1.6}}` ← `{{S1.4}}`; `{{S1.5}}` independent.
+Edges: `S1.2` ← `S1.1`; `S1.3` ← `S1.2`, `#21548`; `S1.4` ← `S1.2`;
+`S1.6` ← `S1.4`; `S1.5` independent.
 Stage 1 starts now, in its own worktree, concurrent with #21334, #19664, and the
 #21363 burndown.
 
-### Stage 2 — strangler absorption behind the front door ({{S2}})
+### Stage 2 — strangler absorption behind the front door (#21544)
 
 Ordered so story B emerges mid-port; hook ingress lands late because the rule
 engine is entangled with sessions and MCP dispatch.
 
-{{S2.1}} `gcore` async Postgres layer · {{S2.2}} native WS transport ·
-{{S2.3}} config, runtime handshake, and grant issuing (first takeover) ·
-{{S2.4}} tasks family · {{S2.5}} sessions and transcripts · {{S2.6}} memory and
-search · {{S2.7}} attention, agents, dispatch, worktrees with machine scoping ·
-{{S2.8}} daemon-side gterm adoption and terminal WS · {{S2.9}} workflows, rules,
-pipelines, build, validation · {{S2.10}} external-MCP transport multiplexer as a
-delegated backend · {{S2.11}} hook ingress and the node-local envelope ledger ·
-{{S2.12}} MCP front door flip · {{S2.13}} remaining route families.
+| Ref | Family |
+| --- | --- |
+| **S2.1** · #21557 | `gcore` async Postgres layer — pool vs `spawn_blocking`, the repository seam, grant-role compatibility with `baseline@420` |
+| **S2.2** · #21558 | Native WS transport in `gdaemon` — accept, auth handshake, subscription filter, broadcast envelope |
+| **S2.3** · #21559 | Config, runtime handshake, and grant issuing — the first takeover, and the template for every later one |
+| **S2.4** · #21560 | Tasks family — reduced list, then get, then the write path (#21561, which hosts the hub authority contract #20822), stages, dependencies, the MCP server |
+| **S2.5** · #21562 | Sessions and transcripts — including the resumability decision |
+| **S2.6** · #21563 | Memory and search — repositories, recall injection, dream |
+| **S2.7** · #21564 | Attention, agents, dispatch, and worktrees with machine scoping — where node semantics become HTTP-only |
+| **S2.8** · #21565 | Daemon-side `gterm` adoption and terminal WS |
+| **S2.9** · #21567 | Workflows, rules, pipelines, build, and validation |
+| **S2.10** · #21566 | External-MCP transport multiplexer as a delegated backend |
+| **S2.11** · #21569 | Hook ingress and the node-local envelope ledger |
+| **S2.12** · #21570 | MCP front door flip — the last MCP step |
+| **S2.13** · #21568 | Remaining route families — thirteen children, enumerated now so nothing is discovered late |
 
-Edges: `{{S2}}` ← `{{S1}}`; `{{S2.3}}` ← `{{S1.5}}`, `{{S2.1}}`;
-`{{S2.4}}` ← `{{S2.3}}`; `{{S2.5}}` ← `{{S2.4}}`, `{{S2.2}}`;
-`{{S2.6}}` ← `{{S2.4}}`; `{{S2.7}}` ← `{{S2.4}}`, `{{S1.4}}`;
-`{{S2.8}}` ← `{{S2.2}}`, `#21334`; `{{S2.9}}` ← `{{S2.5}}`, `{{S2.7}}`;
-`{{S2.10}}` ← `{{S2.4}}`; `{{S2.11}}` ← `{{S2.5}}`, `{{S2.9}}`, `{{S2.10}}`;
-`{{S2.12}}` ← `{{S2.10}}`, `{{S2.11}}`; `{{S2.13}}` ← `{{S2.4}}`, `{{S2.2}}`.
+Edges: `S2` ← `S1`; `S2.3` ← `S1.5`, `S2.1`;
+`S2.4` ← `S2.3`; `S2.5` ← `S2.4`, `S2.2`;
+`S2.6` ← `S2.4`; `S2.7` ← `S2.4`, `S1.4`;
+`S2.8` ← `S2.2`, `#21334`; `S2.9` ← `S2.5`, `S2.7`;
+`S2.10` ← `S2.4`; `S2.11` ← `S2.5`, `S2.9`, `S2.10`;
+`S2.12` ← `S2.10`, `S2.11`; `S2.13` ← `S2.4`, `S2.2`.
 
-### Stage 3 — the client takes the name, then Python retires ({{S3}})
+### Stage 3 — the client takes the name, then Python retires (#21545)
 
-{{S3.1}} operator verbs on the client · {{S3.2}} the naming switch
-(`gclient` → `gobby`, Python → `gobby-backend`) · {{S3.3}} the parity ledger at
-`docs/contracts/parity-ledger.md` · {{S3.4}} retire `gobby-backend` in one
-commit.
+| Ref | Step | Exit |
+| --- | --- | --- |
+| **S3.1** · #21571 | Operator verbs on the client | The client carries the daily verbs over the public API; the 175-module `src/gobby/cli/` tail is inventoried with a keep, absorb, or drop decision each |
+| **S3.2** · #21573 | The naming switch: `gclient` → `gobby`, Python → `gobby-backend` | `gobby` on PATH is the Rust client, and `gobby start` brings up story A end to end |
+| **S3.3** · #21572 | Parity ledger at `docs/contracts/parity-ledger.md` | Every row `delegated` or dropped by a recorded decision |
+| **S3.4** · #21574 | Retire `gobby-backend` | One commit; all golden corpora green against `gdaemon` alone |
 
-Edges: `{{S3.1}}` ← `#21334`, `{{S1.1}}`; `{{S3.2}}` ← `{{S3.1}}`;
-`{{S3.4}}` ← `{{S3.3}}`, `{{S2}}`. Stage 3 carries no stage-level edge; S3.1 and
-S3.2 start as soon as the client is real.
+Edges: `S3.1` ← `#21334`, `S1.1`; `S3.2` ← `S3.1`; `S3.4` ← `S3.3`, `S2`.
+Stage 3 carries no stage-level edge; S3.1 and S3.2 start as soon as the client
+is real.
 
-### Stage 4 — hub and node live, story B ({{S4}})
+### Stage 4 — hub and node live, story B (#21546)
 
-{{S4.1}} node mode (#17436), with {{S4.1a}} transitional Python node semantics
-and {{S4.1b}} Rust node duties · {{S4.2}} hub mode: everything database-backed
-runs only in `hub` and `standalone` · {{S4.3}} remote `gobby` attach (#20202,
-plan home stays under #21334) · {{S4.4}} per-user auth and multi-user (#17769) ·
-{{S4.5}} `gcode` and `gwiki` on nodes · {{S4.6}} hub transcript archive research
-(#19652) · {{S4.7}} hosted terminal-relay privacy stance (#20203, `hosted`,
-off-spine) · {{S4.8}} move Telegram/comms attachments onto hub `files_home`.
+| Ref | Piece |
+| --- | --- |
+| **S4.1** · #17436 | Node mode: the per-machine daemon that holds no datastore credentials and runs only local duties |
+| **S4.1a** · #21578 | Transitional Python node semantics — throwaway, re-implemented by S2.7 |
+| **S4.1b** · #21579 | Rust node duties — cross-reference to S2.7, S2.8, S2.11; closes when a node needs no Python backend |
+| **S4.2** · #21575 | Hub mode: everything database-backed runs only in `hub` and `standalone` |
+| **S4.3** · #20202 | Remote `gobby` attach — plan home stays under #21334 |
+| **S4.4** · #17769 | Per-user auth and multi-user; labeled `later` |
+| **S4.5** · #21577 | `gcode` and `gwiki` on nodes — configuration, once the tunnel exists |
+| **S4.6** · #19652 | Hub transcript archive research |
+| **S4.7** · #20203 | Hosted terminal-relay privacy stance — `hosted`, off-spine |
+| **S4.8** · #21576 | Move Telegram and comms attachments onto hub `files_home` |
 
-Edges: `{{S4}}` ← `{{S1}}`, `#19600`; `{{S4.1a}}` ← `{{S1.2}}`, `{{S1.4}}`,
-`{{S1.6}}`, `{{S4.2}}`, `{{FW.2}}`; `{{S4.1b}}` ← `{{S2.7}}`, `{{S2.8}}`,
-`{{S2.11}}`; `{{S4.2}}` ← `{{S1.2}}`; `{{S4.4}}` ← `{{S1.4}}`;
-`{{S4.5}}` ← `{{S1.6}}`.
+Edges: `S4` ← `S1`, `#19600`; `S4.1a` ← `S1.2`, `S1.4`, `S1.6`, `S4.2`, `#21549`;
+`S4.1b` ← `S2.7`, `S2.8`, `S2.11`; `S4.2` ← `S1.2`; `S4.4` ← `S1.4`;
+`S4.5` ← `S1.6`.
 
-**Story B is testable when Stage 1, {{S4.1a}}, and {{S4.2}} close** — months
-before agents, terminals, and hooks are absorbed, because the Python daemon can
-be a node behind the tunnel. Stage 4 as a whole closes with {{S4.1b}}.
+**Story B is testable when Stage 1, S4.1a, and S4.2 close** — months before
+agents, terminals, and hooks are absorbed, because the Python daemon can be a
+node behind the tunnel. Stage 4 as a whole closes with S4.1b.
 
 ## Side quests
 
@@ -267,18 +294,18 @@ and **never a blocker of anything on the path**.
 - SWE-bench evaluation: `docs/plans/SWE-BENCH.md`
 
 The feedback-findings burndown **#21363** is not a side quest and not a
-dependency. It is the stability work that feeds {{CHK}} and hosts the
+dependency. It is the stability work that feeds #21547 and hosts the
 `found-work` leaves gating #19600. It is recreated nightly by title, so nothing
 may depend on it — depend on its leaves.
 
 ## Ports and the proxied surface
 
-- `:60887` HTTP and `:60888` WS are public and become `gdaemon`'s at {{S1.1}};
+- `:60887` HTTP and `:60888` WS are public and become `gdaemon`'s at S1.1;
   the Python daemon moves to an internal loopback port set in bootstrap.
 - `:60889` dev web UI. `:60891` managed PostgreSQL. `:60890` is released — the
   sidecar it was reserved for is not being built.
 - Freeze set for the port: the three terminal protocols, the WS event envelope,
-  and the HTTP contract corpus ({{S1.5}}).
+  and the HTTP contract corpus (S1.5).
 - Error-envelope quirk that parity must preserve: internal failures return
   HTTP 200 with `{"status":"error","message":"Internal error occurred but
   request acknowledged","error_logged":true}`.
@@ -286,7 +313,7 @@ may depend on it — depend on its leaves.
   `/api/admin/status`, `POST /api/hooks/execute`, and sessions
   `include_resumability`.
 - The external-MCP transport multiplexer moves before any internal `gobby-*`
-  server ({{S2.10}} before {{S2.12}}).
+  server (S2.10 before S2.12).
 - Second pattern for CLI-shaped surfaces: a versioned CLI contract plus a thin
   gateway.
 
@@ -339,10 +366,10 @@ may depend on it — depend on its leaves.
     which connects as a machine-scoped PostgreSQL role under row-level security.
     The Python daemon points its DSNs at localhost, holds no credential, and
     loses access when the key is revoked. HTTP-only node semantics arrive with
-    the Rust node ({{S2.7}}).
+    the Rust node (S2.7).
 15. **Naming: `gobby` is the client and interface** (2026-09-01), taken from
-    `gclient` as soon as it carries the daily operator verbs ({{S3.2}}). The
-    Python package becomes `gobby-backend` until it retires at {{S3.4}};
+    `gclient` as soon as it carries the daily operator verbs (S3.2). The
+    Python package becomes `gobby-backend` until it retires at S3.4;
     `gdaemon` and `gterm` keep their names.
 
 ## References
@@ -365,4 +392,4 @@ Architecture and guides: `docs/architecture/hub-owned-files-home.md`,
 Retired and deleted 2026-09-01: `docs/architecture/evolution.md`, whose durable
 content is absorbed above, together with the three superseded Rust-migration
 plan documents under `docs/plans/`. Umbrella #17488 is closed as a duplicate of
-{{S4.8}}; its history stays in the task graph.
+S4.8; its history stays in the task graph.
