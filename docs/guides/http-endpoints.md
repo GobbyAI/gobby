@@ -623,8 +623,7 @@ The top-level response is `{ "providers": [...] }`. A matrix-backed provider
 entry combines provider availability metadata with:
 
 - `models`: canonical model rows containing aliases, availability, reasoning,
-  typed context/output facts, modalities, tool support, `standard`/`fast`
-  routes, activation descriptors, multipliers, and field provenance.
+  typed context/output facts, modalities, tool support, and field provenance.
 - `refresh.generation`: the atomic durable snapshot generation.
 - `refresh.sources`: per-source `pending`, `ok`, `stale`, or `error` health,
   attempt counts, timestamps, and the last error.

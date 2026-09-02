@@ -197,16 +197,6 @@ provider-model capability matrix:
     },
     "context_length": { "value": null, "source": "unknown" },
     "max_output_tokens": { "value": null, "source": "unknown" },
-    "routes": {
-      "standard": {
-        "selector": "example-model",
-        "available": true,
-        "usage_multiplier": null,
-        "throughput_multiplier": null,
-        "latency_class": null,
-        "activations": []
-      }
-    },
     "provenance": {}
   }
 ],
@@ -226,9 +216,8 @@ provider-model capability matrix:
 }
 ```
 
-Each canonical model carries reasoning facts, typed context/output facts,
-`standard`/`fast` routes, optional decimal multipliers and latency class,
-ordered activations, and field provenance. Refresh source states are `pending`,
+Each canonical model carries reasoning facts, typed context/output facts, and
+field provenance. There is no route or speed axis. Refresh source states are `pending`,
 `ok`, `stale`, or `error`; collection failure preserves the prior generation's
 models. Collectors refresh at daemon startup and every 24 hours. Bundled Claude
 and Droid rows seed an empty store with stale health until a live refresh

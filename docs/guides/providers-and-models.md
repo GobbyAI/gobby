@@ -11,9 +11,9 @@ Provider availability answers whether a backend can run now: is the CLI present,
 is auth configured, does the local backend respond, and is the provider enabled?
 
 The capability matrix answers which canonical model IDs, reasoning levels,
-context limits, execution routes, and provenance are available for each
-provider. Rows come from durable last-good snapshots populated by live
-collectors or empty-store bundled seeds.
+context limits, and provenance are available for each provider. Rows come from
+durable last-good snapshots populated by live collectors or empty-store bundled
+seeds.
 
 Do not infer provider from model name. Gobby tracks provider as explicit source,
 chat state, or matrix key because providers can expose overlapping model
@@ -67,7 +67,7 @@ auth, and ADC-style auth for providers that support it.
 ## Capability Matrix
 
 The matrix is the source of truth for provider-scoped model identity,
-reasoning, context, execution routes, and fact provenance. Rows are keyed by
+reasoning, context, and fact provenance. Rows are keyed by
 `(provider, canonical_model)` because the same model can expose different
 capabilities through different providers. `CapabilityResolver` matches the
 canonical ID or an explicit alias; it does not infer facts from model names.
@@ -98,32 +98,8 @@ canonical ID or an explicit alias; it does not infer facts from model names.
           },
           "input_modalities": null,
           "supports_tools": null,
-          "routes": {
-            "standard": {
-              "selector": "example-model",
-              "available": true,
-              "usage_multiplier": null,
-              "throughput_multiplier": null,
-              "latency_class": null,
-              "activations": []
-            },
-            "fast": {
-              "selector": "example-model",
-              "available": true,
-              "usage_multiplier": null,
-              "throughput_multiplier": null,
-              "latency_class": "fast",
-              "activations": [
-                {
-                  "kind": "request_parameter",
-                  "surface": "app-server",
-                  "params": {"name": "serviceTier", "value": "priority"}
-                }
-              ]
-            }
-          },
           "provenance": {
-            "selector": {
+            "display_name": {
               "source_key": "app-server-model-list",
               "source_url": null,
               "observed_at": "2026-08-04T00:00:00+00:00"
