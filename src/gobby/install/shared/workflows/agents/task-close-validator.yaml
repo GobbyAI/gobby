@@ -2,7 +2,7 @@ name: task-close-validator
 description: |
   Taskless read-only validator for close reviews whose complete evidence exceeds
   the one-shot prompt limit.
-version: "1.4"
+version: "1.5"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -60,11 +60,17 @@ prompts:
     {
       "status": "valid|invalid",
       "criteria": [
-        {"index": 1, "satisfied": true, "gap": null}
+        {"index": 1, "satisfied": true, "gap": null,
+         "required_evidence": null|"complete evidence set"}
       ],
       "feedback": "short overall assessment"
     }
-    Include every criterion index exactly once. Call
+    Include every criterion index exactly once. State `required_evidence` only
+    for an unsatisfied criterion when rejecting evidence fidelity. It must name
+    the complete evidence set the next close has to supply: the entry point that
+    must be invoked, whether collaborators must be real or may be fake, and the
+    receipt or artifact that must result. Use null when the rejection does not
+    depend on evidence fidelity. Call
     submit_close_review(review_id=<exact launch review_id>, verdict=<object>).
     Correct any malformed-verdict response while the review remains running.
     After a terminal closed, invalid, stale, or error response, call the

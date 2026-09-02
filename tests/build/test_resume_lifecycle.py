@@ -21,11 +21,11 @@ from gobby.build.runtime_hooks import RuntimeHooks
 from gobby.build.workspace_git import _workspace_path
 from gobby.config.build import StageCapOverride
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._runtime_mutex import DispatchMutexUnavailableError
 from gobby.storage.worktrees import LocalWorktreeManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.storage.tasks._stage_test_helpers import initialize_manifest, spec
 
 
@@ -50,6 +50,7 @@ def _init_repo(path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_development_resume_ticks_with_active_child_epic_integration_workspace(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
@@ -58,10 +59,7 @@ async def test_development_resume_ticks_with_active_child_epic_integration_works
     repo.mkdir()
     _init_repo(repo)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    project = LocalProjectManager(temp_db).create(
-        "resume-active-integration",
-        repo_path=str(repo),
-    )
+    project = isolated_checkout_factory(temp_db, "resume-active-integration", root=repo).project
     task_manager = LocalTaskManager(temp_db)
     root = task_manager.create_task(
         project_id=project.id,
@@ -165,6 +163,7 @@ async def test_development_resume_ticks_with_active_child_epic_integration_works
 
 @pytest.mark.asyncio
 async def test_development_resume_leaves_invalid_child_epic_workspace_for_dispatch(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
@@ -173,10 +172,7 @@ async def test_development_resume_leaves_invalid_child_epic_workspace_for_dispat
     repo.mkdir()
     _init_repo(repo)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    project = LocalProjectManager(temp_db).create(
-        "resume-integration-refresh",
-        repo_path=str(repo),
-    )
+    project = isolated_checkout_factory(temp_db, "resume-integration-refresh", root=repo).project
     task_manager = LocalTaskManager(temp_db)
     root = task_manager.create_task(
         project_id=project.id,

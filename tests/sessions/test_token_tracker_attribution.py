@@ -11,10 +11,10 @@ from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.token_events import TokenEventStore
 from tests.config_runtime_helpers import static_session_capture
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -51,14 +51,12 @@ def _message(
 
 @pytest.mark.asyncio
 async def test_non_claude_transcript_events_keep_source_and_session_model_attribution(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     """Codex/Qwen token events should aggregate under their source and model names."""
-    project = LocalProjectManager(temp_db).create(
-        name="token-attribution-project",
-        repo_path=str(tmp_path),
-    )
+    project = isolated_checkout_factory(temp_db, "token-attribution-project", root=tmp_path).project
     session_manager = SessionManager(temp_db)
     lifecycle = SessionLifecycleManager(
         temp_db,

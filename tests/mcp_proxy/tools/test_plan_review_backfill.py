@@ -11,10 +11,10 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 from gobby.review_learning.service import ReviewLearningService
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.review_coverage_helpers import StubReviewLearningService
 from tests.review_learning.test_round_diff import (
     DurableLineage,
@@ -125,16 +125,14 @@ async def test_backfill_wire_contract(
 
 @pytest.mark.asyncio
 async def test_non_plan_approval_unaffected(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.plans.review_evidence import PlanReviewEvidenceService
 
-    project = LocalProjectManager(temp_db).create(
-        name="non-plan-review-paths",
-        repo_path=str(tmp_path),
-    )
+    project = isolated_checkout_factory(temp_db, "non-plan-review-paths", root=tmp_path).project
     session = SessionManager(temp_db).register(
         external_id="non-plan-review-parent",
         machine_id="21000000-0000-4000-8000-000000000002",

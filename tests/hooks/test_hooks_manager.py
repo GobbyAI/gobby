@@ -24,6 +24,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.utils.session_context import reset_seeded_contexts, resolve_and_seed_contexts
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import wait_for_async_condition
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -47,6 +48,7 @@ def mock_daemon_client() -> Any:
 
 @pytest.fixture
 def hook_manager_with_mocks(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_dir: Path,
     mock_daemon_client: MagicMock,
     hub_db: HubDatabase,
@@ -56,12 +58,9 @@ def hook_manager_with_mocks(
 
     # Create a test project
     project_mgr = LocalProjectManager(db)
-    project = project_mgr.create(name="test-project", repo_path=str(temp_dir))
+    isolated_checkout_factory(project_mgr.db, "test-project", root=temp_dir)
 
-    # Create project.json for auto-discovery
-    gobby_dir = temp_dir / ".gobby"
-    gobby_dir.mkdir()
-    (gobby_dir / "project.json").write_text(f'{{"id": "{project.id}", "name": "test-project"}}')
+    # The factory already wrote .gobby/project.json for project resolution.
 
     from gobby.config.extensions import HookExtensionsConfig, WebhooksConfig
 

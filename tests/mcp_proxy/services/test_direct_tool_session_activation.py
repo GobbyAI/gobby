@@ -27,13 +27,14 @@ from gobby.mcp_proxy.services.result_handling import (
 )
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.definitions import split_rule_definition_data
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -133,10 +134,9 @@ def _session(
     *,
     agent_depth: int,
 ) -> str:
-    project = LocalProjectManager(db).create(
-        name=f"direct-tool-{agent_depth}",
-        repo_path=str(tmp_path),
-    )
+    project = install_isolated_checkout_project(
+        db, tmp_path, name=f"direct-tool-{agent_depth}", machine_id=require_machine_id()
+    ).project
     return session_manager.register_session(
         external_id=f"external-{agent_depth}",
         machine_id="21000000-0000-4000-8000-000000000001",

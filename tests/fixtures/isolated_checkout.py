@@ -121,6 +121,9 @@ def install_isolated_checkout_project(
     if monkeypatch is not None:
         patch_local_machine_id(monkeypatch, resolved_machine_id)
     root.mkdir(parents=True, exist_ok=True)
+    # Register the canonical path: production lookups compare realpaths, and a
+    # tempfile-based root such as macOS /var/... resolves to /private/var/....
+    root = root.resolve()
     project = LocalProjectManager(db).create(name=name, github_url=github_url)
     write_project_marker(root, project_id=project.id, name=name)
     root_path = str(root)
