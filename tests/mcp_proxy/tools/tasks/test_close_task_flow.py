@@ -92,6 +92,28 @@ def _ctx(task: Task, validator: object = None) -> RegistryContext:
     )
 
 
+def _successful_transcript(task: Task, *, command: str) -> TranscriptEvidence:
+    now = datetime(2026, 7, 27, 12, 5, tzinfo=UTC)
+    return TranscriptEvidence(
+        validation_runs=(
+            TranscriptValidationRun(
+                session_id=task.claimed_by_session_id or "",
+                source="codex",
+                command=command,
+                categories=("test",),
+                matcher_id="pytest",
+                label="pytest",
+                outcome="success",
+                started_at=now,
+                completed_at=now,
+                order=1,
+                exit_code=0,
+            ),
+        ),
+        sessions=(task.claimed_by_session_id or "",),
+    )
+
+
 async def _evaluate_named_test_close(
     task: Task,
     *,
@@ -106,24 +128,9 @@ async def _evaluate_named_test_close(
             extra={"verdict": {"status": "valid"}},
         )
     )
-    now = datetime(2026, 7, 27, 12, 5, tzinfo=UTC)
-    transcript = TranscriptEvidence(
-        validation_runs=(
-            TranscriptValidationRun(
-                session_id=task.claimed_by_session_id or "",
-                source="codex",
-                command="uv run pytest tests/test_example.py -q",
-                categories=("test",),
-                matcher_id="pytest",
-                label="pytest",
-                outcome="success",
-                started_at=now,
-                completed_at=now,
-                order=1,
-                exit_code=0,
-            ),
-        ),
-        sessions=(task.claimed_by_session_id or "",),
+    transcript = _successful_transcript(
+        task,
+        command="uv run pytest tests/test_example.py -q",
     )
     artifacts = AcceptanceArtifactResult(
         passed=True,
@@ -153,6 +160,11 @@ async def _evaluate_named_test_close(
             return_value=(["abc123"], None),
         ),
         patch.object(lifecycle, "active_validation_backoff", return_value=None),
+        patch.object(
+            lifecycle,
+            "evaluate_task_scope",
+            return_value=TaskScopeEvaluation((), (), ()),
+        ),
         patch.object(
             lifecycle,
             "_derive_close_transcript_evidence",
@@ -553,7 +565,7 @@ async def test_named_acceptance_test_keeps_tdd_gate_when_task_requires_tdd() -> 
 
 
 @pytest.mark.asyncio
-async def test_scope_mismatch_stops_before_dirty_and_validation_gates() -> None:
+async def test_scope_dirty_and_acceptance_failures_report_together() -> None:
     task = _task()
     ctx = _ctx(task, validator=object())
     scope = TaskScopeEvaluation(
@@ -562,7 +574,18 @@ async def test_scope_mismatch_stops_before_dirty_and_validation_gates() -> None:
         out_of_scope_paths=("src/gobby/service.py",),
         justification_error="A scope_justification is required for out-of-scope paths.",
     )
-    transcript = AsyncMock()
+    transcript = AsyncMock(
+        return_value=_successful_transcript(
+            task,
+            command="uv run pytest tests/tasks/test_close_checklist.py -q",
+        )
+    )
+    artifacts = AcceptanceArtifactResult(
+        passed=False,
+        tests=(),
+        findings=("Named acceptance test cannot be resolved.",),
+        evidence_files=(),
+    )
     review = AsyncMock()
 
     with (
@@ -581,7 +604,11 @@ async def test_scope_mismatch_stops_before_dirty_and_validation_gates() -> None:
             return_value=ValidationResult(can_close=True),
         ),
         patch.object(lifecycle, "evaluate_task_scope", return_value=scope),
+        patch.object(lifecycle, "_has_committable_edits", return_value=True),
+        patch.object(lifecycle, "active_validation_backoff", return_value=None),
         patch.object(lifecycle, "_derive_close_transcript_evidence", transcript),
+        patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
+        patch.object(lifecycle, "evaluate_acceptance_artifacts", return_value=artifacts),
         patch.object(lifecycle, "evaluate_criteria_review", review),
         patch(
             "gobby.workflows.task_claim_state.target_task_has_edits",
@@ -602,10 +629,18 @@ async def test_scope_mismatch_stops_before_dirty_and_validation_gates() -> None:
             response_detail="diagnostic",
         )
 
+    response = evaluation.response(preview=True)
+
     assert evaluation.error == "task_scope_mismatch"
-    assert evaluation.gates[-1].item == 8
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 12))
     assert evaluation.extra["out_of_scope_paths"] == ["src/gobby/service.py"]
-    transcript.assert_not_awaited()
+    assert response["blocking_reasons"] == [
+        "A scope_justification is required for out-of-scope paths.",
+        "Task-attributed files still have uncommitted changes. Commit them and retry.",
+        "Named acceptance test cannot be resolved.",
+    ]
+    assert len(response["required_actions"]) == 3
+    transcript.assert_awaited_once()
     review.assert_not_awaited()
 
 
@@ -1225,10 +1260,21 @@ async def test_justified_escalated_structural_parent_closes_and_persists_overrid
 
 
 @pytest.mark.asyncio
-async def test_dirty_attributed_edit_stops_before_transcript_and_llm() -> None:
+async def test_dirty_attributed_edit_is_collected_before_acceptance() -> None:
     task = _task()
     ctx = _ctx(task, validator=object())
-    transcript = AsyncMock()
+    transcript = AsyncMock(
+        return_value=_successful_transcript(
+            task,
+            command="uv run pytest tests/tasks/test_close_checklist.py -q",
+        )
+    )
+    artifacts = AcceptanceArtifactResult(
+        passed=True,
+        tests=(),
+        findings=(),
+        evidence_files=(),
+    )
     review = AsyncMock()
 
     with (
@@ -1247,7 +1293,10 @@ async def test_dirty_attributed_edit_stops_before_transcript_and_llm() -> None:
             "validate_commit_requirements",
             return_value=ValidationResult(can_close=True),
         ),
+        patch.object(lifecycle, "active_validation_backoff", return_value=None),
         patch.object(lifecycle, "_derive_close_transcript_evidence", transcript),
+        patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
+        patch.object(lifecycle, "evaluate_acceptance_artifacts", return_value=artifacts),
         patch.object(lifecycle, "evaluate_criteria_review", review),
         patch(
             "gobby.workflows.task_claim_state.target_task_has_edits",
@@ -1269,8 +1318,8 @@ async def test_dirty_attributed_edit_stops_before_transcript_and_llm() -> None:
         )
 
     assert evaluation.error == "uncommitted_task_edits"
-    assert evaluation.gates[-1].item == 9
-    transcript.assert_not_awaited()
+    assert evaluation.gates[-1].item == 11
+    transcript.assert_awaited_once()
     review.assert_not_awaited()
 
 
@@ -1464,8 +1513,8 @@ async def test_close_resolves_commits_and_validates_them_off_the_event_loop() ->
     """
     task = _task()
     ctx = _ctx(task, validator=object())
-    # Both helpers run before the scope gate, so a scope mismatch stops the
-    # evaluation right after them and keeps this test off the later gates.
+    # Both helpers run before the scope gate. Later deterministic gates are
+    # controlled so the collected scope mismatch remains the primary failure.
     scope = TaskScopeEvaluation(
         declared_paths=("tests/",),
         actual_paths=("src/gobby/service.py",),
@@ -1474,6 +1523,18 @@ async def test_close_resolves_commits_and_validates_them_off_the_event_loop() ->
     )
     resolved_on: list[int] = []
     validated_on: list[int] = []
+    transcript = AsyncMock(
+        return_value=_successful_transcript(
+            task,
+            command="uv run pytest tests/tasks/test_close_checklist.py -q",
+        )
+    )
+    artifacts = AcceptanceArtifactResult(
+        passed=True,
+        tests=(),
+        findings=(),
+        evidence_files=(),
+    )
 
     def record_resolve(*_args: object, **_kwargs: object) -> tuple[list[str], None]:
         resolved_on.append(threading.get_ident())
@@ -1495,7 +1556,11 @@ async def test_close_resolves_commits_and_validates_them_off_the_event_loop() ->
         patch.object(lifecycle, "resolve_close_commit_shas", record_resolve),
         patch.object(lifecycle, "validate_commit_requirements", record_validate),
         patch.object(lifecycle, "evaluate_task_scope", return_value=scope),
-        patch.object(lifecycle, "_derive_close_transcript_evidence", AsyncMock()),
+        patch.object(lifecycle, "_has_committable_edits", return_value=False),
+        patch.object(lifecycle, "active_validation_backoff", return_value=None),
+        patch.object(lifecycle, "_derive_close_transcript_evidence", transcript),
+        patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
+        patch.object(lifecycle, "evaluate_acceptance_artifacts", return_value=artifacts),
         patch.object(lifecycle, "evaluate_criteria_review", AsyncMock()),
         patch(
             "gobby.workflows.task_claim_state.target_task_has_edits",

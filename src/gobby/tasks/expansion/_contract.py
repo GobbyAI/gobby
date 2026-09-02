@@ -275,7 +275,10 @@ def _contract_validation_criteria(entry: ManifestEntry, section: PlanSection) ->
         lines.extend(
             [
                 "TDD evidence required:",
-                "- Red evidence: failing test output captured before implementation.",
+                "- Red evidence: test-attributed assertion/panic, pytest "
+                "`Failed: DID NOT RAISE`, or test-body `*Error`/`*Exception` output "
+                "captured before implementation (including bare `NotImplementedError` "
+                "after a stub edit).",
                 "- Green evidence: minimal implementation made the new test pass.",
                 "- Refactor/final-green evidence: final validation after cleanup.",
                 "- Exact test command used for red and green/final checks.",
