@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Any, cast
+from uuid import UUID
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
@@ -64,11 +65,18 @@ async def _send_tmux_session_wake(
     from gobby.terminals.write_coordinator import SequenceDelay, WriteRequest
 
     manager, coordinator = _wake_write_services()
-    terminal = manager.get(identity)
-    if terminal is None and hasattr(manager, "get_live_for_session"):
-        terminal = manager.get_live_for_session(identity)
-    if terminal is None and hasattr(manager, "get_live_by_session_name"):
-        terminal = manager.get_live_by_session_name(identity)
+    try:
+        UUID(identity)
+    except ValueError:
+        terminal = (
+            manager.get_live_by_session_name(identity)
+            if hasattr(manager, "get_live_by_session_name")
+            else None
+        )
+    else:
+        terminal = manager.get(identity)
+        if terminal is None and hasattr(manager, "get_live_for_session"):
+            terminal = manager.get_live_for_session(identity)
     if terminal is None:
         raise RuntimeError(f"no terminal for wake identity {identity}")
     steps: list[WriteRequest | SequenceDelay] = []
