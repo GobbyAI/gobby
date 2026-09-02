@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, Self
 
 __all__ = [
+    "CLAUDE_INTERRUPT_PREFIX",
+    "CLAUDE_USER_REJECTED",
     "INTERRUPT_OBSERVED_SOURCES",
     "ClaudeTranscriptCursor",
     "CodexRolloutCursor",
@@ -35,8 +37,8 @@ InterruptObserver = Callable[[], bool | None]
 # CLIs whose transcripts record interrupts; every other CLI keeps the blind path.
 INTERRUPT_OBSERVED_SOURCES = frozenset({"claude", "codex"})
 
-_CLAUDE_INTERRUPT_PREFIX = "[Request interrupted by user"
-_CLAUDE_USER_REJECTED = "user-rejected"
+CLAUDE_INTERRUPT_PREFIX = "[Request interrupted by user"
+CLAUDE_USER_REJECTED = "user-rejected"
 
 
 class TranscriptObservationError(RuntimeError):
@@ -161,12 +163,12 @@ class ClaudeTranscriptCursor(TranscriptTailCursor):
         for record in self.fresh_records():
             if record.get("type") != "user":
                 continue
-            if record.get("toolDenialKind") == _CLAUDE_USER_REJECTED:
+            if record.get("toolDenialKind") == CLAUDE_USER_REJECTED:
                 return True
             message = record.get("message")
             content = message.get("content") if isinstance(message, dict) else None
             if isinstance(content, str):
-                if content.startswith(_CLAUDE_INTERRUPT_PREFIX):
+                if content.startswith(CLAUDE_INTERRUPT_PREFIX):
                     return True
                 continue
             if not isinstance(content, list):
@@ -175,7 +177,7 @@ class ClaudeTranscriptCursor(TranscriptTailCursor):
                 if (
                     isinstance(block, dict)
                     and block.get("type") == "text"
-                    and str(block.get("text", "")).startswith(_CLAUDE_INTERRUPT_PREFIX)
+                    and str(block.get("text", "")).startswith(CLAUDE_INTERRUPT_PREFIX)
                 ):
                     return True
         return False

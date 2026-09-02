@@ -13,15 +13,12 @@ from pathlib import Path
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.providers.capabilities.collectors.base import SourceSpec
 from gobby.providers.capabilities.models import (
-    ActivationDescriptor,
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
     SourceHealth,
     SourceState,
-    SpeedMode,
 )
 
 _SOURCE_KEY = "app-server-model-list"
@@ -37,8 +34,6 @@ _MODEL_BASE_FACTS = frozenset(
         "reasoning",
     }
 )
-_ROUTE_FACTS = frozenset({"speed_mode", "selector", "available", "activations"})
-
 RawModel = Mapping[str, object]
 FetchModels = Callable[[], Awaitable[Sequence[RawModel]]]
 FetchModelsCache = Callable[[], Awaitable[Mapping[str, int]]]
@@ -217,17 +212,11 @@ def _build_model(
         _first(raw, "inputModalities", "input_modalities"),
         f"model {canonical_model!r} input modalities",
     )
-    fast_tier = _fast_tier(raw, canonical_model)
-
     reasoning = ReasoningSupport.UNKNOWN
     if supported_efforts == () and default_effort is None:
         reasoning = ReasoningSupport.UNSUPPORTED
     elif supported_efforts or default_effort is not None:
         reasoning = ReasoningSupport.KNOWN
-
-    routes = [_route(canonical_model, SpeedMode.STANDARD, observed_at)]
-    if fast_tier is not None:
-        routes.append(_route(canonical_model, SpeedMode.FAST, observed_at, fast_tier))
 
     model_facts = set(_MODEL_BASE_FACTS)
     if context_length is not None:
@@ -265,35 +254,7 @@ def _build_model(
         latency_class=None,
         input_modalities=input_modalities,
         supports_tools=None,
-        routes=tuple(routes),
         provenance=provenance,
-    )
-
-
-def _route(
-    selector: str,
-    speed_mode: SpeedMode,
-    observed_at: datetime,
-    fast_tier: str | None = None,
-) -> ModelRoute:
-    activations: tuple[ActivationDescriptor, ...] = ()
-    if fast_tier is not None:
-        activations = (
-            ActivationDescriptor(
-                kind="request_parameter",
-                surface="app-server",
-                params={"name": "serviceTier", "value": fast_tier},
-            ),
-        )
-    return ModelRoute(
-        speed_mode=speed_mode,
-        selector=selector,
-        available=True,
-        usage_multiplier=None,
-        throughput_multiplier=None,
-        latency_class=None,
-        activations=activations,
-        provenance=_provenance(_ROUTE_FACTS, observed_at),
     )
 
 
@@ -354,33 +315,6 @@ def _reasoning_efforts(raw: RawModel, canonical_model: str) -> tuple[str, ...] |
         if effort not in efforts:
             efforts.append(effort)
     return tuple(efforts)
-
-
-def _fast_tier(raw: RawModel, canonical_model: str) -> str | None:
-    service_tiers = _first(raw, "serviceTiers", "service_tiers")
-    if service_tiers is not None:
-        if isinstance(service_tiers, (str, bytes)) or not isinstance(service_tiers, Sequence):
-            raise ValueError(f"model {canonical_model!r} service tiers must be a list")
-        for item in service_tiers:
-            if not isinstance(item, Mapping):
-                raise ValueError(f"model {canonical_model!r} service tier must be an object")
-            tier_id = _optional_string(item.get("id"), "service tier id")
-            tier_name = _optional_string(item.get("name"), "service tier name")
-            if tier_id is not None and (
-                tier_id.casefold() == "fast"
-                or (tier_name is not None and tier_name.casefold() == "fast")
-            ):
-                return tier_id
-
-    additional_tiers = _first(raw, "additionalSpeedTiers", "additional_speed_tiers")
-    if additional_tiers is None:
-        return None
-    tiers = _optional_string_tuple(
-        additional_tiers,
-        f"model {canonical_model!r} additional speed tiers",
-    )
-    assert tiers is not None
-    return next((tier for tier in tiers if tier.casefold() == "fast"), None)
 
 
 def _optional_string_tuple(value: object, field: str) -> tuple[str, ...] | None:

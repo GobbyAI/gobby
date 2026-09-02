@@ -59,7 +59,6 @@ class ChatMessageIngressMixin:
             inject_context: str | None = None,
             provider: str | None = None,
             reasoning_effort: str | None = None,
-            speed_mode: str = "standard",
             tts_enabled: bool | None = None,
             attachments: PreparedMessageAttachments | None = None,
         ) -> None: ...
@@ -75,16 +74,6 @@ class ChatMessageIngressMixin:
         project_id = data.get("project_id")
         provider = data.get("provider")
         reasoning_effort = data.get("reasoning_effort")
-        speed_mode = data.get("speed_mode", "standard")
-
-        if not isinstance(speed_mode, str) or speed_mode not in {"standard", "fast"}:
-            await self._send_error(
-                websocket,
-                f"Invalid speed_mode '{speed_mode}'",
-                request_id=request_id,
-            )
-            return
-
         if provider is not None and provider not in _SUPPORTED_PROVIDERS:
             await self._send_error(
                 websocket, f"Invalid provider '{provider}'", request_id=request_id
@@ -147,7 +136,6 @@ class ChatMessageIngressMixin:
                     inject_context=inject_context,
                     provider=provider,
                     reasoning_effort=reasoning_effort,
-                    speed_mode=speed_mode,
                     tts_enabled=(
                         data.get("tts_enabled")
                         if isinstance(data.get("tts_enabled"), bool)

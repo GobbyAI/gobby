@@ -175,39 +175,28 @@ every 24 hours. Successful live facts retain their `source_key`, optional
 `agy --output-format json models` data; the bundled seed remains the fallback when
 that 6.3 collector cannot produce a fresh snapshot.
 
-### Speed Routes And Results
+### Speed Is Model Selection, Not A Mode
 
-Every model may expose `standard` and `fast` routes. A route supplies the exact
-provider selector, availability, optional decimal `usage_multiplier` and
-`throughput_multiplier`, optional `latency_class`, and ordered activation
-descriptors. Supported activation kinds are `model_selector`, `cli_config`, and
-`request_parameter`; each activation names the execution `surface` where it is
-valid. Accelerated behavior is declared by the source and is never inferred
-from a model-name suffix.
+Gobby has no speed axis. Of the six supported CLIs only Droid offers an
+invocation-time speed choice, and there it is an ordinary model id:
 
-Spawn, WebSocket chat, chat-completions, and tool-chat requests accept
-`speed_mode: "standard" | "fast"`; omission means `standard`. The field is
-request-scoped and is not saved in launch defaults, resume metadata, or chat
-session state. Agent CLI spawn exposes the same request as `--fast`.
+| CLI | Version checked | Speed control at invocation |
+| --- | --- | --- |
+| droid | 0.190.0 | `-m/--model <id>-fast` — fast is a **model id**, not a mode |
+| codex | 0.149.1 | None. `service_tier` is a session/app-server parameter, absent from the `config.toml` key set, so `-c` cannot carry it to a spawned CLI |
+| claude | 2.1.258 | None. `/fast` is a session slash command; `--effort` is reasoning |
+| grok | 1.0.13 | None |
+| qwen | 0.22.0 | None |
+| agy | 1.1.24 | None |
 
-Successful execution metadata includes:
+Droid's `-fast` ids — `claude-opus-5-fast`, `gpt-5.5-fast`,
+`gpt-5.3-codex-fast`, `glm-5.2-fast` — are therefore ordinary selectable models.
+They appear in `/api/providers/models` and reach `--model` like any other id.
+Collectors never fold a `-fast` id into a base model and never infer accelerated
+behavior from a model-name suffix.
 
-```json
-{
-  "speed": {
-    "requested": "fast",
-    "effective": "fast",
-    "status": "fast_applied",
-    "reason": null
-  }
-}
-```
-
-`status` is `standard`, `fast_configured`, `fast_applied`,
-`fast_unavailable`, or `fast_degraded`. Provider-echoed model or tier metadata
-confirms `fast_applied`; a confirmed fallback preserves provider output and
-reports `fast_degraded` with a reason. `fast_unavailable` is a typed
-pre-dispatch error and performs no model substitution.
+No request surface takes a speed parameter: spawn, WebSocket chat,
+chat-completions, and tool-chat carry model and reasoning effort only.
 
 ## Web Chat Backends
 
@@ -216,7 +205,6 @@ The web chat provider controls use:
 - `/api/providers` for provider availability.
 - `/api/providers/models` for grouped model choices.
 - Chat session state for selected provider, model, and reasoning effort.
-- Per-send `speed_mode`, which resets to `standard` for the next send.
 
 Configured `ai.generation.endpoints` appear as `endpoint:<name>` groups. Web-chat
 routability is protocol-specific and always requires the Codex CLI:
@@ -279,16 +267,14 @@ discovery and prefer explicit provider fields over model-name parsing.
 - `src/gobby/config/feature_base.py`: feature routing candidate schema.
 - `src/gobby/servers/routes/providers.py`: `/api/providers` and the matrix
 envelope returned by `/api/providers/models`.
-- `src/gobby/providers/capabilities/models.py`: immutable capability, route,
-source-health, activation, and provenance types.
+- `src/gobby/providers/capabilities/models.py`: immutable capability,
+source-health, and provenance types.
 - `src/gobby/providers/capabilities/collectors/`: provider-specific discovery.
 - `src/gobby/providers/capabilities/store.py`: PostgreSQL snapshot storage.
 - `src/gobby/providers/capabilities/refresh.py`: startup and periodic refresh.
 - `src/gobby/providers/capabilities/seed.py`: empty-store cold-start rows.
-- `src/gobby/providers/capabilities/resolve.py`: context, reasoning, and route
+- `src/gobby/providers/capabilities/resolve.py`: context and reasoning
 resolution.
-- `src/gobby/providers/capabilities/apply.py`: surface activation and typed
-speed result reporting.
 - `src/gobby/storage/model_metadata.py`: provider-independent model metadata.
 - `src/gobby/agents/reasoning.py`: spawn reasoning validation.
 - `src/gobby/servers/websocket/chat/local_openai_warmup.py`: local model warmup.

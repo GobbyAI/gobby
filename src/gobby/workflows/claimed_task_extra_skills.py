@@ -1,0 +1,111 @@
+"""Claimed-task extra skill projection and reload helpers."""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Any
+
+import psycopg
+
+from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.tdd_evidence import TDD_SKILL, task_requires_tdd
+
+if TYPE_CHECKING:
+    from gobby.storage.tasks import LocalTaskManager
+
+logger = logging.getLogger(__name__)
+
+EXTRA_SKILLS_VARIABLE = "claimed_task_extra_skills"
+UNRESOLVABLE_EXTRA_SKILLS_VARIABLE = "unresolvable_claimed_task_extra_skills"
+
+
+def build_claimed_task_extra_skill_state(
+    variables: dict[str, Any],
+    task_manager: LocalTaskManager | None,
+) -> dict[str, list[str]]:
+    """Build ordered task extras for every task currently claimed by the session."""
+    claimed_tasks = variables.get("claimed_tasks") or {}
+    extras: list[str] = []
+
+    if isinstance(claimed_tasks, dict) and task_manager is not None:
+        for task_id in claimed_tasks:
+            task = _load_task(task_manager, str(task_id))
+            if task is None:
+                continue
+
+            labels = _string_list(_field(task, "labels"))
+            additional_skills = _string_list(_field(task, "additional_skills"))
+            validation_criteria = _string_field(task, "validation_criteria")
+
+            _extend_unique(extras, additional_skills)
+            if task_requires_tdd(
+                labels=labels,
+                additional_skills=additional_skills,
+                validation_criteria=validation_criteria,
+                enforce_tdd=bool(variables.get("enforce_tdd")),
+            ):
+                _append_unique(extras, TDD_SKILL)
+
+    unresolved = _string_list(variables.get(UNRESOLVABLE_EXTRA_SKILLS_VARIABLE))
+    return {
+        EXTRA_SKILLS_VARIABLE: extras,
+        UNRESOLVABLE_EXTRA_SKILLS_VARIABLE: [skill for skill in unresolved if skill in extras],
+    }
+
+
+def refresh_claimed_task_extra_skills(
+    variables: dict[str, Any],
+    task_manager: LocalTaskManager | None,
+) -> dict[str, list[str]]:
+    """Refresh claimed-task extras in-place and return the persisted merge."""
+    merge = build_claimed_task_extra_skill_state(variables, task_manager)
+    variables.update(merge)
+    return merge
+
+
+def missing_claimed_task_extra_skills(variables: dict[str, Any]) -> list[str]:
+    """Return unloaded, resolvable extras in their declared order."""
+    loaded = set(_string_list(variables.get("loaded_skills")))
+    unresolved = set(_string_list(variables.get(UNRESOLVABLE_EXTRA_SKILLS_VARIABLE)))
+    return [
+        skill
+        for skill in _string_list(variables.get(EXTRA_SKILLS_VARIABLE))
+        if skill not in loaded and skill not in unresolved
+    ]
+
+
+def _load_task(task_manager: LocalTaskManager, task_id: str) -> Any | None:
+    try:
+        return task_manager.get_task(task_id)
+    except (TaskNotFoundError, ValueError, psycopg.Error) as exc:
+        logger.debug("Failed to load claimed task %s for extra skills: %s", task_id, exc)
+        return None
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list | tuple):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _string_field(value: Any, name: str) -> str | None:
+    raw = _field(value, name)
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
+def _field(value: Any, name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
+def _append_unique(items: list[str], item: str) -> None:
+    if item not in items:
+        items.append(item)
+
+
+def _extend_unique(items: list[str], values: list[str]) -> None:
+    for value in values:
+        _append_unique(items, value)

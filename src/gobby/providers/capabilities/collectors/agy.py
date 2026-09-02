@@ -12,12 +12,10 @@ from gobby.providers.capabilities.collectors.base import SourceSpec
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
     SourceHealth,
     SourceState,
-    SpeedMode,
 )
 from gobby.providers.version_gate import AgySupportRecord, peek_agy_support
 from gobby.servers.provider_model_defaults import AGY_MODELS
@@ -37,13 +35,6 @@ _MODEL_FACTS = (
     "reasoning",
     "supported_efforts",
     "default_effort",
-)
-_ROUTE_FACTS = (
-    "speed_mode",
-    "selector",
-    "available",
-    "latency_class",
-    "activations",
 )
 _CONTEXT_WINDOWS = {
     "gemini-3.7-flash": 1_048_576,
@@ -209,7 +200,6 @@ def _build_model(raw: _AgyModel, observed_at: datetime) -> ModelCapability:
         latency_class=None,
         input_modalities=None,
         supports_tools=None,
-        routes=(_standard_route(raw.model_id, observed_at),),
         provenance=provenance,
     )
 
@@ -234,19 +224,6 @@ def _split_effort(model_id: str) -> tuple[str, str | None]:
         if model_id.endswith(suffix):
             return model_id.removesuffix(suffix), effort
     return model_id, None
-
-
-def _standard_route(selector: str, observed_at: datetime) -> ModelRoute:
-    return ModelRoute(
-        speed_mode=SpeedMode.STANDARD,
-        selector=selector,
-        available=True,
-        usage_multiplier=None,
-        throughput_multiplier=None,
-        latency_class=None,
-        activations=(),
-        provenance=_live_provenance(_ROUTE_FACTS, observed_at),
-    )
 
 
 def _live_provenance(

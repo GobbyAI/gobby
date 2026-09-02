@@ -2,7 +2,6 @@
 
 from dataclasses import replace
 from datetime import UTC, datetime
-from decimal import Decimal
 
 import pytest
 
@@ -14,15 +13,12 @@ from gobby.providers.capabilities.collectors import (
     validate_snapshot,
 )
 from gobby.providers.capabilities.models import (
-    ActivationDescriptor,
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
     SourceHealth,
     SourceState,
-    SpeedMode,
 )
 
 _OBSERVED_AT = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
@@ -45,17 +41,6 @@ _MODEL_FACTS = frozenset(
         "supports_tools",
     }
 )
-_ROUTE_FACTS = frozenset(
-    {
-        "speed_mode",
-        "selector",
-        "available",
-        "usage_multiplier",
-        "throughput_multiplier",
-        "latency_class",
-        "activations",
-    }
-)
 
 
 def _provenance(facts: frozenset[str]) -> dict[str, FactProvenance]:
@@ -67,34 +52,15 @@ def _provenance(facts: frozenset[str]) -> dict[str, FactProvenance]:
     return dict.fromkeys(facts, provenance)
 
 
-def _source_spec(*, fast_only_selectors: frozenset[str] = frozenset()) -> SourceSpec:
+def _source_spec() -> SourceSpec:
     return SourceSpec(
         source_key="provider-api",
         url=_SOURCE_URL,
         required=True,
-        fast_only_selectors=fast_only_selectors,
     )
 
 
-def _route(
-    speed_mode: SpeedMode = SpeedMode.STANDARD,
-    *,
-    selector: str = "model",
-    activations: tuple[ActivationDescriptor, ...] = (),
-) -> ModelRoute:
-    return ModelRoute(
-        speed_mode=speed_mode,
-        selector=selector,
-        available=True,
-        usage_multiplier=Decimal("1"),
-        throughput_multiplier=Decimal("2"),
-        latency_class="fast",
-        activations=activations,
-        provenance=_provenance(_ROUTE_FACTS),
-    )
-
-
-def _snapshot(*routes: ModelRoute) -> ProviderSnapshot:
+def _snapshot() -> ProviderSnapshot:
     model = ModelCapability(
         canonical_model="model",
         display_name="Model",
@@ -110,7 +76,6 @@ def _snapshot(*routes: ModelRoute) -> ProviderSnapshot:
         latency_class="fast",
         input_modalities=("text",),
         supports_tools=True,
-        routes=routes or (_route(),),
         provenance=_provenance(_MODEL_FACTS),
     )
     source = SourceHealth(
@@ -154,37 +119,6 @@ def test_empty_snapshot_rejected() -> None:
         validate_snapshot(snapshot, (_source_spec(),))
 
 
-@pytest.mark.parametrize(
-    ("route", "message"),
-    [
-        (_route(selector=" "), "selector"),
-        (
-            _route(
-                activations=(ActivationDescriptor(kind="unknown", surface="spawn-cli", params={}),)
-            ),
-            "activation",
-        ),
-        (
-            replace(
-                _route(),
-                provenance={
-                    name: value for name, value in _route().provenance.items() if name != "selector"
-                },
-            ),
-            "selector",
-        ),
-    ],
-)
-def test_malformed_route_rejected(route: ModelRoute, message: str) -> None:
-    snapshot = replace(
-        _snapshot(),
-        models=(replace(_snapshot().models[0], routes=(route,)),),
-    )
-
-    with pytest.raises(SnapshotValidationError, match=message):
-        validate_snapshot(snapshot, (_source_spec(),))
-
-
 def test_model_fact_without_provenance_rejected() -> None:
     model = _snapshot().models[0]
     snapshot = replace(
@@ -201,27 +135,3 @@ def test_model_fact_without_provenance_rejected() -> None:
 
     with pytest.raises(SnapshotValidationError, match="reasoning"):
         validate_snapshot(snapshot, (_source_spec(),))
-
-
-def test_fast_route_requires_standard_pair_or_source_declaration() -> None:
-    fast_route = _route(SpeedMode.FAST, selector="model-fast")
-    fast_snapshot = replace(
-        _snapshot(),
-        models=(replace(_snapshot().models[0], routes=(fast_route,)),),
-    )
-
-    with pytest.raises(SnapshotValidationError, match="standard route"):
-        validate_snapshot(fast_snapshot, (_source_spec(),))
-
-    assert (
-        validate_snapshot(
-            fast_snapshot,
-            (_source_spec(fast_only_selectors=frozenset({"model-fast"})),),
-        )
-        is fast_snapshot
-    )
-    paired_snapshot = replace(
-        fast_snapshot,
-        models=(replace(fast_snapshot.models[0], routes=(_route(), fast_route)),),
-    )
-    assert validate_snapshot(paired_snapshot, (_source_spec(),)) is paired_snapshot

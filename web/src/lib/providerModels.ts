@@ -14,9 +14,6 @@ export type {
   ProviderModelReasoning,
   ProviderModelRefresh,
   ProviderModelRefreshSource,
-  ProviderModelRoute,
-  ProviderModelRouteActivation,
-  ProviderModelRoutes,
   ReasoningOption,
 } from "./providerModelTypes";
 

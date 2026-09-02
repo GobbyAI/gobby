@@ -694,20 +694,19 @@ def build_condition_helpers(
             record["tool"] == tool and record["target_key"] == target_key for record in records
         )
 
-    def _missing_claimed_task_required_skills(
+    def _missing_claimed_task_extra_skills() -> list[str]:
+        """Return claimed-task extras missing from the canonical skill ledger."""
+        from gobby.workflows.claimed_task_extra_skills import missing_claimed_task_extra_skills
+
+        return missing_claimed_task_extra_skills(_get_variables(ctx))
+
+    def _task_mutation_requires_tasks_skill(
         tool_input: Any = None,
         event_data: dict[str, Any] | None = None,
-    ) -> list[str]:
-        """Return claimed-task skills missing from the canonical skill ledger."""
-        from gobby.workflows.claimed_task_skills import (
-            missing_claimed_task_required_skills,
-        )
+    ) -> bool:
+        from gobby.workflows.enforcement.blocking import task_mutation_requires_tasks_skill
 
-        return missing_claimed_task_required_skills(
-            _get_variables(ctx),
-            tool_input,
-            event_data,
-        )
+        return task_mutation_requires_tasks_skill(tool_input, event_data)
 
     def _assistant_response_matches_any(
         patterns: list[str],
@@ -753,7 +752,8 @@ def build_condition_helpers(
     funcs["projected_monolith_paths"] = _projected_monolith_paths
     funcs["outstanding_monolith_paths"] = _outstanding_monolith_paths
     funcs["has_open_tool_error"] = _has_open_tool_error
-    funcs["missing_claimed_task_required_skills"] = _missing_claimed_task_required_skills
+    funcs["missing_claimed_task_extra_skills"] = _missing_claimed_task_extra_skills
+    funcs["task_mutation_requires_tasks_skill"] = _task_mutation_requires_tasks_skill
     funcs["assistant_response_matches_any"] = _assistant_response_matches_any
     funcs["queue_memory_review_close"] = lambda event_data=None, tool_input=None: (
         queue_memory_review_close(

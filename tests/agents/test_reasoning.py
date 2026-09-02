@@ -59,7 +59,6 @@ def _resolver(
         latency_class=None,
         input_modalities=None,
         supports_tools=None,
-        routes=(),
         provenance={},
     )
     snapshot = ProviderSnapshot(provider=provider, generation=1, models=(capability,), sources=())

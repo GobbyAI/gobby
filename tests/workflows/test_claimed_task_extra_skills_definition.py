@@ -1,4 +1,4 @@
-"""Contract for the claimed-task required-skills rule definition."""
+"""Contracts for claimed-task extra-skill rule definitions."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 
 pytestmark = pytest.mark.unit
 
-RULE_NAME = "require-claimed-task-required-skills"
+RULE_NAME = "require-claimed-task-extra-skills"
 RULE_FILE = (
     Path(__file__).resolve().parents[2]
     / "src"
@@ -26,7 +26,7 @@ RULE_FILE = (
     / "task-enforcement"
     / f"{RULE_NAME}.yaml"
 )
-DISCLOSURE_RULE_NAME = "disclose-claimed-task-required-skills"
+DISCLOSURE_RULE_NAME = "disclose-claimed-task-extra-skills"
 DISCLOSURE_RULE_FILE = RULE_FILE.with_name(f"{DISCLOSURE_RULE_NAME}.yaml")
 
 
@@ -50,9 +50,7 @@ def test_source_rule_parses_to_canonical_installed_definition(temp_db: HubDataba
     assert installed.effects[0].reason == source_rule["effects"][0]["reason"]
 
 
-def test_claim_disclosure_rule_injects_every_missing_required_skill(
-    temp_db: HubDatabase,
-) -> None:
+def test_claim_disclosure_injects_every_missing_extra(temp_db: HubDatabase) -> None:
     source = yaml.safe_load(DISCLOSURE_RULE_FILE.read_text())
     source_rule = source["rules"][DISCLOSURE_RULE_NAME]
 
@@ -69,7 +67,6 @@ def test_claim_disclosure_rule_injects_every_missing_required_skill(
     assert installed.effects is not None
     assert installed.effects[0].type == "inject_context"
     assert installed.effects[0].template == source_rule["effects"][0]["template"]
-    helper = "missing_claimed_task_required_skills(tool_input, event.data)"
+    helper = "missing_claimed_task_extra_skills()"
     assert f"{helper} != []" in (installed.when or "")
     assert f"skill_fetch_batch_directive({helper})" in (installed.effects[0].template or "")
-    assert "$VAR" in (installed.effects[0].template or "")

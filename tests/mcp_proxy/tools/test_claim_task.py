@@ -636,10 +636,10 @@ class TestClaimTaskSessionVariables:
             assert merged_vars["active_task_id"] == sample_task.id
 
     @pytest.mark.asyncio
-    async def test_claim_task_sets_required_skill_metadata_via_session_variables(
+    async def test_claim_task_sets_extra_skills_via_session_variables(
         self, mock_task_manager, sample_task
     ) -> None:
-        """claim_task persists proactive skill gates for the claimed task."""
+        """claim_task persists ordered extras for claim-time delivery and reload."""
         with (
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
@@ -663,6 +663,8 @@ class TestClaimTaskSessionVariables:
             sample_task.seq_num = 42
             sample_task.category = "code"
             sample_task.validation_criteria = "Update src/gobby/tasks/demo.py"
+            sample_task.additional_skills = ["context7"]
+            sample_task.labels = []
             mock_task_manager.get_task.return_value = sample_task
             mock_task_manager.claim_task.return_value = sample_task
 
@@ -671,12 +673,7 @@ class TestClaimTaskSessionVariables:
 
             assert "error" not in result
             merged_vars = mock_sv_manager.merge_variables.call_args[0][1]
-            assert merged_vars["claimed_task_required_skills"] == [
-                "tasks",
-                "python",
-                "development-discipline",
-            ]
-            assert merged_vars["claimed_task_files"] == ["src/gobby/tasks/demo.py"]
+            assert merged_vars["claimed_task_extra_skills"] == ["context7"]
 
 
 class TestClaimTaskVsUpdateTask:

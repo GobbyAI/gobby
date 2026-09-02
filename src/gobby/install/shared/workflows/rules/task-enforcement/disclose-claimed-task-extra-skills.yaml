@@ -1,8 +1,8 @@
 tags: [task-enforcement, enforcement, tasks, gobby, default]
 
 rules:
-  disclose-claimed-task-required-skills:
-    description: "Disclose every missing required skill after a successful task claim"
+  disclose-claimed-task-extra-skills:
+    description: "Disclose missing task extras after a successful task claim"
     event: after_tool
     enabled: true
     priority: 29
@@ -12,23 +12,21 @@ rules:
       and isinstance(event.data.get('tool_output'), dict)
       and (
         event.data.get('tool_output', {}).get('task_id')
-          in (variables.get('claimed_tasks') or {})
+        in (variables.get('claimed_tasks') or {})
         or event.data.get('tool_output', {}).get('id')
-          in (variables.get('claimed_tasks') or {})
+        in (variables.get('claimed_tasks') or {})
         or (
           isinstance(event.data.get('tool_output', {}).get('result'), dict)
           and (
             event.data.get('tool_output', {}).get('result', {}).get('task_id')
-              in (variables.get('claimed_tasks') or {})
+            in (variables.get('claimed_tasks') or {})
             or event.data.get('tool_output', {}).get('result', {}).get('id')
-              in (variables.get('claimed_tasks') or {})
+            in (variables.get('claimed_tasks') or {})
           )
         )
       )
-      and missing_claimed_task_required_skills(tool_input, event.data) != []
+      and missing_claimed_task_extra_skills() != []
     effects:
       - type: inject_context
         template: |
-          {{ skill_fetch_batch_directive(missing_claimed_task_required_skills(tool_input, event.data)) }}
-          A write whose target path cannot be extracted, including a `$VAR` target,
-          requires the complete unscoped skill set.
+          {{ skill_fetch_batch_directive(missing_claimed_task_extra_skills()) }}

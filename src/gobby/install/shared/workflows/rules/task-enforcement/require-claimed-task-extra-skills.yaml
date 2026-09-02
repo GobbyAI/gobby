@@ -1,0 +1,16 @@
+tags: [task-enforcement, enforcement, tasks, gobby, default]
+
+rules:
+  require-claimed-task-extra-skills:
+    description: "Block the first claimed-task source write until task extras are loaded"
+    event: before_tool
+    enabled: true
+    priority: 29
+    when: >-
+      variables.get('task_claimed')
+      and event.data.get('canonical_tool_kind') == 'write'
+      and claimed_task_source_code_write(tool_input, event.data)
+      and missing_claimed_task_extra_skills() != []
+    effects:
+      - type: block
+        reason: '{{ skill_fetch_batch_directive(missing_claimed_task_extra_skills()) }}'

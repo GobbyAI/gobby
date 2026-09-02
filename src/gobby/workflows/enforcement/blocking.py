@@ -34,6 +34,41 @@ INFRASTRUCTURE_TOOLS = {
     "get_variable",
 }
 
+TASK_MUTATION_TOOLS_BY_SERVER = {
+    "gobby-tasks": frozenset(
+        {
+            "add_dependency",
+            "add_label",
+            "auto_link_commits",
+            "backup_tasks",
+            "claim_task",
+            "close_task",
+            "create_task",
+            "de_escalate_task",
+            "delete_task",
+            "escalate_task",
+            "link_commit",
+            "link_task_to_session",
+            "release_task_paths",
+            "remove_dependency",
+            "remove_label",
+            "reopen_task",
+            "restore_tasks",
+            "submit_close_review",
+            "unlink_commit",
+            "update_observed_files",
+            "update_task",
+        }
+    ),
+    "gobby-tasks-ops": frozenset(
+        {
+            "approve_review",
+            "reject_review",
+            "submit_for_review",
+        }
+    ),
+}
+
 
 # Provider-native catalog tools that discover other tools without executing
 # any: Claude Code's deferred-tool loader and Grok's MCP catalog search.
@@ -102,6 +137,36 @@ def is_gobby_call_tool(tool_name: str | None) -> bool:
     if not tool_name:
         return False
     return canonical_gobby_tool_name(tool_name) == "mcp__gobby__call_tool"
+
+
+def task_mutation_requires_tasks_skill(
+    tool_input: Any,
+    event_data: dict[str, Any] | None = None,
+) -> bool:
+    """Return whether a direct or proxy-routed event targets a task mutation."""
+    data = event_data if isinstance(event_data, dict) else {}
+    if _is_task_mutation(data.get("mcp_server"), data.get("mcp_tool")):
+        return True
+
+    raw_tool_name = data.get("tool_name")
+    tool_name = canonical_gobby_tool_name(raw_tool_name) if isinstance(raw_tool_name, str) else ""
+    is_schema_lookup = (
+        tool_name == "mcp__gobby__get_tool_schema" or data.get("mcp_tool") == "get_tool_schema"
+    )
+    if tool_name != "mcp__gobby__call_tool" and not is_schema_lookup:
+        return False
+    if not isinstance(tool_input, dict):
+        return False
+
+    server_name = tool_input.get("server_name") or tool_input.get("server")
+    target_tool = tool_input.get("tool_name") or tool_input.get("tool")
+    return _is_task_mutation(server_name, target_tool)
+
+
+def _is_task_mutation(server_name: Any, tool_name: Any) -> bool:
+    if not isinstance(server_name, str) or not isinstance(tool_name, str):
+        return False
+    return tool_name in TASK_MUTATION_TOOLS_BY_SERVER.get(server_name, ())
 
 
 def is_message_delivery_tool(tool_name: str | None) -> bool:

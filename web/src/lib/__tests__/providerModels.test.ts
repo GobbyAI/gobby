@@ -598,8 +598,7 @@ describe("providerModels", () => {
                   },
                   input_modalities: ["text", "image"],
                   supports_tools: true,
-                  routes: {},
-                  provenance: {},
+                              provenance: {},
                 },
               ],
               refresh: { generation: 4, sources: [] },
@@ -637,37 +636,14 @@ describe("providerModels", () => {
               supported_efforts: ["low", "medium", "high"],
               default_effort: "medium",
             },
-            routes: {},
-          },
+                },
         ],
         refresh: { generation: 4, sources: [] },
       },
     ]);
   });
 
-  it("exposes_routes_and_refresh", async () => {
-    const routes = {
-      standard: {
-        selector: "gpt-5.4",
-        available: true,
-        usage_multiplier: "1",
-        throughput_multiplier: null,
-        latency_class: null,
-        activations: [
-          { kind: "model_selector", surface: "spawn-cli", params: {} },
-        ],
-      },
-      fast: {
-        selector: "gpt-5.4-fast",
-        available: true,
-        usage_multiplier: "5",
-        throughput_multiplier: "2",
-        latency_class: "fast",
-        activations: [
-          { kind: "model_selector", surface: "spawn-cli", params: {} },
-        ],
-      },
-    };
+  it("exposes_refresh", async () => {
     const refresh = {
       generation: 7,
       sources: [{ source_key: "codex-app-server", state: "ok" }],
@@ -699,7 +675,6 @@ describe("providerModels", () => {
                   },
                   input_modalities: null,
                   supports_tools: null,
-                  routes,
                   provenance: {},
                 },
               ],
@@ -712,11 +687,8 @@ describe("providerModels", () => {
 
     const result = await fetchProviderModelCatalog();
 
-    expect(result[0]?.models[0]?.routes).toBe(routes);
+    expect(result[0]?.models[0]?.value).toBe("gpt-5.4");
     expect(result[0]?.refresh).toBe(refresh);
-    expectTypeOf(result[0]?.models[0]?.routes?.fast?.selector).toEqualTypeOf<
-      string | undefined
-    >();
     expectTypeOf(result[0]?.refresh?.generation).toEqualTypeOf<
       number | undefined
     >();

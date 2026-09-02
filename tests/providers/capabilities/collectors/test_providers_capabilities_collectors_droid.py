@@ -1,5 +1,4 @@
 from datetime import UTC, datetime
-from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
@@ -10,7 +9,7 @@ from gobby.providers.capabilities.collectors.droid import (
     DROID_MODELS_URL,
     DroidCollector,
 )
-from gobby.providers.capabilities.models import ReasoningSupport, SpeedMode
+from gobby.providers.capabilities.models import ReasoningSupport
 
 pytestmark = pytest.mark.unit
 
@@ -35,44 +34,52 @@ def _collector(document: str = _MODELS_DOCUMENT) -> DroidCollector:
 
 
 @pytest.mark.asyncio
-async def test_usage_multiplier_parsed() -> None:
+async def test_model_row_facts_parsed() -> None:
     collector = _collector()
     snapshot = validate_snapshot(await collector.collect(), collector.sources)
 
     model = next(model for model in snapshot.models if model.canonical_model == "gpt-5.5")
-    routes = {route.speed_mode: route for route in model.routes}
 
-    assert routes[SpeedMode.STANDARD].usage_multiplier == Decimal("2")
-    assert routes[SpeedMode.FAST].usage_multiplier == Decimal("5")
     assert model.supported_efforts == ("none", "low", "medium", "high", "xhigh")
     assert model.default_effort == "medium"
     assert model.reasoning is ReasoningSupport.KNOWN
 
 
 @pytest.mark.asyncio
-async def test_fast_pairing_requires_explicit_label_and_standard_match() -> None:
+async def test_fast_models_are_ordinary_selectable_models() -> None:
+    """`-fast` ids are plain Droid models, never folded into their base model."""
     collector = _collector()
     snapshot = validate_snapshot(await collector.collect(), collector.sources)
     models = {model.canonical_model: model for model in snapshot.models}
 
-    paired_routes = {route.speed_mode: route for route in models["gpt-5.5"].routes}
-    assert paired_routes[SpeedMode.FAST].selector == "gpt-5.5-fast"
-    assert {
-        (activation.kind, activation.surface)
-        for activation in paired_routes[SpeedMode.FAST].activations
-    } == {("model_selector", "spawn-cli"), ("model_selector", "tool-chat")}
-    assert "gpt-5.5-fast" not in models
-
-    assert tuple(route.speed_mode for route in models["suffix-only-fast"].routes) == (
-        SpeedMode.STANDARD,
+    assert set(models) == {
+        "gpt-5.5",
+        "gpt-5.5-fast",
+        "suffix-only-fast",
+        "glm-5.2-fast",
+        "registry-only",
+    }
+    assert models["gpt-5.5-fast"].display_name == "GPT-5.5 Fast"
+    assert models["gpt-5.5-fast"].supported_efforts == (
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
     )
     assert models["suffix-only-fast"].supported_efforts == ("minimal", "high")
     assert models["suffix-only-fast"].default_effort == "minimal"
-    assert tuple(route.speed_mode for route in models["glm-5.2-fast"].routes) == (
-        SpeedMode.STANDARD,
-    )
     assert models["glm-5.2-fast"].supported_efforts == ("off", "high", "max")
     assert models["glm-5.2-fast"].default_effort == "high"
+
+
+@pytest.mark.asyncio
+async def test_row_with_unparsable_usage_multiplier_is_rejected() -> None:
+    document = _MODELS_DOCUMENT.replace("| 2\u00d7 |", "| free |")
+    collector = _collector(document)
+
+    with pytest.raises(ValueError, match="invalid usage multiplier for 'gpt-5.5'"):
+        await collector.collect()
 
 
 @pytest.mark.asyncio

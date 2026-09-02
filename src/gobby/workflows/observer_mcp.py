@@ -40,7 +40,7 @@ def detect_mcp_call(event: HookEvent, variables: dict[str, Any], session_id: str
                 session_id,
             )
         else:
-            _track_unresolvable_required_skill(
+            _track_unresolvable_claimed_task_extra_skill(
                 variables,
                 event.data.get("tool_input") or {},
                 tool_output,
@@ -95,29 +95,33 @@ def _extract_loaded_skill_name(tool_output: dict[str, Any] | Any) -> str | None:
     return None
 
 
-def _track_unresolvable_required_skill(
+def _track_unresolvable_claimed_task_extra_skill(
     variables: dict[str, Any],
     tool_input: dict[str, Any] | Any,
     tool_output: dict[str, Any] | Any,
     session_id: str,
 ) -> None:
-    """Record a required skill after get_skill definitively reports it missing."""
+    """Record a claimed-task extra after get_skill definitively reports it missing."""
     name = _requested_skill_name(tool_input)
-    required = variables.get("claimed_task_required_skills") or []
-    if not name or not isinstance(required, list) or name not in required:
+    extras = variables.get("claimed_task_extra_skills") or []
+    if not name or not isinstance(extras, list) or name not in extras:
         return
 
     error = _skill_error(tool_output)
     if error != f"Skill not found: {name}":
         return
 
-    unresolvable = variables.get("unresolvable_required_skills") or []
+    unresolvable = variables.get("unresolvable_claimed_task_extra_skills") or []
     if not isinstance(unresolvable, list):
         unresolvable = []
     if name not in unresolvable:
         unresolvable.append(name)
-        logger.warning("Session %s: dropping unresolvable required skill %s", session_id, name)
-    variables["unresolvable_required_skills"] = unresolvable
+        logger.warning(
+            "Session %s: suppressing unresolvable claimed-task extra skill %s",
+            session_id,
+            name,
+        )
+    variables["unresolvable_claimed_task_extra_skills"] = unresolvable
 
 
 def _requested_skill_name(tool_input: dict[str, Any] | Any) -> str | None:

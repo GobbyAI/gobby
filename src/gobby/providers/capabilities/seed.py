@@ -2,18 +2,14 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
 
 from gobby.providers.capabilities.models import (
-    ActivationDescriptor,
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
     SourceHealth,
     SourceState,
-    SpeedMode,
 )
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 
@@ -45,15 +41,6 @@ _MODEL_FACTS = (
     "input_modalities",
     "supports_tools",
 )
-_ROUTE_FACTS = (
-    "speed_mode",
-    "selector",
-    "available",
-    "usage_multiplier",
-    "throughput_multiplier",
-    "latency_class",
-    "activations",
-)
 
 
 @dataclass(frozen=True)
@@ -62,8 +49,6 @@ class _SeedModel:
     display_name: str
     efforts: tuple[str, ...] | None = None
     default_effort: str | None = None
-    base_model_id: str | None = None
-    speed_multiplier: str | None = None
     aliases: tuple[str, ...] = ()
     context_length: int | None = None
 
@@ -87,8 +72,6 @@ _DROID_MODELS = (
         "Claude Opus 5 Fast Mode",
         ("off", "low", "medium", "high", "xhigh", "max"),
         "high",
-        "claude-opus-5",
-        "4.0",
     ),
     _SeedModel(
         "claude-opus-4-7",
@@ -123,8 +106,6 @@ _DROID_MODELS = (
         "GPT-5.5 Fast Mode",
         ("none", "low", "medium", "high", "xhigh"),
         "medium",
-        "gpt-5.5",
-        "5.0",
     ),
     _SeedModel("gpt-5.4", "GPT-5.4", ("none", "low", "medium", "high", "xhigh"), "medium"),
     _SeedModel(
@@ -139,8 +120,6 @@ _DROID_MODELS = (
         "GPT-5.3-Codex Fast Mode",
         ("none", "low", "medium", "high", "xhigh"),
         "medium",
-        "gpt-5.3-codex",
-        "1.4",
     ),
     _SeedModel("gpt-5.2", "GPT-5.2", ("off", "low", "medium", "high", "xhigh"), "low"),
     _SeedModel("gpt-5.2-codex", "GPT-5.2-Codex", ("low", "medium", "high", "xhigh"), "medium"),
@@ -310,17 +289,7 @@ def _claude_snapshot(observed_at: datetime) -> ProviderSnapshot:
 
 
 def _droid_snapshot(observed_at: datetime) -> ProviderSnapshot:
-    fast_by_base = {model.base_model_id: model for model in _DROID_MODELS if model.base_model_id}
-    models = tuple(
-        _model(
-            model,
-            aliases=(),
-            observed_at=observed_at,
-            fast_model=fast_by_base.get(model.model_id),
-        )
-        for model in _DROID_MODELS
-        if model.base_model_id is None
-    )
+    models = tuple(_model(model, aliases=(), observed_at=observed_at) for model in _DROID_MODELS)
     return ProviderSnapshot(
         provider="droid",
         generation=0,
@@ -345,11 +314,7 @@ def _model(
     *,
     aliases: tuple[str, ...],
     observed_at: datetime,
-    fast_model: _SeedModel | None = None,
 ) -> ModelCapability:
-    routes = [_route(spec, SpeedMode.STANDARD, observed_at)]
-    if fast_model is not None:
-        routes.append(_route(fast_model, SpeedMode.FAST, observed_at))
     return ModelCapability(
         canonical_model=spec.model_id,
         display_name=spec.display_name,
@@ -367,29 +332,7 @@ def _model(
         latency_class=None,
         input_modalities=None,
         supports_tools=None,
-        routes=tuple(routes),
         provenance=_provenance(_MODEL_FACTS, observed_at),
-    )
-
-
-def _route(spec: _SeedModel, speed_mode: SpeedMode, observed_at: datetime) -> ModelRoute:
-    activations: tuple[ActivationDescriptor, ...] = ()
-    if speed_mode is SpeedMode.FAST:
-        activations = tuple(
-            ActivationDescriptor(kind="model_selector", surface=surface, params={})
-            for surface in ("spawn-cli", "tool-chat")
-        )
-    return ModelRoute(
-        speed_mode=speed_mode,
-        selector=spec.model_id,
-        available=True,
-        usage_multiplier=(
-            Decimal(spec.speed_multiplier) if spec.speed_multiplier is not None else None
-        ),
-        throughput_multiplier=None,
-        latency_class=None,
-        activations=activations,
-        provenance=_provenance(_ROUTE_FACTS, observed_at),
     )
 
 
