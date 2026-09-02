@@ -1073,6 +1073,76 @@ describe("useTmuxSessions", () => {
     expect(received).toEqual([["att-1", "hello"]]);
   });
 
+  it("reassembles terminal fragments through onOutput and ignores foreign attachments", () => {
+    const { result } = renderHook(() => useTmuxSessions());
+    const [ws] = mockWs.instances;
+    open(ws);
+
+    act(() => result.current.attachSession("term-1", "tmux"));
+    respondToAttach(
+      ws,
+      requestId(ws, "terminal_attach"),
+      "term-1",
+      "tmux",
+      "att-1",
+    );
+
+    const received: Array<[string, string]> = [];
+    act(() => result.current.onOutput((id, data) => received.push([id, data])));
+
+    const payload = "fragmented output";
+    const message = JSON.stringify({
+      type: "terminal_output",
+      attachment_id: "att-1",
+      data: payload,
+    });
+    const splitAt = Math.ceil(message.length / 2);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_ws_fragment",
+        event: "terminal_output",
+        terminal_id: "term-1",
+        attachment_id: "att-1",
+        message_seq: 1,
+        fragment_index: 0,
+        more: true,
+        encoding: "utf8-b64",
+        payload: btoa(message.slice(0, splitAt)),
+      });
+      ws.simulateMessage({
+        type: "terminal_ws_fragment",
+        event: "terminal_output",
+        terminal_id: "term-other",
+        attachment_id: "att-other",
+        message_seq: 1,
+        fragment_index: 0,
+        more: false,
+        encoding: "utf8-b64",
+        payload: btoa(
+          JSON.stringify({
+            type: "terminal_output",
+            attachment_id: "att-other",
+            data: "should-not-route",
+          }),
+        ),
+      });
+      ws.simulateMessage({
+        type: "terminal_ws_fragment",
+        event: "terminal_output",
+        terminal_id: "term-1",
+        attachment_id: "att-1",
+        message_seq: 1,
+        fragment_index: 1,
+        more: false,
+        encoding: "utf8-b64",
+        payload: btoa(message.slice(splitAt)),
+      });
+    });
+
+    expect(received).toEqual([["att-1", payload]]);
+  });
+
   it("test_terminal_list_follows_pages", () => {
     const { result } = renderHook(() => useTmuxSessions());
     const ws = mockWs.instances[0];
