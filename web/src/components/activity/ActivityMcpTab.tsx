@@ -11,6 +11,7 @@ import {
 import type {
   McpServer,
   McpStatus,
+  McpTemplate,
   McpTool,
   McpToolSchema,
 } from "../../hooks/useMcp";
@@ -65,6 +66,11 @@ export interface ActivityMcpTabProps {
   removeServer: (name: string) => Promise<boolean>;
   setServerEnabled: (name: string, enabled: boolean) => Promise<boolean>;
   fetchServers?: () => Promise<void>;
+  currentProjectId?: string | null;
+  templates?: readonly McpTemplate[];
+  templatesLoading?: boolean;
+  templatesError?: string | null;
+  fetchTemplates?: (projectId?: string) => Promise<void>;
   refreshToolCache: () => Promise<boolean>;
   fetchToolSchema: (
     serverName: string,
@@ -137,6 +143,11 @@ export function ActivityMcpTab({
   removeServer,
   setServerEnabled,
   fetchServers,
+  currentProjectId = null,
+  templates = [],
+  templatesLoading = false,
+  templatesError = null,
+  fetchTemplates,
   refreshToolCache,
   fetchToolSchema,
   callTool,
@@ -232,11 +243,13 @@ export function ActivityMcpTab({
       : null;
   const serverDraftSource = useMemo(() => {
     if (selection?.kind !== "server") return null;
-    if (selection.viewMode === "create") return createMcpServerDraft();
+    if (selection.viewMode === "create") {
+      return createMcpServerDraft({ project_id: currentProjectId ?? "" });
+    }
     if (!selectedServer || getServerType(selectedServer) !== "external")
       return null;
     return mcpServerToDraft(selectedServer);
-  }, [selectedServer, selection]);
+  }, [currentProjectId, selectedServer, selection]);
 
   const toggleServer = useCallback((name: string) => {
     setExpandedServers((prev) => {
@@ -747,6 +760,11 @@ export function ActivityMcpTab({
             <McpServerFields
               mode={selection.viewMode === "create" ? "create" : "edit"}
               source={serverDraftSource}
+              currentProjectId={currentProjectId ?? ""}
+              templates={templates}
+              templatesLoading={templatesLoading}
+              templatesError={templatesError}
+              fetchTemplates={fetchTemplates}
               onSave={handleSaveServerDraft}
               onDiscard={() => {
                 if (selection.viewMode === "create") updateSelection(null);
