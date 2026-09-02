@@ -486,6 +486,8 @@ async def spawn_agent_impl(
         effective_initial_variables["assigned_task_id"] = (
             f"#{task_seq_num}" if task_seq_num else resolved_task_id
         )
+    if "assigned_task_id" in effective_initial_variables:
+        effective_initial_variables["parent_session_id"] = parent_session_id
     if enhanced_prompt:
         effective_initial_variables["prompt"] = enhanced_prompt
     additional_skills = _normalize_string_list(effective_initial_variables.get("additional_skills"))

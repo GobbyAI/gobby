@@ -76,7 +76,12 @@ def test_handoff_transitions_to_end_agent_run_termination() -> None:
     )
     assert "tool_output.get('closed') is True" in close_hook["when"]
     assert "tool_input.get('task_id') == vars.get('assigned_task_id')" in close_hook["when"]
-    assert implement["transitions"] == [{"to": "terminate", "when": "vars.implementation_complete"}]
+    assert implement["transitions"] == [
+        {
+            "to": "terminate",
+            "when": "vars.implementation_complete or vars.blocker_handed_off",
+        }
+    ]
     assert "gobby-agents:end_agent_run" in implement["blocked_mcp_tools"]
     assert terminate["allowed_mcp_tools"] == ["gobby-agents:end_agent_run"]
 

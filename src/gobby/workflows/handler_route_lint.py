@@ -10,8 +10,8 @@ from typing import Any
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
-# Spawn infrastructure injects this before an agent's step workflow starts.
-_RUNTIME_HANDLER_VARIABLES = {"assigned_task_id"}
+# Spawn infrastructure injects these before an agent's step workflow starts.
+_RUNTIME_HANDLER_VARIABLES = {"assigned_task_id", "parent_session_id"}
 
 
 @dataclass(frozen=True)
