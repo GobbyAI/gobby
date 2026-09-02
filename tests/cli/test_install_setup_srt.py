@@ -88,7 +88,7 @@ def test_download_verified_tarball_retries_checksum_mismatch(
     assert destination.read_bytes() == expected
 
 
-def test_download_verified_tarball_resumes_incomplete_response(
+def test_download_verified_tarball_retries_incomplete_response(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -101,9 +101,8 @@ def test_download_verified_tarball_resumes_incomplete_response(
                 headers={"Content-Length": str(len(expected))},
             ),
             FakeDownloadResponse(
-                expected[split:],
-                status=206,
-                headers={"Content-Range": f"bytes {split}-{len(expected) - 1}/{len(expected)}"},
+                expected,
+                headers={"Content-Length": str(len(expected))},
             ),
         )
     )
@@ -124,8 +123,9 @@ def test_download_verified_tarball_resumes_incomplete_response(
     install_setup_srt._download_verified_tarball(destination)
 
     assert destination.read_bytes() == expected
+    assert len(requests) == 2
     assert requests[0].get_header("Range") is None
-    assert requests[1].get_header("Range") == f"bytes={split}-"
+    assert requests[1].get_header("Range") is None
 
 
 def test_download_verified_tarball_rejects_non_https_source(

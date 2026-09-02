@@ -145,39 +145,21 @@ def _download_verified_tarball(destination: Path) -> None:
     if urlsplit(SRT_RELEASE.tarball_url).scheme != "https":
         raise SrtRuntimeError("managed SRT tarball URL must use HTTPS")
 
-    digest = hashlib.sha256()
-    total = 0
-    expected_total: int | None = None
+    headers = {"User-Agent": f"gobby-srt/{SRT_RELEASE.version}"}
     for _attempt in range(_MAX_TARBALL_REQUESTS):
-        request_offset = total
-        headers = {"User-Agent": f"gobby-srt/{SRT_RELEASE.version}"}
-        if request_offset:
-            headers["Range"] = f"bytes={request_offset}-"
+        # Every attempt starts from scratch: partial data from a truncated
+        # transfer is discarded rather than resumed.
+        digest = hashlib.sha256()
+        total = 0
+        expected_total: int | None = None
         request = Request(SRT_RELEASE.tarball_url, headers=headers)
         with urlopen(request, timeout=30) as response:  # HTTPS enforced above  # nosec B310
-            status = getattr(response, "status", 200)
             response_headers = getattr(response, "headers", {})
-            if request_offset and status != 206:
-                destination.unlink(missing_ok=True)
-                digest = hashlib.sha256()
-                total = 0
-                expected_total = None
-            elif request_offset:
-                content_range = response_headers.get("Content-Range", "")
-                range_prefix = f"bytes {request_offset}-"
-                if not content_range.startswith(range_prefix):
-                    raise SrtRuntimeError("SRT tarball returned an invalid byte range")
-                try:
-                    expected_total = int(content_range.partition("/")[2])
-                except ValueError as exc:
-                    raise SrtRuntimeError("SRT tarball returned an invalid byte range") from exc
-            elif content_length := response_headers.get("Content-Length"):
+            if content_length := response_headers.get("Content-Length"):
                 expected_total = int(content_length)
-
             if expected_total is not None and expected_total > _MAX_TARBALL_BYTES:
                 raise SrtRuntimeError("SRT tarball exceeded the expected size limit")
-            mode = "ab" if total else "wb"
-            with destination.open(mode) as output:
+            with destination.open("wb") as output:
                 while True:
                     try:
                         chunk = response.read(64 * 1024)
@@ -191,14 +173,10 @@ def _download_verified_tarball(destination: Path) -> None:
                     digest.update(chunk)
                     output.write(chunk)
 
-        if expected_total is not None and total < expected_total:
-            continue
-        if digest.hexdigest() == SRT_RELEASE.tarball_sha256:
+        complete = expected_total is None or total >= expected_total
+        if complete and digest.hexdigest() == SRT_RELEASE.tarball_sha256:
             return
         destination.unlink(missing_ok=True)
-        digest = hashlib.sha256()
-        total = 0
-        expected_total = None
 
     raise SrtRuntimeError("SRT tarball checksum mismatch")
 
