@@ -19,6 +19,11 @@ from gobby.cli.hub_backup.cli import _start_daemon
 from gobby.cli.postgres_backup import _resolve_database_url as _resolve_backup_database_url
 from gobby.cli.utils_shutdown import stop_daemon
 from gobby.paths import get_gobby_home
+from gobby.shutdown_intent import (
+    ShutdownIntent,
+    clear_active_shutdown_intent,
+    write_shutdown_intent,
+)
 from gobby.storage.maintenance_epoch import (
     CAMPAIGNS,
     Campaign,
@@ -77,6 +82,15 @@ def hub_maintenance() -> None:
     """Fence the hub while a verified destructive campaign runs."""
 
 
+def _refresh_maintenance_marker() -> None:
+    """Keep ghook fail-open guards active for the maintenance campaign."""
+    write_shutdown_intent(
+        source="cli_hub_maintenance",
+        intent=ShutdownIntent.MAINTENANCE,
+        home=get_gobby_home(),
+    )
+
+
 @hub_maintenance.command("run")
 @click.argument("campaign", type=click.Choice(CAMPAIGNS))
 @click.pass_context
@@ -87,6 +101,7 @@ def run_campaign(ctx: click.Context, campaign: Campaign) -> None:
     database_url = _resolve_database_url()
     _require_rehearsal_database(database_url)
     _stop_daemon_before_fence(database_url)
+    _refresh_maintenance_marker()
     owner_command = f"hub-maintenance:{campaign}"
     epoch = open_maintenance_epoch(
         database_url,
@@ -117,6 +132,7 @@ def resume_campaign(ctx: click.Context) -> None:
     """Resume the open campaign using only hub-resident state."""
     database_url = _resolve_database_url()
     _stop_daemon_before_fence(database_url)
+    _refresh_maintenance_marker()
     epoch = discover_active_maintenance_epoch(database_url)
     if epoch is None:
         raise click.ClickException("No maintenance epoch is open")
@@ -182,6 +198,7 @@ def abort_campaign(disposition: str) -> None:
         disposition=disposition,
         confirmed=True,
     )
+    clear_active_shutdown_intent(home=get_gobby_home())
     _start_daemon()
     click.echo(f"Maintenance epoch {epoch.id} aborted and released")
 
@@ -287,6 +304,7 @@ def _finish_or_report(
         raise click.ClickException(
             f"Maintenance epoch {epoch.id} remains open for resume: {exc}"
         ) from exc
+    clear_active_shutdown_intent(home=get_gobby_home())
     _start_daemon()
 
 

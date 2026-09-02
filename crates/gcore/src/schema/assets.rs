@@ -21,7 +21,12 @@ pub(crate) struct EmbeddedMigration {
     pub sql: &'static str,
 }
 
-pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[];
+pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[EmbeddedMigration {
+    version: 421,
+    filename: "421_drop_provider_model_routes.sql",
+    checksum: "d3de405d14b6e2d1096f928b905b781c3d4813c764038eb7d4f2e926943f3d90",
+    sql: include_str!("../../assets/schema/migrations/421_drop_provider_model_routes.sql"),
+}];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

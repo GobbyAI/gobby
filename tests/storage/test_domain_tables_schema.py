@@ -58,7 +58,9 @@ def _table_names(column_names: set[str]) -> set[str]:
 def test_baseline_drops_legacy_tables_and_keeps_domain_tables() -> None:
     baseline = _BASELINE.read_text(encoding="utf-8")
     for table in DOMAIN_TABLES:
-        assert f"CREATE TABLE IF NOT EXISTS {table} (" in baseline
+        # baseline@420 is a normalized pg_dump (#21479), which emits bare
+        # CREATE TABLE rather than the hand-written IF NOT EXISTS form.
+        assert f"CREATE TABLE {table} (" in baseline
     for table in (*LEGACY_TABLES, "legacy_copy_ledger"):
         assert f"CREATE TABLE {table} (" not in baseline
         assert f"CREATE TABLE IF NOT EXISTS {table} (" not in baseline

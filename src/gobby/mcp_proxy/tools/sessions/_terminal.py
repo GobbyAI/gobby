@@ -122,6 +122,21 @@ def _resolve_tmux_target(
     )
 
 
+_FORBIDDEN_SPEED_COMMANDS = frozenset({"/fast"})
+
+
+def _is_speed_command(keys: str) -> bool:
+    r"""Report whether a send_keys payload toggles provider speed mode.
+
+    `/fast` is Claude Code's in-session speed switch and the only such toggle
+    across the six supported CLIs; the constant is the seam for any that appear.
+    Matching is on the first whitespace-separated token, casefolded, so `/fast\n`
+    and `  /FAST  ` are caught while `/faster` passes through.
+    """
+    tokens = keys.split()
+    return bool(tokens) and tokens[0].casefold() in _FORBIDDEN_SPEED_COMMANDS
+
+
 def _authorize_send_keys_target(
     session_ref: str,
     session_manager: SessionManager,
@@ -398,7 +413,9 @@ def register_terminal_tools(
             "Targets must be the caller, in the same project, or in the same agent tree. "
             "Use literal=true (default) to paste text — one or more trailing \\n characters "
             "produce exactly one Enter after the literal paste settles. "
-            "Use literal=false for tmux key names: C-c, Escape, Enter, C-d."
+            "Use literal=false for tmux key names: C-c, Escape, Enter, C-d. "
+            "Payloads whose first token is /fast are refused with "
+            "send_keys_speed_command_forbidden; ask the user to run it."
         ),
     )
     async def send_keys(
@@ -412,6 +429,13 @@ def register_terminal_tools(
         )
         if authorization_error is not None:
             return authorization_error
+
+        if _is_speed_command(keys):
+            return {
+                "success": False,
+                "error": "send_keys cannot toggle provider speed mode; ask the user to run it",
+                "error_code": "send_keys_speed_command_forbidden",
+            }
 
         assert resolved_session_id is not None
         if write_coordinator is not None and terminal_manager is not None:

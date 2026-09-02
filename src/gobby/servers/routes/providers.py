@@ -68,11 +68,6 @@ def _matrix_model_entry(
     provider: str,
     resolver: CapabilityResolver | None,
 ) -> dict[str, Any]:
-    route_provenance = {
-        name: provenance.to_dict()
-        for route in model.routes
-        for name, provenance in route.provenance.items()
-    }
     return {
         "canonical_model": model.canonical_model,
         "display_name": model.display_name,
@@ -94,24 +89,7 @@ def _matrix_model_entry(
             list(model.input_modalities) if model.input_modalities is not None else None
         ),
         "supports_tools": model.supports_tools,
-        "routes": {
-            route.speed_mode.value: {
-                "selector": route.selector,
-                "available": route.available,
-                "usage_multiplier": (
-                    str(route.usage_multiplier) if route.usage_multiplier is not None else None
-                ),
-                "throughput_multiplier": (
-                    str(route.throughput_multiplier)
-                    if route.throughput_multiplier is not None
-                    else None
-                ),
-                "latency_class": route.latency_class,
-                "activations": [activation.to_dict() for activation in route.activations],
-            }
-            for route in model.routes
-        },
-        "provenance": route_provenance,
+        "provenance": {name: provenance.to_dict() for name, provenance in model.provenance.items()},
     }
 
 

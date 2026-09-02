@@ -6,7 +6,7 @@ import pytest
 from gobby.providers.capabilities.collectors import validate_snapshot
 from gobby.providers.capabilities.collectors.grok import GrokCollector, GrokSourceError
 from gobby.providers.capabilities.collectors.qwen import QwenCollector, QwenSourceError
-from gobby.providers.capabilities.models import ReasoningSupport, SpeedMode
+from gobby.providers.capabilities.models import ReasoningSupport
 
 _OBSERVED_AT = datetime(2026, 8, 4, 15, tzinfo=UTC)
 type RawModel = Mapping[str, object]
@@ -55,11 +55,6 @@ async def test_standard_only_discovery() -> None:
         validate_snapshot(await grok.collect(), grok.sources),
         validate_snapshot(await qwen.collect(), qwen.sources),
     )
-
-    for snapshot in snapshots:
-        for model in snapshot.models:
-            assert tuple(route.speed_mode for route in model.routes) == (SpeedMode.STANDARD,)
-            assert model.routes[0].selector == model.canonical_model
 
     grok_models = {model.canonical_model: model for model in snapshots[0].models}
     assert grok_models["grok-composer-2.5-fast"].context_length == 200_000

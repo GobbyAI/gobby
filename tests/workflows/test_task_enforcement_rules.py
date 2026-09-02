@@ -10,20 +10,22 @@ from __future__ import annotations
 import shlex
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.mcp_proxy.tools.tasks._factory import create_task_registry
+from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.skills.formatting import (
     skill_fetch_directive,
     skill_fetch_proxy_path,
 )
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.definitions import RuleDefinitionBody
-from gobby.workflows.enforcement.blocking import TASK_MUTATION_TOOLS_BY_SERVER
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.git_utils import DirtyFiles
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -39,10 +41,33 @@ EXTERNAL_SESSION_ID = "22222222-2222-4222-8222-222222222222"
 CLAIM_TASK_ID = "33333333-3333-4333-8333-333333330043"
 DISCLOSURE_RULE_NAME = "disclose-claimed-task-extra-skills"
 
-TASK_MUTATION_CASES = tuple(
-    (server_name, tool_name)
-    for server_name, tool_names in TASK_MUTATION_TOOLS_BY_SERVER.items()
-    for tool_name in sorted(tool_names)
+INTERACTIVE_TASK_MUTATIONS = (
+    "add_dependency",
+    "add_label",
+    "auto_link_commits",
+    "backup_tasks",
+    "claim_task",
+    "close_task",
+    "create_task",
+    "de_escalate_task",
+    "delete_task",
+    "escalate_task",
+    "link_commit",
+    "link_task_to_session",
+    "release_task_paths",
+    "remove_dependency",
+    "remove_label",
+    "reopen_task",
+    "restore_tasks",
+    "submit_close_review",
+    "unlink_commit",
+    "update_observed_files",
+    "update_task",
+)
+TASK_REVIEW_OPERATIONS = (
+    "approve_review",
+    "reject_review",
+    "submit_for_review",
 )
 READ_ONLY_TASK_TOOLS = (
     "check_dependency_cycles",
@@ -63,6 +88,59 @@ READ_ONLY_TASK_TOOLS = (
     "list_tasks",
     "search_tasks",
     "suggest_next_task",
+)
+NON_INTERACTIVE_TASK_OPS = (
+    "add_stage",
+    "append_description_section",
+    "backfill_plan_review_lessons",
+    "build_clean",
+    "build_restart",
+    "build_resume",
+    "build_stop",
+    "build_task",
+    "cancel_expansion_run",
+    "check_expansion_qa_result",
+    "clear_isolation_pair",
+    "close_linked_github_issue",
+    "complete_stage",
+    "delete_stage",
+    "fail_stage",
+    "find_file_overlaps",
+    "get_affected_files",
+    "get_artifacts",
+    "get_delivery_state",
+    "get_expansion_run",
+    "get_latest_expansion_run",
+    "import_github_issues",
+    "initialize_task_manifest",
+    "link_task_to_github_issue",
+    "open_delivery_pr",
+    "record_merge_result",
+    "record_plan_enhancement",
+    "record_pr_opened",
+    "record_pr_state",
+    "record_pr_verdict",
+    "reindex_tasks",
+    "remove_stage",
+    "reset_expansion_output",
+    "restore_stage",
+    "resume_expansion_run",
+    "run_expansion_qa_coverage",
+    "save_expansion_qa_result",
+    "set_affected_files",
+    "set_artifact",
+    "set_artifacts_atomic",
+    "set_task_type_defaults",
+    "start_expansion_run",
+    "start_stage",
+    "update_stage",
+    "validate_expansion_run",
+    "validate_plan_file",
+    "wire_affected_files_from_run",
+)
+TASK_MUTATION_CASES = tuple(
+    [("gobby-tasks", name) for name in INTERACTIVE_TASK_MUTATIONS]
+    + [("gobby-tasks-ops", name) for name in TASK_REVIEW_OPERATIONS]
 )
 
 
@@ -890,6 +968,25 @@ asyncio.run(main())
 
 class TestRequireTasksSkillForMutations:
     """Verify one classifier covers interactive task mutations across event shapes."""
+
+    def test_real_registry_inventory_matches_independent_classification(self) -> None:
+        task_manager = MagicMock(spec=LocalTaskManager)
+        task_manager.db = MagicMock()
+        registered = {
+            "gobby-tasks": {
+                tool["name"] for tool in create_task_registry(task_manager).list_tools()
+            },
+            "gobby-tasks-ops": {
+                tool["name"] for tool in create_task_ops_registry(task_manager).list_tools()
+            },
+        }
+
+        assert registered["gobby-tasks"] == set(INTERACTIVE_TASK_MUTATIONS) | set(
+            READ_ONLY_TASK_TOOLS
+        )
+        assert registered["gobby-tasks-ops"] == set(TASK_REVIEW_OPERATIONS) | set(
+            NON_INTERACTIVE_TASK_OPS
+        )
 
     @staticmethod
     def _event_shape(

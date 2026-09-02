@@ -317,7 +317,6 @@ class TestAgentsSpawnCommand:
                 "claude",
                 "--model",
                 "claude-3-opus",
-                "--fast",
                 "--timeout",
                 "300",
                 "--context",
@@ -338,7 +337,6 @@ class TestAgentsSpawnCommand:
         assert call_args[1]["json"]["terminal"] == "iterm"
         assert call_args[1]["json"]["provider"] == "claude"
         assert call_args[1]["json"]["model"] == "claude-3-opus"
-        assert call_args[1]["json"]["speed_mode"] == "fast"
         assert call_args[1]["json"]["timeout"] == 300.0
         assert "max_turns" not in call_args[1]["json"]
         assert call_args[1]["json"]["session_context"] == "summary_markdown"

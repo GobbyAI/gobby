@@ -857,12 +857,6 @@ class TestSpawnAgentPreRegistration:
             "success": False,
             "error": error,
             "run_id": captured["run_id"],
-            "speed": {
-                "requested": "standard",
-                "effective": "standard",
-                "status": "standard",
-                "reason": None,
-            },
         }
         assert run is not None
         assert run.status == "cancelled"

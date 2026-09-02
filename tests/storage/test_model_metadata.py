@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,8 +14,6 @@ from gobby.llm.model_registry import ModelInfo, ModelReasoningInfo
 from gobby.storage import model_metadata
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.model_metadata import ModelMetadataStore
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_populate_dedupes_shared_model_ids_keeping_larger_context_window(
@@ -98,24 +95,12 @@ def test_reasoning_metadata_database_round_trip(postgres_db: HubDatabase) -> Non
 
 
 @pytest.mark.integration
-def test_reasoning_migration_preserves_existing_rows(postgres_db: HubDatabase) -> None:
-    for column in (
-        "reasoning_present",
-        "reasoning_supported_efforts",
-        "reasoning_default_effort",
-        "reasoning_default_enabled",
-        "reasoning_mandatory",
-    ):
-        postgres_db.execute(f"ALTER TABLE model_metadata DROP COLUMN IF EXISTS {column}")
+def test_applied_schema_carries_nullable_reasoning_columns(postgres_db: HubDatabase) -> None:
+    """The reasoning columns migration 401 added are part of baseline@420 and stay nullable."""
     postgres_db.execute(
         "INSERT INTO model_metadata (model, context_length, source) VALUES (%s, %s, %s)",
         ("existing-model", 32_000, "registry"),
     )
-
-    migration = (
-        _REPO_ROOT / "crates/gcore/assets/schema/migrations/401_model_metadata_reasoning.sql"
-    ).read_text(encoding="utf-8")
-    postgres_db.execute(migration)
 
     row = postgres_db.fetchone(
         "SELECT reasoning_present, reasoning_supported_efforts, reasoning_default_effort, "

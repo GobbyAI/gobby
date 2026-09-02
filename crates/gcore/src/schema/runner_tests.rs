@@ -1294,14 +1294,26 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
 }
 
 #[test]
-fn migrations_directory_exists_and_registry_is_empty_after_flatten() {
+fn migrations_directory_exists_and_registry_is_contiguous_above_baseline() {
     let migrations_dir =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/schema/migrations");
     assert!(
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist for versions after baseline@420"
     );
-    assert!(MIGRATIONS.is_empty());
+    for (offset, migration) in MIGRATIONS.iter().enumerate() {
+        let expected_version = BASELINE_VERSION + 1 + i32::try_from(offset).expect("offset fits");
+        assert_eq!(
+            migration.version, expected_version,
+            "registered migrations must be contiguous from baseline {BASELINE_VERSION} + 1"
+        );
+        assert_eq!(
+            super::assets::sha256_hex(migration.sql.as_bytes()),
+            migration.checksum,
+            "checksum must match the embedded SQL for {}",
+            migration.filename
+        );
+    }
     assert!(
         DESTRUCTIVE_MIGRATION.version > BASELINE_VERSION
             && GUARDED_MIGRATION.version > BASELINE_VERSION,

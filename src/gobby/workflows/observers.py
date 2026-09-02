@@ -40,6 +40,7 @@ from gobby.workflows.observer_utils import (
     _shell_tool_succeeded,
     _successful_close_result,
 )
+from gobby.workflows.turn_interrupt_observer import detect_turn_interrupt
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
@@ -65,6 +66,7 @@ __all__ = [
     "detect_mcp_call",
     "detect_plan_mode_from_context",
     "detect_task_claim",
+    "detect_turn_interrupt",
     "release_clean_task_paths_after_commit",
     "reconcile_claimed_tasks",
 ]

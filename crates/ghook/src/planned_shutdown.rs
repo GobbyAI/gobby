@@ -1,10 +1,10 @@
-//! Planned daemon shutdown handling for Stop hooks.
+//! Planned daemon shutdown handling for fail-open hooks.
 //!
-//! During intentional daemon stop/restart windows, the Stop hook may fire after
-//! the daemon has already gone away. In that case blocking the host CLI is
-//! wrong: the shutdown was requested by Gobby itself. This module recognizes
-//! the daemon's short-lived shutdown markers and suppresses only daemon
-//! unreachable races for Stop hooks.
+//! During intentional daemon stop/restart windows, Stop and pre-compact hooks
+//! may fire after the daemon has already gone away. In that case blocking the
+//! host CLI is wrong: the shutdown was requested by Gobby itself. This module
+//! recognizes the daemon's shutdown markers and suppresses only daemon
+//! unreachable races for those hooks.
 
 use crate::transport::DeliveryFailureKind;
 use serde_json::Value;
@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_ALLOW_SECONDS: f64 = 120.0;
+const MAINTENANCE_ALLOW_SECONDS: f64 = 24.0 * 60.0 * 60.0;
 const HEALTH_TIMEOUT: Duration = Duration::from_millis(350);
 const HEALTH_ENDPOINT: &str = "/api/health";
 const ACTIVE_MARKER: &str = "shutdown_intent_active.json";
@@ -53,12 +54,16 @@ pub fn is_stop_hook(hook_type: &str) -> bool {
     hook_type.eq_ignore_ascii_case("stop")
 }
 
+fn is_fail_open_hook(hook_type: &str) -> bool {
+    is_stop_hook(hook_type) || matches!(hook_type, "pre-compact" | "PreCompact" | "pre_compact")
+}
+
 fn should_skip_dispatch_with(
     hook_type: &str,
     marker_active: impl FnOnce() -> bool,
     daemon_reachable: impl FnOnce() -> bool,
 ) -> bool {
-    is_stop_hook(hook_type) && marker_active() && !daemon_reachable()
+    is_fail_open_hook(hook_type) && marker_active() && !daemon_reachable()
 }
 
 fn should_suppress_failed_post(
@@ -66,7 +71,7 @@ fn should_suppress_failed_post(
     failure_kind: Option<DeliveryFailureKind>,
     marker_active: impl FnOnce() -> bool,
 ) -> bool {
-    is_stop_hook(hook_type)
+    is_fail_open_hook(hook_type)
         && matches!(
             failure_kind,
             Some(DeliveryFailureKind::Connect | DeliveryFailureKind::Timeout)
@@ -89,16 +94,21 @@ fn marker_is_allowed_and_fresh(marker: &Value, now: f64, allow_seconds: f64) -> 
         return false;
     };
 
-    if timestamp > now || now - timestamp > allow_seconds {
-        return false;
-    }
-
     let intent = marker
         .get("intent")
         .and_then(value_as_text)
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if matches!(intent.as_str(), "stop" | "restart") {
+    let freshness_window = if intent == "maintenance" {
+        MAINTENANCE_ALLOW_SECONDS
+    } else {
+        allow_seconds
+    };
+    if timestamp > now || now - timestamp > freshness_window {
+        return false;
+    }
+
+    if matches!(intent.as_str(), "stop" | "restart" | "maintenance") {
         return true;
     }
 
@@ -206,6 +216,14 @@ mod tests {
     }
 
     #[test]
+    fn fail_open_hook_matching_includes_precompact_spellings() {
+        for hook_type in ["pre-compact", "PreCompact", "pre_compact"] {
+            assert!(is_fail_open_hook(hook_type));
+        }
+        assert!(!is_fail_open_hook("session-start"));
+    }
+
+    #[test]
     fn marker_accepts_fresh_allowed_intents() {
         let dir = tempdir().unwrap();
         let now = 1_000.0;
@@ -216,6 +234,33 @@ mod tests {
         );
 
         assert!(fresh_shutdown_marker_at(dir.path(), now, 120.0));
+    }
+
+    #[test]
+    fn maintenance_marker_uses_its_extended_freshness_window() {
+        let now = 10_000.0;
+        let beyond_default_window = now - DEFAULT_ALLOW_SECONDS - 1.0;
+
+        assert!(marker_is_allowed_and_fresh(
+            &json!({"intent": "maintenance", "timestamp": beyond_default_window}),
+            now,
+            DEFAULT_ALLOW_SECONDS,
+        ));
+        for intent in ["stop", "restart"] {
+            assert!(!marker_is_allowed_and_fresh(
+                &json!({"intent": intent, "timestamp": beyond_default_window}),
+                now,
+                DEFAULT_ALLOW_SECONDS,
+            ));
+        }
+        assert!(!marker_is_allowed_and_fresh(
+            &json!({
+                "intent": "maintenance",
+                "timestamp": now - MAINTENANCE_ALLOW_SECONDS - 1.0,
+            }),
+            now,
+            DEFAULT_ALLOW_SECONDS,
+        ));
     }
 
     #[test]
@@ -291,10 +336,18 @@ mod tests {
     }
 
     #[test]
-    fn skip_dispatch_requires_stop_marker_and_unreachable_daemon() {
+    fn skip_dispatch_requires_fail_open_hook_marker_and_unreachable_daemon() {
         assert!(should_skip_dispatch_with("Stop", || true, || false));
         assert!(should_skip_dispatch_with("stop", || true, || false));
+        assert!(should_skip_dispatch_with("pre-compact", || true, || false));
+        assert!(should_skip_dispatch_with("PreCompact", || true, || false));
+        assert!(should_skip_dispatch_with("pre_compact", || true, || false));
         assert!(!should_skip_dispatch_with("PreToolUse", || true, || false));
+        assert!(!should_skip_dispatch_with(
+            "session-start",
+            || true,
+            || false
+        ));
         assert!(!should_skip_dispatch_with(
             "Stop",
             || false,
@@ -328,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn post_enqueue_suppression_deletes_stop_envelope_for_connect_or_timeout() {
+    fn post_enqueue_suppression_deletes_fail_open_envelope_for_connect_or_timeout() {
         let dir = tempdir().unwrap();
         let connect = dir.path().join("connect.json");
         let timeout = dir.path().join("timeout.json");
@@ -336,7 +389,7 @@ mod tests {
         std::fs::write(&timeout, "{}").unwrap();
 
         assert!(suppress_after_failed_post_with_marker(
-            "Stop",
+            "pre-compact",
             Some(DeliveryFailureKind::Connect),
             &connect,
             || true
@@ -344,7 +397,7 @@ mod tests {
         assert!(!connect.exists());
 
         assert!(suppress_after_failed_post_with_marker(
-            "STOP",
+            "PreCompact",
             Some(DeliveryFailureKind::Timeout),
             &timeout,
             || true

@@ -246,7 +246,6 @@ class CodexSpawnToolChatAdapter:
             _params: dict[str, Any],
         ) -> None:
             nonlocal stop_reason, turns
-            response_metadata.update(_speed_response_metadata(_params))
             turns += 1
             if limits.max_turns is None or turns < limits.max_turns or stop_reason != "completed":
                 return
@@ -406,18 +405,3 @@ class CodexSpawnToolChatAdapter:
             trace_available=True,
             response_metadata=response_metadata,
         )
-
-
-def _speed_response_metadata(params: dict[str, Any]) -> dict[str, object]:
-    containers = [params]
-    for key in ("response", "rawResponse", "raw_response"):
-        nested = params.get(key)
-        if isinstance(nested, dict):
-            containers.append(nested)
-    metadata: dict[str, object] = {}
-    for container in containers:
-        for key in ("serviceTier", "service_tier", "tier"):
-            value = container.get(key)
-            if isinstance(value, str):
-                metadata[key] = value
-    return metadata

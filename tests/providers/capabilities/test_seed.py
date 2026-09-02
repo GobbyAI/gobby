@@ -7,12 +7,10 @@ import pytest
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
     SourceHealth,
     SourceState,
-    SpeedMode,
 )
 from gobby.providers.capabilities.seed import _agy_snapshot, apply_seed
 from gobby.providers.capabilities.store import ProviderCapabilityStore
@@ -43,18 +41,6 @@ def _live_claude_snapshot() -> ProviderSnapshot:
         latency_class=None,
         input_modalities=("text", "image"),
         supports_tools=None,
-        routes=(
-            ModelRoute(
-                speed_mode=SpeedMode.STANDARD,
-                selector="claude-live",
-                available=True,
-                usage_multiplier=None,
-                throughput_multiplier=None,
-                latency_class=None,
-                activations=(),
-                provenance={"selector": provenance},
-            ),
-        ),
         provenance={"canonical_model": provenance},
     )
     sources = tuple(
@@ -84,7 +70,8 @@ def test_seed_only_when_empty(postgres_db: HubDatabase) -> None:
     assert claude is not None
     assert [model.canonical_model for model in claude.models] == ["claude-live"]
     assert droid is not None
-    assert len(droid.models) == 30
+    # 33 = 30 base models + the three `-fast` ids that route pairing used to hide.
+    assert len(droid.models) == 33
     assert {source.state for source in droid.sources} == {SourceState.STALE}
     assert all(
         provenance.source_key == "bundled"
@@ -93,13 +80,9 @@ def test_seed_only_when_empty(postgres_db: HubDatabase) -> None:
     )
 
     models = {model.canonical_model: model for model in droid.models}
-    paired = models["claude-opus-5"]
-    assert [(route.speed_mode, route.selector) for route in paired.routes] == [
-        (SpeedMode.STANDARD, "claude-opus-5"),
-        (SpeedMode.FAST, "claude-opus-5-fast"),
-    ]
-    standalone_fast = models["claude-opus-4-6-fast"]
-    assert [route.speed_mode for route in standalone_fast.routes] == [SpeedMode.STANDARD]
+    assert "claude-opus-5" in models
+    assert "claude-opus-5-fast" in models
+    assert "claude-opus-4-6-fast" in models
 
 
 def test_seed_includes_agy_floor_catalog(postgres_db: HubDatabase) -> None:
@@ -144,7 +127,6 @@ def test_agy_seed_snapshot_is_fixture_derived() -> None:
     assert len(snapshot.models) == 14
     assert snapshot.models[0].canonical_model == "gemini-3.7-flash-high"
     assert snapshot.models[-1].canonical_model == "gpt-oss-120b-medium"
-    assert snapshot.models[0].routes[0].selector == "gemini-3.7-flash-high"
 
 
 def test_refresh_replaces_seed(postgres_db: HubDatabase) -> None:

@@ -9,12 +9,9 @@ from typing import Protocol
 from gobby.config.ai import ModelMetadataAlias, model_metadata_alias_source_key
 from gobby.llm.context_window_values import positive_context_window
 from gobby.providers.capabilities.models import (
-    ActivationDescriptor,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
-    SpeedMode,
 )
 
 
@@ -51,28 +48,6 @@ class ReasoningResolution:
     requested_effort: str | None
     effective_effort: str | None
     status: ReasoningStatus
-    reason: str | None
-
-
-class SpeedStatus(StrEnum):
-    """Resolution and provider-confirmation state for a speed request."""
-
-    STANDARD = "standard"
-    FAST_CONFIGURED = "fast_configured"
-    FAST_APPLIED = "fast_applied"
-    FAST_UNAVAILABLE = "fast_unavailable"
-    FAST_DEGRADED = "fast_degraded"
-
-
-@dataclass(frozen=True)
-class SpeedResolution:
-    """Typed pre-dispatch result for a provider model route."""
-
-    requested: SpeedMode
-    effective: SpeedMode
-    status: SpeedStatus
-    selector: str
-    activations: tuple[ActivationDescriptor, ...]
     reason: str | None
 
 
@@ -216,58 +191,6 @@ class CapabilityResolver:
             return self._reject_reasoning(requested, f"unsupported reasoning effort: {requested}")
         return ReasoningResolution(requested, requested, ReasoningStatus.VERIFIED, None)
 
-    def resolve_route(
-        self,
-        provider: str,
-        model: str,
-        speed_mode: SpeedMode = SpeedMode.STANDARD,
-        surface: str = "spawn-cli",
-    ) -> SpeedResolution:
-        """Resolve an exact route for one model and execution surface."""
-        capability = self._find_model(provider, model)
-        standard_route = self._find_route(capability, SpeedMode.STANDARD)
-        standard_selector = standard_route.selector if standard_route is not None else model
-
-        if speed_mode is SpeedMode.STANDARD:
-            return SpeedResolution(
-                requested=SpeedMode.STANDARD,
-                effective=SpeedMode.STANDARD,
-                status=SpeedStatus.STANDARD,
-                selector=standard_selector,
-                activations=self._surface_activations(standard_route, surface),
-                reason=None,
-            )
-
-        fast_route = self._find_route(capability, SpeedMode.FAST)
-        if fast_route is None:
-            return SpeedResolution(
-                requested=SpeedMode.FAST,
-                effective=SpeedMode.STANDARD,
-                status=SpeedStatus.FAST_UNAVAILABLE,
-                selector=standard_selector,
-                activations=(),
-                reason="model has no available fast route",
-            )
-
-        activations = self._surface_activations(fast_route, surface)
-        if not activations:
-            return SpeedResolution(
-                requested=SpeedMode.FAST,
-                effective=SpeedMode.STANDARD,
-                status=SpeedStatus.FAST_UNAVAILABLE,
-                selector=standard_selector,
-                activations=(),
-                reason=f"fast route is unavailable on surface: {surface}",
-            )
-        return SpeedResolution(
-            requested=SpeedMode.FAST,
-            effective=SpeedMode.FAST,
-            status=SpeedStatus.FAST_CONFIGURED,
-            selector=fast_route.selector,
-            activations=activations,
-            reason=None,
-        )
-
     def _find_model(self, provider: str, model: str) -> ModelCapability | None:
         snapshot = self._store.get_provider_snapshot(provider)
         if snapshot is None:
@@ -297,29 +220,6 @@ class CapabilityResolver:
         if alias is None:
             return None
         return self._model_metadata_store.get_model_metadata(alias.openrouter_model_id)
-
-    @staticmethod
-    def _find_route(capability: ModelCapability | None, speed_mode: SpeedMode) -> ModelRoute | None:
-        if capability is None or not capability.available:
-            return None
-        return next(
-            (
-                route
-                for route in capability.routes
-                if route.speed_mode is speed_mode and route.available
-            ),
-            None,
-        )
-
-    @staticmethod
-    def _surface_activations(
-        route: ModelRoute | None, surface: str
-    ) -> tuple[ActivationDescriptor, ...]:
-        if route is None:
-            return ()
-        return tuple(
-            activation for activation in route.activations if activation.surface == surface
-        )
 
     @staticmethod
     def _reject_reasoning(effort: str, reason: str) -> ReasoningResolution:

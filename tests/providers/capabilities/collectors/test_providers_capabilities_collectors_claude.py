@@ -14,7 +14,7 @@ from gobby.providers.capabilities.collectors.claude import (
     ClaudeCollector,
     ClaudeSourceError,
 )
-from gobby.providers.capabilities.models import ReasoningSupport, SourceState, SpeedMode
+from gobby.providers.capabilities.models import ReasoningSupport, SourceState
 
 pytestmark = pytest.mark.unit
 
@@ -109,7 +109,7 @@ async def test_malformed_required_source_fails_snapshot(
 
 
 @pytest.mark.asyncio
-async def test_compared_models_emit_standard_routes() -> None:
+async def test_compared_models_are_collected() -> None:
     collector = _collector(_documents())
 
     snapshot = validate_snapshot(await collector.collect(), collector.sources)
@@ -121,11 +121,6 @@ async def test_compared_models_emit_standard_routes() -> None:
         "claude-sonnet-5",
         "claude-haiku-4-5-20251001",
     }
-    assert all(
-        tuple(route.speed_mode for route in model.routes) == (SpeedMode.STANDARD,)
-        for model in models.values()
-    )
-    assert all(model.routes[0].selector == model.canonical_model for model in models.values())
     assert all(source.state is SourceState.OK for source in snapshot.sources)
 
 

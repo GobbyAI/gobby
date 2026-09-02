@@ -68,11 +68,20 @@ def test_postgres_baseline_uses_native_types() -> None:
     for fragment in removed_backend_fragments:
         assert fragment not in upper_sql
 
-    _assert_matches(sql, r"\bTIMESTAMPTZ\b", "timestamp text columns must become TIMESTAMPTZ")
+    # baseline@420 is a normalized pg_dump (#21479): it spells the type
+    # `timestamp with time zone` and puts DEFAULT before NOT NULL. The
+    # `TIMESTAMPTZ` alias survives only inside preserved PL/pgSQL bodies, so
+    # both spellings and both clause orders have to satisfy the contract.
     _assert_matches(
         sql,
-        r"\bTIMESTAMPTZ\s+NOT\s+NULL\s+DEFAULT\s+NOW\(\)",
-        "datetime('now') defaults must become TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+        r"\b(?:TIMESTAMPTZ|TIMESTAMP\s+WITH\s+TIME\s+ZONE)\b",
+        "timestamp text columns must become TIMESTAMPTZ",
+    )
+    _assert_matches(
+        sql,
+        r"\b(?:TIMESTAMPTZ|TIMESTAMP\s+WITH\s+TIME\s+ZONE)\s+"
+        r"(?:NOT\s+NULL\s+DEFAULT\s+NOW\(\)|DEFAULT\s+NOW\(\)\s+NOT\s+NULL)",
+        "datetime('now') defaults must become a non-null TIMESTAMPTZ defaulting to NOW()",
     )
     _assert_matches(sql, r"\bBOOLEAN\b", "integer booleans must become BOOLEAN")
     _assert_matches(sql, r"\bBYTEA\b", "binary columns must become BYTEA")

@@ -24,6 +24,7 @@ class ShutdownIntent(StrEnum):
 
     STOP = "stop"
     RESTART = "restart"
+    MAINTENANCE = "maintenance"
 
     @property
     def preserve_agents(self) -> bool:
@@ -53,6 +54,8 @@ def coerce_shutdown_intent(value: str | ShutdownIntent | None) -> ShutdownIntent
         return value
     if value == ShutdownIntent.RESTART.value:
         return ShutdownIntent.RESTART
+    if value == ShutdownIntent.MAINTENANCE.value:
+        return ShutdownIntent.MAINTENANCE
     return ShutdownIntent.STOP
 
 

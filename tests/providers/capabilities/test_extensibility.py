@@ -4,10 +4,6 @@ from datetime import UTC, datetime
 
 import pytest
 
-from gobby.providers.capabilities.activation import (
-    ActivationHandler,
-    register_activation_handler,
-)
 from gobby.providers.capabilities.collectors import (
     SourceSpec,
     collectors,
@@ -15,15 +11,12 @@ from gobby.providers.capabilities.collectors import (
     validate_snapshot,
 )
 from gobby.providers.capabilities.models import (
-    ActivationDescriptor,
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
     SourceHealth,
     SourceState,
-    SpeedMode,
 )
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -31,7 +24,6 @@ from gobby.storage.hub.protocol import HubDatabase
 pytestmark = pytest.mark.integration
 
 _PROVIDER = "fake-provider-19624"
-_ACTIVATION_KIND = "fake_selector_19624"
 _SOURCE_URL = "https://fake-provider.test/models"
 _OBSERVED_AT = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
 
@@ -52,21 +44,6 @@ class _FakeCollector:
     )
 
     async def collect(self) -> ProviderSnapshot:
-        activation = ActivationDescriptor(
-            kind=_ACTIVATION_KIND,
-            surface="tool-chat",
-            params={"name": "fake-model"},
-        )
-        route = ModelRoute(
-            speed_mode=SpeedMode.STANDARD,
-            selector="fake-model",
-            available=True,
-            usage_multiplier=None,
-            throughput_multiplier=None,
-            latency_class=None,
-            activations=(activation,),
-            provenance=_provenance("speed_mode", "selector", "available", "activations"),
-        )
         model = ModelCapability(
             canonical_model="fake-model",
             display_name="Fake Model",
@@ -82,7 +59,6 @@ class _FakeCollector:
             latency_class=None,
             input_modalities=None,
             supports_tools=None,
-            routes=(route,),
             provenance=_provenance(
                 "canonical_model",
                 "display_name",
@@ -113,13 +89,6 @@ class _FakeCollector:
 
 @pytest.mark.asyncio
 async def test_fake_provider_end_to_end(postgres_db: HubDatabase) -> None:
-    register_activation_handler(
-        _ACTIVATION_KIND,
-        ActivationHandler(
-            surfaces=frozenset({"tool-chat"}),
-            allowed_params=frozenset({"name"}),
-        ),
-    )
     collector = _FakeCollector()
     register_collector(collector)
 
@@ -129,4 +98,5 @@ async def test_fake_provider_end_to_end(postgres_db: HubDatabase) -> None:
 
     stored = store.get_provider_snapshot(_PROVIDER)
     assert stored is not None
-    assert stored.models[0].routes[0].activations[0].kind == _ACTIVATION_KIND
+    assert stored.models[0].canonical_model == "fake-model"
+    assert stored.models[0].display_name == "Fake Model"

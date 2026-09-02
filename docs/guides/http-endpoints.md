@@ -635,14 +635,8 @@ their snapshots atomically at startup and every 24 hours.
 Configured local generation endpoints may return transport-specific model rows;
 their availability does not create canonical matrix facts.
 
-Requests that execute provider models use `speed_mode: "standard" | "fast"`.
-Agent spawn accepts it in the REST and MCP request; WebSocket `chat_message`,
-chat-completions, and tool-chat accept it per send. Omission selects `standard`,
-and the value is not persisted to launch defaults, resume metadata, or chat
-session state. Successful execution metadata contains
-`speed: { requested, effective, status, reason }`, where status is `standard`,
-`fast_configured`, `fast_applied`, `fast_unavailable`, or `fast_degraded`.
-`fast_unavailable` fails before provider dispatch.
+Requests that execute provider models carry no speed parameter. Droid's `-fast`
+ids are ordinary models in these rows and are selected through `model`.
 
 ## Communications
 

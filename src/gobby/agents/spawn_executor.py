@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
-from dataclasses import replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
@@ -34,7 +33,6 @@ from gobby.agents.spawn_executor_support import (
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.terminals import TerminalConfig
-from gobby.providers.capabilities.apply import speed_result
 from gobby.storage.terminals import Terminal, TerminalManager, mint_terminal_id
 from gobby.terminals import TerminalRuntimeRegistry, UnregisteredBackendError
 from gobby.terminals.host_client import HostCommandError
@@ -159,8 +157,6 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
                 error=f"Unsupported spawn provider: {request.provider}",
             )
 
-    if request.speed_resolution is not None:
-        result = replace(result, speed=speed_result(request.speed_resolution))
     return result
 
 

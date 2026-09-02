@@ -10,7 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.sessions._terminal import _resolve_tmux_target, register_terminal_tools
+from gobby.mcp_proxy.tools.sessions._terminal import (
+    _FORBIDDEN_SPEED_COMMANDS,
+    _is_speed_command,
+    _resolve_tmux_target,
+    register_terminal_tools,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -141,6 +146,50 @@ class TestResolveTmuxTarget:
         assert error == (
             "Session session-1 terminal_context has no tmux_pane or tmux_session (keys: terminal)"
         )
+
+
+class TestIsSpeedCommand:
+    """Tests for the send_keys provider-speed payload matcher."""
+
+    @pytest.mark.parametrize(
+        "keys",
+        [
+            "/fast",
+            "/fast\n",
+            "/fast\n\n",
+            "  /FAST  ",
+            "\t/Fast\r\n",
+            "/fast --now",
+            "/fast on",
+        ],
+    )
+    def test_matches_the_toggle_however_it_is_typed(self, keys: str) -> None:
+        """Leading and trailing whitespace, case, and trailing arguments do not evade it."""
+        assert _is_speed_command(keys) is True
+
+    @pytest.mark.parametrize(
+        "keys",
+        [
+            "",
+            "   ",
+            "\n",
+            "/faster",
+            "/fastfoo",
+            "/fas",
+            "fast",
+            "not /fast",
+            "echo /fast",
+            "//fast",
+            "/compact",
+        ],
+    )
+    def test_leaves_every_other_payload_alone(self, keys: str) -> None:
+        """Only an exact `/fast` first token matches; prefixes and later tokens do not."""
+        assert _is_speed_command(keys) is False
+
+    def test_the_forbidden_set_is_exactly_the_one_live_toggle(self) -> None:
+        """`/fast` is the only in-session speed toggle across the six supported CLIs."""
+        assert _FORBIDDEN_SPEED_COMMANDS == frozenset({"/fast"})
 
 
 class TestRegisterTerminalTools:
@@ -348,6 +397,71 @@ class TestRegisterTerminalTools:
 
         assert result == {"success": True}
         tmux_manager.send_keys.assert_awaited_once_with("%12", "hello", literal=True)
+
+    @staticmethod
+    def _authorized_send_keys(
+        tmux_manager: MagicMock,
+    ) -> Callable[..., Any]:
+        """Register send_keys with a caller that clears every authorization check."""
+        registry = _TestRegistry(name="test", description="test")
+        caller = MagicMock(id="caller-session", project_id="project-1", agent_run_id=None)
+        target = MagicMock(
+            id="target-session",
+            project_id="project-1",
+            terminal_context={"tmux_pane": "%12"},
+        )
+
+        session_manager = MagicMock()
+        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+        session_manager.get.side_effect = {
+            "caller-session": caller,
+            "target-session": target,
+        }.get
+
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(registry, session_manager, MagicMock())
+
+        send_keys = registry.get_tool("send_keys")
+        assert send_keys is not None
+        return send_keys
+
+    def test_send_keys_gates_the_speed_toggle_before_any_delivery_path(self) -> None:
+        """The `/fast` refusal fires after authorization and before either delivery path."""
+        tmux_manager = MagicMock()
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+        tmux_manager.dispatch_keys = tmux_manager.send_keys
+        send_keys = self._authorized_send_keys(tmux_manager)
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
+                return_value=tmux_manager,
+            ) as mock_get_tmux_manager,
+            patch(
+                "gobby.utils.session_context.get_current_session_id",
+                return_value="caller-session",
+            ),
+        ):
+            refused = asyncio.run(send_keys(session_id="target-session", keys="/fast\n"))
+            delivered = asyncio.run(send_keys(session_id="target-session", keys="/faster\n"))
+
+        assert refused == {
+            "success": False,
+            "error": "send_keys cannot toggle provider speed mode; ask the user to run it",
+            "error_code": "send_keys_speed_command_forbidden",
+        }
+        assert delivered == {"success": True}
+        # The refusal never resolved a pane, so neither the write-coordinator nor the
+        # tmux fallback branch could have run; the nearby `/faster` proves the same
+        # setup does deliver.
+        mock_get_tmux_manager.assert_called_once_with({"tmux_pane": "%12"})
+        tmux_manager.send_keys.assert_awaited_once_with("%12", "/faster\n", literal=True)
 
     def test_capture_output_uses_tmux_when_pane_exists(self) -> None:
         """capture_output reads the live pane when a tmux target is available."""
