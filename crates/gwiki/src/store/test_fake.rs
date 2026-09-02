@@ -9,6 +9,7 @@ use super::{
 /// Test-only in-memory [`WikiIndexStore`]. Production uses [`super::PostgresWikiStore`].
 #[derive(Debug, Default)]
 pub struct FakeWikiStore {
+    _test_env: TestEnv,
     pub documents: BTreeMap<PathBuf, WikiDocument>,
     pub chunks: BTreeMap<PathBuf, Vec<WikiChunk>>,
     pub links: BTreeMap<PathBuf, Vec<WikiLink>>,
@@ -20,6 +21,16 @@ pub struct FakeWikiStore {
     pub chunk_replacements: usize,
     pub link_replacements: usize,
     pub source_upserts: usize,
+}
+
+#[derive(Debug)]
+struct TestEnv;
+
+impl Default for TestEnv {
+    fn default() -> Self {
+        crate::support::test_env::ensure_clean_effective_config();
+        Self
+    }
 }
 
 impl WikiIndexStore for FakeWikiStore {

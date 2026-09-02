@@ -800,8 +800,8 @@ mod tests {
         );
         let grant_path = gobby_core::grant::write_managed_bootstrap(&home.join("grants"), &grant)
             .expect("write managed grant");
-        let _grant_env = EnvGuard::set("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", grant_path.as_os_str())
-            .and_set("GOBBY_HOME", home.as_os_str());
+        let _grant_env = EnvGuard::set("GOBBY_HOME", home.as_os_str())
+            .and_set("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", grant_path.as_os_str());
         let _clear_root = ClearActiveProjectRoot;
         crate::support::env::set_active_project_root(Some(temp.path().to_path_buf()));
 

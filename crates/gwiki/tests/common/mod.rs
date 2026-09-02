@@ -8,6 +8,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 
 pub const PROJECT_ID: &str = "project-123";
+const MANAGED_AGENT_ENV_KEYS: &[&str] = &[
+    "GOBBY_AGENT_RUN_ID",
+    "GOBBY_MANAGED_EXECUTION_ID",
+    gobby_core::grant::MANAGED_BOOTSTRAP_ENV,
+    "GOBBY_SESSION_ID",
+    "GOBBY_PARENT_SESSION_ID",
+    gobby_core::local_token::AGENT_API_TOKEN_ENV,
+    "GOBBY_DAEMON_URL",
+    "GOBBY_PORT",
+    "GOBBY_DAEMON_PORT",
+];
 pub const GCODE_JSON: &str = r#"{
   "id": "project-123",
   "name": "gcode-fixture"
@@ -143,6 +154,7 @@ impl GwikiFixture {
     }
 
     fn apply_isolated_env<'a>(&self, command: &'a mut Command) -> &'a mut Command {
+        scrub_managed_agent_env(command);
         command
             .env("GOBBY_WIKI_HUB", &self.hub)
             .env("GOBBY_HOME", &self.home)
@@ -275,6 +287,7 @@ impl Drop for GwikiScopeCleanup {
 }
 
 pub fn strip_service_env(command: &mut Command) -> &mut Command {
+    scrub_managed_agent_env(command);
     for key in [
         "GWIKI_TEST_DATABASE_URL",
         "GWIKI_POSTGRES_TEST_DATABASE_URL",
@@ -282,11 +295,16 @@ pub fn strip_service_env(command: &mut Command) -> &mut Command {
         "GCODE_TEST_DATABASE_URL",
         "GCODE_POSTGRES_TEST_DATABASE_URL",
         "GOBBY_HOME",
-        "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
     ] {
         command.env_remove(key);
     }
     command
+}
+
+fn scrub_managed_agent_env(command: &mut Command) {
+    for key in MANAGED_AGENT_ENV_KEYS {
+        command.env_remove(key);
+    }
 }
 
 pub fn attach_managed_grant(

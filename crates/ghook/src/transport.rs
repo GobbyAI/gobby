@@ -408,6 +408,24 @@ mod tests {
     use std::thread;
     use tempfile::tempdir;
 
+    fn with_transport_test_env<R>(home: &std::path::Path, closure: impl FnOnce() -> R) -> R {
+        temp_env::with_vars(
+            [
+                ("GOBBY_HOME", Some(home.as_os_str())),
+                ("GOBBY_AGENT_RUN_ID", None),
+                ("GOBBY_MANAGED_EXECUTION_ID", None),
+                (gobby_core::grant::MANAGED_BOOTSTRAP_ENV, None),
+                ("GOBBY_SESSION_ID", None),
+                ("GOBBY_PARENT_SESSION_ID", None),
+                (gobby_core::local_token::AGENT_API_TOKEN_ENV, None),
+                ("GOBBY_DAEMON_URL", None),
+                ("GOBBY_PORT", None),
+                ("GOBBY_DAEMON_PORT", None),
+            ],
+            closure,
+        )
+    }
+
     #[test]
     fn ts13_is_13_digits() {
         let s = ts13();
@@ -765,7 +783,7 @@ mod tests {
         let home = tempdir().unwrap();
         fs::write(home.path().join("local_cli_token"), "ghook-test-token\n").unwrap();
 
-        temp_env::with_var("GOBBY_HOME", Some(home.path()), || {
+        with_transport_test_env(home.path(), || {
             let inbox = home.path().join("inbox");
             let mut headers = BTreeMap::new();
             headers.insert(
@@ -805,7 +823,7 @@ mod tests {
     fn post_omits_authorization_when_token_missing() {
         let home = tempdir().unwrap();
 
-        temp_env::with_var("GOBBY_HOME", Some(home.path()), || {
+        with_transport_test_env(home.path(), || {
             let inbox = home.path().join("inbox");
             let mut headers = BTreeMap::new();
             headers.insert(
