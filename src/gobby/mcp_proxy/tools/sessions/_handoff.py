@@ -125,6 +125,7 @@ def register_handoff_tools(
             return {
                 "success": True,
                 "found": False,
+                "session_id": None,
                 "handoff": "",
                 "leased_tool_schemas": [],
             }

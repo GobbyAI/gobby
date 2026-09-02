@@ -94,6 +94,24 @@ def test_criteria_test_references_expand_declared_scope() -> None:
     assert evaluation.out_of_scope_paths == ()
 
 
+def test_inline_reference_examples_do_not_expand_declared_scope() -> None:
+    evaluation = _evaluate(
+        validation_criteria=(
+            "For example, `test: tests/other/test_feature.py::test_feature` and "
+            "file: docs/evidence/example.md are reference syntax examples."
+        ),
+        annotations=[_annotation("src/gobby/tasks/acceptance_artifacts.py", "manual")],
+        actual_paths={
+            "docs/evidence/example.md",
+            "src/gobby/tasks/acceptance_artifacts.py",
+            "tests/other/test_feature.py",
+        },
+    )
+
+    assert evaluation.declared_paths == ("src/gobby/tasks/acceptance_artifacts.py",)
+    assert evaluation.out_of_scope_paths == ("docs/evidence/example.md",)
+
+
 def test_bundled_manifest_in_scope_when_shared_tree_changes() -> None:
     evaluation = _evaluate(
         annotations=[_annotation("src/gobby/install/shared/skills/tasks/SKILL.md", "manual")],
