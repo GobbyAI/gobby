@@ -118,8 +118,8 @@ def test_memoized_verdict_is_served_per_evidence_state(temp_db: HubDatabase) -> 
         valid=False,
     )
 
-    # Advancing the evidence retires the previous memo instead of accumulating
-    # one row per attempt for the life of the task.
+    # Prior evidence states remain available so a later close can carry the
+    # previous review's requirements forward.
     assert (
         store.get_memoized_verdict(
             task_id=_TASK_ID,
@@ -134,8 +134,9 @@ def test_memoized_verdict_is_served_per_evidence_state(temp_db: HubDatabase) -> 
             review_fingerprint="review",
             evidence_fingerprint="evidence",
         )
-        is None
+        == verdict
     )
+    assert store.get_latest_memoized_verdict(task_id=_TASK_ID) == later
 
 
 def test_memo_rows_stay_out_of_the_agentic_review_lifecycle(temp_db: HubDatabase) -> None:

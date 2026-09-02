@@ -4314,6 +4314,7 @@ class TestAgentRestartRecoveryHelpers:
                 "status": "success",
                 "run_id": "active-run",
                 "continuation_prompt": "Inspect result",
+                "completion_id": "active-run",
             },
         )
         subscriber_manager.remove_completion_subscribers.assert_called_once_with(

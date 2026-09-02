@@ -18,6 +18,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
+from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
 from gobby.storage.tasks import Task
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
 from gobby.tasks.close_checklist import CloseGateResult
@@ -181,6 +182,11 @@ async def _evaluate(
             return_value=ValidationResult(can_close=True),
         ),
         patch.object(lifecycle, "active_validation_backoff", return_value=None),
+        patch.object(
+            lifecycle,
+            "evaluate_task_scope",
+            return_value=TaskScopeEvaluation((), (), ()),
+        ),
         patch.object(
             lifecycle,
             "_derive_close_transcript_evidence",
