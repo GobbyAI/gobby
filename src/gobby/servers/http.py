@@ -278,14 +278,6 @@ class HTTPServer:
             raise RuntimeError("caller must check services.mcp_manager")
         ws_port = self.bootstrap_config.websocket_port
 
-        # Create a lazy getter for tool_proxy that will be available after
-        # GobbyDaemonTools is created. This allows in-process agents to route
-        # tool calls through the MCP proxy.
-        def tool_proxy_getter() -> Any:
-            if self._tools_handler is not None:
-                return self._tools_handler.tool_proxy
-            return None
-
         # Create merge managers if db available
         merge_storage = None
         merge_resolver = None
@@ -344,7 +336,6 @@ class HTTPServer:
             merge_storage=merge_storage,
             merge_resolver=merge_resolver,
             project_id=services.project_id,
-            tool_proxy_getter=tool_proxy_getter,
             inter_session_message_manager=inter_session_message_manager,
             pipeline_executor=services.pipeline_executor,
             workflow_loader=services.workflow_loader,

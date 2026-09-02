@@ -50,7 +50,6 @@ from gobby.sessions.compact_continuation import (
     CODEX_COMPACT_READY_CAPTURE_LINES,
     clear_handoff_compact_continuation_pending,
     mark_handoff_compact_continuation_pending,
-    persist_handoff_resume_leased_tools,
     schedule_codex_handoff_compact_continuation_readiness,
 )
 from gobby.sessions.handoff import (
@@ -563,7 +562,6 @@ def register_terminal_tools(
                 and web_chat_session_registry.find_session(resolved_session_id)[1] is None
             ):
                 compact_target = session_id
-            persist_handoff_resume_leased_tools(db, resolved_session_id)
             attempt_id = uuid4().hex
             attempt_state = None
             try:
@@ -667,7 +665,6 @@ def register_terminal_tools(
                 "error_code": _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE,
             }
 
-        persist_handoff_resume_leased_tools(db, resolved_session_id)
         continuation_prompt = build_handoff_continue_prompt()
         compact_attempt_id = uuid4().hex
         try:

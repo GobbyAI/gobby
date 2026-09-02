@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
     from gobby.llm.service import LLMService
     from gobby.mcp_proxy.metrics import ToolMetricsManager
-    from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
     from gobby.memory.manager import MemoryManager
     from gobby.providers.capacity_service import ProviderCapacityService
     from gobby.storage.clones import LocalCloneManager
@@ -61,7 +60,6 @@ def setup_internal_registries(
     merge_storage: MergeResolutionManager | None = None,
     merge_resolver: MergeResolver | None = None,
     project_id: str | None = None,
-    tool_proxy_getter: Callable[[], ToolProxyService | None] | None = None,
     inter_session_message_manager: InterSessionMessageManager | None = None,
     pipeline_executor: PipelineExecutor | None = None,
     workflow_loader: PipelineLoader | None = None,
@@ -110,8 +108,6 @@ def setup_internal_registries(
         merge_storage: Merge storage manager for conflict resolution
         merge_resolver: Merge resolver for AI resolution
         project_id: Default project ID for worktree operations
-        tool_proxy_getter: Callable that returns ToolProxyService for routing
-            tool calls in in-process agents. Called lazily during agent execution.
         inter_session_message_manager: Inter-session message manager for agent messaging
         pipeline_executor: Pipeline executor for running pipelines
         workflow_loader: Workflow loader for loading pipeline definitions
@@ -240,7 +236,6 @@ def setup_internal_registries(
             terminal_manager=terminal_manager,
             terminal_runtime_registry=terminal_runtime_registry,
             write_coordinator=write_coordinator,
-            tool_proxy_getter=tool_proxy_getter,
         )
         manager.add_registry(session_messages_registry)
         logger.debug("Sessions registry initialized")
