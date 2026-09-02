@@ -154,8 +154,8 @@ async def test_same_session_lock_wait_extends_blocking_effect_deadline(tmp_path)
     )
     await asyncio.wait_for(first_entered.wait(), timeout=1)
 
-    deadline = BlockingEffectDeadline(time.monotonic() - 0.05)
-    with patch("gobby.workflows.hooks.monotonic", side_effect=[100.0, 100.1]):
+    deadline = BlockingEffectDeadline(time.monotonic() - 1.0)
+    with patch("gobby.workflows.hooks.monotonic", side_effect=[100.0, 110.0]):
         second = asyncio.create_task(
             handler._evaluate_rules(
                 _event(
@@ -171,7 +171,7 @@ async def test_same_session_lock_wait_extends_blocking_effect_deadline(tmp_path)
         await asyncio.gather(first, second)
 
     assert len(observed_remaining) == 1
-    assert observed_remaining[0] > 0
+    assert observed_remaining[0] == 1.0
 
 
 @pytest.mark.asyncio

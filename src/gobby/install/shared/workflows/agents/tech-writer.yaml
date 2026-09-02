@@ -80,6 +80,7 @@ step_workflow:
       - tasks
     required_skills_loaded: false
     implementation_complete: false
+    blocker_handed_off: false
 
   exit_condition: "current_step == 'terminate'"
   steps:
@@ -174,9 +175,19 @@ step_workflow:
           action: set_variable
           variable: implementation_complete
           value: true
+        - server: gobby-agents
+          tool: send_message
+          when: >-
+            tool_input.get('message_type') == 'task_blocker'
+            and tool_input.get('target') == 'session'
+            and tool_input.get('target_id') is not None
+            and tool_input.get('target_id') in (vars.get('parent_session_id'), vars.get('parent_session_ref'))
+          action: set_variable
+          variable: blocker_handed_off
+          value: true
       transitions:
         - to: terminate
-          when: "vars.implementation_complete"
+          when: "vars.implementation_complete or vars.blocker_handed_off"
 
     - name: terminate
       description: "Self-terminate"

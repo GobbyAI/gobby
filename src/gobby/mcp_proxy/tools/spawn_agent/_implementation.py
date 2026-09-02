@@ -73,6 +73,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _parent_session_ref(session_manager: Any | None, parent_session_id: str) -> str:
+    """Return the coordinator's ``#N`` ref so a leaf can address it by either form."""
+    if session_manager is None:
+        return parent_session_id
+    try:
+        parent_session = session_manager.get(parent_session_id)
+    except Exception:
+        logger.debug("Failed to load parent session %s", parent_session_id, exc_info=True)
+        return parent_session_id
+    seq_num = getattr(parent_session, "seq_num", None)
+    return f"#{seq_num}" if seq_num else parent_session_id
+
+
 async def spawn_agent_impl(
     prompt: str,
     runner: AgentRunner,
@@ -485,6 +498,11 @@ async def spawn_agent_impl(
     if resolved_task_id:
         effective_initial_variables["assigned_task_id"] = (
             f"#{task_seq_num}" if task_seq_num else resolved_task_id
+        )
+    if "assigned_task_id" in effective_initial_variables:
+        effective_initial_variables["parent_session_id"] = parent_session_id
+        effective_initial_variables["parent_session_ref"] = _parent_session_ref(
+            session_manager, parent_session_id
         )
     if enhanced_prompt:
         effective_initial_variables["prompt"] = enhanced_prompt

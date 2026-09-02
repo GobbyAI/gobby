@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
@@ -12,6 +13,7 @@ import pytest
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
@@ -242,6 +244,56 @@ class TestAggregateBlocks:
             "1. [first-gate] First gate\n"
             "2. [second-gate] Second gate"
         )
+
+    @pytest.mark.asyncio
+    async def test_lookahead_suppression_is_logged_and_recorded(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        _insert_rule(
+            manager,
+            "primary-gate",
+            [RuleEffect(type="block", reason="Primary gate")],
+            priority=10,
+        )
+        _insert_rule(
+            manager,
+            "lookahead-gate",
+            [
+                RuleEffect(type="set_variable", variable="lookahead_ran", value=True),
+                RuleEffect(type="inject_context", template="Suppressed context"),
+                RuleEffect(type="block", reason="Lookahead gate"),
+            ],
+            priority=20,
+        )
+        metrics = MetricsEventStore(db)
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.engine.evaluation"):
+            await RuleEngine(db, metrics_event_store=metrics).evaluate(
+                _make_event(), session_id=SESSION_ID, variables={}
+            )
+
+        suppression_messages = [
+            record.getMessage()
+            for record in caplog.records
+            if "Suppressed non-block rule effects" in record.getMessage()
+        ]
+        assert suppression_messages == [
+            "Suppressed non-block rule effects during block-gate lookahead: "
+            "rule=lookahead-gate event=before_tool "
+            "effect_types=set_variable,inject_context"
+        ]
+
+        records = {
+            record["name"]: record for record in metrics.query_events(event_type="rule_eval")
+        }
+        assert records["primary-gate"]["metadata_json"] is None
+        assert records["lookahead-gate"]["result"] == "block"
+        assert json.loads(records["lookahead-gate"]["metadata_json"]) == {
+            "evaluation_mode": "lookahead"
+        }
 
     @pytest.mark.asyncio
     async def test_aggregate_acknowledges_first_and_lookahead_block_gates(

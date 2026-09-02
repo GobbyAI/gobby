@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Literal
 
@@ -32,8 +34,37 @@ pytestmark = [
 ]
 
 
+def _nested_runner_socket_root() -> Path:
+    """Return the directory the nested runner binds its mux socket in, or skip.
+
+    sandbox-runtime allocates that socket under ``os.tmpdir()``, which the
+    runner takes from GOBBY_SRT_TMPDIR. The directory cannot live inside
+    ``tmp_path``: macOS limits ``sun_path`` to 104 bytes and pytest's temp
+    directories exceed it. Inside a managed execution the outer Seatbelt
+    profile only allows Unix-socket binds under the tmux socket roots, so a
+    nested runner fails with ``listen EPERM``; probe the bind instead of
+    guessing from environment flags.
+    """
+    root = Path(tempfile.gettempdir())
+    probe_path = root / f"srt-probe-{os.getpid()}.sock"
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.bind(str(probe_path))
+    except OSError as exc:
+        pytest.skip(f"cannot bind a nested SRT runner socket under {root}: {exc}")
+    finally:
+        probe.close()
+        probe_path.unlink(missing_ok=True)
+    return root
+
+
 def _run_srt(
-    node: str, runner: Path, settings: Path, workspace: Path, script: str
+    node: str,
+    runner: Path,
+    settings: Path,
+    workspace: Path,
+    script: str,
+    socket_root: Path,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
@@ -49,6 +80,7 @@ def _run_srt(
             script,
         ],
         cwd=workspace,
+        env={**os.environ, "GOBBY_SRT_TMPDIR": str(socket_root)},
         capture_output=True,
         text=True,
         check=False,
@@ -82,6 +114,7 @@ def test_supported_backend_blocks_sensitive_path_traversal_and_later_launch_pers
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node.js is required")
+    socket_root = _nested_runner_socket_root()
     runtime = install_srt_runtime().path
     request.addfinalizer(lambda: _make_runtime_removable(runtime))
     runner = runtime / "runner.mjs"
@@ -111,9 +144,10 @@ def test_supported_backend_blocks_sensitive_path_traversal_and_later_launch_pers
         f"printf hacked >> {runner}",
     )
     for command in denied_commands:
-        assert _run_srt(node, runner, settings, workspace, command).returncode != 0
+        denied = _run_srt(node, runner, settings, workspace, command, socket_root)
+        assert denied.returncode != 0
 
     assert sensitive.read_text(encoding="utf-8") == "operator-secret"
     assert runner.read_bytes() == original_runner
-    later_launch = _run_srt(node, runner, settings, workspace, "exit 0")
+    later_launch = _run_srt(node, runner, settings, workspace, "exit 0", socket_root)
     assert later_launch.returncode == 0, later_launch.stderr

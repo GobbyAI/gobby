@@ -882,16 +882,16 @@ class TestComputeSandboxPaths:
         real_gobby_home.mkdir()
         gobby_home = tmp_path / "gobby-home"
         gobby_home.symlink_to(real_gobby_home, target_is_directory=True)
-        runtime_home = gobby_home / "gcode-runtime" / "current"
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        runtime_home = Path(sandbox_policy.gcode_runtime_write_exceptions(workspace)[0])
 
         paths = compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path=str(workspace),
             provider="codex",
-            env={"PATH": "", "GOBBY_CODE_INDEX_RUNTIME_HOME": str(runtime_home)},
+            env={"PATH": ""},
         )
 
         literal_protected = {

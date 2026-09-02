@@ -172,6 +172,8 @@ def is_assertion_failure(output: str | None) -> bool:
 def validation_run_names_test(command: str, output: str | None, test: AcceptanceTest) -> bool:
     """Return whether a run identifies the exact acceptance test."""
     evidence = f"{command}\n{output or ''}"
+    if Path(test.path).suffix == ".rs" and rust_validation_run_names_test(evidence, test):
+        return True
     symbol_variants = (test.symbol, test.symbol.replace(".", "::"))
     return any(symbol in evidence for symbol in symbol_variants) and (
         test.path in evidence or Path(test.path).name in evidence
@@ -183,6 +185,8 @@ def validation_run_covers_test(command: str, output: str | None, test: Acceptanc
     evidence = f"{command}\n{output or ''}"
     if test.path in evidence or test.reference in evidence:
         return True
+    if Path(test.path).suffix == ".rs":
+        return rust_validation_run_names_test(evidence, test)
     names = (
         Path(test.path).name,
         test.symbol,
@@ -190,6 +194,36 @@ def validation_run_covers_test(command: str, output: str | None, test: Acceptanc
         test.symbol.replace("::", "."),
     )
     return any(_line_contains_word(evidence, name) for name in names)
+
+
+def rust_validation_run_names_test(evidence: str, test: AcceptanceTest) -> bool:
+    """Return whether one evidence line names a Rust test under its source module."""
+    if Path(test.path).suffix != ".rs":
+        return False
+
+    path_parts = list(PurePosixPath(test.path).with_suffix("").parts)
+    if len(path_parts) >= 3 and path_parts[0] == "crates":
+        path_parts = path_parts[2:]
+
+    is_integration_test = bool(path_parts and path_parts[0] == "tests")
+    if path_parts and path_parts[0] in {"src", "tests"}:
+        path_parts = path_parts[1:]
+    if path_parts and path_parts[-1] in {"lib", "main", "mod"}:
+        path_parts.pop()
+    if not path_parts:
+        return False
+
+    module_prefix = "::".join(re.escape(part) for part in path_parts)
+    symbol = re.escape(test.symbol)
+    module_test = re.compile(rf"\b{module_prefix}(?:::[A-Za-z0-9_]+)*::{symbol}\b")
+    integration_stem = re.compile(rf"\b{re.escape(PurePosixPath(test.path).stem)}\b")
+    symbol_word = re.compile(rf"\b{symbol}\b")
+
+    return any(
+        module_test.search(line)
+        or (is_integration_test and integration_stem.search(line) and symbol_word.search(line))
+        for line in evidence.splitlines()
+    )
 
 
 def _line_contains_word(value: str, word: str) -> bool:
@@ -644,6 +678,7 @@ __all__ = [
     "is_assertion_failure",
     "render_acceptance_test_bodies",
     "resolve_acceptance_tests",
+    "rust_validation_run_names_test",
     "validation_run_covers_test",
     "validation_run_names_test",
     "validate_structured_file_evidence",

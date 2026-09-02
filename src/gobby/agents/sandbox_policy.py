@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
+import stat
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -391,10 +393,16 @@ def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
     return canonical_paths([str(path) for path in paths])
 
 
-def gcode_runtime_write_exceptions(env: Mapping[str, str]) -> list[str]:
-    """Allow renewal writes only inside this run's generated gcode home."""
-    runtime_home = env.get("GOBBY_CODE_INDEX_RUNTIME_HOME")
-    return canonical_paths([runtime_home]) if runtime_home else []
+def gcode_runtime_write_exceptions(workspace: Path) -> list[str]:
+    """Allow renewal writes only inside this workspace's generated gcode home."""
+    # Keep the key contract aligned with code_index._runtime_home_for_workspace().
+    try:
+        workspace_key = str(workspace.resolve(strict=False))
+    except OSError:
+        workspace_key = str(workspace)
+    digest = hashlib.sha256(workspace_key.encode("utf-8")).hexdigest()[:16]
+    runtime_home = get_gobby_home() / "gcode-runtime" / digest
+    return canonical_paths([str(runtime_home)])
 
 
 def mcp_config_read_exceptions(workspace: Path) -> list[str]:
@@ -587,7 +595,37 @@ def srt_mux_tmpdir() -> Path:
     return directory
 
 
-def prepare_sandbox_run_paths(run_id: str, env: Mapping[str, str]) -> SandboxRunPaths:
+def _operator_pre_commit_store() -> Path:
+    """Resolve the operator's pre-commit store using pre-commit's precedence."""
+    if pre_commit_home := os.environ.get("PRE_COMMIT_HOME"):
+        return Path(pre_commit_home).expanduser()
+    if xdg_cache_home := os.environ.get("XDG_CACHE_HOME"):
+        return Path(xdg_cache_home).expanduser() / "pre-commit"
+    return Path.home() / ".cache" / "pre-commit"
+
+
+def _prewarm_pre_commit_store(*, workspace: Path, destination: Path) -> None:
+    """Copy the operator's pre-commit store into one writable run cache."""
+    if not (workspace / ".pre-commit-config.yaml").is_file():
+        return
+    source = _operator_pre_commit_store()
+    if not source.is_dir():
+        return
+
+    shutil.copytree(source, destination, dirs_exist_ok=True)
+    for copied_path in (destination, *destination.rglob("*")):
+        required_mode = stat.S_IRUSR | stat.S_IWUSR
+        if copied_path.is_dir():
+            required_mode |= stat.S_IXUSR
+        copied_path.chmod(stat.S_IMODE(copied_path.stat().st_mode) | required_mode)
+
+
+def prepare_sandbox_run_paths(
+    run_id: str,
+    env: Mapping[str, str],
+    *,
+    workspace: Path,
+) -> SandboxRunPaths:
     """Materialize one daemon-owned run root with four writable siblings."""
     managed_root = managed_execution_root()
     bootstrap = env.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
@@ -614,6 +652,10 @@ def prepare_sandbox_run_paths(run_id: str, env: Mapping[str, str]) -> SandboxRun
         candidate = Path(cache_path)
         if candidate.is_relative_to(paths.cache):
             candidate.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _prewarm_pre_commit_store(
+        workspace=workspace,
+        destination=Path(paths.environment("unknown")["XDG_CACHE_HOME"]) / "pre-commit",
+    )
     return paths
 
 
