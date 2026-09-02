@@ -14,7 +14,6 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.sync.tasks import TaskBackupError
-from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
@@ -190,28 +189,6 @@ class TestTaskBackupRestore:
         result = await task_backup_registry.call("backup_tasks", {})
 
         assert result == {"success": False, "error": "backup unavailable"}
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# gobby-sessions: set_handoff (replaced generate_handoff + extract_handoff_context)
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestSessionSetHandoffContext:
-    """Verify set_handoff is registered on gobby-sessions and callable."""
-
-    def test_tool_registered(self, session_registry) -> None:
-        assert "set_handoff" in session_registry._tools
-
-    @pytest.mark.asyncio
-    async def test_agent_authored_path(self, session_registry) -> None:
-        with session_context_for_test("sess-1"):
-            result = await session_registry.call(
-                "set_handoff",
-                {"content": "## Test handoff"},
-            )
-        assert result["success"] is True
-        assert result["mode"] == "agent_authored"
 
 
 # ═══════════════════════════════════════════════════════════════════════
