@@ -554,7 +554,7 @@ class TestCreateTaskTool:
             {
                 "title": "Reject malformed acceptance reference",
                 "category": "code",
-                "validation_criteria": "Covered by test: `tests/tasks/test_validation.py`.",
+                "validation_criteria": "- test: `tests/tasks/test_validation.py`",
                 "implementation_domain": "backend",
             },
         )
