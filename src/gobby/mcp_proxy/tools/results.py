@@ -28,6 +28,7 @@ from gobby.utils.project_context import get_project_context
 logger = logging.getLogger(__name__)
 
 _MAX_SEARCH_LIMIT = 50
+_MAX_SLICE_CHARS = 1_000_000 - _WRAPPER_MUTATION_RESERVE
 _DEFAULT_SLICE_CHARS = 1_000
 _RESULT_ID_SCHEMA: dict[str, object] = {
     "type": "string",
@@ -50,7 +51,6 @@ def create_results_registry(
         description="Retrieve oversized MCP tool results by result_id",
     )
     resolve_config = config_resolver if callable(config_resolver) else lambda: config_resolver
-    schema_limit = resolve_config().max_envelope_chars - _WRAPPER_MUTATION_RESERVE
     store = ToolResultStore(db, resolve_config)
     search_backend = pick_search_backend(db, "tool_result_chunks")
 
@@ -151,8 +151,6 @@ def create_results_registry(
         validation_error = _validate_slice_arguments(offset=offset, limit=limit)
         if validation_error is not None:
             return validation_error
-        if limit > response_limit:
-            return _invalid_arguments(f"limit exceeds current live maximum of {response_limit}")
 
         project_id = current_project_id()
         if project_id is None:
@@ -163,7 +161,9 @@ def create_results_registry(
                 canonical_id,
                 project_id,
                 offset=offset,
-                limit=limit,
+                # The live envelope budget is dynamic, so a limit above it is
+                # clamped rather than rejected; next_offset drives paging.
+                limit=min(limit, response_limit),
             )
         except Exception:
             logger.exception("Failed to read stored tool result")
@@ -176,8 +176,9 @@ def create_results_registry(
         name="get_tool_result",
         description=(
             "Read a bounded character slice from one stored oversized tool result. "
-            f"The effective live maximum is max_envelope_chars - {_WRAPPER_MUTATION_RESERVE}; "
-            f"the default is {_DEFAULT_SLICE_CHARS}."
+            "A limit above the live maximum (max_envelope_chars - "
+            f"{_WRAPPER_MUTATION_RESERVE}) is clamped to it; page with next_offset. "
+            f"The default slice is {_DEFAULT_SLICE_CHARS} characters."
         ),
         input_schema={
             "type": "object",
@@ -191,7 +192,7 @@ def create_results_registry(
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": schema_limit,
+                    "maximum": _MAX_SLICE_CHARS,
                     "default": _DEFAULT_SLICE_CHARS,
                 },
             },
