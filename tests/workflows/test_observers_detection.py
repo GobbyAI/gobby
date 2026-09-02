@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -649,13 +649,14 @@ class TestDetectTaskClaimClaimOperations:
         assert variables.get("task_claimed") is True
         assert "new-task-uuid" in variables.get("claimed_tasks", {})
 
-    def test_create_task_claim_caches_python_skill_metadata(
+    def test_create_task_claim_caches_explicit_extra_skills(
         self, variables, make_after_tool_event, mock_task_manager
     ) -> None:
         mock_task_manager.get_task.return_value = _claimed_task(
             task_id="new-task-uuid",
             title="Update src/gobby/tasks/metadata.py",
             validation_criteria="src/gobby/tasks/metadata.py handles task metadata",
+            additional_skills=["python", "context7"],
         )
 
         event = make_after_tool_event(
@@ -670,51 +671,30 @@ class TestDetectTaskClaimClaimOperations:
 
         detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
 
-        assert variables["claimed_task_language_skills"] == ["python"]
-        assert variables["claimed_task_required_skills"] == [
-            "tasks",
-            "python",
-            "development-discipline",
-        ]
-        assert "src/gobby/tasks/metadata.py" in variables["claimed_task_files"]
+        assert variables["claimed_task_extra_skills"] == ["python", "context7"]
 
-    def test_claim_task_caches_rust_skill_from_affected_files(
+    def test_claim_task_does_not_infer_language_extras_from_affected_files(
         self, variables, make_after_tool_event, mock_task_manager
     ) -> None:
         task = _claimed_task(task_id="task-uuid-123", title="Update parser")
         mock_task_manager.get_task.return_value = task
 
-        with patch(
-            "gobby.workflows.claimed_task_skills.TaskAffectedFileManager"
-        ) as MockAffectedFiles:
-            mock_af_manager = MagicMock()
-            mock_af_manager.get_files.return_value = [
-                SimpleNamespace(file_path="crates/gobby/src/lib.rs")
-            ]
-            MockAffectedFiles.return_value = mock_af_manager
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "claim_task",
+                "arguments": {"task_id": "task-123"},
+            },
+            tool_output={
+                "success": True,
+                "result": {"id": "task-uuid-123", "status": "in_progress"},
+            },
+        )
 
-            event = make_after_tool_event(
-                "mcp__gobby__call_tool",
-                tool_input={
-                    "server_name": "gobby-tasks",
-                    "tool_name": "claim_task",
-                    "arguments": {"task_id": "task-123"},
-                },
-                tool_output={
-                    "success": True,
-                    "result": {"id": "task-uuid-123", "status": "in_progress"},
-                },
-            )
+        detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
 
-            detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
-
-        assert variables["claimed_task_language_skills"] == ["rust"]
-        assert variables["claimed_task_required_skills"] == [
-            "tasks",
-            "rust",
-            "development-discipline",
-        ]
-        assert variables["claimed_task_files"] == ["crates/gobby/src/lib.rs"]
+        assert variables["claimed_task_extra_skills"] == []
 
     @pytest.mark.parametrize(
         ("labels", "additional_skills", "validation_criteria"),
@@ -755,9 +735,9 @@ class TestDetectTaskClaimClaimOperations:
 
         detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
 
-        assert "test-driven-development" in variables["claimed_task_required_skills"]
+        assert "test-driven-development" in variables["claimed_task_extra_skills"]
 
-    def test_reconcile_claimed_tasks_refreshes_skill_metadata(
+    def test_reconcile_claimed_tasks_refreshes_extra_skills(
         self, variables, mock_task_manager
     ) -> None:
         task = _claimed_task(
@@ -765,6 +745,7 @@ class TestDetectTaskClaimClaimOperations:
             title="Update src/gobby/workflows/hooks.py",
             validation_criteria="src/gobby/workflows/hooks.py caches metadata",
             claimed_by_session_id=SESSION_ID,
+            additional_skills=["yaml"],
         )
         mock_task_manager.get_task.return_value = task
         variables["claimed_tasks"] = {"task-uuid-123": "#123"}
@@ -772,11 +753,7 @@ class TestDetectTaskClaimClaimOperations:
         reconcile_claimed_tasks(variables, SESSION_ID, task_manager=mock_task_manager)
 
         assert variables["task_claimed"] is True
-        assert variables["claimed_task_required_skills"] == [
-            "tasks",
-            "python",
-            "development-discipline",
-        ]
+        assert variables["claimed_task_extra_skills"] == ["yaml"]
 
     def test_create_task_without_claim_does_not_set_task_claimed(
         self, variables, make_after_tool_event, mock_task_manager
@@ -1217,10 +1194,10 @@ class TestDetectMcpCall:
 
         assert "loaded_skills" not in variables
 
-    def test_missing_required_skill_is_recorded_as_unresolvable(
+    def test_missing_claimed_task_extra_is_recorded_as_unresolvable(
         self, variables, make_after_tool_event, caplog
     ) -> None:
-        variables["claimed_task_required_skills"] = ["typo-skill"]
+        variables["claimed_task_extra_skills"] = ["typo-skill"]
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
             tool_input={
@@ -1234,8 +1211,8 @@ class TestDetectMcpCall:
         with caplog.at_level(logging.WARNING, logger="gobby.workflows.observers"):
             detect_mcp_call(event, variables, SESSION_ID)
 
-        assert variables["unresolvable_required_skills"] == ["typo-skill"]
-        assert "dropping unresolvable required skill typo-skill" in caplog.text
+        assert variables["unresolvable_claimed_task_extra_skills"] == ["typo-skill"]
+        assert "suppressing unresolvable claimed-task extra skill typo-skill" in caplog.text
 
     def test_ignores_missing_server_or_tool(self, variables, make_after_tool_event) -> None:
         event = make_after_tool_event(

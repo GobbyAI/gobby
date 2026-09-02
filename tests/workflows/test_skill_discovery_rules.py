@@ -100,7 +100,8 @@ def _skill_fetch_template(name: str) -> str:
 
 
 SKILL_DISCOVERY_RULES = {
-    "discover-skill-hubs-on-turn-start",
+    "bootstrap-default-agent-core-skills",
+    "list-skill-hubs-once-per-session",
     "require-bash-skill",
     "require-c-skill",
     "require-cpp-skill",
@@ -130,11 +131,11 @@ REPLACED_SKILL_RULES = {
     "inject-python-skill",
     "inject-rust-skill",
     "block-and-teach-code-index",
+    "discover-skill-hubs-on-turn-start",
 }
 
 BREVITY_RULES = {
     "opt-out-brevity",
-    "load-brevity-on-turn-start",
     "inject-brevity-drift-feedback",
     "remind-brevity-on-turn-start",
     "detect-brevity-literal-drift",
@@ -199,15 +200,126 @@ class TestSkillDiscoverySync:
         assert "memory_nudge_fired" not in set_variables
 
 
-# --- discover-skill-hubs-on-turn-start ---
+# --- ordered context-epoch bootstrap ---
 
 
-class TestDiscoverSkillHubsOnTurnStart:
+class TestDefaultAgentCoreSkillBootstrap:
+    CORE_SKILLS = ("memory", "loading-skills", "brevity")
+
+    @staticmethod
+    def _turn_event(prompt: str = "Continue.") -> HookEvent:
+        return HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"prompt": prompt},
+        )
+
+    def test_structure_preserves_core_order(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("bootstrap-default-agent-core-skills")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+
+        assert body.event.value == "turn_start"
+        assert body.effects is not None
+        assert [effect.skill for effect in body.effects] == list(self.CORE_SKILLS)
+        assert all(effect.type == "load_skill" for effect in body.effects)
+        assert "handoff_pull_pending" in (body.when or "")
+        assert "has_open_tool_error" in (body.when or "")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "reset_source",
+        [
+            pytest.param(None, id="initial-start"),
+            pytest.param("clear", id="clear"),
+            pytest.param("compact", id="compact"),
+        ],
+    )
+    async def test_bootstraps_missing_core_skills_each_context_epoch(
+        self,
+        db: HubDatabase,
+        reset_source: str | None,
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {
+            "loaded_skills": list(self.CORE_SKILLS) if reset_source else [],
+            "skill_discovery_instructions_shown": True,
+            "_memory_initial_stop_checked": False,
+            "open_tool_errors": [],
+            "servers_listed": True,
+        }
+        if reset_source:
+            reset = HookEvent(
+                event_type=HookEventType.SESSION_START,
+                session_id=SESSION_ID,
+                source=SessionSource.CODEX,
+                timestamp=datetime.now(UTC),
+                data={"source": reset_source},
+            )
+            await engine.evaluate(reset, session_id=SESSION_ID, variables=variables)
+            assert variables["loaded_skills"] == []
+
+        response = await engine.evaluate(
+            self._turn_event(),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        context = response.context or ""
+        directives = [skill_fetch_directive(skill) for skill in self.CORE_SKILLS]
+        assert all(directive in context for directive in directives)
+        assert [context.index(directive) for directive in directives] == sorted(
+            context.index(directive) for directive in directives
+        )
+
+    @pytest.mark.asyncio
+    async def test_loaded_core_skills_stay_silent(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        response = await RuleEngine(db).evaluate(
+            self._turn_event(),
+            session_id=SESSION_ID,
+            variables={
+                "loaded_skills": list(self.CORE_SKILLS),
+                "skill_discovery_instructions_shown": True,
+                "_memory_initial_stop_checked": True,
+                "servers_listed": True,
+            },
+        )
+
+        context = response.context or ""
+        assert all(skill_fetch_directive(skill) not in context for skill in self.CORE_SKILLS)
+
+    @pytest.mark.asyncio
+    async def test_brevity_opt_out_suppresses_bootstrap_load(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        response = await RuleEngine(db).evaluate(
+            self._turn_event("stop brevity"),
+            session_id=SESSION_ID,
+            variables={
+                "loaded_skills": ["memory", "loading-skills"],
+                "skill_discovery_instructions_shown": True,
+                "_memory_initial_stop_checked": True,
+                "brevity_disabled": False,
+                "servers_listed": True,
+            },
+        )
+
+        assert skill_fetch_directive("brevity") not in (response.context or "")
+
+
+# --- once-per-session skill hub listing ---
+
+
+class TestListSkillHubsOncePerSession:
     """Verify the once-per-session skill hub discovery rule."""
 
     def test_structure(self, db, manager) -> None:
         _sync_bundled(db)
-        row = manager.get_by_name("discover-skill-hubs-on-turn-start")
+        row = manager.get_by_name("list-skill-hubs-once-per-session")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
@@ -215,23 +327,22 @@ class TestDiscoverSkillHubsOnTurnStart:
         assert body.event.value == "turn_start"
         assert "skill_discovery_instructions_shown" in (body.when or "")
         assert "handoff_pull_pending" in (body.when or "")
-        assert [effect.type for effect in body.effects] == [
-            "load_skill",
-            "mcp_call",
-        ]
-        assert body.effects[0].skill == "loading-skills"
+        assert body.effects is not None
+        assert [effect.type for effect in body.effects] == ["mcp_call"]
+        assert body.effects[0].server == "gobby-skills"
+        assert body.effects[0].tool == "list_hubs"
+        assert body.effects[0].inject_result is True
+        assert body.effects[0].success_variable == "skill_discovery_instructions_shown"
         assert getattr(body.effects[0], "delivery", None) == "on_receipt"
-        assert body.effects[1].server == "gobby-skills"
-        assert body.effects[1].tool == "list_hubs"
-        assert body.effects[1].inject_result is True
-        assert body.effects[1].success_variable == "skill_discovery_instructions_shown"
-        assert getattr(body.effects[1], "delivery", None) == "on_receipt"
 
     @pytest.mark.asyncio
-    async def test_injects_guidance_and_sets_guard_after_success(self, db) -> None:
+    async def test_injects_listing_once_and_sets_guard_after_success(self, db) -> None:
         _sync_bundled(db)
+        calls = 0
 
         async def dispatcher(server: str, tool: str, args: dict, event: Any) -> dict[str, Any]:
+            nonlocal calls
+            calls += 1
             assert server == "gobby-skills"
             assert tool == "list_hubs"
             assert args == {}
@@ -250,7 +361,10 @@ class TestDiscoverSkillHubsOnTurnStart:
                 },
             }
 
-        variables: dict[str, Any] = {"loaded_skills": ["brevity"], "servers_listed": True}
+        variables: dict[str, Any] = {
+            "loaded_skills": ["memory", "loading-skills", "brevity"],
+            "servers_listed": True,
+        }
         engine = RuleEngine(db, mcp_dispatcher=dispatcher)
         event = HookEvent(
             event_type=HookEventType.BEFORE_AGENT,
@@ -261,12 +375,14 @@ class TestDiscoverSkillHubsOnTurnStart:
         )
 
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.context is not None
-        assert skill_fetch_directive("loading-skills") in response.context
+        assert skill_fetch_directive("loading-skills") not in response.context
         assert "<available-skill-hubs>" in response.context
         assert "- clawdhub (clawdhub, auth: not required)" in response.context
         assert variables["skill_discovery_instructions_shown"] is True
+        assert calls == 1
         assert all(
             call.get("tool") != "list_hubs" for call in response.metadata.get("mcp_calls", [])
         )
@@ -308,7 +424,10 @@ class TestDiscoverSkillHubsOnTurnStart:
         ) -> dict[str, Any]:
             return {"success": False, "result": {"error": "hub manager unavailable"}}
 
-        variables: dict[str, Any] = {"loaded_skills": ["brevity"], "servers_listed": True}
+        variables: dict[str, Any] = {
+            "loaded_skills": ["memory", "loading-skills", "brevity"],
+            "servers_listed": True,
+        }
         engine = RuleEngine(db, mcp_dispatcher=dispatcher)
         event = HookEvent(
             event_type=HookEventType.BEFORE_AGENT,
@@ -337,26 +456,17 @@ class TestBrevityRules:
             "servers_listed": True,
         }
 
-    def test_brevity_rules_sync_and_old_first_turn_rule_is_orphaned(self, db, manager) -> None:
+    def test_brevity_rules_sync_and_retired_loaders_are_absent(self, db, manager) -> None:
         _sync_bundled(db)
 
         rule_names = {r.name for r in manager.list_all()}
 
         assert BREVITY_RULES.issubset(rule_names)
         assert "inject-brevity-on-first-turn" not in rule_names
+        assert "load-brevity-on-turn-start" not in rule_names
 
     def test_reinforce_brevity_structure(self, db, manager) -> None:
         _sync_bundled(db)
-
-        load_row = manager.get_by_name("load-brevity-on-turn-start")
-        assert load_row is not None
-        load_body = RuleDefinitionBody.model_validate(load_row.definition_json)
-        assert load_body.event.value == "turn_start"
-        assert load_body.effects[0].type == "load_skill"
-        assert load_body.effects[0].skill == "brevity"
-        assert "brevity_disabled" in (load_body.when or "")
-        assert "skill_loaded('brevity')" in (load_body.when or "")
-        assert "handoff_pull_pending" in (load_body.when or "")
 
         reminder_row = manager.get_by_name("remind-brevity-on-turn-start")
         assert reminder_row is not None
@@ -365,7 +475,9 @@ class TestBrevityRules:
         assert reminder_body.effects[0].type == "inject_context"
 
     @pytest.mark.asyncio
-    async def test_load_brevity_skips_while_handoff_pull_pending(self, db: HubDatabase) -> None:
+    async def test_bootstrap_skips_brevity_while_handoff_pull_pending(
+        self, db: HubDatabase
+    ) -> None:
         _sync_bundled(db)
         variables: dict[str, Any] = self._turn_variables(loaded=False)
         variables["handoff_pull_pending"] = True
@@ -4447,8 +4559,8 @@ class TestCodeIndexNavigationRules:
     @pytest.mark.asyncio
     async def test_unnormalized_repo_search_with_cwd_and_project_path_still_blocks(
         self,
-        db,
-        tmp_path,
+        db: HubDatabase,
+        tmp_path: Path,
     ) -> None:
         _sync_bundled(db)
         repo = tmp_path / "repo"

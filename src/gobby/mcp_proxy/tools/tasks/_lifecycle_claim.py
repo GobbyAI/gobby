@@ -15,7 +15,7 @@ from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskAlreadyClaimedError, TaskClosedError, TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
-from gobby.workflows.claimed_task_skills import build_claimed_task_skill_state
+from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +164,7 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             ref = f"#{task.seq_num}" if task.seq_num else resolved_id
             merge_dict = add_claimed_task(session_vars, resolved_id, ref)
             current_vars = {**session_vars, **merge_dict}
-            merge_dict.update(build_claimed_task_skill_state(current_vars, ctx.task_manager))
+            merge_dict.update(build_claimed_task_extra_skill_state(current_vars, ctx.task_manager))
             ctx.session_var_manager.merge_variables(resolved_session_id, merge_dict)
         except Exception as e:
             logger.debug("Best-effort session variable setting failed: %s", e)

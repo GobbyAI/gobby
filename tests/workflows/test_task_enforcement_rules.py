@@ -10,18 +10,21 @@ from __future__ import annotations
 import shlex
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.mcp_proxy.tools.tasks._factory import create_task_registry
+from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.skills.formatting import (
     skill_fetch_directive,
     skill_fetch_proxy_path,
 )
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.git_utils import DirtyFiles
@@ -36,7 +39,109 @@ pytestmark = pytest.mark.unit
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 EXTERNAL_SESSION_ID = "22222222-2222-4222-8222-222222222222"
 CLAIM_TASK_ID = "33333333-3333-4333-8333-333333330043"
-DISCLOSURE_RULE_NAME = "disclose-claimed-task-required-skills"
+DISCLOSURE_RULE_NAME = "disclose-claimed-task-extra-skills"
+
+INTERACTIVE_TASK_MUTATIONS = (
+    "add_dependency",
+    "add_label",
+    "auto_link_commits",
+    "backup_tasks",
+    "claim_task",
+    "close_task",
+    "create_task",
+    "de_escalate_task",
+    "delete_task",
+    "escalate_task",
+    "link_commit",
+    "link_task_to_session",
+    "release_task_paths",
+    "remove_dependency",
+    "remove_label",
+    "reopen_task",
+    "restore_tasks",
+    "submit_close_review",
+    "unlink_commit",
+    "update_observed_files",
+    "update_task",
+)
+TASK_REVIEW_OPERATIONS = (
+    "approve_review",
+    "reject_review",
+    "submit_for_review",
+)
+READ_ONLY_TASK_TOOLS = (
+    "check_dependency_cycles",
+    "explain_dispatch",
+    "get_build_status",
+    "get_dependency_tree",
+    "get_session_tasks",
+    "get_task",
+    "get_task_diff",
+    "get_task_sessions",
+    "get_task_stages",
+    "get_task_type_defaults",
+    "inspect_task_path_ownership",
+    "list_blocked_tasks",
+    "list_build_history",
+    "list_ready_tasks",
+    "list_stages_registry",
+    "list_tasks",
+    "search_tasks",
+    "suggest_next_task",
+)
+NON_INTERACTIVE_TASK_OPS = (
+    "add_stage",
+    "append_description_section",
+    "backfill_plan_review_lessons",
+    "build_clean",
+    "build_restart",
+    "build_resume",
+    "build_stop",
+    "build_task",
+    "cancel_expansion_run",
+    "check_expansion_qa_result",
+    "clear_isolation_pair",
+    "close_linked_github_issue",
+    "complete_stage",
+    "delete_stage",
+    "fail_stage",
+    "find_file_overlaps",
+    "get_affected_files",
+    "get_artifacts",
+    "get_delivery_state",
+    "get_expansion_run",
+    "get_latest_expansion_run",
+    "import_github_issues",
+    "initialize_task_manifest",
+    "link_task_to_github_issue",
+    "open_delivery_pr",
+    "record_merge_result",
+    "record_plan_enhancement",
+    "record_pr_opened",
+    "record_pr_state",
+    "record_pr_verdict",
+    "reindex_tasks",
+    "remove_stage",
+    "reset_expansion_output",
+    "restore_stage",
+    "resume_expansion_run",
+    "run_expansion_qa_coverage",
+    "save_expansion_qa_result",
+    "set_affected_files",
+    "set_artifact",
+    "set_artifacts_atomic",
+    "set_task_type_defaults",
+    "start_expansion_run",
+    "start_stage",
+    "update_stage",
+    "validate_expansion_run",
+    "validate_plan_file",
+    "wire_affected_files_from_run",
+)
+TASK_MUTATION_CASES = tuple(
+    [("gobby-tasks", name) for name in INTERACTIVE_TASK_MUTATIONS]
+    + [("gobby-tasks-ops", name) for name in TASK_REVIEW_OPERATIONS]
+)
 
 
 @pytest.fixture
@@ -156,14 +261,11 @@ TASK_ENFORCEMENT_RULES = {
     "block-native-task-tools-unclaimed",
     "block-native-todo-write",
     "block-reopen-task",
-    "require-task-creation-skill-on-schema",
-    "require-task-transitions-skill-on-lifecycle",
-    "require-task-creation-skill-loaded",
-    "require-task-transitions-skill-loaded",
+    "require-tasks-skill-for-mutations",
     "require-task-before-edit",
     "require-task-before-commit",
     DISCLOSURE_RULE_NAME,
-    "require-claimed-task-required-skills",
+    "require-claimed-task-extra-skills",
     "require-commit-before-status",
     "require-clean-tree-before-status",
     "task-commit-project-path-allowlist-before-git",
@@ -176,6 +278,12 @@ TASK_ENFORCEMENT_RULES = {
 REPLACED_TASK_SKILL_RULES = {
     "inject-task-creation-on-schema",
     "inject-transition-skill",
+    "require-task-creation-skill-on-schema",
+    "require-task-transitions-skill-on-lifecycle",
+    "require-task-creation-skill-loaded",
+    "require-task-transitions-skill-loaded",
+    "require-claimed-task-required-skills",
+    "disclose-claimed-task-required-skills",
 }
 
 
@@ -858,21 +966,142 @@ asyncio.run(main())
         assert result is True, "Should block if any touched file needs a task"
 
 
-class TestRequireClaimedTaskRequiredSkills:
-    """Verify claimed task metadata gates first source-code write."""
+class TestRequireTasksSkillForMutations:
+    """Verify one classifier covers interactive task mutations across event shapes."""
+
+    def test_real_registry_inventory_matches_independent_classification(self) -> None:
+        task_manager = MagicMock(spec=LocalTaskManager)
+        task_manager.db = MagicMock()
+        registered = {
+            "gobby-tasks": {
+                tool["name"] for tool in create_task_registry(task_manager).list_tools()
+            },
+            "gobby-tasks-ops": {
+                tool["name"] for tool in create_task_ops_registry(task_manager).list_tools()
+            },
+        }
+
+        assert registered["gobby-tasks"] == set(INTERACTIVE_TASK_MUTATIONS) | set(
+            READ_ONLY_TASK_TOOLS
+        )
+        assert registered["gobby-tasks-ops"] == set(TASK_REVIEW_OPERATIONS) | set(
+            NON_INTERACTIVE_TASK_OPS
+        )
+
+    @staticmethod
+    def _event_shape(
+        route: str,
+        server_name: str,
+        tool_name: str,
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        if route == "direct":
+            return {}, {"mcp_server": server_name, "mcp_tool": tool_name}
+        proxy_tool = "mcp__gobby__call_tool"
+        if route == "schema":
+            proxy_tool = "mcp__gobby__get_tool_schema"
+        return (
+            {"server_name": server_name, "tool_name": tool_name},
+            {"tool_name": proxy_tool},
+        )
+
+    @pytest.mark.parametrize(("server_name", "tool_name"), TASK_MUTATION_CASES)
+    @pytest.mark.parametrize("route", ["direct", "proxy", "schema"])
+    def test_every_classified_mutation_matches_each_event_shape(
+        self,
+        server_name: str,
+        tool_name: str,
+        route: str,
+    ) -> None:
+        from gobby.workflows.enforcement.blocking import task_mutation_requires_tasks_skill
+
+        tool_input, event_data = self._event_shape(route, server_name, tool_name)
+
+        assert task_mutation_requires_tasks_skill(tool_input, event_data) is True
+
+    @pytest.mark.parametrize("tool_name", READ_ONLY_TASK_TOOLS)
+    @pytest.mark.parametrize("route", ["direct", "proxy", "schema"])
+    def test_task_reads_remain_ungated(self, tool_name: str, route: str) -> None:
+        from gobby.workflows.enforcement.blocking import task_mutation_requires_tasks_skill
+
+        tool_input, event_data = self._event_shape(route, "gobby-tasks", tool_name)
+
+        assert task_mutation_requires_tasks_skill(tool_input, event_data) is False
+
+    def test_rule_uses_normalized_helper_and_default_agent_scope(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-tasks-skill-for-mutations")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+
+        assert body.event.value == "before_tool"
+        assert "variables.get('_agent_type') == 'default'" in (body.when or "")
+        assert "task_mutation_requires_tasks_skill(tool_input, event.data)" in (body.when or "")
+        assert body.effects[0].reason == _skill_fetch_template("tasks")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("agent_type", "loaded_skills", "expected"),
+        [
+            pytest.param("default", [], "block", id="interactive-default"),
+            pytest.param("default", ["tasks"], "allow", id="already-loaded"),
+            pytest.param("backend-developer", [], "allow", id="specialized-developer"),
+            pytest.param("qa-reviewer", [], "allow", id="specialized-reviewer"),
+            pytest.param("pipeline", [], "allow", id="pipeline"),
+        ],
+    )
+    async def test_rule_excludes_specialized_agents_and_loaded_sessions(
+        self,
+        db: HubDatabase,
+        agent_type: str,
+        loaded_skills: list[str],
+        expected: str,
+    ) -> None:
+        _sync_bundled(db)
+        with db.transaction() as conn:
+            conn.execute("UPDATE rule_definitions SET enabled = FALSE")
+            conn.execute(
+                "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
+                ("require-tasks-skill-for-mutations",),
+            )
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "update_task",
+                    "arguments": {"task_id": "#1"},
+                },
+            },
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={"_agent_type": agent_type, "loaded_skills": loaded_skills},
+        )
+
+        assert response.decision == expected
+
+
+class TestRequireClaimedTaskExtraSkills:
+    """Verify claimed-task extras reload before the first source write."""
 
     CONDITION = (
-        "event.data.get('canonical_tool_kind') == 'write' "
+        "variables.get('task_claimed') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
         "and claimed_task_source_code_write(tool_input, event.data) "
-        "and missing_claimed_task_required_skills(tool_input, event.data) != []"
+        "and missing_claimed_task_extra_skills() != []"
     )
 
     def _eval(
         self,
         *,
         file_path: str = "/project/src/main.py",
-        required_skills: list[str] | None = None,
-        language_skills: list[str] | None = None,
+        extra_skills: list[str] | None = None,
         loaded_skills: list[str] | None = None,
         canonical_tool_kind: str = "write",
     ) -> bool:
@@ -883,8 +1112,8 @@ class TestRequireClaimedTaskRequiredSkills:
 
         context = {
             "variables": {
-                "claimed_task_required_skills": required_skills or [],
-                "claimed_task_language_skills": language_skills or [],
+                "task_claimed": True,
+                "claimed_task_extra_skills": extra_skills or [],
                 "loaded_skills": loaded_skills or [],
             },
             "event": SimpleNamespace(
@@ -904,51 +1133,27 @@ class TestRequireClaimedTaskRequiredSkills:
     def test_rule_syncs_with_dynamic_skill_directive(self, db, manager) -> None:
         _sync_bundled(db)
 
-        row = manager.get_by_name("require-claimed-task-required-skills")
+        row = manager.get_by_name("require-claimed-task-extra-skills")
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
-        helper = "missing_claimed_task_required_skills(tool_input, event.data)"
+        helper = "missing_claimed_task_extra_skills()"
         assert helper in body.when
         assert "skill_fetch_batch_directive" in body.effects[0].reason
 
-    def test_condition_blocks_inferred_python_from_task_metadata(self) -> None:
-        assert (
-            self._eval(
-                required_skills=["python", "typescript", "development-discipline"],
-                language_skills=["python", "typescript"],
-            )
-            is True
-        )
+    def test_condition_blocks_missing_extra(self) -> None:
+        assert self._eval(extra_skills=["context7"]) is True
 
-    def test_condition_allows_python_edit_without_typescript_skill(self) -> None:
-        assert (
-            self._eval(
-                required_skills=["python", "typescript", "development-discipline"],
-                language_skills=["python", "typescript"],
-                loaded_skills=["python", "development-discipline"],
-            )
-            is False
-        )
+    def test_condition_stays_silent_without_explicit_or_tdd_extras(self) -> None:
+        assert self._eval(extra_skills=[]) is False
 
-    def test_condition_requires_typescript_for_tsx_edit(self) -> None:
-        assert (
-            self._eval(
-                file_path="/project/web/app.tsx",
-                required_skills=["python", "typescript", "development-discipline"],
-                language_skills=["python", "typescript"],
-                loaded_skills=["development-discipline"],
-            )
-            is True
-        )
-
-    def test_condition_blocks_tdd_required_metadata(self) -> None:
+    def test_condition_blocks_inferred_tdd_extra(self) -> None:
         assert (
             self._eval(
                 file_path="/project/src/app.ts",
-                required_skills=["test-driven-development"],
+                extra_skills=["test-driven-development"],
             )
             is True
         )
@@ -957,19 +1162,13 @@ class TestRequireClaimedTaskRequiredSkills:
         assert (
             self._eval(
                 file_path="/project/docs/notes.md",
-                required_skills=["development-discipline"],
+                extra_skills=["context7"],
             )
             is False
         )
 
     def test_condition_skips_when_skills_loaded(self) -> None:
-        assert (
-            self._eval(
-                required_skills=["python", "development-discipline"],
-                loaded_skills=["python", "development-discipline"],
-            )
-            is False
-        )
+        assert self._eval(extra_skills=["context7"], loaded_skills=["context7"]) is False
 
     @pytest.mark.parametrize(
         "source",
@@ -982,7 +1181,7 @@ class TestRequireClaimedTaskRequiredSkills:
         ],
     )
     @pytest.mark.asyncio
-    async def test_rule_blocks_with_every_missing_skill_in_load_order(
+    async def test_post_reset_write_blocks_with_missing_extras_in_order(
         self,
         db: HubDatabase,
         source: SessionSource,
@@ -1008,27 +1207,21 @@ class TestRequireClaimedTaskRequiredSkills:
             session_id=SESSION_ID,
             variables={
                 "task_claimed": True,
-                "claimed_task_required_skills": [
-                    "tasks",
-                    "python",
-                    "development-discipline",
-                ],
-                "loaded_skills": [],
+                "claimed_task_extra_skills": ["context7", "test-driven-development"],
+                "loaded_skills": ["python", "development-discipline", "restraint"],
             },
         )
 
         assert response.decision == "block"
         assert response.reason is not None
-        calls = [
-            skill_fetch_proxy_path(skill) for skill in ("tasks", "python", "development-discipline")
-        ]
+        calls = [skill_fetch_proxy_path(skill) for skill in ("context7", "test-driven-development")]
         assert all(call in response.reason for call in calls)
         assert [response.reason.index(call) for call in calls] == sorted(
             response.reason.index(call) for call in calls
         )
 
     @pytest.mark.asyncio
-    async def test_rule_allows_when_all_relevant_skills_loaded(self, db: HubDatabase) -> None:
+    async def test_rule_allows_after_extras_reload(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         event = HookEvent(
@@ -1051,12 +1244,7 @@ class TestRequireClaimedTaskRequiredSkills:
             variables={
                 "task_claimed": True,
                 "enforce_tdd": False,
-                "claimed_task_required_skills": [
-                    "python",
-                    "typescript",
-                    "development-discipline",
-                ],
-                "claimed_task_language_skills": ["python", "typescript"],
+                "claimed_task_extra_skills": ["context7"],
                 "loaded_skills": [
                     "python",
                     "development-discipline",
@@ -1091,7 +1279,7 @@ class TestRequireClaimedTaskRequiredSkills:
         response = await engine.evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"claimed_task_required_skills": [], "loaded_skills": []},
+            variables={"claimed_task_extra_skills": [], "loaded_skills": []},
         )
 
         assert response.decision == "block"
@@ -1099,7 +1287,7 @@ class TestRequireClaimedTaskRequiredSkills:
         assert skill_fetch_directive("rust") in response.reason
 
 
-class TestDiscloseClaimedTaskRequiredSkills:
+class TestDiscloseClaimedTaskExtraSkills:
     @staticmethod
     def _engine(db: HubDatabase) -> RuleEngine:
         _sync_bundled(db)
@@ -1135,7 +1323,7 @@ class TestDiscloseClaimedTaskRequiredSkills:
             ),
         ],
     )
-    async def test_claim_discloses_every_missing_skill_in_required_order(
+    async def test_claim_discloses_only_missing_extras_in_declared_order(
         self,
         db: HubDatabase,
         tool_name: str,
@@ -1149,27 +1337,18 @@ class TestDiscloseClaimedTaskRequiredSkills:
             session_id=SESSION_ID,
             variables={
                 "claimed_tasks": {CLAIM_TASK_ID: "#43"},
-                "claimed_task_required_skills": [
-                    "tasks",
-                    "python",
-                    "development-discipline",
-                ],
-                "claimed_task_language_skills": ["python"],
-                "loaded_skills": [],
+                "claimed_task_extra_skills": ["context7", "python"],
+                "loaded_skills": ["python"],
             },
         )
 
         assert response.context is not None
-        calls = [
-            skill_fetch_proxy_path(skill) for skill in ("tasks", "python", "development-discipline")
-        ]
-        assert all(call in response.context for call in calls)
-        assert [response.context.index(call) for call in calls] == sorted(
-            response.context.index(call) for call in calls
-        )
+        assert skill_fetch_proxy_path("context7") in response.context
+        assert skill_fetch_proxy_path("python") not in response.context
+        assert skill_fetch_proxy_path("tasks") not in response.context
 
     @pytest.mark.asyncio
-    async def test_claim_stays_silent_when_every_required_skill_is_loaded(
+    async def test_claim_stays_silent_when_every_extra_is_loaded(
         self,
         db: HubDatabase,
     ) -> None:
@@ -1184,13 +1363,8 @@ class TestDiscloseClaimedTaskRequiredSkills:
             session_id=SESSION_ID,
             variables={
                 "claimed_tasks": {CLAIM_TASK_ID: "#43"},
-                "claimed_task_required_skills": [
-                    "tasks",
-                    "python",
-                    "development-discipline",
-                ],
-                "claimed_task_language_skills": ["python"],
-                "loaded_skills": ["tasks", "python", "development-discipline"],
+                "claimed_task_extra_skills": ["context7", "python"],
+                "loaded_skills": ["context7", "python"],
             },
         )
 
@@ -1235,8 +1409,7 @@ class TestDiscloseClaimedTaskRequiredSkills:
             session_id=SESSION_ID,
             variables={
                 "claimed_tasks": claimed_tasks,
-                "claimed_task_required_skills": ["tasks", "python"],
-                "claimed_task_language_skills": ["python"],
+                "claimed_task_extra_skills": ["context7"],
                 "loaded_skills": [],
             },
         )
@@ -1800,49 +1973,44 @@ class TestBlockReopenTask:
         assert response.decision == "allow"
 
 
-class TestRequireTaskCreationSkillOnSchema:
-    """Verify create_task schema lookup requires the tasks skill."""
+class TestRequireTasksSkillOnMutationSchema:
+    """Verify mutation schema lookup uses the consolidated tasks gate."""
 
     def test_blocks_create_task_schema_with_canonical_directive(self, db, manager) -> None:
         _sync_bundled(db)
 
-        row = manager.get_by_name("require-task-creation-skill-on-schema")
+        row = manager.get_by_name("require-tasks-skill-for-mutations")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
-        assert "get_tool_schema" in (body.when or "")
-        assert "create_task" in (body.when or "")
+        assert "task_mutation_requires_tasks_skill" in (body.when or "")
+        assert "_agent_type" in (body.when or "")
         assert "not skill_loaded('tasks')" in (body.when or "")
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("tasks")
 
 
-class TestRequireTaskTransitionsSkillOnLifecycle:
-    """Verify lifecycle schemas require the tasks skill."""
+class TestRequireTasksSkillMutationDefinition:
+    """Verify the consolidated mutation rule uses one helper and one directive."""
 
-    def test_when_mentions_extended_lifecycle_tools(self, db, manager) -> None:
-        """reopen/escalate/de_escalate should all trigger the skill directive."""
+    def test_when_uses_normalized_mutation_helper(self, db, manager) -> None:
         _sync_bundled(db)
 
-        row = manager.get_by_name("require-task-transitions-skill-on-lifecycle")
+        row = manager.get_by_name("require-tasks-skill-for-mutations")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
-        assert "get_tool_schema" in (body.when or "")
-        assert "reopen_task" in (body.when or "")
-        assert "escalate_task" in (body.when or "")
-        assert "de_escalate_task" in (body.when or "")
-        assert "reject_review" in (body.when or "")
+        assert "task_mutation_requires_tasks_skill(tool_input, event.data)" in (body.when or "")
         assert "not skill_loaded('tasks')" in (body.when or "")
 
     def test_blocks_with_task_transitions_directive(self, db, manager) -> None:
         """The rule should block with the canonical directive."""
         _sync_bundled(db)
 
-        row = manager.get_by_name("require-task-transitions-skill-on-lifecycle")
+        row = manager.get_by_name("require-tasks-skill-for-mutations")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
@@ -1854,12 +2022,12 @@ class TestRequireTaskTransitionsSkillOnLifecycle:
         assert set_effects == []
 
 
-class TestTaskLifecycleSkillGates:
-    """Verify lifecycle calls require agent-loaded task skills."""
+class TestTaskMutationSkillGateRoutes:
+    """Verify representative mutation routes require agent-loaded task guidance."""
 
     def test_creation_gate_blocks_without_loaded_skill(self, db, manager) -> None:
         _sync_bundled(db)
-        row = manager.get_by_name("require-task-creation-skill-loaded")
+        row = manager.get_by_name("require-tasks-skill-for-mutations")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
@@ -1869,13 +2037,14 @@ class TestTaskLifecycleSkillGates:
 
     def test_transition_gate_blocks_without_loaded_skill(self, db, manager) -> None:
         _sync_bundled(db)
-        row = manager.get_by_name("require-task-transitions-skill-loaded")
+        row = manager.get_by_name("require-tasks-skill-for-mutations")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
-        assert "reopen_task" in (body.when or "")
+        assert "task_mutation_requires_tasks_skill" in (body.when or "")
         assert "skill_loaded('tasks')" in (body.when or "")
+        assert body.effects is not None
         assert body.effects[0].reason == _skill_fetch_template("tasks")
 
     @pytest.mark.asyncio
@@ -1893,11 +2062,15 @@ class TestTaskLifecycleSkillGates:
             },
         )
 
-        blocked = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
+        blocked = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={"_agent_type": "default"},
+        )
         allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"loaded_skills": ["tasks"]},
+            variables={"_agent_type": "default", "loaded_skills": ["tasks"]},
         )
 
         assert blocked.decision == "block"
@@ -1919,11 +2092,15 @@ class TestTaskLifecycleSkillGates:
             },
         )
 
-        blocked = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
+        blocked = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={"_agent_type": "default"},
+        )
         allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"loaded_skills": ["tasks"]},
+            variables={"_agent_type": "default", "loaded_skills": ["tasks"]},
         )
 
         assert blocked.decision == "block"
@@ -1946,11 +2123,15 @@ class TestTaskLifecycleSkillGates:
             },
         )
 
-        blocked = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
+        blocked = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={"_agent_type": "default"},
+        )
         allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"loaded_skills": ["tasks"]},
+            variables={"_agent_type": "default", "loaded_skills": ["tasks"]},
         )
 
         assert blocked.decision == "block"
@@ -1983,7 +2164,11 @@ class TestTaskLifecycleSkillGates:
         assert allowed.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_transition_gate_blocks_raw_call_until_loaded(self, db, manager) -> None:
+    async def test_transition_gate_blocks_raw_call_until_loaded(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+    ) -> None:
         _sync_bundled(db)
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -2000,11 +2185,15 @@ class TestTaskLifecycleSkillGates:
             },
         )
 
-        blocked = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
+        blocked = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={"_agent_type": "default"},
+        )
         allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"loaded_skills": ["tasks"]},
+            variables={"_agent_type": "default", "loaded_skills": ["tasks"]},
         )
 
         assert blocked.decision == "block"

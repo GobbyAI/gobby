@@ -15,18 +15,14 @@ import pytest
 
 from gobby.sessions.compact_continuation import (
     _HANDOFF_COMPACT_CONTINUATION_TASKS,
-    COMPACT_RESUME_LEASED_TOOLS_LIMIT,
-    COMPACT_RESUME_LEASED_TOOLS_VARIABLE,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
     _continue_after_codex_compaction_ready,
     _merge_session_variable,
     _pop_session_variable,
     clear_handoff_compact_continuation_pending,
     consume_and_schedule_handoff_compact_continuation,
-    consume_compact_resume_leased_tools,
     consume_handoff_compact_continuation_pending,
     mark_handoff_compact_continuation_pending,
-    persist_handoff_resume_leased_tools,
     schedule_codex_handoff_compact_continuation_readiness,
     schedule_handoff_compact_continuation,
 )
@@ -723,20 +719,6 @@ def test_in_place_compact_does_not_steal_pending_from_other_terminal(
     assert scheduled is False
     variables = SessionVariableManager(session_db).get_variables(marked_id)
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE in variables
-
-
-def test_persist_compact_resume_leases_caps_newest_tools(session_db: HubDatabase) -> None:
-    sv_mgr = SessionVariableManager(session_db)
-    unlocked_tools = [f"gobby-tasks:tool-{index}" for index in range(10)]
-    sv_mgr.set_variable(SESSION_ID, "unlocked_tools", unlocked_tools)
-
-    leased_tools = persist_handoff_resume_leased_tools(session_db, SESSION_ID)
-
-    expected = list(reversed(unlocked_tools[-COMPACT_RESUME_LEASED_TOOLS_LIMIT:]))
-    assert leased_tools == expected
-    assert sv_mgr.get_variables(SESSION_ID)[COMPACT_RESUME_LEASED_TOOLS_VARIABLE] == expected
-    assert consume_compact_resume_leased_tools(session_db, SESSION_ID) == expected
-    assert COMPACT_RESUME_LEASED_TOOLS_VARIABLE not in sv_mgr.get_variables(SESSION_ID)
 
 
 def test_reload_directive_normalized() -> None:

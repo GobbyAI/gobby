@@ -3797,21 +3797,20 @@ class TestVerboseOnceBlockReason:
         assert "gcode outline path/to/file" in second.reason
 
     @pytest.mark.asyncio
-    async def test_parallel_skill_blocks_share_one_batch_recovery_event(
+    async def test_parallel_extra_skill_blocks_share_one_batch_recovery_event(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
-            "require-claimed-task-required-skills",
+            "require-claimed-task-extra-skills",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
-                when="missing_claimed_task_required_skills() != []",
+                when="missing_claimed_task_extra_skills() != []",
                 effects=[
                     RuleEffect(
                         type="block",
                         reason=(
-                            "{{ skill_fetch_batch_directive("
-                            "missing_claimed_task_required_skills()) }}"
+                            "{{ skill_fetch_batch_directive(missing_claimed_task_extra_skills()) }}"
                         ),
                     )
                 ],
@@ -3819,7 +3818,7 @@ class TestVerboseOnceBlockReason:
         )
         engine = RuleEngine(db)
         variables: dict[str, Any] = {
-            "claimed_task_required_skills": ["rust", "development-discipline"],
+            "claimed_task_extra_skills": ["rust", "context7"],
             "loaded_skills": [],
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
@@ -3832,7 +3831,7 @@ class TestVerboseOnceBlockReason:
         assert {first.decision, second.decision} == {"block"}
         assert first.reason is not None
         assert second.reason is not None
-        directive = skill_fetch_batch_directive(["rust", "development-discipline"])
+        directive = skill_fetch_batch_directive(["rust", "context7"])
         reasons = [first.reason, second.reason]
         assert sum(reason.endswith(directive) for reason in reasons) == 1
         assert sum(self._TERSE_HINT in reason for reason in reasons) == 1

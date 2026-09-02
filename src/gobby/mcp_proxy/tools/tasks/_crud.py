@@ -29,7 +29,7 @@ from gobby.tasks.acceptance_artifacts import malformed_test_reference_findings
 from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.criteria_contract import TaskCriteriaError, require_validation_criteria
 from gobby.tasks.isolation import validate_task_isolation_artifacts
-from gobby.workflows.claimed_task_skills import build_claimed_task_skill_state
+from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 
 logger = logging.getLogger(__name__)
 TASK_CATEGORY_ENUM = tuple(sorted(VALID_CATEGORIES))
@@ -300,7 +300,9 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 ref = f"#{task.seq_num}" if task.seq_num else task.id
                 merge_dict = add_claimed_task(session_vars, task.id, ref)
                 current_vars = {**session_vars, **merge_dict}
-                merge_dict.update(build_claimed_task_skill_state(current_vars, ctx.task_manager))
+                merge_dict.update(
+                    build_claimed_task_extra_skill_state(current_vars, ctx.task_manager)
+                )
                 ctx.session_var_manager.merge_variables(resolved_session_id, merge_dict)
             except Exception as e:
                 logger.debug("Best-effort session variable update failed: %s", e)
