@@ -822,12 +822,14 @@ async def test_build_plan_file_planning_spawn_forces_main_context(
 ) -> None:
     from gobby.agents.sync import sync_bundled_agents
     from gobby.build.service import build
+    from gobby.skills.sync import sync_bundled_skills
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.sessions import SessionManager
 
     project_id, repo_path = _project(temp_db, tmp_path)
     plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
+    sync_bundled_skills(temp_db)
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
     session_manager = SessionManager(temp_db)
@@ -880,12 +882,14 @@ async def test_build_plan_file_plan_adversary_spawn_forces_main_context(
 ) -> None:
     from gobby.agents.sync import sync_bundled_agents
     from gobby.build.service import build
+    from gobby.skills.sync import sync_bundled_skills
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.sessions import SessionManager
 
     project_id, repo_path = _project(temp_db, tmp_path)
     plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
+    sync_bundled_skills(temp_db)
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
     session_manager = SessionManager(temp_db)

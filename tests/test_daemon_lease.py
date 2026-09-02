@@ -19,7 +19,6 @@ from gobby.daemon_lease import (
     LeaseConnectionLostError,
     current_lease,
 )
-from gobby.deployment import deployment_advisory_key
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _BASELINE_SQL = _REPO_ROOT / "crates/gcore/assets/schema/baseline.sql"
@@ -62,28 +61,26 @@ def _runtime_row(database_url: str, token: str) -> tuple[int, str]:
 
 
 @pytest.mark.unit
-def test_lease_keying_uses_deployment_advisory_key() -> None:
+def test_lease_keying_uses_current_database() -> None:
     source = _DAEMON_LEASE_PY.read_text(encoding="utf-8")
-    assert "hashtext" not in source
-    assert "deployment_advisory_key" in source
-    assert "single-active-daemon" in source
+    assert "hashtext(current_database())" in source
+    assert "deployment_advisory_key" not in source
 
 
 @pytest.mark.unit
 def test_baseline_seals_deployment_runtime_and_interactive_ciphertext() -> None:
-    baseline = _BASELINE_SQL.read_text(encoding="utf-8")
-    assert "CREATE TABLE IF NOT EXISTS deployment_runtime" in baseline
-    assert "fencing_epoch BIGINT NOT NULL DEFAULT 0" in baseline
-    assert "grant_signing_secret TEXT NOT NULL" in baseline
-    assert "CREATE TABLE IF NOT EXISTS gobby_agent_auth.interactive_credential_material" in baseline
-    assert "ciphertext" in baseline
-    assert "aad_identity" in baseline
+    baseline = _BASELINE_SQL.read_text(encoding="utf-8").lower()
+    assert "create table deployment_runtime" in baseline
+    assert "fencing_epoch bigint default 0 not null" in baseline
+    assert "grant_signing_secret text not null" in baseline
+    table_declaration = "create table gobby_agent_auth.interactive_credential_material"
+    assert table_declaration in baseline
     assert "issue_or_reuse_interactive_principal" in baseline
-    table_start = baseline.index(
-        "CREATE TABLE IF NOT EXISTS gobby_agent_auth.interactive_credential_material"
-    )
+    table_start = baseline.index(table_declaration)
     table_end = baseline.index(");", table_start) + 2
-    material = baseline[table_start:table_end].lower()
+    material = baseline[table_start:table_end]
+    assert "ciphertext text not null" in material
+    assert "aad_identity text not null" in material
     for forbidden in ("dsn", "password", "connection_uri", "plaintext"):
         assert forbidden not in material
 
@@ -198,9 +195,6 @@ def test_deployment_scoped_lease_and_epoch() -> None:
     _ensure_deployment_runtime(database_url)
     first_token = uuid.uuid4().hex[:16]
     second_token = uuid.uuid4().hex[:16]
-    assert deployment_advisory_key("single-active-daemon", token=first_token) != (
-        deployment_advisory_key("single-active-daemon", token=second_token)
-    )
     first = ActiveDaemonLease(
         database_url,
         machine_id=str(uuid.uuid4()),
@@ -214,17 +208,25 @@ def test_deployment_scoped_lease_and_epoch() -> None:
 
     try:
         assert first.try_acquire() is True
-        assert second.try_acquire() is True
-        first_epoch, _first_secret = _runtime_row(database_url, first_token)
-        second_epoch, _second_secret = _runtime_row(database_url, second_token)
+        assert second.try_acquire() is False
+        first_epoch, first_secret = _runtime_row(database_url, first_token)
         assert first.fencing_epoch == first_epoch == 1
-        assert second.fencing_epoch == second_epoch == 1
         assert first.is_live() is True
-        assert second.is_live() is True
+        assert second.fencing_epoch is None
+        assert second.grant_signing_secret is None
+
         first.release()
+        assert second.try_acquire() is True
+        second_epoch, second_secret = _runtime_row(database_url, second_token)
+        assert second.fencing_epoch == second_epoch == 1
+        assert second.grant_signing_secret == second_secret
+        assert second_secret != first_secret
+        assert _runtime_row(database_url, first_token) == (first_epoch, first_secret)
+
+        second.release()
         assert first.try_acquire() is True
         assert _runtime_row(database_url, first_token)[0] == 2
-        assert _runtime_row(database_url, second_token)[0] == 1
+        assert _runtime_row(database_url, second_token) == (second_epoch, second_secret)
     finally:
         first.release()
         second.release()
