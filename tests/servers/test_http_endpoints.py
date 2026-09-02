@@ -1,18 +1,22 @@
 """HTTP server endpoint coverage tests."""
 
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.extensions import HookExtensionsConfig, WebhookEndpointConfig, WebhooksConfig
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
 
 pytestmark = [
@@ -336,8 +340,9 @@ class TestMCPEndpointsWithManager:
             test_mode=True,
             bootstrap_config=BootstrapConfig(),
         )
-        server.mcp_manager = FakeMCPManagerSimple()
-        server.services.mcp_manager = server.mcp_manager
+        manager = cast(MCPClientManager, FakeMCPManagerSimple())
+        server.mcp_manager = manager
+        server.services.mcp_manager = manager
         return server
 
     @pytest.fixture
@@ -349,26 +354,38 @@ class TestMCPEndpointsWithManager:
     def test_remove_server_not_found(
         self, mcp_client: TestClient, http_server_with_mcp: HTTPServer
     ) -> None:
-        """Test removing non-existent server returns envelope error."""
-        http_server_with_mcp.mcp_manager.remove_server = AsyncMock(
-            side_effect=ValueError("Server not found")
-        )
-
+        """Test removing non-existent server returns an HTTP error."""
         response = mcp_client.delete("/api/mcp/servers/nonexistent")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is False
-        assert "Server not found" in data["error"]
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"]["error"]
 
     def test_remove_server_success(
         self, mcp_client: TestClient, http_server_with_mcp: HTTPServer
     ) -> None:
         """Test removing server successfully."""
-        http_server_with_mcp.mcp_manager.remove_server = AsyncMock()
+        config = MCPServerConfig(
+            id="test-server",
+            name="test-server",
+            project_id=GLOBAL_PROJECT_ID,
+        )
+        manager = http_server_with_mcp.mcp_manager
+        assert manager is not None
+        manager.server_configs.append(config)
 
-        response = mcp_client.delete("/api/mcp/servers/test-server")
+        with patch.object(
+            manager,
+            "remove_server",
+            new_callable=AsyncMock,
+            create=True,
+        ) as remove_server:
+            response = mcp_client.delete("/api/mcp/servers/test-server")
+
         assert response.status_code == 200
         assert response.json()["success"] is True
+        remove_server.assert_awaited_once_with(
+            "test-server",
+            project_id=GLOBAL_PROJECT_ID,
+        )
 
     def test_list_all_tools_with_server_filter(
         self, mcp_client: TestClient, http_server_with_mcp: HTTPServer
@@ -450,8 +467,9 @@ class TestHooksEndpoints:
 
     def test_execute_hook_without_hook_manager(self, client: TestClient) -> None:
         """Test execute hook when hook manager not initialized."""
-        if hasattr(client.app.state, "hook_manager"):
-            del client.app.state.hook_manager
+        app = cast(FastAPI, client.app)
+        if hasattr(app.state, "hook_manager"):
+            del app.state.hook_manager
 
         response = client.post(
             "/api/hooks/execute",
