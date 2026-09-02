@@ -31,7 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_artifact_references_ignore_prose_file_line_token() -> None:
-    criteria = "The plan uses file:line anchors and records file: `docs/evidence.md`."
+    criteria = "The plan uses file:line anchors.\nfile: `docs/evidence.md`."
 
     assert artifacts_module.extract_artifact_references(criteria, "file") == ("docs/evidence.md",)
 
@@ -48,8 +48,9 @@ def test_artifact_references_ignore_bare_prose_words() -> None:
 
 def test_artifact_references_keep_pathlike_bare_tokens() -> None:
     criteria = (
-        "Covered by test: tests/tasks/test_validation.py::test_gate. "
-        "Evidence file: docs/evidence.md, and file: .gobby/plans/x.yaml."
+        "test: tests/tasks/test_validation.py::test_gate.\n"
+        "file: docs/evidence.md,\n"
+        "file: .gobby/plans/x.yaml."
     )
 
     assert artifacts_module.extract_artifact_references(criteria, "test") == (
@@ -62,15 +63,59 @@ def test_artifact_references_keep_pathlike_bare_tokens() -> None:
 
 
 def test_backticked_references_bypass_the_bare_token_shape_filter() -> None:
-    criteria = "Covered by test: `oops` and evidence file: `notes`."
+    criteria = "test: `oops`\nfile: `notes`"
 
     assert artifacts_module.extract_artifact_references(criteria, "test") == ("oops",)
     assert artifacts_module.extract_artifact_references(criteria, "file") == ("notes",)
 
 
+def test_line_leading_references_support_markdown_prefixes() -> None:
+    criteria = (
+        "test: `tests/test_plain.py::test_plain`\n"
+        "- file: docs/bullet.md\n"
+        "2) test: tests/test_numbered.py::test_numbered\n"
+        "**test**: `tests/test_bold.py::test_bold`\n"
+        "**file**: `docs/bold.md`\n"
+        "> test: `tests/test_quote.py::test_quote`"
+    )
+
+    assert artifacts_module.extract_artifact_references(criteria, "test") == (
+        "tests/test_plain.py::test_plain",
+        "tests/test_numbered.py::test_numbered",
+        "tests/test_bold.py::test_bold",
+        "tests/test_quote.py::test_quote",
+    )
+    assert artifacts_module.extract_artifact_references(criteria, "file") == (
+        "docs/bullet.md",
+        "docs/bold.md",
+    )
+
+
+def test_inline_code_examples_are_not_artifact_references() -> None:
+    criteria = (
+        "The schema describes `test: path::test_symbol`, examples use "
+        "`test: tests/x.py::test_y`, and docs mention `file: docs/foo.md`.\n"
+        "- test: `tests/a/test_b.py::test_c`"
+    )
+
+    assert artifacts_module.extract_artifact_references(criteria, "test") == (
+        "tests/a/test_b.py::test_c",
+    )
+    assert artifacts_module.extract_artifact_references(criteria, "file") == ()
+
+
+def test_bare_reference_never_keeps_trailing_backtick() -> None:
+    criteria = "test: tests/test_feature.py::test_feature`\nfile: docs/evidence.md`"
+
+    assert artifacts_module.extract_artifact_references(criteria, "test") == (
+        "tests/test_feature.py::test_feature",
+    )
+    assert artifacts_module.extract_artifact_references(criteria, "file") == ("docs/evidence.md",)
+
+
 def test_backticked_test_reference_without_symbol_still_fails(tmp_path: Path) -> None:
     result = evaluate_acceptance_artifacts(
-        criteria="Covered by test: `tests/tasks/test_validation.py`.",
+        criteria="test: `tests/tasks/test_validation.py`.",
         repo_path=str(tmp_path),
         commit_shas=[],
     )
@@ -81,7 +126,7 @@ def test_backticked_test_reference_without_symbol_still_fails(tmp_path: Path) ->
 
 def test_deliberate_missing_file_reference_keeps_actionable_diagnostic(tmp_path: Path) -> None:
     result = evaluate_acceptance_artifacts(
-        criteria="Required evidence file: `docs/missing.md`.",
+        criteria="file: `docs/missing.md`.",
         repo_path=str(tmp_path),
         commit_shas=[],
     )
@@ -186,7 +231,7 @@ def test_stale_index_names_the_index_and_the_reindex_command(
     monkeypatch.setattr(artifacts_module, "_run_command", run_command)
 
     result = evaluate_acceptance_artifacts(
-        criteria="Feature works. test: tests/test_feature.py::test_feature",
+        criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
         repo_path=str(tmp_path),
         commit_shas=[],
     )
@@ -227,7 +272,7 @@ def test_stale_index_is_repaired_by_reindexing_the_artifact_file(
     monkeypatch.setattr(artifacts_module, "_run_command", run_command)
 
     result = evaluate_acceptance_artifacts(
-        criteria="Feature works. test: tests/test_feature.py::test_feature",
+        criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
         repo_path=str(tmp_path),
         commit_shas=[],
     )
@@ -273,7 +318,7 @@ def test_search_timeout_is_repaired_by_reindexing_the_artifact_file(
     monkeypatch.setattr(artifacts_module, "_run_command", run_command)
 
     result = evaluate_acceptance_artifacts(
-        criteria="Feature works. test: tests/test_feature.py::test_feature",
+        criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
         repo_path=str(tmp_path),
         commit_shas=[],
     )
@@ -303,7 +348,7 @@ def test_search_timeout_and_failed_reindex_name_the_stale_index(
     monkeypatch.setattr(artifacts_module, "_run_command", run_command)
 
     result = evaluate_acceptance_artifacts(
-        criteria="Feature works. test: tests/test_feature.py::test_feature",
+        criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
         repo_path=str(tmp_path),
         commit_shas=[],
     )
@@ -341,7 +386,7 @@ def test_symbol_absent_from_disk_keeps_the_unresolved_diagnostic(
     monkeypatch.setattr(artifacts_module, "_run_command", run_command)
 
     result = evaluate_acceptance_artifacts(
-        criteria="Feature works. test: tests/test_feature.py::test_feature",
+        criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
         repo_path=str(tmp_path),
         commit_shas=[],
     )
@@ -365,7 +410,7 @@ def test_feature() -> None:
     monkeypatch.setattr(artifacts_module, "_resolve_test_body", lambda *_args: body)
 
     result = evaluate_acceptance_artifacts(
-        criteria="Feature works. test: tests/test_feature.py::test_feature",
+        criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
         repo_path=str(tmp_path),
         commit_shas=[],
     )
@@ -389,7 +434,7 @@ fn protocol_frame_roundtrip() {
 
     result = evaluate_acceptance_artifacts(
         criteria=(
-            "Frames round trip. "
+            "Frames round trip.\n"
             "test: crates/gterminal/tests/frame_protocol.rs::protocol_frame_roundtrip"
         ),
         repo_path=str(tmp_path),
@@ -441,7 +486,7 @@ def test_test_named_helper_call_is_not_delegation(
     monkeypatch.setattr(artifacts_module, "_resolve_test_body", lambda *_args: body)
 
     result = evaluate_acceptance_artifacts(
-        criteria=f"Contract is executable. test: {path}::{symbol}",
+        criteria=f"Contract is executable.\ntest: {path}::{symbol}",
         repo_path=str(tmp_path),
         commit_shas=[],
     )
@@ -486,7 +531,7 @@ def test_delegation_only_body_still_requires_an_executable_assertion(
     monkeypatch.setattr(artifacts_module, "_resolve_test_body", lambda *_args: body)
 
     result = evaluate_acceptance_artifacts(
-        criteria=f"Contract is executable. test: {path}::{symbol}",
+        criteria=f"Contract is executable.\ntest: {path}::{symbol}",
         repo_path=str(tmp_path),
         commit_shas=[],
     )
