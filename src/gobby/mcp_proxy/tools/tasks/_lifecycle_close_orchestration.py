@@ -140,6 +140,10 @@ async def launch_close_review(
         "review_fingerprint": running.review_fingerprint,
         "deterministic_evidence_fingerprint": running.evidence_fingerprint,
         "review_status": running.status,
+        "prompt_chars": evaluation.extra.get("prompt_chars"),
+        "prompt_limit": evaluation.extra.get("prompt_limit"),
+        "manifest_count": evaluation.extra.get("manifest_count"),
+        "excerpt_chars": evaluation.extra.get("excerpt_chars"),
         "criteria_review_duration_ms": evaluation.extra.get("criteria_review_duration_ms"),
     }
 

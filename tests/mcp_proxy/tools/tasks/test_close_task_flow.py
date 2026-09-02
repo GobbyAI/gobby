@@ -16,6 +16,8 @@ import pytest
 
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
+from gobby.config.tasks import TaskValidationConfig
+from gobby.llm import LLMService
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     CloseAttributionSnapshot,
@@ -33,10 +35,16 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as notifications
 from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
-from gobby.storage.tasks import Task, TaskHasOpenChildrenError
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from gobby.storage.task_close_reviews import TaskCloseReviewStore
+from gobby.storage.tasks import LocalTaskManager, Task, TaskHasOpenChildrenError
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
 from gobby.tasks.tdd_evidence import TddEvidenceResult
 from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
+from gobby.tasks.validation import TaskValidator
+from gobby.utils.machine_id import require_machine_id
+from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
@@ -91,6 +99,28 @@ def _ctx(
             resolve_session_id=lambda session_id: session_id,
             get_current_project_name=lambda: "gobby",
         ),
+    )
+
+
+def _successful_transcript(task: Task, *, command: str) -> TranscriptEvidence:
+    now = datetime(2026, 9, 2, 12, 5, tzinfo=UTC)
+    return TranscriptEvidence(
+        validation_runs=(
+            TranscriptValidationRun(
+                session_id=task.claimed_by_session_id or "",
+                source="codex",
+                command=command,
+                categories=("test",),
+                matcher_id="pytest",
+                label="pytest",
+                outcome="success",
+                started_at=now,
+                completed_at=now,
+                order=1,
+                exit_code=0,
+            ),
+        ),
+        sessions=(task.claimed_by_session_id or "",),
     )
 
 
@@ -835,6 +865,115 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
     agent_registry.call.assert_awaited_once()
     prompt = agent_registry.call.await_args.args[1]["prompt"]
     assert 'changes_summary="Implemented and tested."' in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_claim(
+    temp_db: HubDatabase,
+    sample_git_project: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    session = SessionManager(temp_db).register(
+        external_id="ordinary-detached-close",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_git_project["id"],
+    )
+    task = manager.create_task(
+        project_id=sample_git_project["id"],
+        title="Ordinary detached close",
+        category="code",
+        task_type="task",
+        implementation_domain="backend",
+        validation_criteria="Focused tests pass.",
+    )
+    claimed = manager.claim_task(task.id, session.id)
+    provider_call = AsyncMock()
+    validator = TaskValidator(
+        TaskValidationConfig(),
+        cast(LLMService, SimpleNamespace(call_json_feature=provider_call)),
+        temp_db,
+    )
+    render_prompt = MagicMock(
+        side_effect=lambda _path, context: "\n".join(str(value) for value in context.values())
+    )
+    agent_call = AsyncMock(
+        return_value={
+            "success": True,
+            "run_id": "00000000-0000-4000-8000-000000000777",
+        }
+    )
+    ctx = RegistryContext(
+        task_manager=manager,
+        task_validator_resolver=lambda: validator,
+        agent_registry_resolver=lambda: cast(
+            InternalToolRegistry,
+            SimpleNamespace(call=agent_call),
+        ),
+    )
+    registry = InternalToolRegistry("gobby-tasks")
+    register_close_task(registry, ctx)
+    transcript = _successful_transcript(
+        claimed,
+        command="uv run pytest tests/tasks/test_validation.py -q",
+    )
+    caplog.set_level("INFO", logger=lifecycle.__name__)
+
+    with (
+        session_context_for_test(session.id),
+        patch.object(validator._loader, "render", render_prompt),
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(
+            lifecycle,
+            "resolve_task_repo_path",
+            return_value=sample_git_project["repo_path"],
+        ),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(close_finalization, "_linked_commit_paths", return_value=frozenset()),
+        patch.object(close_finalization, "_committable_task_paths", return_value=set()),
+        patch.object(lifecycle, "_has_committable_edits", return_value=False),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
+        patch.object(
+            lifecycle,
+            "validate_commit_requirements",
+            return_value=ValidationResult(can_close=True),
+        ),
+        patch.object(
+            lifecycle,
+            "_derive_close_transcript_evidence",
+            AsyncMock(return_value=transcript),
+        ),
+        patch.object(lifecycle, "collect_commit_diff_text", return_value="small diff"),
+        patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=False),
+        patch("gobby.workflows.task_claim_state.task_edited_file_set", return_value=set()),
+    ):
+        result = await registry.call(
+            "close_task",
+            {
+                "task_id": task.id,
+                "changes_summary": "Implemented and tested.",
+                "commit_sha": "abc123",
+                "preview": True,
+            },
+        )
+
+    assert result["error"] == "agentic_review_required"
+    assert result["closed"] is False
+    assert result["can_close"] is False
+    assert result["review_id"]
+    assert result["prompt_chars"] < result["prompt_limit"]
+    assert 0 <= result["criteria_review_duration_ms"] < 50
+    provider_call.assert_not_awaited()
+    persisted = manager.get_task(task.id)
+    assert persisted.closed_at is None
+    assert persisted.claimed_by_session_id == session.id
+    stored_review = TaskCloseReviewStore(temp_db).get(result["review_id"])
+    assert stored_review is not None
+    assert stored_review.task_id == task.id
+    assert stored_review.agent_run_id == "00000000-0000-4000-8000-000000000777"
+    assert any("mode=detached" in message for message in caplog.messages)
 
 
 def test_close_task_schema_has_automated_review_surface() -> None:
