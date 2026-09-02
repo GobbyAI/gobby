@@ -43,8 +43,12 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-EXPANSION_QA_AGENT_PATH = (
-    PROJECT_ROOT / "src/gobby/install/shared/workflows/agents/expansion-qa.yaml"
+AGENTS_PATH = PROJECT_ROOT / "src/gobby/install/shared/workflows/agents"
+DEVELOPER_AGENT_NAMES = (
+    "backend-developer",
+    "frontend-developer",
+    "fullstack-developer",
+    "tech-writer",
 )
 
 
@@ -179,14 +183,17 @@ def _register_qa_reviewer_workflow(
     return instance_manager
 
 
-def _register_expansion_qa_workflow(
+def _register_bundled_agent_workflow(
     db: HubDatabase,
     *,
+    agent_name: str,
+    current_step: str,
     session_id: str = AGENT_SESSION_ID,
 ) -> AgentStepInstanceManager:
     _create_session(db, session_id)
     instance_manager = AgentStepInstanceManager(db)
-    agent_data = yaml.safe_load(EXPANSION_QA_AGENT_PATH.read_text(encoding="utf-8"))
+    agent_path = AGENTS_PATH / f"{agent_name}.yaml"
+    agent_data = yaml.safe_load(agent_path.read_text(encoding="utf-8"))
     agent_body = AgentDefinitionBody.model_validate(agent_data)
     instance_manager.save(
         build_step_instance(
@@ -194,10 +201,23 @@ def _register_expansion_qa_workflow(
             session_id=session_id,
             step_workflow_id=None,
             variables=dict(agent_body.step_workflow.variables if agent_body.step_workflow else {}),
-            current_step="coverage_check",
+            current_step=current_step,
         )
     )
     return instance_manager
+
+
+def _register_expansion_qa_workflow(
+    db: HubDatabase,
+    *,
+    session_id: str = AGENT_SESSION_ID,
+) -> AgentStepInstanceManager:
+    return _register_bundled_agent_workflow(
+        db,
+        agent_name="expansion-qa",
+        current_step="coverage_check",
+        session_id=session_id,
+    )
 
 
 def _after_tool_event(
@@ -856,3 +876,53 @@ class TestAgentWorkflowCompletion:
         instance = instance_manager.get_for_session(AGENT_SESSION_ID)
         assert instance is None
         assert variables["review_complete"] is True
+
+    @pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+    @pytest.mark.asyncio
+    async def test_developer_close_task_completion_requires_assigned_task(
+        self,
+        db: HubDatabase,
+        agent_name: str,
+    ) -> None:
+        instance_manager = _register_bundled_agent_workflow(
+            db,
+            agent_name=agent_name,
+            current_step="implement",
+        )
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {"assigned_task_id": "#21596"}
+        closed_output = {"success": True, "result": {"closed": True}}
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-tasks",
+                mcp_tool="close_task",
+                tool_arguments={"task_id": "#21595", "preview": True},
+                tool_output=closed_output,
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+        assert instance is not None
+        assert instance.current_step == "implement"
+        assert instance.variables["implementation_complete"] is False
+        assert "step_workflow_complete" not in variables
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-tasks",
+                mcp_tool="close_task",
+                tool_arguments={"task_id": "#21596", "preview": True},
+                tool_output=closed_output,
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+        assert instance is not None
+        assert instance.current_step == "terminate"
+        assert instance.variables["implementation_complete"] is True
+        assert variables["step_workflow_complete"] is True
