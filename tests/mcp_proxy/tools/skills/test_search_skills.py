@@ -15,6 +15,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
 
@@ -340,7 +341,9 @@ class TestSearchSkillsTool:
             assert "typing" in res["tags"]
 
     @pytest.mark.asyncio
-    async def test_invalid_active_skill_names_do_not_filter_results(self, populated_db):
+    async def test_invalid_active_skill_names_do_not_filter_results(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, populated_db
+    ):
         """Invalid session allowlists are ignored instead of partially applied."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
         from gobby.storage.skills import LocalSkillManager
@@ -351,10 +354,7 @@ class TestSearchSkillsTool:
         if hasattr(registry, "search"):
             await registry.search.index_skills_async(skills)
 
-        project = LocalProjectManager(populated_db).create(
-            name="skills-test",
-            repo_path="/tmp/skills-test",
-        )
+        project = isolated_checkout_factory(populated_db, "skills-test").project
         session = SessionManager(populated_db).register(
             external_id="invalid-active-skills",
             machine_id="21000000-0000-4000-8000-000000000003",
@@ -444,7 +444,7 @@ class TestSearchSkillsInternalFilter:
         assert "plan-methodology-beta" not in names
 
     @pytest.mark.asyncio
-    async def test_search_include_internal_surfaces_them(self, registry_with_internal):
+    async def test_search_include_internal_surfaces_them(self, registry_with_internal: Any) -> None:
         tool = registry_with_internal.get_tool("search_skills")
 
         result = await tool(query="plan", include_internal=True)

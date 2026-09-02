@@ -126,6 +126,10 @@ async def test_operational_criteria_block_before_inline_or_submitted_review(
 
     assert result.error_type == "operational_evidence_missing"
     assert result.extra["missing_operational_actions"] == ["install", "restart", "smoke"]
+    hint = result.extra["operational_evidence_hint"]
+    assert "completion verb 'installed' with subject 'release'" in hint
+    assert "completion verb 'restarted' with subject 'daemon'" in hint
+    assert "completion verb 'passed' with subject 'smoke test'" in hint
     review.assert_not_awaited()
     account.assert_not_called()
 

@@ -59,6 +59,7 @@ _OPERATIONAL_REQUIREMENTS = {
 _OPERATIONAL_COMMANDS = {
     "install": re.compile(
         r"(?:^|[\s;&|])(?:(?:uv|python)\s+run\s+)?gobby\s+install\b|"
+        r"(?:^|[\s;&|])uv\s+(?:sync|add)\b|"
         r"(?:^|[\s;&|])(?:pip|cargo|npm|pnpm|yarn)\s+install\b",
         re.IGNORECASE,
     ),
@@ -75,7 +76,9 @@ _OPERATIONAL_COMMANDS = {
 
 _COMPLETED_OPERATIONAL_EVIDENCE = {
     "install": re.compile(
-        r"\b(?:installed|install(?:ation)?\s+(?:completed|passed|succeeded|verified))\b",
+        r"\b(?:(?P<tool_native>successfully\s+installed|"
+        r"(?:resolved|audited|installed)\s+\d+\s+packages?)|installed|"
+        r"install(?:ation)?\s+(?:completed|passed|succeeded|verified))\b",
         re.IGNORECASE,
     ),
     "restart": re.compile(
@@ -83,8 +86,8 @@ _COMPLETED_OPERATIONAL_EVIDENCE = {
         re.IGNORECASE,
     ),
     "smoke": re.compile(
-        r"\b(?:smoke-tested|smoke(?:[- ]+(?:tests?|checks?|probes?))?\s+"
-        r"(?:completed|passed|succeeded|clean|verified))\b",
+        r"\b(?:smoke-tested|smoke(?:[- ]+(?:tests?|checks?|probes?))?\b"
+        r"[^.!?\n]*?\b(?P<smoke_verb>completed|passed|succeeded|clean|verified))\b",
         re.IGNORECASE,
     ),
     "deploy": re.compile(
@@ -146,10 +149,21 @@ _NOMINAL_FOLLOWER_RE = re.compile(
 )
 
 _OPERATIONAL_SUBJECT_RE = re.compile(
-    r"\b(?:release|binary|artifact|package|build|executable|service|plugin|skill|"
+    r"\b(?:(?P<generic>artifact|package|build)s?|release|binary|executable|service|plugin|skill|"
     r"ghook|gcode|gwiki|gobby|daemon|server|app|application|site)\b",
     re.IGNORECASE,
 )
+
+_SENTENCE_BOUNDARY_RE = re.compile(r"(?:[.!?](?=\s|$)|\n+)")
+
+_OPERATIONAL_HINTS = {
+    "install": ("installed", "package"),
+    "restart": ("restarted", "daemon"),
+    "smoke": ("passed", "smoke test"),
+    "deploy": ("deployed", "service"),
+    "publish": ("published", "release"),
+    "cutover": ("completed", "cutover"),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,6 +238,31 @@ def split_validation_criteria(value: str | None) -> tuple[str, ...]:
 def required_operational_actions(value: str | None) -> tuple[str, ...]:
     """Return operational actions explicitly named by acceptance criteria."""
     return tuple(dict.fromkeys(requirement.action for requirement in _requirements(value)))
+
+
+def operational_evidence_hint(
+    validation_criteria: str | None,
+    missing_actions: Iterable[str],
+) -> str:
+    """Describe one canonical completion verb and subject for each missing action."""
+    requirements = _requirements(validation_criteria)
+    hints: list[str] = []
+    for action in dict.fromkeys(missing_actions):
+        verb, default_subject = _OPERATIONAL_HINTS[action]
+        subjects = sorted(
+            {
+                subject
+                for requirement in requirements
+                if requirement.action == action
+                for subject in requirement.subjects
+            }
+        )
+        subject_text = " or ".join(subjects) or default_subject
+        hints.append(
+            f"{action}: use completion verb '{verb}' with subject '{subject_text}' "
+            "in the same sentence"
+        )
+    return "; ".join(hints) + "."
 
 
 def operational_actions_from_command(command: str) -> tuple[str, ...]:
@@ -314,7 +353,8 @@ def _is_ruled_out(criteria: str, match: re.Match[str]) -> bool:
 def _subjects(value: str) -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(
-            match.group(0).casefold() for match in _OPERATIONAL_SUBJECT_RE.finditer(value)
+            (match.group("generic") or match.group(0)).casefold()
+            for match in _OPERATIONAL_SUBJECT_RE.finditer(value)
         )
     )
 
@@ -342,13 +382,26 @@ def _has_affirmative_completion(
 ) -> bool:
     """Return whether one positive, non-negated completion claim is present."""
     for match in _COMPLETED_OPERATIONAL_EVIDENCE[requirement.action].finditer(changes_summary):
-        prefix = changes_summary[max(0, match.start() - 32) : match.start()]
+        completion_start = (
+            match.start("smoke_verb") if match.lastgroup == "smoke_verb" else match.start()
+        )
+        prefix = changes_summary[max(0, completion_start - 32) : completion_start]
         if _NEGATED_COMPLETION_PREFIX_RE.search(prefix) is not None:
             continue
-        evidence_window = changes_summary[
-            max(0, match.start() - 48) : min(len(changes_summary), match.end() + 48)
-        ]
+        if match.lastgroup == "tool_native":
+            return True
+        evidence_window = _sentence_window(changes_summary, match)
         evidence_subjects = frozenset(_subjects(evidence_window))
         if not requirement.subjects or requirement.subjects & evidence_subjects:
             return True
     return False
+
+
+def _sentence_window(value: str, match: re.Match[str]) -> str:
+    """Return the sentence containing a completion match."""
+    start = 0
+    for prior_boundary in _SENTENCE_BOUNDARY_RE.finditer(value, 0, match.start()):
+        start = prior_boundary.end()
+    next_boundary = _SENTENCE_BOUNDARY_RE.search(value, match.end())
+    end = next_boundary.start() if next_boundary is not None else len(value)
+    return value[start:end]

@@ -544,6 +544,93 @@ class TestCreateTaskTool:
         assert call_kwargs["validation_criteria"] == "Tests pass and feature works"
 
     @pytest.mark.asyncio
+    async def test_create_rejects_malformed_test_reference(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        registry = create_task_registry(mock_task_manager)
+
+        result = await registry.call(
+            "create_task",
+            {
+                "title": "Reject malformed acceptance reference",
+                "category": "code",
+                "validation_criteria": "- test: `tests/tasks/test_validation.py`",
+                "implementation_domain": "backend",
+            },
+        )
+
+        assert result["error"] == (
+            "tests/tasks/test_validation.py: malformed test reference; expected path::test_symbol"
+        )
+        mock_task_manager.create_task_with_decomposition.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_ignores_prose_after_test_marker(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        registry = create_task_registry(mock_task_manager)
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440007"
+        mock_task.to_dict.return_value = {"id": mock_task.id}
+        mock_task_manager.create_task_with_decomposition.return_value = {
+            "task": {"id": mock_task.id},
+        }
+        mock_task_manager.get_task.return_value = mock_task
+
+        result = await registry.call(
+            "create_task",
+            {
+                "title": "Preserve prose criteria",
+                "category": "research",
+                "validation_criteria": ("3) Dispatch test: an openapi-template server registers."),
+            },
+        )
+
+        assert "error" not in result
+        mock_task_manager.create_task_with_decomposition.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_validates_only_explicit_test_reference(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        registry = create_task_registry(mock_task_manager)
+        task_id = "550e8400-e29b-41d4-a716-446655440000"
+        legacy_task = MagicMock()
+        legacy_task.id = task_id
+        legacy_task.seq_num = 42
+        legacy_task.claimed_by_session_id = None
+        legacy_task.task_type = "task"
+        legacy_task.category = "research"
+        legacy_task.validation_criteria = "test: `tests/tasks/test_validation.py`"
+        legacy_task.implementation_domain = None
+        legacy_task.is_escalated = False
+        mock_task_manager.get_task.return_value = legacy_task
+        mock_task_manager.update_task.return_value = MagicMock()
+
+        title_result = await registry.call(
+            "update_task",
+            {"task_id": task_id, "title": "Updated legacy task"},
+        )
+
+        assert title_result == {}
+        mock_task_manager.update_task.assert_called_once_with(
+            task_id,
+            title="Updated legacy task",
+        )
+        mock_task_manager.update_task.reset_mock()
+
+        criteria_result = await registry.call(
+            "update_task",
+            {
+                "task_id": task_id,
+                "validation_criteria": "test: `tests/tasks/test_validation.py`",
+            },
+        )
+
+        assert "expected path::test_symbol" in criteria_result["error"]
+        mock_task_manager.update_task.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_create_non_code_task_without_validation_criteria(
         self, mock_task_manager: MagicMock
     ) -> None:

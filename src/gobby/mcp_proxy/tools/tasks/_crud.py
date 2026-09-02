@@ -25,6 +25,7 @@ from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.task_dependencies import DependencyCycleError
 from gobby.storage.tasks import TASK_TYPE_CHOICES, VALID_CATEGORIES, TaskNotFoundError
+from gobby.tasks.acceptance_artifacts import malformed_test_reference_findings
 from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.criteria_contract import TaskCriteriaError, require_validation_criteria
 from gobby.tasks.isolation import validate_task_isolation_artifacts
@@ -71,12 +72,18 @@ def _task_invariant_error(
     category: str | None,
     validation_criteria: str | None,
     implementation_domain: str | None,
+    *,
+    supplied_validation_criteria: str | None,
 ) -> str | None:
     """Return the task invariant error for the effective task state."""
     try:
         require_validation_criteria(task_type, validation_criteria)
     except TaskCriteriaError as exc:
         return str(exc)
+    if supplied_validation_criteria is not None:
+        findings = malformed_test_reference_findings(supplied_validation_criteria)
+        if findings:
+            return "\n".join(findings)
     if category == "code" and implementation_domain is None:
         return "Code tasks require implementation_domain ('backend', 'frontend', or 'fullstack')."
     return None
@@ -194,6 +201,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             category,
             validation_criteria,
             implementation_domain,
+            supplied_validation_criteria=validation_criteria,
         )
         if invariant_error:
             return {"error": invariant_error}
@@ -594,6 +602,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             effective_category,
             effective_validation_criteria,
             effective_implementation_domain,
+            supplied_validation_criteria=validation_criteria,
         )
         if invariant_error:
             return {"error": invariant_error}
@@ -775,6 +784,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         priority: int | None = None,
         task_type: str | None = None,
         label: str | None = None,
+        closed: bool | None = None,
         parent_task_id: str | None = None,
         title_like: str | None = None,
         limit: int = 50,
@@ -801,6 +811,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if isinstance(current_stage_state, str) and "," in current_stage_state:
             current_stage_filter = [s.strip() for s in current_stage_state.split(",")]
 
+        closed_filter: dict[str, Any] = {"closed": closed} if closed is not None else {}
         tasks = ctx.task_manager.list_tasks(
             current_stage_state=current_stage_filter,
             priority=priority,
@@ -810,8 +821,21 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             title_like=title_like,
             limit=limit,
             project_id=project_id,
+            **closed_filter,
         )
-        return {"tasks": [task_discovery_payload(t) for t in tasks], "count": len(tasks)}
+        result = {"tasks": [task_discovery_payload(t) for t in tasks], "count": len(tasks)}
+        if parent_task_id:
+            result["open_count"] = ctx.task_manager.count_tasks(
+                current_stage_state=current_stage_filter,
+                priority=priority,
+                task_type=task_type,
+                label=label,
+                parent_task_id=parent_task_id,
+                title_like=title_like,
+                project_id=project_id,
+                closed=False,
+            )
+        return result
 
     registry.register(
         name="list_tasks",
@@ -838,6 +862,10 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "string",
                     "description": "Filter by label presence",
                     "default": None,
+                },
+                "closed": {
+                    "type": "boolean",
+                    "description": "true = closed only, false = open only, omitted = both",
                 },
                 "parent_task_id": {
                     "type": "string",
