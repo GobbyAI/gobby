@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from gobby.terminals.composer import (
+    COMPOSER_CAPTURE_LINES,
     COMPOSER_DRAIN_LINES,
     composer_clear_sequence,
     composer_is_bare,
@@ -63,3 +64,20 @@ def test_composer_prompt_line_is_none_without_a_prompt() -> None:
 )
 def test_composer_is_bare(capture: str, bare: bool) -> None:
     assert composer_is_bare(capture) is bare
+
+
+def test_composer_prompt_line_survives_the_slash_command_menu() -> None:
+    """Claude Code's slash menu opens under the composer; the prompt row is still found."""
+    capture = (
+        "❯ /compact\n"
+        "  /autocompact                  Set how full the context gets before\n"
+        "                                auto-summarizing\n"
+        "  /security-review              Complete a security review of the pending\n"
+        "                                changes on the current branch\n"
+        "  /workflows                    Browse running and completed workflows\n"
+        "\n\n\n"
+    )
+
+    assert composer_prompt_line(capture) == "❯ /compact"
+    assert composer_line_is(composer_prompt_line(capture), "/compact") is True
+    assert COMPOSER_CAPTURE_LINES >= 40
