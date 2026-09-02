@@ -111,6 +111,7 @@ class TestTerminalInputRouting:
         with patch("gobby.storage.agents.LocalAgentRunManager", return_value=mock_arm):
             await server._handle_terminal_input(ws, {"run_id": run_id, "data": "x"})
         mock_arm.get.assert_called_once_with(run_id)
+        assert ws.sent_messages == []
 
     @pytest.mark.asyncio
     async def test_input_for_a_detached_tmux_id_never_reaches_the_run_lookup(
