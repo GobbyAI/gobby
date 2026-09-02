@@ -197,6 +197,7 @@ async def run_daemon(
             port=runner.http_server.port,
             log_level="warning",
             access_log=False,
+            ws="websockets-sansio",
             timeout_graceful_shutdown=uvicorn_drain_timeout,
         )
         server = uvicorn.Server(config)

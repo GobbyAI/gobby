@@ -151,6 +151,7 @@ async def serve_standby_until_promotion(
             port=port,
             log_level="warning",
             access_log=False,
+            ws="none",
             timeout_graceful_shutdown=5,
         )
     )
