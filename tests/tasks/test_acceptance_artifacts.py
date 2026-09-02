@@ -149,7 +149,17 @@ def test_test_body_resolution_requests_gcode_json(monkeypatch: pytest.MonkeyPatc
     body = artifacts_module._resolve_test_body("tests/test_feature.py", "test_feature", "/repo")
 
     assert body == "def test_feature(): pass"
-    assert calls[0][-4:] == ["--format", "json", "--limit", "20"]
+    assert calls[0] == [
+        "gcode",
+        "search-symbol",
+        "test_feature",
+        "tests/test_feature.py",
+        "--allow-stale",
+        "--format",
+        "json",
+        "--limit",
+        "20",
+    ]
     assert calls[1] == ["gcode", "symbol", "symbol-id", "--format", "json"]
 
 
@@ -185,7 +195,7 @@ def test_stale_index_names_the_index_and_the_reindex_command(
         "tests/test_feature.py::test_feature: test_feature is defined in "
         "tests/test_feature.py on disk but the code index does not have it "
         "(index lock busy for project abc; skipped); the acceptance artifact is "
-        "valid and the index is behind. Run `gcode index --files "
+        "valid and the index is behind. Run `gcode index --full --files "
         "tests/test_feature.py` and retry the close.",
     )
 
@@ -226,10 +236,84 @@ def test_stale_index_is_repaired_by_reindexing_the_artifact_file(
     assert commands[1] == [
         "gcode",
         "index",
+        "--full",
         "--files",
         "tests/test_feature.py",
         "--skip-if-locked",
     ]
+
+
+def test_search_timeout_is_repaired_by_reindexing_the_artifact_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    test_file = tmp_path / "tests" / "test_feature.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("def test_feature() -> None:\n    assert compute() == 3\n")
+    commands: list[list[str]] = []
+
+    def run_command(command: list[str], _repo_path: str) -> str:
+        commands.append(command)
+        if command[1] == "search-symbol":
+            if sum(item[1] == "search-symbol" for item in commands) == 1:
+                raise RuntimeError("gcode command failed: search timed out after 30 seconds")
+            return (
+                '{"results":[{"id":"symbol-id","file_path":"tests/test_feature.py",'
+                '"name":"test_feature","qualified_name":"test_feature"}]}'
+            )
+        if command[1] == "index":
+            return "{}"
+        if command[1] == "symbol":
+            return '{"source":"def test_feature() -> None:\\n    assert compute() == 3\\n"}'
+        if command[0] == "git":
+            return ""
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(artifacts_module, "_run_command", run_command)
+
+    result = evaluate_acceptance_artifacts(
+        criteria="Feature works. test: tests/test_feature.py::test_feature",
+        repo_path=str(tmp_path),
+        commit_shas=[],
+    )
+
+    assert result.passed is True
+    assert result.findings == ()
+
+
+def test_search_timeout_and_failed_reindex_name_the_stale_index(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    test_file = tmp_path / "tests" / "test_feature.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("def test_feature() -> None:\n    assert compute() == 3\n")
+    timeout_error = "gcode command failed: search timed out after 30 seconds"
+
+    def run_command(command: list[str], _repo_path: str) -> str:
+        if command[1] == "search-symbol":
+            raise RuntimeError(timeout_error)
+        if command[1] == "index":
+            raise RuntimeError("index lock busy for project abc; skipped")
+        if command[0] == "git":
+            return ""
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(artifacts_module, "_run_command", run_command)
+
+    result = evaluate_acceptance_artifacts(
+        criteria="Feature works. test: tests/test_feature.py::test_feature",
+        repo_path=str(tmp_path),
+        commit_shas=[],
+    )
+
+    assert result.passed is False
+    assert result.findings == (
+        "tests/test_feature.py::test_feature: test_feature is defined in "
+        "tests/test_feature.py on disk but the code index does not have it "
+        f"({timeout_error}); the acceptance artifact is valid and the index is behind. "
+        "Run `gcode index --full --files tests/test_feature.py` and retry the close.",
+    )
 
 
 def test_symbol_absent_from_disk_keeps_the_unresolved_diagnostic(
@@ -248,6 +332,8 @@ def test_symbol_absent_from_disk_keeps_the_unresolved_diagnostic(
     )
 
     def run_command(command: list[str], _repo_path: str) -> str:
+        if command[1] == "search-symbol":
+            raise RuntimeError("gcode command failed: search timed out after 30 seconds")
         assert command[1] != "index", "a symbol absent from disk must not trigger a reindex"
         return '{"results":[]}'
 
