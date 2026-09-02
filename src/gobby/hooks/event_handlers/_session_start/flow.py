@@ -437,7 +437,9 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             terminal_context=terminal_context,
         )
         context_mode = str(event.metadata.pop(_CONTEXT_MODE_METADATA_KEY, "live"))
-        if session_source == "clear" and handler._session_manager:
+        if handler._session_manager and (
+            session_source == "clear" or resolution.clear_predecessor is not None
+        ):
             rebound = handler._session_manager.get(session_id)
             if rebound is not None:
                 session_obj = rebound

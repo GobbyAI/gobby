@@ -158,11 +158,15 @@ def _bind_clear_successor(
     successor_id = getattr(session_obj, "id", None)
     if not isinstance(predecessor_id, str) or not isinstance(successor_id, str):
         return False
+    supersedes = getattr(resolution, "clear_supersedes", None)
+    if not isinstance(supersedes, str):
+        supersedes = None
     won = take_clear_handoff_marker(
         handler._session_manager.db,
         predecessor_id,
         attempt_id=attempt_id,
         successor_id=successor_id,
+        supersede_successor_id=supersedes,
     )
     if not won:
         handler.logger.warning(
@@ -194,6 +198,16 @@ def _bind_clear_successor(
             predecessor_id,
             predecessor_vars,
         )
+        if supersedes is not None:
+            # The stale successor already took the claims on its own bind; move
+            # them again so the newcomer owns them before that row is expired.
+            stale_vars: dict[str, Any] = {}
+            try:
+                if sv_mgr is not None:
+                    stale_vars = dict(sv_mgr.get_variables(supersedes) or {})
+            except Exception:
+                stale_vars = {}
+            preserve_task_claim_state(handler, sv_mgr, successor_id, supersedes, stale_vars)
     except Exception as exc:
         handler.logger.warning(
             "Failed to reassign clear task claims for successor %s: %s",
@@ -220,6 +234,17 @@ def _bind_clear_successor(
     except Exception as exc:
         handler.logger.warning(
             "Failed to set clear-successor title for session %s: %s",
+            successor_id,
+            exc,
+        )
+    # The successor now owns the handoff and the claims: this is the only path
+    # that ends the predecessor's awaiting_handoff status.
+    try:
+        handler._session_manager.update_status_if_non_terminal(predecessor_id, "expired")
+    except Exception as exc:
+        handler.logger.warning(
+            "Failed to expire clear predecessor %s after successor %s bound: %s",
+            predecessor_id,
             successor_id,
             exc,
         )
@@ -284,12 +309,6 @@ def activate_materialized_session(
             None,
         )
 
-    expire_stale_terminal_sessions_for_context(
-        handler,
-        session_id=session_id,
-        project_id=project_id,
-        terminal_context=terminal_context,
-    )
     # handler is typed Any and the mixins never declare terminal_manager; only
     # the concrete HookEventHandlers assigns it. Match _session_end.py:192 so a
     # handler without the attribute takes the same skip path as one holding None.
@@ -342,6 +361,14 @@ def activate_materialized_session(
             rebound = handler._session_manager.get(session_id)
             if rebound is not None:
                 session_obj = rebound
+    # Context-reuse expiry runs only after the newcomer is bound and holds the
+    # claims, so a superseded successor is expired after its handoff moved on.
+    expire_stale_terminal_sessions_for_context(
+        handler,
+        session_id=session_id,
+        project_id=project_id,
+        terminal_context=terminal_context,
+    )
     if session_obj:
         _schedule_tmux_window_rename_for_session(handler, session_obj)
 

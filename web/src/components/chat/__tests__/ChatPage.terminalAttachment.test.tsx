@@ -320,7 +320,7 @@ describe("ChatPage – terminal attachment", () => {
               ref: "#154",
               source: "qwen",
               title: "Live Handoff Terminal",
-              status: "handoff_ready",
+              status: "awaiting_handoff",
               canProxyAttach: true,
               model: "qwen3-coder",
               externalId: "term-154",

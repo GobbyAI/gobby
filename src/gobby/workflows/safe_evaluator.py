@@ -497,6 +497,7 @@ def build_condition_helpers(
         first_tdd_test_path,
         is_gobby_build_command,
         is_validation_command,
+        paths_written_this_turn,
         shell_command_invokes_gcode,
         task_commit_project_path_allowlist_violation,
         task_needs_human_review,
@@ -528,6 +529,9 @@ def build_condition_helpers(
         "first_tdd_test_path": first_tdd_test_path,
         "is_gobby_build_command": is_gobby_build_command,
         "is_validation_command": is_validation_command,
+        "paths_written_this_turn": lambda paths: paths_written_this_turn(
+            paths, _get_variables(ctx).get("turn_written_paths")
+        ),
         "shell_command_invokes_gcode": shell_command_invokes_gcode,
         "task_commit_project_path_allowlist_violation": (
             task_commit_project_path_allowlist_violation

@@ -183,7 +183,7 @@ async def handle_delete_chat(
 
     # Soft-delete: mark as expired (preserves messages;
     # hard delete fails due to FK constraints from agent_runs, tasks, etc.)
-    # Use 'expired' not 'handoff_ready' — no child session will pick these up.
+    # Use 'expired' not 'awaiting_handoff' — no child session will pick these up.
     if db_session_id:
         session_manager = getattr(mixin, "session_manager", None)
         try:

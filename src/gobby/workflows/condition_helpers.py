@@ -533,6 +533,25 @@ def is_gobby_build_command(command: Any) -> bool:
     return any(_segment_invokes_gobby_build(segment) for segment in shell_command_segments(command))
 
 
+def paths_written_this_turn(paths: Any, turn_written_paths: Any) -> bool:
+    """Return whether every requested path was written in the current turn."""
+
+    def normalized_paths(value: Any) -> set[str]:
+        values: Sequence[Any]
+        if isinstance(value, str):
+            values = (value,)
+        elif isinstance(value, list | tuple):
+            values = value
+        else:
+            return set()
+        return {
+            _normalize_condition_path(path) for path in values if isinstance(path, str) and path
+        }
+
+    requested = normalized_paths(paths)
+    return bool(requested) and requested.issubset(normalized_paths(turn_written_paths))
+
+
 def shell_command_invokes_gcode(command: Any) -> bool:
     """Return whether any shell command segment invokes ``gcode``."""
     if not isinstance(command, str) or not command.strip():

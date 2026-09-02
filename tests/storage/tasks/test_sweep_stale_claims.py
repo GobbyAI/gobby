@@ -214,7 +214,7 @@ def test_sweep_reclaims_non_automation_task_claimed_by_inactive_session(
     assert task.id not in candidate_ids
 
 
-@pytest.mark.parametrize("status", ["active", "paused", "handoff_ready"])
+@pytest.mark.parametrize("status", ["active", "paused", "awaiting_handoff"])
 def test_sweep_keeps_task_claimed_by_live_session(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -290,7 +290,7 @@ def test_sweep_preserves_claim_while_compact_marker_is_fresh(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     session_id = str(uuid.uuid4())
-    _make_session(temp_db, sample_project, session_id, "handoff_ready")
+    _make_session(temp_db, sample_project, session_id, "awaiting_handoff")
     task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
     assert mark_handoff_compact_continuation_pending(temp_db, session_id)
     # Lifecycle status can be transiently stale before SessionStart consumes the
@@ -311,7 +311,7 @@ def test_sweep_reclaims_claim_once_compact_marker_is_stale(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     session_id = str(uuid.uuid4())
-    _make_session(temp_db, sample_project, session_id, "handoff_ready")
+    _make_session(temp_db, sample_project, session_id, "awaiting_handoff")
     task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
     assert mark_handoff_compact_continuation_pending(temp_db, session_id)
     _backdate_compact_marker(temp_db, session_id, HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS + 60)

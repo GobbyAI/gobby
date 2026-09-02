@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.workflows.hooks import WorkflowHookHandler
 
-# The final bool is set_handoff_ready for handoff-gated summary dispatches.
+# The final bool is set_awaiting_handoff for handoff-gated summary dispatches.
 DispatchSessionSummariesFn = Callable[[str, bool, threading.Event | None, bool], None]
 
 

@@ -132,7 +132,7 @@ def test_releases_clean_claim_and_clears_session_variables(
     assert task.id not in variables["claimed_tasks"]
 
 
-@pytest.mark.parametrize("status", ["active", "paused", "handoff_ready"])
+@pytest.mark.parametrize("status", ["active", "paused", "awaiting_handoff"])
 def test_preserves_claims_for_live_owner_statuses(
     temp_db: HubDatabase,
     tmp_path: Path,

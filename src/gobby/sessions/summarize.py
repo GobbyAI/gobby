@@ -368,7 +368,7 @@ async def generate_session_summaries(
     db: HubDatabase | None = None,
     write_file: bool = False,
     output_path: str = ".gobby/session_summaries",
-    set_handoff_ready: bool = False,
+    set_awaiting_handoff: bool = False,
     run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> dict[str, Any]:
     """Generate or reuse a full transcript-based archival summary."""
@@ -394,8 +394,8 @@ async def generate_session_summaries(
             task.add_done_callback(partial(_remove_summary_task, task_key))
 
     core_result = await asyncio.shield(task)
-    if set_handoff_ready and core_result.result.get("success"):
-        await _run_db(db_runner, session_manager.update_status, session_id, "handoff_ready")
+    if set_awaiting_handoff and core_result.result.get("success"):
+        await _run_db(db_runner, session_manager.update_status, session_id, "awaiting_handoff")
     files_written = await _write_files(
         session_id=session_id,
         full_markdown=core_result.full_markdown,

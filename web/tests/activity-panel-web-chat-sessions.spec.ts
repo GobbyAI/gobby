@@ -234,7 +234,7 @@ test("activity panel shows non-current web chats with a web badge", async ({
     if (path === "/api/sessions") {
       const status = url.searchParams.get("status");
       const body =
-        status === "paused" || status === "handoff_ready"
+        status === "paused" || status === "awaiting_handoff"
           ? { sessions: [] }
           : { sessions, total: sessions.length };
       await route.fulfill({
@@ -458,7 +458,7 @@ test("activity panel refreshes sessions after a session_event websocket message"
     if (path === "/api/sessions") {
       const status = url.searchParams.get("status");
       const body =
-        status === "paused" || status === "handoff_ready"
+        status === "paused" || status === "awaiting_handoff"
           ? { sessions: [] }
           : { sessions: catalogSessions, total: catalogSessions.length };
       await route.fulfill({

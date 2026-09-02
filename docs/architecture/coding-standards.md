@@ -214,7 +214,7 @@ Session Manager for multi-CLI session management (local-first).
 Handles:
 - Session registration with hub database storage
 - Parent session lookup for context handoff
-- Session status updates (active, expired, handoff_ready)
+- Session status updates (active, expired, awaiting_handoff)
 
 This module is CLI-agnostic and can be used by any CLI integration.
 """
@@ -232,7 +232,7 @@ class SessionManager:
     Provides:
     - Session registration and lookup
     - Parent session discovery for context handoff
-    - Status management (active, expired, handoff_ready)
+    - Status management (active, expired, awaiting_handoff)
 
     Thread-safe: Uses locks for session metadata and mapping caches.
     """

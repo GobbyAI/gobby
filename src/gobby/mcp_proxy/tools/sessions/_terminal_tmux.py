@@ -1,4 +1,4 @@
-"""tmux target resolution and key delivery helpers for terminal tools."""
+"""Pane resolution and verified command delivery for terminal handoff tools."""
 
 from __future__ import annotations
 
@@ -9,6 +9,13 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.sessions.tmux_context import parse_terminal_context_value
+from gobby.terminals.composer import (
+    COMPOSER_CAPTURE_LINES,
+    composer_line_is,
+    composer_prompt_line,
+)
+from gobby.terminals.pane_io import PaneIO, clear_composer
+from gobby.terminals.runtime import NamedKey
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
@@ -25,20 +32,27 @@ _CLI_COMPACT_COMMANDS: dict[str, str] = {
     "qwen": "/compress",
     "droid": "/compress",
 }
-_DEFAULT_COMPACT_INTERRUPT_KEY = "Escape"
-_CLI_COMPACT_INTERRUPT_KEYS: dict[str, str] = {
-    "codex": "C-c",
+_DEFAULT_COMPACT_INTERRUPT_KEY: NamedKey = "escape"
+_CLI_COMPACT_INTERRUPT_KEYS: dict[str, NamedKey] = {
+    "codex": "ctrl_c",
 }
+# Blind path (no transcript observer): wait this long after the interrupt key.
 _DEFAULT_INTERRUPT_SETTLE_SECONDS = 0.1
-_CODEX_INTERRUPT_SETTLE_SECONDS = 1.0
-_CODEX_INTERRUPT_ATTEMPTS = 3
-_CODEX_INTERRUPT_POLL_SECONDS = 0.05
+# Observed path: poll the transcript this long per interrupt attempt.
+_OBSERVED_INTERRUPT_SETTLE_SECONDS = 1.0
+_INTERRUPT_ATTEMPTS = 3
+_INTERRUPT_POLL_SECONDS = 0.05
+_COMPOSER_SETTLE_SECONDS = 0.05
+_COMMAND_VERIFY_SECONDS = 1.0
 _COMPACTION_REJECTION_SETTLE_SECONDS = 0.1
 _COMPACTION_REJECTION_CAPTURE_LINES = 30
 _COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
+_COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
+_INTERRUPT_UNCONFIRMED_ERROR_CODE = "interrupt_unconfirmed"
+_INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE = "interrupt_observation_unavailable"
 
 
-def _compact_interrupt_key(source: str | None) -> str:
+def _compact_interrupt_key(source: str | None) -> NamedKey:
     if source is None:
         return _DEFAULT_COMPACT_INTERRUPT_KEY
     return _CLI_COMPACT_INTERRUPT_KEYS.get(source, _DEFAULT_COMPACT_INTERRUPT_KEY)
@@ -60,19 +74,11 @@ def _fresh_output_delta(before: str, after: str) -> str:
 
 
 async def _capture_pane_snapshot(
-    tmux: TmuxSessionManager,
-    target: str,
+    pane: PaneIO,
     *,
     lines: int = _COMPACTION_REJECTION_CAPTURE_LINES,
 ) -> str | None:
-    try:
-        output = await tmux.snapshot_lines(target, lines=lines)
-    except (TimeoutError, OSError, RuntimeError):
-        logger.debug("Failed to capture tmux target %s for compaction state check", target)
-        return None
-    if isinstance(output, str):
-        return output
-    return None
+    return await pane.snapshot(lines)
 
 
 def _detect_compaction_rejection(
@@ -93,74 +99,46 @@ def _detect_compaction_rejection(
     }
 
 
-async def _send_tmux_keys(
-    tmux: TmuxSessionManager,
-    target: str,
-    keys: str,
-    session_id: str,
-    *,
-    literal: bool,
-    action: str,
-) -> tuple[bool, str | None]:
-    """Send tmux keys and keep failures structured for MCP callers."""
-    try:
-        ok = await tmux.dispatch_keys(target, keys, literal=literal)
-    except TimeoutError:
-        logger.warning("Timed out %s to tmux target %s for %s", action, target, session_id)
-        return False, f"tmux send-keys timed out for session {session_id} while {action}"
-    except (OSError, RuntimeError) as exc:
-        detail = str(exc) or type(exc).__name__
-        logger.warning(
-            "Failed %s to tmux target %s for %s: %s",
-            action,
-            target,
-            session_id,
-            detail,
-            exc_info=True,
-        )
-        return False, f"tmux send-keys failed for session {session_id} while {action}: {detail}"
-
-    if not ok:
-        logger.warning(
-            "tmux send-keys returned false while %s to target %s for session %s",
-            action,
-            target,
-            session_id,
-            extra={
-                "event": "tmux_key_delivery_failed",
-                "action": action,
-                "tmux_target": target,
-                "session_id": session_id,
-            },
-        )
-        return False, f"tmux send-keys failed for session {session_id} while {action}"
-    return True, None
-
-
-async def _send_compaction_command(
-    tmux: TmuxSessionManager,
-    target: str,
-    command: str,
-    session_id: str,
-) -> tuple[bool, str | None]:
-    """Send a compaction command through tmux and keep failures structured."""
-    return await _send_tmux_keys(
-        tmux,
-        target,
-        f"{command}\n",
+def _log_pane_failure(pane: PaneIO, session_id: str, action: str, reason: str | None) -> None:
+    logger.warning(
+        "Failed %s on %s target %s for session %s: %s",
+        action,
+        pane.backend,
+        pane.target,
         session_id,
-        literal=True,
-        action="sending compaction command",
+        reason,
+        extra={
+            "event": "terminal_key_delivery_failed",
+            "action": action,
+            "backend": pane.backend,
+            "target": pane.target,
+            "session_id": session_id,
+        },
     )
 
 
-async def _wait_for_codex_interrupt(
+async def _send_pane_key(
+    pane: PaneIO,
+    key: NamedKey,
+    session_id: str,
+    *,
+    action: str,
+) -> tuple[bool, str | None]:
+    """Send one named key and keep failures structured for MCP callers."""
+    ok, reason = await pane.send_key(key)
+    if not ok:
+        _log_pane_failure(pane, session_id, action, reason)
+        return False, f"{reason} (session {session_id} while {action})"
+    return True, None
+
+
+async def _wait_for_interrupt(
     observe_interrupt: Callable[[], bool | None],
     *,
     attempt_seconds: float,
-    poll_seconds: float = _CODEX_INTERRUPT_POLL_SECONDS,
+    poll_seconds: float = _INTERRUPT_POLL_SECONDS,
 ) -> bool | None:
-    """Poll for a fresh Codex abort event during one interrupt attempt."""
+    """Poll the transcript observer for a fresh interrupt during one attempt."""
     if attempt_seconds <= 0:
         return observe_interrupt()
 
@@ -175,9 +153,100 @@ async def _wait_for_codex_interrupt(
     return observe_interrupt()
 
 
+async def _confirm_interrupt(
+    pane: PaneIO,
+    key: NamedKey,
+    session_id: str,
+    observe_interrupt: Callable[[], bool | None],
+    *,
+    attempt_seconds: float,
+) -> tuple[bool, str | None, dict[str, Any] | None]:
+    """Send the interrupt key until the CLI's transcript confirms the turn stopped."""
+    for _attempt in range(_INTERRUPT_ATTEMPTS):
+        ok, reason = await _send_pane_key(
+            pane, key, session_id, action="sending compaction interrupt"
+        )
+        if not ok:
+            return False, reason, None
+        observed = await _wait_for_interrupt(observe_interrupt, attempt_seconds=attempt_seconds)
+        if observed is None:
+            return (
+                False,
+                "transcript became unavailable during interrupt confirmation",
+                {
+                    "error_code": _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE,
+                    "continuation_pending": False,
+                },
+            )
+        if observed:
+            return True, None, None
+    return (
+        False,
+        f"CLI did not confirm interruption after {_INTERRUPT_ATTEMPTS} attempts",
+        {
+            "error_code": _INTERRUPT_UNCONFIRMED_ERROR_CODE,
+            "continuation_pending": False,
+        },
+    )
+
+
+async def _submit_verified_command(
+    pane: PaneIO,
+    command: str,
+    session_id: str,
+    *,
+    verify_seconds: float,
+    poll_seconds: float = _INTERRUPT_POLL_SECONDS,
+) -> tuple[bool, str | None, dict[str, Any] | None]:
+    """Type ``command``, require it alone on the prompt line, then press Enter."""
+    ok, reason = await pane.type_text(command)
+    if not ok:
+        _log_pane_failure(pane, session_id, "typing compaction command", reason)
+        return False, reason, None
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + verify_seconds
+    prompt_line: str | None = None
+    while True:
+        capture = await pane.snapshot(COMPOSER_CAPTURE_LINES)
+        prompt_line = composer_prompt_line(capture) if capture is not None else None
+        if composer_line_is(prompt_line, command):
+            break
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            # Back the typed command out so the operator's draft is not submitted
+            # with it later; whatever preceded it stays in the box.
+            for _ in command:
+                await pane.send_key("backspace")
+            logger.warning(
+                "Composer on %s target %s did not show %s cleanly for session %s: %r",
+                pane.backend,
+                pane.target,
+                command,
+                session_id,
+                (prompt_line or "").strip(),
+            )
+            return (
+                False,
+                f"composer did not show {command} cleanly before submit",
+                {
+                    "error_code": _COMPOSER_NOT_CLEAN_ERROR_CODE,
+                    "continuation_pending": False,
+                    "prompt_line": (prompt_line or "").strip(),
+                },
+            )
+        await asyncio.sleep(min(poll_seconds, remaining))
+
+    ok, reason = await _send_pane_key(
+        pane, "enter", session_id, action="submitting compaction command"
+    )
+    if not ok:
+        return False, reason, None
+    return True, None, None
+
+
 async def _send_terminal_compaction_command(
-    tmux: TmuxSessionManager,
-    target: str,
+    pane: PaneIO,
     command: str,
     session_id: str,
     *,
@@ -186,24 +255,20 @@ async def _send_terminal_compaction_command(
     clear_continuation_pending: Callable[[], bool],
     schedule_continuation_readiness: Callable[[str | None], bool] | None = None,
     continuation_readiness_capture_lines: int | None = None,
-    observe_codex_interrupt: Callable[[], bool | None] | None = None,
+    observe_interrupt: Callable[[], bool | None] | None = None,
     settle_seconds: float | None = None,
     interrupt_settle_seconds: float = _DEFAULT_INTERRUPT_SETTLE_SECONDS,
     rejection_settle_seconds: float = _COMPACTION_REJECTION_SETTLE_SECONDS,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
-    """Confirm interruption, persist continuation state, then compact."""
+    """Confirm the interrupt, clear the composer, then submit the verified command.
+
+    ``settle_seconds`` overrides every wait (tests); ``observe_interrupt`` is the
+    transcript observer for CLIs that record interrupts, and its absence keeps the
+    blind interrupt path for CLIs that do not.
+    """
     continuation_pending = False
-    if cli_source == "codex":
-        if observe_codex_interrupt is None:
-            return (
-                False,
-                "Codex rollout transcript is unavailable for interrupt confirmation",
-                False,
-                {
-                    "error_code": "codex_interrupt_observation_unavailable",
-                    "continuation_pending": False,
-                },
-            )
+    interrupt_key = _compact_interrupt_key(cli_source)
+    if observe_interrupt is not None:
         continuation_pending = bool(mark_continuation_pending())
         if not continuation_pending:
             return (
@@ -212,58 +277,20 @@ async def _send_terminal_compaction_command(
                 False,
                 None,
             )
-
         attempt_seconds = interrupt_settle_seconds if settle_seconds is None else settle_seconds
-        interrupted = False
-        for _attempt in range(_CODEX_INTERRUPT_ATTEMPTS):
-            ok, reason = await _send_tmux_keys(
-                tmux,
-                target,
-                _compact_interrupt_key(cli_source),
-                session_id,
-                literal=False,
-                action="sending compaction interrupt",
-            )
-            if not ok:
-                clear_continuation_pending()
-                return False, reason, False, None
-            observed = await _wait_for_codex_interrupt(
-                observe_codex_interrupt,
-                attempt_seconds=attempt_seconds,
-            )
-            if observed is None:
-                clear_continuation_pending()
-                return (
-                    False,
-                    "Codex rollout transcript became unavailable during interrupt confirmation",
-                    False,
-                    {
-                        "error_code": "codex_interrupt_observation_unavailable",
-                        "continuation_pending": False,
-                    },
-                )
-            if observed:
-                interrupted = True
-                break
-        if not interrupted:
-            clear_continuation_pending()
-            return (
-                False,
-                "Codex did not confirm interruption after 3 attempts",
-                False,
-                {
-                    "error_code": "codex_interrupt_unconfirmed",
-                    "continuation_pending": False,
-                },
-            )
-    else:
-        ok, reason = await _send_tmux_keys(
-            tmux,
-            target,
-            _compact_interrupt_key(cli_source),
+        confirmed, reason, detail = await _confirm_interrupt(
+            pane,
+            interrupt_key,
             session_id,
-            literal=False,
-            action="sending compaction interrupt",
+            observe_interrupt,
+            attempt_seconds=attempt_seconds,
+        )
+        if not confirmed:
+            clear_continuation_pending()
+            return False, reason, False, detail
+    else:
+        ok, reason = await _send_pane_key(
+            pane, interrupt_key, session_id, action="sending compaction interrupt"
         )
         if not ok:
             return False, reason, False, None
@@ -272,32 +299,50 @@ async def _send_terminal_compaction_command(
         if delay > 0:
             await asyncio.sleep(delay)
 
-    before_command = await _capture_pane_snapshot(tmux, target)
+    before_command = await _capture_pane_snapshot(pane)
     readiness_before_command = before_command
     if (
         schedule_continuation_readiness is not None
         and continuation_readiness_capture_lines is not None
     ):
         readiness_before_command = await _capture_pane_snapshot(
-            tmux,
-            target,
+            pane,
             lines=continuation_readiness_capture_lines,
         )
-    if cli_source != "codex":
+    if observe_interrupt is None:
         continuation_pending = bool(mark_continuation_pending())
-    if schedule_continuation_readiness is not None:
-        if not continuation_pending:
-            return (
-                False,
-                "failed to persist handoff continuation before compaction",
-                False,
-                None,
-            )
-    ok, reason = await _send_compaction_command(tmux, target, command, session_id)
+    if schedule_continuation_readiness is not None and not continuation_pending:
+        return (
+            False,
+            "failed to persist handoff continuation before compaction",
+            False,
+            None,
+        )
+
+    composer_settle = _COMPOSER_SETTLE_SECONDS if settle_seconds is None else settle_seconds
+    cleared, clear_reason = await clear_composer(pane, cli_source, settle_seconds=composer_settle)
+    if not cleared:
+        if continuation_pending:
+            clear_continuation_pending()
+        _log_pane_failure(pane, session_id, "clearing the composer", clear_reason)
+        return (
+            False,
+            f"composer could not be cleared before {command}: {clear_reason}",
+            False,
+            {"error_code": _COMPOSER_NOT_CLEAN_ERROR_CODE, "continuation_pending": False},
+        )
+
+    verify_seconds = _COMMAND_VERIFY_SECONDS if settle_seconds is None else settle_seconds
+    ok, reason, failure_detail = await _submit_verified_command(
+        pane,
+        command,
+        session_id,
+        verify_seconds=verify_seconds,
+    )
     if not ok:
         if continuation_pending:
             clear_continuation_pending()
-        return False, reason, False, None
+        return False, reason, False, failure_detail
 
     rejection_delay = rejection_settle_seconds if settle_seconds is None else settle_seconds
     if rejection_delay > 0:
@@ -305,7 +350,7 @@ async def _send_terminal_compaction_command(
 
     rejection = _detect_compaction_rejection(
         before_command,
-        await _capture_pane_snapshot(tmux, target),
+        await _capture_pane_snapshot(pane),
         command,
     )
     if rejection is not None:

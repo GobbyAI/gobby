@@ -190,7 +190,7 @@ class HookSessionManager(Protocol):
         machine_id: str,
         project_id: str,
         source: str | None = None,
-        status: str = "handoff_ready",
+        status: str = "awaiting_handoff",
         max_age_minutes: int = 10,
     ) -> Session | None: ...
 

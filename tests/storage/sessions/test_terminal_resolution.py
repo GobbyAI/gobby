@@ -93,7 +93,7 @@ def test_resolve_current_terminal_session_uses_best_inactive_fallback(
         session_manager,
         sample_project["id"],
         "handoff-pid-and-pane",
-        status="handoff_ready",
+        status="awaiting_handoff",
         terminal_context={"parent_pid": 4242, "tmux_pane": "%2"},
     )
 

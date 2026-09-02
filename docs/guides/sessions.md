@@ -41,13 +41,13 @@ stateDiagram-v2
     [*] --> active: registered
     active --> paused: turn ends
     paused --> active: next turn
-    active --> handoff_ready: compact or handoff
-    paused --> handoff_ready: handoff
-    handoff_ready --> active: compact restart (same row)
+    active --> awaiting_handoff: compact or handoff
+    paused --> awaiting_handoff: handoff
+    awaiting_handoff --> active: compact restart (same row)
     active --> completed: web chat cleared
     active --> expired: session end or stale
     paused --> expired: stale
-    handoff_ready --> expired: orphaned or stale
+    awaiting_handoff --> expired: orphaned or stale
     expired --> active: compact revival
 ```
 
@@ -55,7 +55,7 @@ stateDiagram-v2
 | :--- | :--- |
 | `active` | A session is registered and currently expected to receive activity. |
 | `paused` | A turn finished or the session went idle, but the session may resume. |
-| `handoff_ready` | Summary context is available for a successor session. |
+| `awaiting_handoff` | Summary context is available for a successor session. |
 | `completed` | A web-chat lifecycle ended cleanly. |
 | `expired` | The session ended, went stale, or was soft-deleted. |
 
@@ -111,7 +111,7 @@ gobby sessions list [OPTIONS]
 | Option | Description |
 | :--- | :--- |
 | `-p, --project TEXT` | Filter by project name or UUID. |
-| `-s, --status TEXT` | Filter by status such as `active`, `completed`, or `handoff_ready`. |
+| `-s, --status TEXT` | Filter by status such as `active`, `completed`, or `awaiting_handoff`. |
 | `--source TEXT` | Filter by `claude`, `grok`, `qwen`, `agy`, `codex`, or `droid`. |
 | `-n, --limit INTEGER` | Maximum rows to show. |
 | `--json` | Emit JSON. |
@@ -204,7 +204,7 @@ with `get_tool_schema` before writing examples or automating calls.
 | `get_session_messages` | Read rendered transcript messages. |
 | `search_session_messages` | Search rendered transcript messages by substring. |
 | `set_handoff` | Set or generate handoff context for the current session. |
-| `get_handoff` | Retrieve handoff context directly or from the latest same-project `handoff_ready` session. |
+| `get_handoff` | Retrieve handoff context directly or from the latest same-project `awaiting_handoff` session. |
 | `get_handoff` | Wait for a session's `summary_markdown` to become available. |
 | `register_session` | Register hookless clients such as SDK-driven agents. |
 | `get_session_commits` | List commits made during a session timeframe. |
@@ -432,7 +432,7 @@ stop or turn-end event does not release the agent run.
 1. Confirm the session has `summary_markdown`.
 2. Create or update handoff context with `gobby sessions summarize` or
    `set_handoff`.
-3. Confirm the target status is `handoff_ready`. A session may always read its
+3. Confirm the target status is `awaiting_handoff`. A session may always read its
    own summary regardless of status (post-compact self-reads).
 4. Pass `session_id` to `get_handoff` when multiple handoff-ready
    sessions exist.

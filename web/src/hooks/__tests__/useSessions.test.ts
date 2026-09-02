@@ -215,7 +215,7 @@ describe("useSessionCatalog", () => {
     ]);
   });
 
-  it("keeps expired and handoff_ready rows but hides deleted rows", async () => {
+  it("keeps expired and awaiting_handoff rows but hides deleted rows", async () => {
     mockFetch.resetRoutes();
     mockFetch.mockJsonResponse("/api/sessions", {
       sessions: [
@@ -223,7 +223,7 @@ describe("useSessionCatalog", () => {
         {
           ...SAMPLE_SESSIONS[0],
           id: "sess-handoff",
-          status: "handoff_ready",
+          status: "awaiting_handoff",
           seq_num: 102,
           updated_at: "2026-03-03T12:00:00Z",
         },

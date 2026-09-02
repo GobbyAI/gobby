@@ -61,7 +61,7 @@ describe("ChatPage – terminal resume", () => {
               ref: "#153",
               source: "qwen",
               title: "Resume Only Terminal",
-              status: "handoff_ready",
+              status: "awaiting_handoff",
               canProxyAttach: false,
               model: "qwen3-coder",
               externalId: "term-153",

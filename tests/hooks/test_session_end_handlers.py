@@ -287,10 +287,10 @@ class TestSessionEndHandling:
             "sess-123", "expired"
         )
 
-    def test_session_end_marks_handoff_ready_with_compact_reason(
+    def test_session_end_marks_awaiting_handoff_with_compact_reason(
         self, mock_dependencies: dict
     ) -> None:
-        """Test SESSION_END marks handoff_ready when event reason is 'compact'."""
+        """Test SESSION_END marks awaiting_handoff when event reason is 'compact'."""
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
         mock_session.agent_run_id = "run-456"
@@ -310,19 +310,19 @@ class TestSessionEndHandling:
 
         assert response.decision == "allow"
         mock_dependencies["session_storage"].update_status_if_non_terminal.assert_called_once_with(
-            "sess-123", "handoff_ready"
+            "sess-123", "awaiting_handoff"
         )
         mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
         manager_cls.return_value.delete_for_session.assert_not_called()
 
-    def test_session_end_expires_stale_handoff_ready_without_handoff_reason(
+    def test_session_end_leaves_awaiting_handoff_for_the_successor(
         self, mock_dependencies: dict
     ) -> None:
-        """Test ordinary SESSION_END does not preserve stale handoff_ready state."""
+        """An ordinary SESSION_END never expires a clear predecessor; its successor's bind does."""
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
         mock_session.agent_run_id = None
-        mock_session.status = "handoff_ready"
+        mock_session.status = "awaiting_handoff"
         mock_dependencies["session_storage"].get.return_value = mock_session
 
         handlers = EventHandlers(**mock_dependencies)
@@ -336,16 +336,14 @@ class TestSessionEndHandling:
         response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
-        mock_dependencies["session_storage"].update_status_if_non_terminal.assert_called_once_with(
-            "sess-123", "expired"
-        )
+        mock_dependencies["session_storage"].update_status_if_non_terminal.assert_not_called()
 
     def test_session_end_resume_reason_expires_session(self, mock_dependencies: dict) -> None:
-        """Runtime resume is not a handoff-ready exit."""
+        """Runtime resume on a live row is an ordinary exit."""
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
         mock_session.agent_run_id = None
-        mock_session.status = "handoff_ready"
+        mock_session.status = "active"
         mock_dependencies["session_storage"].get.return_value = mock_session
 
         handlers = EventHandlers(**mock_dependencies)
@@ -454,12 +452,12 @@ class TestSessionEndHandling:
         mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
         manager_cls.return_value.delete_for_session.assert_not_called()
 
-    def test_session_end_handoff_ready_error_handled(
+    def test_session_end_awaiting_handoff_error_handled(
         self,
         mock_dependencies: dict,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Test error marking handoff_ready doesn't block response."""
+        """Test error marking awaiting_handoff doesn't block response."""
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
         mock_session.agent_run_id = None
