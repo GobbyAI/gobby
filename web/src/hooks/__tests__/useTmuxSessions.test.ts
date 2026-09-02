@@ -972,7 +972,7 @@ describe("useTmuxSessions", () => {
     act(() => {
       ws.simulateMessage({
         type: "terminal_attach_history",
-        streaming_id: "stream-1",
+        attachment_id: "stream-1",
         text: "older\r\nlines",
         truncated: true,
         unavailable: false,
@@ -996,7 +996,7 @@ describe("useTmuxSessions", () => {
     act(() => {
       ws.simulateMessage({
         type: "terminal_attach_history",
-        streaming_id: "stream-1",
+        attachment_id: "stream-1",
       });
     });
     expect(received[1]).toEqual({
@@ -1007,6 +1007,37 @@ describe("useTmuxSessions", () => {
       droppedBytes: 0,
       totalBytes: 0,
     });
+  });
+
+  it("warns and ignores attach history without an attachment id", () => {
+    const mount = renderHook(() => useTmuxSessions());
+    const [ws] = mockWs.instances;
+    open(ws);
+
+    const onAttachHistory = vi.fn();
+    const onOutput = vi.fn();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    act(() => {
+      mount.result.current.onAttachHistory(onAttachHistory);
+      mount.result.current.onOutput(onOutput);
+      ws.simulateMessage({
+        type: "terminal_attach_history",
+        terminal_id: "terminal-1",
+        streaming_id: "legacy-stream",
+        text: "should-not-route",
+      });
+    });
+
+    expect(onAttachHistory).not.toHaveBeenCalled();
+    expect(onOutput).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Ignoring terminal attach history without attachment_id",
+      {
+        terminal_id: "terminal-1",
+        type: "terminal_attach_history",
+      },
+    );
   });
 
   it("routes terminal_output by attachment_id and ignores a terminal-row-only frame", () => {

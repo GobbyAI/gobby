@@ -17,7 +17,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import (
@@ -30,6 +29,7 @@ from gobby.utils.session_context import (
     _resolve_and_seed_contexts_sync as resolve_and_seed_contexts,
 )
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -170,14 +170,12 @@ def test_resolve_and_seed_contexts_current_alias_without_context_does_not_warn(
 
 
 def test_resumed_codex_register_recovery_seeds_canonical_session_for_variables(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A failed resumed Codex registration must not seed a stale wrapper session id."""
-    project = LocalProjectManager(temp_db).create(
-        name="resumed-codex-project",
-        repo_path="/tmp/resumed-codex-project",
-    )
+    project = isolated_checkout_factory(temp_db, "resumed-codex-project").project
     session_manager = SessionManager(temp_db)
     canonical_id = session_manager.register_session(
         external_id="codex-external-session",

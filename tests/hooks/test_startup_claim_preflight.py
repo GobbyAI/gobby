@@ -25,10 +25,10 @@ from gobby.hooks.startup_claim_preflight import (
     preflight_timeout_seconds,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import wait_for_async_condition
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -79,8 +79,8 @@ def _hook_manager(db: HubDatabase) -> SimpleNamespace:
     return SimpleNamespace(session_manager=SessionManager(db))
 
 
-def _project(db: HubDatabase, name: str) -> str:
-    return LocalProjectManager(db).create(name=f"{name}-{uuid4().hex[:8]}", repo_path=f"/{name}").id
+def _project(isolated_checkout_factory: IsolatedCheckoutFactory, db: HubDatabase, name: str) -> str:
+    return isolated_checkout_factory(db, f"{name}-{uuid4().hex[:8]}").project.id
 
 
 def _rows_for_conversation(db: HubDatabase, conversation_id: str) -> list[dict[str, Any]]:
@@ -97,9 +97,12 @@ def _rows_for_conversation(db: HubDatabase, conversation_id: str) -> list[dict[s
 
 class TestResolveOrAdoptOrRegister:
     def test_first_event_registers_the_canonical_row_once(
-        self, temp_db: HubDatabase, tmp_path: Path
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        tmp_path: Path,
     ) -> None:
-        project_id = _project(temp_db, "first-event")
+        project_id = _project(isolated_checkout_factory, temp_db, "first-event")
         workspace = _workspace(tmp_path, "ws", project_id)
         payload = _payload(workspace=workspace)
 
@@ -126,8 +129,13 @@ class TestResolveOrAdoptOrRegister:
         assert session.machine_id == LOCAL_MACHINE_ID
         assert session.source == "agy"
 
-    def test_repeated_event_is_idempotent(self, temp_db: HubDatabase, tmp_path: Path) -> None:
-        project_id = _project(temp_db, "repeat")
+    def test_repeated_event_is_idempotent(
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        project_id = _project(isolated_checkout_factory, temp_db, "repeat")
         workspace = _workspace(tmp_path, "ws", project_id)
         manager = _hook_manager(temp_db)
 
@@ -145,8 +153,13 @@ class TestResolveOrAdoptOrRegister:
         assert [row["id"] for row in rows] == [first.session_id]
         assert rows[0]["startup_claim_state"] == "committed"
 
-    def test_concurrent_events_commit_once(self, temp_db: HubDatabase, tmp_path: Path) -> None:
-        project_id = _project(temp_db, "concurrent")
+    def test_concurrent_events_commit_once(
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        project_id = _project(isolated_checkout_factory, temp_db, "concurrent")
         workspace = _workspace(tmp_path, "ws", project_id)
         manager = _hook_manager(temp_db)
         barrier = threading.Barrier(6)
@@ -171,9 +184,12 @@ class TestResolveOrAdoptOrRegister:
         )
 
     def test_pre_created_child_adopts_the_hint_and_binds_conversation(
-        self, temp_db: HubDatabase, tmp_path: Path
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        tmp_path: Path,
     ) -> None:
-        project_id = _project(temp_db, "child")
+        project_id = _project(isolated_checkout_factory, temp_db, "child")
         workspace = _workspace(tmp_path, "ws", project_id)
         sessions = SessionManager(temp_db)
         child = sessions.register(
@@ -199,9 +215,12 @@ class TestResolveOrAdoptOrRegister:
         assert len(_rows_for_conversation(temp_db, CONVERSATION)) == 1
 
     def test_terminal_and_web_chat_collision_each_commit_once(
-        self, temp_db: HubDatabase, tmp_path: Path
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        tmp_path: Path,
     ) -> None:
-        project_id = _project(temp_db, "collision")
+        project_id = _project(isolated_checkout_factory, temp_db, "collision")
         workspace = _workspace(tmp_path, "ws", project_id)
         sessions = SessionManager(temp_db)
         web = sessions.register(
@@ -234,10 +253,14 @@ class TestResolveOrAdoptOrRegister:
             )
 
     def test_mismatched_hint_falls_through_without_mutating_the_hinted_row(
-        self, temp_db: HubDatabase, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        project_a = _project(temp_db, "hint-a")
-        project_b = _project(temp_db, "hint-b")
+        project_a = _project(isolated_checkout_factory, temp_db, "hint-a")
+        project_b = _project(isolated_checkout_factory, temp_db, "hint-b")
         workspace_a = _workspace(tmp_path, "ws-a", project_a)
         workspace_b = _workspace(tmp_path, "ws-b", project_b)
         sessions = SessionManager(temp_db)
@@ -275,10 +298,13 @@ class TestResolveOrAdoptOrRegister:
         assert "_gobby_startup_claim" not in payload
 
     def test_mismatched_hint_for_another_conversation_registers_fresh_row(
-        self, temp_db: HubDatabase, tmp_path: Path
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        tmp_path: Path,
     ) -> None:
-        project_a = _project(temp_db, "other-a")
-        project_b = _project(temp_db, "other-b")
+        project_a = _project(isolated_checkout_factory, temp_db, "other-a")
+        project_b = _project(isolated_checkout_factory, temp_db, "other-b")
         workspace_a = _workspace(tmp_path, "ws-a", project_a)
         workspace_b = _workspace(tmp_path, "ws-b", project_b)
         sessions = SessionManager(temp_db)
@@ -309,12 +335,15 @@ class TestResolveOrAdoptOrRegister:
         assert registered.startup_claim_state == "claimed"
 
     def test_preflight_adopts_owner_of_a_released_startup_receipt(
-        self, temp_db: HubDatabase, tmp_path: Path
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        tmp_path: Path,
     ) -> None:
         """A lost delivery re-presents: the next preflight adopts the released owner token."""
         from gobby.storage.hook_receipts import prepare_receipt, release_receipt
 
-        project_id = _project(temp_db, "redeliver")
+        project_id = _project(isolated_checkout_factory, temp_db, "redeliver")
         workspace = _workspace(tmp_path, "ws", project_id)
         manager = _hook_manager(temp_db)
         lost = preflight_agy_startup_claim(_payload(workspace=workspace), manager)

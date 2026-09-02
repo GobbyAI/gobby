@@ -10,7 +10,6 @@ import pytest
 
 from gobby.dispatch.context import reload_candidate
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.task_github_import import GitHubIssueImporter
 from gobby.sync.tasks import (
@@ -21,6 +20,7 @@ from gobby.sync.tasks import (
 )
 from gobby.tasks.criteria_contract import TaskCriteriaError
 from gobby.tasks.state_semantics import is_task_closed
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -96,12 +96,12 @@ def task_manager(hub_db: HubDatabase) -> LocalTaskManager:
 
 
 @pytest.fixture
-def sample_project(hub_db: HubDatabase) -> dict[str, Any]:
-    project = LocalProjectManager(hub_db).create(
-        name="test-project",
-        repo_path="/tmp/test-project",
-        github_url="https://github.com/test/test-project",
-    )
+def sample_project(
+    isolated_checkout_factory: IsolatedCheckoutFactory, hub_db: HubDatabase
+) -> dict[str, Any]:
+    project = isolated_checkout_factory(
+        hub_db, "test-project", github_url="https://github.com/test/test-project"
+    ).project
     return project.to_dict()
 
 
@@ -1478,13 +1478,14 @@ class TestImportFromGitHubIssues:
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_same_issue_number_in_different_repositories_creates_distinct_tasks(
-        self, github_importer: GitHubIssueImporter, sample_project: dict[str, Any]
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        github_importer: GitHubIssueImporter,
+        sample_project: dict[str, Any],
     ) -> None:
-        other_project = LocalProjectManager(github_importer.db).create(
-            name="other-project",
-            repo_path="/tmp/other-project",
-            github_url="https://github.com/other/repo",
-        )
+        other_project = isolated_checkout_factory(
+            github_importer.db, "other-project", github_url="https://github.com/other/repo"
+        ).project
         issues_json = json.dumps(
             [
                 {
@@ -1745,14 +1746,15 @@ class TestImportFromGitHubIssues:
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_import_issues_ignores_legacy_id_in_other_project(
-        self, github_importer: GitHubIssueImporter, sample_project: dict[str, Any]
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        github_importer: GitHubIssueImporter,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test legacy ID fallback is scoped to the requested project."""
-        other_project = LocalProjectManager(github_importer.db).create(
-            name="other-project",
-            repo_path="/tmp/other-project",
-            github_url="https://github.com/other/repo",
-        )
+        other_project = isolated_checkout_factory(
+            github_importer.db, "other-project", github_url="https://github.com/other/repo"
+        ).project
         legacy_task_id = _legacy_normalized_github_issue_task_id(10)
         other_task = github_importer.task_manager.create_task(
             project_id=other_project.id,
@@ -2276,15 +2278,13 @@ class TestImportSeqNumPreservation:
     @pytest.mark.integration
     def test_import_path_cache_ignores_parent_from_other_project(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         backup_manager: TaskBackupManager,
         task_manager: LocalTaskManager,
         sample_project: dict[str, Any],
     ) -> None:
         """A foreign-project parent id must not shape imported task path_cache."""
-        other_project = LocalProjectManager(backup_manager.db).create(
-            name="other-project",
-            repo_path="/tmp/other-project",
-        )
+        other_project = isolated_checkout_factory(backup_manager.db, "other-project").project
         now = "2023-01-02T00:00:00+00:00"
         foreign_parent_id = _task_id("foreign-parent")
         backup_manager.db.execute(

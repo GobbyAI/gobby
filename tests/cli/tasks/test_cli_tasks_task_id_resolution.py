@@ -20,6 +20,7 @@ from click.testing import CliRunner
 from gobby.cli import cli
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import TaskNotFoundError
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 
 @pytest.fixture
@@ -80,15 +81,14 @@ def mock_task_with_uuid() -> MagicMock:
 
 
 @pytest.fixture
-def hub_sample_project(hub_db: HubDatabase) -> dict[str, Any]:
+def hub_sample_project(
+    isolated_checkout_factory: IsolatedCheckoutFactory, hub_db: HubDatabase
+) -> dict[str, Any]:
     """Create a sample project through the active hub database adapter."""
-    from gobby.storage.projects import LocalProjectManager
 
-    project = LocalProjectManager(hub_db).create(
-        name="test-project",
-        repo_path="/tmp/test-project",
-        github_url="https://github.com/test/test-project",
-    )
+    project = isolated_checkout_factory(
+        hub_db, "test-project", github_url="https://github.com/test/test-project"
+    ).project
     return project.to_dict()
 
 

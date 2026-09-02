@@ -56,6 +56,7 @@ class TranscriptProviderSpec:
     hook_requires_cwd: bool = False
     hook_search: Callable[..., list[Path]] | None = None
     recover: Callable[[Path, str, str, int], str | None] | None = None
+    supplemental: Callable[[Path], list[Path]] | None = None
 
 
 def classify_transcript_path(path: object) -> tuple[TranscriptPathStatus, str | None]:
@@ -153,6 +154,16 @@ def find_transcript_on_disk(
     return spec.recover(home, external_id, glob_escape(external_id), source_max_days)
 
 
+def find_supplemental_transcripts_on_disk(source: str, transcript_path: str) -> list[str]:
+    """Return readable provider transcript files related to a primary transcript."""
+    spec = _SPECS_BY_SOURCE.get(source)
+    if spec is None or spec.supplemental is None:
+        return []
+    return [
+        str(path) for path in spec.supplemental(Path(transcript_path)) if _is_readable_file(path)
+    ]
+
+
 def _first_readable(paths: list[Path]) -> str | None:
     for path in paths:
         if _is_readable_file(path):
@@ -225,6 +236,12 @@ def _recover_claude(home: Path, external_id: str, escaped: str, max_days: int) -
         if _is_recent_file(candidate, max_days):
             return str(candidate)
     return None
+
+
+def _claude_subagent_transcripts(transcript_path: Path) -> list[Path]:
+    if transcript_path.suffix != ".jsonl":
+        return []
+    return _safe_glob(transcript_path.with_suffix("") / "subagents", "agent-*.jsonl")
 
 
 def _recover_codex(home: Path, external_id: str, escaped: str, max_days: int) -> str | None:
@@ -321,6 +338,7 @@ PROVIDER_TRANSCRIPT_SPECS: tuple[TranscriptProviderSpec, ...] = (
         source="claude",
         detect_rules=(_PathDetectRule(parts=(".claude", "projects")),),
         recover=_recover_claude,
+        supplemental=_claude_subagent_transcripts,
     ),
     TranscriptProviderSpec(
         source="codex",

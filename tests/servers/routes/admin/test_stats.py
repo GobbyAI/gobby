@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from gobby.servers.routes.admin._stats import _build_filters, register_stats_routes
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 
 @pytest.fixture
@@ -135,10 +136,12 @@ def test_build_filters_uses_postgres_sql(hours, days, expected_sql, expected_par
     assert "?" not in sql
 
 
-def test_stats_with_filters_returns_postgres_counts(temp_db):
+def test_stats_with_filters_returns_postgres_counts(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db
+):
     project_manager = LocalProjectManager(temp_db)
-    included_project = project_manager.create(name="included", repo_path="/tmp/included")
-    excluded_project = project_manager.create(name="excluded", repo_path="/tmp/excluded")
+    included_project = isolated_checkout_factory(project_manager.db, "included").project
+    excluded_project = isolated_checkout_factory(project_manager.db, "excluded").project
     task_manager = LocalTaskManager(temp_db)
     for project in (included_project, excluded_project):
         task_manager.create_task(
@@ -162,7 +165,7 @@ def test_stats_with_filters_returns_postgres_counts(temp_db):
     assert response.json()["tasks"]["ready"] == 1
 
 
-def test_stats_exceptions_return_server_error(test_app):
+def test_stats_exceptions_return_server_error(test_app: tuple[FastAPI, MagicMock]) -> None:
     app, server_mock = test_app
     db = server_mock.services.database
 

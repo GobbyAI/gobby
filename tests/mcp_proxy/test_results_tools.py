@@ -9,7 +9,11 @@ import pytest
 
 from gobby.config.features import ToolResultOffloadConfig
 from gobby.mcp_proxy.services.result_offload import _WRAPPER_MUTATION_RESERVE
-from gobby.mcp_proxy.tools.results import _hydrate_matches, create_results_registry
+from gobby.mcp_proxy.tools.results import (
+    _MAX_SLICE_CHARS,
+    _hydrate_matches,
+    create_results_registry,
+)
 from gobby.search.keyword import MAX_PG_SEARCH_QUERY_CHARS, SearchHit
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -421,7 +425,8 @@ async def test_search_backend_failure_returns_bounded_nondiagnostic_error() -> N
 
 
 @pytest.mark.asyncio
-async def test_get_tool_result_accepts_advertised_maximum() -> None:
+async def test_get_tool_result_clamps_limit_above_live_maximum() -> None:
+    """A limit above the live envelope budget is clamped, never rejected (#21532)."""
     config = _config()
     live_limit = config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
     store = MagicMock(spec=ToolResultStore)
@@ -438,7 +443,7 @@ async def test_get_tool_result_accepts_advertised_maximum() -> None:
 
     result = await registry.call(
         "get_tool_result",
-        {"result_id": result_id, "offset": 40, "limit": live_limit},
+        {"result_id": result_id, "offset": 40, "limit": _MAX_SLICE_CHARS},
     )
 
     store.get_slice.assert_called_once_with(
@@ -450,41 +455,6 @@ async def test_get_tool_result_accepts_advertised_maximum() -> None:
     assert result["content"] == "x" * 200
     assert result["next_offset"] == 240
     assert "error" not in result
-
-
-@pytest.mark.asyncio
-async def test_get_tool_result_rejects_limit_above_dynamic_live_maximum() -> None:
-    initial_config = _config()
-    live_config = initial_config.model_copy(update={"max_envelope_chars": 4_000})
-    active_config = initial_config
-
-    def resolve_config() -> ToolResultOffloadConfig:
-        return active_config
-
-    store = MagicMock(spec=ToolResultStore)
-    backend = MagicMock()
-    with (
-        patch("gobby.mcp_proxy.tools.results.ToolResultStore", return_value=store),
-        patch("gobby.mcp_proxy.tools.results.pick_search_backend", return_value=backend),
-    ):
-        registry = create_results_registry(
-            cast(HubDatabase, MagicMock()),
-            resolve_config,
-            default_project_id="11111111-1111-4111-8111-111111111111",
-        )
-
-    active_config = live_config
-    live_limit = live_config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
-    result = await registry.call(
-        "get_tool_result",
-        {"result_id": str(uuid.uuid4()), "limit": live_limit + 1},
-    )
-
-    assert result["success"] is False
-    assert (
-        result["error"] == f"invalid arguments: limit exceeds current live maximum of {live_limit}"
-    )
-    store.get_slice.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -527,14 +497,12 @@ def test_results_tool_schemas_bound_every_input() -> None:
     assert search_properties["limit"]["maximum"] == 50
     assert get_properties["offset"]["minimum"] == 0
     assert get_properties["limit"]["minimum"] == 1
-    assert get_properties["limit"]["maximum"] == (
-        config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
-    )
+    assert get_properties["limit"]["maximum"] == 1_000_000 - _WRAPPER_MUTATION_RESERVE
     assert get_properties["limit"]["default"] == 1_000
     assert search_properties["result_id"] == get_properties["result_id"]
 
 
-def test_results_schema_limit_tracks_initial_config() -> None:
+def test_results_schema_limit_is_stable_across_initial_configs() -> None:
     low = _config().model_copy(update={"max_envelope_chars": 4_000})
     high = _config().model_copy(update={"max_envelope_chars": 20_000})
 
@@ -547,11 +515,9 @@ def test_results_schema_limit_tracks_initial_config() -> None:
 
     assert low_schema is not None
     assert high_schema is not None
-    assert low_schema["inputSchema"]["properties"]["limit"]["maximum"] == (
-        low.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
-    )
-    assert high_schema["inputSchema"]["properties"]["limit"]["maximum"] == (
-        high.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
+    assert (
+        low_schema["inputSchema"]["properties"]["limit"]
+        == high_schema["inputSchema"]["properties"]["limit"]
     )
 
 

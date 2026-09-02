@@ -6,8 +6,8 @@ import pytest
 
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.workflows.pipeline_loader import PipelineLoader
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -24,10 +24,10 @@ def _pipeline_body(name: str, *, override: bool = False) -> dict[str, object]:
 
 
 @pytest.mark.asyncio
-async def test_conflict_without_override_label_fails_loud(temp_db: HubDatabase) -> None:
-    project = LocalProjectManager(temp_db).create(
-        name="test-project", repo_path="/tmp/test-project"
-    )
+async def test_conflict_without_override_label_fails_loud(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+) -> None:
+    project = isolated_checkout_factory(temp_db, "test-project").project
     manager = PipelineDefinitionManager(temp_db)
     manager.create(
         name="shared-pipeline",
@@ -48,10 +48,10 @@ async def test_conflict_without_override_label_fails_loud(temp_db: HubDatabase) 
 
 
 @pytest.mark.asyncio
-async def test_conflict_with_override_label_loads_project_copy(temp_db: HubDatabase) -> None:
-    project = LocalProjectManager(temp_db).create(
-        name="test-project", repo_path="/tmp/test-project"
-    )
+async def test_conflict_with_override_label_loads_project_copy(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+) -> None:
+    project = isolated_checkout_factory(temp_db, "test-project").project
     manager = PipelineDefinitionManager(temp_db)
     manager.create(
         name="shared-pipeline",

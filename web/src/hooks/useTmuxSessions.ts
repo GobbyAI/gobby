@@ -513,16 +513,22 @@ export function useTmuxSessions(
         case "terminal_attach_history": {
           // The host proxy keys history on the attachment; that id doubles as
           // the streaming id the scrollback consumer registered against.
-          const streamingId =
-            (data.attachment_id as string | undefined) ||
-            (data.streaming_id as string | undefined) ||
-            (data.terminal_id as string | undefined);
-          if (typeof streamingId !== "string") break;
+          const attachmentId = data.attachment_id;
+          if (typeof attachmentId !== "string") {
+            console.warn(
+              "Ignoring terminal attach history without attachment_id",
+              {
+                terminal_id: data.terminal_id,
+                type: data.type,
+              },
+            );
+            break;
+          }
           const text = typeof data.text === "string" ? data.text : "";
           const callback = attachHistoryCallbackRef.current;
           if (callback) {
             callback({
-              streamingId,
+              streamingId: attachmentId,
               text,
               truncated: data.truncated === true,
               unavailable: data.unavailable === true,
@@ -532,7 +538,7 @@ export function useTmuxSessions(
                 typeof data.total_bytes === "number" ? data.total_bytes : 0,
             });
           } else if (outputCallbackRef.current && text) {
-            outputCallbackRef.current(streamingId, text);
+            outputCallbackRef.current(attachmentId, text);
           }
           break;
         }

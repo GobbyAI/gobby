@@ -13,6 +13,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager, SkillFile
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 
 def _skill_file(skill_id: str, path: str, file_type: str = "reference") -> SkillFile:
@@ -48,10 +49,10 @@ def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
 
 
 @pytest.fixture
-def project_id(db: HubDatabase) -> str:
+def project_id(isolated_checkout_factory: IsolatedCheckoutFactory, db: HubDatabase) -> str:
     """Create a test project and return its ID."""
     project_mgr = LocalProjectManager(db)
-    project = project_mgr.create(name="test-project", repo_path="/tmp/test-skills")
+    project = isolated_checkout_factory(project_mgr.db, "test-project").project
     return project.id
 
 
