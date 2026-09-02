@@ -485,7 +485,7 @@
     "workflows/agents/tech-writer.yaml": "355420bd79983223a4ff0ca65797df905452653a2087809c5b9932172a1f1134",
     "workflows/agents/trajectory-monitor.yaml": "4037cb0baa17a9bf30aac789a4fe5259d3e2c6c0a2fb6f9bb69f7d1925e63bb3",
     "workflows/agents/triage-agent.yaml": "ff8ee2a478313bce61de9915647a07eaea125efd1af7fdc8734e8f5e63821426",
-    "workflows/pipelines/expand-task.yaml": "798e311b3a5f5cd9648f9a1e2e16e490f594fba032037f2e8e0055391c34deaf",
+    "workflows/pipelines/expand-task.yaml": "b675596488c5cd56857b6ad93b5f9f06e86f338764cd87ead33a89b68176cb42",
     "workflows/pipelines/gobby-merge.yaml": "787b2d5a346293744e76f9208a65bdf85dd5fbbc3c60a5d812f39b5dc419f962",
     "workflows/review.yaml": "3609b4c23ce43380007b60ae03b59ea6498ea8d4b3221693d476422916c84805",
     "workflows/rules/AGENTS.md": "4e55fc91f20b244e6221231abc32c4f0bcdf70f142163025637fcbfc1f33bc21",
