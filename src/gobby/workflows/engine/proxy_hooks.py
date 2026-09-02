@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 
 from gobby.adapters.capabilities import get_provider_capabilities
@@ -23,14 +24,23 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_PROXY_TIMEOUT_SECONDS = 2.0
 _MAX_PROXY_OUTPUT_BYTES = 64 * 1024
-# ``rtk rewrite`` verdicts: 0 allow / 3 ask carry the rewritten command on
-# stdout; 1 passthrough / 2 deny carry nothing. Gobby applies the rewrite and
-# leaves the permission verdict to the host's native flow.
-_RTK_REWRITE_APPLY_CODES = frozenset({0, 3})
-_RTK_REWRITE_PASSTHROUGH_CODES = frozenset({1, 2})
+_SHELL_CONTEXT_PREFIX = re.compile(r"^\s*(?:[A-Za-z_][A-Za-z0-9_]*=|cd(?:[ \t]|$))")
+_RTK_DIAGNOSTIC_PREFIX = re.compile(r"^\s*(?:\[rtk\s*:|rtk(?:\s+error)?\s*:)", re.IGNORECASE)
 
 # One WARNING per unavailability episode; DEBUG until RTK resolves again.
 _rtk_unavailable_warned = False
+
+
+def _has_shell_context_prefix(command: str) -> bool:
+    """Return whether RTK could detach a command from its shell context."""
+    return _SHELL_CONTEXT_PREFIX.match(command) is not None
+
+
+def _is_plausible_rewrite(command: str) -> bool:
+    """Reject RTK diagnostics and bytes that cannot form a safe shell command."""
+    if not command or _RTK_DIAGNOSTIC_PREFIX.match(command):
+        return False
+    return not any(ord(char) < 32 and char not in "\t\n\r" for char in command)
 
 
 def _note_rtk_unavailable(rule_name: str) -> None:
@@ -176,6 +186,12 @@ class ProxyHooksMixin:
         command = tool_input.get("command")
         if not isinstance(command, str):
             return False
+        if _has_shell_context_prefix(command):
+            logger.debug(
+                "proxy_hook[%s]: bypassing RTK for shell-context prefix",
+                invocation.row.name,
+            )
+            return False
 
         # This stage runs last (``core.py`` defers proxy transformations until
         # every original-input denial has passed), so a shared budget with a
@@ -243,14 +259,21 @@ class ProxyHooksMixin:
             await _terminate_process(process)
             raise
 
-        if code in _RTK_REWRITE_PASSTHROUGH_CODES:
-            return False
-        if code not in _RTK_REWRITE_APPLY_CODES:
-            detail = stderr[:512].decode("utf-8", errors="replace").strip()
-            logger.warning(
+        if code != 0:
+            detail_bytes = stderr or stdout
+            detail = detail_bytes[:512].decode("utf-8", errors="replace").strip()
+            logger.debug(
                 "proxy_hook[%s]: RTK exited %s%s",
                 invocation.row.name,
                 code,
+                f": {detail}" if detail else "",
+            )
+            return False
+        if stderr:
+            detail = stderr[:512].decode("utf-8", errors="replace").strip()
+            logger.debug(
+                "proxy_hook[%s]: RTK wrote to stderr%s",
+                invocation.row.name,
                 f": {detail}" if detail else "",
             )
             return False
@@ -260,7 +283,15 @@ class ProxyHooksMixin:
             logger.warning("proxy_hook[%s]: RTK output is not UTF-8", invocation.row.name)
             return False
         transformed = transformed.removesuffix("\n").removesuffix("\r")
-        if not transformed or transformed == command:
+        if transformed == command:
+            return False
+        if not _is_plausible_rewrite(transformed):
+            detail = transformed[:512].strip()
+            logger.debug(
+                "proxy_hook[%s]: RTK output rejected%s",
+                invocation.row.name,
+                f": {detail}" if detail else "",
+            )
             return False
 
         tool_input["command"] = transformed
