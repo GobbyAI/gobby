@@ -175,6 +175,11 @@ def capture_found_work_handoff(event: HookEvent, variables: dict[str, Any]) -> N
         variables["_found_work_owner_handoff_turn"] = True
 
 
+def is_found_work_deferral(message: str) -> bool:
+    """True when the user told this turn to leave found work filed for later."""
+    return bool(_USER_DEFERRAL_RE.search(message))
+
+
 def is_permission_deferral_candidate(message: str) -> bool:
     """Cheap, conservative fast path before an LLM confirmation."""
     if not isinstance(message, str) or not message.strip():
@@ -327,21 +332,61 @@ class FoundWorkStopAnalyzer:
         session_id: str,
         *,
         user_prompt: str = "",
+        deferred: AbstractSet[str] = frozenset(),
     ) -> tuple[str, ...]:
-        """Return this session's open, unclaimed found-work task refs."""
+        """Return this session's open, unclaimed found-work task refs.
+
+        A task graph the session authored is excluded: an epic it created and
+        also gave children, plus every descendant of that epic. Those are the
+        output of planning, and they are meant to sit unclaimed until someone
+        schedules them. A defect noticed mid-session and filed loose still
+        counts, which is the shape this gate exists to catch. Refs in
+        ``deferred`` were already deferred by the user and stay excluded.
+        """
         if self._db is None or _USER_DEFERRAL_RE.search(user_prompt):
             return ()
         try:
             rows = self._db.fetchall(
                 """
-                SELECT seq_num, labels
-                FROM tasks
-                WHERE created_in_session_id = %s
-                  AND closed_at IS NULL
-                  AND claimed_by_session_id IS NULL
-                ORDER BY seq_num
+                WITH RECURSIVE candidates AS (
+                    SELECT id, seq_num, labels
+                    FROM tasks
+                    WHERE created_in_session_id = %s
+                      AND closed_at IS NULL
+                      AND claimed_by_session_id IS NULL
+                ),
+                chain AS (
+                    SELECT c.id AS candidate_id, t.id AS node_id, t.task_type,
+                           t.created_in_session_id, t.parent_task_id, 0 AS depth
+                    FROM candidates c
+                    JOIN tasks t ON t.id = c.id
+                    UNION ALL
+                    SELECT ch.candidate_id, p.id, p.task_type,
+                           p.created_in_session_id, p.parent_task_id, ch.depth + 1
+                    FROM chain ch
+                    JOIN tasks p ON p.id = ch.parent_task_id
+                    WHERE ch.depth < 32
+                ),
+                authored AS (
+                    SELECT DISTINCT ch.candidate_id
+                    FROM chain ch
+                    WHERE ch.task_type = 'epic'
+                      AND ch.created_in_session_id = %s
+                      AND EXISTS (
+                          SELECT 1
+                          FROM tasks child
+                          WHERE child.parent_task_id = ch.node_id
+                            AND child.created_in_session_id = %s
+                      )
+                )
+                SELECT c.seq_num, c.labels
+                FROM candidates c
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM authored a WHERE a.candidate_id = c.id
+                )
+                ORDER BY c.seq_num
                 """,
-                (session_id,),
+                (session_id, session_id, session_id),
             )
         except Exception:
             logger.debug("Could not inspect unclaimed found-work tasks", exc_info=True)
@@ -356,7 +401,9 @@ class FoundWorkStopAnalyzer:
                 continue
             seq_num = row["seq_num"]
             if isinstance(seq_num, int):
-                refs.append(f"#{seq_num}")
+                ref = f"#{seq_num}"
+                if ref not in deferred:
+                    refs.append(ref)
         return tuple(refs)
 
     def _has_labeled_deferral_task(self, session_id: str) -> bool:
