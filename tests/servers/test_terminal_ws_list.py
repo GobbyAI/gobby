@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,6 +13,7 @@ from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.terminals import TerminalManager, tmux_locator_key
+from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.servers.test_tmux_mixin import MockWebSocket
 from tests.storage.test_terminals import LOCAL_MACHINE_ID
 
@@ -23,9 +23,11 @@ SOCKET = "/private/tmp/tmux-501/default"
 
 
 @pytest.fixture(autouse=True)
-def _local_machine_identity() -> Iterator[None]:
-    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
-        yield
+def _local_machine_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    sample_project: dict[str, Any],
+) -> None:
+    patch_local_machine_id(monkeypatch, LOCAL_MACHINE_ID)
 
 
 @pytest.fixture
