@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from http.client import IncompleteRead
 from pathlib import Path
 from urllib.error import URLError
 from urllib.parse import urlsplit
@@ -25,6 +26,7 @@ from gobby.agents.srt_runtime import (
 from gobby.utils.dependency_requirements import SRT_RELEASE, node_dependency_status
 
 _MAX_TARBALL_BYTES = 16 * 1024 * 1024
+_MAX_TARBALL_REQUESTS = 8
 _PACKAGE_JSON = {
     "name": "gobby-managed-srt",
     "version": "0.0.0",
@@ -142,24 +144,63 @@ def _require_node() -> Path:
 def _download_verified_tarball(destination: Path) -> None:
     if urlsplit(SRT_RELEASE.tarball_url).scheme != "https":
         raise SrtRuntimeError("managed SRT tarball URL must use HTTPS")
-    request = Request(
-        SRT_RELEASE.tarball_url,
-        headers={"User-Agent": f"gobby-srt/{SRT_RELEASE.version}"},
-    )
+
     digest = hashlib.sha256()
     total = 0
-    with (
-        urlopen(request, timeout=30) as response,  # HTTPS enforced above  # nosec B310
-        destination.open("wb") as output,
-    ):
-        while chunk := response.read(64 * 1024):
-            total += len(chunk)
-            if total > _MAX_TARBALL_BYTES:
+    expected_total: int | None = None
+    for _attempt in range(_MAX_TARBALL_REQUESTS):
+        request_offset = total
+        headers = {"User-Agent": f"gobby-srt/{SRT_RELEASE.version}"}
+        if request_offset:
+            headers["Range"] = f"bytes={request_offset}-"
+        request = Request(SRT_RELEASE.tarball_url, headers=headers)
+        with urlopen(request, timeout=30) as response:  # HTTPS enforced above  # nosec B310
+            status = getattr(response, "status", 200)
+            response_headers = getattr(response, "headers", {})
+            if request_offset and status != 206:
+                destination.unlink(missing_ok=True)
+                digest = hashlib.sha256()
+                total = 0
+                expected_total = None
+            elif request_offset:
+                content_range = response_headers.get("Content-Range", "")
+                range_prefix = f"bytes {request_offset}-"
+                if not content_range.startswith(range_prefix):
+                    raise SrtRuntimeError("SRT tarball returned an invalid byte range")
+                try:
+                    expected_total = int(content_range.partition("/")[2])
+                except ValueError as exc:
+                    raise SrtRuntimeError("SRT tarball returned an invalid byte range") from exc
+            elif content_length := response_headers.get("Content-Length"):
+                expected_total = int(content_length)
+
+            if expected_total is not None and expected_total > _MAX_TARBALL_BYTES:
                 raise SrtRuntimeError("SRT tarball exceeded the expected size limit")
-            digest.update(chunk)
-            output.write(chunk)
-    if digest.hexdigest() != SRT_RELEASE.tarball_sha256:
-        raise SrtRuntimeError("SRT tarball checksum mismatch")
+            mode = "ab" if total else "wb"
+            with destination.open(mode) as output:
+                while True:
+                    try:
+                        chunk = response.read(64 * 1024)
+                    except IncompleteRead as exc:
+                        chunk = exc.partial
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > _MAX_TARBALL_BYTES:
+                        raise SrtRuntimeError("SRT tarball exceeded the expected size limit")
+                    digest.update(chunk)
+                    output.write(chunk)
+
+        if expected_total is not None and total < expected_total:
+            continue
+        if digest.hexdigest() == SRT_RELEASE.tarball_sha256:
+            return
+        destination.unlink(missing_ok=True)
+        digest = hashlib.sha256()
+        total = 0
+        expected_total = None
+
+    raise SrtRuntimeError("SRT tarball checksum mismatch")
 
 
 def _promote_install(staging: Path, target: Path) -> None:

@@ -9,12 +9,35 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 from urllib.error import URLError
+from urllib.request import Request
 
 import pytest
 
 from gobby.agents.srt_runtime import SrtInstallation, SrtRuntimeError
 from gobby.cli import install_setup_srt
 from gobby.utils.dependency_requirements import SRT_RELEASE
+
+
+class FakeDownloadResponse:
+    def __init__(
+        self,
+        content: bytes,
+        *,
+        status: int = 200,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self._chunks = iter((content, b""))
+        self.status = status
+        self.headers = headers or {}
+
+    def __enter__(self) -> FakeDownloadResponse:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self, _size: int) -> bytes:
+        return next(self._chunks)
 
 
 def test_install_srt_runtime_wraps_download_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -31,23 +54,78 @@ def test_download_verified_tarball_rejects_checksum_mismatch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    class FakeResponse:
-        def __init__(self) -> None:
-            self._chunks = iter((b"not-the-pinned-tarball", b""))
-
-        def __enter__(self) -> FakeResponse:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def read(self, _size: int) -> bytes:
-            return next(self._chunks)
-
-    monkeypatch.setattr(install_setup_srt, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+    monkeypatch.setattr(
+        install_setup_srt,
+        "urlopen",
+        lambda *_args, **_kwargs: FakeDownloadResponse(b"not-the-pinned-tarball"),
+    )
 
     with pytest.raises(SrtRuntimeError, match="checksum mismatch"):
         install_setup_srt._download_verified_tarball(tmp_path / "runtime.tgz")
+
+
+def test_download_verified_tarball_retries_checksum_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    expected = b"verified tarball"
+    responses = iter(
+        (
+            FakeDownloadResponse(b"wrong tarball"),
+            FakeDownloadResponse(expected),
+        )
+    )
+    monkeypatch.setattr(
+        install_setup_srt,
+        "SRT_RELEASE",
+        replace(SRT_RELEASE, tarball_sha256=install_setup_srt.hashlib.sha256(expected).hexdigest()),
+    )
+    monkeypatch.setattr(install_setup_srt, "urlopen", lambda *_args, **_kwargs: next(responses))
+    destination = tmp_path / "runtime.tgz"
+
+    install_setup_srt._download_verified_tarball(destination)
+
+    assert destination.read_bytes() == expected
+
+
+def test_download_verified_tarball_resumes_incomplete_response(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    expected = b"verified tarball"
+    split = 7
+    responses = iter(
+        (
+            FakeDownloadResponse(
+                expected[:split],
+                headers={"Content-Length": str(len(expected))},
+            ),
+            FakeDownloadResponse(
+                expected[split:],
+                status=206,
+                headers={"Content-Range": f"bytes {split}-{len(expected) - 1}/{len(expected)}"},
+            ),
+        )
+    )
+    requests: list[Request] = []
+
+    def respond(request: Request, **_kwargs: object) -> FakeDownloadResponse:
+        requests.append(request)
+        return next(responses)
+
+    monkeypatch.setattr(
+        install_setup_srt,
+        "SRT_RELEASE",
+        replace(SRT_RELEASE, tarball_sha256=install_setup_srt.hashlib.sha256(expected).hexdigest()),
+    )
+    monkeypatch.setattr(install_setup_srt, "urlopen", respond)
+    destination = tmp_path / "runtime.tgz"
+
+    install_setup_srt._download_verified_tarball(destination)
+
+    assert destination.read_bytes() == expected
+    assert requests[0].get_header("Range") is None
+    assert requests[1].get_header("Range") == f"bytes={split}-"
 
 
 def test_download_verified_tarball_rejects_non_https_source(
