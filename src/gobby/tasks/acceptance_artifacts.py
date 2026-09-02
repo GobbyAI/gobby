@@ -169,7 +169,20 @@ def validation_run_names_test(command: str, output: str | None, test: Acceptance
 def validation_run_covers_test(command: str, output: str | None, test: AcceptanceTest) -> bool:
     """Return whether a successful run covers the named test or its complete file."""
     evidence = f"{command}\n{output or ''}"
-    return test.path in evidence or test.reference in evidence
+    if test.path in evidence or test.reference in evidence:
+        return True
+    names = (
+        Path(test.path).name,
+        test.symbol,
+        test.symbol.replace(".", "::"),
+        test.symbol.replace("::", "."),
+    )
+    return any(_line_contains_word(evidence, name) for name in names)
+
+
+def _line_contains_word(value: str, word: str) -> bool:
+    pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(word)}(?![A-Za-z0-9_])")
+    return any(pattern.search(line) for line in value.splitlines())
 
 
 def validate_structured_file_evidence(
