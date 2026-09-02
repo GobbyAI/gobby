@@ -88,6 +88,7 @@ def _make_hook_event(data: dict | None = None, external_id: str = "external-1") 
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data=data or {},
+        machine_id=LOCAL_MACHINE_ID,
         metadata={},
     )
 

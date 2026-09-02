@@ -98,6 +98,12 @@ class TestPlanEnhanceContent:
         ):
             assert field in body, f"Output schema missing field: {field}"
 
+    def test_effort_enum_uses_full_words(self, body: str) -> None:
+        assert "effort: small" in body
+        assert "small|medium|large" in body
+        assert "effort: S" not in body
+        assert "`S|M|L`" not in body
+
     def test_category_enum(self, body: str) -> None:
         for category in ("scope", "testability", "reuse", "sequencing", "clarity"):
             assert category in body, f"Category enum missing: {category}"
