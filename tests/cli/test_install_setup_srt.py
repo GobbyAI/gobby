@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -186,7 +188,7 @@ def test_install_srt_runtime_uses_locked_npm_ci_and_promotes_atomically(
     monkeypatch.setattr(install_setup_srt, "srt_install_root", lambda: target)
     monkeypatch.setattr(install_setup_srt, "_require_node", lambda: node)
     monkeypatch.setattr(
-        install_setup_srt.shutil,
+        shutil,
         "which",
         lambda command: str(npm) if command == "npm" else None,
     )
@@ -195,7 +197,7 @@ def test_install_srt_runtime_uses_locked_npm_ci_and_promotes_atomically(
         "_download_verified_tarball",
         lambda destination: destination.write_bytes(b"verified tarball"),
     )
-    monkeypatch.setattr(install_setup_srt.subprocess, "run", fake_npm_run)
+    monkeypatch.setattr(subprocess, "run", fake_npm_run)
 
     result = install_setup_srt.install_srt_runtime()
 

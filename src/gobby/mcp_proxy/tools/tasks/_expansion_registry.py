@@ -22,7 +22,7 @@ from gobby.mcp_proxy.tools.tasks._expansion_runtime import (
     start_expansion_run_impl,
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
-from gobby.storage.expansion_runs import LocalExpansionRunManager
+from gobby.storage.expansion_runs import ExpansionRun, LocalExpansionRunManager
 from gobby.storage.plans import LocalPlanManager, PlanRecord
 from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.expansion_qa_coverage import run_expansion_qa_coverage as run_qa_coverage
@@ -217,6 +217,57 @@ def _resolve_current_session(ctx: RegistryContext) -> tuple[str, str] | dict[str
     except (ValueError, LookupError) as e:
         return {"error": f"Cannot resolve session '{session_ref}': {e}"}
     return session_ref, resolved_session_id
+
+
+def _current_session_is_spawned(ctx: RegistryContext) -> bool:
+    """Return whether the current tool caller is a spawned agent."""
+    session_result = _resolve_current_session(ctx)
+    if isinstance(session_result, dict):
+        # Internal/direct registry callers have no session context. Preserve the
+        # established review-action payload when caller kind cannot be resolved.
+        return True
+    _session_ref, resolved_session_id = session_result
+    variables = ctx.session_var_manager.get_variables(resolved_session_id)
+    session = ctx.session_manager.get(resolved_session_id)
+    return bool(
+        variables.get("is_spawned_agent")
+        or getattr(session, "agent_run_id", None)
+        or getattr(session, "agent_depth", 0)
+    )
+
+
+def _bound_plan_for_run(ctx: RegistryContext, run: ExpansionRun) -> PlanRecord:
+    """Resolve the unique active registered plan bound to an expansion run."""
+    root_task_id, plan_path = _bind_registered_plan(
+        ctx,
+        run.parent_task_id,
+        None,
+        reset_output=False,
+    )
+    if plan_path is None:
+        raise ValueError(f"Expansion run {run.id} is not bound to an active registered plan")
+    if run.plan_file is not None and not _same_plan_path(run.plan_file, plan_path, None):
+        raise ValueError(
+            f"Expansion run {run.id} is bound to plan {run.plan_file!r}, but the active "
+            f"registered plan is {plan_path!r}"
+        )
+
+    root_task = ctx.task_manager.get_task(root_task_id)
+    plans = LocalPlanManager(ctx.task_manager.db).list_plans(
+        state="active",
+        project_id=run.project_id,
+    )
+    matches = [
+        plan
+        for plan in plans
+        if plan.plan_path == plan_path and _plan_root_matches_task(plan, root_task)
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"Expansion run {run.id} is not bound to a unique active registered plan")
+    plan = matches[0]
+    if not plan.plan_hash:
+        raise ValueError(f"Active registered plan {plan.plan_id!r} has no plan hash")
+    return plan
 
 
 def _get_execute_run_background() -> Any:
@@ -653,11 +704,11 @@ def _register_qa_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> 
 
     def run_expansion_qa_coverage(
         run_id: str,
-        plan_path: str,
-        plan_id: str,
-        plan_hash: str,
-        root_task: str,
-        project_id: str,
+        plan_path: str | None = None,
+        plan_id: str | None = None,
+        plan_hash: str | None = None,
+        root_task: str | None = None,
+        project_id: str | None = None,
         task_tree: str = "db",
         regenerate: bool = False,
     ) -> dict[str, Any]:
@@ -665,6 +716,25 @@ def _register_qa_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> 
         run = run_manager.get(run_id)
         if run is None:
             return {"ok": False, "error": f"Expansion run {run_id} not found"}
+
+        if None in (plan_path, plan_id, plan_hash, root_task, project_id):
+            try:
+                bound_plan = _bound_plan_for_run(ctx, run)
+            except CHECKOUT_RESOLUTION_ERRORS as exc:
+                return {"ok": False, **checkout_unresolved_error(exc)}
+            except (TaskNotFoundError, ValueError) as exc:
+                return {"ok": False, "error": str(exc)}
+            plan_path = plan_path or bound_plan.plan_path
+            plan_id = plan_id or bound_plan.plan_id
+            plan_hash = plan_hash or bound_plan.plan_hash
+            root_task = root_task or bound_plan.root_task_ref
+            project_id = project_id or bound_plan.project_id
+
+        assert plan_path is not None
+        assert plan_id is not None
+        assert plan_hash is not None
+        assert root_task is not None
+        assert project_id is not None
         repo_project_id = project_id or run.project_id
         try:
             repo_path = ctx.get_project_repo_path(
@@ -684,6 +754,7 @@ def _register_qa_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> 
             project_id=project_id,
             task_tree=task_tree,
             regenerate=regenerate,
+            is_spawned_agent=_current_session_is_spawned(ctx),
         )
 
     registry.register(
@@ -696,11 +767,31 @@ def _register_qa_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> 
             "type": "object",
             "properties": {
                 "run_id": {"type": "string", "description": "Expansion run ID"},
-                "plan_path": {"type": "string", "description": "Plan file path"},
-                "plan_id": {"type": "string", "description": "Stable plan identifier"},
-                "plan_hash": {"type": "string", "description": "Expected SHA-256 plan hash"},
-                "root_task": {"type": "string", "description": "Root task ref, e.g. #12725"},
-                "project_id": {"type": "string", "description": "Project UUID"},
+                "plan_path": {
+                    "type": ["string", "null"],
+                    "description": "Plan file path; derived from the run when omitted",
+                    "default": None,
+                },
+                "plan_id": {
+                    "type": ["string", "null"],
+                    "description": "Stable plan identifier; derived from the run when omitted",
+                    "default": None,
+                },
+                "plan_hash": {
+                    "type": ["string", "null"],
+                    "description": "Expected SHA-256 plan hash; derived from the run when omitted",
+                    "default": None,
+                },
+                "root_task": {
+                    "type": ["string", "null"],
+                    "description": "Root task ref; derived from the run when omitted",
+                    "default": None,
+                },
+                "project_id": {
+                    "type": ["string", "null"],
+                    "description": "Project UUID; derived from the run when omitted",
+                    "default": None,
+                },
                 "task_tree": {
                     "type": "string",
                     "description": "Coverage task tree source; only db is supported here",
@@ -713,14 +804,7 @@ def _register_qa_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> 
                     "default": False,
                 },
             },
-            "required": [
-                "run_id",
-                "plan_path",
-                "plan_id",
-                "plan_hash",
-                "root_task",
-                "project_id",
-            ],
+            "required": ["run_id"],
         },
         func=run_expansion_qa_coverage,
     )

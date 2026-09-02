@@ -256,8 +256,8 @@ Validation criteria: `EventHandlersBase._memory_recall_helper_config` exists wit
 - 1.3.6 — `internal_keys` filter contains `memory_recall_helper_enabled` so `variables_count` excludes the internal flag. test: `tests/hooks/event_handlers/test_session_variable_preservation.py::test_internal_keys_excludes_memory_recall_helper_enabled_from_variables_count`.
 - 1.3.7 — Preservation test asserts `parent_turn_seq=42` survives a second `activate_default_agent` call end-to-end. test: `tests/hooks/event_handlers/test_session_variable_preservation.py::test_parent_turn_seq_preserved_across_activation`.
 - 1.3.8 — Fresh-session test asserts `parent_turn_seq=0` is seeded on first activation when the key is absent from `existing` (regardless of whether `existing` is otherwise empty). test: `tests/hooks/event_handlers/test_session_variable_preservation.py::test_parent_turn_seq_seeded_on_first_activation`.
-- 1.3.9 — Flow-level skipped-activation test: when `handle_session_start` fires with `skip_default_agent_activation=True` (the web chat persona-selected path), `memory_recall_helper_enabled` and `parent_turn_seq` are still seeded by the flow-level call before the guard. test: `tests/hooks/event_handlers/test_session_variable_preservation.py::test_variables_seeded_when_activation_skipped_at_flow_level`.
-- 1.3.10 — Pre-created session seeding test: `handle_pre_created_session` seeds both variables at the flow level before calling `_activate_default_agent`. test: `tests/hooks/event_handlers/test_session_variable_preservation.py::test_variables_seeded_in_pre_created_session_flow`.
+- 1.3.9 — Flow-level skipped-activation behavior: when `handle_session_start` fires with `skip_default_agent_activation=True` (the web chat persona-selected path), `memory_recall_helper_enabled` and `parent_turn_seq` are still seeded by the flow-level call before the guard. test: `tests/hooks/event_handlers/test_session_variable_preservation.py::test_variables_seeded_when_activation_skipped_at_flow_level`.
+- 1.3.10 — Pre-created session seeding behavior: `handle_pre_created_session` seeds both variables at the flow level before calling `_activate_default_agent`. test: `tests/hooks/event_handlers/test_session_variable_preservation.py::test_variables_seeded_in_pre_created_session_flow`.
 
 ### 1.4 Create `memory-recall-helper` agent definition [category: config]
 
@@ -616,7 +616,7 @@ Validation criteria: in `_check_agent_tool_enforcement`, the explicit-block chec
 - 2.2.1 — `_check_agent_tool_enforcement` runs the explicit-block check before the infra exempt. symbol: `gobby.workflows.engine.enforcement.EnforcementMixin._check_agent_tool_enforcement`.
 - 2.2.2 — With `_agent_blocked_tools=["mcp__gobby__set_variable"]`, the call is blocked with the documented `[agent-enforcement:<agent>]` reason. test: `tests/workflows/test_step_enforcement.py::test_explicit_block_overrides_infra_exempt`.
 - 2.2.3 — With empty `_agent_blocked_tools`, infra tools still pass via the exempt path. test: `tests/workflows/test_step_enforcement.py::test_infra_exempt_default_when_no_explicit_block`.
-- 2.2.4 — Helper-equivalent integration test: a local fixture mirroring the §1.4 helper's `blocked_tools` list produces a session that denies `mcp__gobby__set_variable` with the documented `[agent-enforcement:memory-recall-helper]` reason while still allowing `mcp__gobby__get_variable`. test: `tests/workflows/test_step_enforcement.py::test_blocked_tools_overrides_infra_exempt_for_helper`.
+- 2.2.4 — Helper-equivalent integration behavior: a local fixture mirroring the §1.4 helper's `blocked_tools` list produces a session that denies `mcp__gobby__set_variable` with the documented `[agent-enforcement:memory-recall-helper]` reason while still allowing `mcp__gobby__get_variable`. test: `tests/workflows/test_step_enforcement.py::test_blocked_tools_overrides_infra_exempt_for_helper`.
 
 ### 2.3 Add `get_cancelled_session_ids` to `_AgentRunQueryMixin` [category: code]
 
