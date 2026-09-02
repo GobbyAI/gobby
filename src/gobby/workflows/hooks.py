@@ -372,6 +372,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
             detect_commit_link,
             detect_mcp_call,
             detect_task_claim,
+            detect_turn_interrupt,
             reconcile_claimed_tasks,
             release_clean_task_paths_after_commit,
         )
@@ -395,6 +396,8 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     event.event_type,
                     exc_info=True,
                 )
+
+        run_observer("detect_turn_interrupt", detect_turn_interrupt, event, variables)
 
         # Tool and stop payloads carry the provider's live permission mode;
         # turn-start events (e.g. Claude UserPromptSubmit) omit it and manual

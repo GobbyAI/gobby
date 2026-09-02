@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.receipt_effects import (
     STAGED_EFFECTS_FIELD,
     merge_staged_payloads,
@@ -34,6 +34,7 @@ from gobby.workflows.engine.event_utils import (
     _block_tool_name,
     _clear_edit_write_state,
     _get_tool_identity,
+    _is_turn_end_event,
     _is_write_like_event_data,
 )
 from gobby.workflows.engine.proxy_hooks import ProxyHookInvocation
@@ -325,6 +326,38 @@ class EvaluationMixin:
         )
         return self._render_template(reason, ctx, allowed_funcs)
 
+    async def _suppress_interrupt_turn_end_blocks(
+        self,
+        evaluation: EvaluationContext,
+        block_gates: list[BlockGate],
+    ) -> list[BlockGate]:
+        rule_names = list(dict.fromkeys(gate.rule_name for gate in block_gates))
+        message = (
+            f"Suppressed {len(block_gates)} turn_end stop gate(s) for interrupt-initiated turn "
+            f"(session {evaluation.session_id}): {', '.join(rule_names)}"
+        )
+        logger.info(message)
+        event_type = evaluation.event.event_type
+        event_name = event_type.value if isinstance(event_type, HookEventType) else str(event_type)
+        record_rule_evaluation(
+            rule_name="interrupt-initiated-turn",
+            result="allow",
+            event=event_name,
+            session_id=evaluation.session_id,
+            latency_ms=0.0,
+        )
+        await log_enforcement_block(
+            self.workflow_audit,
+            session_id=evaluation.session_id,
+            current_step=evaluation.variables.get("current_step"),
+            rule_id="interrupt-initiated-turn",
+            condition=None,
+            result="allow",
+            reason=message,
+            tool_name=evaluation.block_tool_name,
+        )
+        return []
+
     async def _run_rule_loop(
         self,
         rules: list[tuple[RuleDefinitionRow, RuleDefinitionBody]],
@@ -335,6 +368,10 @@ class EvaluationMixin:
     ) -> list[BlockGate]:
         block_gates: list[BlockGate] = []
         metric_records: list[MetricsEventRecord] = []
+        suppress_turn_end_blocks = (
+            _is_turn_end_event(evaluation.event.event_type)
+            and evaluation.variables.get("turn_interrupt_initiated") is True
+        )
 
         for row, body in rules:
             # Pre-filter: skip rule if tools field doesn't match current tool
@@ -366,7 +403,7 @@ class EvaluationMixin:
                 ):
                     continue
 
-            if block_effects_only or block_gates:
+            if block_effects_only or (block_gates and not suppress_turn_end_blocks):
                 rule_start = time.perf_counter()
                 suppressed_effect_types = list(
                     dict.fromkeys(
@@ -548,8 +585,9 @@ class EvaluationMixin:
                 )
 
             if rule_blocked:
-                # First block runs normal effects; later aggregation is read-only.
-                if not aggregate_blocks:
+                # Ordinary aggregation becomes read-only after the first block.
+                # An interrupt turn must keep every non-block effect live.
+                if not aggregate_blocks and not suppress_turn_end_blocks:
                     break
 
         if self._event_store and metric_records:
@@ -558,6 +596,8 @@ class EvaluationMixin:
             except Exception as e:
                 logger.debug("Metrics recording failed: %s", e, exc_info=True)
 
+        if suppress_turn_end_blocks and block_gates:
+            return await self._suppress_interrupt_turn_end_blocks(evaluation, block_gates)
         return block_gates
 
     def _assemble_response(
