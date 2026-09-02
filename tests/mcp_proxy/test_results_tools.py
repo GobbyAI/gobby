@@ -9,7 +9,11 @@ import pytest
 
 from gobby.config.features import ToolResultOffloadConfig
 from gobby.mcp_proxy.services.result_offload import _WRAPPER_MUTATION_RESERVE
-from gobby.mcp_proxy.tools.results import _hydrate_matches, create_results_registry
+from gobby.mcp_proxy.tools.results import (
+    _MAX_SLICE_CHARS,
+    _hydrate_matches,
+    create_results_registry,
+)
 from gobby.search.keyword import MAX_PG_SEARCH_QUERY_CHARS, SearchHit
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -418,6 +422,39 @@ async def test_search_backend_failure_returns_bounded_nondiagnostic_error() -> N
     assert result["error"] == "tool result search unavailable"
     assert "sensitive-driver-dump" not in result["error"]
     assert _serialized_size(result) <= (config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE)
+
+
+@pytest.mark.asyncio
+async def test_get_tool_result_clamps_limit_above_live_maximum() -> None:
+    """A limit above the live envelope budget is clamped, never rejected (#21532)."""
+    config = _config()
+    live_limit = config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
+    store = MagicMock(spec=ToolResultStore)
+    store.get_slice.return_value = {
+        "content": "x" * 200,
+        "offset": 40,
+        "next_offset": 240,
+        "total_chars": 5_500,
+        "stored_chars": 5_000,
+    }
+    backend = MagicMock()
+    registry = _mocked_registry(config=config, store=store, backend=backend)
+    result_id = str(uuid.uuid4())
+
+    result = await registry.call(
+        "get_tool_result",
+        {"result_id": result_id, "offset": 40, "limit": _MAX_SLICE_CHARS},
+    )
+
+    store.get_slice.assert_called_once_with(
+        result_id,
+        "11111111-1111-4111-8111-111111111111",
+        offset=40,
+        limit=live_limit,
+    )
+    assert result["content"] == "x" * 200
+    assert result["next_offset"] == 240
+    assert "error" not in result
 
 
 @pytest.mark.asyncio

@@ -88,9 +88,11 @@ async def test_wrapper_originated_internal_list_is_offloaded_and_retrievable(
         config,
         lambda: None,
     )
+    # sample_project pins its own isolated machine as local (#21453); absent
+    # ingress identity resolves to it.
     session_id = session_manager.register_session(
         external_id="offload-session",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=None,
         source="codex",
         project_id=project_id,
     )
