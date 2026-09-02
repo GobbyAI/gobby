@@ -3445,50 +3445,6 @@
       "definition": "boolean|bool|YES||NEVER"
     },
     {
-      "name": "provider_model_routes.activations",
-      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
-    },
-    {
-      "name": "provider_model_routes.available",
-      "definition": "boolean|bool|NO|true|NEVER"
-    },
-    {
-      "name": "provider_model_routes.canonical_model",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "provider_model_routes.generation",
-      "definition": "bigint|int8|NO||NEVER"
-    },
-    {
-      "name": "provider_model_routes.latency_class",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "provider_model_routes.provenance",
-      "definition": "jsonb|jsonb|NO||NEVER"
-    },
-    {
-      "name": "provider_model_routes.provider",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "provider_model_routes.selector",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "provider_model_routes.speed_mode",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "provider_model_routes.throughput_multiplier",
-      "definition": "numeric|numeric|YES||NEVER"
-    },
-    {
-      "name": "provider_model_routes.usage_multiplier",
-      "definition": "numeric|numeric|YES||NEVER"
-    },
-    {
       "name": "recall_gate_runs.attempts",
       "definition": "integer|int4|NO|0|NEVER"
     },
@@ -7271,14 +7227,6 @@
       "definition": "PRIMARY KEY (provider, canonical_model)"
     },
     {
-      "name": "provider_model_routes.provider_model_routes_capability_fkey",
-      "definition": "FOREIGN KEY (provider, canonical_model) REFERENCES provider_model_capabilities(provider, canonical_model) ON DELETE CASCADE"
-    },
-    {
-      "name": "provider_model_routes.provider_model_routes_pkey",
-      "definition": "PRIMARY KEY (provider, canonical_model, speed_mode)"
-    },
-    {
       "name": "recall_gate_runs.recall_gate_runs_attempts_check",
       "definition": "CHECK (attempts >= 0)"
     },
@@ -9689,10 +9637,6 @@
     {
       "name": "provider_model_capabilities_pkey",
       "definition": "CREATE UNIQUE INDEX provider_model_capabilities_pkey ON $schema.provider_model_capabilities USING btree (provider, canonical_model)"
-    },
-    {
-      "name": "provider_model_routes_pkey",
-      "definition": "CREATE UNIQUE INDEX provider_model_routes_pkey ON $schema.provider_model_routes USING btree (provider, canonical_model, speed_mode)"
     },
     {
       "name": "recall_gate_runs_pkey",

@@ -10,7 +10,7 @@ import pytest
 
 from gobby.providers.capabilities.collectors.base import CapabilityCollector, validate_snapshot
 from gobby.providers.capabilities.collectors.codex import CodexCollector, CodexSourceError
-from gobby.providers.capabilities.models import SourceState, SpeedMode
+from gobby.providers.capabilities.models import SourceState
 from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -60,7 +60,7 @@ def _collector(
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_fast_tier_same_selector_route() -> None:
+async def test_service_tiers_are_ignored() -> None:
     collector = _collector(
         [
             _model(
@@ -78,17 +78,9 @@ async def test_fast_tier_same_selector_route() -> None:
     snapshot = await collector.collect()
 
     validate_snapshot(snapshot, collector.sources)
+    assert len(snapshot.models) == 1
     model = snapshot.models[0]
-    standard = next(route for route in model.routes if route.speed_mode is SpeedMode.STANDARD)
-    fast = next(route for route in model.routes if route.speed_mode is SpeedMode.FAST)
-    assert standard.selector == fast.selector == "gpt-test"
-    assert [activation.to_dict() for activation in fast.activations] == [
-        {
-            "kind": "request_parameter",
-            "surface": "app-server",
-            "params": {"name": "serviceTier", "value": "priority"},
-        }
-    ]
+    assert model.canonical_model == "gpt-test"
     assert model.context_length == 128_000
 
 

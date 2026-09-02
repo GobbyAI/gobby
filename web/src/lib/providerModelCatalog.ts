@@ -3,7 +3,6 @@ import type {
   ProviderModelOption,
   ProviderModelReasoning,
   ProviderModelRefresh,
-  ProviderModelRoutes,
 } from "./providerModelTypes";
 
 interface ProviderMatrixFact {
@@ -30,7 +29,6 @@ interface ProviderMatrixModel {
   reasoning: ProviderMatrixReasoning;
   input_modalities: string[] | null;
   supports_tools: boolean | null;
-  routes: ProviderModelRoutes;
   provenance: Record<string, unknown>;
 }
 
@@ -62,28 +60,6 @@ function isNullableString(value: unknown): value is string | null {
 function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === "string")
-  );
-}
-
-function isProviderModelRoutes(value: unknown): value is ProviderModelRoutes {
-  if (!isRecord(value)) return false;
-  return Object.entries(value).every(
-    ([speed, route]) =>
-      ["standard", "fast"].includes(speed) &&
-      isRecord(route) &&
-      typeof route.selector === "string" &&
-      typeof route.available === "boolean" &&
-      isNullableString(route.usage_multiplier) &&
-      isNullableString(route.throughput_multiplier) &&
-      isNullableString(route.latency_class) &&
-      Array.isArray(route.activations) &&
-      route.activations.every(
-        (activation) =>
-          isRecord(activation) &&
-          typeof activation.kind === "string" &&
-          typeof activation.surface === "string" &&
-          isRecord(activation.params),
-      ),
   );
 }
 
@@ -176,7 +152,6 @@ function isProviderMatrixModel(value: unknown): value is ProviderMatrixModel {
       isStringArray(value.input_modalities)) &&
     (value.supports_tools === null ||
       typeof value.supports_tools === "boolean") &&
-    isProviderModelRoutes(value.routes) &&
     isRecord(value.provenance)
   );
 }
@@ -255,7 +230,6 @@ function mapProviderModel(model: ProviderModelPayload): ProviderModelOption {
               : { default_effort: model.reasoning.default_effort }),
           },
         }),
-    routes: model.routes,
   };
 }
 

@@ -3,25 +3,6 @@ export interface ProviderModelReasoning {
   default_effort?: string;
 }
 
-export interface ProviderModelRouteActivation {
-  kind: string;
-  surface: string;
-  params: Record<string, unknown>;
-}
-
-export interface ProviderModelRoute {
-  selector: string;
-  available: boolean;
-  usage_multiplier: string | null;
-  throughput_multiplier: string | null;
-  latency_class: string | null;
-  activations: ProviderModelRouteActivation[];
-}
-
-export type ProviderModelRoutes = Partial<
-  Record<"standard" | "fast", ProviderModelRoute>
->;
-
 export interface ProviderModelRefreshSource {
   source_key: string;
   source_url?: string | null;
@@ -50,7 +31,6 @@ export interface ProviderModelOption {
   supports_tools?: boolean;
   execution_provider?: string;
   reasoning?: ProviderModelReasoning;
-  routes?: ProviderModelRoutes;
 }
 
 export interface ProviderModelEntry {

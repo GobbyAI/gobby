@@ -1,26 +1,21 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
 
 from gobby.config.ai import ModelMetadataAlias
 from gobby.providers.capabilities.models import (
-    ActivationDescriptor,
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
     SourceHealth,
     SourceState,
-    SpeedMode,
 )
 from gobby.providers.capabilities.resolve import (
     CapabilityResolver,
     ContextSource,
     ReasoningResolution,
     ReasoningStatus,
-    SpeedStatus,
 )
 from gobby.storage.model_metadata import ModelMetadata
 
@@ -61,7 +56,6 @@ def _snapshot(
     reasoning: ReasoningSupport = ReasoningSupport.KNOWN,
     supported_efforts: tuple[str, ...] | None = ("low", "medium", "high"),
     default_effort: str | None = "medium",
-    include_fast: bool = True,
 ) -> ProviderSnapshot:
     observed_at = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
     provenance = {
@@ -71,35 +65,6 @@ def _snapshot(
             observed_at=observed_at,
         )
     }
-    routes = [
-        ModelRoute(
-            speed_mode=SpeedMode.STANDARD,
-            selector="model-standard",
-            available=True,
-            usage_multiplier=Decimal("1"),
-            throughput_multiplier=None,
-            latency_class="normal",
-            activations=(),
-            provenance=provenance,
-        )
-    ]
-    if include_fast:
-        routes.append(
-            ModelRoute(
-                speed_mode=SpeedMode.FAST,
-                selector="model-fast",
-                available=True,
-                usage_multiplier=Decimal("1.5"),
-                throughput_multiplier=Decimal("4"),
-                latency_class="fastest",
-                activations=(
-                    ActivationDescriptor(kind="model_selector", surface="spawn-cli", params={}),
-                    ActivationDescriptor(kind="cli_config", surface="app-server", params={}),
-                    ActivationDescriptor(kind="env", surface="spawn-cli", params={}),
-                ),
-                provenance=provenance,
-            )
-        )
     model = ModelCapability(
         canonical_model="model",
         display_name="Model",
@@ -115,7 +80,6 @@ def _snapshot(
         latency_class="normal",
         input_modalities=("text",),
         supports_tools=True,
-        routes=tuple(routes),
         provenance=provenance,
     )
     source = SourceHealth(
@@ -396,30 +360,3 @@ def test_openrouter_pin_validation_handles_null_empty_mandatory_and_none() -> No
         ),
         "none",
     ) == (ReasoningStatus.VERIFIED, "none")
-
-
-def test_fast_unavailable_pre_dispatch() -> None:
-    without_fast = CapabilityResolver(
-        _CapabilityStore(_snapshot(include_fast=False)), _ModelMetadataStore(None)
-    ).resolve_route("provider", "model", SpeedMode.FAST, "spawn-cli")
-    wrong_surface = CapabilityResolver(
-        _CapabilityStore(_snapshot()), _ModelMetadataStore(None)
-    ).resolve_route("provider", "model", SpeedMode.FAST, "tool-chat")
-
-    assert without_fast.status is SpeedStatus.FAST_UNAVAILABLE
-    assert wrong_surface.status is SpeedStatus.FAST_UNAVAILABLE
-    assert without_fast.effective is SpeedMode.STANDARD
-    assert wrong_surface.effective is SpeedMode.STANDARD
-
-
-def test_route_resolution_surface_filtering() -> None:
-    resolver = CapabilityResolver(_CapabilityStore(_snapshot()), _ModelMetadataStore(None))
-
-    standard = resolver.resolve_route("provider", "model", surface="spawn-cli")
-    fast = resolver.resolve_route("provider", "model-latest", SpeedMode.FAST, "spawn-cli")
-
-    assert standard.status is SpeedStatus.STANDARD
-    assert standard.selector == "model-standard"
-    assert fast.status is SpeedStatus.FAST_CONFIGURED
-    assert fast.selector == "model-fast"
-    assert [activation.kind for activation in fast.activations] == ["model_selector", "env"]

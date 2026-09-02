@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
-from decimal import Decimal
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -16,15 +15,12 @@ from fastapi.testclient import TestClient
 from gobby.config.ai import AIConfig, GenerationConfig, GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.providers.capabilities.models import (
-    ActivationDescriptor,
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
     SourceHealth,
     SourceState,
-    SpeedMode,
 )
 from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.seed import _agy_snapshot
@@ -83,7 +79,6 @@ def _model(
         latency_class=None,
         input_modalities=input_modalities,
         supports_tools=None,
-        routes=(),
         provenance={"context_length": provenance} if context_length is not None else {},
     )
 
@@ -384,11 +379,6 @@ def _assert_models_response_matrix_shape() -> None:
         source_url="https://docs.factory.ai/models.md",
         observed_at=observed_at,
     )
-    activation = ActivationDescriptor(
-        kind="model_selector",
-        surface="spawn-cli",
-        params={},
-    )
     model = ModelCapability(
         canonical_model="gpt-5.4",
         display_name="GPT-5.4",
@@ -404,28 +394,6 @@ def _assert_models_response_matrix_shape() -> None:
         latency_class=None,
         input_modalities=("text",),
         supports_tools=True,
-        routes=(
-            ModelRoute(
-                speed_mode=SpeedMode.STANDARD,
-                selector="gpt-5.4",
-                available=True,
-                usage_multiplier=Decimal("1"),
-                throughput_multiplier=None,
-                latency_class=None,
-                activations=(activation,),
-                provenance={"usage_multiplier": provenance},
-            ),
-            ModelRoute(
-                speed_mode=SpeedMode.FAST,
-                selector="gpt-5.4-fast",
-                available=True,
-                usage_multiplier=Decimal("5"),
-                throughput_multiplier=None,
-                latency_class="fast",
-                activations=(activation,),
-                provenance={"usage_multiplier": provenance},
-            ),
-        ),
         provenance={"context_length": provenance},
     )
     snapshot = ProviderSnapshot(
@@ -488,29 +456,7 @@ def _assert_models_response_matrix_shape() -> None:
             },
             "input_modalities": ["text"],
             "supports_tools": True,
-            "routes": {
-                "standard": {
-                    "selector": "gpt-5.4",
-                    "available": True,
-                    "usage_multiplier": "1",
-                    "throughput_multiplier": None,
-                    "latency_class": None,
-                    "activations": [
-                        {"kind": "model_selector", "surface": "spawn-cli", "params": {}}
-                    ],
-                },
-                "fast": {
-                    "selector": "gpt-5.4-fast",
-                    "available": True,
-                    "usage_multiplier": "5",
-                    "throughput_multiplier": None,
-                    "latency_class": "fast",
-                    "activations": [
-                        {"kind": "model_selector", "surface": "spawn-cli", "params": {}}
-                    ],
-                },
-            },
-            "provenance": {"usage_multiplier": provenance.to_dict()},
+            "provenance": {"context_length": provenance.to_dict()},
         }
     ]
 

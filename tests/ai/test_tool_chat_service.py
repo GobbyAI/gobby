@@ -37,12 +37,9 @@ from gobby.ai._tool_chat_service import ToolChatService
 from gobby.config.ai import AIConfig, GenerationConfig, ToolLoopConfig
 from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import FeatureCandidateConfig
-from gobby.providers.capabilities.models import SpeedMode
 from gobby.providers.capabilities.resolve import (
     ReasoningResolution,
     ReasoningStatus,
-    SpeedResolution,
-    SpeedStatus,
 )
 
 pytestmark = pytest.mark.unit
@@ -173,22 +170,6 @@ class _ReasoningResolver:
             True,
         )
         return ReasoningResolution("auto", None, ReasoningStatus.VERIFIED, None)
-
-    def resolve_route(
-        self,
-        provider: str,
-        model: str,
-        speed_mode: SpeedMode = SpeedMode.STANDARD,
-        surface: str = "spawn-cli",
-    ) -> SpeedResolution:
-        return SpeedResolution(
-            requested=speed_mode,
-            effective=SpeedMode.STANDARD,
-            status=SpeedStatus.STANDARD,
-            selector=model,
-            activations=(),
-            reason=None,
-        )
 
 
 def test_tool_chat_request_exposes_effective_limits_and_shared_stop_reasons() -> None:

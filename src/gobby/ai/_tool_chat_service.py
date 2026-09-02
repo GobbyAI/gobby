@@ -16,7 +16,6 @@ import logging
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
-from typing import Protocol
 
 from gobby.ai._reasoning import (
     ReasoningEffortRejectedError,
@@ -46,9 +45,6 @@ from gobby.config.feature_base import (
     candidate_runtime_entries,
     parse_feature_candidate,
 )
-from gobby.providers.capabilities.apply import apply_speed, finalize_speed, speed_result
-from gobby.providers.capabilities.models import SpeedMode
-from gobby.providers.capabilities.resolve import SpeedResolution, SpeedStatus
 
 logger = logging.getLogger(__name__)
 
@@ -64,16 +60,6 @@ _RUNTIME_ADAPTER_STYLES = frozenset(
         AIAdapterStyle.OPENAI_COMPATIBLE,
     }
 )
-
-
-class _CapabilityResolver(ReasoningResolver, Protocol):
-    def resolve_route(
-        self,
-        provider: str,
-        model: str,
-        speed_mode: SpeedMode = SpeedMode.STANDARD,
-        surface: str = "spawn-cli",
-    ) -> SpeedResolution: ...
 
 
 class ToolChatService:
@@ -96,7 +82,7 @@ class ToolChatService:
         ) = None,
         default_limits: ToolLoopLimits | None = None,
         lease_factory: ToolChatLeaseFactory | None = None,
-        capability_resolver: _CapabilityResolver | None = None,
+        capability_resolver: ReasoningResolver | None = None,
     ) -> None:
         self._registry = registry
         self._adapters: dict[AIAdapterStyle, ToolChatAdapter] = dict(adapters or {})
@@ -153,7 +139,6 @@ class ToolChatService:
                 binding = self._select_binding(candidate)
                 candidate = self._apply_candidate_reasoning(candidate, binding)
                 adapter = self._adapter_for_style(binding.adapter_style)
-                candidate, resolution = self._apply_candidate_speed(candidate, binding)
                 result = await self._await_chat_candidate(
                     adapter,
                     candidate,
@@ -166,11 +151,6 @@ class ToolChatService:
                     model=(result.model or candidate.model or next(iter(binding.models), None)),
                     adapter_style=binding.adapter_style.value,
                 )
-                resolution = finalize_speed(
-                    resolution,
-                    {"model": result.model, **result.response_metadata},
-                )
-                result = replace(result, speed=speed_result(resolution))
                 result_log_fields = _result_log_fields(candidate_log_fields, result)
                 logger.debug("tool_chat request completed", extra=result_log_fields)
                 if result.stop_reason in LIMIT_STOP_REASONS:
@@ -308,54 +288,6 @@ class ToolChatService:
                 reason=str(exc),
             ) from exc
         return replace(request, reasoning_effort=effort)
-
-    def _apply_candidate_speed(
-        self,
-        request: ToolChatRequest,
-        binding: CapabilityBinding,
-    ) -> tuple[ToolChatRequest, SpeedResolution]:
-        model = request.model or next(iter(binding.models), None)
-        mode = SpeedMode(request.speed_mode)
-        resolver = self._capability_resolver
-        if resolver is None:
-            from gobby.app_context import get_app_context
-
-            context = get_app_context()
-            resolver = (
-                getattr(context, "provider_capability_resolver", None)
-                if context is not None
-                else None
-            )
-        if resolver is not None and model is not None:
-            resolution = resolver.resolve_route(
-                binding.provider,
-                model,
-                mode,
-                "app-server" if binding.provider == "codex" else "tool-chat",
-            )
-        else:
-            unavailable = mode is SpeedMode.FAST
-            resolution = SpeedResolution(
-                requested=mode,
-                effective=SpeedMode.STANDARD,
-                status=(SpeedStatus.FAST_UNAVAILABLE if unavailable else SpeedStatus.STANDARD),
-                selector=model or "",
-                activations=(),
-                reason="provider capability resolver unavailable" if unavailable else None,
-            )
-        application = apply_speed(
-            resolution,
-            model=model,
-            request_parameters=request.request_parameters,
-        )
-        return (
-            replace(
-                request,
-                model=application.model,
-                request_parameters=application.request_parameters,
-            ),
-            resolution,
-        )
 
     def _adapter_for_style(self, adapter_style: AIAdapterStyle) -> ToolChatAdapter:
         adapter = self._adapters.get(adapter_style)

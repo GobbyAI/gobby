@@ -6,21 +6,17 @@ import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
 
 import httpx
 
 from gobby.providers.capabilities.collectors.base import SourceSpec
 from gobby.providers.capabilities.models import (
-    ActivationDescriptor,
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
     SourceHealth,
     SourceState,
-    SpeedMode,
 )
 
 DROID_MODELS_URL = "https://docs.factory.ai/models.md"
@@ -28,7 +24,6 @@ DROID_MODELS_URL = "https://docs.factory.ai/models.md"
 _SOURCE_KEY = "factory-models"
 _MODEL_ID_RE = re.compile(r"`([^`]+)`")
 _EFFORT_RE = re.compile(r"`([^`]+)`(\s*\(default\))?", re.IGNORECASE)
-_EXPLICIT_FAST_RE = re.compile(r"\bfast(?:\s+mode)?\b", re.IGNORECASE)
 _MULTIPLIER_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*[×x]", re.IGNORECASE)
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
@@ -43,8 +38,6 @@ _MODEL_BASE_FACTS = frozenset(
         "reasoning",
     }
 )
-_ROUTE_BASE_FACTS = frozenset({"speed_mode", "selector", "available", "activations"})
-
 FetchText = Callable[[str], Awaitable[str]]
 Clock = Callable[[], datetime]
 
@@ -60,7 +53,6 @@ class DroidSourceError(ValueError):
 class _DroidModel:
     display_name: str
     model_id: str
-    usage_multiplier: Decimal
     supported_efforts: tuple[str, ...] | None
     default_effort: str | None
 
@@ -90,18 +82,7 @@ class DroidCollector:
         except ValueError as error:
             raise DroidSourceError(str(error)) from error
 
-        by_id = {model.model_id: model for model in parsed_models}
-        fast_by_standard = {
-            model.model_id.removesuffix("-fast"): model
-            for model in parsed_models
-            if _is_pairable_fast(model, by_id)
-        }
-        paired_fast_ids = {model.model_id for model in fast_by_standard.values()}
-        models = tuple(
-            _build_model(model, fast_by_standard.get(model.model_id), observed_at)
-            for model in parsed_models
-            if model.model_id not in paired_fast_ids
-        )
+        models = tuple(_build_model(model, observed_at) for model in parsed_models)
         return ProviderSnapshot(
             provider=self.provider,
             generation=0,
@@ -139,12 +120,12 @@ def _parse_models(document: str) -> tuple[_DroidModel, ...]:
         if model_id in seen_ids:
             raise ValueError(f"duplicate model ID {model_id!r}")
         seen_ids.add(model_id)
+        _require_usage_multiplier(multiplier_cell, model_id)
         efforts, default_effort = _parse_reasoning(reasoning_cell)
         models.append(
             _DroidModel(
                 display_name=_clean_label(label_cell) or model_id,
                 model_id=model_id,
-                usage_multiplier=_parse_multiplier(multiplier_cell, model_id),
                 supported_efforts=efforts,
                 default_effort=default_effort,
             )
@@ -162,12 +143,11 @@ def _model_row_cells(line: str) -> tuple[str, ...] | None:
     return cells if len(cells) >= 4 else None
 
 
-def _parse_multiplier(value: str, model_id: str) -> Decimal:
+def _require_usage_multiplier(value: str, model_id: str) -> None:
+    """Reject table rows whose usage-multiplier cell does not match Factory's format."""
     cleaned = _HTML_TAG_RE.sub("", value).replace("`", "").strip()
-    match = _MULTIPLIER_RE.fullmatch(cleaned)
-    if match is None:
+    if _MULTIPLIER_RE.fullmatch(cleaned) is None:
         raise ValueError(f"invalid usage multiplier for {model_id!r}: {value!r}")
-    return Decimal(match.group(1))
 
 
 def _parse_reasoning(value: str) -> tuple[tuple[str, ...] | None, str | None]:
@@ -181,24 +161,7 @@ def _parse_reasoning(value: str) -> tuple[tuple[str, ...] | None, str | None]:
     return efforts, defaults[0] if defaults else efforts[0]
 
 
-def _is_pairable_fast(model: _DroidModel, by_id: Mapping[str, _DroidModel]) -> bool:
-    if not model.model_id.endswith("-fast"):
-        return False
-    standard_id = model.model_id.removesuffix("-fast")
-    return bool(
-        standard_id and _EXPLICIT_FAST_RE.search(model.display_name) and standard_id in by_id
-    )
-
-
-def _build_model(
-    model: _DroidModel,
-    fast_model: _DroidModel | None,
-    observed_at: datetime,
-) -> ModelCapability:
-    routes = [_build_route(model, SpeedMode.STANDARD, observed_at)]
-    if fast_model is not None:
-        routes.append(_build_route(fast_model, SpeedMode.FAST, observed_at))
-
+def _build_model(model: _DroidModel, observed_at: datetime) -> ModelCapability:
     fact_sources = dict.fromkeys(_MODEL_BASE_FACTS, _SOURCE_KEY)
     if model.supported_efforts is not None:
         fact_sources["supported_efforts"] = _SOURCE_KEY
@@ -222,28 +185,6 @@ def _build_model(
         latency_class=None,
         input_modalities=None,
         supports_tools=None,
-        routes=tuple(routes),
-        provenance=_provenance(fact_sources, observed_at),
-    )
-
-
-def _build_route(model: _DroidModel, speed_mode: SpeedMode, observed_at: datetime) -> ModelRoute:
-    activations: tuple[ActivationDescriptor, ...] = ()
-    if speed_mode is SpeedMode.FAST:
-        activations = tuple(
-            ActivationDescriptor(kind="model_selector", surface=surface, params={})
-            for surface in ("spawn-cli", "tool-chat")
-        )
-    fact_sources = dict.fromkeys(_ROUTE_BASE_FACTS, _SOURCE_KEY)
-    fact_sources["usage_multiplier"] = _SOURCE_KEY
-    return ModelRoute(
-        speed_mode=speed_mode,
-        selector=model.model_id,
-        available=True,
-        usage_multiplier=model.usage_multiplier,
-        throughput_multiplier=None,
-        latency_class=None,
-        activations=activations,
         provenance=_provenance(fact_sources, observed_at),
     )
 

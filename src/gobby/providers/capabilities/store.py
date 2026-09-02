@@ -6,21 +6,17 @@ import json
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from decimal import Decimal
 from typing import Any
 
 from psycopg.types.json import Jsonb
 
 from gobby.providers.capabilities.models import (
-    ActivationDescriptor,
     FactProvenance,
     ModelCapability,
-    ModelRoute,
     ProviderSnapshot,
     ReasoningSupport,
     SourceHealth,
     SourceState,
-    SpeedMode,
 )
 from gobby.providers.registry import provider_metadata
 from gobby.storage.hub.protocol import HubDatabase, Row, Transaction
@@ -58,22 +54,6 @@ INSERT INTO provider_model_capabilities (
     generation,
     provenance
 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-"""
-
-_INSERT_ROUTE_SQL = """
-INSERT INTO provider_model_routes (
-    provider,
-    canonical_model,
-    speed_mode,
-    selector,
-    available,
-    usage_multiplier,
-    throughput_multiplier,
-    latency_class,
-    activations,
-    generation,
-    provenance
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 _UPSERT_SOURCE_SQL = """
@@ -124,28 +104,6 @@ WHERE (%s::text IS NULL OR provider = %s)
 ORDER BY provider, is_default DESC, display_name, canonical_model
 """
 
-_SELECT_ROUTES_SQL = """
-SELECT
-    provider,
-    canonical_model,
-    speed_mode,
-    selector,
-    available,
-    usage_multiplier,
-    throughput_multiplier,
-    latency_class,
-    activations,
-    generation,
-    provenance
-FROM provider_model_routes
-WHERE (%s::text IS NULL OR provider = %s)
-ORDER BY
-    provider,
-    canonical_model,
-    CASE speed_mode WHEN 'standard' THEN 0 WHEN 'fast' THEN 1 ELSE 2 END,
-    speed_mode
-"""
-
 _SELECT_SOURCES_SQL = """
 SELECT
     provider,
@@ -181,16 +139,11 @@ class ProviderCapabilityStore:
                 (provider,),
             )
 
-            capability_rows: list[Sequence[Any]] = []
-            route_rows: list[Sequence[Any]] = []
-            for model in snapshot.models:
-                capability_rows.append(self._capability_row(provider, generation, model))
-                route_rows.extend(self._route_rows(provider, generation, model))
-
+            capability_rows: list[Sequence[Any]] = [
+                self._capability_row(provider, generation, model) for model in snapshot.models
+            ]
             if capability_rows:
                 transaction.executemany(_INSERT_CAPABILITY_SQL, capability_rows)
-            if route_rows:
-                transaction.executemany(_INSERT_ROUTE_SQL, route_rows)
 
             source_rows = [
                 (
@@ -325,52 +278,19 @@ class ProviderCapabilityStore:
         )
 
     @staticmethod
-    def _route_rows(
-        provider: str,
-        generation: int,
-        model: ModelCapability,
-    ) -> list[Sequence[Any]]:
-        return [
-            (
-                provider,
-                model.canonical_model,
-                route.speed_mode.value,
-                route.selector,
-                route.available,
-                route.usage_multiplier,
-                route.throughput_multiplier,
-                route.latency_class,
-                Jsonb([activation.to_dict() for activation in route.activations]),
-                generation,
-                Jsonb({name: value.to_dict() for name, value in route.provenance.items()}),
-            )
-            for route in model.routes
-        ]
-
-    @staticmethod
     def _load_snapshots(
         transaction: Transaction,
         provider: str | None,
     ) -> tuple[ProviderSnapshot, ...]:
         params = (provider, provider)
         capability_rows = transaction.execute(_SELECT_CAPABILITIES_SQL, params).fetchall()
-        route_rows = transaction.execute(_SELECT_ROUTES_SQL, params).fetchall()
         source_rows = transaction.execute(_SELECT_SOURCES_SQL, params).fetchall()
-
-        routes_by_model: dict[tuple[str, str], list[ModelRoute]] = defaultdict(list)
-        for row in route_rows:
-            routes_by_model[(str(row["provider"]), str(row["canonical_model"]))].append(
-                _model_route(row)
-            )
 
         models_by_provider: dict[str, list[ModelCapability]] = defaultdict(list)
         generations: dict[str, int] = {}
         for row in capability_rows:
             row_provider = str(row["provider"])
-            canonical_model = str(row["canonical_model"])
-            models_by_provider[row_provider].append(
-                _model_capability(row, routes_by_model[(row_provider, canonical_model)])
-            )
+            models_by_provider[row_provider].append(_model_capability(row))
             generations[row_provider] = max(
                 generations.get(row_provider, 0),
                 int(row["generation"]),
@@ -397,7 +317,7 @@ class ProviderCapabilityStore:
         )
 
 
-def _model_capability(row: Row, routes: Sequence[ModelRoute]) -> ModelCapability:
+def _model_capability(row: Row) -> ModelCapability:
     return ModelCapability(
         canonical_model=str(row["canonical_model"]),
         display_name=str(row["display_name"]),
@@ -413,20 +333,6 @@ def _model_capability(row: Row, routes: Sequence[ModelRoute]) -> ModelCapability
         latency_class=_optional_str(row["latency_class"]),
         input_modalities=_string_tuple(row["input_modalities"]),
         supports_tools=_optional_bool(row["supports_tools"]),
-        routes=tuple(routes),
-        provenance=_provenance(row["provenance"]),
-    )
-
-
-def _model_route(row: Row) -> ModelRoute:
-    return ModelRoute(
-        speed_mode=SpeedMode(str(row["speed_mode"])),
-        selector=str(row["selector"]),
-        available=bool(row["available"]),
-        usage_multiplier=_optional_decimal(row["usage_multiplier"]),
-        throughput_multiplier=_optional_decimal(row["throughput_multiplier"]),
-        latency_class=_optional_str(row["latency_class"]),
-        activations=_activations(row["activations"]),
         provenance=_provenance(row["provenance"]),
     )
 
@@ -457,26 +363,6 @@ def _provenance(value: object) -> dict[str, FactProvenance]:
     return result
 
 
-def _activations(value: object) -> tuple[ActivationDescriptor, ...]:
-    value = _json_value(value)
-    if not isinstance(value, list):
-        raise TypeError("activations must be a JSON array")
-    activations: list[ActivationDescriptor] = []
-    for index, raw_activation in enumerate(value):
-        activation = _mapping(raw_activation, f"activations[{index}]")
-        params = _mapping(activation.get("params"), f"activations[{index}].params")
-        activations.append(
-            ActivationDescriptor(
-                kind=_required_str(activation.get("kind"), "kind"),
-                surface=_required_str(activation.get("surface"), "surface"),
-                params={
-                    key: _required_str(param, f"params.{key}") for key, param in params.items()
-                },
-            )
-        )
-    return tuple(activations)
-
-
 def _mapping(value: object, field: str) -> Mapping[str, object]:
     value = _json_value(value)
     if not isinstance(value, Mapping):
@@ -505,10 +391,6 @@ def _optional_int(value: object) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     raise TypeError("expected an integer or null")
-
-
-def _optional_decimal(value: object) -> Decimal | None:
-    return None if value is None else Decimal(str(value))
 
 
 def _optional_bool(value: object) -> bool | None:

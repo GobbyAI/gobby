@@ -113,7 +113,7 @@ async def test_collects_record_1_1_20_model_rows() -> None:
     )
     assert snapshot.models[0].aliases == ()
     assert snapshot.models[0].supported_efforts == ("high",)
-    assert snapshot.models[0].routes[0].selector == "gemini-3.7-flash-high"
+    assert snapshot.models[0].canonical_model == "gemini-3.7-flash-high"
     assert snapshot.models[1].canonical_model == "gemini-3.7-flash-medium"
     assert snapshot.models[1].aliases == ("gemini-3.7-flash",)
 
