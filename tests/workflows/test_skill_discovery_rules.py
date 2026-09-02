@@ -2809,7 +2809,38 @@ class TestRequirePlanSkillStructure:
         assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == _skill_fetch_template("plan")
+        assert body.effects[0].reason is not None
+        assert body.effects[0].reason.startswith(_skill_fetch_template("plan"))
+
+    @pytest.mark.asyncio
+    async def test_rendered_block_reason_includes_registration_guidance(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "Write",
+                "canonical_tool_kind": "write",
+                "canonical_file_path": "/project/.gobby/plans/design.md",
+            },
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={"loaded_skills": ["markdown"]},
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert skill_fetch_directive("plan") in response.reason
+        assert "`gobby plans register`" in response.reason
+        assert "never by copying a plan-mode file" in response.reason
+        assert "Lightweight planning does not create" in response.reason
 
 
 class TestRequirePlanSkillCondition:
