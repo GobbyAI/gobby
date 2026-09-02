@@ -67,7 +67,7 @@ class PreparedCloseReview:
     excerpt_chars: int
 
 
-def _render_prior_requirements(verdict: CloseVerdict | None) -> str:
+def render_prior_requirements(verdict: CloseVerdict | None) -> str:
     if verdict is None:
         return _NO_PRIOR_REQUIREMENTS
     requirements: list[str] = []
@@ -227,7 +227,7 @@ class TaskValidator:
             f"{index}. {criterion}" for index, criterion in enumerate(criteria, start=1)
         )
         facts_text = json.dumps(checklist_facts, sort_keys=True, separators=(",", ":"), default=str)
-        prior_requirements = _render_prior_requirements(prior_verdict)
+        prior_requirements = render_prior_requirements(prior_verdict)
 
         def render(evidence_text: str, requirements_text: str) -> str:
             return self._loader.render(
@@ -297,4 +297,5 @@ class TaskValidator:
 __all__ = [
     "TaskValidator",
     "ValidationPromptTooLarge",
+    "render_prior_requirements",
 ]
