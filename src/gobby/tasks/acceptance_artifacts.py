@@ -87,6 +87,15 @@ def extract_artifact_references(criteria: str, kind: str) -> tuple[str, ...]:
     return tuple(references)
 
 
+def malformed_test_reference_findings(criteria: str) -> tuple[str, ...]:
+    """Return diagnostics for named tests that omit a path or symbol."""
+    return tuple(
+        f"{reference}: malformed test reference; expected path::test_symbol"
+        for reference in extract_artifact_references(criteria, "test")
+        if parse_test_reference(reference) is None
+    )
+
+
 def evaluate_acceptance_artifacts(
     *,
     criteria: str,
@@ -121,11 +130,10 @@ def resolve_acceptance_tests(
 ) -> tuple[tuple[AcceptanceTest, ...], tuple[str, ...]]:
     """Resolve every named acceptance test through gcode."""
     tests: list[AcceptanceTest] = []
-    findings: list[str] = []
+    findings = list(malformed_test_reference_findings(criteria))
     for reference in extract_artifact_references(criteria, "test"):
         parsed = parse_test_reference(reference)
         if parsed is None:
-            findings.append(f"{reference}: malformed test reference; expected path::test_symbol")
             continue
         path, symbol = parsed
         path_error = _path_error(path, repo_path)
