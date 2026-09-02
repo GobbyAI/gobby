@@ -562,7 +562,7 @@ class TestCommitWebChatClearSuccessorTransaction:
         assert successor is None
         refreshed = sessions.get(predecessor.id)
         assert refreshed is not None
-        assert refreshed.status == "active"
+        assert refreshed.status == "awaiting_handoff"
         marker = SessionVariableManager(hub_db).get_variables(predecessor.id)
         assert marker[CLEAR_ATTEMPT_VARIABLE]["consumed_by"] is None
 

@@ -196,7 +196,6 @@ def test_unauthenticated_handshake_is_rejected_before_handler(
     assert websocket_server.handler_calls == 0
     assert websocket_server.clients == {}
     assert "Exception in ASGI application" not in caplog.text
-    assert "transfer_data_task" not in caplog.text
     assert "AttributeError" not in caplog.text
 
 
@@ -337,7 +336,7 @@ async def _live_ws_server(websocket_server: _WebSocketServer | None) -> AsyncIte
         access_log=False,
         lifespan="off",
         log_config=None,
-        ws="websockets",
+        ws="websockets-sansio",
     )
     http = uvicorn.Server(config)
     task = asyncio.create_task(http.serve())
@@ -393,7 +392,6 @@ async def test_pre_accept_rejection_hangup_does_not_raise_in_uvicorn(
 
     combined = probe.text()
     assert "Exception in ASGI application" not in combined
-    assert "transfer_data_task" not in combined
     assert "AttributeError" not in combined
 
 
@@ -410,9 +408,10 @@ async def test_unauthenticated_live_client_closes_with_4401_without_traceback() 
     finally:
         logger.removeHandler(probe)
 
-    assert exc_info.value.code == 4401
-    assert exc_info.value.reason == "Authentication required"
+    close_frame = exc_info.value.rcvd
+    assert close_frame is not None
+    assert close_frame.code == 4401
+    assert close_frame.reason == "Authentication required"
     combined = probe.text()
     assert "Exception in ASGI application" not in combined
-    assert "transfer_data_task" not in combined
     assert "AttributeError" not in combined

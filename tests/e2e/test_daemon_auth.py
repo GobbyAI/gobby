@@ -66,7 +66,7 @@ def _hook_payload() -> dict[str, object]:
 
 
 def _register_session(client: httpx.Client, project_dir: Path) -> str:
-    project_id = "7d5f7f2b-202a-4ca6-a06d-39dfc15b9932"
+    project_id = "00000000-0000-0000-0000-000000000e2e"
     project_response = client.post(
         "/api/admin/test/register-project",
         json={
@@ -286,7 +286,8 @@ async def test_ws_auth(daemon_instance: DaemonInstance) -> None:
     ) as websocket:
         with pytest.raises(ConnectionClosedError) as http_ws_closed:
             await websocket.recv()
-    assert http_ws_closed.value.code == 4401
+    assert http_ws_closed.value.rcvd is not None
+    assert http_ws_closed.value.rcvd.code == 4401
     cookie = _browser_session_cookie(daemon_instance)
     await _assert_websocket_frames(
         f"ws://localhost:{daemon_instance.http_port}/ws",
