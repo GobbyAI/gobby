@@ -80,16 +80,51 @@ async def test_launch_after_rejected_verdict_carries_required_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = TaskCloseReviewStore(temp_db)
-    first_review, created = store.create_or_get_active(
-        task_id=_PERSISTED_TASK_ID,
-        task_ref="#42",
-        caller_session_id=_PERSISTED_SESSION_ID,
-        close_arguments=_arguments(),
-        review_fingerprint="first-review",
-        evidence_fingerprint="first-evidence",
+    task_manager = SimpleNamespace(db=temp_db)
+    task = Task(
+        id=_PERSISTED_TASK_ID,
+        project_id="00000000-0000-4000-8000-000000002612",
+        title="Carry prior close evidence",
+        priority=1,
+        task_type="task",
+        validation_criteria="Focused tests pass.",
+        created_at=datetime(2026, 8, 22, tzinfo=UTC),
+        updated_at=datetime(2026, 8, 22, tzinfo=UTC),
+        seq_num=42,
     )
-    assert created is True
-    assert store.bind_run(first_review.id, _FIRST_REVIEW_RUN_ID) is not None
+    evaluation = CloseEvaluation("#42")
+    evaluation.task = task
+    evaluation.task_id = task.id
+    evaluation.resolved_session_id = _PERSISTED_SESSION_ID
+    evaluation.repo_path = "/repo"
+    evaluation.commit_shas = ["def"]
+    evaluation.error = "agentic_review_required"
+    evaluation.extra.update(
+        {
+            "review_fingerprint": "first-review",
+            "deterministic_evidence_fingerprint": "first-evidence",
+        }
+    )
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
+    ctx = cast(
+        RegistryContext,
+        SimpleNamespace(
+            task_manager=task_manager,
+            agent_registry=registry,
+            validation_config=TaskValidationConfig(),
+        ),
+    )
+
+    await launch_close_review(ctx, evaluation=evaluation, close_arguments=_arguments())
+
+    first_launch_prompt = registry.call.await_args.args[1]["prompt"]
+    assert "prior_requirements=" not in first_launch_prompt
+    first_review = store.get_active_for_task(_PERSISTED_TASK_ID)
+    assert first_review is not None
+    assert first_review.agent_run_id == _FIRST_REVIEW_RUN_ID
+
     monkeypatch.setattr(orchestration, "_authenticate_submission", lambda _ctx, _review: None)
     submitted_verdict: dict[str, object] = {
         "status": "invalid",
@@ -103,7 +138,6 @@ async def test_launch_after_rejected_verdict_carries_required_evidence(
         ],
         "feedback": "The close evidence is incomplete.",
     }
-    task_manager = SimpleNamespace(db=temp_db)
     submit_ctx = cast(
         RegistryContext,
         SimpleNamespace(
@@ -144,24 +178,6 @@ async def test_launch_after_rejected_verdict_carries_required_evidence(
     registry = SimpleNamespace(
         call=AsyncMock(return_value={"success": True, "run_id": _SECOND_REVIEW_RUN_ID})
     )
-    task = Task(
-        id=_PERSISTED_TASK_ID,
-        project_id="00000000-0000-4000-8000-000000002612",
-        title="Carry prior close evidence",
-        priority=1,
-        task_type="task",
-        validation_criteria="Focused tests pass.",
-        created_at=datetime(2026, 8, 22, tzinfo=UTC),
-        updated_at=datetime(2026, 8, 22, tzinfo=UTC),
-        seq_num=42,
-    )
-    evaluation = CloseEvaluation("#42")
-    evaluation.task = task
-    evaluation.task_id = task.id
-    evaluation.resolved_session_id = _PERSISTED_SESSION_ID
-    evaluation.repo_path = "/repo"
-    evaluation.commit_shas = ["def"]
-    evaluation.error = "agentic_review_required"
     evaluation.extra.update(
         {
             "review_fingerprint": "second-review",
