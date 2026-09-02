@@ -3921,6 +3921,35 @@ class TestCodeIndexNavigationRules:
             assert response.decision == "allow"
 
     @pytest.mark.asyncio
+    async def test_unexpanded_home_search_bypasses_code_index_rule(
+        self, db, tmp_path, monkeypatch
+    ) -> None:
+        _sync_bundled(db)
+        home = tmp_path / "home"
+        repo = tmp_path / "repo"
+        monkeypatch.setenv("HOME", str(home))
+
+        cases = (
+            ('rg -l "pat" "$HOME/Library/Application Support/rtk/tee"', False, "allow"),
+            ("rg foo src", True, "block"),
+        )
+        for command, expected_repo_scope, expected_decision in cases:
+            event = self._normalized_bash_event(
+                command,
+                cwd=str(repo),
+                project_path=str(repo),
+            )
+            assert event.data["canonical_code_navigation_repo_scope"] is expected_repo_scope
+
+            response = await RuleEngine(db).evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=self._variables(loaded=True),
+            )
+
+            assert response.decision == expected_decision
+
+    @pytest.mark.asyncio
     async def test_file_discovery_scope_controls_code_index_rules(
         self, db: HubDatabase, tmp_path: Path
     ) -> None:
