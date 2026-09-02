@@ -260,7 +260,7 @@ def prepare_daemon_env(
 
     This handles the critical setup that's easy to miss when manually spawning daemons:
     1. Sets PYTHONPATH to include the src directory
-    2. Removes GOBBY_DATABASE_PATH so daemon uses its config file's database_url
+    2. Removes parent database overrides so the daemon uses its isolated bootstrap
     3. Clears LLM API keys to avoid external calls
     4. Overrides HOME to isolate the daemon from the real ~/.gobby/
 
@@ -290,6 +290,7 @@ def prepare_daemon_env(
     env["GOBBY_TEST_PROTECT"] = "1"
     env.pop("GOBBY_DATABASE_PATH", None)
     env.pop("GOBBY_CONFIG_FILE", None)
+    env.pop("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", None)
 
     # Disable any LLM providers to avoid external calls. The memory-helper
     # live smoke is explicitly opt-in and needs the real provider credentials.
@@ -1501,12 +1502,10 @@ async def async_mcp_client(
 _SNAPSHOT_EXCLUDED_DIRS = {"skill-cache"}
 
 # Directories recorded one level deep and never descended into. Task worktrees
-# are full source checkouts whose file count is unbounded and unrelated to what
-# this guard protects: ~/.gobby/worktrees has held 840k files / 85 GiB, which
-# cost ~36s per snapshot and ~72s per test. Recording each worktree's top-level
-# entry still catches a test creating one; descending only prices in churn from
-# concurrent agents.
-_SHALLOW_SNAPSHOT_PREFIXES = ("worktrees/",)
+# and managed-run sandboxes contain unbounded agent-owned files unrelated to
+# what this guard protects. Recording each top-level entry still catches a test
+# creating one while excluding churn inside existing concurrent agent contexts.
+_SHALLOW_SNAPSHOT_PREFIXES = ("run/sandbox/", "worktrees/")
 
 
 def _is_shallow_snapshot_child(rel_dir: str) -> bool:
@@ -1587,7 +1586,9 @@ _PRODUCTION_DAEMON_ARTIFACT_PREFIXES = (
     "cache/transcript-indexes/",
     "grants/",
     "logs/",
+    "run/sandbox/",
     "runtime/managed-executions/",
+    "runtime/srt-sock/",
     "session_summaries/",
     "session_transcripts/",
     "worktrees/",
@@ -1665,9 +1666,9 @@ def assert_no_external_writes() -> Generator[None]:
             # PostgreSQL WAL/SHM files can be touched by any process that opens
             # the database (even read-only), so exempt them as well.
             basename = Path(rel_path).name
-            if rel_path.startswith("worktrees/"):
-                # Shallow-snapshotted: a worktree directory's mtime changes
-                # whenever a concurrent agent writes into it.
+            if _is_shallow_snapshot_child(f"{rel_path}/"):
+                # A shallow-snapshotted directory's mtime changes whenever its
+                # concurrent owner writes a direct child.
                 continue
             if basename.endswith(("-shm", "-wal", "-journal")):
                 continue

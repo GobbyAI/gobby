@@ -5,7 +5,7 @@ rules:
     description: "Allow exact user prompts to disable brevity for the session"
     event: turn_start
     enabled: true
-    priority: 18
+    priority: 8
     when: >
       ((event.data.get('prompt') or event.data.get('user_prompt') or '').strip().lower())
       == 'stop brevity'
@@ -13,19 +13,6 @@ rules:
       - type: set_variable
         variable: brevity_disabled
         value: true
-
-  load-brevity-on-turn-start:
-    description: "Load brevity while it is enabled"
-    event: turn_start
-    enabled: true
-    priority: 20
-    when: >
-      not variables.get('brevity_disabled')
-      and not skill_loaded('brevity')
-      and not variables.get('handoff_pull_pending')
-    effects:
-      - type: load_skill
-        skill: brevity
 
   inject-brevity-drift-feedback:
     description: "Carry the last brevity drift match into the next turn"

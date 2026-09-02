@@ -1,7 +1,7 @@
 """Tests for the HTTP server endpoints."""
 
-from collections.abc import Iterator
-from typing import Any
+from collections.abc import Awaitable, Iterator
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,7 +9,10 @@ from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.servers.http import HTTPServer
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
 
 pytestmark = [
@@ -94,9 +97,8 @@ class TestStreamableHttpShutdown:
         session_manager = StreamableSessionManagerDouble({"one": transport})
         http_server._mcp_server.session_manager = session_manager
 
-        async def _wait_for(awaitable, timeout):
+        async def _wait_for(awaitable: Awaitable[Any], timeout: float) -> None:
             await awaitable
-            return None
 
         with patch(
             "gobby.servers.http.asyncio.wait_for",
@@ -105,7 +107,9 @@ class TestStreamableHttpShutdown:
             await http_server._terminate_streamable_http_sessions()
 
         mock_wait_for.assert_awaited_once()
-        assert mock_wait_for.await_args.kwargs["timeout"] == 2.0
+        await_args = mock_wait_for.await_args
+        assert await_args is not None
+        assert await_args.kwargs["timeout"] == 2.0
         assert transport.terminate.await_count == 1
         assert session_manager.active_sessions() == {}
 
@@ -223,7 +227,7 @@ class TestMCPEndpointsWithManager:
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
-            mcp_manager=mock_mcp_manager,
+            mcp_manager=cast(MCPClientManager, mock_mcp_manager),
         )
         return HTTPServer(
             services=services,
@@ -241,11 +245,10 @@ class TestMCPEndpointsWithManager:
     def test_mcp_tools_server_not_found(
         self,
         mcp_client: TestClient,
-        http_server_with_mcp: HTTPServer,
+        mock_mcp_manager: FakeMCPManager,
     ) -> None:
         """Test MCP tools listing for unknown server."""
-        assert http_server_with_mcp.mcp_manager is not None
-        http_server_with_mcp.mcp_manager.get_client.side_effect = ValueError("Server not found")
+        mock_mcp_manager.get_client.side_effect = ValueError("Server not found")
 
         # No try/except needed if we fixed the root cause, but leaving assertion
         response = mcp_client.get("/api/mcp/unknown-server/tools")
@@ -254,7 +257,7 @@ class TestMCPEndpointsWithManager:
     def test_mcp_proxy_tool_not_found(
         self,
         mcp_client: TestClient,
-        http_server_with_mcp: HTTPServer,
+        mock_mcp_manager: FakeMCPManager,
     ) -> None:
         """Test MCP proxy for unknown tool.
 
@@ -262,11 +265,15 @@ class TestMCPEndpointsWithManager:
         200 with error in response body. Only server-level errors return 404.
         See _process_tool_proxy_result in routes/mcp/tools.py.
         """
-        assert http_server_with_mcp.mcp_manager is not None
-        http_server_with_mcp.mcp_manager.connections["test-server"] = MagicMock()
-        http_server_with_mcp.mcp_manager.call_tool = AsyncMock(
-            side_effect=ValueError("Tool not found")
+        mock_mcp_manager.server_configs.append(
+            MCPServerConfig(
+                id="test-server",
+                name="test-server",
+                project_id=GLOBAL_PROJECT_ID,
+            )
         )
+        mock_mcp_manager.connections["test-server"] = MagicMock()
+        mock_mcp_manager.call_tool.side_effect = ValueError("Tool not found")
 
         response = mcp_client.post(
             "/api/mcp/test-server/tools/unknown-tool",
@@ -283,13 +290,16 @@ class TestMCPEndpointsWithManager:
         mcp_client: TestClient,
         http_server_with_mcp: HTTPServer,
     ) -> None:
-        """Test adding a new MCP server."""
-        # Mock get_project_context
-        with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "test-project-id", "name": "test"}
-            assert http_server_with_mcp.mcp_manager is not None
-            http_server_with_mcp.mcp_manager.add_server = AsyncMock()
+        """Test adding a new sessionless MCP server in global scope."""
+        manager = http_server_with_mcp.mcp_manager
+        assert manager is not None
 
+        with patch.object(
+            manager,
+            "add_server",
+            new_callable=AsyncMock,
+            create=True,
+        ) as add_server:
             response = mcp_client.post(
                 "/api/mcp/servers",
                 json={
@@ -304,19 +314,28 @@ class TestMCPEndpointsWithManager:
         assert response.json()["success"] is True
 
         # Verify add_server was called with correct config
-        assert http_server_with_mcp.mcp_manager is not None
-        http_server_with_mcp.mcp_manager.add_server.assert_called_once()
-        config = http_server_with_mcp.mcp_manager.add_server.call_args[0][0]
+        add_server.assert_called_once()
+        config = add_server.call_args[0][0]
         assert config.name == "new-server"
-        assert config.project_id == "test-project-id"
+        assert config.project_id == GLOBAL_PROJECT_ID
 
     def test_add_mcp_server_no_project(
         self,
         mcp_client: TestClient,
         http_server_with_mcp: HTTPServer,
     ) -> None:
-        """Test adding MCP server without project context fails."""
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
+        """Test adding a sessionless MCP server ignores ambient project context."""
+        manager = http_server_with_mcp.mcp_manager
+        assert manager is not None
+        with (
+            patch.object(
+                manager,
+                "add_server",
+                new_callable=AsyncMock,
+                create=True,
+            ) as add_server,
+            patch("gobby.utils.project_context.get_project_context") as mock_context,
+        ):
             response = mcp_client.post(
                 "/api/mcp/servers",
                 json={
@@ -326,11 +345,11 @@ class TestMCPEndpointsWithManager:
                 },
             )
 
-        assert response.status_code == 400
-        # HTTPException returns {"success": False, "error": "..."} in detail
-        detail = response.json()["detail"]
-        error_msg = detail.get("error", "") if isinstance(detail, dict) else str(detail)
-        assert "No current project" in error_msg
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        mock_context.assert_not_called()
+        config = add_server.call_args.args[0]
+        assert config.project_id == GLOBAL_PROJECT_ID
 
 
 class TestExceptionHandling:

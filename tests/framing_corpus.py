@@ -39,7 +39,7 @@ REDIRECT_RULES = frozenset(
         "require-bash-skill",
         "require-build-coordinator-for-gobby-build",
         "require-c-skill",
-        "require-claimed-task-required-skills",
+        "require-claimed-task-extra-skills",
         "require-clean-tree-before-status",
         "require-code-index-skill",
         "require-commit-before-status",
@@ -47,6 +47,7 @@ REDIRECT_RULES = frozenset(
         "require-csharp-skill",
         "require-current-context-schema-before-call",
         "require-dart-skill",
+        "require-development-discipline-skill",
         "require-decompose-monolith-before-threshold-write",
         "require-elixir-skill",
         "require-go-skill",
@@ -70,10 +71,7 @@ REDIRECT_RULES = frozenset(
         "require-swift-skill",
         "require-task-before-commit",
         "require-task-before-edit",
-        "require-task-creation-skill-loaded",
-        "require-task-creation-skill-on-schema",
-        "require-task-transitions-skill-loaded",
-        "require-task-transitions-skill-on-lifecycle",
+        "require-tasks-skill-for-mutations",
         "require-typescript-skill",
         "require-uv",
         "require-yaml-skill",
@@ -134,7 +132,9 @@ TRUE_RESTRICTION_RULES = frozenset(
     }
 )
 
-SKILL_FETCH_REASON_TEMPLATE = "{{ skill_fetch_batch_directive(missing_claimed_task_required_skills(tool_input, event.data)) }}"
+SKILL_FETCH_REASON_TEMPLATE = (
+    "{{ skill_fetch_batch_directive(missing_claimed_task_extra_skills()) }}"
+)
 
 
 def bundled_before_tool_block_reasons(*, validate: bool = False) -> dict[str, str]:

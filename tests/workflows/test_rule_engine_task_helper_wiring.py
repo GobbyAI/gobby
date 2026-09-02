@@ -81,16 +81,15 @@ async def test_require_epic_tree_close_uses_real_task_manager(db: HubDatabase) -
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("labels", "cached_labels", "expected_decision"),
+    ("labels", "expected_decision"),
     [
-        pytest.param(["live-session"], [], "allow", id="database-label-enables-exemption"),
-        pytest.param([], ["live-session"], "block", id="cached-label-cannot-fake-exemption"),
+        pytest.param(["live-session"], "allow", id="database-label-enables-exemption"),
+        pytest.param([], "block", id="ordinary-task-blocks"),
     ],
 )
 async def test_require_task_close_uses_database_labels_after_mode_reset(
     db: HubDatabase,
     labels: list[str],
-    cached_labels: list[str],
     expected_decision: str,
 ) -> None:
     _sync_bundled(db)
@@ -112,7 +111,6 @@ async def test_require_task_close_uses_database_labels_after_mode_reset(
         "plan_skill_loaded": True,
         "task_claimed": True,
         "claimed_tasks": {task.id: f"#{task.seq_num}"},
-        "claimed_task_labels": cached_labels,
         "stop_attempts": 0,
     }
 
@@ -160,7 +158,6 @@ async def test_require_task_close_rejects_mixed_live_and_ordinary_claims(
                 live_task.id: f"#{live_task.seq_num}",
                 ordinary_task.id: f"#{ordinary_task.seq_num}",
             },
-            "claimed_task_labels": ["live-session"],
             "stop_attempts": 0,
         },
     )

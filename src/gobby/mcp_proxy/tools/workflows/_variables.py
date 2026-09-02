@@ -34,9 +34,8 @@ logger = logging.getLogger(__name__)
 SKILL_LIST_VARIABLE_NAMES = frozenset(
     (
         "required_skills",
-        "claimed_task_required_skills",
+        "claimed_task_extra_skills",
         "additional_skills",
-        "claimed_task_additional_skills",
     )
 )
 
