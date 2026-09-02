@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -206,6 +206,36 @@ class TestSetVariableScoped:
 
         assert result["success"] is False
         assert "managed by the workflow runtime" in result["error"]
+        mocks["instance_manager"].merge_variables.assert_not_called()
+
+    @pytest.mark.parametrize("scope", ["session", "step"])
+    def test_set_variable_blocks_turn_interrupt_initiated(
+        self, scope: Literal["session", "step"]
+    ) -> None:
+        """Agents cannot forge the daemon-derived turn-interrupt fact."""
+        from gobby.mcp_proxy.tools.workflows._variables import set_variable
+
+        mocks = _make_mocks()
+
+        result = set_variable(
+            mocks["session_manager"],
+            mocks["db"],
+            name="turn_interrupt_initiated",
+            value=True,
+            session_id="#1",
+            scope=scope,
+            instance_manager=mocks["instance_manager"],
+            session_var_manager=mocks["session_var_manager"],
+        )
+
+        assert result == {
+            "success": False,
+            "error": (
+                "turn_interrupt_initiated is managed by the workflow runtime "
+                "and cannot be set directly."
+            ),
+        }
+        mocks["session_var_manager"].set_variable.assert_not_called()
         mocks["instance_manager"].merge_variables.assert_not_called()
 
     def test_set_variable_with_step_scope_not_found(self) -> None:

@@ -18,6 +18,7 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
         "servers_listed",
         "step_workflow_complete",
         "tool_block_pending",
+        "turn_interrupt_initiated",
         "unlocked_tools",
     }
 )
