@@ -204,7 +204,6 @@ async function installTerminalSocket(
             request_id: message.request_id,
             next_cursor: null,
             items: MOCK_SESSIONS,
-            live_cli_session_ids: [],
           }),
         );
         return;

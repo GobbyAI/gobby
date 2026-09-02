@@ -2040,30 +2040,6 @@ class TestTmuxSessionManagerExtended:
         mock_run.assert_awaited_once_with("list-sessions", timeout=5.0)
 
     @pytest.mark.asyncio
-    async def test_list_pane_ids(self) -> None:
-        """list_pane_ids returns only panes that tmux reports as alive."""
-        mgr = TmuxSessionManager()
-        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (0, "%0\t0\n%5\t1\n%12\t0\n", "")
-            result = await mgr.list_pane_ids()
-        assert result == {"%0", "%12"}
-        mock_run.assert_awaited_once_with(
-            "list-panes",
-            "-a",
-            "-F",
-            "#{pane_id}\t#{pane_dead}",
-        )
-
-    @pytest.mark.asyncio
-    async def test_list_pane_ids_failure(self) -> None:
-        """list_pane_ids returns empty set on failure."""
-        mgr = TmuxSessionManager()
-        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (1, "", "no server")
-            result = await mgr.list_pane_ids()
-        assert result == set()
-
-    @pytest.mark.asyncio
     async def test_create_session_already_exists_raises(self) -> None:
         """create_session raises TmuxSessionError if session already exists."""
         mgr = TmuxSessionManager()
