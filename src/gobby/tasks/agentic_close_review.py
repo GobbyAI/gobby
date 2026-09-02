@@ -49,7 +49,7 @@ def build_agentic_review_prompt(
 ) -> str:
     """Build the fixed taskless validator prompt for one persisted review intent."""
     return (
-        "Perform the read-only oversized task-close review. "
+        "Perform the read-only task-close review. "
         f"review_id={review_id}; task_id={task_id}; "
         f"commit_shas={json.dumps(list(commit_shas))}; "
         f"changes_summary={json.dumps(changes_summary)}; "

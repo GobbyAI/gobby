@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+import logging
 from dataclasses import replace
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Literal
 
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
@@ -65,7 +66,6 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._task_scope import evaluate_task_scope
 from gobby.storage.project_checkouts import CheckoutNotFoundError
-from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.acceptance_artifacts import (
     evaluate_acceptance_artifacts,
@@ -73,12 +73,8 @@ from gobby.tasks.acceptance_artifacts import (
     render_acceptance_test_bodies,
 )
 from gobby.tasks.close_checklist import evaluate_validation_commands
-from gobby.tasks.close_verdict_memo import TaskCloseVerdictMemo
 from gobby.tasks.commits import collect_commit_diff_text
-from gobby.tasks.criteria_contract import (
-    operational_actions_from_command,
-    split_validation_criteria,
-)
+from gobby.tasks.criteria_contract import operational_actions_from_command
 from gobby.tasks.generation_schemas import TASK_CLOSE_VALIDATION_SCHEMA
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence, task_requires_tdd
@@ -89,32 +85,7 @@ from gobby.tasks.transcript_evidence import (
 from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
 
 _DELIBERATE_CLOSE_SKIP = "Skipped for a justified deliberate close of an escalated task."
-
-
-def _close_verdict_memo(
-    ctx: RegistryContext,
-    *,
-    task: Task,
-    caller_session_id: str | None,
-    close_arguments: Mapping[str, Any],
-) -> TaskCloseVerdictMemo | None:
-    """Bind this task's verdict memo to the attempt's own identity.
-
-    Returns ``None`` when the attempt has no resolvable session or no criteria
-    to review against — both cases the review gate handles on its own, and
-    neither is worth a memo row.
-    """
-    criteria = split_validation_criteria(task.validation_criteria or "")
-    if caller_session_id is None or not criteria:
-        return None
-    return TaskCloseVerdictMemo(
-        TaskCloseReviewStore(ctx.task_manager.db),
-        task_id=task.id,
-        task_ref=f"#{task.seq_num}" if task.seq_num else task.id,
-        caller_session_id=caller_session_id,
-        close_arguments=close_arguments,
-        criteria=criteria,
-    )
+logger = logging.getLogger(__name__)
 
 
 def _acceptance_root_diagnostic(
@@ -749,24 +720,12 @@ async def _evaluate_close(
             infra.message or "The task-close criteria reviewer is not configured.",
             extra=infra.extra,
         )
+    review_started = perf_counter()
     llm_result = await evaluate_criteria_review(
         task=evaluation_task,
         task_validator=task_validator,
         ctx=ctx,
         resolved_id=resolved_id,
-        verdict_memo=_close_verdict_memo(
-            ctx,
-            task=evaluation_task,
-            caller_session_id=evaluation.resolved_session_id,
-            close_arguments={
-                "reason": reason,
-                "changes_summary": changes_summary,
-                "commit_sha": commit_sha,
-                "project_path": project_path,
-                "override_justification": override_justification,
-                "scope_justification": scope_justification,
-            },
-        ),
         changes_summary=changes_summary or "",
         diff_text=diff_text,
         checklist_facts={
@@ -793,6 +752,14 @@ async def _evaluate_close(
         test_bodies=test_bodies,
         submitted_review=submitted_review,
     )
+    review_duration_ms = round((perf_counter() - review_started) * 1_000, 3)
+    logger.info(
+        "Task close gate 13 completed in %.3f ms for task %s (mode=%s)",
+        review_duration_ms,
+        resolved_id,
+        "submitted" if submitted_review is not None else "detached",
+    )
+    llm_result.extra["criteria_review_duration_ms"] = review_duration_ms
     evaluation.validation_status = llm_result.validation_status
     evaluation.validation_feedback = llm_result.validation_feedback
     evaluation.validation_reset_reason = llm_result.reset_reason

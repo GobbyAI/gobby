@@ -130,7 +130,7 @@ async def launch_close_review(
         "commit_shas": list(evaluation.commit_shas),
         "error": "agentic_review_required",
         "message": (
-            "Oversized close evidence is being reviewed by a daemon-managed validator. "
+            "Close evidence is being reviewed by a daemon-managed validator. "
             "The task stays open and claimed; the verdict is applied and delivered to "
             "this session automatically. Do not poll agent runs or re-call close_task."
         ),
@@ -140,6 +140,7 @@ async def launch_close_review(
         "review_fingerprint": running.review_fingerprint,
         "deterministic_evidence_fingerprint": running.evidence_fingerprint,
         "review_status": running.status,
+        "criteria_review_duration_ms": evaluation.extra.get("criteria_review_duration_ms"),
     }
 
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,7 +25,6 @@ from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import (
-    _close_verdict_memo,
     _commit_close,
     _evaluate_close,
     register_close_task,
@@ -35,10 +33,8 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as notifications
 from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import Task, TaskHasOpenChildrenError
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
-from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
 from gobby.tasks.tdd_evidence import TddEvidenceResult
 from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
 from gobby.workflows.state_manager import SessionVariableManager
@@ -71,7 +67,12 @@ def _task(*, criteria: str | None = "Focused tests pass.") -> Task:
     )
 
 
-def _ctx(task: Task, validator: object = None) -> RegistryContext:
+def _ctx(
+    task: Task,
+    validator: object = None,
+    *,
+    agent_registry: object | None = None,
+) -> RegistryContext:
     manager = MagicMock()
     manager.db = MagicMock()
     manager.get_task.return_value = task
@@ -82,6 +83,7 @@ def _ctx(task: Task, validator: object = None) -> RegistryContext:
         SimpleNamespace(
             task_manager=manager,
             task_validator=validator,
+            agent_registry=agent_registry,
             project_manager=MagicMock(),
             session_manager=SimpleNamespace(get=lambda _session_id: close_session),
             session_var_manager=SimpleNamespace(get_variables=lambda _session_id: {}),
@@ -320,16 +322,17 @@ async def test_no_work_disposition_skips_delivery_gates_but_runs_review() -> Non
 
 
 @pytest.mark.asyncio
-async def test_ready_leaf_runs_criteria_review_exactly_once() -> None:
+async def test_ready_leaf_detaches_criteria_review_and_records_latency() -> None:
     task = _task()
     ctx = _ctx(task, validator=object())
     review = AsyncMock(
         return_value=ValidationResult(
-            can_close=True,
-            validation_status="valid",
-            validation_feedback="Criteria satisfied.",
-            reset_reason="llm_valid",
-            extra={"verdict": {"status": "valid"}},
+            can_close=False,
+            error_type="agentic_review_required",
+            extra={
+                "review_fingerprint": "review",
+                "deterministic_evidence_fingerprint": "evidence",
+            },
         )
     )
     now = datetime(2026, 7, 27, 12, 5, tzinfo=UTC)
@@ -378,6 +381,7 @@ async def test_ready_leaf_runs_criteria_review_exactly_once() -> None:
         ),
         patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
         patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(lifecycle, "perf_counter", side_effect=[10.0, 10.0125]),
         patch(
             "gobby.workflows.task_claim_state.target_task_has_edits",
             return_value=False,
@@ -397,7 +401,9 @@ async def test_ready_leaf_runs_criteria_review_exactly_once() -> None:
             response_detail="diagnostic",
         )
 
-    assert evaluation.ready is True
+    assert evaluation.ready is False
+    assert evaluation.error == "agentic_review_required"
+    assert evaluation.extra["criteria_review_duration_ms"] == 12.5
     assert [gate.item for gate in evaluation.gates] == list(range(1, 14))
     linked_paths.assert_called_once_with(task, "/repo", ("base123", "abc123"))
     review.assert_awaited_once()
@@ -734,6 +740,101 @@ async def test_ready_preview_commits_same_evaluation() -> None:
     awaited = commit.await_args
     assert awaited is not None
     assert awaited.args[1] is evaluation
+
+
+@pytest.mark.asyncio
+async def test_concurrent_ordinary_closes_share_review_without_closing_or_releasing_claim() -> None:
+    task = _task()
+    spawn_started = asyncio.Event()
+    release_spawn = asyncio.Event()
+
+    async def spawn_validator(*_args: object, **_kwargs: object) -> dict[str, object]:
+        spawn_started.set()
+        await release_spawn.wait()
+        return {"success": True, "run_id": "validator-run"}
+
+    agent_registry = SimpleNamespace(call=AsyncMock(side_effect=spawn_validator))
+    ctx = _ctx(task, validator=object(), agent_registry=agent_registry)
+    evaluation = CloseEvaluation(task.id)
+    evaluation.task = task
+    evaluation.task_id = task.id
+    evaluation.repo_path = "/repo"
+    evaluation.resolved_session_id = task.claimed_by_session_id
+    evaluation.commit_shas = ["abc123"]
+    evaluation.error = "agentic_review_required"
+    evaluation.extra.update(
+        {
+            "review_fingerprint": "review-fingerprint",
+            "deterministic_evidence_fingerprint": "evidence-fingerprint",
+            "criteria_review_duration_ms": 4.25,
+        }
+    )
+    review_fields = {
+        "id": "review-id",
+        "caller_session_id": task.claimed_by_session_id,
+        "review_fingerprint": "review-fingerprint",
+        "evidence_fingerprint": "evidence-fingerprint",
+        "task_id": task.id,
+        "close_arguments": {"preview": True},
+    }
+    launching_review = SimpleNamespace(**review_fields, status="launching")
+    running_review = SimpleNamespace(**review_fields, status="running")
+    store = MagicMock()
+    store.create_or_get_active.side_effect = [
+        (launching_review, True),
+        (launching_review, False),
+    ]
+    store.bind_run.return_value = running_review
+    registry = InternalToolRegistry("gobby-tasks")
+    register_close_task(registry, ctx)
+
+    with (
+        patch.object(lifecycle, "active_review_response", return_value=None),
+        patch.object(lifecycle, "_evaluate_close", AsyncMock(return_value=evaluation)),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration.TaskCloseReviewStore",
+            return_value=store,
+        ),
+    ):
+        first_close = asyncio.create_task(
+            registry.call(
+                "close_task",
+                {
+                    "task_id": task.id,
+                    "changes_summary": "Implemented and tested.",
+                    "commit_sha": "abc123",
+                    "preview": True,
+                },
+            )
+        )
+        await spawn_started.wait()
+        pending_result = await registry.call(
+            "close_task",
+            {
+                "task_id": task.id,
+                "changes_summary": "Implemented and tested.",
+                "commit_sha": "abc123",
+                "preview": True,
+            },
+        )
+        release_spawn.set()
+        result = await first_close
+
+    assert result["error"] == "agentic_review_required"
+    assert result["closed"] is False
+    assert result["can_close"] is False
+    assert result["review_id"] == "review-id"
+    assert result["criteria_review_duration_ms"] == 4.25
+    assert pending_result["error"] == "agentic_review_pending"
+    assert pending_result["review_id"] == "review-id"
+    assert task.closed_at is None
+    assert task.claimed_by_session_id == "00000000-0000-4000-8000-000000000301"
+    cast(MagicMock, ctx.task_manager.close_task).assert_not_called()
+    assert store.create_or_get_active.call_count == 2
+    store.bind_run.assert_called_once_with("review-id", "validator-run")
+    agent_registry.call.assert_awaited_once()
+    prompt = agent_registry.call.await_args.args[1]["prompt"]
+    assert 'changes_summary="Implemented and tested."' in prompt
 
 
 def test_close_task_schema_has_automated_review_surface() -> None:
@@ -1686,81 +1787,6 @@ async def test_commit_close_runs_every_storage_call_off_the_event_loop() -> None
     # The notifier is not a storage call -- it schedules a coroutine, which
     # needs the loop it is scheduling onto, so it belongs on this thread.
     assert notify_threads == [loop_thread, loop_thread]
-
-
-class _RecordingDb:
-    """Records the statements a store writes, without a database."""
-
-    def __init__(self) -> None:
-        self.statements: list[tuple[str, tuple[object, ...]]] = []
-
-    @contextmanager
-    def transaction(self) -> Iterator[_RecordingDb]:
-        yield self
-
-    def execute(self, statement: str, parameters: tuple[object, ...] = ()) -> _RecordingDb:
-        self.statements.append((statement, parameters))
-        return self
-
-    def fetchone(self) -> None:
-        return None
-
-
-def test_close_verdict_memo_binds_the_task_ref_and_its_criteria() -> None:
-    task = replace(_task(), seq_num=4242)
-    ctx = _ctx(task)
-    db = _RecordingDb()
-    ctx.task_manager.db = cast(HubDatabase, db)
-
-    memo = _close_verdict_memo(
-        ctx,
-        task=task,
-        caller_session_id="00000000-0000-4000-8000-000000000301",
-        close_arguments={"reason": "completed"},
-    )
-
-    assert memo is not None
-    memo.put(
-        review_fingerprint="review",
-        evidence_fingerprint="evidence",
-        verdict=CloseVerdict(
-            status="valid",
-            criteria=(CloseCriterionVerdict(1, "Focused tests pass.", True, None),),
-            feedback="Satisfied.",
-        ),
-    )
-
-    pruned, written = db.statements
-    assert "DELETE FROM task_close_reviews" in pruned[0]
-    assert "INSERT INTO task_close_reviews" in written[0]
-    assert task.id in written[1]
-    assert "#4242" in written[1]
-    assert "review" in written[1]
-    assert "evidence" in written[1]
-
-
-def test_close_verdict_memo_is_skipped_without_a_session_or_criteria() -> None:
-    task = replace(_task(), seq_num=4242)
-    ctx = _ctx(task)
-
-    assert (
-        _close_verdict_memo(
-            ctx,
-            task=task,
-            caller_session_id=None,
-            close_arguments={"reason": "completed"},
-        )
-        is None
-    )
-    assert (
-        _close_verdict_memo(
-            ctx,
-            task=_task(criteria=None),
-            caller_session_id="00000000-0000-4000-8000-000000000301",
-            close_arguments={"reason": "completed"},
-        )
-        is None
-    )
 
 
 def _record_notify_threads(sink: list[int]) -> Callable[..., None]:

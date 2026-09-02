@@ -26,7 +26,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-async def test_oversized_close_persists_and_launches_one_taskless_validator(
+async def test_close_persists_and_launches_one_taskless_validator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = _Store(_review(status="launching", run_id=None))
@@ -57,6 +57,8 @@ async def test_oversized_close_persists_and_launches_one_taskless_validator(
     assert "spawn_request" not in result
     assert "review_run_id" not in result
     assert "Do not poll agent runs or re-call close_task." in result["message"]
+    assert "Oversized" not in result["message"]
+    assert result["criteria_review_duration_ms"] == 4.25
 
 
 @pytest.mark.asyncio
@@ -104,6 +106,56 @@ async def test_failed_validator_launch_remains_unsuccessful(
     assert result["can_close"] is False
     assert result["error"] == "agentic_review_launch_failed"
     assert result["review_status"] == "error"
+    assert store.finished_status == "error"
+
+
+@pytest.mark.asyncio
+async def test_missing_agent_registry_finishes_launch_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="launching", run_id=None))
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+
+    result = await launch_close_review(
+        _ctx(registry=None),
+        evaluation=_evaluation(),
+        close_arguments=_arguments(),
+    )
+
+    assert result["error"] == "agentic_review_launch_failed"
+    assert result["closed"] is False
+    assert store.finished_status == "error"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "launch",
+    [
+        pytest.param(RuntimeError("spawn failed"), id="spawn-exception"),
+        pytest.param({"success": True}, id="missing-run-id"),
+    ],
+)
+async def test_incomplete_spawn_finishes_launch_error(
+    monkeypatch: pytest.MonkeyPatch,
+    launch: Exception | dict[str, object],
+) -> None:
+    store = _Store(_review(status="launching", run_id=None))
+    call = (
+        AsyncMock(side_effect=launch)
+        if isinstance(launch, Exception)
+        else AsyncMock(return_value=launch)
+    )
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+
+    result = await launch_close_review(
+        _ctx(registry=SimpleNamespace(call=call)),
+        evaluation=_evaluation(),
+        close_arguments=_arguments(),
+    )
+
+    assert result["error"] == "agentic_review_launch_failed"
+    assert result["closed"] is False
+    assert store.finished_status == "error"
 
 
 @pytest.mark.parametrize(
@@ -143,7 +195,7 @@ def test_validator_spawn_overrides_are_empty_without_config() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_oversized_close_reuses_active_review(
+async def test_concurrent_close_reuses_active_review(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     existing = _review(status="running", run_id="same-run")
@@ -233,6 +285,8 @@ async def test_invalid_and_stale_submissions_clear_active_lock(
         assert result["review_status"] == expected
         assert store.finished_status == expected
         assert result["closed"] is False
+        if expected == "invalid":
+            assert result["terminal_payload"]["blocking_reasons"] == ["gap"]
 
 
 @pytest.mark.asyncio
@@ -382,6 +436,7 @@ def _evaluation(*, ready: bool = False) -> CloseEvaluation:
         {
             "review_fingerprint": "close",
             "deterministic_evidence_fingerprint": "evidence",
+            "criteria_review_duration_ms": 4.25,
         }
     )
     if ready:

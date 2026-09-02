@@ -1,4 +1,4 @@
-"""Automated oversized close-review contract tests."""
+"""Automated detached close-review contract tests."""
 
 from __future__ import annotations
 
@@ -35,10 +35,12 @@ def test_agentic_review_prompt_is_taskless_and_submission_driven() -> None:
 
     assert "review_id=review" in prompt
     assert "task_id=task" in prompt
+    assert 'changes_summary="summary"' in prompt
     assert "submit_close_review" in prompt
     assert "end_agent_run" in prompt
     assert "review_run_id" not in prompt
     assert "retry close_task" not in prompt
+    assert "oversized" not in prompt.lower()
 
 
 def test_task_close_validator_definition_submits_then_terminates() -> None:
