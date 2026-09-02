@@ -31,7 +31,7 @@ rules:
           - **Full:** artifact-first plan, validation, enhancement, separately approved adversarial review, and optional build handoff.
           - **Lightweight:** Gobby elicitation and a conversational, decision-complete plan; artifact-free — no `.gobby/plans/` file, validation, enhancement, adversarial review, or build handoff. Switch to Full when an artifact is wanted.
 
-          Do not load the `plan` skill until the user chooses Gobby planning or explicitly invokes `$gobby plan` or `/gobby plan`.
+          Do not load the `plan` skill until the user chooses Gobby planning or explicitly invokes `$gobby plan` or `/gobby plan`. If this planning will produce a `.gobby/plans/` artifact because the user chose Gobby planning, load `plan` before drafting.
       - type: set_variable
         delivery: on_receipt
         variable: gobby_plan_consider_shown

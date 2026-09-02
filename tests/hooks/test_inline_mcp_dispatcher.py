@@ -20,7 +20,6 @@ from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import (
     _current_project_context,
@@ -34,6 +33,7 @@ from gobby.utils.session_context import (
     set_session_context,
 )
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -76,15 +76,13 @@ def daemon_loop() -> Iterator[asyncio.AbstractEventLoop]:
 
 @pytest.mark.asyncio
 async def test_turn_start_message_retrieval_seeds_resolved_caller_context(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
     daemon_loop: asyncio.AbstractEventLoop,
 ) -> None:
-    project = LocalProjectManager(temp_db).create(
-        name="inline-delivery-project",
-        repo_path=str(tmp_path),
-    )
+    project = isolated_checkout_factory(temp_db, "inline-delivery-project", root=tmp_path).project
     session_manager = SessionManager(temp_db)
     sender = session_manager.register(
         external_id="inline-delivery-sender",

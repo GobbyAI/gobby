@@ -9,11 +9,12 @@ import pytest
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.storage.tasks._stage_test_helpers import set_stage_state
 
 
@@ -33,10 +34,12 @@ class StageReviewSetup:
 
 @pytest.fixture(name="stage_review_setup")
 def stage_review_setup(temp_db: HubDatabase, tmp_path: Path) -> StageReviewSetup:
-    project = LocalProjectManager(temp_db).create(
+    project = install_isolated_checkout_project(
+        temp_db,
+        tmp_path,
         name="stage-review-findings",
-        repo_path=str(tmp_path),
-    )
+        machine_id=require_machine_id(),
+    ).project
     sessions = SessionManager(temp_db)
     with patch(
         "gobby.utils.machine_id._cached_machine_id",

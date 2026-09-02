@@ -21,9 +21,9 @@ from gobby.servers.routes import wiki as wiki_routes
 from gobby.servers.routes.wiki import _stage_upload, create_wiki_router
 from gobby.storage.projects import (
     PERSONAL_PROJECT_ID,
-    LocalProjectManager,
     ensure_personal_project,
 )
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -279,8 +279,10 @@ def reset_fakes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def client(temp_db: Any, tmp_path: Path) -> TestClient:
-    project = LocalProjectManager(temp_db).create(name="wiki-route-client", repo_path=str(tmp_path))
+def client(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: Any, tmp_path: Path
+) -> TestClient:
+    project = isolated_checkout_factory(temp_db, "wiki-route-client", root=tmp_path).project
     app = FastAPI()
     server = SimpleNamespace(
         services=SimpleNamespace(config=SimpleNamespace(), database=temp_db, project_id=project.id)
@@ -314,8 +316,10 @@ def test_status_search_read_and_gateway_scope(client: TestClient) -> None:
     assert FakeGateway.instances[-1].calls == [("read", {"path": None, "title": "A"})]
 
 
-def test_project_scope_resolves_to_repo_path(temp_db: Any, tmp_path: Path) -> None:
-    project = LocalProjectManager(temp_db).create(name="wiki-route", repo_path=str(tmp_path))
+def test_project_scope_resolves_to_repo_path(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: Any, tmp_path: Path
+) -> None:
+    project = isolated_checkout_factory(temp_db, "wiki-route", root=tmp_path).project
     app = FastAPI()
     server = SimpleNamespace(
         services=SimpleNamespace(

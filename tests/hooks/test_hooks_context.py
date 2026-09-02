@@ -13,12 +13,15 @@ from gobby.hooks.session_materialize import activate_deferred_session
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import Task
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_hook_manager(temp_dir: Path, hub_db: HubDatabase) -> Iterator[HookManager]:
+def mock_hook_manager(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_dir: Path, hub_db: HubDatabase
+) -> Iterator[HookManager]:
     """Create a HookManager with a real test database but mocked external dependencies.
 
     Uses a real PostgreSQL database (like hook_manager_with_mocks) to avoid 'file is not
@@ -28,7 +31,7 @@ def mock_hook_manager(temp_dir: Path, hub_db: HubDatabase) -> Iterator[HookManag
 
     # Create a test project for project_id resolution
     project_mgr = LocalProjectManager(db)
-    project = project_mgr.create(name="test-project", repo_path=str(temp_dir))
+    project = isolated_checkout_factory(project_mgr.db, "test-project", root=temp_dir).project
 
     # Create project.json for auto-discovery
     gobby_dir = temp_dir / ".gobby"

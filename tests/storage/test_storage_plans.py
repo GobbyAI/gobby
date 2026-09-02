@@ -10,14 +10,17 @@ import pytest
 from gobby.plans.coverage_manifest import coverage_manifest_path
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
 
 def _project(temp_db: HubDatabase, root: Path) -> str:
-    return LocalProjectManager(temp_db).create(name="plans-red", repo_path=str(root)).id
+    return install_isolated_checkout_project(
+        temp_db, root, name="plans-red", machine_id=require_machine_id()
+    ).project.id
 
 
 def _root_task_ref(temp_db: HubDatabase, project_id: str) -> str:

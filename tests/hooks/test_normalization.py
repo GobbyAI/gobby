@@ -2419,6 +2419,94 @@ class TestExternalNavigationScope:
         assert data["canonical_repo_mutation"] is True
         assert data["canonical_file_paths"] == ["out.txt"]
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ruby -ryaml -e 'puts YAML.safe_load_file(\"config.yaml\")'",
+            "uv run ruby -ryaml -e 'puts YAML.safe_load_file(\"config.yaml\")'",
+            "node -e \"console.log(require('fs').readFileSync('config.json'))\"",
+            "uv run node --eval \"console.log(require('fs').readFileSync('config.json'))\"",
+            "ruby -e \"File.open('config.yaml', 'r') { |file| puts file.read }\"",
+            "ruby - <<'RUBY'\nputs File.read('config.yaml')\nRUBY",
+            "node - <<'NODE'\nconsole.log(require('fs').readFileSync('config.json'))\nNODE",
+            (
+                'uv run python -c "from pathlib import Path; '
+                "print(Path('~/.gobby/bootstrap.yaml').expanduser().read_text())\""
+            ),
+        ],
+    )
+    def test_read_only_ruby_and_node_programs_are_execute(self, command: str) -> None:
+        data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert data["canonical_tool_confidence"] == "high"
+        assert not data.get("canonical_repo_mutation")
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ruby -e \"File.write('out.txt', 'x')\"",
+            "ruby -e \"File.open('out.txt', 'w') {}\"",
+            "ruby -e \"File.open('out.txt', 'a') {}\"",
+            "ruby -e \"File.open(File.join('tmp', 'out.txt'), 'w') {}\"",
+            "ruby -e \"File.open 'out.txt', 'a'\"",
+            "ruby -e \"FileUtils.mkdir_p('out')\"",
+            "ruby -e \"IO.write('out.txt', 'x')\"",
+            "ruby -e \"Dir.mkdir('out')\"",
+            "ruby -e \"File.delete('out.txt')\"",
+            "ruby -e \"File.unlink('out.txt')\"",
+            "ruby -e \"File.rename('old', 'new')\"",
+            "ruby -e \"system('touch out.txt')\"",
+            "ruby -e '`touch out.txt`'",
+            "node -e \"require('fs').writeFileSync('out.txt', 'x')\"",
+            "node -e \"fs.appendFileSync('out.txt', 'x')\"",
+            "node -e \"fs.unlinkSync('out.txt')\"",
+            "node -e \"fs.rmSync('out')\"",
+            "node -e \"fs.promises.mkdir('out')\"",
+            "node -e \"fs.renameSync('old', 'new')\"",
+            "node -e \"fs.copyFileSync('old', 'new')\"",
+            "node -e \"require('child_process').execSync('touch out.txt')\"",
+            "ruby - <<'RUBY'\nFile.write('out.txt', 'x')\nRUBY",
+            "node - <<'NODE'\nrequire('fs').writeFileSync('out.txt', 'x')\nNODE",
+        ],
+    )
+    def test_mutating_ruby_and_node_programs_stay_write(self, command: str) -> None:
+        data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+
+    def test_non_inline_ruby_and_node_commands_keep_high_confidence(self) -> None:
+        for command in ("ruby script.rb", "node script.js"):
+            data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+            normalize_tool_fields(data)
+
+            assert data["canonical_tool_kind"] == "execute"
+            assert data["canonical_tool_confidence"] == "high"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ruby -e \"File.open('out.txt', mode) {}\"",
+            'node -e "eval(source)"',
+        ],
+    )
+    def test_indeterminate_ruby_and_node_programs_are_low_confidence_execute(
+        self, command: str
+    ) -> None:
+        data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert data["canonical_tool_confidence"] == "low"
+        assert not data.get("canonical_repo_mutation")
+
     def test_git_restore_pathspecs_without_separator_are_write_paths(self) -> None:
         for command, expected in (
             ("git restore --staged src/gobby/x.py", ["src/gobby/x.py"]),

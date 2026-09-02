@@ -12,8 +12,8 @@ from starlette.testclient import TestClient
 from gobby.config.app import DaemonConfig
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.workflows.template_hashes import TemplateHashCache
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.servers.conftest import create_http_server
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("authenticated_http_requests")]
@@ -97,6 +97,7 @@ def test_restore_from_template_uses_kind_cache(
 
 
 def test_create_project_override_when_global_exists(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     client: TestClient,
     temp_db: HubDatabase,
     tmp_path: Path,
@@ -106,10 +107,7 @@ def test_create_project_override_when_global_exists(
         json={"name": "shared_var", "value": "global"},
     )
     assert global_resp.status_code == 200
-    project = LocalProjectManager(temp_db).create(
-        name="var-override-proj",
-        repo_path=str(tmp_path),
-    )
+    project = isolated_checkout_factory(temp_db, "var-override-proj", root=tmp_path).project
     resp = client.post(
         "/api/variables",
         json={"name": "shared_var", "value": "project", "project_id": project.id},
