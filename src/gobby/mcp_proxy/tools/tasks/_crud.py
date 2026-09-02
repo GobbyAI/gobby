@@ -718,6 +718,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         priority: int | None = None,
         task_type: str | None = None,
         label: str | None = None,
+        closed: bool | None = None,
         parent_task_id: str | None = None,
         title_like: str | None = None,
         limit: int = 50,
@@ -744,6 +745,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if isinstance(current_stage_state, str) and "," in current_stage_state:
             current_stage_filter = [s.strip() for s in current_stage_state.split(",")]
 
+        closed_filter: dict[str, Any] = {"closed": closed} if closed is not None else {}
         tasks = ctx.task_manager.list_tasks(
             current_stage_state=current_stage_filter,
             priority=priority,
@@ -753,8 +755,21 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             title_like=title_like,
             limit=limit,
             project_id=project_id,
+            **closed_filter,
         )
-        return {"tasks": [task_discovery_payload(t) for t in tasks], "count": len(tasks)}
+        result = {"tasks": [task_discovery_payload(t) for t in tasks], "count": len(tasks)}
+        if parent_task_id:
+            result["open_count"] = ctx.task_manager.count_tasks(
+                current_stage_state=current_stage_filter,
+                priority=priority,
+                task_type=task_type,
+                label=label,
+                parent_task_id=parent_task_id,
+                title_like=title_like,
+                project_id=project_id,
+                closed=False,
+            )
+        return result
 
     registry.register(
         name="list_tasks",
@@ -781,6 +796,10 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "string",
                     "description": "Filter by label presence",
                     "default": None,
+                },
+                "closed": {
+                    "type": "boolean",
+                    "description": "true = closed only, false = open only, omitted = both",
                 },
                 "parent_task_id": {
                     "type": "string",
