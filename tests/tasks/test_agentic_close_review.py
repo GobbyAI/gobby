@@ -68,6 +68,17 @@ def test_launch_prompt_renders_prior_requirements() -> None:
         "again unless the submitted code and evidence satisfy it."
     ) in prompt
 
+    prompt_without_prior = build_agentic_review_prompt(
+        review_id="review",
+        task_id="task",
+        commit_shas=["abc"],
+        changes_summary="summary",
+        review_fingerprint="close",
+        evidence_fingerprint="evidence",
+    )
+
+    assert "prior_requirements=" not in prompt_without_prior
+
 
 def test_task_close_validator_definition_submits_then_terminates() -> None:
     path = (
