@@ -334,7 +334,8 @@ async def spawn_agent(
         artifacts=artifacts,
         isolation=effective_isolation,
     )
-    project_path = await _resolve_spawn_operation_root(db, project_id, artifacts)
+    operation_root_artifacts = artifacts if effective_isolation != "none" else None
+    project_path = await _resolve_spawn_operation_root(db, project_id, operation_root_artifacts)
     worktree_id, clone_id = _spawn_workspace_ids(
         task=task,
         action=action,
