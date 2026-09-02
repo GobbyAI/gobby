@@ -67,6 +67,7 @@ async def test_require_epic_tree_close_uses_real_task_manager(db: HubDatabase) -
         session_id="11111111-1111-4111-8111-111111111111",
         variables={
             "_agent_type": "default",
+            "_memory_initial_stop_checked": True,
             "mode_level": 0,
             "task_claimed": True,
             "claimed_tasks": {parent.id: f"#{parent.seq_num}"},
@@ -104,6 +105,7 @@ async def test_require_task_close_uses_database_labels_after_mode_reset(
     )
     variables: dict[str, object] = {
         "_agent_type": "default",
+        "_memory_initial_stop_checked": True,
         "mode_level": 0,
         "chat_mode": "bypass",
         "plan_mode": True,
@@ -151,6 +153,7 @@ async def test_require_task_close_rejects_mixed_live_and_ordinary_claims(
         session_id="11111111-1111-4111-8111-111111111111",
         variables={
             "_agent_type": "default",
+            "_memory_initial_stop_checked": True,
             "mode_level": 2,
             "task_claimed": True,
             "claimed_tasks": {
@@ -192,6 +195,7 @@ async def test_require_epic_tree_close_skips_live_session_epic(db: HubDatabase) 
         session_id="11111111-1111-4111-8111-111111111111",
         variables={
             "_agent_type": "default",
+            "_memory_initial_stop_checked": True,
             "mode_level": 2,
             "task_claimed": True,
             "claimed_tasks": {parent.id: f"#{parent.seq_num}"},
@@ -209,6 +213,7 @@ async def test_active_agent_wait_is_computed_once_and_yields_both_stop_gates(
     _sync_bundled(db)
     variables: dict[str, object] = {
         "_agent_type": "default",
+        "_memory_initial_stop_checked": True,
         "mode_level": 2,
         "task_claimed": True,
         "claimed_tasks": {"11111111-1111-4111-8111-111111111112": "#1"},
@@ -237,6 +242,7 @@ async def test_agent_wait_lookup_failure_warns_and_keeps_stop_gates_armed(
     _sync_bundled(db)
     variables: dict[str, object] = {
         "_agent_type": "default",
+        "_memory_initial_stop_checked": True,
         "mode_level": 2,
         "task_claimed": True,
         "claimed_tasks": {"11111111-1111-4111-8111-111111111112": "#1"},
@@ -269,6 +275,7 @@ async def test_stale_human_wait_marker_does_not_yield_or_suppress_attempts(
     session_id = "11111111-1111-4111-8111-111111111111"
     variables: dict[str, object] = {
         "_agent_type": "default",
+        "_memory_initial_stop_checked": True,
         "mode_level": 2,
         "task_claimed": True,
         "claimed_tasks": {"11111111-1111-4111-8111-111111111112": "#1"},
