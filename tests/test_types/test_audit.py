@@ -171,8 +171,12 @@ def test_mypy_command_falls_back_when_lockfile_env_lacks_mypy(
     def fake_which(executable: str) -> str | None:
         return {"uv": "/tools/uv", "mypy": "/tools/mypy"}.get(executable)
 
-    def fake_run(command: tuple[str, ...], **_: object) -> subprocess.CompletedProcess[str]:
-        probe_calls.append(command)
+    def fake_run(
+        command: tuple[str, ...] | list[str], **_: object
+    ) -> subprocess.CompletedProcess[str]:
+        if command[0] != "uv":
+            raise FileNotFoundError(command[0])
+        probe_calls.append(tuple(command))
         return subprocess.CompletedProcess(command, 1)
 
     monkeypatch.setattr(shutil, "which", fake_which)
@@ -180,6 +184,9 @@ def test_mypy_command_falls_back_when_lockfile_env_lacks_mypy(
 
     assert resolve_mypy_command(tmp_path) == ("/tools/mypy",)
     assert probe_calls == [("uv", "run", "--no-sync", "python", "-c", "import mypy")]
+    with pytest.raises(MypyInvocationError) as exc_info:
+        run_mypy(("tests",), root=tmp_path, mypy_command="definitely-missing-checker")
+    assert "--mypy-command" in str(exc_info.value)
 
 
 def test_resolver_keeps_uv_when_lockfile_env_has_mypy(
@@ -222,7 +229,7 @@ def test_run_mypy_reports_non_finding_failures(
 
 
 def test_run_mypy_reports_missing_checker_and_timeout(tmp_path: Path) -> None:
-    with pytest.raises(MypyInvocationError, match="--mypy-command"):
+    with pytest.raises(MypyInvocationError, match="executable not found"):
         run_mypy(("tests",), root=tmp_path, mypy_command="definitely-missing-checker")
 
     command = _checker_command(tmp_path, "import time\ntime.sleep(5)\n")
