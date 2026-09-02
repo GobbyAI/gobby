@@ -25,6 +25,8 @@ _MIN_DIFF_EVIDENCE_CHARS = 10_000
 
 logger = logging.getLogger(__name__)
 
+_NO_PRIOR_REQUIREMENTS = "No requirements were stated by a prior rejected review."
+
 # Closure reasons that require no repository change: the criteria review judges
 # the disposition justification instead of literal criterion satisfaction.
 NO_WORK_CLOSE_REASONS: frozenset[str] = frozenset(
@@ -65,6 +67,37 @@ class PreparedCloseReview:
     excerpt_chars: int
 
 
+def _render_prior_requirements(verdict: CloseVerdict | None) -> str:
+    if verdict is None:
+        return _NO_PRIOR_REQUIREMENTS
+    requirements: list[str] = []
+    for criterion in verdict.criteria:
+        if criterion.satisfied or not (criterion.gap or criterion.required_evidence):
+            continue
+        parts = [f"Criterion {criterion.index}: {criterion.criterion}"]
+        if criterion.gap:
+            parts.append(f"Gap: {criterion.gap}")
+        if criterion.required_evidence:
+            parts.append(f"Required evidence: {criterion.required_evidence}")
+        requirements.append("\n".join(parts))
+    return "\n\n".join(requirements) or _NO_PRIOR_REQUIREMENTS
+
+
+def _ensure_prompt_within_limit(prepared: PreparedCloseReview) -> None:
+    if prepared.prompt_chars <= prepared.prompt_limit:
+        return
+    raise ValidationPromptTooLarge(
+        f"Task-close criteria-review prompt is {prepared.prompt_chars} characters, "
+        f"exceeding the configured limit of {prepared.prompt_limit} characters at "
+        "gobby-tasks.validation.close_review_prompt_max_chars. The background "
+        "task-close-validator is required.",
+        prompt_chars=prepared.prompt_chars,
+        prompt_limit=prepared.prompt_limit,
+        review_fingerprint=prepared.review_fingerprint,
+        evidence_fingerprint=prepared.evidence_fingerprint,
+    )
+
+
 class TaskValidator:
     """Run one bounded criteria-vs-work coherence review."""
 
@@ -103,17 +136,7 @@ class TaskValidator:
             description=description,
             test_bodies=test_bodies,
         )
-        if prepared.prompt_chars > prepared.prompt_limit:
-            raise ValidationPromptTooLarge(
-                f"Task-close criteria-review prompt is {prepared.prompt_chars} characters, "
-                f"exceeding the configured limit of {prepared.prompt_limit} characters at "
-                "gobby-tasks.validation.close_review_prompt_max_chars. The background "
-                "task-close-validator is required.",
-                prompt_chars=prepared.prompt_chars,
-                prompt_limit=prepared.prompt_limit,
-                review_fingerprint=prepared.review_fingerprint,
-                evidence_fingerprint=prepared.evidence_fingerprint,
-            )
+        _ensure_prompt_within_limit(prepared)
 
         if verdict_memo is not None:
             # Off the loop: the memo reaches psycopg synchronously, and this
@@ -132,6 +155,20 @@ class TaskValidator:
                     prepared.evidence_fingerprint[:12],
                 )
                 return memoized
+            previous_verdict = await asyncio.to_thread(verdict_memo.get_previous)
+            if previous_verdict is not None:
+                prepared = self.prepare_task_review(
+                    title=title,
+                    changes_summary=changes_summary,
+                    validation_criteria=validation_criteria,
+                    diff_text=diff_text,
+                    checklist_facts=checklist_facts,
+                    closure_reason=closure_reason,
+                    description=description,
+                    test_bodies=test_bodies,
+                    prior_verdict=previous_verdict,
+                )
+                _ensure_prompt_within_limit(prepared)
 
         logger.debug(
             "Running bounded close criteria review for task %s "
@@ -176,6 +213,7 @@ class TaskValidator:
         closure_reason: str = "completed",
         description: str = "",
         test_bodies: str = "Named acceptance tests: none.",
+        prior_verdict: CloseVerdict | None = None,
     ) -> PreparedCloseReview:
         """Render and fingerprint a review without calling the generation provider."""
         if not self.config.enabled:
@@ -189,8 +227,9 @@ class TaskValidator:
             f"{index}. {criterion}" for index, criterion in enumerate(criteria, start=1)
         )
         facts_text = json.dumps(checklist_facts, sort_keys=True, separators=(",", ":"), default=str)
+        prior_requirements = _render_prior_requirements(prior_verdict)
 
-        def render(evidence_text: str) -> str:
+        def render(evidence_text: str, requirements_text: str) -> str:
             return self._loader.render(
                 self.config.prompt_path or "validation/validate",
                 {
@@ -202,11 +241,14 @@ class TaskValidator:
                     "diff_evidence": evidence_text,
                     "test_bodies": test_bodies,
                     "checklist_facts": facts_text,
+                    "prior_requirements": requirements_text,
                 },
             )
 
         diff_evidence = build_close_diff_evidence(diff_text, criteria=validation_criteria)
-        prompt = render(diff_evidence.text)
+        complete_evidence_sha = diff_evidence.sha256
+        fingerprint_prompt = render(diff_evidence.text, _NO_PRIOR_REQUIREMENTS)
+        prompt = render(diff_evidence.text, prior_requirements)
         budget = min(
             self.config.close_review_prompt_budget_chars,
             self.config.close_review_prompt_max_chars,
@@ -223,11 +265,11 @@ class TaskValidator:
                 criteria=validation_criteria,
                 budget_chars=diff_budget,
             )
-            prompt = render(diff_evidence.text)
+            prompt = render(diff_evidence.text, prior_requirements)
         evidence_fingerprint = hashlib.sha256(
             json.dumps(
                 {
-                    "diff": diff_evidence.sha256,
+                    "diff": complete_evidence_sha,
                     "tests": test_bodies,
                     "facts": checklist_facts,
                 },
@@ -236,7 +278,10 @@ class TaskValidator:
                 default=str,
             ).encode()
         ).hexdigest()
-        review_fingerprint = hashlib.sha256(prompt.encode()).hexdigest()
+        # Prior requirements are reviewer-produced continuity context. Keep them
+        # out of the memo key so an unchanged caller evidence state still hits
+        # its exact verdict after that verdict becomes the latest prior review.
+        review_fingerprint = hashlib.sha256(fingerprint_prompt.encode()).hexdigest()
         return PreparedCloseReview(
             prompt=prompt,
             criteria=tuple(criteria),

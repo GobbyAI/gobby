@@ -113,6 +113,7 @@ TASK_CLOSE_VALIDATION_SCHEMA: dict[str, Any] = {
                     "index": {"type": "integer"},
                     "satisfied": {"type": "boolean"},
                     "gap": {"type": ["string", "null"]},
+                    "required_evidence": {"type": ["string", "null"]},
                 },
                 "required": ["index", "satisfied", "gap"],
                 "additionalProperties": False,
