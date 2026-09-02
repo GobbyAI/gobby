@@ -557,7 +557,7 @@
     "workflows/rules/skill-discovery/require-swift-skill.yaml": "ef4c05c6c67e8f1e4b2d4085a910189edadcbc755de2268724903944c895279e",
     "workflows/rules/skill-discovery/require-typescript-skill.yaml": "cc92ba553750b7e3df2fb41b6f9626836c25f7ccdaf9384737c6336dba847984",
     "workflows/rules/skill-discovery/require-yaml-skill.yaml": "c961eafecd30d168268a2227627352a2bc2cfe70355a8f89cb781ba6eea06215",
-    "workflows/rules/skill-discovery/reset-skill-injection.yaml": "1d5ae11ccfb4ace0a5ab4685dc95aae795de2035712c675c6477fbbc8017cc33",
+    "workflows/rules/skill-discovery/reset-skill-injection.yaml": "6ed239d8f0fc029fa85e88cf6e130f96a3f6847cc936d9718e57c3842611b7b7",
     "workflows/rules/stop-gates/enforce-found-work-ladder.yaml": "c492013203660d72401e31872f58b617d5d10f48af90074bd437b060fef5ebba",
     "workflows/rules/stop-gates/require-epic-tree-close.yaml": "eb214b9c697664db4adfd2d2b0ce224566e97714ac9ed654cedd0c1eba78d0b2",
     "workflows/rules/stop-gates/require-step-completion.yaml": "6f756605a0e4613b26fdd315b61752ee710cc5cc0d00d5840f14228cb00f09bd",
