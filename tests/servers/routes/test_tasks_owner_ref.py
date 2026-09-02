@@ -17,6 +17,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -31,9 +32,9 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 @pytest.fixture
-def project_id(temp_db: HubDatabase) -> str:
+def project_id(isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase) -> str:
     pm = LocalProjectManager(temp_db)
-    return pm.create(name="owner-ref", repo_path="/tmp/owner-ref").id
+    return isolated_checkout_factory(pm.db, "owner-ref").project.id
 
 
 @pytest.fixture

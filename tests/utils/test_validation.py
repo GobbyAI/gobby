@@ -10,6 +10,7 @@ import pytest
 
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.validation import TaskValidator
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
 
@@ -60,16 +61,14 @@ class TestCheckOrphanDependencies:
 
     def test_no_orphans_with_valid_dependencies(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         validator: TaskValidator,
         task_manager: LocalTaskManager,
         project_manager: "LocalProjectManager",
     ) -> None:
         """Returns empty list when all dependencies are valid."""
         # Create a project first
-        project = project_manager.create(
-            name="test-project",
-            repo_path="/tmp/test",
-        )
+        project = isolated_checkout_factory(project_manager.db, "test-project").project
 
         # Create two tasks
         task1 = task_manager.create_task(
@@ -96,15 +95,13 @@ class TestCheckOrphanDependencies:
 
     def test_detects_orphan_with_missing_task(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         validator: TaskValidator,
         task_manager: LocalTaskManager,
         project_manager: "LocalProjectManager",
     ) -> None:
         """Detects dependency where task_id references non-existent task."""
-        project = project_manager.create(
-            name="test-project",
-            repo_path="/tmp/test",
-        )
+        project = isolated_checkout_factory(project_manager.db, "test-project").project
 
         task1 = task_manager.create_task(
             title="Task 1",
@@ -127,15 +124,13 @@ class TestCheckOrphanDependencies:
 
     def test_detects_orphan_with_missing_depends_on(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         validator: TaskValidator,
         task_manager: LocalTaskManager,
         project_manager: "LocalProjectManager",
     ) -> None:
         """Detects dependency where depends_on references non-existent task."""
-        project = project_manager.create(
-            name="test-project",
-            repo_path="/tmp/test",
-        )
+        project = isolated_checkout_factory(project_manager.db, "test-project").project
 
         task1 = task_manager.create_task(
             title="Task 1",
@@ -167,15 +162,13 @@ class TestCheckInvalidProjects:
 
     def test_no_invalid_with_valid_project(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         validator: TaskValidator,
         task_manager: LocalTaskManager,
         project_manager: "LocalProjectManager",
     ) -> None:
         """Returns empty list when all tasks have valid projects."""
-        project = project_manager.create(
-            name="test-project",
-            repo_path="/tmp/test",
-        )
+        project = isolated_checkout_factory(project_manager.db, "test-project").project
 
         task_manager.create_task(
             title="Task 1",
@@ -230,15 +223,13 @@ class TestCheckCycles:
 
     def test_no_cycles_with_linear_deps(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         validator: TaskValidator,
         task_manager: LocalTaskManager,
         project_manager: "LocalProjectManager",
     ) -> None:
         """Returns empty list for linear dependency chain."""
-        project = project_manager.create(
-            name="test-project",
-            repo_path="/tmp/test",
-        )
+        project = isolated_checkout_factory(project_manager.db, "test-project").project
 
         task1 = task_manager.create_task(
             title="Task 1",
@@ -274,15 +265,13 @@ class TestCheckCycles:
 
     def test_detects_direct_cycle(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         validator: TaskValidator,
         task_manager: LocalTaskManager,
         project_manager: "LocalProjectManager",
     ) -> None:
         """Detects A -> B -> A cycle."""
-        project = project_manager.create(
-            name="test-project",
-            repo_path="/tmp/test",
-        )
+        project = isolated_checkout_factory(project_manager.db, "test-project").project
 
         task1 = task_manager.create_task(
             title="Task 1",
@@ -325,15 +314,13 @@ class TestCleanOrphans:
 
     def test_removes_orphan_dependencies(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         validator: TaskValidator,
         task_manager: LocalTaskManager,
         project_manager: "LocalProjectManager",
     ) -> None:
         """Removes orphan dependencies and returns count."""
-        project = project_manager.create(
-            name="test-project",
-            repo_path="/tmp/test",
-        )
+        project = isolated_checkout_factory(project_manager.db, "test-project").project
 
         task1 = task_manager.create_task(
             title="Task 1",
@@ -371,15 +358,13 @@ class TestValidateAll:
 
     def test_returns_all_validation_results(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         validator: TaskValidator,
         task_manager: LocalTaskManager,
         project_manager: "LocalProjectManager",
     ) -> None:
         """Returns dict with all validation check results."""
-        project = project_manager.create(
-            name="test-project",
-            repo_path="/tmp/test",
-        )
+        project = isolated_checkout_factory(project_manager.db, "test-project").project
 
         # Create a valid task
         task_manager.create_task(

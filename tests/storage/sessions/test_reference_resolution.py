@@ -9,6 +9,7 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
@@ -76,6 +77,7 @@ class TestProjectScopedSeqNum:
 
     def test_seq_num_per_project(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         session_manager: SessionManager,
         temp_db,
     ) -> None:
@@ -83,8 +85,8 @@ class TestProjectScopedSeqNum:
         from gobby.storage.projects import LocalProjectManager
 
         proj_manager = LocalProjectManager(temp_db)
-        project1 = proj_manager.create(name="project1", repo_path="/tmp/p1")
-        project2 = proj_manager.create(name="project2", repo_path="/tmp/p2")
+        project1 = isolated_checkout_factory(proj_manager.db, "project1").project
+        project2 = isolated_checkout_factory(proj_manager.db, "project2").project
 
         # Create sessions in project1
         s1_p1 = session_manager.register(
@@ -117,6 +119,7 @@ class TestProjectScopedSeqNum:
 
     def test_resolve_session_reference_with_project_id(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         session_manager: SessionManager,
         temp_db,
     ) -> None:
@@ -124,8 +127,8 @@ class TestProjectScopedSeqNum:
         from gobby.storage.projects import LocalProjectManager
 
         proj_manager = LocalProjectManager(temp_db)
-        project1 = proj_manager.create(name="proj1", repo_path="/tmp/proj1")
-        project2 = proj_manager.create(name="proj2", repo_path="/tmp/proj2")
+        project1 = isolated_checkout_factory(proj_manager.db, "proj1").project
+        project2 = isolated_checkout_factory(proj_manager.db, "proj2").project
 
         # Create #1 in each project
         s1 = session_manager.register(
@@ -191,12 +194,17 @@ class TestProjectQualifiedSeqNum:
     """'<project>-S#N' resolves a seq_num inside a named project."""
 
     @pytest.fixture
-    def two_projects(self, session_manager: SessionManager, temp_db: HubDatabase) -> dict[str, Any]:
+    def two_projects(
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        session_manager: SessionManager,
+        temp_db: HubDatabase,
+    ) -> dict[str, Any]:
         from gobby.storage.projects import LocalProjectManager
 
         proj_manager = LocalProjectManager(temp_db)
-        gobby = proj_manager.create(name="gobby-main", repo_path="/tmp/gobby-main")
-        goblins = proj_manager.create(name="game-goblins", repo_path="/tmp/game-goblins")
+        gobby = isolated_checkout_factory(proj_manager.db, "gobby-main").project
+        goblins = isolated_checkout_factory(proj_manager.db, "game-goblins").project
         gobby_s1 = session_manager.register(
             external_id="gobby-1",
             machine_id=LOCAL_MACHINE_ID,
@@ -407,6 +415,7 @@ class TestResolveReferenceExternalId:
 
     def test_resolve_reference_external_id_cross_project_no_scope_ambiguous_raises(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         session_manager: SessionManager,
         temp_db,
     ) -> None:
@@ -424,8 +433,8 @@ class TestResolveReferenceExternalId:
 
         LocalMachineManager(temp_db).upsert_seen(LOCAL_MACHINE_ID, TEST_USER_ID)
         pm = LocalProjectManager(temp_db)
-        p1 = pm.create(name="amb-p1", repo_path="/tmp/amb-p1")
-        p2 = pm.create(name="amb-p2", repo_path="/tmp/amb-p2")
+        p1 = isolated_checkout_factory(pm.db, "amb-p1").project
+        p2 = isolated_checkout_factory(pm.db, "amb-p2").project
         external_uuid = str(_uuid.uuid4())
         now = datetime.now(UTC).isoformat()
         for idx, pid in enumerate((p1.id, p2.id)):

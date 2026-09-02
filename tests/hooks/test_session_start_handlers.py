@@ -23,11 +23,11 @@ from gobby.hooks.event_handlers._session_start.terminal_runtime import (
 )
 from gobby.hooks.events import HookEventType
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager, StartupContextClaim
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 from ._event_handler_helpers import make_event
 
@@ -171,11 +171,10 @@ def _session_variable_handler(db: Any) -> MagicMock:
     return handler
 
 
-def _register_context_claim_session(db: HubDatabase, *, external_id: str) -> str:
-    project = LocalProjectManager(db).create(
-        name=external_id,
-        repo_path="/context-claim-tests",
-    )
+def _register_context_claim_session(
+    isolated_checkout_factory: IsolatedCheckoutFactory, db: HubDatabase, *, external_id: str
+) -> str:
+    project = isolated_checkout_factory(db, external_id).project
     session = SessionManager(db).register(
         external_id=external_id,
         machine_id=require_machine_id(),
@@ -324,9 +323,12 @@ class TestSessionHandlers:
 class TestSessionStartContextClaim:
     """Test shared SessionStart startup context claim behavior."""
 
-    def test_duplicate_session_start_claims_full_context_once(self, temp_db: Any) -> None:
+    def test_duplicate_session_start_claims_full_context_once(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: Any
+    ) -> None:
         handler = _session_variable_handler(temp_db)
         session_id = _register_context_claim_session(
+            isolated_checkout_factory,
             temp_db,
             external_id="context-claim-sequential",
         )
@@ -361,10 +363,11 @@ class TestSessionStartContextClaim:
         )
 
     def test_concurrent_duplicate_session_start_claims_full_context_once(
-        self, temp_db: Any
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: Any
     ) -> None:
         handler = _session_variable_handler(temp_db)
         session_id = _register_context_claim_session(
+            isolated_checkout_factory,
             temp_db,
             external_id="context-claim-concurrent",
         )
@@ -390,9 +393,12 @@ class TestSessionStartContextClaim:
         assert session.startup_claim_state == "claimed"
         assert session.startup_claim_generation == 1
 
-    def test_explicit_context_loss_bypasses_existing_startup_claim(self, temp_db: Any) -> None:
+    def test_explicit_context_loss_bypasses_existing_startup_claim(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: Any
+    ) -> None:
         handler = _session_variable_handler(temp_db)
         session_id = _register_context_claim_session(
+            isolated_checkout_factory,
             temp_db,
             external_id="context-claim-explicit-loss",
         )
@@ -419,9 +425,12 @@ class TestSessionStartContextClaim:
         assert session.startup_claim_state == "committed"
         assert session.context_injected is True
 
-    def test_committed_claim_is_prior_context_evidence(self, temp_db: Any) -> None:
+    def test_committed_claim_is_prior_context_evidence(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: Any
+    ) -> None:
         handler = _session_variable_handler(temp_db)
         session_id = _register_context_claim_session(
+            isolated_checkout_factory,
             temp_db,
             external_id="context-claim-committed-evidence",
         )
@@ -443,9 +452,12 @@ class TestSessionStartContextClaim:
         assert decision.mode == "live"
         assert decision.claim is None
 
-    def test_external_owner_claim_never_commits_on_emit(self, temp_db: Any) -> None:
+    def test_external_owner_claim_never_commits_on_emit(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: Any
+    ) -> None:
         handler = _session_variable_handler(temp_db)
         session_id = _register_context_claim_session(
+            isolated_checkout_factory,
             temp_db,
             external_id="context-claim-external-owner",
         )

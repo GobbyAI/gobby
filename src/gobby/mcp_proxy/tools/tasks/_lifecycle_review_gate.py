@@ -15,7 +15,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 from gobby.storage.tasks import Task
 from gobby.tasks.close_verdict import CloseVerdictParseError, parse_close_verdict
 from gobby.tasks.close_verdict_memo import CloseVerdictMemo
-from gobby.tasks.criteria_contract import missing_operational_evidence
+from gobby.tasks.criteria_contract import missing_operational_evidence, operational_evidence_hint
 from gobby.tasks.validation import TaskValidator
 
 
@@ -75,6 +75,10 @@ async def evaluate_close_criteria(
                     f"Missing completion evidence for operational actions: {missing_text}."
                 ],
                 "missing_operational_actions": list(missing_operations),
+                "operational_evidence_hint": operational_evidence_hint(
+                    task.validation_criteria,
+                    missing_operations,
+                ),
             },
         )
     if submitted_review is not None:

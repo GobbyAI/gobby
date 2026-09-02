@@ -20,7 +20,6 @@ from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_dir
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
@@ -32,6 +31,7 @@ from gobby.workflows.definitions import (
     split_rule_definition_data,
 )
 from gobby.workflows.engine.core import RuleEngine
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -3243,10 +3243,13 @@ class TestLiveActiveRuleSelection:
 
     @pytest.mark.asyncio
     async def test_project_scoped_agent_definition_wins_for_event_project(
-        self, db: HubDatabase, manager: RuleDefinitionManager
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
     ) -> None:
         """Resolve live agent rules from the event's project-scoped agent row first."""
-        project = LocalProjectManager(db).create(name="project-one", repo_path="/tmp/project-one")
+        project = isolated_checkout_factory(db, "project-one").project
         _insert_agent(manager, "default", include=["tag:global"])
         _insert_agent(manager, "default", include=["tag:project"], project_id=project.id)
         _insert_rule(
@@ -3280,10 +3283,13 @@ class TestLiveActiveRuleSelection:
 
     @pytest.mark.asyncio
     async def test_global_agent_definition_is_fallback_for_event_project(
-        self, db: HubDatabase, manager: RuleDefinitionManager
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
     ) -> None:
         """Resolve global live agent rules when no project-scoped agent row exists."""
-        project = LocalProjectManager(db).create(name="project-two", repo_path="/tmp/project-two")
+        project = isolated_checkout_factory(db, "project-two").project
         _insert_agent(manager, "default", include=["tag:global"])
         _insert_rule(
             manager,
@@ -3356,9 +3362,12 @@ class TestLiveActiveRuleSelection:
         assert second_variables.get("old_matched") is None
 
     def test_project_rule_does_not_cache_missing_global_agent(
-        self, db: HubDatabase, manager: RuleDefinitionManager
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
     ) -> None:
-        project = LocalProjectManager(db).create(name="agent-collision", repo_path="/tmp/collision")
+        project = isolated_checkout_factory(db, "agent-collision").project
         _insert_agent(manager, "shared-name", include=["tag:shared"])
         manager.create(
             name="shared-name",

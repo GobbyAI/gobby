@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 if TYPE_CHECKING:
     from gobby.storage.agents import AgentRun
@@ -125,14 +126,12 @@ def test_lifecycle_event_id_comes_from_returning_row() -> None:
     )
 
 
-def test_lifecycle_event_appended_on_hub_database(hub_db) -> None:
+def test_lifecycle_event_appended_on_hub_database(
+    isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
+) -> None:
     from gobby.build.service import build_resume
-    from gobby.storage.projects import LocalProjectManager
 
-    project = LocalProjectManager(hub_db).create(
-        name="build-controls-hub",
-        repo_path="/tmp/build-controls-hub",
-    )
+    project = isolated_checkout_factory(hub_db, "build-controls-hub").project
 
     result = build_resume(db=hub_db, project_id=project.id)
 
@@ -184,19 +183,17 @@ def test_no_task_flag_exposed() -> None:
     assert "task" not in param_names
 
 
-def test_resume_cleanup_preserves_expired_mutex_for_active_run(temp_db) -> None:
+def test_resume_cleanup_preserves_expired_mutex_for_active_run(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db
+) -> None:
     from gobby.build.control_runtime import _clear_stale_dispatch_mutexes
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import ensure_system_session, system_session_id
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
     ensure_system_session(temp_db)
-    project = LocalProjectManager(temp_db).create(
-        name="resume-cleanup-active-run",
-        repo_path="/tmp/resume-cleanup-active-run",
-    )
+    project = isolated_checkout_factory(temp_db, "resume-cleanup-active-run").project
     task_manager = LocalTaskManager(temp_db)
     active_task = task_manager.create_task(
         project_id=project.id,
@@ -474,20 +471,14 @@ class TestBuildStopParkedDaemonStopRuns:
         return SimpleNamespace(agent_lifecycle_monitor=monitor, completion_registry=None)
 
     @pytest.mark.asyncio
-    async def test_stop_gives_up_parked_runs_in_subtree(self, temp_db: HubDatabase) -> None:
+    async def test_stop_gives_up_parked_runs_in_subtree(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+    ) -> None:
         from gobby.build.controls import build_stop_target
         from gobby.storage.agents import LocalAgentRunManager
         from gobby.storage.daemon_resume_keys import REAP_REQUESTED_AT_KEY
-        from gobby.storage.projects import LocalProjectManager
 
-        project_id = (
-            LocalProjectManager(temp_db)
-            .create(
-                name="stop-parked-subtree",
-                repo_path="/tmp/stop-parked-subtree",
-            )
-            .id
-        )
+        project_id = isolated_checkout_factory(temp_db, "stop-parked-subtree").project.id
         root = _automated_task(temp_db, project_id, title="Root", task_type="epic")
         child = _automated_task(temp_db, project_id, title="Child", parent_task_id=root.id)
         outside = _automated_task(temp_db, project_id, title="Outside")
@@ -522,18 +513,12 @@ class TestBuildStopParkedDaemonStopRuns:
         assert outside_parked.id not in orphan_ids
 
     @pytest.mark.asyncio
-    async def test_stop_without_parked_runs_skips_reap(self, temp_db: HubDatabase) -> None:
+    async def test_stop_without_parked_runs_skips_reap(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+    ) -> None:
         from gobby.build.controls import build_stop_target
-        from gobby.storage.projects import LocalProjectManager
 
-        project_id = (
-            LocalProjectManager(temp_db)
-            .create(
-                name="stop-no-parked",
-                repo_path="/tmp/stop-no-parked",
-            )
-            .id
-        )
+        project_id = isolated_checkout_factory(temp_db, "stop-no-parked").project.id
         task = _automated_task(temp_db, project_id, title="Task")
         services = self._services()
 
@@ -546,21 +531,13 @@ class TestBuildStopParkedDaemonStopRuns:
 
     @pytest.mark.asyncio
     async def test_stop_flags_parked_runs_without_lifecycle_monitor(
-        self, temp_db: HubDatabase
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
     ) -> None:
         from gobby.build.controls import build_stop_target
         from gobby.storage.agents import LocalAgentRunManager
         from gobby.storage.daemon_resume_keys import REAP_REQUESTED_AT_KEY
-        from gobby.storage.projects import LocalProjectManager
 
-        project_id = (
-            LocalProjectManager(temp_db)
-            .create(
-                name="stop-parked-no-monitor",
-                repo_path="/tmp/stop-parked-no-monitor",
-            )
-            .id
-        )
+        project_id = isolated_checkout_factory(temp_db, "stop-parked-no-monitor").project.id
         task = _automated_task(temp_db, project_id, title="Task")
         parked = _seed_parked_daemon_stop_run(
             temp_db, project_id=project_id, task_id=task.id, prefix="no-monitor"

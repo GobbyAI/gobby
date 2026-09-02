@@ -176,7 +176,9 @@ def create_results_registry(
         name="get_tool_result",
         description=(
             "Read a bounded character slice from one stored oversized tool result. "
-            "A limit above the live maximum is clamped to it; page with next_offset."
+            "A limit above the live maximum (max_envelope_chars - "
+            f"{_WRAPPER_MUTATION_RESERVE}) is clamped to it; page with next_offset. "
+            f"The default slice is {_DEFAULT_SLICE_CHARS} characters."
         ),
         input_schema={
             "type": "object",

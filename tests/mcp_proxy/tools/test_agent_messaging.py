@@ -13,6 +13,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock
 
@@ -21,6 +22,7 @@ import pytest
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.hooks.event_enrichment import EventEnricher
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, apply_acknowledged_receipt
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -586,6 +588,19 @@ class TestSendMessage:
 
             assert response.context is not None
             assert "routine update" in response.context
+            staged = response.metadata[STAGED_EFFECTS_FIELD]
+            assert staged["pending_message_ids"] == [message_id]
+            still_pending = message_manager.get_message(message_id)
+            assert still_pending is not None
+            assert still_pending.delivered_at is None
+            apply_acknowledged_receipt(
+                SimpleNamespace(
+                    receipt_id="routine-ack",
+                    session_id=recipient.id,
+                    staged_payload=staged,
+                ),
+                message_manager=message_manager,
+            )
             delivered = message_manager.get_message(message_id)
             assert delivered is not None
             assert delivered.delivered_at is not None

@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -26,9 +26,9 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 @pytest.fixture
-def project_id(temp_db: HubDatabase) -> str:
+def project_id(isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase) -> str:
     """Create a project and return its ID."""
-    return LocalProjectManager(temp_db).create(name="test-project", repo_path="/tmp/test").id
+    return isolated_checkout_factory(temp_db, "test-project").project.id
 
 
 @pytest.fixture

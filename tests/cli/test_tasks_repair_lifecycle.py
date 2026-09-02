@@ -10,6 +10,7 @@ from click.testing import CliRunner
 
 from gobby.cli.tasks.repair import repair_lifecycle_cmd
 from gobby.storage.tasks import LocalTaskManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -24,14 +25,12 @@ def test_repair_lifecycle_cli_requires_scope() -> None:
     assert "--task or --provenance" in result.output
 
 
-def test_repair_lifecycle_cli_dry_runs_by_default(hub_db) -> None:
-    from gobby.storage.projects import LocalProjectManager
-
-    project = LocalProjectManager(hub_db).create(
-        name="test-project",
-        repo_path="/tmp/test-project",
-        github_url="https://github.com/test/test-project",
-    )
+def test_repair_lifecycle_cli_dry_runs_by_default(
+    isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
+) -> None:
+    project = isolated_checkout_factory(
+        hub_db, "test-project", github_url="https://github.com/test/test-project"
+    ).project
     manager = LocalTaskManager(hub_db)
     task = manager.create_task(
         project_id=project.id,
@@ -53,14 +52,12 @@ def test_repair_lifecycle_cli_dry_runs_by_default(hub_db) -> None:
     ]
 
 
-def test_repair_lifecycle_cli_json_includes_diagnostics(hub_db) -> None:
-    from gobby.storage.projects import LocalProjectManager
-
-    project = LocalProjectManager(hub_db).create(
-        name="test-project",
-        repo_path="/tmp/test-project",
-        github_url="https://github.com/test/test-project",
-    )
+def test_repair_lifecycle_cli_json_includes_diagnostics(
+    isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
+) -> None:
+    project = isolated_checkout_factory(
+        hub_db, "test-project", github_url="https://github.com/test/test-project"
+    ).project
     manager = LocalTaskManager(hub_db)
     task = manager.create_task(
         project_id=project.id,

@@ -13,7 +13,6 @@ from gobby.dispatch.skill_composition import inspect_skill_composition
 from gobby.dispatch.spawn import DispatchSpawnFailed, _with_skill_allowed_tools, spawn_agent
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
 from gobby.storage.tasks import LocalTaskManager
@@ -22,6 +21,7 @@ from gobby.workflows.definitions import (
     AgentStepWorkflowBody,
     WorkflowStep,
 )
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
 
@@ -189,13 +189,11 @@ def test_skill_composition_skips_query_when_no_skills_are_checked(
 
 @pytest.mark.asyncio
 async def test_spawn_and_explain_share_unknown_skill_failure(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    project = LocalProjectManager(temp_db).create(
-        name="skill-composition",
-        repo_path="/tmp/skill-composition",
-    )
+    project = isolated_checkout_factory(temp_db, "skill-composition").project
     task_manager = LocalTaskManager(temp_db)
     task = task_manager.create_task(
         project_id=project.id,

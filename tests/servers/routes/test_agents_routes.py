@@ -24,6 +24,7 @@ from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.definitions import AgentDefinitionBody
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -162,9 +163,13 @@ class TestListDefinitions:
         assert "list-worker-2" in names
 
     def test_list_with_project_filter(
-        self, client: TestClient, agent_manager: AgentDefinitionManager, project_manager
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        client: TestClient,
+        agent_manager: AgentDefinitionManager,
+        project_manager,
     ) -> None:
-        project = project_manager.create(name="proj-1", repo_path="/tmp/proj-1")
+        project = isolated_checkout_factory(project_manager.db, "proj-1").project
         _create_agent_row(agent_manager, "scoped", project_id=project.id)
         _create_agent_row(agent_manager, "global-agent")
         response = client.get(f"/api/agents/definitions?project_id={project.id}")
@@ -216,9 +221,13 @@ class TestGetDefinition:
         assert response.status_code == 404
 
     def test_get_with_project_id(
-        self, client: TestClient, agent_manager: AgentDefinitionManager, project_manager
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        client: TestClient,
+        agent_manager: AgentDefinitionManager,
+        project_manager,
     ) -> None:
-        project = project_manager.create(name="proj-1", repo_path="/tmp/proj-1")
+        project = isolated_checkout_factory(project_manager.db, "proj-1").project
         _create_agent_row(agent_manager, "scoped", project_id=project.id)
         response = client.get(f"/api/agents/definitions/scoped?project_id={project.id}")
         assert response.status_code == 200
@@ -347,8 +356,13 @@ class TestCreateDefinition:
         body = AgentDefinitionBody.model_validate_json(defn["definition_json"])
         assert body.surfaces == ["spawn", "persona"]
 
-    def test_create_with_project_id(self, client: TestClient, project_manager) -> None:
-        project = project_manager.create(name="test-proj", repo_path="/tmp/test-proj")
+    def test_create_with_project_id(
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        client: TestClient,
+        project_manager,
+    ) -> None:
+        project = isolated_checkout_factory(project_manager.db, "test-proj").project
         response = client.post(
             "/api/agents/definitions",
             json=_agent_request("proj-agent", project_id=project.id),
@@ -641,9 +655,13 @@ class TestImportDefinition:
         assert response.status_code == 400
 
     def test_import_with_project_id(
-        self, client: TestClient, project_manager, tmp_path: Path
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        client: TestClient,
+        project_manager,
+        tmp_path: Path,
     ) -> None:
-        project = project_manager.create(name="import-proj", repo_path="/tmp/import-proj")
+        project = isolated_checkout_factory(project_manager.db, "import-proj").project
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "proj-agent.yaml").write_text(

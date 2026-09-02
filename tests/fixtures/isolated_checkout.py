@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,10 @@ class IsolatedCheckoutProject:
     machine_id: str
     project: Project
     root_path: str
+
+
+# Signature of the `isolated_checkout_factory` fixture: one pinned machine per test.
+IsolatedCheckoutFactory = Callable[..., IsolatedCheckoutProject]
 
 
 def write_project_marker(root: Path, *, project_id: str, name: str) -> None:
