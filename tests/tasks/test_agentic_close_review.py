@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -41,6 +42,31 @@ def test_agentic_review_prompt_is_taskless_and_submission_driven() -> None:
     assert "review_run_id" not in prompt
     assert "retry close_task" not in prompt
     assert "oversized" not in prompt.lower()
+    assert "prior_requirements=" not in prompt
+
+
+def test_launch_prompt_renders_prior_requirements() -> None:
+    prior_requirements = (
+        "Criterion 1: Focused tests pass.\n"
+        "Gap: The integration path was not exercised.\n"
+        "Required evidence: Run the real close adapter and capture its receipt."
+    )
+
+    prompt = build_agentic_review_prompt(
+        review_id="review",
+        task_id="task",
+        commit_shas=["abc"],
+        changes_summary="summary",
+        review_fingerprint="close",
+        evidence_fingerprint="evidence",
+        prior_requirements=prior_requirements,
+    )
+
+    assert f"prior_requirements={json.dumps(prior_requirements)}" in prompt
+    assert (
+        "A previously rejected close named this required evidence; reject the same criterion "
+        "again unless the submitted code and evidence satisfy it."
+    ) in prompt
 
 
 def test_task_close_validator_definition_submits_then_terminates() -> None:
@@ -64,6 +90,9 @@ def test_task_close_validator_definition_submits_then_terminates() -> None:
     assert "gobby-agents:end_agent_run" in step["allowed_mcp_tools"]
     assert "gobby-agents:send_message" not in step["allowed_mcp_tools"]
     assert "submit_close_review" in body["prompts"]["agent"]
+    assert body["version"] == "1.5"
+    assert '"required_evidence": null|"complete evidence set"' in body["prompts"]["agent"]
+    assert "complete evidence set the next close has to supply" in body["prompts"]["agent"]
 
 
 @pytest.mark.parametrize(

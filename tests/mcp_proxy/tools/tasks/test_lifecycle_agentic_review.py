@@ -80,6 +80,41 @@ async def test_matching_submitted_verdict_uses_shared_accounting(
 
 
 @pytest.mark.asyncio
+async def test_submitted_invalid_verdict_preserves_required_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    accounted = ValidationResult(can_close=False, error_type="validation_failed")
+    account = MagicMock(return_value=accounted)
+    monkeypatch.setattr(review_gate, "account_criteria_verdict", account)
+
+    await _evaluate(
+        submitted=SubmittedCloseReview(
+            verdict={
+                "status": "invalid",
+                "criteria": [
+                    {
+                        "index": 1,
+                        "satisfied": False,
+                        "gap": "The real close path was not exercised.",
+                        "required_evidence": (
+                            "Run the real close adapter and capture its MCP response receipt."
+                        ),
+                    }
+                ],
+                "feedback": "The close evidence is incomplete.",
+            },
+            review_fingerprint="close",
+            evidence_fingerprint="evidence",
+        )
+    )
+
+    parsed = account.call_args.kwargs["verdict"]
+    assert parsed.criteria[0].required_evidence == (
+        "Run the real close adapter and capture its MCP response receipt."
+    )
+
+
+@pytest.mark.asyncio
 async def test_stale_submitted_fingerprint_skips_accounting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

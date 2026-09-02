@@ -18,11 +18,23 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
     submit_close_review,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
-from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewStatus
+from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import SubmittedCloseReview
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.task_close_reviews import (
+    TaskCloseReview,
+    TaskCloseReviewStatus,
+    TaskCloseReviewStore,
+)
 from gobby.storage.tasks import Task
 from gobby.tasks import agentic_close_review as agentic_close_review_module
 
 pytestmark = pytest.mark.unit
+
+_PERSISTED_TASK_ID = "00000000-0000-4000-8000-000000002608"
+_PERSISTED_SESSION_ID = "00000000-0000-4000-8000-000000002609"
+_FIRST_REVIEW_RUN_ID = "00000000-0000-4000-8000-000000002610"
+_SECOND_REVIEW_RUN_ID = "00000000-0000-4000-8000-000000002611"
+_REQUIRED_EVIDENCE = "Run the real close adapter and capture its MCP response receipt."
 
 
 @pytest.mark.asyncio
@@ -59,6 +71,118 @@ async def test_close_persists_and_launches_one_taskless_validator(
     assert "Do not poll agent runs or re-call close_task." in result["message"]
     assert "Oversized" not in result["message"]
     assert result["criteria_review_duration_ms"] == 4.25
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_launch_after_rejected_verdict_carries_required_evidence(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    first_review, created = store.create_or_get_active(
+        task_id=_PERSISTED_TASK_ID,
+        task_ref="#42",
+        caller_session_id=_PERSISTED_SESSION_ID,
+        close_arguments=_arguments(),
+        review_fingerprint="first-review",
+        evidence_fingerprint="first-evidence",
+    )
+    assert created is True
+    assert store.bind_run(first_review.id, _FIRST_REVIEW_RUN_ID) is not None
+    monkeypatch.setattr(orchestration, "_authenticate_submission", lambda _ctx, _review: None)
+    submitted_verdict: dict[str, object] = {
+        "status": "invalid",
+        "criteria": [
+            {
+                "index": 1,
+                "satisfied": False,
+                "gap": "The real close path was not exercised.",
+                "required_evidence": _REQUIRED_EVIDENCE,
+            }
+        ],
+        "feedback": "The close evidence is incomplete.",
+    }
+    task_manager = SimpleNamespace(db=temp_db)
+    submit_ctx = cast(
+        RegistryContext,
+        SimpleNamespace(
+            task_manager=task_manager,
+            agent_registry=None,
+            validation_config=TaskValidationConfig(),
+        ),
+    )
+
+    async def evaluate_close(
+        _ctx: RegistryContext,
+        **kwargs: Any,
+    ) -> CloseEvaluation:
+        submitted = kwargs["submitted_review"]
+        assert isinstance(submitted, SubmittedCloseReview)
+        evaluation = CloseEvaluation("#42")
+        evaluation.task_id = _PERSISTED_TASK_ID
+        evaluation.error = "validation_failed"
+        evaluation.message = "The close evidence is incomplete."
+        evaluation.validation_status = "invalid"
+        evaluation.verdict = dict(submitted.verdict)
+        return evaluation
+
+    submit_result = await submit_close_review(
+        submit_ctx,
+        review_id=first_review.id,
+        verdict=submitted_verdict,
+        evaluate_close=evaluate_close,
+        commit_close=AsyncMock(),
+    )
+
+    assert submit_result["review_status"] == "invalid"
+    terminal = store.get(first_review.id)
+    assert terminal is not None
+    assert terminal.result_payload is not None
+    assert terminal.result_payload["verdict"] == submitted_verdict
+
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _SECOND_REVIEW_RUN_ID})
+    )
+    task = Task(
+        id=_PERSISTED_TASK_ID,
+        project_id="00000000-0000-4000-8000-000000002612",
+        title="Carry prior close evidence",
+        priority=1,
+        task_type="task",
+        validation_criteria="Focused tests pass.",
+        created_at=datetime(2026, 8, 22, tzinfo=UTC),
+        updated_at=datetime(2026, 8, 22, tzinfo=UTC),
+        seq_num=42,
+    )
+    evaluation = CloseEvaluation("#42")
+    evaluation.task = task
+    evaluation.task_id = task.id
+    evaluation.resolved_session_id = _PERSISTED_SESSION_ID
+    evaluation.repo_path = "/repo"
+    evaluation.commit_shas = ["def"]
+    evaluation.error = "agentic_review_required"
+    evaluation.extra.update(
+        {
+            "review_fingerprint": "second-review",
+            "deterministic_evidence_fingerprint": "second-evidence",
+        }
+    )
+    ctx = cast(
+        RegistryContext,
+        SimpleNamespace(
+            task_manager=task_manager,
+            agent_registry=registry,
+            validation_config=TaskValidationConfig(),
+        ),
+    )
+
+    await launch_close_review(ctx, evaluation=evaluation, close_arguments=_arguments())
+
+    launch_prompt = registry.call.await_args.args[1]["prompt"]
+    assert f"Required evidence: {_REQUIRED_EVIDENCE}" in launch_prompt
+    assert "prior_requirements=" in launch_prompt
+    assert 'changes_summary="Implemented."' in launch_prompt
 
 
 @pytest.mark.asyncio
