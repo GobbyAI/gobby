@@ -25,7 +25,10 @@ from gobby.config.validation_detection import (
 from gobby.sessions.machine_scope import require_local_session_ownership
 from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.sessions.transcript_io import _iter_archive_lines
-from gobby.sessions.transcript_paths import find_transcript_on_disk
+from gobby.sessions.transcript_paths import (
+    find_supplemental_transcripts_on_disk,
+    find_transcript_on_disk,
+)
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import (
     ParsedMessage,
@@ -496,19 +499,46 @@ def _derive_transcript_evidence_sync(
     repo_path: str,
     archive_dir: str | None,
 ) -> TranscriptEvidence:
-    path, attempted_paths = _resolve_transcript_path(session, archive_dir)
-    if path is None:
+    paths, attempted_paths = _resolve_transcript_paths(session, archive_dir)
+    if not paths:
         raise TranscriptEvidenceUnavailable(
             f"No transcript was found for {session.source} session {session.ref}.",
             source=session.source,
             attempted_paths=attempted_paths,
         )
+    return merge_transcript_evidence(
+        *(
+            _derive_transcript_path_evidence(
+                session,
+                path,
+                window_start,
+                detection_config,
+                task_edited_files,
+                repo_path,
+                attempted_paths,
+                resume_enabled=index == 0,
+            )
+            for index, path in enumerate(paths)
+        )
+    )
 
+
+def _derive_transcript_path_evidence(
+    session: Session,
+    path: str,
+    window_start: datetime | None,
+    detection_config: ValidationDetectionConfig,
+    task_edited_files: set[str],
+    repo_path: str,
+    attempted_paths: list[str],
+    *,
+    resume_enabled: bool,
+) -> TranscriptEvidence:
     normalized_task_files = {_normalize_known_path(item, repo_path) for item in task_edited_files}
     fingerprint = _derivation_fingerprint(
         session, window_start, detection_config, normalized_task_files, repo_path
     )
-    resume = _load_snapshot(session.id)
+    resume = _load_snapshot(session.id) if resume_enabled else None
     if resume is not None and (
         resume.fingerprint != fingerprint or resume.transcript_path != path or path.endswith(".gz")
     ):
@@ -568,7 +598,7 @@ def _derive_transcript_evidence_sync(
             elif isinstance(record, ParsedToolEvent):
                 _consume_tool_event(state, record)
 
-    if read is not None and not read.has_partial_tail:
+    if resume_enabled and read is not None and not read.has_partial_tail:
         _store_snapshot(
             session.id,
             _EvidenceSnapshot(
@@ -633,6 +663,17 @@ def _resolve_transcript_path(
     if archive_path.is_file():
         return str(archive_path), attempted
     return None, attempted
+
+
+def _resolve_transcript_paths(
+    session: Session,
+    archive_dir: str | None,
+) -> tuple[list[str], list[str]]:
+    primary, attempted = _resolve_transcript_path(session, archive_dir)
+    if primary is None:
+        return [], attempted
+    supplemental = find_supplemental_transcripts_on_disk(session.source, primary)
+    return [primary, *supplemental], [*attempted, *supplemental]
 
 
 def _consume_message(state: _DerivationState, message: ParsedMessage) -> None:
