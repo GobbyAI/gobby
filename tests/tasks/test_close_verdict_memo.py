@@ -36,6 +36,12 @@ class _RecordingMemo:
         self.lookups.append((review_fingerprint, evidence_fingerprint))
         return self.entries.get((review_fingerprint, evidence_fingerprint))
 
+    def get_previous(self) -> CloseVerdict | None:
+        self.threads.add(threading.get_ident())
+        if not self.entries:
+            return None
+        return self.entries[next(reversed(self.entries))]
+
     def put(
         self,
         *,
