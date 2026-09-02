@@ -9,7 +9,7 @@ from typing import Any, cast
 import psycopg
 
 from gobby.hooks.envelope_dedupe import bump_stop_replay_epoch
-from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.events import HookEvent, HookResponse, require_hook_machine_id
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.hooks.terminal_context import (
@@ -108,6 +108,7 @@ def _log_session_start_timing(
 def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     """Handle SESSION_START event."""
     _t0 = time.monotonic()
+    machine_id = require_hook_machine_id(event)
     input_data = event.data
     cli_source = event.source.value
     external_id = str(event.session_id or "").strip()
@@ -155,7 +156,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         and session_start_is_native_subagent_child(
             handler._session_manager,
             terminal_context,
-            event.machine_id or handler._get_machine_id(),
+            machine_id,
         )
     ):
         handler.logger.info(
@@ -249,8 +250,6 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     project_id = project_resolution.project_id
     if project_id is None:
         return HookResponse(decision="allow")
-
-    machine_id = event.machine_id or handler._get_machine_id()
 
     handler.logger.debug(
         "SESSION_START: cli=%s, project=%s, source=%s", cli_source, project_id, session_source
@@ -535,18 +534,18 @@ def handle_pre_created_session(
     terminal_context: dict[str, Any] | None = None,
 ) -> HookResponse:
     """Handle session start for a pre-created session."""
+    machine_id = require_hook_machine_id(event)
     handler.logger.info("Found pre-created session %s, updating instead of creating", external_id)
 
     input_data = event.data if event else {}
     if transcript_path and "transcript_path" not in input_data:
         input_data = {**input_data, "transcript_path": transcript_path}
-    local_machine_id = event.machine_id or handler._get_machine_id()
     transcript_path = handler._derive_transcript_path(
         cli_source,
         input_data,
         external_id,
         owner_machine_id=existing_session.machine_id,
-        local_machine_id=local_machine_id,
+        local_machine_id=machine_id,
         stored_path=getattr(existing_session, "transcript_path", None),
     )
 
@@ -586,8 +585,6 @@ def handle_pre_created_session(
 
     session_id = session_obj.id
     parent_session_id = session_obj.parent_session_id
-    machine_id = event.machine_id or session_obj.machine_id or handler._get_machine_id()
-
     if transcript_path and handler._session_coordinator:
         try:
             handler._session_coordinator.register_session(external_id)

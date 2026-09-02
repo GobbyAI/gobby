@@ -22,7 +22,13 @@ from gobby.hooks.agent_run_ingress import (
 from gobby.hooks.broadcaster import schedule_hook_broadcast
 from gobby.hooks.dispatchers import mcp as mcp_dispatcher
 from gobby.hooks.effect_deadline import BlockingEffectDeadline, new_blocking_effect_deadline
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import (
+    HookEvent,
+    HookEventType,
+    HookIngressError,
+    HookResponse,
+    SessionSource,
+)
 from gobby.hooks.factory import HookManagerFactory
 from gobby.hooks.health_gate import ensure_daemon_ready, ensure_daemon_ready_async
 from gobby.hooks.hook_manager_dispatch import HookManagerDispatchMixin
@@ -192,7 +198,6 @@ class HookManager(HookManagerDispatchMixin):
             session_manager=self._session_manager,
             session_coordinator=self._session_coordinator,
             session_task_manager=self._session_task_manager,
-            get_machine_id=self.get_machine_id,
             resolve_project_id=self._resolve_project_id,
             logger=self.logger,
         )
@@ -289,6 +294,12 @@ class HookManager(HookManagerDispatchMixin):
                 if span.is_recording():
                     span.set_attribute("decision", response.decision)
                 return response
+            except HookIngressError as exc:
+                if span.is_recording():
+                    span.record_exception(exc)
+                    span.set_attribute("decision", "block")
+                self.logger.warning("Rejecting malformed hook ingress: %s", exc)
+                return HookResponse(decision="block", reason=str(exc))
             except Exception as e:
                 if span.is_recording():
                     span.record_exception(e)
@@ -311,6 +322,12 @@ class HookManager(HookManagerDispatchMixin):
                 if span.is_recording():
                     span.set_attribute("decision", response.decision)
                 return response
+            except HookIngressError as exc:
+                if span.is_recording():
+                    span.record_exception(exc)
+                    span.set_attribute("decision", "block")
+                self.logger.warning("Rejecting malformed hook ingress: %s", exc)
+                return HookResponse(decision="block", reason=str(exc))
             except Exception as e:
                 if span.is_recording():
                     span.record_exception(e)
@@ -469,6 +486,8 @@ class HookManager(HookManagerDispatchMixin):
             with create_span("hook.session_start.handler"):
                 try:
                     response = handler(event)
+                except HookIngressError:
+                    raise
                 except Exception as e:
                     self.logger.exception("Event handler %s failed: %s", event.event_type, e)
                     return HookResponse(decision="allow", reason=f"Handler error: {e}")

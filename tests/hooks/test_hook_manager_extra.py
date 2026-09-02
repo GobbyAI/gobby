@@ -7,7 +7,6 @@ import importlib
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -26,23 +25,10 @@ from gobby.storage.hub.protocol import HubDatabase
 pytestmark = pytest.mark.unit
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
-_RECEIPT_MIGRATION = (
-    Path(__file__).resolve().parents[2]
-    / "crates/gcore/assets/schema/migrations/416_hook_receipt_effects.sql"
-)
 
 
 @pytest.fixture
 def receipts_db(temp_db: HubDatabase) -> HubDatabase:
-    sql = "\n".join(
-        line
-        for line in _RECEIPT_MIGRATION.read_text(encoding="utf-8").splitlines()
-        if not line.strip().startswith("--")
-    )
-    statements = [statement.strip() for statement in sql.split(";") if statement.strip()]
-    with temp_db.transaction() as conn:
-        for statement in statements:
-            conn.execute(statement)
     return temp_db
 
 

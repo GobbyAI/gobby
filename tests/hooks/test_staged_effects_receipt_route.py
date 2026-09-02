@@ -148,8 +148,28 @@ def _create_session(db: HubDatabase, session_id: str) -> None:
         )
 
 
-def _post_set_handoff(client: TestClient, session_id: str, envelope_id: str) -> dict[str, Any]:
+def _post_set_handoff(
+    client: TestClient,
+    session_id: str,
+    envelope_id: str,
+    *,
+    machine_id: str | None = TEST_MACHINE_ID,
+) -> dict[str, Any]:
     """One real PreToolUse delivery for gobby-sessions:set_handoff."""
+    input_data: dict[str, Any] = {
+        "hook_event_name": "PreToolUse",
+        "session_id": session_id,
+        "cwd": str(REPO_ROOT),
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": "gobby-sessions",
+            "tool_name": "set_handoff",
+            "arguments": {"current_state": "x"},
+        },
+    }
+    if machine_id is not None:
+        input_data["machine_id"] = machine_id
+
     response = client.post(
         "/api/hooks/execute",
         headers={ENVELOPE_ID_HEADER: envelope_id},
@@ -160,23 +180,29 @@ def _post_set_handoff(client: TestClient, session_id: str, envelope_id: str) -> 
             "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
             "hook_type": "PreToolUse",
             "source": "claude",
-            "input_data": {
-                "hook_event_name": "PreToolUse",
-                "session_id": session_id,
-                "cwd": str(REPO_ROOT),
-                "tool_name": "mcp__gobby__call_tool",
-                "tool_input": {
-                    "server_name": "gobby-sessions",
-                    "tool_name": "set_handoff",
-                    "arguments": {"current_state": "x"},
-                },
-            },
+            "input_data": input_data,
         },
     )
     assert response.status_code == 200, response.text
     body = response.json()
     assert isinstance(body, dict)
     return body
+
+
+def test_route_rejects_missing_envelope_machine_id(
+    hook_client: TestClient,
+) -> None:
+    body = _post_set_handoff(
+        hook_client,
+        "missing-machine-id",
+        f"n-{uuid4()}",
+        machine_id=None,
+    )
+
+    assert _blocked(body), body
+    assert body["hookSpecificOutput"]["permissionDecisionReason"] == (
+        "Hook envelope is missing required machine_id"
+    )
 
 
 def _blocked(body: dict[str, Any]) -> bool:

@@ -29,9 +29,11 @@ from gobby.ai._text_generation_helpers import (
     _CandidateTimeoutError,
     _coerce_text_result,
     _elapsed_ms,
+    _InvalidTextGenerationOutputError,
     _json_request,
     _parse_candidate,
     _parse_json_text,
+    _validate_json_generation_output,
     _validate_text_generation_output,
 )
 from gobby.ai.endpoints import normalize_endpoint_routing
@@ -633,6 +635,11 @@ class TextGenerationService:
                     except (ValueError, json.JSONDecodeError) as exc:
                         raise _json_parse_failure(raw, exc) from exc
                     parse_outcome = "parsed_text"
+                try:
+                    _validate_json_generation_output(candidate, result)
+                except _InvalidTextGenerationOutputError:
+                    parse_outcome = "schema_failed"
+                    raise
                 self._log_generation_event(
                     request=candidate,
                     binding=binding,
