@@ -221,31 +221,64 @@ def test_interactive_coverage_persists_inapplicable_review_action(
     assert saved_results[0]["review_action"] == expected_action
 
 
-def test_spawned_coverage_keeps_reject_review_action_shape() -> None:
-    failures = [
-        {
-            "section_id": "A1",
-            "item_id": "A1.1",
-            "status": "missing",
-            "detail": "coverage status missing",
-            "leaves": [],
-        }
-    ]
+@pytest.mark.parametrize(
+    ("expected_passed", "expected_tool"),
+    ((True, "approve_review"), (False, "reject_review")),
+)
+def test_spawned_coverage_persists_legacy_review_action_shape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    expected_passed: bool,
+    expected_tool: str,
+) -> None:
+    plan_path, plan_hash = _plan_file(tmp_path)
+    saved_results: list[dict[str, object]] = []
 
-    assert qa_module._review_action(_ROOT_REF, ".gobby/coverage.yaml", failures) == {
-        "server": "gobby-tasks-ops",
-        "tool": "reject_review",
-        "arguments": {
-            "task_id": _ROOT_REF,
-            "stage_name": "expansion",
-            "rejection_notes": (
-                "Plan coverage rejected mechanically.\n"
-                "Manifest: .gobby/coverage.yaml\n"
-                "- section_id=A1 item_id=A1.1 status=missing "
-                "detail=coverage status missing leaves=none"
-            ),
-        },
-    }
+    class _CapturingRunManager(_FakeRunManager):
+        def save_qa_result(self, run_id: str, qa_result: dict[str, object]) -> _FakeRun:
+            saved_results.append(qa_result)
+            return super().save_qa_result(run_id, qa_result)
+
+    task_records = (
+        _task_records() if expected_passed else [{"ref": f"#{_ROOT_REF}", "path_cache": _ROOT_REF}]
+    )
+    monkeypatch.setattr(qa_module, "TaskArtifactManager", _FakeArtifactManager)
+    monkeypatch.setattr(qa_module, "LocalExpansionRunManager", _CapturingRunManager)
+
+    result = qa_module.run_expansion_qa_coverage(
+        task_manager=cast(LocalTaskManager, _FakeTaskManager()),
+        run=cast(ExpansionRun, _FakeRun()),
+        repo_path=tmp_path,
+        plan_path=str(plan_path),
+        plan_id="plan",
+        plan_hash=plan_hash,
+        root_task_ref=_ROOT_REF,
+        project_id=_PROJECT_ID,
+        evaluator=lambda **_kwargs: evaluate(
+            plan=plan_path,
+            plan_id="plan",
+            plan_hash=plan_hash,
+            task_tree="db",
+            root_task_ref=_ROOT_REF,
+            project_id=_PROJECT_ID,
+            task_records=task_records,
+        ),
+        is_spawned_agent=True,
+    )
+
+    expected_action = qa_module._review_action(
+        _ROOT_REF,
+        result["manifest_path"],
+        result["qa_result"]["failures"],
+    )
+    assert result["passed"] is expected_passed
+    assert expected_action["server"] == "gobby-tasks-ops"
+    assert expected_action["tool"] == expected_tool
+    assert expected_action["arguments"]["task_id"] == _ROOT_REF
+    assert expected_action["arguments"]["stage_name"] == "expansion"
+    assert result["review_action"] == expected_action
+    assert result["qa_result"]["review_action"] == expected_action
+    assert saved_results[0]["review_action"] == expected_action
 
 
 @pytest.mark.asyncio
