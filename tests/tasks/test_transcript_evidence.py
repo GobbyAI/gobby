@@ -164,6 +164,71 @@ async def test_claude_pairs_shell_results_and_tracks_task_edits(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+async def test_claude_subagent_transcript_satisfies_validation_close_gate(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "transcript-evidence-claude-2.jsonl"
+    subagent = transcript.with_suffix("") / "subagents" / "agent-worker.jsonl"
+    subagent.parent.mkdir(parents=True)
+    _write_jsonl(transcript, [])
+    session = _session("claude", transcript, suffix="2")
+    window_start = BASE_TIME + timedelta(seconds=10)
+    records = [
+        *_claude_tool_pair(
+            command="uv run pytest tests/tasks/test_old.py",
+            call_id="old-run",
+            start=BASE_TIME,
+            result={"exit_code": 0, "stdout": "passed"},
+        ),
+        {
+            "type": "assistant",
+            "timestamp": (window_start + timedelta(seconds=1)).isoformat(),
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "subagent-edit",
+                        "name": "Edit",
+                        "input": {"file_path": str(tmp_path / "src" / "changed.py")},
+                    }
+                ],
+            },
+        },
+        *_claude_tool_pair(
+            command="uv run pytest tests/tasks/test_changed.py",
+            call_id="subagent-run",
+            start=window_start + timedelta(seconds=2),
+            result={"exit_code": 0, "stdout": "1 passed"},
+        ),
+    ]
+    for record in records:
+        record.update({"sessionId": session.external_id, "agentId": "worker", "isSidechain": True})
+    _write_jsonl(subagent, records)
+
+    evidence = await derive_transcript_evidence(
+        session,
+        window_start,
+        default_validation_detection_config(),
+        {"src/changed.py"},
+        str(tmp_path),
+    )
+
+    assert evidence.attempted_paths == (str(transcript), str(subagent))
+    assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [("src/changed.py", "Edit")]
+    assert [(run.command, run.outcome) for run in evidence.validation_runs] == [
+        ("uv run pytest tests/tasks/test_changed.py", "success")
+    ]
+    assert evidence.summary()["validation_run_count"] == 1
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+    )
+    assert gate.passed
+
+
+@pytest.mark.asyncio
 async def test_claim_window_excludes_earlier_validation_runs(tmp_path: Path) -> None:
     transcript = tmp_path / "window.jsonl"
     _write_jsonl(

@@ -6,6 +6,7 @@ import pytest
 
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -116,11 +117,12 @@ class TestMCPTemplateStorageMixin:
 
     def test_get_template_never_crosses_projects_and_returns_disabled_row(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         mcp_manager: LocalMCPManager,
         sample_project: dict[str, Any],
         project_manager: LocalProjectManager,
     ) -> None:
-        other = project_manager.create(name="other-mcp-project", repo_path="/tmp/other-mcp")
+        other = isolated_checkout_factory(project_manager.db, "other-mcp-project").project
         global_row = mcp_manager.upsert_template(
             name="openapi",
             project_id=GLOBAL_PROJECT_ID,

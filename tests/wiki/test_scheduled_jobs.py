@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,6 +35,7 @@ from gobby.wiki.scheduled_jobs import (
 )
 from gobby.wiki.scope_resolution import ResolvedWikiScope
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, IsolatedCheckoutProject
 
 WIKI_JOB_COMMANDS = (
     "audit",
@@ -314,8 +316,15 @@ def _job(
 
 
 @pytest.fixture
-def project_id(temp_db: Any) -> str:
-    return LocalProjectManager(temp_db).create(name="wiki", repo_path="/tmp/wiki").id
+def wiki_project(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: Any
+) -> IsolatedCheckoutProject:
+    return isolated_checkout_factory(temp_db, "wiki")
+
+
+@pytest.fixture
+def project_id(wiki_project: IsolatedCheckoutProject) -> str:
+    return wiki_project.project.id
 
 
 @pytest.fixture
@@ -1228,6 +1237,7 @@ async def test_query_backed_research_jobs_are_left_untouched(
 @pytest.mark.asyncio
 async def test_default_wiki_cron_scope_resolves_project_root(
     cron_storage: CronJobStorage,
+    wiki_project: IsolatedCheckoutProject,
     project_id: str,
     temp_db: Any,
 ) -> None:
@@ -1248,7 +1258,9 @@ async def test_default_wiki_cron_scope_resolves_project_root(
     )
 
     assert {scope.identity for scope in resolved_scopes} == {f"project:{project_id}"}
-    assert {scope.project_root for scope in resolved_scopes} == {Path("/tmp/wiki").resolve()}
+    assert {scope.project_root for scope in resolved_scopes} == {
+        Path(wiki_project.root_path).resolve()
+    }
     assert sorted(job.name for job in cron_storage.list_jobs(project_id=project_id)) == [
         f"gobby:wiki-{command}:project:{project_id}" for command in WIKI_JOB_COMMANDS
     ]
@@ -1432,12 +1444,13 @@ async def test_non_system_bare_scope_row_does_not_abort_registration(
 
 @pytest.mark.asyncio
 async def test_startup_registers_handlers_for_other_projects_enabled_rows(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     cron_storage: CronJobStorage,
     project_id: str,
     temp_db: Any,
 ) -> None:
     # A previous startup in another project created its enabled system rows.
-    other_project = LocalProjectManager(temp_db).create(name="wiki-b", repo_path="/tmp/wiki-b").id
+    other_project = isolated_checkout_factory(temp_db, "wiki-b").project.id
     await register_wiki_cron_jobs(
         cron_storage=cron_storage,
         cron_executor=RecordingExecutor(handlers={}),
@@ -1506,6 +1519,7 @@ async def test_startup_parks_rows_for_unresolvable_scope(
 
 @pytest.mark.asyncio
 async def test_startup_disables_rows_for_soft_deleted_project(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     cron_storage: CronJobStorage,
     project_id: str,
     temp_db: Any,
@@ -1514,7 +1528,7 @@ async def test_startup_disables_rows_for_soft_deleted_project(
     # soft-deleted (repo merged away, #18330): parking would re-warn on every
     # startup forever, so the rows are disabled once with an audit trail.
     manager = LocalProjectManager(temp_db)
-    dead_project = manager.create(name="wiki-dead", repo_path="/tmp/wiki-dead").id
+    dead_project = isolated_checkout_factory(manager.db, "wiki-dead").project.id
     await register_wiki_cron_jobs(
         cron_storage=cron_storage,
         cron_executor=RecordingExecutor(handlers={}),
@@ -1562,17 +1576,16 @@ async def test_startup_disables_rows_for_soft_deleted_project(
 
 @pytest.mark.asyncio
 async def test_startup_keeps_parking_live_project_with_missing_root(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     cron_storage: CronJobStorage,
     project_id: str,
     temp_db: Any,
-    tmp_path: Path,
 ) -> None:
     # A registered, live project whose repo path is missing (unmounted
     # volume) must keep today's parking — never lose its schedules (#18330).
-    vanished_root = tmp_path / "unmounted" / "wiki-away"
-    away_project = (
-        LocalProjectManager(temp_db).create(name="wiki-away", repo_path=str(vanished_root)).id
-    )
+    away = isolated_checkout_factory(temp_db, "wiki-away")
+    shutil.rmtree(away.root_path)
+    away_project = away.project.id
     await register_wiki_cron_jobs(
         cron_storage=cron_storage,
         cron_executor=RecordingExecutor(handlers={}),
@@ -1603,11 +1616,12 @@ async def test_startup_keeps_parking_live_project_with_missing_root(
 
 @pytest.mark.asyncio
 async def test_sweep_wakes_parked_rows_when_scope_resolves(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     cron_storage: CronJobStorage,
     project_id: str,
     temp_db: Any,
 ) -> None:
-    other_project = LocalProjectManager(temp_db).create(name="wiki-b", repo_path="/tmp/wiki-b").id
+    other_project = isolated_checkout_factory(temp_db, "wiki-b").project.id
     await register_wiki_cron_jobs(
         cron_storage=cron_storage,
         cron_executor=RecordingExecutor(handlers={}),

@@ -10,8 +10,8 @@ import pytest
 
 from gobby.sessions.summarize import generate_session_summaries
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -25,8 +25,10 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 @pytest.mark.asyncio
-async def test_missing_transcript_leaves_archival_summary_empty(temp_db: HubDatabase) -> None:
-    project = LocalProjectManager(temp_db).create(name="summary-test", repo_path="/tmp/test")
+async def test_missing_transcript_leaves_archival_summary_empty(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+) -> None:
+    project = isolated_checkout_factory(temp_db, "summary-test").project
     manager = SessionManager(temp_db)
     session_id = manager.register_session(
         external_id="missing-transcript",
@@ -56,13 +58,11 @@ async def test_missing_transcript_leaves_archival_summary_empty(temp_db: HubData
 
 @pytest.mark.asyncio
 async def test_transcript_fallback_persists_summary_revision(
-    temp_db: HubDatabase, tmp_path: Path
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
 ) -> None:
     root = Path(__file__).resolve().parents[2]
     transcript = root / "tests/sessions/transcripts/fixtures/golden_path/claude.jsonl"
-    # repo_path must not point at this checkout: running the suite from a linked
-    # worktree would trip the isolation-path repo_path guard.
-    project = LocalProjectManager(temp_db).create(name="summary-test", repo_path=str(tmp_path))
+    project = isolated_checkout_factory(temp_db, "summary-test").project
     manager = SessionManager(temp_db)
     session_id = manager.register_session(
         external_id="archival-summary",

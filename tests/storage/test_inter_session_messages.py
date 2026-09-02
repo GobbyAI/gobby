@@ -16,6 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -58,7 +59,9 @@ class TestInterSessionMessageDataclass:
         assert msg.priority == "normal"
         assert msg.sent_at == datetime(2026, 1, 19, 12, tzinfo=UTC)
 
-    def test_from_row_creates_instance(self, temp_db: HubDatabase) -> None:
+    def test_from_row_creates_instance(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+    ) -> None:
         """Test that InterSessionMessage.from_row creates instance from DB row."""
         from gobby.storage.inter_session_messages import InterSessionMessage
         from gobby.storage.projects import LocalProjectManager
@@ -66,7 +69,7 @@ class TestInterSessionMessageDataclass:
 
         # Create project first (needed for foreign key)
         project_mgr = LocalProjectManager(temp_db)
-        project = project_mgr.create(name="test-project", repo_path="/tmp/test")
+        project = isolated_checkout_factory(project_mgr.db, "test-project").project
 
         # Create sessions (needed for foreign key)
         session_mgr = SessionManager(temp_db)
@@ -213,7 +216,9 @@ class TestInterSessionMessageManagerImport:
 class TestInterSessionMessageManagerCreateMessage:
     """TDD tests for create_message method."""
 
-    def test_create_message_returns_message(self, temp_db: HubDatabase) -> None:
+    def test_create_message_returns_message(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+    ) -> None:
         """Test that create_message returns an InterSessionMessage."""
         from gobby.storage.inter_session_messages import (
             InterSessionMessage,
@@ -224,7 +229,7 @@ class TestInterSessionMessageManagerCreateMessage:
 
         # Setup project and sessions
         project_mgr = LocalProjectManager(temp_db)
-        project = project_mgr.create(name="test-project", repo_path="/tmp/test")
+        project = isolated_checkout_factory(project_mgr.db, "test-project").project
 
         session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
@@ -255,14 +260,16 @@ class TestInterSessionMessageManagerCreateMessage:
         assert msg.content == "Work on task X"
         assert msg.priority == "normal"
 
-    def test_create_message_persists_to_database(self, temp_db: HubDatabase) -> None:
+    def test_create_message_persists_to_database(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+    ) -> None:
         """Test that created message is persisted to database."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
-        project = project_mgr.create(name="test-project", repo_path="/tmp/test")
+        project = isolated_checkout_factory(project_mgr.db, "test-project").project
 
         session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
@@ -290,14 +297,16 @@ class TestInterSessionMessageManagerCreateMessage:
         assert row is not None
         assert row["content"] == "Persistent message"
 
-    def test_create_message_defaults_priority_to_normal(self, temp_db: HubDatabase) -> None:
+    def test_create_message_defaults_priority_to_normal(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+    ) -> None:
         """Test that priority defaults to 'normal' if not specified."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
-        project = project_mgr.create(name="test-project", repo_path="/tmp/test")
+        project = isolated_checkout_factory(project_mgr.db, "test-project").project
 
         session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
@@ -326,14 +335,16 @@ class TestInterSessionMessageManagerCreateMessage:
 class TestInterSessionMessageManagerGetMessages:
     """TDD tests for get_messages method."""
 
-    def test_has_completion_notification_matches_metadata(self, temp_db: HubDatabase) -> None:
+    def test_has_completion_notification_matches_metadata(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+    ) -> None:
         """Completion notification lookup checks stable metadata IDs."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
-        project = project_mgr.create(name="test-project", repo_path="/tmp/test")
+        project = isolated_checkout_factory(project_mgr.db, "test-project").project
 
         session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
@@ -369,14 +380,16 @@ class TestInterSessionMessageManagerGetMessages:
             "run-2",
         )
 
-    def test_get_messages_returns_list(self, temp_db: HubDatabase) -> None:
+    def test_get_messages_returns_list(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+    ) -> None:
         """Test that get_messages returns a list of messages."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
-        project = project_mgr.create(name="test-project", repo_path="/tmp/test")
+        project = isolated_checkout_factory(project_mgr.db, "test-project").project
 
         session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
@@ -408,14 +421,16 @@ class TestInterSessionMessageManagerGetMessages:
         assert isinstance(messages, list)
         assert len(messages) == 2
 
-    def test_get_messages_filters_by_recipient(self, temp_db: HubDatabase) -> None:
+    def test_get_messages_filters_by_recipient(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+    ) -> None:
         """Test that get_messages only returns messages for specified recipient."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
-        project = project_mgr.create(name="test-project", repo_path="/tmp/test")
+        project = isolated_checkout_factory(project_mgr.db, "test-project").project
 
         session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
@@ -449,7 +464,9 @@ class TestInterSessionMessageManagerGetMessages:
 class TestInterSessionMessageManagerGetMessage:
     """TDD tests for get_message method."""
 
-    def test_get_message_returns_message(self, temp_db: HubDatabase) -> None:
+    def test_get_message_returns_message(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+    ) -> None:
         """Test that get_message returns the message by ID."""
         from gobby.storage.inter_session_messages import (
             InterSessionMessage,
@@ -459,7 +476,7 @@ class TestInterSessionMessageManagerGetMessage:
         from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
-        project = project_mgr.create(name="test-project", repo_path="/tmp/test")
+        project = isolated_checkout_factory(project_mgr.db, "test-project").project
 
         session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
@@ -498,15 +515,11 @@ class TestInterSessionMessageManagerDeliveryClaims:
     """Atomic delivery claims are scoped to one recipient."""
 
     @pytest.fixture
-    def mailbox(self, temp_db: HubDatabase):
+    def mailbox(self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase):
         from gobby.storage.inter_session_messages import InterSessionMessageManager
-        from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
-        project = LocalProjectManager(temp_db).create(
-            name="delivery-claims",
-            repo_path="/tmp/delivery-claims",
-        )
+        project = isolated_checkout_factory(temp_db, "delivery-claims").project
         sessions = SessionManager(temp_db)
         sender = sessions.register(
             external_id="claim-sender",
@@ -656,14 +669,14 @@ class TestInterSessionMessageManagerListMessages:
     """Tests for list_messages read-only query method."""
 
     @pytest.fixture
-    def setup(self, temp_db: HubDatabase):
+    def setup(self, isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase):
         """Create project, sessions, manager, and seed messages."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
-        project = project_mgr.create(name="test-project", repo_path="/tmp/test")
+        project = isolated_checkout_factory(project_mgr.db, "test-project").project
 
         session_mgr = SessionManager(temp_db)
         s_alpha = session_mgr.register(

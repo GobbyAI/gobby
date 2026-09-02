@@ -15,10 +15,10 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._crud import build_task_tree, create_crud_registry
 from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.storage.tasks._stage_test_helpers import stage_row
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
@@ -32,14 +32,12 @@ def _local_machine_identity() -> Iterator[None]:
 
 @pytest.mark.asyncio
 async def test_create_task_fails_closed_when_session_project_lookup_errors(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    fallback_project = LocalProjectManager(temp_db).create(
-        "task-create-fallback",
-        repo_path="/tmp/task-create-fallback",
-    )
+    fallback_project = isolated_checkout_factory(temp_db, "task-create-fallback").project
     session = SessionManager(temp_db).register(
         external_id="task-create-project-error",
         machine_id="21000000-0000-4000-8000-000000000002",

@@ -8,10 +8,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_lifecycle import _build_empty_session_prune_reference_guards
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._field_update import _FieldUpdateMixin
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 # PostgreSQL-backed tests below are marked integration individually.
 
@@ -25,9 +25,9 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 @pytest.fixture
-def project_id(temp_db: HubDatabase) -> str:
+def project_id(isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase) -> str:
     """Create a project and return its ID."""
-    return LocalProjectManager(temp_db).create(name="test-project", repo_path="/tmp/test").id
+    return isolated_checkout_factory(temp_db, "test-project").project.id
 
 
 @pytest.fixture

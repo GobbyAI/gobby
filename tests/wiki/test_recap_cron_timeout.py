@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.storage.cron import CronJobStorage
-from gobby.storage.projects import LocalProjectManager
 from gobby.wiki.scheduled_jobs import (
     WIKI_RECAP_SCHEDULE_CRON,
     WIKI_RECAP_TIMEOUT_SECONDS,
@@ -14,13 +13,14 @@ from gobby.wiki.scheduled_jobs import (
     wiki_handler_name,
     wiki_job_name,
 )
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def project_id(temp_db: Any) -> str:
-    return LocalProjectManager(temp_db).create(name="wiki", repo_path="/tmp/wiki").id
+def project_id(isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: Any) -> str:
+    return isolated_checkout_factory(temp_db, "wiki").project.id
 
 
 @pytest.fixture

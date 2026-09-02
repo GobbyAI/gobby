@@ -11,9 +11,9 @@ from unittest.mock import patch
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager, SkillFile
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
 
@@ -284,12 +284,12 @@ async def test_content_change_invalidates_cursor(
 
 @pytest.mark.asyncio
 async def test_skill_tracking_occurs_only_after_final_entrypoint_page(
-    db: HubDatabase, storage: LocalSkillManager
+    isolated_checkout_factory: IsolatedCheckoutFactory, db: HubDatabase, storage: LocalSkillManager
 ) -> None:
     from gobby.mcp_proxy.tools.skills import create_skills_registry
     from gobby.workflows.state_manager import SessionVariableManager
 
-    project = LocalProjectManager(db).create(name="paging", repo_path="/tmp/paging")
+    project = isolated_checkout_factory(db, "paging").project
     session = SessionManager(db).register(
         external_id="paging-session",
         machine_id=None,

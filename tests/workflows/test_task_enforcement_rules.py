@@ -35,6 +35,8 @@ pytestmark = pytest.mark.unit
 # SESSION_ID would fail with `invalid input syntax for type uuid`.
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 EXTERNAL_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+CLAIM_TASK_ID = "33333333-3333-4333-8333-333333330043"
+DISCLOSURE_RULE_NAME = "disclose-claimed-task-required-skills"
 
 
 @pytest.fixture
@@ -91,6 +93,31 @@ def _close_task_event(
     )
 
 
+def _task_claim_event(
+    tool_name: str,
+    arguments: dict[str, object],
+    tool_output: object,
+) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id=SESSION_ID,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": tool_name,
+                "arguments": arguments,
+            },
+            "mcp_server": "gobby-tasks",
+            "mcp_tool": tool_name,
+            "tool_output": tool_output,
+        },
+        metadata={"_platform_session_id": SESSION_ID},
+    )
+
+
 def _status_gate_variables(
     *,
     claimed_tasks: dict[str, str] | None = None,
@@ -135,6 +162,7 @@ TASK_ENFORCEMENT_RULES = {
     "require-task-transitions-skill-loaded",
     "require-task-before-edit",
     "require-task-before-commit",
+    DISCLOSURE_RULE_NAME,
     "require-claimed-task-required-skills",
     "require-commit-before-status",
     "require-clean-tree-before-status",
@@ -1071,6 +1099,151 @@ class TestRequireClaimedTaskRequiredSkills:
         assert skill_fetch_directive("rust") in response.reason
 
 
+class TestDiscloseClaimedTaskRequiredSkills:
+    @staticmethod
+    def _engine(db: HubDatabase) -> RuleEngine:
+        _sync_bundled(db)
+        with db.transaction() as conn:
+            conn.execute("UPDATE rule_definitions SET enabled = FALSE")
+            conn.execute(
+                "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
+                (DISCLOSURE_RULE_NAME,),
+            )
+        return RuleEngine(db)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool_name", "arguments", "tool_output"),
+        [
+            pytest.param(
+                "claim_task",
+                {"task_id": "#43"},
+                {"success": True, "task_id": CLAIM_TASK_ID},
+                id="bare-payload",
+            ),
+            pytest.param(
+                "claim_task",
+                {"task_id": "#43"},
+                {"success": True, "result": {"success": True, "task_id": CLAIM_TASK_ID}},
+                id="proxy-envelope",
+            ),
+            pytest.param(
+                "create_task",
+                {"title": "Implement parser", "claim": True},
+                {"success": True, "result": {"id": CLAIM_TASK_ID, "ref": "#43"}},
+                id="create-with-claim",
+            ),
+        ],
+    )
+    async def test_claim_discloses_every_missing_skill_in_required_order(
+        self,
+        db: HubDatabase,
+        tool_name: str,
+        arguments: dict[str, object],
+        tool_output: dict[str, object],
+    ) -> None:
+        event = _task_claim_event(tool_name, arguments, tool_output)
+
+        response = await self._engine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "claimed_tasks": {CLAIM_TASK_ID: "#43"},
+                "claimed_task_required_skills": [
+                    "tasks",
+                    "python",
+                    "development-discipline",
+                ],
+                "claimed_task_language_skills": ["python"],
+                "loaded_skills": [],
+            },
+        )
+
+        assert response.context is not None
+        calls = [
+            skill_fetch_proxy_path(skill) for skill in ("tasks", "python", "development-discipline")
+        ]
+        assert all(call in response.context for call in calls)
+        assert [response.context.index(call) for call in calls] == sorted(
+            response.context.index(call) for call in calls
+        )
+
+    @pytest.mark.asyncio
+    async def test_claim_stays_silent_when_every_required_skill_is_loaded(
+        self,
+        db: HubDatabase,
+    ) -> None:
+        event = _task_claim_event(
+            "claim_task",
+            {"task_id": "#43"},
+            {"success": True, "task_id": CLAIM_TASK_ID},
+        )
+
+        response = await self._engine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "claimed_tasks": {CLAIM_TASK_ID: "#43"},
+                "claimed_task_required_skills": [
+                    "tasks",
+                    "python",
+                    "development-discipline",
+                ],
+                "claimed_task_language_skills": ["python"],
+                "loaded_skills": ["tasks", "python", "development-discipline"],
+            },
+        )
+
+        assert response.context is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool_name", "arguments", "tool_output", "claimed_tasks"),
+        [
+            pytest.param(
+                "create_task",
+                {"title": "Unclaimed follow-up"},
+                {"success": True, "result": {"id": CLAIM_TASK_ID, "ref": "#43"}},
+                {},
+                id="create-without-claim",
+            ),
+            pytest.param(
+                "claim_task",
+                {"task_id": "#43"},
+                {
+                    "success": False,
+                    "error": "Task already claimed by another session",
+                    "code": "task_claim_conflict",
+                },
+                {"44444444-4444-4444-8444-444444440007": "#7"},
+                id="claim-conflict",
+            ),
+        ],
+    )
+    async def test_non_claim_results_stay_silent(
+        self,
+        db: HubDatabase,
+        tool_name: str,
+        arguments: dict[str, object],
+        tool_output: dict[str, object],
+        claimed_tasks: dict[str, str],
+    ) -> None:
+        event = _task_claim_event(tool_name, arguments, tool_output)
+
+        response = await self._engine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "claimed_tasks": claimed_tasks,
+                "claimed_task_required_skills": ["tasks", "python"],
+                "claimed_task_language_skills": ["python"],
+                "loaded_skills": [],
+            },
+        )
+
+        assert response.context is None
+
+
 class TestIsPlanFile:
     """Unit tests for is_plan_file helper."""
 
@@ -1947,9 +2120,9 @@ class TestWriteRouteParity:
             ('uv run python -c "print(1)"', False),
             ('uv run python3 -c "print(1)"', False),
             ('uv run --with rich python -c "print(1)"', False),
-            ('node -e "console.log(1)"', True),
-            ('node --eval "console.log(1)"', True),
-            ('ruby -e "puts 1"', True),
+            ('node -e "console.log(1)"', False),
+            ('node --eval "console.log(1)"', False),
+            ('ruby -e "puts 1"', False),
             ("git apply --check changes.patch", False),
             ("git -C /repo apply --check changes.patch", False),
             ("git apply --stat changes.patch", False),
@@ -2042,6 +2215,53 @@ class TestWriteRouteParity:
                 True,
             ),
             ('python3 -c "print(1)"', "execute", False, False),
+            (
+                "ruby -ryaml -e 'puts YAML.safe_load_file(\"~/.gobby/bootstrap.yaml\")'",
+                "execute",
+                False,
+                False,
+            ),
+            (
+                "uv run ruby -ryaml -e 'puts YAML.safe_load_file(\"config.yaml\")'",
+                "execute",
+                False,
+                False,
+            ),
+            (
+                "node -e \"console.log(require('fs').readFileSync('config.json'))\"",
+                "execute",
+                False,
+                False,
+            ),
+            (
+                "uv run node --eval \"console.log(require('fs').readFileSync('config.json'))\"",
+                "execute",
+                False,
+                False,
+            ),
+            ("ruby -e \"File.write('out.txt', 'x')\"", "write", True, True),
+            (
+                "node -e \"require('fs').writeFileSync('out.txt', 'x')\"",
+                "write",
+                True,
+                True,
+            ),
+            ("ruby -e \"File.open('out.txt', 'w') {{}}\"", "write", True, True),
+            ("ruby -e \"File.open('out.txt', 'a') {{}}\"", "write", True, True),
+            ("ruby - <<'RUBY'\nputs File.read('config.yaml')\nRUBY", "execute", False, False),
+            ("ruby - <<'RUBY'\nFile.write('out.txt', 'x')\nRUBY", "write", True, True),
+            (
+                "node - <<'NODE'\nconsole.log(require('fs').readFileSync('config.json'))\nNODE",
+                "execute",
+                False,
+                False,
+            ),
+            (
+                "node - <<'NODE'\nrequire('fs').writeFileSync('out.txt', 'x')\nNODE",
+                "write",
+                True,
+                True,
+            ),
             (
                 "python3 -c \"from pathlib import Path; Path('notes.md').replace('renamed.md')\"",
                 "write",

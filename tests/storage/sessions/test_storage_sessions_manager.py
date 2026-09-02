@@ -10,8 +10,8 @@ from unittest.mock import patch
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -32,9 +32,9 @@ def _storage_session_manager_cls() -> type[SessionManager]:
 
 
 @pytest.fixture
-def project_id(temp_db: HubDatabase) -> str:
+def project_id(isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase) -> str:
     """Create a project and return its ID."""
-    return LocalProjectManager(temp_db).create(name="test-project", repo_path="/tmp/test").id
+    return isolated_checkout_factory(temp_db, "test-project").project.id
 
 
 def test_storage_package_exports_internal_session_manager() -> None:

@@ -5,17 +5,20 @@ from threading import Barrier
 
 import pytest
 
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
+
 pytestmark = pytest.mark.unit
 
 VALIDATION_CRITERIA = "Storage fixture task; behavior asserted by the test."
 
 
-def test_build_history_records_runs_and_events_in_newest_order(temp_db) -> None:
+def test_build_history_records_runs_and_events_in_newest_order(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db
+) -> None:
     from gobby.storage.build_history import BuildHistoryStorage
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
 
-    project = LocalProjectManager(temp_db).create("build-history", repo_path="/tmp/history")
+    project = isolated_checkout_factory(temp_db, "build-history").project
     task = LocalTaskManager(temp_db).create_task(project.id, "Build root", task_type="epic")
     history = BuildHistoryStorage(temp_db)
 
@@ -73,12 +76,13 @@ def test_build_history_get_run_returns_none_for_missing_run(temp_db) -> None:
     assert BuildHistoryStorage(temp_db).get_run("00000000-0000-0000-0000-0000000000ff") is None
 
 
-def test_build_history_start_and_finish_updates_root_and_status(temp_db) -> None:
+def test_build_history_start_and_finish_updates_root_and_status(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db
+) -> None:
     from gobby.storage.build_history import BuildHistoryStorage
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
 
-    project = LocalProjectManager(temp_db).create("build-history-finish", repo_path="/tmp/history")
+    project = isolated_checkout_factory(temp_db, "build-history-finish").project
     task = LocalTaskManager(temp_db).create_task(
         project.id, "Build root", validation_criteria=VALIDATION_CRITERIA
     )
@@ -98,14 +102,12 @@ def test_build_history_start_and_finish_updates_root_and_status(temp_db) -> None
     assert history.latest_run_for_input(project.id, "plan.md").id == run.id
 
 
-def test_update_run_context_merges_concurrent_summary_updates(temp_db, monkeypatch) -> None:
+def test_update_run_context_merges_concurrent_summary_updates(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db, monkeypatch
+) -> None:
     from gobby.storage.build_history import BuildHistoryStorage
-    from gobby.storage.projects import LocalProjectManager
 
-    project = LocalProjectManager(temp_db).create(
-        "build-history-concurrent-context",
-        repo_path="/tmp/history-concurrent-context",
-    )
+    project = isolated_checkout_factory(temp_db, "build-history-concurrent-context").project
     history = BuildHistoryStorage(temp_db)
     run = history.start_run(
         project_id=project.id,
@@ -163,20 +165,15 @@ def test_update_run_context_merges_concurrent_summary_updates(temp_db, monkeypat
     }
 
 
-def test_build_history_finds_latest_coordinated_ancestor_run(temp_db) -> None:
+def test_build_history_finds_latest_coordinated_ancestor_run(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db
+) -> None:
     """Latest coordinated run lookup should walk task ancestors within the project."""
     from gobby.storage.build_history import BuildHistoryStorage
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
 
-    project = LocalProjectManager(temp_db).create(
-        "build-history-coordinator",
-        repo_path="/tmp/history-coordinator",
-    )
-    other_project = LocalProjectManager(temp_db).create(
-        "other-build-history-coordinator",
-        repo_path="/tmp/other-history-coordinator",
-    )
+    project = isolated_checkout_factory(temp_db, "build-history-coordinator").project
+    other_project = isolated_checkout_factory(temp_db, "other-build-history-coordinator").project
     tasks = LocalTaskManager(temp_db)
     root = tasks.create_task(project.id, "Build root", task_type="epic")
     child = tasks.create_task(

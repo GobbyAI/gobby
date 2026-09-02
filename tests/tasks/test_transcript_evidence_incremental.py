@@ -165,6 +165,39 @@ async def test_repeat_derivation_of_an_unchanged_file_parses_nothing(
     assert second == first
 
 
+@pytest.mark.asyncio
+async def test_supplemental_transcripts_bypass_primary_resume_snapshot(
+    tmp_path: Path, parse_counts: list[int]
+) -> None:
+    transcript = tmp_path / "transcript-evidence-claude-1.jsonl"
+    subagent = transcript.with_suffix("") / "subagents" / "agent-worker.jsonl"
+    subagent.parent.mkdir(parents=True)
+    primary_records = _claude_tool_pair(
+        command="uv run ruff check src/",
+        call_id="primary-run",
+        start=BASE_TIME,
+        result={"exit_code": 0, "stdout": ""},
+    )
+    subagent_records = _claude_tool_pair(
+        command="uv run pytest tests/tasks/test_a.py",
+        call_id="subagent-run",
+        start=BASE_TIME + timedelta(seconds=10),
+        result={"exit_code": 0, "stdout": "passed"},
+    )
+    _write_jsonl(transcript, primary_records)
+    _write_jsonl(subagent, subagent_records)
+    session = _session("claude", transcript)
+
+    first = await _derive(session, BASE_TIME, set(), tmp_path)
+    second = await _derive(session, BASE_TIME, set(), tmp_path)
+
+    assert parse_counts == [len(primary_records), len(subagent_records), 0, len(subagent_records)]
+    assert second == first
+    snapshot = transcript_evidence._load_snapshot(session.id)
+    assert snapshot is not None
+    assert snapshot.transcript_path == str(transcript)
+
+
 async def test_incremental_derivation_matches_a_full_window_parse(
     tmp_path: Path, parse_counts: list[int]
 ) -> None:

@@ -8,8 +8,8 @@ from gobby.review_learning.file_paths import path_tag
 from gobby.review_learning.fingerprint import fingerprint_tag, occurrence_tag
 from gobby.review_learning.service import ReviewLearningService
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
 
@@ -31,13 +31,11 @@ def _finding() -> dict[str, str]:
 
 @pytest.mark.asyncio
 async def test_storage_backed_dedupe_ignores_large_unrelated_window_without_tasks(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    project = LocalProjectManager(temp_db).create(
-        name="review-learning-storage-contract",
-        repo_path="/tmp/review-learning-storage-contract",
-    )
+    project = isolated_checkout_factory(temp_db, "review-learning-storage-contract").project
     monkeypatch.setattr(
         "gobby.review_learning.service.get_project_context",
         lambda: {"id": project.id},

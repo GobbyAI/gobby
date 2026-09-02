@@ -18,6 +18,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree, WorktreeStatus
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 
 class WorktreeSetup(TypedDict):
@@ -68,13 +69,13 @@ def worktree_manager(temp_db: HubDatabase) -> LocalWorktreeManager:
 
 
 @pytest.fixture
-def project(project_manager: LocalProjectManager) -> Project:
+def project(
+    isolated_checkout_factory: IsolatedCheckoutFactory, project_manager: LocalProjectManager
+) -> Project:
     """Create a test project."""
-    return project_manager.create(
-        name="test-project",
-        repo_path="/tmp/test-repo",
-        github_url="https://github.com/test/test-project",
-    )
+    return isolated_checkout_factory(
+        project_manager.db, "test-project", github_url="https://github.com/test/test-project"
+    ).project
 
 
 @pytest.fixture
@@ -237,6 +238,7 @@ class TestWorktreeListing:
     @pytest.fixture
     def setup_worktrees(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         worktree_manager: LocalWorktreeManager,
         project_manager: LocalProjectManager,
         project: Project,
@@ -244,10 +246,7 @@ class TestWorktreeListing:
     ) -> WorktreeSetup:
         """Create a variety of worktrees for listing tests."""
         # Create another project
-        project2 = project_manager.create(
-            name="other-project",
-            repo_path="/tmp/other-project",
-        )
+        project2 = isolated_checkout_factory(project_manager.db, "other-project").project
 
         worktrees = []
 
@@ -355,6 +354,7 @@ class TestWorktreeStatusTransitions:
 
     def test_claim_and_release(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         worktree_manager: LocalWorktreeManager,
         project: Project,
         session_manager: SessionManager,
@@ -362,10 +362,7 @@ class TestWorktreeStatusTransitions:
     ) -> None:
         """Test claiming and releasing a worktree."""
         # Create a fresh project and session for this test
-        proj = project_manager.create(
-            name="claim-test-project",
-            repo_path="/tmp/claim-test",
-        )
+        proj = isolated_checkout_factory(project_manager.db, "claim-test-project").project
         sess = session_manager.register(
             machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
@@ -462,6 +459,7 @@ class TestWorktreeStatusTransitions:
 
     def test_full_lifecycle(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         worktree_manager: LocalWorktreeManager,
         project: Project,
         session_manager: SessionManager,
@@ -469,10 +467,7 @@ class TestWorktreeStatusTransitions:
     ) -> None:
         """Test complete worktree lifecycle: active → claimed → released → merged."""
         # Create a fresh project and session for this test
-        proj = project_manager.create(
-            name="lifecycle-project",
-            repo_path="/tmp/lifecycle",
-        )
+        proj = isolated_checkout_factory(project_manager.db, "lifecycle-project").project
         sess = session_manager.register(
             machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
@@ -595,15 +590,15 @@ class TestStaleWorktreeDetection:
     """Integration tests for stale worktree detection and cleanup."""
 
     def test_find_stale_worktrees(
-        self, temp_db: HubDatabase, project_manager: LocalProjectManager
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        project_manager: LocalProjectManager,
     ) -> None:
         """Find worktrees that haven't been updated recently."""
         # Need fresh managers to manipulate timestamps
         wm = LocalWorktreeManager(temp_db)
-        proj = project_manager.create(
-            name="stale-project",
-            repo_path="/tmp/stale",
-        )
+        proj = isolated_checkout_factory(project_manager.db, "stale-project").project
 
         # Create worktrees
         wm.create(
@@ -632,14 +627,14 @@ class TestStaleWorktreeDetection:
         assert stale[0].id == old.id
 
     def test_find_stale_custom_hours(
-        self, temp_db: HubDatabase, project_manager: LocalProjectManager
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        project_manager: LocalProjectManager,
     ) -> None:
         """Find stale worktrees with custom hours threshold."""
         wm = LocalWorktreeManager(temp_db)
-        proj = project_manager.create(
-            name="stale-custom-project",
-            repo_path="/tmp/stale-custom",
-        )
+        proj = isolated_checkout_factory(project_manager.db, "stale-custom-project").project
 
         worktree = wm.create(
             project_id=proj.id,
@@ -663,14 +658,14 @@ class TestStaleWorktreeDetection:
         assert len(stale_6) == 1
 
     def test_cleanup_stale_dry_run(
-        self, temp_db: HubDatabase, project_manager: LocalProjectManager
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        project_manager: LocalProjectManager,
     ) -> None:
         """Cleanup stale in dry run mode doesn't modify worktrees."""
         wm = LocalWorktreeManager(temp_db)
-        proj = project_manager.create(
-            name="cleanup-dry-project",
-            repo_path="/tmp/cleanup-dry",
-        )
+        proj = isolated_checkout_factory(project_manager.db, "cleanup-dry-project").project
 
         worktree = wm.create(
             project_id=proj.id,
@@ -695,14 +690,14 @@ class TestStaleWorktreeDetection:
         assert retrieved.status == WorktreeStatus.ACTIVE.value
 
     def test_cleanup_stale_marks_abandoned(
-        self, temp_db: HubDatabase, project_manager: LocalProjectManager
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        project_manager: LocalProjectManager,
     ) -> None:
         """Cleanup stale marks worktrees as abandoned."""
         wm = LocalWorktreeManager(temp_db)
-        proj = project_manager.create(
-            name="cleanup-abandon-project",
-            repo_path="/tmp/cleanup-abandon",
-        )
+        proj = isolated_checkout_factory(project_manager.db, "cleanup-abandon-project").project
 
         worktree = wm.create(
             project_id=proj.id,

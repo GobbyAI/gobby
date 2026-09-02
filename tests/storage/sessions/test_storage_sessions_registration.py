@@ -13,7 +13,6 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager, system_session_external_id, system_session_id
 from gobby.storage.sessions import _crud as session_crud
@@ -27,6 +26,7 @@ from gobby.storage.sessions._title_defaults import (
 )
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
 FOREIGN_MACHINE_ID = "20000000-0000-4000-8000-000000000002"
@@ -88,20 +88,16 @@ def test_registration_requires_local_machine_ownership(
 
 
 def test_registration_blocks_foreign_owner_across_projects(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     session_manager: SessionManager,
     sample_project: dict,
 ) -> None:
     """The ownership scan is project-agnostic: register may recover a
     same-identity session across projects, so a foreign owner in another
     project must block before that reuse path can run."""
-    other_project_id = (
-        LocalProjectManager(session_manager.db)
-        .create(
-            name="foreign-owner-project",
-            repo_path="/tmp/foreign-owner-project",
-        )
-        .id
-    )
+    other_project_id = isolated_checkout_factory(
+        session_manager.db, "foreign-owner-project"
+    ).project.id
 
     with patch("gobby.utils.machine_id.get_machine_id", return_value=FOREIGN_MACHINE_ID):
         foreign = session_manager.register(
@@ -1176,13 +1172,13 @@ class TestSessionManagerRegistration:
 
     def test_register_cross_project_recovery_allocates_destination_seq_num(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
-        destination = LocalProjectManager(session_manager.db).create(
-            name="registration-recovery-destination",
-            repo_path="/tmp/registration-recovery-destination",
-        )
+        destination = isolated_checkout_factory(
+            session_manager.db, "registration-recovery-destination"
+        ).project
         original = session_manager.register(
             external_id="cross-project-recovery",
             machine_id=LOCAL_MACHINE_ID,

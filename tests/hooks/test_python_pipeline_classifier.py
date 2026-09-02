@@ -210,6 +210,12 @@ asyncio.run(main())
         "import sys; print('progress', file=sys.stderr)",
         "from datetime import datetime; print(datetime.now())",
         "import json, sys; payload = json.load(sys.stdin); print(payload.get('name'))",
+        (
+            "from pathlib import Path; "
+            "path = Path('~/.gobby/bootstrap.yaml').expanduser().resolve(); "
+            "print(path.exists(), path.is_file(), path.is_dir(), path.stat(), path.read_text(), "
+            "path.read_bytes(), Path.home(), list(Path.home().iterdir()))"
+        ),
         _XLSX_WORKBOOK_DIAGNOSTIC,
     ],
 )

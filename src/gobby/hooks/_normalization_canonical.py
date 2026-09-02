@@ -8,6 +8,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.hooks._inline_interpreter_classifier import (
+    _classify_inline_interpreter,
+    _classify_interpreter_source,
+    _InlineProgramClassification,
+)
 from gobby.hooks._normalization_operands import (
     _curl_output_paths,
     _find_has_mutation_predicate,
@@ -128,9 +133,9 @@ class _ShellSegmentMetadata:
     neutral_setup: bool = False
     pure_gcode_navigation: bool = False
     read_only_pipeline_filter: bool = False
-    # A python program fed via stdin (heredoc); the body may prove it read-only
-    # or name the literal paths it writes, rebased against this segment's cwd.
-    stdin_python_program: bool = False
+    # An interpreter program fed via stdin (heredoc); its body may prove it
+    # read-only or mutating. Python also reports literal write targets.
+    stdin_program_interpreter: str | None = None
     cwd: str | None = None
 
 
@@ -189,11 +194,12 @@ def _is_read_only_pipeline_stage(tokens: list[ShellToken], parts: list[str]) -> 
     return cmd in _GCODE_PIPELINE_READ_ONLY_FILTERS or _is_read_only_python_pipeline(parts)
 
 
-def _stdin_program_is_python(parts: list[str]) -> bool:
+def _stdin_program_interpreter(parts: list[str]) -> str | None:
     interpreter_parts = _inline_interpreter_parts(parts)
     if not interpreter_parts:
-        return False
-    return shell_command_name(interpreter_parts[0]) in {"python", "python3"}
+        return None
+    interpreter = shell_command_name(interpreter_parts[0])
+    return interpreter if interpreter in {"node", "python", "python3", "ruby"} else None
 
 
 def _interpreter_reads_program_from_stdin(parts: list[str]) -> bool:
@@ -204,7 +210,7 @@ def _interpreter_reads_program_from_stdin(parts: list[str]) -> bool:
     if interpreter not in {"node", "python", "python3", "ruby"}:
         return False
     args = interpreter_parts[1:]
-    if any(flag in args for flag in {"-c", "-e", "--eval", "-m"}):
+    if any(flag in {"-c", "-e", "--eval", "-m"} or flag.startswith("--eval=") for flag in args):
         return False
     return "-" in args or not any(not arg.startswith("-") for arg in args)
 
@@ -458,16 +464,25 @@ def _classify_stdin_python(
     metadata: list[_ShellSegmentMetadata],
     heredoc_bodies: list[str],
 ) -> list[_ShellSegmentMetadata]:
-    """Reclassify a lone Python heredoc from its body evidence.
+    """Reclassify a lone interpreter heredoc from its body evidence.
 
-    A proven mutation carries its literal targets as write paths; ambiguous
-    shell shapes keep their conservative unscoped write classification.
+    Python mutations carry literal targets as write paths. Ambiguous shell
+    shapes keep their conservative unscoped write classification.
     """
-    flagged = [item for item in metadata if item.stdin_python_program]
+    flagged = [item for item in metadata if item.stdin_program_interpreter]
     if len(flagged) != 1 or len(heredoc_bodies) != 1:
         return metadata
-    classification, targets = _classify_python_source_with_targets(heredoc_bodies[0])
-    if classification is _PythonExecutionClassification.MUTATION:
+    interpreter = flagged[0].stdin_program_interpreter
+    targets: tuple[str, ...] = ()
+    if interpreter in {"python", "python3"}:
+        python_classification, targets = _classify_python_source_with_targets(heredoc_bodies[0])
+        is_mutation = python_classification is _PythonExecutionClassification.MUTATION
+        is_read_only = python_classification is _PythonExecutionClassification.READ_ONLY
+    else:
+        inline_classification = _classify_interpreter_source(interpreter or "", heredoc_bodies[0])
+        is_mutation = inline_classification is _InlineProgramClassification.MUTATION
+        is_read_only = inline_classification is _InlineProgramClassification.READ_ONLY
+    if is_mutation:
         replacement = _ShellSegmentMetadata(
             "write",
             paths=tuple(_rebase_shell_paths(list(targets), flagged[0].cwd)),
@@ -476,11 +491,9 @@ def _classify_stdin_python(
     else:
         replacement = _ShellSegmentMetadata(
             "execute",
-            confidence=(
-                "high" if classification is _PythonExecutionClassification.READ_ONLY else "low"
-            ),
+            confidence="high" if is_read_only else "low",
         )
-    return [replacement if item.stdin_python_program else item for item in metadata]
+    return [replacement if item.stdin_program_interpreter else item for item in metadata]
 
 
 def _classify_shell_segment(
@@ -543,7 +556,7 @@ def _classify_shell_segment(
             base_metadata = _ShellSegmentMetadata(
                 "write",
                 repo_mutation=True,
-                stdin_python_program=_stdin_program_is_python(stdin_parts),
+                stdin_program_interpreter=_stdin_program_interpreter(stdin_parts),
                 cwd=cwd,
             )
         base_paths = list(base_metadata.paths)
@@ -564,7 +577,7 @@ def _classify_shell_segment(
             return _ShellSegmentMetadata(
                 "write",
                 repo_mutation=True,
-                stdin_python_program=_stdin_program_is_python(stdin_parts),
+                stdin_program_interpreter=_stdin_program_interpreter(stdin_parts),
                 cwd=cwd,
             )
         return _ShellSegmentMetadata("execute")
@@ -675,20 +688,35 @@ def _classify_shell_segment_without_redirection(
         interpreter = shell_command_name(interpreter_parts[0])
         interpreter_args = interpreter_parts[1:]
         if interpreter in {"python", "python3"} and "-c" in interpreter_args:
-            classification, targets = _classify_python_pipeline_with_targets(parts)
-            if classification is _PythonExecutionClassification.READ_ONLY:
+            python_classification, targets = _classify_python_pipeline_with_targets(parts)
+            if python_classification is _PythonExecutionClassification.READ_ONLY:
                 return _ShellSegmentMetadata("execute")
-            if classification is _PythonExecutionClassification.INDETERMINATE:
+            if python_classification is _PythonExecutionClassification.INDETERMINATE:
                 return _ShellSegmentMetadata("execute", confidence="low")
             return _ShellSegmentMetadata(
                 "write",
                 paths=tuple(_rebase_shell_paths(list(targets), cwd)),
                 repo_mutation=True,
             )
-        if (
-            interpreter == "node" and any(flag in interpreter_args for flag in {"-e", "--eval"})
-        ) or (interpreter == "ruby" and "-e" in interpreter_args):
-            return _ShellSegmentMetadata("write", repo_mutation=True)
+        has_inline_program = (interpreter == "ruby" and "-e" in interpreter_args) or (
+            interpreter == "node"
+            and any(
+                argument in {"-e", "--eval"} or argument.startswith("--eval=")
+                for argument in interpreter_args
+            )
+        )
+        if has_inline_program:
+            inline_classification = _classify_inline_interpreter(interpreter, interpreter_args)
+            if inline_classification is _InlineProgramClassification.MUTATION:
+                return _ShellSegmentMetadata("write", repo_mutation=True)
+            return _ShellSegmentMetadata(
+                "execute",
+                confidence=(
+                    "high"
+                    if inline_classification is _InlineProgramClassification.READ_ONLY
+                    else "low"
+                ),
+            )
 
     if cmd == "curl":
         writes_file, paths = _curl_output_paths(parts)

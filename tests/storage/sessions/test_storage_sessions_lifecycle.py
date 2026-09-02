@@ -25,6 +25,7 @@ from gobby.terminal_ownership import (
     terminal_session_identity,
 )
 from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.fixtures.postgres import TEST_USER_ID
 from tests.workflows.step_instance_fixtures import make_step_instance
 
@@ -1430,12 +1431,14 @@ class TestSessionManagerLifecycle:
 
     def test_find_by_terminal_identity_is_global_and_filters_ineligible_statuses(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         session_manager: SessionManager,
         sample_project: dict[str, str],
         tmp_path: Path,
     ) -> None:
-        project_manager = LocalProjectManager(session_manager.db)
-        other_project = project_manager.create("other-terminal-project", str(tmp_path))
+        other_project = isolated_checkout_factory(
+            session_manager.db, "other-terminal-project"
+        ).project
         terminal_context = {
             "tmux_pane": "%226",
             "tmux_socket_path": "/tmp/tmux-501/gobby",
@@ -2012,11 +2015,12 @@ class TestSessionManagerLifecycle:
 
     def test_renumber_project_sessions_dry_run_leaves_rows_unchanged(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         session_manager: SessionManager,
         temp_db: HubDatabase,
     ) -> None:
         """Dry-run reports dense refs without mutating rows."""
-        project = LocalProjectManager(temp_db).create(name="renumber-dry", repo_path="/tmp/dry")
+        project = isolated_checkout_factory(temp_db, "renumber-dry").project
         first = session_manager.register(
             external_id="dry-1",
             machine_id="20000000-0000-4000-8000-000000000001",
@@ -2056,13 +2060,14 @@ class TestSessionManagerLifecycle:
 
     def test_renumber_project_sessions_apply_is_project_scoped_and_tails_deleted(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         session_manager: SessionManager,
         temp_db: HubDatabase,
     ) -> None:
         """Apply compacts one project and moves retained deleted rows after visible rows."""
         project_manager = LocalProjectManager(temp_db)
-        project = project_manager.create(name="renumber-apply", repo_path="/tmp/apply")
-        other_project = project_manager.create(name="renumber-other", repo_path="/tmp/other")
+        project = isolated_checkout_factory(project_manager.db, "renumber-apply").project
+        other_project = isolated_checkout_factory(project_manager.db, "renumber-other").project
 
         visible_first = session_manager.register(
             external_id="apply-1",

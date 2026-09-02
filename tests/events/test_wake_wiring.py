@@ -236,11 +236,15 @@ class TestRegistryWakeCallback:
         )
 
         assert wake_mock.await_count == 2
+        wake_payload = {
+            "status": "completed",
+            "completion_id": "796ce97e-38ee-508a-bdc0-f3ce2dded342",
+        }
         wake_mock.assert_any_await(
-            "12313230-63a9-5fd2-bdbb-f793325d2c16", "Pipeline done", {"status": "completed"}
+            "12313230-63a9-5fd2-bdbb-f793325d2c16", "Pipeline done", wake_payload
         )
         wake_mock.assert_any_await(
-            "e3c98b06-11a5-5e52-9b82-b47a220be090", "Pipeline done", {"status": "completed"}
+            "e3c98b06-11a5-5e52-9b82-b47a220be090", "Pipeline done", wake_payload
         )
 
     @pytest.mark.asyncio
