@@ -94,11 +94,14 @@ def test_line_leading_references_support_markdown_prefixes() -> None:
 
 def test_inline_code_examples_are_not_artifact_references() -> None:
     criteria = (
-        "Examples include `test: tests/test_feature.py::test_feature` and a phrase like "
-        "file: docs/evidence.md."
+        "The schema describes `test: path::test_symbol`, examples use "
+        "`test: tests/x.py::test_y`, and docs mention `file: docs/foo.md`.\n"
+        "- test: `tests/a/test_b.py::test_c`"
     )
 
-    assert artifacts_module.extract_artifact_references(criteria, "test") == ()
+    assert artifacts_module.extract_artifact_references(criteria, "test") == (
+        "tests/a/test_b.py::test_c",
+    )
     assert artifacts_module.extract_artifact_references(criteria, "file") == ()
 
 

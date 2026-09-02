@@ -8,10 +8,13 @@ import sys
 import zipfile
 from pathlib import Path
 
+import pytest
+
 from gobby.install.manifest import (
     build_bundled_content_manifest,
     check_committed_bundled_content_manifest,
     check_linked_committed_bundled_manifest,
+    main,
     write_bundled_content_manifest,
 )
 
@@ -33,6 +36,54 @@ def test_current_committed_bundled_content_manifest_matches_git_tree() -> None:
     assert result.ok is True
     assert result.errors == ()
     assert result.expected_file_count > 0
+
+
+def test_main_write_round_trips_to_committed_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    install_dir = tmp_path / "src" / "gobby" / "install"
+    shared_dir = install_dir / "shared"
+    shared_dir.mkdir(parents=True)
+    (shared_dir / "rule.yaml").write_text("enabled: true\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["--write"]) == 0
+    manifest_path = install_dir / "bundled_content_manifest.json"
+    assert capsys.readouterr().out == f"{manifest_path}\n"
+
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "tests@gobby.local")
+    _git(tmp_path, "config", "user.name", "Gobby Tests")
+    _git(tmp_path, "add", "src/gobby/install")
+    _git(tmp_path, "commit", "-qm", "initial manifest")
+    assert check_committed_bundled_content_manifest(tmp_path).ok is True
+
+
+def test_main_write_treeish_uses_committed_shared_files(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    install_dir = tmp_path / "src" / "gobby" / "install"
+    shared_dir = install_dir / "shared"
+    shared_dir.mkdir(parents=True)
+    rule = shared_dir / "rule.yaml"
+    rule.write_text("enabled: true\n", encoding="utf-8")
+    manifest_path = write_bundled_content_manifest(install_dir)
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "tests@gobby.local")
+    _git(tmp_path, "config", "user.name", "Gobby Tests")
+    _git(tmp_path, "add", "src/gobby/install")
+    _git(tmp_path, "commit", "-qm", "initial manifest")
+    expected = manifest_path.read_bytes()
+
+    rule.write_text("enabled: false\n", encoding="utf-8")
+    (shared_dir / "foreign.yaml").write_text("foreign: true\n", encoding="utf-8")
+    assert main(["--repo-root", str(tmp_path), "--write", "--treeish", "HEAD"]) == 0
+
+    assert capsys.readouterr().out == f"{manifest_path}\n"
+    assert manifest_path.read_bytes() == expected
 
 
 def test_committed_checker_ignores_worktree_and_scopes_linked_commits(tmp_path: Path) -> None:

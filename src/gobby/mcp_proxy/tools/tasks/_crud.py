@@ -17,6 +17,10 @@ from gobby.mcp_proxy.tools.tasks._formatters import (
 )
 from gobby.mcp_proxy.tools.tasks._live_session_label import live_session_label_change_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
+from gobby.mcp_proxy.tools.tasks._task_scope import (
+    collect_declared_task_targets,
+    find_targets_not_found,
+)
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.task_dependencies import DependencyCycleError
@@ -31,6 +35,36 @@ logger = logging.getLogger(__name__)
 TASK_CATEGORY_ENUM = tuple(sorted(VALID_CATEGORIES))
 IMPLEMENTATION_DOMAIN_ENUM = tuple(sorted(IMPLEMENTATION_DOMAINS))
 TASK_TYPE_ENUM = TASK_TYPE_CHOICES
+
+
+def _targets_not_found_for_request(
+    ctx: RegistryContext,
+    *,
+    project_id: str,
+    session_id: str | None,
+    description: str | None,
+    affected_files: list[str] | None,
+) -> list[str]:
+    """Best-effort advisory for declared task paths absent from the checkout."""
+    targets = collect_declared_task_targets(description, affected_files)
+    if not targets:
+        return []
+    try:
+        machine_id = ctx.checkout_machine_id(project_id, session_id)
+        repo_path = ctx.get_project_repo_path(project_id, machine_id)
+    except Exception:
+        logger.debug(
+            "Skipping declared target existence check for project %s",
+            project_id,
+            exc_info=True,
+        )
+        return []
+    if not repo_path:
+        return []
+    missing = find_targets_not_found(repo_path, targets)
+    if missing:
+        logger.debug("Declared task targets not found under %s: %s", repo_path, missing)
+    return missing
 
 
 def _task_invariant_error(
@@ -323,6 +357,16 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         if claim_warning:
             result["warning"] = claim_warning
+
+        targets_not_found = _targets_not_found_for_request(
+            ctx,
+            project_id=project_id,
+            session_id=resolved_session_id,
+            description=description,
+            affected_files=affected_files,
+        )
+        if targets_not_found:
+            result["targets_not_found"] = targets_not_found
 
         # Include dependency errors if any
         if dependency_errors:
@@ -621,7 +665,20 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return {"error": str(e)}
         if not task:
             return {"error": f"Task {task_id} not found"}
-        return {}
+        result: dict[str, Any] = {}
+        if description is not None or affected_files is not None:
+            from gobby.utils.session_context import get_current_session_id
+
+            targets_not_found = _targets_not_found_for_request(
+                ctx,
+                project_id=current_task.project_id,
+                session_id=get_current_session_id(),
+                description=description,
+                affected_files=affected_files,
+            )
+            if targets_not_found:
+                result["targets_not_found"] = targets_not_found
+        return result
 
     registry.register(
         name="update_task",
