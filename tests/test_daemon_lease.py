@@ -71,19 +71,18 @@ def test_lease_keying_uses_deployment_advisory_key() -> None:
 
 @pytest.mark.unit
 def test_baseline_seals_deployment_runtime_and_interactive_ciphertext() -> None:
-    baseline = _BASELINE_SQL.read_text(encoding="utf-8")
-    assert "CREATE TABLE IF NOT EXISTS deployment_runtime" in baseline
-    assert "fencing_epoch BIGINT NOT NULL DEFAULT 0" in baseline
-    assert "grant_signing_secret TEXT NOT NULL" in baseline
-    assert "CREATE TABLE IF NOT EXISTS gobby_agent_auth.interactive_credential_material" in baseline
-    assert "ciphertext" in baseline
-    assert "aad_identity" in baseline
+    baseline = _BASELINE_SQL.read_text(encoding="utf-8").lower()
+    assert "create table deployment_runtime" in baseline
+    assert "fencing_epoch bigint default 0 not null" in baseline
+    assert "grant_signing_secret text not null" in baseline
+    table_declaration = "create table gobby_agent_auth.interactive_credential_material"
+    assert table_declaration in baseline
     assert "issue_or_reuse_interactive_principal" in baseline
-    table_start = baseline.index(
-        "CREATE TABLE IF NOT EXISTS gobby_agent_auth.interactive_credential_material"
-    )
+    table_start = baseline.index(table_declaration)
     table_end = baseline.index(");", table_start) + 2
-    material = baseline[table_start:table_end].lower()
+    material = baseline[table_start:table_end]
+    assert "ciphertext text not null" in material
+    assert "aad_identity text not null" in material
     for forbidden in ("dsn", "password", "connection_uri", "plaintext"):
         assert forbidden not in material
 
