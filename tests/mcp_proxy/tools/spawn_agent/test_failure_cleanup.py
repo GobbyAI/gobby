@@ -173,9 +173,6 @@ async def test_start_raising_cleans_up_and_reports_error() -> None:
         "child_session_id": "child-1",
     }
     cleanup.assert_awaited_once()
-    assert cleanup.await_args is not None
-    assert cleanup.await_args.kwargs["pid"] == 4242
-    assert cleanup.await_args.kwargs["tmux_session_name"] == "tmux-1"
     runner.run_storage.get.assert_not_called()
     assert cleanup.await_args is not None
     assert cleanup.await_args.kwargs["pid"] == 4242

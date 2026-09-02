@@ -10,7 +10,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.hooks.effect_deadline import BlockingEffectDeadline
+from gobby.hooks.effect_deadline import (
+    BlockingEffectDeadline,
+    remaining_blocking_effect_seconds,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -123,7 +126,7 @@ async def test_same_session_evaluations_are_serialized(tmp_path) -> None:
 async def test_same_session_lock_wait_extends_blocking_effect_deadline(tmp_path) -> None:
     first_entered = asyncio.Event()
     release_first = asyncio.Event()
-    observed_expiry: list[float] = []
+    observed_remaining: list[float] = []
 
     async def evaluate(
         *,
@@ -138,8 +141,9 @@ async def test_same_session_lock_wait_extends_blocking_effect_deadline(tmp_path)
             first_entered.set()
             await release_first.wait()
         else:
-            assert blocking_deadline is not None
-            observed_expiry.append(blocking_deadline.expires_at)
+            observed_remaining.append(
+                remaining_blocking_effect_seconds(blocking_deadline, maximum=1.0)
+            )
         return HookResponse(decision="allow")
 
     handler = _handler_with_fake_engine(evaluate)
