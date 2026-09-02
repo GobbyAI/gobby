@@ -7,7 +7,7 @@ import pytest
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.agents.tmux.text_injection import TmuxTextInjectionTimeout
-from gobby.mcp_proxy.tools.sessions._terminal_tmux import _send_tmux_keys
+from gobby.terminals.pane_io import TmuxPaneIO
 
 
 def _enter_timeout() -> TmuxTextInjectionTimeout:
@@ -61,19 +61,10 @@ async def test_double_enter_timeout_returns_false_with_caller_diagnostics(
     monkeypatch.setattr("gobby.agents.tmux.text_injection.asyncio.sleep", sleep)
 
     with caplog.at_level(logging.WARNING):
-        ok, reason = await _send_tmux_keys(
-            TmuxSessionManager(),
-            "%12",
-            "/compact\n",
-            "#11144",
-            literal=True,
-            action="sending compaction command",
-        )
+        ok, reason = await TmuxPaneIO(TmuxSessionManager(), "%12").type_text("/compact\n")
 
     assert ok is False
-    assert reason == "tmux send-keys failed for session #11144 while sending compaction command"
+    assert reason == "tmux send-keys returned false while typing text to %12"
     paste.assert_awaited_once()
     assert enter.await_count == 2
-    assert "sending compaction command" in caplog.text
     assert "%12" in caplog.text
-    assert "#11144" in caplog.text

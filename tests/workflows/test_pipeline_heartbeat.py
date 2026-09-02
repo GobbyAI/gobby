@@ -718,7 +718,7 @@ async def test_interactive_session_task_not_recovered(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("agent_depth", [0, 1])
-async def test_handoff_ready_session_task_not_recovered(
+async def test_awaiting_handoff_session_task_not_recovered(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
     temp_db: HubDatabase,
@@ -727,7 +727,7 @@ async def test_handoff_ready_session_task_not_recovered(
     """A handoff-ready owner retains its in-progress task claim."""
     _seed_db(temp_db)
     temp_db.execute(
-        "UPDATE sessions SET status = 'handoff_ready', agent_depth = %s WHERE id = %s",
+        "UPDATE sessions SET status = 'awaiting_handoff', agent_depth = %s WHERE id = %s",
         (agent_depth, SESSION_ID),
     )
     task_id = _create_in_progress_task(task_manager, claimed_by_session_id=SESSION_ID)

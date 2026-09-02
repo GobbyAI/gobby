@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from typing import cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.runner_init.orchestration import _send_tmux_session_wake
 from gobby.storage.terminals import Terminal
+from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.runtime import Delivered, IndeterminateWrite
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.terminals.fakes import (
@@ -27,7 +28,7 @@ WAKE_SESSION_ID = "9264a39c-68db-5eed-917c-6f7babb8e6b1"
 # pane in it, which is exactly what used to end the wake as `no_tmux_pane`.
 NATIVE_TERMINAL_CONTEXT = {"parent_pid": 4242, "term_program": "gterm"}
 WAKE_SEQUENCE = [
-    ("key", "escape"),
+    *(("key", key) for key in composer_clear_sequence(None)),
     ("text", CONTINUE_WAKE_MESSAGE),
     ("key", "enter"),
 ]
@@ -137,7 +138,8 @@ async def test_interactive_session_without_a_managed_row_still_uses_the_tmux_pan
         CONTINUE_WAKE_MESSAGE,
         "/tmp/s",
         submit=True,
-        escape_before_submit=True,
+        clear_before_submit=True,
+        cli_source=ANY,
     )
     managed_sender.assert_not_awaited()
 

@@ -168,7 +168,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
 
                 Args:
                     project_id: Filter by project ID
-                    status: Filter by status (active, paused, expired, archived, handoff_ready)
+                    status: Filter by status (active, paused, expired, archived, awaiting_handoff)
         source: Filter by CLI source (claude, grok, qwen, codex, droid, agy)
                     machine_id: Filter by client machine id
                     limit: Max results (default 20)

@@ -272,11 +272,11 @@ class TestPaneOwnershipLifecycle:
         assert decision.validated_session_ids == frozenset({"outer", "inner"})
 
     @pytest.mark.asyncio
-    async def test_handoff_ready_ownerless_row_is_preserved(
+    async def test_awaiting_handoff_ownerless_row_is_preserved(
         self,
         monitor: SessionLivenessMonitor,
     ) -> None:
-        handoff = _record("handoff", status="handoff_ready")
+        handoff = _record("handoff", status="awaiting_handoff")
         decision = PaneOwnershipDecision(
             identity=("21000000-0000-4000-8000-000000000003", "tmux_socket_name:gobby", "%1"),
             requested_session_id="handoff",
@@ -307,7 +307,7 @@ class TestPaneOwnershipLifecycle:
             )
 
         assert expire.await_count == 0
-        assert handoff.status == "handoff_ready"
+        assert handoff.status == "awaiting_handoff"
         assert decision.owner is None
 
     @pytest.mark.asyncio
@@ -649,7 +649,7 @@ class TestGetActiveTerminalSessions:
             {
                 "id": "session",
                 "source": "codex",
-                "status": "handoff_ready",
+                "status": "awaiting_handoff",
                 "machine_id": "21000000-0000-4000-8000-000000000003",
                 "terminal_context": json.dumps(
                     {
@@ -667,11 +667,11 @@ class TestGetActiveTerminalSessions:
         records = monitor._get_active_terminal_sessions()
 
         assert len(records) == 1
-        assert records[0].status == "handoff_ready"
+        assert records[0].status == "awaiting_handoff"
         assert records[0].parent_pid == 42
         query = storage.db.fetchall.call_args.args[0]
         assert "s.status = ANY(%s)" in query
-        assert storage.db.fetchall.call_args.args[1] == (["active", "paused", "handoff_ready"],)
+        assert storage.db.fetchall.call_args.args[1] == (["active", "paused", "awaiting_handoff"],)
 
     def test_skips_context_without_process_or_tmux_identity(self, storage: _Storage) -> None:
         storage.db.fetchall.return_value = [

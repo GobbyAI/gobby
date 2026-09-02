@@ -392,7 +392,7 @@ describe("useChat proxy session messaging", () => {
         external_id: "handoff-ext",
         source: "codex",
         title: "Resume-only terminal",
-        status: "handoff_ready",
+        status: "awaiting_handoff",
         can_proxy_attach: false,
         model: "gpt-5.4",
         ref: "#2314",

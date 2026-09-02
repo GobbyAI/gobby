@@ -171,7 +171,7 @@ Hook event fired (e.g., before_tool)
 3. Session End
    └─> HookManager.handle()
        └─> generate_session_summaries() (sessions/summarize.py, LLM)
-           └─> SessionManager.update_status("handoff_ready")
+           └─> SessionManager.update_status("awaiting_handoff")
 ```
 
 ### MCP Progressive Tool Discovery

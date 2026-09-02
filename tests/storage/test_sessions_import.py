@@ -78,7 +78,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "session_type: 'str | None' = 'terminal') -> 'Session | None'",
     "find_children": "(self, parent_session_id: 'str') -> 'list[Session]'",
     "find_parent": "(self, machine_id: 'str', project_id: 'str', "
-    "source: 'str | None' = None, status: 'str' = 'handoff_ready', "
+    "source: 'str | None' = None, status: 'str' = 'awaiting_handoff', "
     "max_age_minutes: 'int' = 10, terminal_context: 'dict[str, Any] | str | None' = None, "
     "candidate_limit: 'int' = 1) -> 'Session | None'",
     "get": "(self, session_id: 'str') -> 'Session | None'",

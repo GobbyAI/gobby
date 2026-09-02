@@ -60,7 +60,7 @@ def test_missing_socket_detaches_every_local_reference_without_page_limit(
         )
         for index in range(205)
     ]
-    seeded_statuses = ["active", "paused", "handoff_ready", "expired", "deleted"]
+    seeded_statuses = ["active", "paused", "awaiting_handoff", "expired", "deleted"]
     for session, status in zip(local_sessions[:5], seeded_statuses, strict=True):
         session_manager.db.execute(
             "UPDATE sessions SET status = %s WHERE id = %s", (status, session.id)

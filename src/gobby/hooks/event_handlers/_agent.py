@@ -578,9 +578,9 @@ class AgentEventHandlerMixin(EventHandlersBase):
             # Auto compaction in Codex is an in-session event, not a handoff.
             if is_handoff_trigger and self._session_manager:
                 if not self._skip_session_status_update_during_shutdown(
-                    "PRE_COMPACT", session_id, "handoff_ready"
+                    "PRE_COMPACT", session_id, "awaiting_handoff"
                 ):
-                    self._session_manager.update_session_status(session_id, "handoff_ready")
+                    self._session_manager.update_session_status(session_id, "awaiting_handoff")
             # Generate session summaries from digest before compaction
             try:
                 if self._dispatch_session_summaries_fn:

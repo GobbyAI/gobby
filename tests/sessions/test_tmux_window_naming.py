@@ -157,7 +157,7 @@ class TestRenameTmuxWindow:
         assert manager.rename_calls == [("%42", "Codex")]
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("status", ["active", "paused", "handoff_ready"])
+    @pytest.mark.parametrize("status", ["active", "paused", "awaiting_handoff"])
     async def test_queued_rename_reloads_authoritative_persisted_title(self, status: str) -> None:
         from gobby.sessions.tmux_window_naming import _rename_tmux_window
         from gobby.terminal_ownership import PaneOwnershipDecision
@@ -591,7 +591,7 @@ class TestEnforceWindowNameIfUnmanaged:
     """Tests for the periodic repair-sweep rename helper."""
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("status", ["expired", "handoff_ready"])
+    @pytest.mark.parametrize("status", ["expired", "awaiting_handoff"])
     async def test_skips_persisted_ineligible_session(self, status: str) -> None:
         from gobby.sessions.tmux_window_naming import enforce_window_name_if_unmanaged
 

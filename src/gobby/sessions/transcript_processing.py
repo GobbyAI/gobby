@@ -259,7 +259,7 @@ class TranscriptProcessingMixin:
                 llm_service=self.llm_service,
                 session_summary_config=session_summary_config,
                 db=self.db,
-                set_handoff_ready=False,  # already expired, don't change status
+                set_awaiting_handoff=False,  # already expired, don't change status
             )
         except Exception as e:
             logger.warning("Artifact generation failed for session %s: %s", session_id, e)

@@ -825,7 +825,7 @@ class TestSessionMoreCoverage:
 
         row = MagicMock()
         row.id = "sess-1"
-        row.status = "handoff_ready"
+        row.status = "awaiting_handoff"
         row.summary_markdown = "Pre-compaction summary"
         row.seq_num = 1
         row.parent_session_id = None

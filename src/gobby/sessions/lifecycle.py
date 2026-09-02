@@ -299,7 +299,7 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
             timeout_minutes=config.active_session_pause_minutes
         )
 
-        # Expire orphaned handoff_ready sessions (in-place compact restarts
+        # Expire orphaned awaiting_handoff sessions (in-place compact restarts
         # complete within seconds, so 30 min is generous). Workflow state is
         # kept for revival; reclaim it only after the revival horizon.
         orphaned = self.session_manager.expire_orphaned_handoff_sessions(timeout_minutes=30)

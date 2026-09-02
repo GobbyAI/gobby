@@ -170,7 +170,7 @@ def release_task_claim(
                AND NOT EXISTS (
                    SELECT 1 FROM sessions s
                     WHERE s.id = tasks.claimed_by_session_id
-                      AND s.status IN ('active', 'paused', 'handoff_ready')
+                      AND s.status IN ('active', 'paused', 'awaiting_handoff')
                )
                AND NOT EXISTS (
                    -- A fresh compact-continue marker means the owner is
@@ -270,7 +270,7 @@ def sweep_stale_claims(
            AND NOT EXISTS (
                SELECT 1 FROM sessions s
                 WHERE s.id = tasks.claimed_by_session_id
-                  AND s.status IN ('active', 'paused', 'handoff_ready')
+                  AND s.status IN ('active', 'paused', 'awaiting_handoff')
            )
            {project_filter}
         """,  # nosec B608 # project_filter is static SQL selected above.

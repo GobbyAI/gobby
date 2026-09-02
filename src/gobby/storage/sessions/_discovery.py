@@ -218,7 +218,7 @@ class _DiscoveryMixin:
         machine_id: str,
         project_id: str,
         source: str | None = None,
-        status: str = "handoff_ready",
+        status: str = "awaiting_handoff",
         max_age_minutes: int = 10,
         terminal_context: dict[str, Any] | str | None = None,
         candidate_limit: int = 1,
@@ -230,7 +230,7 @@ class _DiscoveryMixin:
             machine_id: Machine identifier
             project_id: Project identifier
             source: Optional source identifier to filter by
-            status: Status to filter by (default: handoff_ready)
+            status: Status to filter by (default: awaiting_handoff)
             max_age_minutes: Only match sessions updated within this many minutes.
                 Legitimate handoffs happen within seconds; stale sessions should
                 not be matched. Default 10 minutes.
@@ -344,7 +344,7 @@ class _DiscoveryMixin:
                 "terminal",
                 "active",
                 "paused",
-                "handoff_ready",
+                "awaiting_handoff",
                 MAX_TERMINAL_SESSION_CANDIDATES,
             ),
         )

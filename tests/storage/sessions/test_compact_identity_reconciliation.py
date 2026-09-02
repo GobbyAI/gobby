@@ -263,7 +263,7 @@ def test_ended_later_populated_sibling_does_not_block_compact_reactivation(
     temp_db.execute(
         """
         UPDATE sessions
-        SET status = 'handoff_ready',
+        SET status = 'awaiting_handoff',
             message_count = 4,
             created_at = created_at + INTERVAL '1 second'
         WHERE id = %s
@@ -279,7 +279,7 @@ def test_ended_later_populated_sibling_does_not_block_compact_reactivation(
     assert resolution.session.status == "active"
     sibling = manager.get(sibling_id)
     assert sibling is not None
-    assert sibling.status == "handoff_ready"
+    assert sibling.status == "awaiting_handoff"
     assert sibling.id not in resolution.deleted_ghost_ids
 
 

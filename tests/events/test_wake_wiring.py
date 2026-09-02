@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from typing import Protocol
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
@@ -163,7 +163,8 @@ class TestWakeDispatcherSdkResume:
             "agent-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
-            escape_before_submit=True,
+            clear_before_submit=True,
+            cli_source=ANY,
         )
         assert tmux_sender.await_count == 1
         assert tmux_sender.await_args is not None
@@ -201,7 +202,8 @@ class TestWakeDispatcherSdkResume:
             "agent-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
-            escape_before_submit=True,
+            clear_before_submit=True,
+            cli_source=ANY,
         )
         assert tmux_sender.await_count == 1
         assert tmux_sender.await_args is not None

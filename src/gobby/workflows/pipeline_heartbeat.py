@@ -271,7 +271,7 @@ class PipelineHeartbeat:
             session = self._session_manager.get(session_id)
             if session is None:
                 return False
-            if session.status in {"active", "handoff_ready"}:
+            if session.status in {"active", "awaiting_handoff"}:
                 return True
             if session.status == "paused":
                 # Agent sessions with no active run are dead (process exited)

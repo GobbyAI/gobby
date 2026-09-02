@@ -22,18 +22,18 @@ from gobby.mcp_proxy.tools.sessions._handoff import (
 from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
     _CLI_COMPACT_COMMANDS,
     _CLI_COMPACT_INTERRUPT_KEYS,
-    _CODEX_INTERRUPT_SETTLE_SECONDS,
     _COMPACTION_REJECTION_CAPTURE_LINES,
     _COMPACTION_REJECTION_ERROR_CODE,
     _COMPACTION_REJECTION_SETTLE_SECONDS,
     _DEFAULT_COMPACT_INTERRUPT_KEY,
     _DEFAULT_INTERRUPT_SETTLE_SECONDS,
+    _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE,
+    _OBSERVED_INTERRUPT_SETTLE_SECONDS,
     _capture_pane_snapshot,
     _compact_interrupt_key,
     _detect_compaction_rejection,
     _fresh_output_delta,
-    _send_compaction_command,
-    _send_tmux_keys,
+    _send_pane_key,
 )
 from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
     _resolve_tmux_target as _resolve_tmux_target_impl,
@@ -48,8 +48,6 @@ from gobby.mcp_proxy.tools.sessions._terminal_transcripts import (
 )
 from gobby.sessions.compact_continuation import (
     CODEX_COMPACT_READY_CAPTURE_LINES,
-    CodexRolloutCursor,
-    CodexRolloutObservationError,
     clear_handoff_compact_continuation_pending,
     mark_handoff_compact_continuation_pending,
     persist_handoff_resume_skills,
@@ -63,10 +61,15 @@ from gobby.sessions.handoff import (
     restore_handoff_attempt,
     stage_handoff_attempt,
 )
+from gobby.sessions.transcript_cursor import (
+    TranscriptObservationError,
+    build_interrupt_observer,
+)
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.terminal_context import parse_terminal_context_value, terminal_context_has_tmux_target
 from gobby.terminals.lookup import manager_for_terminal_context
+from gobby.terminals.pane_io import PaneIO, RuntimePaneIO, TmuxPaneIO
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -80,23 +83,25 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "_CLI_COMPACT_COMMANDS",
     "_CLI_COMPACT_INTERRUPT_KEYS",
-    "_CODEX_INTERRUPT_SETTLE_SECONDS",
     "_COMPACTION_REJECTION_CAPTURE_LINES",
     "_COMPACTION_REJECTION_ERROR_CODE",
     "_COMPACTION_REJECTION_SETTLE_SECONDS",
     "_DEFAULT_COMPACT_INTERRUPT_KEY",
+    "_INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE",
+    "_OBSERVED_INTERRUPT_SETTLE_SECONDS",
     "_TRANSCRIPT_TAIL_MAX_BYTES",
     "_capture_pane_snapshot",
     "_capture_transcript_tail",
     "_compact_interrupt_key",
     "_detect_compaction_rejection",
     "_fresh_output_delta",
+    "_interrupt_observer",
     "_read_transcript_tail_lines",
+    "_resolve_pane_io",
     "_resolve_session_for_compaction",
     "_resolve_tmux_target",
-    "_send_compaction_command",
+    "_send_pane_key",
     "_send_terminal_compaction_command",
-    "_send_tmux_keys",
     "asyncio",
     "manager_for_terminal_context",
     "LocalAgentRunManager",
@@ -192,9 +197,52 @@ def _authorize_send_keys_target(
     }
 
 
+def _resolve_pane_io(
+    session_id: str,
+    session_manager: SessionManager,
+    agent_run_manager: LocalAgentRunManager,
+    *,
+    terminal_manager: Any | None,
+    terminal_runtime_registry: Any | None,
+) -> tuple[PaneIO | None, str | None]:
+    """Route through the session's live terminals row when one exists, else raw tmux."""
+    if terminal_manager is not None and terminal_runtime_registry is not None:
+        terminal = terminal_manager.get_live_for_session(session_id)
+        if terminal is not None:
+            runtime = terminal_runtime_registry.resolve(terminal.backend)
+            return RuntimePaneIO(runtime, terminal), None
+    target, tmux, error = _resolve_tmux_target(session_id, session_manager, agent_run_manager)
+    if error:
+        return None, error
+    assert target is not None
+    assert tmux is not None
+    return TmuxPaneIO(tmux, target), None
+
+
+def _interrupt_observer(
+    source: Any,
+    session: Any,
+) -> tuple[Callable[[], bool | None] | None, str | None]:
+    """Build the transcript interrupt observer; ``(None, error)`` fails closed."""
+    try:
+        observer = build_interrupt_observer(
+            source if isinstance(source, str) else None,
+            getattr(session, "transcript_path", None),
+            session_id=getattr(session, "id", None),
+        )
+    except TranscriptObservationError as exc:
+        logger.warning(
+            "Cannot observe %s interruption for handoff on session %s: %s",
+            source,
+            getattr(session, "id", None),
+            exc,
+        )
+        return None, str(exc)
+    return observer, None
+
+
 async def _send_terminal_compaction_command(
-    tmux: TmuxSessionManager,
-    target: str,
+    pane: PaneIO,
     command: str,
     session_id: str,
     *,
@@ -203,13 +251,12 @@ async def _send_terminal_compaction_command(
     clear_continuation_pending: Callable[[], bool],
     schedule_continuation_readiness: Callable[[str | None], bool] | None = None,
     continuation_readiness_capture_lines: int | None = None,
-    observe_codex_interrupt: Callable[[], bool | None] | None = None,
+    observe_interrupt: Callable[[], bool | None] | None = None,
     settle_seconds: float | None = None,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
-    """Persist continuation state, confirm interruption, then compact."""
+    """Persist continuation state, confirm interruption, clear, verify, then compact."""
     return await _send_terminal_compaction_command_impl(
-        tmux,
-        target,
+        pane,
         command,
         session_id,
         cli_source=cli_source,
@@ -217,11 +264,11 @@ async def _send_terminal_compaction_command(
         clear_continuation_pending=clear_continuation_pending,
         schedule_continuation_readiness=schedule_continuation_readiness,
         continuation_readiness_capture_lines=continuation_readiness_capture_lines,
-        observe_codex_interrupt=observe_codex_interrupt,
+        observe_interrupt=observe_interrupt,
         settle_seconds=settle_seconds,
         interrupt_settle_seconds=(
-            _CODEX_INTERRUPT_SETTLE_SECONDS
-            if cli_source == "codex"
+            _OBSERVED_INTERRUPT_SETTLE_SECONDS
+            if observe_interrupt is not None
             else _DEFAULT_INTERRUPT_SETTLE_SECONDS
         ),
         rejection_settle_seconds=_COMPACTION_REJECTION_SETTLE_SECONDS,
@@ -475,6 +522,8 @@ def register_terminal_tools(
                 db=db,
                 agent_run_manager=agent_run_manager,
                 web_chat_session_registry=web_chat_session_registry,
+                terminal_manager=terminal_manager,
+                terminal_runtime_registry=terminal_runtime_registry,
             )
         return await _compact_with_handoff(markdown, observations)
 
@@ -563,10 +612,12 @@ def register_terminal_tools(
                 "reason": f"no compaction command known for cli={source!r}",
             }
 
-        target, tmux, error = _resolve_tmux_target(
+        pane, error = _resolve_pane_io(
             resolved_session_id,
             session_manager,
             agent_run_manager,
+            terminal_manager=terminal_manager,
+            terminal_runtime_registry=terminal_runtime_registry,
         )
         if error and not terminal_context_has_tmux_target(session.terminal_context):
             recovered_session = _backfill_tmux_context_from_sibling(
@@ -576,42 +627,22 @@ def register_terminal_tools(
             )
             if recovered_session is not None:
                 session = recovered_session
-                target, tmux, error = _resolve_tmux_target(
+                pane, error = _resolve_pane_io(
                     resolved_session_id,
                     session_manager,
                     agent_run_manager,
+                    terminal_manager=terminal_manager,
+                    terminal_runtime_registry=terminal_runtime_registry,
                 )
         if error:
             return {"compacted": False, "reason": error}
-        assert target is not None
-        assert tmux is not None
+        assert pane is not None
 
-        try:
-            pane_probe = await tmux.snapshot_lines(target, lines=1)
-        except Exception as exc:
-            logger.warning(
-                "Failed verifying handoff-compaction tmux target %s for session %s",
-                target,
-                resolved_session_id,
-                extra={
-                    "event": "handoff_compact_tmux_target_verification_failed",
-                    "session_id": resolved_session_id,
-                    "tmux_target": target,
-                    "error_type": type(exc).__name__,
-                    "error": str(exc),
-                },
-                exc_info=True,
-            )
+        if await pane.snapshot(1) is None:
             return {
                 "compacted": False,
-                "reason": f"failed to verify live tmux target {target}: {exc}",
-                "error_code": "tmux_target_verification_failed",
-            }
-        if pane_probe is None:
-            return {
-                "compacted": False,
-                "reason": f"tmux target {target} is not live",
-                "error_code": "tmux_target_not_live",
+                "reason": f"{pane.backend} target {pane.target} is not live",
+                "error_code": "terminal_target_not_live",
             }
 
         if getattr(session, "status", None) == "expired":
@@ -629,24 +660,14 @@ def register_terminal_tools(
             session = activity.session
             assert session is not None
 
-        codex_rollout_cursor: CodexRolloutCursor | None = None
-        if source == "codex":
-            try:
-                codex_rollout_cursor = CodexRolloutCursor.at_eof(
-                    getattr(session, "transcript_path", None)
-                )
-            except CodexRolloutObservationError as exc:
-                logger.warning(
-                    "Cannot observe Codex interruption for handoff compaction %s: %s",
-                    resolved_session_id,
-                    exc,
-                )
-                return {
-                    "compacted": False,
-                    "continuation_pending": False,
-                    "reason": str(exc),
-                    "error_code": "codex_interrupt_observation_unavailable",
-                }
+        observe_interrupt, observer_error = _interrupt_observer(source, session)
+        if observer_error is not None:
+            return {
+                "compacted": False,
+                "continuation_pending": False,
+                "reason": observer_error,
+                "error_code": _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE,
+            }
 
         resume_skills = persist_handoff_resume_skills(db, resolved_session_id)
         continuation_prompt = build_handoff_continue_prompt()
@@ -666,21 +687,6 @@ def register_terminal_tools(
                 "reason": f"failed to stage handoff: {exc}",
                 "error_code": "staging_failed",
             }
-        observe_codex_interrupt: Callable[[], bool | None] | None = None
-        if codex_rollout_cursor is not None:
-
-            def observe_codex_rollout_interrupt() -> bool | None:
-                try:
-                    return codex_rollout_cursor.saw_fresh_turn_aborted()
-                except CodexRolloutObservationError as exc:
-                    logger.warning(
-                        "Lost Codex interrupt observation for handoff compaction %s: %s",
-                        resolved_session_id,
-                        exc,
-                    )
-                    return None
-
-            observe_codex_interrupt = observe_codex_rollout_interrupt
         schedule_continuation_readiness: Callable[[str | None], bool] | None = None
         if source == "codex":
 
@@ -696,8 +702,7 @@ def register_terminal_tools(
             schedule_continuation_readiness = schedule_codex_readiness
         try:
             send_result = await _send_terminal_compaction_command(
-                tmux,
-                target,
+                pane,
                 command,
                 resolved_session_id,
                 cli_source=source,
@@ -716,7 +721,7 @@ def register_terminal_tools(
                 continuation_readiness_capture_lines=(
                     CODEX_COMPACT_READY_CAPTURE_LINES if source == "codex" else None
                 ),
-                observe_codex_interrupt=observe_codex_interrupt,
+                observe_interrupt=observe_interrupt,
             )
         except Exception as exc:
             restore_handoff_attempt(db, attempt_state)
@@ -749,7 +754,7 @@ def register_terminal_tools(
             "compacted": True,
             "command": command,
             "cli": source,
-            "via": "tmux",
+            "via": pane.backend,
             "interrupted": True,
             "continuation_pending": continuation_pending,
             "attempt_id": compact_attempt_id,
@@ -766,9 +771,13 @@ def register_terminal_tools(
             "Persist a structured handoff, optionally record Gobby feedback, then compact "
             "the current session or clear into a successor when clear_session=true. "
             "Requires nonblank current_state and at least one nonblank next step. In a "
-            "terminal session the daemon interrupts the active turn and submits the provider "
-            "command; provider cancellation or rejection immediately after this call is the "
-            "expected dispatch signal. The continuation must call get_handoff()."
+            "terminal session the daemon interrupts the active turn, confirms the interrupt "
+            "from the transcript, clears the composer, and submits the provider command; "
+            "provider cancellation or rejection immediately after this call is the expected "
+            "dispatch signal. A clear_acknowledgment_timeout with attempt_pending=true means "
+            "/clear was delivered and the successor binds on its SessionStart: do not call "
+            "set_handoff again (a retry reuses the pending attempt and never types a second "
+            "/clear). The continuation must call get_handoff()."
         ),
         brief="Store a structured handoff and compact or clear the current session.",
         input_schema={

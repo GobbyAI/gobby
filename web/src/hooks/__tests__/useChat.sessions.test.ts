@@ -1333,7 +1333,7 @@ describe("useChat viewed session state", () => {
     ["codex", "gpt-5.4"],
     ["qwen", "qwen3-coder"],
   ])(
-    "keeps live %s tmux sessions attachable even when the session row is handoff_ready",
+    "keeps live %s tmux sessions attachable even when the session row is awaiting_handoff",
     async (source, model) => {
       await loadModule();
       mockFetch.mockJsonResponse(
@@ -1348,7 +1348,7 @@ describe("useChat viewed session state", () => {
           seq_num: 2310,
           source,
           title: "Live handoff terminal",
-          status: "handoff_ready",
+          status: "awaiting_handoff",
           can_proxy_attach: true,
           model,
           external_id: `${source}-ext-view`,
@@ -1385,7 +1385,7 @@ describe("useChat viewed session state", () => {
           external_id: `${source}-ext-view`,
           source,
           title: "Live handoff terminal",
-          status: "handoff_ready",
+          status: "awaiting_handoff",
           can_proxy_attach: true,
           model,
           ref: "#2310",

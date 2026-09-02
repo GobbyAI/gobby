@@ -10,6 +10,9 @@ from shlex import join as shell_join
 from typing import Literal
 from uuid import uuid4
 
+from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.key_bytes import tmux_key_name
+
 TMUX_TEXT_INJECTION_TIMEOUT_SECONDS = 10.0
 TMUX_TEXT_ENTER_DELAY_SECONDS = 1.0
 TMUX_TEXT_ENTER_RETRY_DELAY_SECONDS = 0.25
@@ -284,18 +287,31 @@ async def submit_literal_text_to_tmux_target(
     tmux_cmd: Sequence[str] = ("tmux",),
     timeout: float = TMUX_TEXT_INJECTION_TIMEOUT_SECONDS,
     enter_delay_seconds: float = TMUX_TEXT_ENTER_DELAY_SECONDS,
-    escape_before_submit: bool = False,
+    clear_before_submit: bool = False,
+    cli_source: str | None = None,
 ) -> None:
-    """Submit non-empty literal text through buffer paste; empty text sends raw Enter."""
+    """Submit non-empty literal text through buffer paste; empty text sends raw Enter.
+
+    ``clear_before_submit`` empties the composer first with the clear sequence for
+    ``cli_source`` so an operator draft is not submitted together with ``text``.
+    """
     literal_text = text.rstrip("\n")
     base_cmd = tuple(tmux_cmd)
 
-    if escape_before_submit:
-        await send_escape_key_to_tmux_target(
-            target,
-            tmux_cmd=base_cmd,
-            timeout=timeout,
-        )
+    if clear_before_submit:
+        for key in composer_clear_sequence(cli_source):
+            key_name = tmux_key_name(key)
+            if key_name is None:
+                raise TmuxTextInjectionError(
+                    f"tmux has no key name for {key}",
+                    command=(*base_cmd, "send-keys", "-t", target, key),
+                )
+            await send_named_key_to_tmux_target(
+                target,
+                key_name,
+                tmux_cmd=base_cmd,
+                timeout=timeout,
+            )
         if literal_text and enter_delay_seconds > 0:
             await asyncio.sleep(enter_delay_seconds)
 
@@ -313,19 +329,6 @@ async def submit_literal_text_to_tmux_target(
             tmux_cmd=base_cmd,
             timeout=timeout,
         )
-
-
-async def send_escape_key_to_tmux_target(
-    target: str,
-    *,
-    tmux_cmd: Sequence[str] = ("tmux",),
-    timeout: float = TMUX_TEXT_INJECTION_TIMEOUT_SECONDS,
-) -> None:
-    """Send Escape as a tmux key event, not pasted literal text."""
-    await _run_tmux_command(
-        (*tuple(tmux_cmd), "send-keys", "-t", target, "Escape"),
-        timeout=timeout,
-    )
 
 
 async def send_named_key_to_tmux_target(

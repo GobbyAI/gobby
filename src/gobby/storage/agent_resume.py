@@ -366,7 +366,7 @@ def expire_parked_daemon_session(
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = %s
               AND agent_run_id = %s
-              AND status IN ('active', 'paused', 'handoff_ready')
+              AND status IN ('active', 'paused', 'awaiting_handoff')
             RETURNING *
             """,
             (child_session_id, original_run_id),

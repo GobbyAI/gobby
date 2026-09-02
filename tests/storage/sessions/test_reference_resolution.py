@@ -25,13 +25,13 @@ def _local_machine_identity() -> Iterator[None]:
 class TestSessionManagerReferenceResolution:
     """Tests split from the SessionManager storage monolith."""
 
-    def test_find_parent_no_handoff_ready(
+    def test_find_parent_no_awaiting_handoff(
         self,
         session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
-        """Test find_parent returns None when no handoff_ready session."""
-        # Create an active session (not handoff_ready)
+        """Test find_parent returns None when no awaiting_handoff session."""
+        # Create an active session (not awaiting_handoff)
         session_manager.register(
             external_id="active-session",
             machine_id=LOCAL_MACHINE_ID,
@@ -58,7 +58,7 @@ class TestSessionManagerReferenceResolution:
             source="qwen",
             project_id=sample_project["id"],
         )
-        session_manager.update_status(session.id, "handoff_ready")
+        session_manager.update_status(session.id, "awaiting_handoff")
 
         # Find without source filter
         found = session_manager.find_parent(

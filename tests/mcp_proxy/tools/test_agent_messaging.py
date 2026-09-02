@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
@@ -696,7 +696,8 @@ class TestSendMessage:
             CONTINUE_WAKE_MESSAGE,
             "/tmp/tmux-gobby",
             submit=True,
-            escape_before_submit=True,
+            clear_before_submit=True,
+            cli_source=ANY,
         )
 
     @pytest.mark.asyncio

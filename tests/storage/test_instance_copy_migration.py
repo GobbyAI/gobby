@@ -288,7 +288,7 @@ def test_migration_sql_exists_and_uses_live_status_constants() -> None:
     assert "ACCESS EXCLUSIVE" in sql_text
 
 
-def test_handoff_ready_session_continuity(copy_schema: tuple[str, str]) -> None:
+def test_awaiting_handoff_session_continuity(copy_schema: tuple[str, str]) -> None:
     url, schema = copy_schema
     session_id = str(uuid.uuid4())
     instance_id = str(uuid.uuid4())
@@ -296,7 +296,7 @@ def test_handoff_ready_session_continuity(copy_schema: tuple[str, str]) -> None:
     created = entered - timedelta(hours=1)
     updated = entered + timedelta(minutes=5)
     with _connect(url, schema) as conn:
-        _insert_session(conn, session_id=session_id, status="handoff_ready")
+        _insert_session(conn, session_id=session_id, status="awaiting_handoff")
         _set_agent_type(conn, session_id, "coder")
         lineage = _insert_agent(conn, name="coder", steps=_STEPS_A)
         _insert_generated(conn, name="coder-steps", steps=_STEPS_A, variables={"goal": "ship"})
