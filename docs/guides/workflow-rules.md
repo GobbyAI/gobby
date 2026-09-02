@@ -174,6 +174,13 @@ effect. That lets one rule set variables, inject context, or queue MCP calls and
 then block the event with a rendered reason. Per-effect `when` conditions are
 evaluated separately from the rule-level `when`.
 
+When `rules.aggregate_blocks` is enabled, the first blocking rule runs all of
+its matching effects. Later matching rules are evaluated in read-only lookahead
+mode: they can contribute another `block` gate, while their non-block effects
+are suppressed. This keeps aggregation limited to collecting block reasons;
+debug logs and rule-evaluation metrics identify the suppressed effects and
+lookahead gates.
+
 ### Override Precedence and Acknowledge Variables
 
 Turn-end responses are assembled in a fixed order. The hard-coded overrides

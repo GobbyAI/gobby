@@ -367,6 +367,25 @@ class EvaluationMixin:
                     continue
 
             if block_effects_only or block_gates:
+                rule_start = time.perf_counter()
+                suppressed_effect_types = list(
+                    dict.fromkeys(
+                        effect.type
+                        for effect in body.resolved_effects
+                        if effect.type != "block"
+                        and self._effect_matches_event(effect, evaluation.event)
+                    )
+                )
+                if suppressed_effect_types:
+                    logger.debug(
+                        "Suppressed non-block rule effects during block-gate lookahead: "
+                        "rule=%s event=%s effect_types=%s",
+                        row.name,
+                        evaluation.event.event_type.value,
+                        ",".join(suppressed_effect_types),
+                    )
+
+                lookahead_blocked = False
                 for effect in body.resolved_effects:
                     if effect.type != "block" or not self._effect_matches_event(
                         effect, evaluation.event
@@ -399,7 +418,30 @@ class EvaluationMixin:
                             delivery=effect.delivery,
                         )
                     )
+                    lookahead_blocked = True
                     break
+
+                if lookahead_blocked:
+                    rule_latency = (time.perf_counter() - rule_start) * 1000
+                    record_rule_evaluation(
+                        rule_name=row.name,
+                        result="block",
+                        event=evaluation.event.event_type.value,
+                        session_id=evaluation.session_id,
+                        latency_ms=rule_latency,
+                    )
+                    if self._event_store:
+                        metric_records.append(
+                            MetricsEventRecord(
+                                event_type="rule_eval",
+                                name=row.name,
+                                session_id=evaluation.session_id,
+                                success=False,
+                                result="block",
+                                latency_ms=rule_latency,
+                                metadata={"evaluation_mode": "lookahead"},
+                            )
+                        )
                 continue
 
             # Process effects: non-block effects first, then block (if any)
