@@ -35,13 +35,15 @@ _PYTHON_PIPELINE_BUILTINS = frozenset(
 # containers, regex matches, and read-mode file handles.
 _PYTHON_PIPELINE_METHODS = frozenset(
     "add append capitalize casefold center clear close copy count decode difference discard "
-    "elements encode end endswith expandtabs extend find findall finditer format fullmatch get glob "
+    "elements encode end endswith exists expandtabs expanduser extend find findall finditer format "
+    "fullmatch get glob "
     "group groupdict groups index insert intersection isalnum isalpha isdecimal isdigit "
-    "isdisjoint islower isnumeric isspace issubset issuperset istitle isupper items join keys "
+    "home is_dir is_file isdisjoint islower isnumeric isspace issubset issuperset istitle isupper "
+    "iterdir items join keys "
     "ljust lower lstrip match most_common namelist partition pop popitem read readline readlines "
-    "relative_to remove "
+    "read_bytes read_text relative_to remove resolve "
     "removeprefix removesuffix replace reverse rfind rindex rjust rpartition rsplit rstrip "
-    "search setdefault sort span split splitlines start startswith strip sub subn swapcase "
+    "search setdefault sort span split splitlines start startswith stat strip sub subn swapcase "
     "symmetric_difference title total union update upper values zfill".split()
 )
 _OPEN_READ_MODES = frozenset({"r", "rb", "rt", "br", "tr"})
