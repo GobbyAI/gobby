@@ -21,6 +21,7 @@ from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.task_dependencies import DependencyCycleError
 from gobby.storage.tasks import TASK_TYPE_CHOICES, VALID_CATEGORIES, TaskNotFoundError
+from gobby.tasks.acceptance_artifacts import malformed_test_reference_findings
 from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.criteria_contract import TaskCriteriaError, require_validation_criteria
 from gobby.tasks.isolation import validate_task_isolation_artifacts
@@ -37,12 +38,18 @@ def _task_invariant_error(
     category: str | None,
     validation_criteria: str | None,
     implementation_domain: str | None,
+    *,
+    supplied_validation_criteria: str | None,
 ) -> str | None:
     """Return the task invariant error for the effective task state."""
     try:
         require_validation_criteria(task_type, validation_criteria)
     except TaskCriteriaError as exc:
         return str(exc)
+    if supplied_validation_criteria is not None:
+        findings = malformed_test_reference_findings(supplied_validation_criteria)
+        if findings:
+            return "\n".join(findings)
     if category == "code" and implementation_domain is None:
         return "Code tasks require implementation_domain ('backend', 'frontend', or 'fullstack')."
     return None
@@ -160,6 +167,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             category,
             validation_criteria,
             implementation_domain,
+            supplied_validation_criteria=validation_criteria,
         )
         if invariant_error:
             return {"error": invariant_error}
@@ -550,6 +558,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             effective_category,
             effective_validation_criteria,
             effective_implementation_domain,
+            supplied_validation_criteria=validation_criteria,
         )
         if invariant_error:
             return {"error": invariant_error}

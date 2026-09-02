@@ -14,6 +14,7 @@ from gobby.tasks import acceptance_artifacts as artifacts_module
 from gobby.tasks.acceptance_artifacts import (
     AcceptanceTest,
     evaluate_acceptance_artifacts,
+    malformed_test_reference_findings,
     validate_structured_file_evidence,
     validation_run_covers_test,
     validation_run_names_test,
@@ -119,6 +120,24 @@ def test_backticked_test_reference_without_symbol_still_fails(tmp_path: Path) ->
 
     assert result.findings
     assert "malformed test reference" in result.findings[0]
+
+
+def test_malformed_test_reference_findings_reports_every_invalid_reference() -> None:
+    findings = malformed_test_reference_findings(
+        """\
+test: `tests/x/test_y.py`
+test: `oops`
+test: tests/z/test_w.py
+test: `tests/x/test_y.py::test_valid`
+3) Dispatch test: an openapi-template server registers.
+"""
+    )
+
+    assert findings == (
+        "tests/x/test_y.py: malformed test reference; expected path::test_symbol",
+        "oops: malformed test reference; expected path::test_symbol",
+        "tests/z/test_w.py: malformed test reference; expected path::test_symbol",
+    )
 
 
 def test_deliberate_missing_file_reference_keeps_actionable_diagnostic(tmp_path: Path) -> None:
