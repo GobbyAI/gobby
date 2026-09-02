@@ -1795,8 +1795,9 @@ def test_close_verdict_memo_binds_the_task_ref_and_its_criteria() -> None:
         ),
     )
 
-    pruned, written = db.statements
-    assert "DELETE FROM task_close_reviews" in pruned[0]
+    # #21465: prior memos are kept so later reviews can quote their requirements,
+    # so a memoized verdict is exactly one INSERT with no prune.
+    (written,) = db.statements
     assert "INSERT INTO task_close_reviews" in written[0]
     assert task.id in written[1]
     assert "#4242" in written[1]
