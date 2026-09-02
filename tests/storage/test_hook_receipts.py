@@ -20,23 +20,9 @@ from gobby.utils.datetime import utc_now
 
 pytestmark = pytest.mark.unit
 
-_RECEIPT_MIGRATION = (
-    Path(__file__).resolve().parents[2]
-    / "crates/gcore/assets/schema/migrations/416_hook_receipt_effects.sql"
-)
-
 
 @pytest.fixture
 def receipts_db(temp_db: HubDatabase) -> HubDatabase:
-    sql = "\n".join(
-        line
-        for line in _RECEIPT_MIGRATION.read_text(encoding="utf-8").splitlines()
-        if not line.strip().startswith("--")
-    )
-    statements = [statement.strip() for statement in sql.split(";") if statement.strip()]
-    with temp_db.transaction() as conn:
-        for statement in statements:
-            conn.execute(statement)
     return temp_db
 
 
