@@ -19,7 +19,7 @@ from gobby.tasks.state_semantics import (
     get_claimed_session_id,
     is_task_actively_claimed,
 )
-from gobby.workflows.claimed_task_skills import refresh_claimed_task_skill_metadata
+from gobby.workflows.claimed_task_extra_skills import refresh_claimed_task_extra_skills
 from gobby.workflows.observer_commits import (
     _is_git_commit_command,
     _looks_like_commit_success,
@@ -160,7 +160,7 @@ def detect_task_claim(
 
             merge = remove_claimed_task(variables, closed_task_id)
             variables.update(merge)
-            refresh_claimed_task_skill_metadata(variables, task_manager)
+            refresh_claimed_task_extra_skills(variables, task_manager)
             logger.debug(
                 "Session %s: removed %s from claimed_tasks (task_claimed=%s)",
                 session_id,
@@ -257,7 +257,7 @@ def detect_task_claim(
             )
     merge = add_claimed_task(variables, task_id, ref)
     variables.update(merge)
-    refresh_claimed_task_skill_metadata(variables, task_manager)
+    refresh_claimed_task_extra_skills(variables, task_manager)
     variables["session_had_task"] = True
     logger.debug(
         "Session %s: added %s to claimed_tasks (via %s)", session_id, task_id, inner_tool_name
@@ -288,7 +288,7 @@ def reconcile_claimed_tasks(
                 session_id,
             )
         variables["task_claimed"] = bool(claimed_tasks)
-        refresh_claimed_task_skill_metadata(variables, None)
+        refresh_claimed_task_extra_skills(variables, None)
         return
 
     from gobby.storage.tasks import TaskNotFoundError
@@ -350,7 +350,7 @@ def reconcile_claimed_tasks(
 
     variables["claimed_tasks"] = claimed_tasks
     variables["task_claimed"] = bool(claimed_tasks)
-    refresh_claimed_task_skill_metadata(variables, task_manager)
+    refresh_claimed_task_extra_skills(variables, task_manager)
 
 
 def _preserve_lineage_claim(

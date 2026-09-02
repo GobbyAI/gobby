@@ -1,0 +1,15 @@
+tags: [task-enforcement, enforcement, lifecycle, gobby, default, task-skill-gates]
+
+rules:
+  require-tasks-skill-for-mutations:
+    description: "Require tasks guidance before interactive task mutations"
+    event: before_tool
+    enabled: true
+    priority: 24
+    when: >
+      variables.get('_agent_type') == 'default'
+      and not skill_loaded('tasks')
+      and task_mutation_requires_tasks_skill(tool_input, event.data)
+    effects:
+      - type: block
+        reason: '{{ skill_fetch_directive("tasks") }}'

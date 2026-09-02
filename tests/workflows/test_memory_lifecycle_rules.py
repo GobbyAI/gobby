@@ -8,7 +8,6 @@ Active memory-lifecycle rules:
 - judge-shadow-relevance-on-response: background mcp_call on turn_end
 - reset-memory-tracking-on-start: set_variable on session_start
 - increment-parent-turn-seq: set_variable on turn_start
-- load-memory-guidance-on-initial-turn: load_skill on the initial turn_start
 - check-memory-guidance-on-initial-stop: acknowledged block on the first turn_end
 - remind-memory-guidance-on-later-turns: inject_context on later parent turn_starts
 - queue-task-memory-review-after-close: set_variable on after_tool close_task
@@ -44,7 +43,6 @@ MEMORY_RULES = {
     "judge-shadow-relevance-on-response",
     "reset-memory-tracking-on-start",
     "increment-parent-turn-seq",
-    "load-memory-guidance-on-initial-turn",
     "check-memory-guidance-on-initial-stop",
     "remind-memory-guidance-on-later-turns",
     "queue-task-memory-review-after-close",
@@ -62,6 +60,7 @@ REMOVED_HELPER_RULES = {
     "require-memory-recall-before-tool",
     "require-memory-recall-before-turn-end",
     "spawn-memory-recall-helper",
+    "load-memory-guidance-on-initial-turn",
 }
 
 
@@ -356,72 +355,6 @@ def _closed_leaf_task_manager() -> MagicMock:
 
 
 class TestLayeredMemoryGuidance:
-    def test_initial_turn_requests_memory_skill(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("load-memory-guidance-on-initial-turn")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        effects = body.resolved_effects
-
-        assert body.event.value == "turn_start"
-        assert effects[0].type == "load_skill"
-        assert effects[0].skill == "memory"
-        assert getattr(effects[0], "delivery", None) == "eager"
-        assert "_memory_initial_stop_checked" in (body.when or "")
-        assert "has_open_tool_error" in (body.when or "")
-        assert "handoff_pull_pending" in (body.when or "")
-
-    @pytest.mark.asyncio
-    async def test_initial_turn_emits_skill_directive_and_records_reload(
-        self, db: HubDatabase
-    ) -> None:
-        _sync_bundled(db)
-        variables: dict[str, Any] = {
-            "_memory_initial_stop_checked": False,
-            "is_spawned_agent": False,
-            "parent_turn_seq": 0,
-            "loaded_skills": [],
-            "open_tool_errors": [],
-        }
-        event = HookEvent(
-            event_type=HookEventType.BEFORE_AGENT,
-            session_id="11111111-1111-4111-8111-111111111111",
-            source=SessionSource.CODEX,
-            timestamp=datetime.now(UTC),
-            data={"prompt": "Implement the requested memory guidance."},
-        )
-
-        response = await RuleEngine(db).evaluate(event, event.session_id, variables)
-
-        assert skill_fetch_directive("memory") in (response.context or "")
-
-    @pytest.mark.asyncio
-    async def test_initial_turn_skips_memory_skill_while_handoff_pull_pending(
-        self, db: HubDatabase
-    ) -> None:
-        _sync_bundled(db)
-        variables: dict[str, Any] = {
-            "_memory_initial_stop_checked": False,
-            "handoff_pull_pending": True,
-            "is_spawned_agent": False,
-            "parent_turn_seq": 0,
-            "loaded_skills": [],
-            "open_tool_errors": [],
-        }
-        event = HookEvent(
-            event_type=HookEventType.BEFORE_AGENT,
-            session_id="11111111-1111-4111-8111-111111111111",
-            source=SessionSource.CODEX,
-            timestamp=datetime.now(UTC),
-            data={"prompt": "Call get_handoff first."},
-        )
-
-        response = await RuleEngine(db).evaluate(event, event.session_id, variables)
-
-        assert skill_fetch_directive("memory") not in (response.context or "")
-
     def test_initial_turn_end_gate_sets_flag_only_when_passed_or_acknowledged(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:

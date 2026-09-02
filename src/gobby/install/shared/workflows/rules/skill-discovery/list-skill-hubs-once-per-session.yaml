@@ -1,8 +1,8 @@
 tags: [skill-discovery, hubs, gobby, default]
 
 rules:
-  discover-skill-hubs-on-turn-start:
-    description: "Load skill-discovery guidance and list available skill hubs once per session"
+  list-skill-hubs-once-per-session:
+    description: "List available skill hubs once per session"
     event: turn_start
     enabled: true
     priority: 15
@@ -10,9 +10,6 @@ rules:
       not variables.get('skill_discovery_instructions_shown')
       and not variables.get('handoff_pull_pending')
     effects:
-      - type: load_skill
-        delivery: on_receipt
-        skill: loading-skills
       - type: mcp_call
         delivery: on_receipt
         server: gobby-skills

@@ -969,10 +969,10 @@ class TestCreateTaskTool:
             assert mock_task.id in merged_vars["claimed_tasks"]
 
     @pytest.mark.asyncio
-    async def test_create_task_with_claim_sets_required_skill_metadata(
+    async def test_create_task_with_claim_sets_extra_skills(
         self, mock_task_manager: MagicMock
     ) -> None:
-        """create_task(claim=True) persists proactive claimed-task skill metadata."""
+        """create_task(claim=True) persists ordered claimed-task extras."""
         with (
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
@@ -995,7 +995,7 @@ class TestCreateTaskTool:
             mock_task.category = "code"
             mock_task.labels = []
             mock_task.validation_criteria = "Update src/gobby/tasks/demo.py"
-            mock_task.additional_skills = None
+            mock_task.additional_skills = ["context7"]
             mock_task.to_dict.return_value = {"id": mock_task.id, "title": mock_task.title}
             mock_task_manager.create_task_with_decomposition.return_value = {
                 "task": {"id": mock_task.id},
@@ -1010,18 +1010,14 @@ class TestCreateTaskTool:
                     "category": "code",
                     "implementation_domain": "backend",
                     "validation_criteria": mock_task.validation_criteria,
+                    "additional_skills": ["context7"],
                     "claim": True,
                 },
             )
 
             assert result["id"] == mock_task.id
             merged_vars = mock_sv_manager.merge_variables.call_args[0][1]
-            assert merged_vars["claimed_task_required_skills"] == [
-                "tasks",
-                "python",
-                "development-discipline",
-            ]
-            assert merged_vars["claimed_task_files"] == ["src/gobby/tasks/demo.py"]
+            assert merged_vars["claimed_task_extra_skills"] == ["context7"]
 
 
 # =============================================================================
