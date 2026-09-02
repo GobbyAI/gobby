@@ -1,7 +1,7 @@
 ---
 name: validation-validate
 description: Bounded task-close criteria review
-version: "3.2"
+version: "3.3"
 variables:
   title:
     type: str
@@ -44,10 +44,12 @@ Deterministic checks already own commits, dirty files, acceptance-artifact
 placebos, TDD sequencing, cumulative guards, and validation-command outcomes.
 Do not invent requirements, request receipt IDs, or demand fresh command output.
 
-Operational acceptance actions such as install, restart, deploy, publish,
-cutover, and live smoke checks require affirmative completion evidence in the
-changes summary or `transcript_operational_actions` checklist fact. Diff and
-test evidence alone cannot satisfy those actions.
+Operational acceptance actions demanded by the numbered criteria, such as
+install, restart, deploy, publish, cutover, and live smoke checks, require
+affirmative completion evidence in the changes summary or
+`transcript_operational_actions` checklist fact. Task-description prose alone
+never creates an operational acceptance requirement. Diff and test evidence
+alone cannot satisfy those actions.
 
 Compare the requested and delivered magnitude and shape explicitly. A task that
 requires an import, migration, broad surface, stated LOC scale, or event loop is

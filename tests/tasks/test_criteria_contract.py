@@ -95,10 +95,33 @@ def test_release_install_and_smoke_outcome_phrasing_is_operational() -> None:
     assert required_operational_actions(criteria) == ("install", "smoke")
 
 
-def test_nominal_operational_requirements_are_detected() -> None:
-    criteria = "Release ghook installation, daemon restart, and live smoke checks are required."
+def test_state_describing_participles_are_not_operational_requirements() -> None:
+    criteria = (
+        "The installed binary remains unchanged.",
+        "Installed package metadata is preserved.",
+        "Existing installed skill rows are unchanged.",
+        "The test asserts the daemon restart path is unaffected.",
+    )
 
-    assert required_operational_actions(criteria) == ("install", "restart", "smoke")
+    for criterion in criteria:
+        assert required_operational_actions(criterion) == ()
+
+
+def test_nominal_operational_requirements_are_detected() -> None:
+    nominal = "Release ghook installation, daemon restart, and live smoke checks are required."
+
+    assert required_operational_actions(nominal) == ("install", "restart", "smoke")
+    assert required_operational_actions("Install the release.") == ("install",)
+    assert required_operational_actions("The daemon must be restarted.") == ("restart",)
+
+
+def test_operational_requirement_detection_uses_criterion_units() -> None:
+    criteria = (
+        "Background prose says to restart the daemon during rollout.\n"
+        "- Existing installed skill rows are unchanged."
+    )
+
+    assert required_operational_actions(criteria) == ()
 
 
 def test_criteria_that_rule_an_operation_out_do_not_require_it() -> None:
