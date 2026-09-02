@@ -136,6 +136,10 @@ async def start_run_or_cleanup(
     cleanup_isolation: bool,
     task_manager: Any | None,
     child_session_id: str | None,
+    pid: int | None,
+    tmux_session_name: str | None,
+    tmux_socket_name: str | None,
+    tmux_socket_path: str | None,
 ) -> dict[str, Any] | None:
     try:
         start_skipped = runner.run_storage.start(run_id) is None
@@ -152,6 +156,10 @@ async def start_run_or_cleanup(
             cleanup_isolation=cleanup_isolation,
             task_manager=task_manager,
             child_session_id=child_session_id,
+            pid=pid,
+            tmux_session_name=tmux_session_name,
+            tmux_socket_name=tmux_socket_name,
+            tmux_socket_path=tmux_socket_path,
         )
         return {
             "success": False,
@@ -177,6 +185,10 @@ async def start_run_or_cleanup(
             cleanup_isolation=cleanup_isolation,
             task_manager=task_manager,
             child_session_id=child_session_id,
+            pid=pid,
+            tmux_session_name=tmux_session_name,
+            tmux_socket_name=tmux_socket_name,
+            tmux_socket_path=tmux_socket_path,
         )
         return {
             "success": False,
@@ -198,6 +210,10 @@ async def start_run_or_cleanup(
         cleanup_isolation=cleanup_isolation,
         task_manager=task_manager,
         child_session_id=child_session_id,
+        pid=pid,
+        tmux_session_name=tmux_session_name,
+        tmux_socket_name=tmux_socket_name,
+        tmux_socket_path=tmux_socket_path,
     )
     return {
         "success": False,
