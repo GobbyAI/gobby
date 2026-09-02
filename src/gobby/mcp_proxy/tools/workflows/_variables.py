@@ -17,7 +17,6 @@ from gobby.mcp_proxy.tools.workflows._resolution import (
     resolve_session_id,
     resolve_session_task_value,
 )
-from gobby.sessions.compact_markers import SKILL_LIST_VARIABLE_NAMES
 from gobby.storage.definitions.variables import (
     SessionVariableDefaultManager,
     SessionVariableDefaultRow,
@@ -30,6 +29,16 @@ from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
 
 logger = logging.getLogger(__name__)
+
+# Session variables that hold skill-name lists; set_variable validates their shape.
+SKILL_LIST_VARIABLE_NAMES = frozenset(
+    (
+        "required_skills",
+        "claimed_task_required_skills",
+        "additional_skills",
+        "claimed_task_additional_skills",
+    )
+)
 
 
 def _coerce_value(

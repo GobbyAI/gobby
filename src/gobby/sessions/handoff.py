@@ -18,8 +18,6 @@ if TYPE_CHECKING:
 
 PENDING_HANDOFF_VARIABLE = "set_handoff_pending"
 HANDOFF_PULL_PENDING_VARIABLE = "handoff_pull_pending"
-REQUIRED_SKILLS_VARIABLE = "compact_resume_required_skills"
-ADVISORY_SKILLS_VARIABLE = "compact_resume_advisory_skills"
 
 _OPTIONAL_FEEDBACK_FIELDS = ("suggestion", "disposition")
 
@@ -36,10 +34,7 @@ _FEEDBACK_SESSION_REF_RE = re.compile(
 
 def build_handoff_continue_prompt() -> str:
     """Return the pull-only continuation directive used after compact and clear."""
-    return (
-        "Call `get_handoff()` on `gobby-sessions`, follow the returned handoff and "
-        "skill reload tiers, then continue."
-    )
+    return "Call `get_handoff()` on `gobby-sessions`, follow the returned handoff, then continue."
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,8 +66,6 @@ class HandoffAttemptState:
 class ConsumedHandoff:
     session_id: str
     markdown: str
-    required_skills: tuple[str, ...]
-    advisory_skills: tuple[str, ...]
 
 
 def render_handoff_markdown(
@@ -420,13 +413,7 @@ def _consume_candidate(
         variables.pop(HANDOFF_PULL_PENDING_VARIABLE, None)
         _store_variables(conn, session_id, variables, exists=True)
         markdown = str(session_row["handoff_markdown"] or "")
-        required = tuple(_string_list(variables.get(REQUIRED_SKILLS_VARIABLE)))
-        advisory = tuple(
-            item
-            for item in _string_list(variables.get(ADVISORY_SKILLS_VARIABLE))
-            if item not in required
-        )
-        return ConsumedHandoff(session_id, markdown, required, advisory)
+        return ConsumedHandoff(session_id, markdown)
 
 
 def _clear_handoff_pull_pending(db: HubDatabase, session_id: str) -> None:
@@ -537,9 +524,3 @@ def _nonblank_list(
 
 def _deduplicate(values: Sequence[str]) -> list[str]:
     return list(dict.fromkeys(values))
-
-
-def _string_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, str) and item]

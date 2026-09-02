@@ -9,20 +9,15 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
 from unittest.mock import patch
 
 import pytest
 
 from gobby.sessions.compact_continuation import (
     _HANDOFF_COMPACT_CONTINUATION_TASKS,
-    COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE,
-    COMPACT_RESUME_EXCLUDED_SKILLS,
     COMPACT_RESUME_LEASED_TOOLS_LIMIT,
     COMPACT_RESUME_LEASED_TOOLS_VARIABLE,
-    COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
-    WORKFLOW_REQUESTED_SKILLS_VARIABLE,
     _continue_after_codex_compaction_ready,
     _merge_session_variable,
     _pop_session_variable,
@@ -32,16 +27,12 @@ from gobby.sessions.compact_continuation import (
     consume_handoff_compact_continuation_pending,
     mark_handoff_compact_continuation_pending,
     persist_handoff_resume_leased_tools,
-    persist_handoff_resume_skills,
     schedule_codex_handoff_compact_continuation_readiness,
     schedule_handoff_compact_continuation,
 )
 from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.sessions.transcript_cursor import CodexRolloutCursor, TranscriptObservationError
-from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import RuleEffect
-from gobby.workflows.engine.effects import EffectsMixin
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
 
@@ -734,38 +725,6 @@ def test_in_place_compact_does_not_steal_pending_from_other_terminal(
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE in variables
 
 
-def test_persist_compact_resume_skills_keeps_core_and_active_task_requirements(
-    session_db: HubDatabase,
-) -> None:
-    db = session_db
-    sv_mgr = SessionVariableManager(db)
-    sv_mgr.merge_variables(
-        SESSION_ID,
-        {
-            "required_skills": ["loading-skills", "memory"],
-            "claimed_task_required_skills": ["tasks", "python", "development-discipline"],
-            WORKFLOW_REQUESTED_SKILLS_VARIABLE: ["plan-review"],
-            "loaded_skills": ["code-index", "tasks"],
-        },
-    )
-
-    skill_tiers = persist_handoff_resume_skills(db, SESSION_ID)
-
-    assert skill_tiers == {
-        "required": [
-            "memory",
-            "tasks",
-            "python",
-            "development-discipline",
-            "plan-review",
-        ],
-        "advisory": [],
-    }
-    variables = sv_mgr.get_variables(SESSION_ID)
-    assert variables[COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE] == skill_tiers["required"]
-    assert variables[COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE] == skill_tiers["advisory"]
-
-
 def test_persist_compact_resume_leases_caps_newest_tools(session_db: HubDatabase) -> None:
     sv_mgr = SessionVariableManager(session_db)
     unlocked_tools = [f"gobby-tasks:tool-{index}" for index in range(10)]
@@ -780,82 +739,6 @@ def test_persist_compact_resume_leases_caps_newest_tools(session_db: HubDatabase
     assert COMPACT_RESUME_LEASED_TOOLS_VARIABLE not in sv_mgr.get_variables(SESSION_ID)
 
 
-def test_no_task_compaction_omits_historical_loaded_language_skills(
-    session_db: HubDatabase,
-) -> None:
-    db = session_db
-    sv_mgr = SessionVariableManager(db)
-    sv_mgr.merge_variables(
-        SESSION_ID,
-        {
-            "required_skills": ["loading-skills", "tasks", "memory"],
-            "additional_skills": ["pytest"],
-            WORKFLOW_REQUESTED_SKILLS_VARIABLE: ["plan", "elicit"],
-            "loaded_skills": ["rust", "typescript", "code-index", "brevity"],
-        },
-    )
-
-    first_tiers = persist_handoff_resume_skills(db, SESSION_ID)
-
-    assert first_tiers == {
-        "required": [
-            "tasks",
-            "memory",
-            "plan",
-            "elicit",
-        ],
-        "advisory": ["pytest"],
-    }
-
-    sv_mgr.set_variable(SESSION_ID, "loaded_skills", [])
-    assert sv_mgr.get_variables(SESSION_ID)["loaded_skills"] == []
-
-    # Successful get_skill calls repopulate the current-context ledger, but that historical
-    # ledger does not expand the next compaction's reload scope.
-    sv_mgr.append_to_set_variable(
-        SESSION_ID,
-        "loaded_skills",
-        ["rust"],
-        preserve_order=True,
-    )
-    sv_mgr.append_to_set_variable(
-        SESSION_ID,
-        "loaded_skills",
-        ["typescript", "rust"],
-        preserve_order=True,
-    )
-    assert sv_mgr.get_variables(SESSION_ID)["loaded_skills"] == ["rust", "typescript"]
-
-    second_tiers = persist_handoff_resume_skills(db, SESSION_ID)
-
-    assert second_tiers == first_tiers
-
-
-def test_meta_skills_never_enter_resume_tiers(session_db: HubDatabase) -> None:
-    """brevity and loading-skills ride per-turn reminders, never reload tiers."""
-    db = session_db
-    sv_mgr = SessionVariableManager(db)
-    sv_mgr.merge_variables(
-        SESSION_ID,
-        {
-            "required_skills": ["loading-skills", "brevity"],
-            "claimed_task_required_skills": ["brevity", "tasks"],
-            WORKFLOW_REQUESTED_SKILLS_VARIABLE: ["loading-skills"],
-            "loaded_skills": ["brevity", "loading-skills", "code-index"],
-            "additional_skills": ["brevity", "restraint"],
-        },
-    )
-
-    skill_tiers = persist_handoff_resume_skills(db, SESSION_ID)
-
-    assert skill_tiers == {
-        "required": ["tasks"],
-        "advisory": ["restraint"],
-    }
-    assert not set(skill_tiers["required"]) & COMPACT_RESUME_EXCLUDED_SKILLS
-    assert not set(skill_tiers["advisory"]) & COMPACT_RESUME_EXCLUDED_SKILLS
-
-
 def test_reload_directive_normalized() -> None:
     """The typed trigger is one paste line and requires pull-only recovery."""
     prompt = build_handoff_continue_prompt()
@@ -863,52 +746,5 @@ def test_reload_directive_normalized() -> None:
     assert "get_handoff()" in prompt
     assert "injected context" not in prompt
     assert "\n" not in prompt
-    assert "Required tier" not in prompt
-    assert "Advisory tier" not in prompt
+    assert "tier" not in prompt
     assert "get_skill" not in prompt
-
-
-@pytest.mark.asyncio
-async def test_load_skill_effect_flows_to_persisted_resume_prompt(
-    session_db: HubDatabase,
-) -> None:
-    variables: dict[str, object] = {
-        "required_skills": ["loading-skills", "python"],
-        "additional_skills": ["pytest", "python", "hypothesis"],
-        "loaded_skills": ["plan", "brevity", "pytest"],
-    }
-    context_parts: list[str] = []
-    effects = EffectsMixin()
-
-    block_reason = await effects._apply_effect(
-        RuleEffect(type="load_skill", skill="plan"),
-        cast(RuleDefinitionRow, SimpleNamespace()),
-        variables,
-        {},
-        {},
-        context_parts,
-        [],
-        {},
-    )
-
-    assert block_reason is None
-    assert variables[WORKFLOW_REQUESTED_SKILLS_VARIABLE] == ["plan"]
-    assert len(context_parts) == 1
-    assert '"get_skill"' in context_parts[0]
-
-    sv_mgr = SessionVariableManager(session_db)
-    sv_mgr.merge_variables(SESSION_ID, variables)
-    skill_tiers = persist_handoff_resume_skills(session_db, SESSION_ID)
-    prompt = build_handoff_continue_prompt()
-
-    assert skill_tiers == {
-        "required": ["python", "plan"],
-        "advisory": ["pytest", "hypothesis"],
-    }
-    # The inject-compact-handoff rule reads both persisted tiers into the
-    # SessionStart injected context; the typed trigger stays skill-free.
-    persisted = sv_mgr.get_variables(SESSION_ID)
-    assert persisted[COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE] == skill_tiers["required"]
-    assert persisted[COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE] == skill_tiers["advisory"]
-    assert "get_skill" not in prompt
-    assert "\n" not in prompt

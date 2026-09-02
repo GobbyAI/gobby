@@ -353,7 +353,7 @@ sequenceDiagram
     Gobby->>Gobby: atomically stage Markdown, feedback, and marker
     Gobby->>Session: dispatch provider compact or clear
     Continuation->>Gobby: get_handoff()
-    Gobby->>Continuation: consume marker and return Markdown + skill tiers
+    Gobby->>Continuation: consume marker and return Markdown
 ```
 
 Provider dispatch failure restores the previous handoff, deletes feedback rows from

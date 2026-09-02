@@ -164,6 +164,26 @@ class TaskCloseReviewStore:
         verdict = (payload or {}).get("verdict")
         return dict(verdict) if isinstance(verdict, Mapping) else None
 
+    def get_latest_memoized_verdict(self, *, task_id: str) -> dict[str, Any] | None:
+        """Return the task's latest verdict for continuity across evidence states."""
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT result_payload
+                FROM task_close_reviews
+                WHERE task_id = %s
+                  AND result_payload->>'kind' = %s
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (task_id, INLINE_CRITERIA_VERDICT_KIND),
+            ).fetchone()
+        if not isinstance(row, Mapping):
+            return None
+        payload = _json_object(row["result_payload"])
+        verdict = (payload or {}).get("verdict")
+        return dict(verdict) if isinstance(verdict, Mapping) else None
+
     def memoize_verdict(
         self,
         *,
@@ -183,23 +203,12 @@ class TaskCloseReviewStore:
         inline, and the partial active-status unique index does not cover
         terminal rows.
 
-        Superseded memos for the task are dropped in the same transaction. A
-        task's evidence state moves forward — a new commit, a fresh edit,
-        repaired criteria — so an older memo can only be hit again by reverting
-        to that exact state, which is worth one more review rather than a row
-        per attempt for the life of the project.
+        Prior memos remain available so later evidence states can quote the
+        requirements the reviewer already stated. Exact fingerprint lookup
+        still ensures an unchanged attempt never invokes the reviewer again.
         """
         now = datetime.now(UTC)
         with self.db.transaction() as conn:
-            conn.execute(
-                """
-                DELETE FROM task_close_reviews
-                WHERE task_id = %s
-                  AND result_payload->>'kind' = %s
-                  AND (review_fingerprint, evidence_fingerprint) <> (%s, %s)
-                """,
-                (task_id, INLINE_CRITERIA_VERDICT_KIND, review_fingerprint, evidence_fingerprint),
-            )
             conn.execute(
                 """
                 INSERT INTO task_close_reviews (

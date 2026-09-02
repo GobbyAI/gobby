@@ -126,8 +126,6 @@ def register_handoff_tools(
                 "success": True,
                 "found": False,
                 "handoff": "",
-                "required_skills": [],
-                "advisory_skills": [],
                 "leased_tool_schemas": [],
             }
         leased_tool_schemas: list[dict[str, Any]] = []
@@ -171,8 +169,6 @@ def register_handoff_tools(
             "found": True,
             "session_id": consumed.session_id,
             "handoff": consumed.markdown,
-            "required_skills": list(consumed.required_skills),
-            "advisory_skills": list(consumed.advisory_skills),
             "leased_tool_schemas": leased_tool_schemas,
         }
 

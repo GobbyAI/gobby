@@ -26,6 +26,36 @@ def test_status_is_case_insensitive_and_entries_match_by_index() -> None:
     assert verdict.valid is True
     assert [entry.index for entry in verdict.criteria] == [1, 2]
     assert all(entry.satisfied for entry in verdict.criteria)
+    assert all(entry.required_evidence is None for entry in verdict.criteria)
+
+
+def test_required_evidence_accepts_string_and_null() -> None:
+    verdict = parse_close_verdict(
+        {
+            "status": "invalid",
+            "criteria": [
+                {
+                    "index": 1,
+                    "satisfied": False,
+                    "gap": "Exercise the close adapter.",
+                    "required_evidence": "Invoke close_task with the real rule and capture its receipt.",
+                },
+                {
+                    "index": 2,
+                    "satisfied": False,
+                    "gap": "Document the prompt contract.",
+                    "required_evidence": None,
+                },
+            ],
+            "feedback": "Two criteria remain incomplete.",
+        },
+        CRITERIA,
+    )
+
+    assert verdict.criteria[0].required_evidence == (
+        "Invoke close_task with the real rule and capture its receipt."
+    )
+    assert verdict.criteria[1].required_evidence is None
 
 
 def test_fuzzy_text_matches_when_index_is_missing() -> None:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,12 +14,25 @@ import pytest
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.event_handlers._session_start.handoff import SessionStartResolution
 from gobby.hooks.event_handlers._session_start.materialize import activate_materialized_session
+from gobby.hooks.event_handlers._session_start.terminal_runtime import (
+    expire_stale_terminal_sessions_for_context,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.session_materialize import activate_deferred_session
-from gobby.sessions.clear_continuation import stage_clear_attempt
-from gobby.sessions.handoff import consume_pending_handoff, render_handoff_markdown
+from gobby.sessions.clear_continuation import (
+    CLEAR_ATTEMPT_VARIABLE,
+    resolve_clear_continuation,
+    stage_clear_attempt,
+    take_clear_handoff_marker,
+)
+from gobby.sessions.handoff import (
+    HANDOFF_PULL_PENDING_VARIABLE,
+    consume_pending_handoff,
+    render_handoff_markdown,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
@@ -362,3 +377,248 @@ def test_clear_session_start_types_pull_prompt_only_when_none_is_in_flight(
     assert rebound is not None
     assert rebound.parent_session_id == predecessor_id
     assert mock_schedule.called is session_start_types_prompt
+
+
+_MATERIALIZE = "gobby.hooks.event_handlers._session_start.materialize"
+# Activation side effects every clear-bind test below stubs unless a test names
+# one in ``overrides`` (``None`` keeps the real function).
+_ACTIVATION_STUBS = (
+    "_seed_parent_turn_seq",
+    "_seed_wiki_overview_var",
+    "seed_user_profile_content",
+    "prepare_compact_continuation_variables",
+    "_schedule_tmux_window_rename_for_session",
+    "classify_session_start_context",
+    "schedule_handoff_continuation",
+    "expire_stale_terminal_sessions_for_context",
+)
+
+
+@dataclass
+class _StagedClear:
+    """A clear predecessor staged on one pane plus the means to add same-pane rows."""
+
+    sessions: SessionManager
+    machine_id: str
+    project_id: str
+    root: str
+    term: dict[str, object]
+    predecessor_id: str = ""
+
+    def register(self, external_id: str) -> str:
+        return self.sessions.register_session(
+            external_id=external_id,
+            machine_id=self.machine_id,
+            source="grok",
+            project_id=self.project_id,
+            terminal_context=self.term,
+        )
+
+    def status(self, session_id: str) -> str | None:
+        session = self.sessions.get(session_id)
+        return None if session is None else session.status
+
+    def resolution(self) -> SessionStartResolution:
+        return SessionStartResolution(
+            session=None,
+            session_source="clear",
+            clear_predecessor=self.sessions.get(self.predecessor_id),
+            clear_attempt_id="attempt-1",
+        )
+
+
+def _staged_clear(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    name: str,
+    pane: str,
+) -> _StagedClear:
+    checkout = install_isolated_checkout_project(
+        temp_db, tmp_path / name, name=name, monkeypatch=monkeypatch
+    )
+    staged = _StagedClear(
+        sessions=SessionManager(temp_db),
+        machine_id=checkout.machine_id,
+        project_id=checkout.project.id,
+        root=checkout.root_path,
+        term={
+            "tmux_pane": pane,
+            "tmux_socket_path": "/tmp/tmux",
+            "parent_pid": 10324,
+            "parent_create_time": 1.0,
+        },
+    )
+    staged.predecessor_id = staged.register("pred-ext")
+    stage_clear_attempt(
+        temp_db,
+        staged.predecessor_id,
+        attempt_id="attempt-1",
+        handoff_markdown=render_handoff_markdown(current_state="Ready.", next_steps=["Continue."]),
+        observations=[],
+        terminal_context=staged.term,
+        chat_context=None,
+    )
+    return staged
+
+
+def _handler(sessions: SessionManager) -> MagicMock:
+    handler = MagicMock()
+    handler.terminal_manager = None
+    handler._session_manager = sessions
+    handler._session_coordinator = None
+    handler._resolve_message_processor.return_value = None
+    handler._build_claimed_task_context.return_value = None
+    return handler
+
+
+def _activate_clear_successor(
+    staged: _StagedClear,
+    handler: MagicMock,
+    session_id: str,
+    resolution: SessionStartResolution,
+    *,
+    overrides: dict[str, object | None] | None = None,
+) -> None:
+    overrides = overrides or {}
+    session = staged.sessions.get(session_id)
+    assert session is not None
+    event = _event({"source": "clear", "skip_default_agent_activation": True, "cwd": staged.root})
+    event.task_id = None
+    with ExitStack() as stack:
+        for name in dict.fromkeys((*_ACTIVATION_STUBS, *overrides)):
+            replacement = overrides.get(name, MagicMock())
+            if replacement is None:
+                continue
+            stack.enter_context(patch(f"{_MATERIALIZE}.{name}", replacement))
+        activate_materialized_session(
+            handler,
+            event,
+            session_id,
+            resolution=resolution,
+            session_obj=session,
+            project_id=staged.project_id,
+            transcript_path=None,
+            terminal_context=staged.term,
+        )
+
+
+def test_context_reuse_expiry_runs_after_the_successor_binds(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When expiry scans the pane the newcomer is parented and the predecessor already expired."""
+    staged = _staged_clear(temp_db, tmp_path, monkeypatch, name="expiry-order", pane="%102")
+    successor_id = staged.register("succ-ext")
+    assert staged.status(staged.predecessor_id) == "awaiting_handoff"
+    seen: list[tuple[str | None, str | None]] = []
+
+    def record(handler: object, **kwargs: object) -> None:
+        successor = staged.sessions.get(successor_id)
+        parent = None if successor is None else successor.parent_session_id
+        seen.append((parent, staged.status(staged.predecessor_id)))
+
+    _activate_clear_successor(
+        staged,
+        _handler(staged.sessions),
+        successor_id,
+        staged.resolution(),
+        overrides={"expire_stale_terminal_sessions_for_context": MagicMock(side_effect=record)},
+    )
+
+    assert seen == [(staged.predecessor_id, "expired")]
+
+
+def test_awaiting_handoff_row_survives_context_reuse_expiry(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A staged clear predecessor waits for its successor while other same-pane rows expire."""
+    staged = _staged_clear(temp_db, tmp_path, monkeypatch, name="expiry-skip", pane="%103")
+    bystander_id = staged.register("bystander-ext")
+    newcomer_id = staged.register("newcomer-ext")
+
+    expire_stale_terminal_sessions_for_context(
+        _handler(staged.sessions),
+        session_id=newcomer_id,
+        project_id=staged.project_id,
+        terminal_context=staged.term,
+    )
+
+    assert staged.status(bystander_id) == "expired"
+    assert staged.status(staged.predecessor_id) == "awaiting_handoff"
+    assert staged.status(newcomer_id) == "active"
+
+
+def test_next_clear_takes_over_a_bound_but_unpulled_successor(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A manual /clear before get_handoff moves the marker, parent, and claims to the third row."""
+    staged = _staged_clear(temp_db, tmp_path, monkeypatch, name="takeover", pane="%104")
+    stale_id = staged.register("stale-ext")
+    assert take_clear_handoff_marker(
+        temp_db, staged.predecessor_id, attempt_id="attempt-1", successor_id=stale_id
+    )
+    staged.sessions.update_status_if_non_terminal(staged.predecessor_id, "expired")
+    variables = SessionVariableManager(temp_db)
+    variables.merge_variables(
+        stale_id,
+        {
+            HANDOFF_PULL_PENDING_VARIABLE: True,
+            "task_claimed": True,
+            "claimed_tasks": {"task-1": "#1"},
+            "session_had_task": True,
+        },
+    )
+    newcomer_id = staged.register("newcomer-ext")
+
+    resolved = resolve_clear_continuation(
+        temp_db,
+        source="grok",
+        project_id=staged.project_id,
+        machine_id=staged.machine_id,
+        terminal_context=staged.term,
+        predecessor_hint=None,
+    )
+    assert resolved.predecessor is not None
+    assert resolved.predecessor.id == staged.predecessor_id
+    assert (resolved.attempt_id, resolved.supersedes) == ("attempt-1", stale_id)
+
+    handler = _handler(staged.sessions)
+    preserve = MagicMock()
+    _activate_clear_successor(
+        staged,
+        handler,
+        newcomer_id,
+        SessionStartResolution(
+            session=None,
+            session_source="clear",
+            clear_predecessor=resolved.predecessor,
+            clear_attempt_id=resolved.attempt_id,
+            clear_supersedes=resolved.supersedes,
+        ),
+        overrides={
+            "expire_stale_terminal_sessions_for_context": None,
+            "preserve_task_claim_state": preserve,
+        },
+    )
+
+    newcomer = staged.sessions.get(newcomer_id)
+    assert newcomer is not None
+    assert newcomer.parent_session_id == staged.predecessor_id
+    marker = variables.get_variables(staged.predecessor_id)[CLEAR_ATTEMPT_VARIABLE]
+    assert marker["consumed_by"] == newcomer_id
+    assert variables.get_variables(newcomer_id)[HANDOFF_PULL_PENDING_VARIABLE] is True
+    assert staged.status(stale_id) == "expired"
+    assert staged.status(newcomer_id) == "active"
+    moved = [(c.args[2], c.args[3]) for c in preserve.call_args_list]
+    assert moved == [(newcomer_id, staged.predecessor_id), (newcomer_id, stale_id)]
+    assert preserve.call_args_list[1].args[4]["claimed_tasks"] == {"task-1": "#1"}
+    consumed = consume_pending_handoff(temp_db, newcomer_id)
+    assert consumed is not None
+    assert consumed.session_id == staged.predecessor_id

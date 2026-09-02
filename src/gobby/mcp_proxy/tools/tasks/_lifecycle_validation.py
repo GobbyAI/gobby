@@ -251,13 +251,31 @@ def account_criteria_verdict(
         )
         extra.update({"escalated": True, "escalation_event_id": event_id})
     gaps = [
-        criterion.gap for criterion in verdict.criteria if not criterion.satisfied and criterion.gap
+        " ".join(
+            part
+            for part in (
+                criterion.gap,
+                (
+                    f"Required evidence: {criterion.required_evidence}"
+                    if criterion.required_evidence
+                    else None
+                ),
+            )
+            if part
+        )
+        for criterion in verdict.criteria
+        if not criterion.satisfied and (criterion.gap or criterion.required_evidence)
     ]
+    requirements = gaps or [verdict.feedback]
     return ValidationResult(
         can_close=False,
         error_type="validation_failed",
         message=verdict.feedback,
-        extra={**extra, "blocking_reasons": gaps or [verdict.feedback]},
+        extra={
+            **extra,
+            "blocking_reasons": requirements,
+            "required_actions": requirements,
+        },
         failure_category=FailureCategory.CODE,
         validation_status="invalid",
         validation_feedback=verdict.feedback,
