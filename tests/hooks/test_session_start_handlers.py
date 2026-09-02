@@ -21,7 +21,7 @@ from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     expire_stale_terminal_sessions_for_context,
     session_start_is_native_subagent_child,
 )
-from gobby.hooks.events import HookEventType
+from gobby.hooks.events import HookEventType, MissingHookMachineIdError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._update_sentinel import UNSET
@@ -310,6 +310,21 @@ class TestSessionHandlers:
         response = event_handlers.handle_session_start(event)
         assert response.decision == "allow"
 
+    def test_session_start_requires_envelope_machine_id(
+        self,
+        event_handlers: EventHandlers,
+        mock_dependencies: dict[str, Any],
+    ) -> None:
+        event = make_event(HookEventType.SESSION_START, machine_id=None)
+
+        with pytest.raises(
+            MissingHookMachineIdError,
+            match="Hook envelope is missing required machine_id",
+        ):
+            event_handlers.handle_session_start(event)
+
+        mock_dependencies["session_manager"].register_session.assert_not_called()
+
     def test_session_end_allows(self, event_handlers: EventHandlers) -> None:
         """Test SESSION_END handler allows by default."""
         event = make_event(
@@ -483,6 +498,25 @@ class TestSessionStartContextClaim:
 
 class TestSessionStartPreCreatedSession:
     """Test SESSION_START handling for pre-created sessions (terminal mode agents)."""
+
+    def test_pre_created_session_requires_envelope_machine_id(
+        self,
+        event_handlers: EventHandlers,
+    ) -> None:
+        event = make_event(HookEventType.SESSION_START, machine_id=None)
+
+        with pytest.raises(
+            MissingHookMachineIdError,
+            match="Hook envelope is missing required machine_id",
+        ):
+            event_handlers._handle_pre_created_session(
+                existing_session=MagicMock(),
+                external_id="external-session",
+                transcript_path=None,
+                cli_source="claude",
+                event=event,
+                cwd=None,
+            )
 
     def test_pre_created_session_found_and_updated(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock

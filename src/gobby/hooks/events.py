@@ -16,6 +16,14 @@ from enum import Enum
 from typing import Any, Literal
 
 
+class HookIngressError(ValueError):
+    """Raised when a normalized hook event violates the ingress contract."""
+
+
+class MissingHookMachineIdError(HookIngressError):
+    """Raised when a hook envelope omits its machine identity."""
+
+
 class HookEventType(str, Enum):
     """Unified hook event types across all CLI sources.
 
@@ -147,6 +155,13 @@ class HookEvent:
     task_id: str | None = None
     workflow_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def require_hook_machine_id(event: HookEvent) -> str:
+    """Return the envelope's machine ID or reject malformed hook ingress."""
+    if not event.machine_id:
+        raise MissingHookMachineIdError("Hook envelope is missing required machine_id")
+    return event.machine_id
 
 
 @dataclass
