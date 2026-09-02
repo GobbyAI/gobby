@@ -214,4 +214,166 @@ async def test_workflow_handler_feeds_unclaimed_fact_for_spawned_claimed_session
     assert response.decision == "block"
     assert "#21484" in (response.reason or "")
     analyze.assert_not_awaited()
-    unclaimed.assert_called_once_with(session_id, user_prompt="")
+    unclaimed.assert_called_once_with(session_id, deferred=frozenset())
+
+
+@pytest.mark.asyncio
+async def test_authored_epic_subtree_is_not_found_work(
+    temp_db: HubDatabase,
+    task_context: tuple[LocalTaskManager, str, str, str],
+) -> None:
+    """A graph the session authored is a plan deliverable, not abandoned work."""
+    tasks, project_id, owner_id, _other_id = task_context
+    root = tasks.create_task(
+        project_id=project_id,
+        title="Roadmap root",
+        created_in_session_id=owner_id,
+        task_type="epic",
+        category="planning",
+    )
+    stage = tasks.create_task(
+        project_id=project_id,
+        title="Stage 1",
+        parent_task_id=root.id,
+        created_in_session_id=owner_id,
+        task_type="epic",
+        category="planning",
+    )
+    tasks.create_task(
+        project_id=project_id,
+        title="Stage 1 leaf",
+        parent_task_id=stage.id,
+        created_in_session_id=owner_id,
+        category="code",
+        validation_criteria="Leaf work is completed.",
+    )
+    loose = tasks.create_task(
+        project_id=project_id,
+        title="Defect noticed in passing",
+        created_in_session_id=owner_id,
+        category="code",
+        validation_criteria="Defect is fixed.",
+    )
+
+    refs = _analyzer(temp_db).unclaimed_found_work(owner_id)
+
+    assert refs == (f"#{loose.seq_num}",)
+
+
+@pytest.mark.asyncio
+async def test_childless_epic_is_still_found_work(
+    temp_db: HubDatabase,
+    task_context: tuple[LocalTaskManager, str, str, str],
+) -> None:
+    """A lone epic is a filing, not a tree, so the gate keeps holding it."""
+    tasks, project_id, owner_id, _other_id = task_context
+    lone = tasks.create_task(
+        project_id=project_id,
+        title="Big problem, filed and abandoned",
+        created_in_session_id=owner_id,
+        task_type="epic",
+        category="code",
+    )
+
+    assert _analyzer(temp_db).unclaimed_found_work(owner_id) == (f"#{lone.seq_num}",)
+
+
+@pytest.mark.asyncio
+async def test_foreign_epic_parent_does_not_exempt_its_children(
+    temp_db: HubDatabase,
+    task_context: tuple[LocalTaskManager, str, str, str],
+) -> None:
+    """Filing under someone else's epic is still filing."""
+    tasks, project_id, owner_id, other_id = task_context
+    foreign_root = tasks.create_task(
+        project_id=project_id,
+        title="Pre-existing epic",
+        created_in_session_id=other_id,
+        task_type="epic",
+        category="planning",
+    )
+    filed = tasks.create_task(
+        project_id=project_id,
+        title="Defect filed under a foreign epic",
+        parent_task_id=foreign_root.id,
+        created_in_session_id=owner_id,
+        category="code",
+        validation_criteria="Defect is fixed.",
+    )
+
+    assert _analyzer(temp_db).unclaimed_found_work(owner_id) == (f"#{filed.seq_num}",)
+
+
+@pytest.mark.asyncio
+async def test_deferred_refs_are_excluded(
+    temp_db: HubDatabase,
+    task_context: tuple[LocalTaskManager, str, str, str],
+) -> None:
+    tasks, project_id, owner_id, _other_id = task_context
+    first = tasks.create_task(
+        project_id=project_id,
+        title="Already deferred",
+        created_in_session_id=owner_id,
+        category="code",
+        validation_criteria="Deferred work is completed.",
+    )
+    later = tasks.create_task(
+        project_id=project_id,
+        title="Filed after the deferral",
+        created_in_session_id=owner_id,
+        category="code",
+        validation_criteria="Later work is completed.",
+    )
+
+    refs = _analyzer(temp_db).unclaimed_found_work(
+        owner_id, deferred=frozenset({f"#{first.seq_num}"})
+    )
+
+    assert refs == (f"#{later.seq_num}",)
+
+
+@pytest.mark.asyncio
+async def test_user_deferral_latches_past_the_turn_that_carried_it(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deferral survives compaction, whose next prompt is harness text."""
+    sync_bundled_rules(temp_db, get_bundled_rules_path())
+    handler = WorkflowHookHandler(rule_engine=RuleEngine(temp_db))
+    variables: dict[str, Any] = {
+        "_memory_initial_stop_checked": True,
+        "task_claimed": False,
+        "stop_attempts": 0,
+        "_current_user_prompt": "File them for later.",
+    }
+    session_vars = MagicMock()
+    session_vars.get_variables.side_effect = lambda _sid: dict(variables)
+    session_vars.merge_variables.side_effect = lambda _sid, changed: variables.update(changed)
+    handler._session_var_manager = session_vars
+    monkeypatch.setattr(
+        handler._found_work_analyzer, "analyze", AsyncMock(return_value=FoundWorkStopFacts())
+    )
+    monkeypatch.setattr(
+        handler._found_work_analyzer,
+        "unclaimed_found_work",
+        MagicMock(
+            side_effect=lambda _sid, deferred=frozenset(): tuple(
+                ref for ref in ("#21484", "#21485") if ref not in deferred
+            )
+        ),
+    )
+    session_id = "11111111-1111-4111-8111-111111111111"
+    event = _event(session_id)
+    event.cwd = str(Path(__file__).resolve().parents[2])
+
+    deferral_turn = await handler.evaluate_async(event)
+
+    assert deferral_turn.decision != "block"
+    assert variables["_found_work_deferred_tasks"] == ["#21484", "#21485"]
+
+    # The compaction continuation carries harness text, never the user's words.
+    variables["_current_user_prompt"] = "Call get_handoff() on gobby-sessions, then continue."
+
+    continuation_turn = await handler.evaluate_async(_event(session_id))
+
+    assert continuation_turn.decision != "block"

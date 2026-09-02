@@ -23,6 +23,7 @@ from gobby.workflows.found_work_gate import (
     FoundWorkStopAnalyzer,
     capture_found_work_handoff,
     capture_turn_prompt,
+    is_found_work_deferral,
 )
 from gobby.workflows.git_utils import DEFAULT_GIT_STATUS_TIMEOUT_SECONDS
 from gobby.workflows.step_context import get_active_step_workflow_context
@@ -814,11 +815,25 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     )
 
                 if _is_turn_end_event(event.event_type) and session_id:
+                    deferred = {
+                        ref
+                        for ref in (variables.get("_found_work_deferred_tasks") or ())
+                        if isinstance(ref, str)
+                    }
                     unclaimed_tasks = await asyncio.to_thread(
                         self._found_work_analyzer.unclaimed_found_work,
                         session_id,
-                        user_prompt=str(variables.get("_current_user_prompt") or ""),
+                        deferred=frozenset(deferred),
                     )
+                    prompt = str(variables.get("_current_user_prompt") or "")
+                    if unclaimed_tasks and is_found_work_deferral(prompt):
+                        # A deferral names the refs open when the user gave it, so
+                        # latch those into session state. Re-reading the live prompt
+                        # would revoke it at the next compaction, whose continuation
+                        # turn carries harness text instead of the user's words.
+                        deferred.update(unclaimed_tasks)
+                        variables["_found_work_deferred_tasks"] = sorted(deferred)
+                        unclaimed_tasks = ()
                     eval_context["unclaimed_found_work"] = bool(unclaimed_tasks)
                     eval_context["unclaimed_found_work_tasks"] = list(unclaimed_tasks)
 
