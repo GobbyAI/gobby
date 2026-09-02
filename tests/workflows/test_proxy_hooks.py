@@ -86,6 +86,13 @@ if mode == "deny":
 if mode == "ask":
     sys.stdout.write(f"rtk {{command}}")
     raise SystemExit(3)
+if mode == "runtime_error":
+    sys.stdout.write("[rtk: No such file or directory (os error 2)]")
+    raise SystemExit(0)
+if mode == "stderr_error":
+    sys.stdout.write(f"rtk {{command}}")
+    sys.stderr.write("rtk: rewrite failed")
+    raise SystemExit(0)
 if mode == "sleep":
     time.sleep(2)
     raise SystemExit(1)
@@ -508,20 +515,73 @@ async def test_unknown_handler_fails_open(
     assert response.modified_input is None
 
 
-async def test_rtk_ask_verdict_applies_rewrite(
+@pytest.mark.parametrize("mode", ["ask", "unexpected"])
+async def test_rtk_nonzero_exit_falls_back_to_original_command(
+    mode: str,
     db: HubDatabase,
     manager: RuleDefinitionManager,
     fake_rtk: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("FAKE_RTK_MODE", "ask")
-    _create_rule(manager, "proxy-ask", [_proxy_effect()], priority=10)
+    monkeypatch.setenv("FAKE_RTK_MODE", mode)
+    _create_rule(manager, f"proxy-{mode}", [_proxy_effect()], priority=10)
 
     response = await RuleEngine(db).evaluate(_event(), SESSION_ID, {})
 
-    assert response.modified_input == {"command": "rtk git status"}
-    assert response.permission_decision is None
-    assert response.auto_approve is False
+    assert response.modified_input is None
+
+
+async def test_rtk_rewrite_preserves_leading_assignment(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+) -> None:
+    command = 'X=/some/path; git -C "$X" status'
+    _create_rule(manager, "proxy-assignment", [_proxy_effect()], priority=10)
+
+    response = await RuleEngine(db).evaluate(_event(command), SESSION_ID, {})
+
+    assert response.modified_input is None
+
+
+async def test_rtk_rewrite_preserves_leading_cd(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+) -> None:
+    command = "cd /some/path && git status"
+    _create_rule(manager, "proxy-cd", [_proxy_effect()], priority=10)
+
+    response = await RuleEngine(db).evaluate(_event(command), SESSION_ID, {})
+
+    assert response.modified_input is None
+
+
+@pytest.mark.parametrize(
+    "mode, detail",
+    [
+        ("runtime_error", "No such file or directory"),
+        ("stderr_error", "rewrite failed"),
+    ],
+)
+async def test_rtk_error_output_falls_back_to_original_command(
+    mode: str,
+    detail: str,
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("FAKE_RTK_MODE", mode)
+    _create_rule(manager, f"proxy-{mode}", [_proxy_effect()], priority=10)
+
+    with caplog.at_level(logging.DEBUG, logger=proxy_hooks.logger.name):
+        response = await RuleEngine(db).evaluate(_event(), SESSION_ID, {})
+
+    assert response.modified_input is None
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(detail in message for message in messages)
 
 
 @pytest.mark.parametrize("mode", ["pass", "deny"])
@@ -544,7 +604,7 @@ async def test_rtk_passthrough_verdicts_are_silent(
     assert not [record for record in caplog.records if record.name == proxy_hooks.logger.name]
 
 
-@pytest.mark.parametrize("mode", ["invalid", "oversized", "unexpected"])
+@pytest.mark.parametrize("mode", ["invalid", "oversized"])
 async def test_rtk_failures_pass_through(
     mode: str,
     db: HubDatabase,
