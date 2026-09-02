@@ -16,6 +16,7 @@ from gobby.memory.dream.truth_digest import build_project_truth_digest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.projects import LocalProjectManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -48,14 +49,18 @@ def _write_frozen_digest(repo_path: Path, project_id: str) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_frozen_digest_is_tolerated(temp_db: HubDatabase, tmp_path: Path) -> None:
+async def test_frozen_digest_is_tolerated(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase, tmp_path: Path
+) -> None:
     projects = LocalProjectManager(temp_db)
     seen_repo = tmp_path / "seen"
     absent_repo = tmp_path / "absent"
     first_sight_repo = tmp_path / "first-sight"
-    seen = projects.create(name="seen-frozen", repo_path=str(seen_repo))
-    absent = projects.create(name="absent-digest", repo_path=str(absent_repo))
-    first_sight = projects.create(name="first-sight-frozen", repo_path=str(first_sight_repo))
+    seen = isolated_checkout_factory(projects.db, "seen-frozen", root=seen_repo).project
+    absent = isolated_checkout_factory(projects.db, "absent-digest", root=absent_repo).project
+    first_sight = isolated_checkout_factory(
+        projects.db, "first-sight-frozen", root=first_sight_repo
+    ).project
 
     _write_frozen_digest(seen_repo, seen.id)
     _write_frozen_digest(first_sight_repo, first_sight.id)

@@ -15,4 +15,6 @@ rules:
       and '.gobby/plans/' in normalize_path(event.data.get('canonical_file_path', ''))
     effects:
       - type: block
-        reason: '{{ skill_fetch_directive("plan") }}'
+        reason: |
+          {{ skill_fetch_directive("plan") }}
+          `.gobby/plans/` is written by `gobby plans register`, never by copying a plan-mode file; Lightweight planning does not create a `.gobby/plans/` file at all.

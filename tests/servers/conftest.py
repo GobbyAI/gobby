@@ -221,15 +221,15 @@ def project_storage(temp_db: HubDatabase) -> LocalProjectManager:
 def test_project(
     project_storage: LocalProjectManager,
     temp_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> dict[str, Any]:
-    """Create a test project with an isolated machine, marker, and checkout."""
+    """Create a test project with a marker and checkout on the pinned local machine."""
+    from gobby.utils.machine_id import require_machine_id
     from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
     isolated = install_isolated_checkout_project(
         project_storage.db,
         temp_dir,
-        monkeypatch=monkeypatch,
+        machine_id=require_machine_id(),
     )
     return isolated.project.to_dict()
 

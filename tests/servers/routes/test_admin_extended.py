@@ -1,9 +1,11 @@
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from gobby.servers.routes.admin import create_admin_router
+from tests.fixtures.isolated_checkout import write_project_marker
 
 pytestmark = pytest.mark.unit
 
@@ -72,15 +74,30 @@ class TestAdminRoutesExtended:
         registry = mock_server._internal_manager.get_all_registries.return_value[0]
         registry.call.assert_called_with("reload_cache", {})
 
-    def test_register_test_project(self, client, mock_server) -> None:
+    def test_register_test_project(self, client, mock_server, tmp_path: Path) -> None:
         """Test POST /test/register-project endpoint."""
+        # The route validates the checkout root, so it needs a real directory
+        # carrying a marker for the project id being registered.
+        write_project_marker(tmp_path, project_id="proj-123", name="Test Project")
         # Mock checking for existing project (None)
         # Patch where the class is defined since it's imported locally in the function
-        with patch("gobby.storage.projects.LocalProjectManager") as MockPM:
+        with (
+            patch("gobby.storage.projects.LocalProjectManager") as MockPM,
+            # The mocked server db cannot answer the overlay query register() runs.
+            patch("gobby.storage.project_checkouts.LocalProjectCheckoutManager"),
+        ):
             mock_pm_instance = MockPM.return_value
             mock_pm_instance.get.return_value = None
+            # Checkout-root validation consults these guards on the same manager.
+            mock_pm_instance._is_isolated_agent_session.return_value = False
+            mock_pm_instance._is_under_isolation_root.return_value = False
+            mock_pm_instance._is_registered_isolation_path.return_value = False
 
-            payload = {"project_id": "proj-123", "name": "Test Project", "repo_path": "/tmp/test"}
+            payload = {
+                "project_id": "proj-123",
+                "name": "Test Project",
+                "repo_path": str(tmp_path),
+            }
             response = client.post("/api/admin/test/register-project", json=payload)
             assert response.status_code == 200
             data = response.json()

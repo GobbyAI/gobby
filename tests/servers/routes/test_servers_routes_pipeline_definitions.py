@@ -13,8 +13,8 @@ from starlette.testclient import TestClient
 from gobby.config.app import DaemonConfig
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.workflows.template_hashes import TemplateHashCache
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.servers.conftest import create_http_server
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("authenticated_http_requests")]
@@ -262,6 +262,7 @@ def test_duplicate_import_export_restore(
 
 
 def test_restore_from_template_and_moves(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     client: TestClient,
     pipe_manager: PipelineDefinitionManager,
     temp_db: HubDatabase,
@@ -290,7 +291,7 @@ def test_restore_from_template_and_moves(
     payload = json.loads(body) if isinstance(body, str) else body
     assert payload["steps"][0]["id"] == "restored"
 
-    project = LocalProjectManager(temp_db).create(name="pipe-project", repo_path=str(tmp_path))
+    project = isolated_checkout_factory(temp_db, "pipe-project", root=tmp_path).project
     moved = client.post(
         f"/api/pipelines/definitions/{row.id}/move-to-project",
         json={"project_id": project.id},
@@ -304,16 +305,14 @@ def test_restore_from_template_and_moves(
 
 
 def test_create_project_override_when_global_exists(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     client: TestClient,
     pipe_manager: PipelineDefinitionManager,
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     _create_pipeline(pipe_manager, name="shared-pipe")
-    project = LocalProjectManager(temp_db).create(
-        name="override-proj",
-        repo_path=str(tmp_path),
-    )
+    project = isolated_checkout_factory(temp_db, "override-proj", root=tmp_path).project
     resp = client.post(
         "/api/pipelines/definitions",
         json={

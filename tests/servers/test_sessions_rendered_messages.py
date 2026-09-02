@@ -18,6 +18,7 @@ from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -44,9 +45,13 @@ def project_storage(temp_db: HubDatabase) -> LocalProjectManager:
 
 
 @pytest.fixture
-def test_project(project_storage: LocalProjectManager, temp_dir: Path) -> dict[str, Any]:
+def test_project(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    project_storage: LocalProjectManager,
+    temp_dir: Path,
+) -> dict[str, Any]:
     """Create a test project with project.json file."""
-    project = project_storage.create(name="test-project", repo_path=str(temp_dir))
+    project = isolated_checkout_factory(project_storage.db, "test-project", root=temp_dir).project
 
     gobby_dir = temp_dir / ".gobby"
     gobby_dir.mkdir(exist_ok=True)

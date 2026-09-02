@@ -495,8 +495,9 @@ def sample_project(
 def isolated_checkout_factory(tmp_path: Path) -> "IsolatedCheckoutFactory":
     """Create isolated-checkout projects on the machine the test already treats as local.
 
-    Replaces `LocalProjectManager(db).create(name=..., repo_path="/literal")`: each
-    call gets its own checkout directory under tmp_path plus a matching marker. The
+    Replaces `LocalProjectManager(db).create(name=..., repo_path=...)`: each call
+    gets its own checkout directory under tmp_path (or the `root` the test needs,
+    such as a session cwd) plus a matching marker. The
     checkout is registered on the currently pinned local machine (read at call time,
     never re-pinned), so sessions the test registers against its own machine id keep
     passing the machine-ownership check.
@@ -511,12 +512,16 @@ def isolated_checkout_factory(tmp_path: Path) -> "IsolatedCheckoutFactory":
         name: str,
         *,
         github_url: str | None = None,
+        root: "str | Path | None" = None,
     ) -> "IsolatedCheckoutProject":
         nonlocal counter
         counter += 1
+        checkout_root = (
+            Path(root) if root is not None else tmp_path / "checkouts" / f"{counter}-{name}"
+        )
         return install_isolated_checkout_project(
             db,
-            tmp_path / "checkouts" / f"{counter}-{name}",
+            checkout_root,
             name=name,
             github_url=github_url,
             machine_id=require_machine_id(),

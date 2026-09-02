@@ -46,10 +46,11 @@ def build_agentic_review_prompt(
     changes_summary: str,
     review_fingerprint: str,
     evidence_fingerprint: str,
+    prior_requirements: str | None = None,
 ) -> str:
     """Build the fixed taskless validator prompt for one persisted review intent."""
-    return (
-        "Perform the read-only oversized task-close review. "
+    prompt = (
+        "Perform the read-only task-close review. "
         f"review_id={review_id}; task_id={task_id}; "
         f"commit_shas={json.dumps(list(commit_shas))}; "
         f"changes_summary={json.dumps(changes_summary)}; "
@@ -59,6 +60,13 @@ def build_agentic_review_prompt(
         "and repository validations. Call submit_close_review with this exact review_id and "
         "only the structured verdict object, correct any rejected malformed submission, then "
         "call end_agent_run. Do not mutate tasks, spawn agents, or stop other agent runs."
+    )
+    if not prior_requirements:
+        return prompt
+    return (
+        f"{prompt} prior_requirements={json.dumps(prior_requirements)}. "
+        "A previously rejected close named this required evidence; reject the same criterion "
+        "again unless the submitted code and evidence satisfy it."
     )
 
 

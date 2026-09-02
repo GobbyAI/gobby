@@ -7,6 +7,8 @@ from typing import Any
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
+from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 
 def sha256_file(path: Path) -> str:
@@ -14,7 +16,9 @@ def sha256_file(path: Path) -> str:
 
 
 def make_expansion_qa_case(temp_db: Any, project_manager: Any, repo_path: Path) -> dict[str, Any]:
-    project = project_manager.create(name="qa-project", repo_path=str(repo_path))
+    project = install_isolated_checkout_project(
+        project_manager.db, repo_path, name="qa-project", machine_id=require_machine_id()
+    ).project
     task_manager = LocalTaskManager(temp_db)
     registry = create_task_ops_registry(task_manager)
     parent = task_manager.create_task(

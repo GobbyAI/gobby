@@ -16,8 +16,9 @@ from gobby.runner_maintenance import (
 )
 from gobby.storage.clones import Clone, LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
+from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
@@ -51,10 +52,9 @@ def _seed_cross_machine_records(
             (machine_id, f"host-{machine_id}", TEST_USER_ID),
         )
 
-    project = LocalProjectManager(temp_db).create(
-        name=f"scope-{uuid.uuid4()}",
-        repo_path=str(tmp_path / "repo"),
-    )
+    project = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", name=f"scope-{uuid.uuid4()}", machine_id=require_machine_id()
+    ).project
     worktrees = LocalWorktreeManager(temp_db)
     clones = LocalCloneManager(temp_db)
     worktree_owners = iter((local_machine_id, remote_machine_id, remote_machine_id))

@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskBackupManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -20,8 +20,10 @@ def _write_jsonl(path: Path, row: dict[str, object]) -> None:
     path.write_text(json.dumps(row) + "\n", encoding="utf-8")
 
 
-def test_restore_persists_supported_fields_from_current_shape(temp_db, tmp_path: Path) -> None:
-    project = LocalProjectManager(temp_db).create("jsonl-shape", repo_path=str(tmp_path))
+def test_restore_persists_supported_fields_from_current_shape(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db, tmp_path: Path
+) -> None:
+    project = isolated_checkout_factory(temp_db, "jsonl-shape", root=tmp_path).project
     export_path = tmp_path / ".gobby" / "tasks.jsonl"
     task_id = "11111111-1111-4111-8111-111111111111"
     now = datetime.now(UTC).isoformat()
@@ -61,8 +63,10 @@ def test_restore_persists_supported_fields_from_current_shape(temp_db, tmp_path:
     assert task.seq_num == 987
 
 
-def test_restore_ignores_top_level_legacy_keys(temp_db, tmp_path: Path) -> None:
-    project = LocalProjectManager(temp_db).create("jsonl-legacy", repo_path=str(tmp_path))
+def test_restore_ignores_top_level_legacy_keys(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db, tmp_path: Path
+) -> None:
+    project = isolated_checkout_factory(temp_db, "jsonl-legacy", root=tmp_path).project
     export_path = tmp_path / ".gobby" / "tasks.jsonl"
     task_id = "22222222-2222-4222-8222-222222222222"
     now = datetime.now(UTC).isoformat()

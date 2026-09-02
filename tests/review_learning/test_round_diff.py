@@ -19,9 +19,10 @@ from gobby.review_learning.round_diff import (
 )
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.review_coverage_helpers import StubReviewLearningService, coverage_attestation
 from tests.storage.stage_review_helpers import _prepare_bound
 from tests.storage.stage_review_helpers import (
@@ -410,10 +411,9 @@ def _persist_round(
 
 
 def _create_durable_lineage(temp_db: HubDatabase, tmp_path: Path) -> DurableLineage:
-    project = LocalProjectManager(temp_db).create(
-        name="round-diff",
-        repo_path=str(tmp_path),
-    )
+    project = install_isolated_checkout_project(
+        temp_db, tmp_path, name="round-diff", machine_id=require_machine_id()
+    ).project
     session = SessionManager(temp_db).register(
         external_id="round-diff-parent",
         machine_id="21000000-0000-4000-8000-000000000002",

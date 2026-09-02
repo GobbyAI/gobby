@@ -16,6 +16,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from tests.fixtures.isolated_checkout import write_project_marker
 
 pytestmark = pytest.mark.unit
 
@@ -39,6 +40,7 @@ def _local_test_machine(monkeypatch: pytest.MonkeyPatch) -> None:
 def _set_project_repo(temp_db: HubDatabase, project_id: str, tmp_path: Path) -> Path:
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
+    write_project_marker(repo_path, project_id=project_id, name="checkout")
     LocalProjectManager(temp_db).update(project_id, repo_path=str(repo_path))
     return repo_path
 
@@ -694,6 +696,9 @@ def test_successful_merge_cleanup_preserves_explicit_reused_worktree(
         lambda _db, _project_id, artifacts, **_kwargs: deleted.extend(artifacts),
     )
     monkeypatch.setattr(controls, "delete_orphan_build_branches", lambda *_args: (0, []))
+    monkeypatch.setattr(
+        control_artifacts, "get_project_path", lambda *_args, **_kwargs: "/tmp/build-controls"
+    )
 
     artifacts = controls.cleanup_successful_merge_artifacts(
         SimpleNamespace(),

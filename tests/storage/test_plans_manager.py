@@ -11,8 +11,9 @@ import yaml
 from gobby.plans.coverage_manifest import coverage_manifest_path
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
+from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -47,7 +48,9 @@ def _write_plan(root: Path, name: str = "task-100-demo.md") -> Path:
 
 
 def _project(temp_db: HubDatabase, root: Path) -> str:
-    project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(root)).id
+    project_id = install_isolated_checkout_project(
+        temp_db, root, name="plans", machine_id=require_machine_id()
+    ).project.id
     tasks = LocalTaskManager(temp_db)
     first = tasks.create_task(
         project_id=project_id, title="Plan root 100", validation_criteria=VALIDATION_CRITERIA

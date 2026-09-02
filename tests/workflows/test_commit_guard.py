@@ -15,7 +15,7 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager, Project
+from gobby.storage.projects import Project
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
@@ -32,6 +32,7 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -173,8 +174,10 @@ class GuardHarness:
 
 
 @pytest.fixture
-def guard_harness(temp_db: HubDatabase, repo: Path) -> GuardHarness:
-    project = LocalProjectManager(temp_db).create("commit-guard-test", repo_path=str(repo))
+def guard_harness(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase, repo: Path
+) -> GuardHarness:
+    project = isolated_checkout_factory(temp_db, "commit-guard-test", root=repo).project
     session_manager = SessionManager(temp_db)
     current_session = session_manager.register(
         external_id="current-external",

@@ -1,4 +1,4 @@
-"""Continuity contracts for task-close criteria review."""
+"""TaskValidator prompt contracts and task-close criteria review continuity."""
 
 from __future__ import annotations
 
@@ -33,6 +33,29 @@ _REQUIRED_EVIDENCE = (
 _TEMPLATE_PATH = (
     Path(__file__).resolve().parents[2] / "src/gobby/install/shared/prompts/validation/validate.md"
 )
+
+
+def test_ordinary_prompt_preparation_preserves_changes_summary_without_provider(
+    temp_db: HubDatabase,
+) -> None:
+    provider_call = AsyncMock()
+    validator = TaskValidator(
+        TaskValidationConfig(),
+        cast(LLMService, SimpleNamespace(call_json_feature=provider_call)),
+        temp_db,
+    )
+
+    prepared = validator.prepare_task_review(
+        title="Ordinary close",
+        changes_summary="ordinary changes summary",
+        validation_criteria="Focused tests pass.",
+        diff_text="small diff",
+        checklist_facts={"validation_run_count": 1},
+    )
+
+    assert prepared.prompt_chars < prepared.prompt_limit
+    assert "ordinary changes summary" in prepared.prompt
+    provider_call.assert_not_awaited()
 
 
 def test_prompt_and_generation_schema_define_optional_required_evidence() -> None:

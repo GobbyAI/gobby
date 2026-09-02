@@ -10,13 +10,13 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000012"
 
@@ -43,12 +43,11 @@ class ClaimContext:
 
 
 @pytest.fixture
-def claim_context(temp_db: HubDatabase, tmp_path: Path) -> ClaimContext:
+def claim_context(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase, tmp_path: Path
+) -> ClaimContext:
     """Create a real claim while leaving the session-side claim view reset."""
-    project = LocalProjectManager(temp_db).create(
-        name="claim-reconciliation",
-        repo_path=str(tmp_path),
-    )
+    project = isolated_checkout_factory(temp_db, "claim-reconciliation", root=tmp_path).project
     session_manager = SessionManager(temp_db)
     session_id = session_manager.register_session(
         external_id="claim-reconciliation-external",

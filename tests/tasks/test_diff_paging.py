@@ -50,6 +50,7 @@ class _TaskManager:
 class _ProjectManager:
     def __init__(self, repo: Path) -> None:
         self.repo = repo
+        self.db = None
 
     def get(self, project_id: str) -> SimpleNamespace | None:
         if project_id != "project-id":
@@ -628,6 +629,10 @@ def test_sync_mcp_path_returns_git_timeout_and_reaps_child(
     repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _hanging_git(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.task_repo_paths.require_root",
+        lambda _db, _project_id, _machine_id: str(repo),
+    )
     manager = _manager()
     registry = create_commit_registry(
         task_manager=cast(Any, manager),

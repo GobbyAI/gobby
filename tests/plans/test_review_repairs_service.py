@@ -13,10 +13,10 @@ from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.review_coverage_helpers import coverage_attestation
 
 PLAN_TEXT = "\n".join(
@@ -66,8 +66,10 @@ class RepairSetup:
 
 
 @pytest.fixture
-def repair_setup(temp_db: HubDatabase, tmp_path: Path) -> RepairSetup:
-    project = LocalProjectManager(temp_db).create(name="review-repairs", repo_path=str(tmp_path))
+def repair_setup(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase, tmp_path: Path
+) -> RepairSetup:
+    project = isolated_checkout_factory(temp_db, "review-repairs", root=tmp_path).project
     session = SessionManager(temp_db).register(
         external_id="review-repairs-parent",
         machine_id=require_machine_id(),

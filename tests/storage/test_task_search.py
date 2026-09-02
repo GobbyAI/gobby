@@ -5,20 +5,17 @@ from typing import Any
 import psycopg
 import pytest
 
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.storage.tasks._stage_test_helpers import set_stage_state
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db_with_tasks(hub_db, tmp_path):
+def db_with_tasks(isolated_checkout_factory: IsolatedCheckoutFactory, hub_db, tmp_path):
     """Create PostgreSQL-backed tasks for task-search testing."""
-    project = LocalProjectManager(hub_db).create(
-        name="task-search-test-project",
-        repo_path=str(tmp_path),
-    )
+    project = isolated_checkout_factory(hub_db, "task-search-test-project", root=tmp_path).project
     project_id = project.id
     manager = LocalTaskManager(hub_db)
 
@@ -277,7 +274,7 @@ class TestTaskSearch:
         scores = [score for _, score in results]
         assert scores == sorted(scores, reverse=True)
 
-    def test_reindex_search(self, db_with_tasks) -> None:
+    def test_reindex_search(self, db_with_tasks: tuple[Any, LocalTaskManager, str]) -> None:
         """Test reindex_search rebuilds the index."""
         db, manager, project_id = db_with_tasks
 

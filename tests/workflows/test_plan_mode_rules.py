@@ -12,6 +12,11 @@ from typing import Any, cast
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.receipt_effects import (
+    STAGED_EFFECTS_FIELD,
+    apply_acknowledged_receipt,
+    worker_staging_scope,
+)
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -160,7 +165,7 @@ class TestHandlePlanModeEntry:
             "Always recommend **Lightweight** for bug fixes and maintenance",
             "regardless of breadth, risk, affected subsystems",
             "Recommend **Full** only for complex new features and complex refactors",
-            "decision-complete plan artifact",
+            "conversational, decision-complete plan",
             "**Full:**",
             "**Lightweight:**",
         ):
@@ -227,7 +232,18 @@ class TestHandlePlanModeEntry:
             },
         )
 
-        response = await handler._evaluate_rules(event)
+        with worker_staging_scope():
+            response = await handler._evaluate_rules(event)
+        staged_payload = response.metadata.get(STAGED_EFFECTS_FIELD)
+        assert isinstance(staged_payload, dict)
+        apply_acknowledged_receipt(
+            SimpleNamespace(
+                receipt_id="plan-mode-entry-ack",
+                session_id=SESSION_ID,
+                staged_payload=staged_payload,
+            ),
+            variable_manager=SessionVariableManager(db),
+        )
 
         variables = SessionVariableManager(db).get_variables(SESSION_ID)
         assert response.context is not None
@@ -247,12 +263,14 @@ class TestHandlePlanModeEntry:
                 "session_type": "terminal",
             },
         )
-        await handler._evaluate_rules(exit_event)
+        with worker_staging_scope():
+            await handler._evaluate_rules(exit_event)
         exited_variables = SessionVariableManager(db).get_variables(SESSION_ID)
         assert exited_variables["plan_mode"] is False
         assert exited_variables["gobby_plan_consider_shown"] is False
 
-        reentry = await handler._evaluate_rules(event)
+        with worker_staging_scope():
+            reentry = await handler._evaluate_rules(event)
         assert reentry.context is not None
         assert "Investigate the user's request and repository" in reentry.context
 

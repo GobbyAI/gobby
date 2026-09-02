@@ -172,11 +172,21 @@ class TaskCloseReviewStore:
                 SELECT result_payload
                 FROM task_close_reviews
                 WHERE task_id = %s
-                  AND result_payload->>'kind' = %s
+                  AND (
+                      result_payload->>'kind' = %s
+                      OR (
+                          status = ANY(%s)
+                          AND result_payload ? 'verdict'
+                      )
+                  )
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
-                (task_id, INLINE_CRITERIA_VERDICT_KIND),
+                (
+                    task_id,
+                    INLINE_CRITERIA_VERDICT_KIND,
+                    list(TERMINAL_TASK_CLOSE_REVIEW_STATUSES),
+                ),
             ).fetchone()
         if not isinstance(row, Mapping):
             return None
