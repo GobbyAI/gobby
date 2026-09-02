@@ -1544,7 +1544,38 @@ class TestCanonicalToolMetadata:
         assert data["canonical_code_navigation_broad"] is True
         assert data["canonical_code_navigation_repo_scope"] is False
 
-    @pytest.mark.parametrize("command", ["rg error src", "rg error"])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'rg -l "pat" "$HOME/Library/Application Support/rtk/tee"',
+            'rg pat "${HOME}/logs"',
+            'grep -r pat "$HOME/rtk-logs"',
+            'rg pat "$TMPDIR/logs"',
+            'rg pat "$UNRESOLVED/logs"',
+        ],
+    )
+    def test_exec_command_search_resolves_or_fails_open_on_shell_references(
+        self, command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home = tmp_path / "home"
+        repo = tmp_path / "repo"
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("TMPDIR", str(tmp_path / "tmp"))
+        data = {
+            "tool_name": "exec_command",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {"command": command},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_code_navigation_repo_scope"] is False
+
+    @pytest.mark.parametrize(
+        "command",
+        ["rg foo", "rg foo src", "grep -rn foo src/", 'rg foo "$PWD/src"'],
+    )
     def test_exec_command_rg_repo_search_is_repo_scoped(self, command: str, tmp_path) -> None:
         repo = tmp_path / "repo"
         data = {
@@ -1911,7 +1942,7 @@ class TestToolErrorDetection:
 
     def test_structured_non_string_tool_result_is_authoritative(self) -> None:
         """A structured exit code is authoritative."""
-        data = {
+        data: dict[str, Any] = {
             "tool_name": "Bash",
             "tool_result": {"exit_code": 1, "output": "fail"},
         }
@@ -2225,7 +2256,7 @@ class TestUnexpandedShellReferencePaths:
         ],
     )
     def test_reference_detector_boundaries(self, path: str, expected: bool) -> None:
-        from gobby.hooks._normalization_canonical import (
+        from gobby.hooks._normalization_shell import (
             _contains_unexpanded_shell_reference,
         )
 
