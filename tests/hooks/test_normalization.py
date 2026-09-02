@@ -1942,7 +1942,7 @@ class TestToolErrorDetection:
 
     def test_structured_non_string_tool_result_is_authoritative(self) -> None:
         """A structured exit code is authoritative."""
-        data = {
+        data: dict[str, Any] = {
             "tool_name": "Bash",
             "tool_result": {"exit_code": 1, "output": "fail"},
         }

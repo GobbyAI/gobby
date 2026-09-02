@@ -4445,7 +4445,7 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_gcode_navigation_is_allowed_and_sets_turn_flag(self, db) -> None:
+    async def test_gcode_navigation_is_allowed_and_sets_turn_flag(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=True)
         before = self._event(
