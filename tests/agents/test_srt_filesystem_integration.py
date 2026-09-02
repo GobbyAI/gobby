@@ -29,6 +29,10 @@ def _make_runtime_removable(root: Path) -> None:
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(sys.platform != "darwin", reason="SRT filesystem enforcement uses Seatbelt"),
+    pytest.mark.skipif(
+        os.environ.get("SANDBOX_RUNTIME") == "1",
+        reason="Sandbox Runtime cannot bind the Unix socket required by a nested runner",
+    ),
 ]
 
 
