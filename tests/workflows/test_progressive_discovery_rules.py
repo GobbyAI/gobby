@@ -13,6 +13,7 @@ to verify conditions like is_tool_unlocked actually resolve correctly.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -42,7 +43,7 @@ def manager(db: HubDatabase) -> RuleDefinitionManager:
     return RuleDefinitionManager(db)
 
 
-def _sync_bundled(db):
+def _sync_bundled(db: HubDatabase) -> dict[str, Any]:
     """Sync bundled rules from the real rules directory."""
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
@@ -116,6 +117,28 @@ class TestProgressiveDiscoverySync:
         replacement = manager.get_by_name("require-current-context-schema-before-call")
         assert replacement is not None
         assert replacement.enabled is True
+
+    def test_sync_updates_installed_schema_gate_condition(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+    ) -> None:
+        manager.create(
+            name="require-current-context-schema-before-call",
+            definition_json=(
+                '{"event":"before_tool","when":"False",'
+                '"effects":[{"type":"block","reason":"stale"}]}'
+            ),
+            enabled=True,
+            source="installed",
+            tags=["gobby", "progressive-discovery"],
+        )
+
+        _sync_bundled(db)
+
+        updated = manager.get_by_name("require-current-context-schema-before-call")
+        assert updated is not None
+        assert "not is_argumentless_proxy_tool(tool_input)" in updated.definition_json["when"]
 
     def test_all_rules_have_progressive_discovery_tag(
         self,
@@ -464,6 +487,26 @@ class TestRuleEngineIntegration:
         assert "get_tool_schema" in result.reason
 
     @pytest.mark.asyncio
+    async def test_argumentless_get_handoff_allowed_without_schema_lookup(self, engine) -> None:
+        variables = {
+            "enforce_tool_schema_check": True,
+            "unlocked_tools": [],
+        }
+        event = _make_hook_event(
+            HookEventType.BEFORE_TOOL,
+            tool_name="mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-sessions",
+                "tool_name": "get_handoff",
+                "arguments": {},
+            },
+        )
+
+        result = await engine.evaluate(event, SESSION_ID, variables)
+
+        assert result.decision == "allow"
+
+    @pytest.mark.asyncio
     async def test_call_tool_decoy_routing_cannot_bypass_schema_check(self, engine) -> None:
         """Schema enforcement uses authoritative outer routing instead of nested decoys."""
         variables = {
@@ -700,7 +743,7 @@ class TestRuleEngineIntegration:
         assert "gobby-tasks:add_label" in variables.get("unlocked_tools", [])
 
     @pytest.mark.asyncio
-    async def test_direct_schema_flow_blocks_then_reuses_lease(self, engine) -> None:
+    async def test_direct_schema_flow_blocks_then_reuses_lease(self, engine: RuleEngine) -> None:
         """Direct schema lookup unlocks repeated calls for the current context."""
         variables: dict = {
             "enforce_tool_schema_check": True,

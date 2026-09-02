@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
+from gobby.sessions.compact_continuation import consume_compact_resume_leased_tools
 from gobby.sessions.handoff import (
     FEEDBACK_DISPOSITIONS,
     FEEDBACK_FREQUENCIES,
@@ -17,6 +20,7 @@ from gobby.storage.sessions._title_defaults import MANUAL_TITLE_SOURCE
 from gobby.utils.session_context import get_current_session_id
 
 if TYPE_CHECKING:
+    from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager, Task
@@ -65,6 +69,8 @@ FEEDBACK_OBSERVATION_INPUT_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+logger = logging.getLogger(__name__)
+
 
 def build_feedback_task_resolver(
     session_manager: SessionManager,
@@ -96,6 +102,7 @@ def register_handoff_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
     task_manager: LocalTaskManager | None = None,
+    tool_proxy_getter: Callable[[], ToolProxyService | None] | None = None,
 ) -> None:
     """Register pull-only handoff, feedback, and title tools."""
 
@@ -108,7 +115,7 @@ def register_handoff_tools(
         except ValueError:
             return None
 
-    def get_handoff() -> dict[str, Any]:
+    async def get_handoff() -> dict[str, Any]:
         """Consume the handoff staged for this compact or clear continuation."""
         session_id = _current_session_id()
         if session_id is None:
@@ -121,7 +128,44 @@ def register_handoff_tools(
                 "handoff": "",
                 "required_skills": [],
                 "advisory_skills": [],
+                "leased_tool_schemas": [],
             }
+        leased_tool_schemas: list[dict[str, Any]] = []
+        leased_tools = consume_compact_resume_leased_tools(
+            session_manager.db,
+            consumed.session_id,
+        )
+        tool_proxy = tool_proxy_getter() if tool_proxy_getter is not None else None
+        if tool_proxy is not None:
+            for key in leased_tools:
+                server_name, separator, tool_name = key.partition(":")
+                if not separator or not server_name or not tool_name:
+                    continue
+                try:
+                    schema_result = await tool_proxy.get_tool_schema(server_name, tool_name)
+                except Exception:
+                    logger.warning(
+                        "Failed to restore compact schema lease for %s",
+                        key,
+                        exc_info=True,
+                    )
+                    continue
+                schema = schema_result.get("tool")
+                if not schema_result.get("success") or not isinstance(schema, dict):
+                    continue
+                leased_tool_schemas.append(
+                    {
+                        "server_name": server_name,
+                        "tool_name": tool_name,
+                        "schema": schema,
+                    }
+                )
+                record_schema_shown(
+                    tool_proxy,
+                    session_id,
+                    server_name=server_name,
+                    tool_name=tool_name,
+                )
         return {
             "success": True,
             "found": True,
@@ -129,6 +173,7 @@ def register_handoff_tools(
             "handoff": consumed.markdown,
             "required_skills": list(consumed.required_skills),
             "advisory_skills": list(consumed.advisory_skills),
+            "leased_tool_schemas": leased_tool_schemas,
         }
 
     def feedback(observations: list[dict[str, Any]]) -> dict[str, Any]:

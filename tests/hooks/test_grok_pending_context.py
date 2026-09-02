@@ -19,6 +19,10 @@ from gobby.hooks.event_handlers._session_start.in_place_compact import (
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hooks.hook_manager import HookManager
+from gobby.sessions.compact_continuation import (
+    COMPACT_RESUME_LEASED_TOOLS_VARIABLE,
+    persist_handoff_resume_leased_tools,
+)
 from gobby.storage import workspace_machine_scope
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
@@ -499,6 +503,26 @@ def test_in_place_compact_clears_queued_context(
     stored = variables.get_variables(grok_session_id)
     assert stored.get("grok_pending_briefing") in ([], None)
     assert stored.get("grok_pending_turn_context") in ([], None)
+
+
+def test_in_place_compact_preserves_snapshotted_schema_leases(
+    session_manager: SessionManager,
+    grok_session_id: str,
+) -> None:
+    variables = SessionVariableManager(session_manager.db)
+    variables.set_variable(
+        grok_session_id,
+        "unlocked_tools",
+        ["gobby-tasks:create_task", "gobby-memory:search_memories"],
+    )
+    expected = persist_handoff_resume_leased_tools(session_manager.db, grok_session_id)
+    handler = SimpleNamespace(_session_manager=session_manager, _task_manager=None)
+
+    apply_in_place_compact_context_loss(handler, grok_session_id)
+
+    stored = variables.get_variables(grok_session_id)
+    assert stored["unlocked_tools"] == []
+    assert stored[COMPACT_RESUME_LEASED_TOOLS_VARIABLE] == expected
 
 
 def test_in_place_compact_rearms_the_feedback_survey(

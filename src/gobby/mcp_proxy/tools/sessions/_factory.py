@@ -21,6 +21,7 @@ from gobby.mcp_proxy.tools.sessions._transcripts import register_transcript_tool
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
+    from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
     from gobby.sessions.transcript_reader import TranscriptReader
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
@@ -44,6 +45,7 @@ def create_session_messages_registry(
     terminal_manager: Any | None = None,
     terminal_runtime_registry: Any | None = None,
     write_coordinator: Any | None = None,
+    tool_proxy_getter: Callable[[], ToolProxyService | None] | None = None,
 ) -> InternalToolRegistry:
     """
     Create a sessions tool registry with session and message tools.
@@ -80,7 +82,12 @@ def create_session_messages_registry(
     # --- Handoff Tools ---
     # Only register if session_manager is available
     if session_manager is not None:
-        register_handoff_tools(registry, session_manager, task_manager)
+        register_handoff_tools(
+            registry,
+            session_manager,
+            task_manager,
+            tool_proxy_getter=tool_proxy_getter,
+        )
 
     # --- Session CRUD Tools ---
     # Only register if session_manager is available
