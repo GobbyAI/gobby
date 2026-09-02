@@ -441,7 +441,9 @@ export function ActivityPanel({
       case "traces":
         return <TracesTab projectId={projectId} />;
       case "mcp":
-        return mcp ? <ActivityMcpTab {...mcp} /> : null;
+        return mcp ? (
+          <ActivityMcpTab {...mcp} currentProjectId={projectId} />
+        ) : null;
       case "agents":
         return <AgentsTab projectId={projectId} />;
       case "stages":
