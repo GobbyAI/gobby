@@ -10,10 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.hooks.effect_deadline import (
-    BlockingEffectDeadline,
-    remaining_blocking_effect_seconds,
-)
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -126,7 +123,7 @@ async def test_same_session_evaluations_are_serialized(tmp_path) -> None:
 async def test_same_session_lock_wait_extends_blocking_effect_deadline(tmp_path) -> None:
     first_entered = asyncio.Event()
     release_first = asyncio.Event()
-    observed_remaining: list[float] = []
+    observed_expiry: list[float] = []
 
     async def evaluate(
         *,
@@ -141,9 +138,8 @@ async def test_same_session_lock_wait_extends_blocking_effect_deadline(tmp_path)
             first_entered.set()
             await release_first.wait()
         else:
-            observed_remaining.append(
-                remaining_blocking_effect_seconds(blocking_deadline, maximum=1.0)
-            )
+            assert blocking_deadline is not None
+            observed_expiry.append(blocking_deadline.expires_at)
         return HookResponse(decision="allow")
 
     handler = _handler_with_fake_engine(evaluate)
@@ -154,8 +150,10 @@ async def test_same_session_lock_wait_extends_blocking_effect_deadline(tmp_path)
     )
     await asyncio.wait_for(first_entered.wait(), timeout=1)
 
-    deadline = BlockingEffectDeadline(time.monotonic() - 0.05)
-    with patch("gobby.workflows.hooks.monotonic", side_effect=[100.0, 100.1]):
+    now = time.monotonic()
+    deadline = BlockingEffectDeadline(now - 0.05)
+    original_expiry = deadline.expires_at
+    with patch("gobby.workflows.hooks.monotonic", side_effect=[now, now + 0.1]):
         second = asyncio.create_task(
             handler._evaluate_rules(
                 _event(
@@ -170,8 +168,7 @@ async def test_same_session_lock_wait_extends_blocking_effect_deadline(tmp_path)
         release_first.set()
         await asyncio.gather(first, second)
 
-    assert len(observed_remaining) == 1
-    assert observed_remaining[0] > 0
+    assert observed_expiry == [pytest.approx(original_expiry + 0.1)]
 
 
 @pytest.mark.asyncio
