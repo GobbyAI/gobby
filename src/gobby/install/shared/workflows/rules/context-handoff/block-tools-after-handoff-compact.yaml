@@ -1,0 +1,18 @@
+tags: [context-handoff, handoff, compact, enforcement, gobby, default]
+
+rules:
+  block-tools-after-handoff-compact:
+    description: "End terminal turns promptly after set_handoff queues in-place compaction"
+    event: before_tool
+    enabled: true
+    priority: 1
+    when: >-
+      event.metadata.get('session_type') != 'web_chat'
+      and isinstance(variables.get('context_compact_handoff_result'), dict)
+      and variables.get('context_compact_handoff_result').get('compacted') is True
+    effects:
+      - type: block
+        reason: >-
+          set_handoff already staged this session's handoff and queued /compact.
+          Stop calling tools and end your turn now so the queued compaction runs;
+          the continuation prompt resumes the work.

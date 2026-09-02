@@ -498,6 +498,7 @@
     "workflows/rules/build-coordinator/require-build-coordinator-for-gobby-build.yaml": "3c0232ee6ec1c0fcbecbf8061a04eed9f3f4544f98572dd28afd9371d535a887",
     "workflows/rules/code-index/require-code-index-skill.yaml": "fd744e1f4fca6f653af02c93948fca63e1ed00619ad17afa3fcb15960c1a385d",
     "workflows/rules/context-handoff/block-autonomous-clear-session.yaml": "df73dda8f0b5b35bc5657ccf1e4931edd3aa857e053c73f75d8ad3da1f690fca",
+    "workflows/rules/context-handoff/block-tools-after-handoff-compact.yaml": "fcd3e7dc4647f2105f551bd6a49d8d98f915c2a9d205ad58c278689cb9772f34",
     "workflows/rules/context-handoff/clear-pending-context-reset-on-start.yaml": "64628aec03c9eb7495a8410dee0fd297448a818c97421cd92778df8762070237",
     "workflows/rules/context-handoff/inject-task-context-on-start.yaml": "4b389a39c6dfd228ec85cb0d9e59b27cbc0066d2a5681c475e15e6b870db01d9",
     "workflows/rules/context-handoff/inject-user-profile.yaml": "50f0c6bb2450267e6e30aa583fef12305436f85a053f89ded871d036d883d614",
