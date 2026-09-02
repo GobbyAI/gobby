@@ -351,9 +351,11 @@ may depend on it — depend on its leaves.
 11. **The M0 lease is database-wide — one active daemon per shared hub**, with
     standbys exposing lease control only (2026-09-01). This is the Python-era
     transition shape, not the destination.
-12. **`ROADMAP.md` is canonical; `docs/architecture/evolution.md` retires**
-    (2026-09-01). Everything off this path is a side quest: documented here,
-    labeled `sidequest`, concurrent, never a blocker.
+12. **`ROADMAP.md` is canonical** (2026-09-01). The separate
+    architecture-evolution document that used to hold the staged path is retired
+    and deleted; its durable content is absorbed here, and this file is both the
+    roadmap and the decision record. Everything off this path is a side quest:
+    documented here, labeled `sidequest`, concurrent, never a blocker.
 13. **Hub and node are the same daemon on every machine** (2026-09-01). `hub`
     owns the datastores and everything database-backed. `node` registers,
     authenticates with a machine API key, holds no datastore credential,
@@ -389,7 +391,8 @@ Architecture and guides: `docs/architecture/hub-owned-files-home.md`,
 `docs/guides/shared-stack.md`, `docs/guides/remote-docker-acceptance.md`,
 `docs/guides/dispatch.md`, `docs/contracts/plan-coverage.md`.
 
-Retired and deleted 2026-09-01: `docs/architecture/evolution.md`, whose durable
-content is absorbed above, together with the three superseded Rust-migration
-plan documents under `docs/plans/`. Umbrella #17488 is closed as a duplicate of
+Retired and deleted 2026-09-01: the architecture-evolution document under
+`docs/architecture/`, whose durable content is absorbed above, together with the
+three superseded Rust-migration plan documents under `docs/plans/`. See commit
+`c0f1276acd` for the exact paths. Umbrella #17488 is closed as a duplicate of
 S4.8; its history stays in the task graph.
