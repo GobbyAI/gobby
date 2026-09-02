@@ -408,8 +408,10 @@ async def test_unauthenticated_live_client_closes_with_4401_without_traceback() 
     finally:
         logger.removeHandler(probe)
 
-    assert exc_info.value.code == 4401
-    assert exc_info.value.reason == "Authentication required"
+    close_frame = exc_info.value.rcvd
+    assert close_frame is not None
+    assert close_frame.code == 4401
+    assert close_frame.reason == "Authentication required"
     combined = probe.text()
     assert "Exception in ASGI application" not in combined
     assert "AttributeError" not in combined
