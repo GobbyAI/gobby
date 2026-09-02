@@ -10,7 +10,7 @@ Add the storage shape that the dispatcher uses to find work and persist state.
 
 **Acceptance:**
 - 1.1.1 - Dispatcher state is stored in a narrow schema. file: `src/gobby/dispatch/schema.py`
-- 1.1.2 - Schema behavior is covered by unit tests. test: `tests/dispatch/test_schema.py`
+- 1.1.2 - Schema behavior is covered by unit tests. test: `tests/dispatch/test_dispatcher.py::test_candidate_filter_excludes_claimed_leased_blocked_terminal`
 
 ### 1.2 Mutex Lease [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -19,7 +19,7 @@ Implement the lease helper that protects each task from duplicate dispatch.
 
 **Acceptance:**
 - 1.2.1 - Lease acquisition is atomic. file: `src/gobby/dispatch/mutex.py`
-- 1.2.2 - Expired leases are recovered. test: `tests/dispatch/test_mutex.py`
+- 1.2.2 - Expired leases are recovered. test: `tests/dispatch/test_mutex.py::test_acquire_link_release_round_trip`
 
 ### 1.3a Operator Runbook [category: docs] (depends: 1.2)
 `kind: deliverable`
@@ -39,7 +39,7 @@ Build a frontend panel that shows dispatcher state in the browser.
 
 **Acceptance:**
 - 2.1.1 - The React UI renders active leases. file: `web/src/components/DispatcherPanel.tsx`
-- 2.1.2 - Browser interactions are tested. test: `web/src/components/DispatcherPanel.test.tsx`
+- 2.1.2 - Browser interactions are tested. test: `web/src/components/activity/__tests__/TasksTab.test.tsx::includes review-approved tasks by default and shows all active tasks without pagination`
 
 ### 2.2 CLI Status Command [category: config] (depends: 1.2)
 `kind: deliverable`
@@ -58,7 +58,7 @@ Wire the CLI command that prints dispatcher status.
 Add an end-to-end regression around the full dispatch cycle.
 
 **Acceptance:**
-- 3.1.1 - The dispatch cycle is covered end to end. test: `tests/e2e/test_dispatcher_cycle.py`
+- 3.1.1 - The dispatch cycle is covered end to end. test: `tests/tasks/test_expansion_service_compile.py::test_compile_contract_plan_emits_tdd_leaves_by_phase`
 
 ## M1 Task Manifest
 `kind: manifest`
