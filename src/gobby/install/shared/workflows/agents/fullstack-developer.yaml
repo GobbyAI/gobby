@@ -222,7 +222,8 @@ step_workflow:
           when: >-
             tool_input.get('message_type') == 'task_blocker'
             and tool_input.get('target') == 'session'
-            and tool_input.get('target_id') == vars.get('parent_session_id')
+            and tool_input.get('target_id') is not None
+            and tool_input.get('target_id') in (vars.get('parent_session_id'), vars.get('parent_session_ref'))
           action: set_variable
           variable: blocker_handed_off
           value: true
