@@ -23,7 +23,10 @@ __all__ = [
 ]
 
 # Lines captured from the bottom of the pane when inspecting the composer.
-COMPOSER_CAPTURE_LINES = 12
+# Claude Code opens its slash-command menu under the composer while a command
+# is typed, pushing the prompt row well above the bottom dozen lines; the
+# bottom-most prompt row is picked, so a wide window is safe.
+COMPOSER_CAPTURE_LINES = 80
 # Lines a non-Claude drain removes per pass; each pass empties the cursor line and
 # joins its neighbours, so this bounds the multi-line draft one pass can clear.
 COMPOSER_DRAIN_LINES = 8

@@ -15,6 +15,7 @@ from gobby.tasks.acceptance_artifacts import (
     AcceptanceTest,
     evaluate_acceptance_artifacts,
     validate_structured_file_evidence,
+    validation_run_covers_test,
     validation_run_names_test,
 )
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence, is_test_convention_path
@@ -1066,6 +1067,155 @@ def test_tdd_evidence_rejects_documentation_as_production_edit(path: str) -> Non
     assert result.findings == (
         "tests/test_feature.py::test_feature: no production edit follows the test edit",
     )
+
+
+def test_tdd_evidence_accepts_did_not_raise_red() -> None:
+    started = datetime(2026, 8, 31, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): raises(ReportError, feature)",
+    )
+    red_output = """\
+______________________________ test_feature ______________________________
+tests/test_feature.py:9: Failed
+E   Failed: DID NOT RAISE <class 'ReportError'>
+=========================== short test summary info ============================
+FAILED tests/test_feature.py::test_feature - Failed: DID NOT RAISE ReportError
+"""
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit(test.path, started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            _run(test, started + timedelta(minutes=1), "failure", red_output, 2),
+            _run(test, started + timedelta(minutes=3), "success", "1 passed", 4),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is True
+    assert result.red_runs
+
+
+@pytest.mark.parametrize(
+    "traceback_line",
+    (
+        "tests/test_feature.py:9: in test_feature",
+        "tests/test_feature.py:9: NotImplementedError",
+    ),
+)
+def test_tdd_evidence_accepts_not_implemented_red(traceback_line: str) -> None:
+    started = datetime(2026, 8, 31, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    red_output = f"""\
+______________________________ test_feature ______________________________
+{traceback_line}
+E   NotImplementedError
+=========================== short test summary info ============================
+FAILED tests/test_feature.py::test_feature - NotImplementedError
+"""
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit(test.path, started, 1),
+            _edit("src/feature.py", started + timedelta(seconds=30), 2),
+            _edit("src/feature.py", started + timedelta(minutes=2), 4),
+        ),
+        validation_runs=(
+            _run(test, started + timedelta(minutes=1), "failure", red_output, 3),
+            _run(test, started + timedelta(minutes=3), "success", "1 passed", 5),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is True
+    assert result.red_runs
+    assert result.green_runs
+
+
+def test_tdd_evidence_accepts_pytest_q_red_with_trailing_failed_line() -> None:
+    started = datetime(2026, 8, 31, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    red_output = """\
+______________________________ test_feature ______________________________
+tests/test_feature.py:9: in test_feature
+E   AssertionError: assert 0 == 1
+=========================== short test summary info ============================
+FAILED tests/test_feature.py::test_feature - AssertionError: assert 0 == 1
+"""
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit(test.path, started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            _run(test, started + timedelta(minutes=1), "failure", red_output, 2),
+            _run(test, started + timedelta(minutes=3), "success", "1 passed", 4),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is True
+    assert result.red_runs
+
+
+def test_green_run_names_symbol_covers_test() -> None:
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+
+    assert validation_run_covers_test("uv run pytest -q -k test_feature", "1 passed", test)
+    assert validation_run_covers_test("uv run pytest -q", "test_feature.py\n1 passed", test)
+    assert not validation_run_covers_test(
+        "uv run pytest -q -k test_feature_extra", "1 passed", test
+    )
+    assert not validation_run_covers_test("uv run pytest -q", "4 passed", test)
+
+
+def test_tdd_evidence_rejection_names_run_and_unattributed_symbol() -> None:
+    started = datetime(2026, 8, 31, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::TestFeature::test_target",
+        path="tests/test_feature.py",
+        symbol="TestFeature::test_target",
+        body="def test_target(): assert feature() == 1",
+    )
+    red_output = """\
+________________________ TestOther.test_sibling _________________________
+tests/test_feature.py:20: in test_sibling
+E   AssertionError: assert 0 == 1
+"""
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit(test.path, started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(_run(test, started + timedelta(minutes=1), "failure", red_output, 2),),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is False
+    assert "pytest tests/test_feature.py::TestFeature::test_target" in result.findings[0]
+    assert "no attributable failure section for 'TestFeature::test_target'" in result.findings[0]
 
 
 def test_collection_import_error_is_missing_red_evidence() -> None:
