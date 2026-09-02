@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
 from typing import cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
+from uuid import UUID
 
 import pytest
 
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.runner_init.orchestration import _send_tmux_session_wake
 from gobby.storage.terminals import Terminal
+from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.runtime import Delivered, IndeterminateWrite
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.terminals.fakes import (
@@ -23,11 +26,13 @@ from tests.terminals.fakes import (
 pytestmark = pytest.mark.unit
 
 WAKE_SESSION_ID = "9264a39c-68db-5eed-917c-6f7babb8e6b1"
+REPRO_SESSION_ID = "b3010944-ba0e-408b-a8a2-e55f43cbf41e"
+REPRO_TERMINAL_ID = "4e0a798f-984f-4c92-8ae2-e6395a496c75"
 # A gterm-hosted session: it has terminal_context, but $TMUX_PANE never set a
 # pane in it, which is exactly what used to end the wake as `no_tmux_pane`.
 NATIVE_TERMINAL_CONTEXT = {"parent_pid": 4242, "term_program": "gterm"}
 WAKE_SEQUENCE = [
-    ("key", "escape"),
+    *(("key", key) for key in composer_clear_sequence(None)),
     ("text", CONTINUE_WAKE_MESSAGE),
     ("key", "enter"),
 ]
@@ -53,11 +58,23 @@ class ManagedChain:
     row: Terminal
 
 
-def _session_manager(terminal_context: object | None) -> MagicMock:
+class UUIDValidatingTerminalStore(MemoryTerminalStore):
+    """Match TerminalManager.get's UUID-only terminal ID contract."""
+
+    def get(self, terminal_id: str) -> Terminal | None:
+        return super().get(str(UUID(terminal_id)))
+
+
+def _session_manager(
+    terminal_context: object | None,
+    *,
+    session_id: str = WAKE_SESSION_ID,
+    agent_depth: int = 0,
+) -> MagicMock:
     manager = MagicMock()
     manager.get.return_value = FakeSession(
-        id=WAKE_SESSION_ID,
-        agent_depth=0,
+        id=session_id,
+        agent_depth=agent_depth,
         terminal_context=terminal_context,
     )
     return manager
@@ -116,6 +133,56 @@ async def test_native_backed_interactive_session_wakes_through_its_terminal_row(
 
 
 @pytest.mark.asyncio
+async def test_tmux_agent_wake_resolves_name_without_uuid_lookup_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Reproduce the b3010944 wake whose identity was gobby-4e0a798f."""
+    row = replace(
+        make_memory_terminal(terminal_id=REPRO_TERMINAL_ID),
+        session_id=REPRO_SESSION_ID,
+    )
+    store = UUIDValidatingTerminalStore(row)
+    runtime = FakeRuntime(backend="tmux")
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+    )
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "gobby.runner_init.orchestration._wake_write_services",
+        lambda: (store, coordinator),
+    )
+    monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", no_sleep)
+    pane_sender = AsyncMock()
+    dispatcher = WakeDispatcher(
+        session_manager=_session_manager(
+            {
+                "tmux_session": f"gobby-{REPRO_TERMINAL_ID}",
+                "tmux_pane": "%21",
+            },
+            session_id=REPRO_SESSION_ID,
+            agent_depth=1,
+        ),
+        ism_manager=MagicMock(),
+        tmux_sender=_send_tmux_session_wake,
+        tmux_pane_sender=pane_sender,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gobby.events.wake"):
+        result = await dispatcher.dispatch_live_wake(REPRO_SESSION_ID)
+
+    assert result["delivered"] is True
+    assert result["method"] == "tmux"
+    assert runtime.write_log == WAKE_SEQUENCE
+    pane_sender.assert_not_awaited()
+    assert not [record for record in caplog.records if record.exc_info]
+
+
+@pytest.mark.asyncio
 async def test_interactive_session_without_a_managed_row_still_uses_the_tmux_pane() -> None:
     """A tmux session Gobby owns no row for has no backend to resolve, so the pane stays."""
     managed_sender = AsyncMock()
@@ -137,7 +204,8 @@ async def test_interactive_session_without_a_managed_row_still_uses_the_tmux_pan
         CONTINUE_WAKE_MESSAGE,
         "/tmp/s",
         submit=True,
-        escape_before_submit=True,
+        clear_before_submit=True,
+        cli_source=ANY,
     )
     managed_sender.assert_not_awaited()
 

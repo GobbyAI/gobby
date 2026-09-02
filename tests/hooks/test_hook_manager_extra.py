@@ -120,7 +120,7 @@ class TestDispatchSessionSummaries:
             ) as build_dispatcher,
         ):
             manager = HookManager(llm_service=llm_service)
-            manager._dispatch_session_summaries("session-1", set_handoff_ready=True)
+            manager._dispatch_session_summaries("session-1", set_awaiting_handoff=True)
 
         assert not hasattr(hook_manager_module, "SessionSummaryDispatcher")
         assert manager._memory_manager is memory_manager
@@ -141,7 +141,7 @@ class TestDispatchSessionSummaries:
             "session-1",
             _background=False,
             done_event=None,
-            set_handoff_ready=True,
+            set_awaiting_handoff=True,
         )
 
     @patch("gobby.hooks.session_summary_dispatcher.asyncio.get_running_loop")

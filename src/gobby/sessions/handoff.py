@@ -62,6 +62,9 @@ class HandoffAttemptState:
     prior_markers: dict[str, Any]
     missing_markers: frozenset[str]
     feedback_ids: tuple[str, ...]
+    # Status the row held before a clear attempt moved it to awaiting_handoff;
+    # None when staging did not transition the row.
+    prior_status: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,8 +238,15 @@ def stage_handoff_attempt(
     observations: Sequence[FeedbackObservation],
     clear_session: bool,
     additional_markers: Mapping[str, Any] | None = None,
+    transition_status: str | None = None,
 ) -> HandoffAttemptState:
-    """Atomically stage handoff Markdown, feedback, and delivery markers."""
+    """Atomically stage handoff Markdown, feedback, and delivery markers.
+
+    ``transition_status`` moves an ``active``/``paused`` row to that status inside
+    the staging transaction (clear attempts use ``awaiting_handoff`` so startup
+    expiry and SessionEnd leave the row alone until its successor binds); the
+    prior status is recorded on the attempt markers and in the returned state.
+    """
     marker_updates = dict(additional_markers or {})
     marker_updates[PENDING_HANDOFF_VARIABLE] = {
         "attempt_id": attempt_id,
@@ -247,11 +257,14 @@ def stage_handoff_attempt(
         marker_updates[HANDOFF_PULL_PENDING_VARIABLE] = True
     with db.transaction() as conn:
         session_row = conn.execute(
-            "SELECT handoff_markdown FROM sessions WHERE id = %s FOR UPDATE",
+            "SELECT handoff_markdown, status FROM sessions WHERE id = %s FOR UPDATE",
             (session_id,),
         ).fetchone()
         if session_row is None:
             raise ValueError(f"Session {session_id} not found")
+        prior_status: str | None = None
+        if transition_status is not None and session_row["status"] in ("active", "paused"):
+            prior_status = str(session_row["status"])
         variable_row = conn.execute(
             "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",
             (session_id,),
@@ -265,14 +278,22 @@ def stage_handoff_attempt(
                 marker_updates[name] = {
                     **value,
                     "prior_handoff_markdown": session_row["handoff_markdown"],
+                    "prior_status": prior_status,
                     "feedback_ids": feedback_ids,
                 }
         variables.update(marker_updates)
 
-        conn.execute(
-            "UPDATE sessions SET handoff_markdown = %s, updated_at = %s WHERE id = %s",
-            (markdown, utc_now(), session_id),
-        )
+        if prior_status is not None:
+            conn.execute(
+                "UPDATE sessions SET handoff_markdown = %s, status = %s, updated_at = %s "
+                "WHERE id = %s",
+                (markdown, transition_status, utc_now(), session_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE sessions SET handoff_markdown = %s, updated_at = %s WHERE id = %s",
+                (markdown, utc_now(), session_id),
+            )
         _store_variables(conn, session_id, variables, exists=variable_row is not None)
         _insert_feedback_rows(conn, session_id, observations, ids=feedback_ids)
 
@@ -283,6 +304,7 @@ def stage_handoff_attempt(
         prior_markers=prior_markers,
         missing_markers=missing_markers,
         feedback_ids=tuple(feedback_ids),
+        prior_status=prior_status,
     )
 
 
@@ -309,6 +331,14 @@ def restore_handoff_attempt(db: HubDatabase, state: HandoffAttemptState) -> bool
             "UPDATE sessions SET handoff_markdown = %s, updated_at = %s WHERE id = %s",
             (state.prior_handoff_markdown, utc_now(), state.session_id),
         )
+        if state.prior_status is not None:
+            # Only undo the staging transition; a successor bind has already
+            # moved the row on and must not be reverted.
+            conn.execute(
+                "UPDATE sessions SET status = %s, updated_at = %s "
+                "WHERE id = %s AND status = 'awaiting_handoff'",
+                (state.prior_status, utc_now(), state.session_id),
+            )
         _store_variables(conn, state.session_id, variables, exists=True)
         if state.feedback_ids:
             conn.executemany(

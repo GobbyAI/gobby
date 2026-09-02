@@ -9,7 +9,9 @@ from typing import Any
 
 from gobby.hooks._normalization_operands import (
     _curl_output_paths,
+    _find_has_mutation_predicate,
     _git_add_positional_args_after,
+    _git_grep_is_revision_scoped,
     _git_restore_positional_args_after,
     _search_command_paths,
     _truncate_positional_paths,
@@ -49,6 +51,7 @@ from gobby.hooks._python_pipeline_classifier import (
 )
 from gobby.hooks.code_navigation import (
     count_option_line_count,
+    enumerate_navigation_metadata,
     gcode_navigation_metadata,
     line_count_from_tool_input,
     search_navigation_metadata,
@@ -299,6 +302,15 @@ def _merge_code_navigation_extra(metadata: list[_ShellSegmentMetadata]) -> dict[
         merged["canonical_code_navigation_broad"] = (
             any(bool(value) for value in broad_values) if broad_values else True
         )
+        search_extras = [
+            extra for extra in extras if extra.get("canonical_code_navigation_action") == "search"
+        ]
+        if search_extras and all(
+            extra.get("canonical_search_revision_scoped") for extra in search_extras
+        ):
+            merged["canonical_search_revision_scoped"] = True
+        else:
+            merged.pop("canonical_search_revision_scoped", None)
     elif "read" in actions:
         merged["canonical_code_navigation_action"] = "read"
         if broad_values:
@@ -673,14 +685,26 @@ def _classify_shell_segment_without_redirection(
             )
         return _ShellSegmentMetadata("execute")
 
-    if cmd in {"rg", "grep", "git", "find"}:
+    if cmd == "find":
+        paths = _rebase_shell_paths(_search_command_paths(cmd, parts), cwd)
+        return _ShellSegmentMetadata(
+            "execute",
+            paths=tuple(paths),
+            extra=enumerate_navigation_metadata(paths),
+            repo_mutation=_find_has_mutation_predicate(parts),
+        )
+
+    if cmd in {"rg", "grep", "git"}:
         if cmd == "git" and (len(parts) <= 1 or parts[1] != "grep"):
             return _ShellSegmentMetadata("execute")
         paths = _rebase_shell_paths(_search_command_paths(cmd, parts), cwd)
+        extra = search_navigation_metadata(paths)
+        if cmd == "git" and _git_grep_is_revision_scoped(parts):
+            extra["canonical_search_revision_scoped"] = True
         return _ShellSegmentMetadata(
             "search",
             paths=tuple(paths),
-            extra=search_navigation_metadata(paths),
+            extra=extra,
         )
 
     if cmd in {"cat", "head", "tail", "bat", "nl"}:

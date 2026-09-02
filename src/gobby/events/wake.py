@@ -55,7 +55,8 @@ class TmuxSender(Protocol):
         message: str,
         *,
         submit: bool = False,
-        escape_before_submit: bool = False,
+        clear_before_submit: bool = False,
+        cli_source: str | None = None,
     ) -> Coroutine[Any, Any, None]: ...
 
 
@@ -67,7 +68,8 @@ class TmuxPaneSender(Protocol):
         tmux_socket_path: str | None,
         *,
         submit: bool = False,
-        escape_before_submit: bool = False,
+        clear_before_submit: bool = False,
+        cli_source: str | None = None,
     ) -> Coroutine[Any, Any, None]: ...
 
 
@@ -282,7 +284,8 @@ class WakeDispatcher:
                     CONTINUE_WAKE_MESSAGE,
                     tmux_socket_path,
                     submit=True,
-                    escape_before_submit=True,
+                    clear_before_submit=True,
+                    cli_source=getattr(session, "source", None),
                 )
                 self._record_live_wake(session_id, session)
                 return {
@@ -331,7 +334,8 @@ class WakeDispatcher:
                         wake_identity,
                         CONTINUE_WAKE_MESSAGE,
                         submit=True,
-                        escape_before_submit=True,
+                        clear_before_submit=True,
+                        cli_source=getattr(session, "source", None),
                     )
                     self._record_live_wake(session_id, session)
                     return {
@@ -367,7 +371,8 @@ class WakeDispatcher:
                         CONTINUE_WAKE_MESSAGE,
                         tmux_socket_path,
                         submit=True,
-                        escape_before_submit=True,
+                        clear_before_submit=True,
+                        cli_source=getattr(session, "source", None),
                     )
                     self._record_live_wake(session_id, session)
                     return {
@@ -470,7 +475,8 @@ class WakeDispatcher:
                 terminal_id,
                 CONTINUE_WAKE_MESSAGE,
                 submit=True,
-                escape_before_submit=True,
+                clear_before_submit=True,
+                cli_source=getattr(session, "source", None),
             )
         except IndeterminateWrite as exc:
             # Bytes may already be on screen, so record no delivery and try no

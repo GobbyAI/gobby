@@ -58,7 +58,7 @@ class SessionEndMixin(EventHandlersBase):
         except (TypeError, ValueError):
             end_reason = SessionEndReason.OTHER
         if end_reason == SessionEndReason.COMPACT:
-            end_status = "handoff_ready"
+            end_status = "awaiting_handoff"
         elif (
             session is not None
             and session.session_type == "terminal"
@@ -179,10 +179,20 @@ class SessionEndMixin(EventHandlersBase):
                     "SESSION_END: orphan-lock sweep failed for session %s: %s", session_id, e
                 )
 
-        # Mark as handoff_ready only for explicit handoff exits. Ordinary
+        # Mark as awaiting_handoff only for explicit handoff exits. Ordinary
         # session ends should expire; live turn completion is handled by
-        # AFTER_AGENT/STOP as paused.
-        if session_id and self._session_manager:
+        # AFTER_AGENT/STOP as paused. A clear predecessor already awaiting its
+        # successor keeps that status: the successor's bind expires it.
+        if (
+            session is not None
+            and session.status == "awaiting_handoff"
+            and end_reason != SessionEndReason.COMPACT
+        ):
+            self.logger.debug(
+                "SESSION_END: session %s is awaiting_handoff; leaving status for the successor",
+                session_id,
+            )
+        elif session_id and self._session_manager:
             try:
                 self._session_manager.update_status_if_non_terminal(session_id, end_status)
             except Exception as e:

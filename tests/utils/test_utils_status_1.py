@@ -61,7 +61,7 @@ class TestStatusUtils:
                 "server2": {"connected": False, "health": "error"},
             },
             "mcp_tools_cached": 5,
-            "sessions": {"active": 1, "paused": 0, "handoff_ready": 0},
+            "sessions": {"active": 1, "paused": 0, "awaiting_handoff": 0},
             "tasks": {"open": 2, "in_progress": 1},
             "memory": {"count": 10},
         }

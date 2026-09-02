@@ -148,7 +148,7 @@ def sessions() -> None:
 @click.option(
     "--status",
     "-s",
-    type=click.Choice(["active", "completed", "handoff_ready", "expired"]),
+    type=click.Choice(["active", "completed", "awaiting_handoff", "expired"]),
     help="Filter by status",
 )
 @click.option(
@@ -192,7 +192,7 @@ def list_sessions(
         status_icon = {
             "active": "●",
             "completed": "✓",
-            "handoff_ready": "→",
+            "awaiting_handoff": "→",
             "expired": "○",
         }.get(session.status, "?")
 
@@ -615,7 +615,7 @@ def summarize_session(
                     llm_service=llm_service,
                     session_summary_config=config.session_summary,
                     db=summary_manager.db,
-                    set_handoff_ready=False,
+                    set_awaiting_handoff=False,
                 )
 
             summary_result = asyncio.run(_gen_summary())

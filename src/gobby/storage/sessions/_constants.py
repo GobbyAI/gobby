@@ -24,7 +24,7 @@ ALLOWED_SESSION_STATUSES = frozenset(
     {
         "active",
         "paused",
-        "handoff_ready",
+        "awaiting_handoff",
         "completed",
         "cancelled",
         "closed",
@@ -32,7 +32,7 @@ ALLOWED_SESSION_STATUSES = frozenset(
         "deleted",
     }
 )
-LIVE_SESSION_STATUSES = frozenset({"active", "paused", "handoff_ready"})
+LIVE_SESSION_STATUSES = frozenset({"active", "paused", "awaiting_handoff"})
 TERMINAL_SESSION_STATUSES = frozenset({"expired", "deleted"})
 
 

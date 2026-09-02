@@ -36,14 +36,14 @@ class TestSessionManagerPruning:
         session_manager: SessionManager,
         sample_project: dict[str, str],
     ) -> None:
-        """Orphan sweep only expires: the handoff_ready row is the live session."""
+        """Orphan sweep only expires: the awaiting_handoff row is the live session."""
         session = session_manager.register(
             external_id="orphaned-compact-session",
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
-        session_manager.update_status(session.id, "handoff_ready")
+        session_manager.update_status(session.id, "awaiting_handoff")
         workflow_manager = AgentStepInstanceManager(session_manager.db)
         workflow_manager.save(
             make_step_instance(
@@ -375,7 +375,7 @@ class TestSessionManagerPruning:
         assert after.updated_at == before.updated_at
 
     @pytest.mark.parametrize("target_field", ["tmux_pane", "tmux_window_id"])
-    @pytest.mark.parametrize("status", ["active", "paused", "handoff_ready"])
+    @pytest.mark.parametrize("status", ["active", "paused", "awaiting_handoff"])
     def test_stale_expiry_protects_recorded_tmux_owner_status(
         self,
         session_manager: SessionManager,

@@ -112,8 +112,8 @@ def test_live_session_without_tty_owns_pane() -> None:
     assert decision.state is OwnershipState.OWNED
 
 
-def test_handoff_ready_is_eligible_foreground_owner() -> None:
-    session = _session("handoff", 10, status="handoff_ready")
+def test_awaiting_handoff_is_eligible_foreground_owner() -> None:
+    session = _session("handoff", 10, status="awaiting_handoff")
 
     decision = _resolve([session], _ProcessFactory(_FakeProcess(10, 10.0)), {10: 100})
 
@@ -139,12 +139,12 @@ def test_expired_and_deleted_rows_cannot_displace_valid_owner() -> None:
     assert decision.validated_session_ids == frozenset({"active"})
 
 
-def test_same_pid_active_owner_beats_newer_handoff_ready() -> None:
+def test_same_pid_active_owner_beats_newer_awaiting_handoff() -> None:
     older = _session("older", 10, created_at="2026-01-01T00:00:00+00:00")
     newer = _session(
         "newer",
         10,
-        status="handoff_ready",
+        status="awaiting_handoff",
         created_at="2026-01-01T00:01:00+00:00",
     )
 

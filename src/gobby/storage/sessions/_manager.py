@@ -363,7 +363,7 @@ class SessionManager(
         try:
             current = self.get(session_id)
             if (
-                status == "handoff_ready"
+                status == "awaiting_handoff"
                 and current is not None
                 and current.status == "expired"
                 and current.session_type == "terminal"

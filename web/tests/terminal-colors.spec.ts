@@ -199,7 +199,6 @@ async function installTerminalSocket(page: Page): Promise<TerminalHarness> {
             request_id: message.request_id,
             next_cursor: null,
             items: MOCK_SESSIONS,
-            live_cli_session_ids: [],
           }),
         );
         return;

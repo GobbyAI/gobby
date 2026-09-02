@@ -48,7 +48,7 @@ def insert_isolated_machine(db: HubDatabase, machine_id: str | None = None) -> s
 
 
 def patch_local_machine_id(monkeypatch: Any, machine_id: str) -> None:
-    """Pin the machine-id cache and both imported `require_machine_id` names.
+    """Pin the machine-id cache and imported `require_machine_id` names.
 
     Production modules bind `require_machine_id` by direct import (for example
     `gobby.agents.launcher_session`), so the cache pin is what keeps every binding
@@ -61,6 +61,10 @@ def patch_local_machine_id(monkeypatch: Any, machine_id: str) -> None:
     )
     monkeypatch.setattr(
         "gobby.utils.machine_id.require_machine_id",
+        lambda: machine_id,
+    )
+    monkeypatch.setattr(
+        "gobby.agents.launcher_session.require_machine_id",
         lambda: machine_id,
     )
 

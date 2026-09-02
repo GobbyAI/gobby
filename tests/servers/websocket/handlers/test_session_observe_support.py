@@ -9,7 +9,7 @@ from gobby.servers.websocket.handlers.session_observe_support import (
 )
 
 
-@pytest.mark.parametrize("status", ["active", "paused", "handoff_ready"])
+@pytest.mark.parametrize("status", ["active", "paused", "awaiting_handoff"])
 def test_eligible_tmux_session_can_proxy_attach(status: str) -> None:
     session = SimpleNamespace(
         session_type="terminal",

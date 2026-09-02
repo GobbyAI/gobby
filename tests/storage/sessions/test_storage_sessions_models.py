@@ -114,7 +114,7 @@ class TestSession:
         assert session.to_dict()["title_source"] == "manual"
         assert session.to_brief()["title_source"] == "manual"
 
-    @pytest.mark.parametrize("status", ["paused", "handoff_ready"])
+    @pytest.mark.parametrize("status", ["paused", "awaiting_handoff"])
     def test_to_dict_marks_live_tmux_sessions_proxy_attachable(self, status: str) -> None:
         """Eligible tmux sessions remain attachable while liveness metadata exists."""
         session = Session(

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Any, cast
+from uuid import UUID
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
@@ -55,18 +56,27 @@ async def _send_tmux_session_wake(
     message: str,
     *,
     submit: bool = False,
-    escape_before_submit: bool = False,
+    clear_before_submit: bool = False,
+    cli_source: str | None = None,
 ) -> None:
     from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
+    from gobby.terminals.composer import composer_clear_sequence
     from gobby.terminals.runtime import Delivered, IndeterminateWrite
     from gobby.terminals.write_coordinator import SequenceDelay, WriteRequest
 
     manager, coordinator = _wake_write_services()
-    terminal = manager.get(identity)
-    if terminal is None and hasattr(manager, "get_live_for_session"):
-        terminal = manager.get_live_for_session(identity)
-    if terminal is None and hasattr(manager, "get_live_by_session_name"):
-        terminal = manager.get_live_by_session_name(identity)
+    try:
+        UUID(identity)
+    except ValueError:
+        terminal = (
+            manager.get_live_by_session_name(identity)
+            if hasattr(manager, "get_live_by_session_name")
+            else None
+        )
+    else:
+        terminal = manager.get(identity)
+        if terminal is None and hasattr(manager, "get_live_for_session"):
+            terminal = manager.get_live_for_session(identity)
     if terminal is None:
         raise RuntimeError(f"no terminal for wake identity {identity}")
     steps: list[WriteRequest | SequenceDelay] = []
@@ -82,15 +92,16 @@ async def _send_tmux_session_wake(
         )
     else:
         literal_text = message.rstrip("\n")
-        if escape_before_submit:
-            steps.append(
+        if clear_before_submit:
+            steps.extend(
                 WriteRequest(
                     terminal_id=terminal.id,
                     action_key=f"wake:{terminal.id}",
                     origin="automatic",
                     kind="key",
-                    payload="escape",
+                    payload=key,
                 )
+                for key in composer_clear_sequence(cli_source)
             )
             if literal_text:
                 steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
@@ -132,7 +143,8 @@ async def _send_tmux_pane_wake(
     tmux_socket_path: str | None,
     *,
     submit: bool = False,
-    escape_before_submit: bool = False,
+    clear_before_submit: bool = False,
+    cli_source: str | None = None,
 ) -> None:
     from gobby.agents.tmux.text_injection import (
         send_literal_text_to_tmux_target,
@@ -148,7 +160,8 @@ async def _send_tmux_pane_wake(
             pane_id,
             message,
             tmux_cmd=tmux_cmd,
-            escape_before_submit=escape_before_submit,
+            clear_before_submit=clear_before_submit,
+            cli_source=cli_source,
         )
     else:
         await send_literal_text_to_tmux_target(pane_id, message, tmux_cmd=tmux_cmd)

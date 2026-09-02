@@ -116,7 +116,7 @@ class _TerminalMixin:
                 WHERE id = ANY(%s::uuid[])
                 """,
                 (
-                    ["active", "paused", "handoff_ready"],
+                    ["active", "paused", "awaiting_handoff"],
                     list(_TMUX_CONTEXT_KEYS),
                     now,
                     session_ids,
@@ -124,7 +124,7 @@ class _TerminalMixin:
             )
 
         for session in sessions:
-            transitioned = session.status in {"active", "paused", "handoff_ready"}
+            transitioned = session.status in {"active", "paused", "awaiting_handoff"}
             self._notify_session_change(
                 "session_expired" if transitioned else "session_updated",
                 session.id,

@@ -177,7 +177,7 @@ def _activate_without_competitors(
 
 def _is_ended_terminal_sibling(session: Session) -> bool:
     """Later same-pane rows that already finished must not block handoff compaction."""
-    return session.status in {"handoff_ready", "expired"}
+    return session.status in {"awaiting_handoff", "expired"}
 
 
 def _is_empty_compact_ghost(db: HubDatabase, session: Session) -> bool:

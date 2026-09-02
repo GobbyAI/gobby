@@ -10,34 +10,43 @@ _LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(?P<text>.+?)\s*$")
 
 _OPERATIONAL_REQUIREMENTS = {
     "install": re.compile(
-        r"\b(?:install(?:ed|ing)?|installation)\s+(?:the\s+)?"
+        r"(?P<direct>\binstall(?:ing)?\s+(?:the\s+)?"
         r"(?:release|binary|artifact|package|build|executable|service|plugin|skill)\b|"
         r"\b(?:release|binary|artifact|package|build|executable|service|plugin|skill)\b"
-        r"(?:\s+[\w.-]+){0,4}\s+(?:(?:is\s+|was\s+)?installed|installation)\b",
+        r"(?:\s+[\w.-]+){0,4}\s+(?:(?:(?:is|was|must|shall|should|will)\s+"
+        r"(?:be\s+)?|(?:needs?|has)\s+to\s+be\s+)installed)\b)|"
+        r"(?P<nominal>\b(?:release|binary|artifact|package|build|executable|service|"
+        r"plugin|skill)\b(?:\s+[\w.-]+){0,4}\s+installation\b)",
         re.IGNORECASE,
     ),
     "restart": re.compile(
-        r"\brestart(?:ed|ing)?\s+(?:the\s+)?(?:daemon|service|server|app(?:lication)?)\b|"
+        r"(?P<direct>\brestart(?:ing)?\s+(?:the\s+)?"
+        r"(?:daemon|service|server|app(?:lication)?)\b|"
         r"\b(?:daemon|service|server|app(?:lication)?)\s+"
-        r"(?:(?:is\s+|was\s+)?restarted|restart)\b",
+        r"(?:(?:(?:is|was|must|shall|should|will)\s+(?:be\s+)?|"
+        r"(?:needs?|has)\s+to\s+be\s+)restarted)\b)|"
+        r"(?P<nominal>\b(?:daemon|service|server|app(?:lication)?)\s+restart\b)",
         re.IGNORECASE,
     ),
     "smoke": re.compile(
-        r"\b(?:run|perform|execute|complete)\s+(?:a\s+)?(?:live[- ]+)?"
+        r"(?P<direct>\b(?:run|perform|execute|complete)\s+(?:a\s+)?(?:live[- ]+)?"
         r"smoke(?:[- ]+(?:tests?|checks?|probes?))?\b|"
-        r"\blive[- ]+smoke[- ]+(?:tests?|checks?|probes?)\b|"
         r"\b(?:live[- ]+)?smoke(?:[- ]+(?:tests?|checks?|probes?))?\s+"
-        r"(?:passes|passed|succeeds|succeeded|completes|completed|shows|show|verifies|verified)\b",
+        r"(?:passes|passed|succeeds|succeeded|completes|completed|shows|show|verifies|"
+        r"verified)\b)|"
+        r"(?P<nominal>\blive[- ]+smoke[- ]+(?:tests?|checks?|probes?)\b)",
         re.IGNORECASE,
     ),
     "deploy": re.compile(
-        r"\bdeploy(?:ed|ing)?\s+(?:the\s+)?(?:service|release|app(?:lication)?|site)\b|"
-        r"\b(?:service|release|app(?:lication)?|site)\s+(?:is\s+|was\s+)?deployed\b",
+        r"\bdeploy(?:ing)?\s+(?:the\s+)?(?:service|release|app(?:lication)?|site)\b|"
+        r"\b(?:service|release|app(?:lication)?|site)\s+(?:(?:is|was|must|shall|should|"
+        r"will)\s+(?:be\s+)?|(?:needs?|has)\s+to\s+be\s+)deployed\b",
         re.IGNORECASE,
     ),
     "publish": re.compile(
-        r"\bpublish(?:ed|ing)?\s+(?:the\s+)?(?:release|package|artifact|site)\b|"
-        r"\b(?:release|package|artifact|site)\s+(?:is\s+|was\s+)?published\b",
+        r"\bpublish(?:ing)?\s+(?:the\s+)?(?:release|package|artifact|site)\b|"
+        r"\b(?:release|package|artifact|site)\s+(?:(?:is|was|must|shall|should|will)\s+"
+        r"(?:be\s+)?|(?:needs?|has)\s+to\s+be\s+)published\b",
         re.IGNORECASE,
     ),
     "cutover": re.compile(
@@ -122,6 +131,19 @@ _NEGATED_REQUIREMENT_SUFFIX_RE = re.compile(
 
 # Widest negator-to-phrase run worth reading, e.g. "should never require another ".
 _NEGATION_WINDOW = 48
+
+_NOMINAL_REQUIREMENT_RE = re.compile(
+    r"\b(?:is|are|was|were)\s+(?:explicitly\s+)?(?:required|needed)\b|"
+    r"\b(?:must|shall|should|will)\b|"
+    r"\b(?:requires?|needs?)\b",
+    re.IGNORECASE,
+)
+
+_NOMINAL_FOLLOWER_RE = re.compile(
+    r"^\s*(?:$|[.,;:]|and\b|is\b|are\b|was\b|were\b|must\b|shall\b|should\b|"
+    r"will\b|needs?\b|to\b)",
+    re.IGNORECASE,
+)
 
 _OPERATIONAL_SUBJECT_RE = re.compile(
     r"\b(?:release|binary|artifact|package|build|executable|service|plugin|skill|"
@@ -244,20 +266,31 @@ def missing_operational_evidence(
 
 
 def _requirements(value: str | None) -> tuple[_OperationalRequirement, ...]:
-    normalized = normalized_validation_criteria(value)
-    if normalized is None:
-        return ()
     requirements: list[_OperationalRequirement] = []
-    for action, pattern in _OPERATIONAL_REQUIREMENTS.items():
-        for match in pattern.finditer(normalized):
-            if _is_ruled_out(normalized, match):
-                continue
-            requirements.append(
-                _OperationalRequirement(
-                    action=action, subjects=frozenset(_subjects(match.group(0)))
+    for criterion in split_validation_criteria(value):
+        for action, pattern in _OPERATIONAL_REQUIREMENTS.items():
+            for match in pattern.finditer(criterion):
+                if _is_ruled_out(criterion, match) or (
+                    match.lastgroup == "nominal" and not _is_nominal_requirement(criterion, match)
+                ):
+                    continue
+                requirements.append(
+                    _OperationalRequirement(
+                        action=action, subjects=frozenset(_subjects(match.group(0)))
+                    )
                 )
-            )
     return tuple(requirements)
+
+
+def _is_nominal_requirement(criteria: str, match: re.Match[str]) -> bool:
+    """Return whether a nominal action phrase is itself an acceptance demand."""
+    suffix = criteria[match.end() :]
+    if _NOMINAL_FOLLOWER_RE.match(suffix) is None:
+        return False
+    stripped = criteria.strip().rstrip(".:;")
+    if stripped.casefold() == match.group(0).casefold():
+        return True
+    return _NOMINAL_REQUIREMENT_RE.search(criteria) is not None
 
 
 def _is_ruled_out(criteria: str, match: re.Match[str]) -> bool:

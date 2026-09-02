@@ -23,6 +23,7 @@ from gobby.storage.terminals import (
     tmux_locator_key,
 )
 from gobby.terminals.dimensions import validate_dimensions
+from gobby.terminals.key_bytes import TMUX_KEY_NAMES, encode_named_key
 from gobby.terminals.runtime import (
     MAX_INPUT_PAYLOAD_BYTES,
     CommitSpawnRefusedError,
@@ -45,49 +46,6 @@ __all__ = [
     "TmuxTerminalRuntime",
     "configured_tmux_runtime",
 ]
-
-_NAMED_TMUX_KEYS: dict[str, str] = {
-    "enter": "Enter",
-    "escape": "Escape",
-    "tab": "Tab",
-}
-_CURSOR_LETTERS: dict[str, str] = {"up": "A", "down": "B", "right": "C", "left": "D"}
-_KEYPAD_APP: dict[str, bytes] = {
-    "kp0": b"\x1bOp",
-    "kp1": b"\x1bOq",
-    "kp2": b"\x1bOr",
-    "kp3": b"\x1bOs",
-    "kp4": b"\x1bOt",
-    "kp5": b"\x1bOu",
-    "kp6": b"\x1bOv",
-    "kp7": b"\x1bOw",
-    "kp8": b"\x1bOx",
-    "kp9": b"\x1bOy",
-    "kpdecimal": b"\x1bOn",
-    "kpminus": b"\x1bOm",
-    "kpplus": b"\x1bOk",
-    "kpmul": b"\x1bOj",
-    "kpdiv": b"\x1bOo",
-    "kpenter": b"\x1bOM",
-}
-_KEYPAD_NORMAL: dict[str, bytes] = {
-    "kp0": b"0",
-    "kp1": b"1",
-    "kp2": b"2",
-    "kp3": b"3",
-    "kp4": b"4",
-    "kp5": b"5",
-    "kp6": b"6",
-    "kp7": b"7",
-    "kp8": b"8",
-    "kp9": b"9",
-    "kpdecimal": b".",
-    "kpminus": b"-",
-    "kpplus": b"+",
-    "kpmul": b"*",
-    "kpdiv": b"/",
-    "kpenter": b"\r",
-}
 
 
 class TmuxTerminalRuntime:
@@ -321,11 +279,11 @@ class TmuxTerminalRuntime:
         target = self._target(terminal)
         try:
             cursor, keypad, _paste = await self._query_flags(terminal, target)
-            named = _NAMED_TMUX_KEYS.get(key)
+            named = TMUX_KEY_NAMES.get(key)
             if named is not None:
                 await send_named_key_to_tmux_target(target, named, tmux_cmd=self._cmd_for(terminal))
                 return Delivered()
-            encoded = _encode_key(key, cursor_app=cursor, keypad_app=keypad)
+            encoded = encode_named_key(key, cursor_app=cursor, keypad_app=keypad)
             hex_bytes = [f"{byte:02x}" for byte in encoded]
             await self._sessions_for(terminal)._run("send-keys", "-t", target, "-H", *hex_bytes)
             return Delivered()
@@ -409,18 +367,6 @@ class TmuxTerminalRuntime:
         while len(parts) < 3:
             parts.append("0")
         return parts[0] == "1", parts[1] == "1", parts[2] == "1"
-
-
-def _encode_key(key: NamedKey, *, cursor_app: bool, keypad_app: bool) -> bytes:
-    letter = _CURSOR_LETTERS.get(key)
-    if letter is not None:
-        prefix = b"\x1bO" if cursor_app else b"\x1b["
-        return prefix + letter.encode("ascii")
-    table = _KEYPAD_APP if keypad_app else _KEYPAD_NORMAL
-    encoded = table.get(key)
-    if encoded is None:
-        raise TerminalWriteError(stage="none")
-    return encoded
 
 
 def configured_tmux_runtime() -> TmuxTerminalRuntime:

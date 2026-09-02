@@ -1303,6 +1303,7 @@ class TestSessionStartNewSession:
             predecessor=predecessor,
             attempt_id="attempt-1",
             degrade_reason=None,
+            supersedes=None,
         )
         successor = MagicMock()
         successor.id = "successor-sess"
@@ -1378,6 +1379,7 @@ class TestSessionStartNewSession:
             predecessor=None,
             attempt_id=None,
             degrade_reason="expired",
+            supersedes=None,
         )
         mock_dependencies["session_storage"].get.return_value = None
         mock_dependencies["session_manager"].register_session.return_value = "new-sess"
@@ -1627,7 +1629,7 @@ class TestSessionStartNewSession:
 
         row = MagicMock()
         row.id = "sess-123"
-        row.status = "handoff_ready"
+        row.status = "awaiting_handoff"
         row.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
 
         mock_dependencies["session_storage"].get.return_value = None

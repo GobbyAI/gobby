@@ -224,14 +224,14 @@ class TestSessionEdgeCases:
         sample_project: dict,
     ) -> None:
         """Test that find_parent returns the most recently updated session."""
-        # Create first handoff_ready session
+        # Create first awaiting_handoff session
         session1 = session_manager.register(
             external_id="parent-1",
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
-        session_manager.update_status(session1.id, "handoff_ready")
+        session_manager.update_status(session1.id, "awaiting_handoff")
 
         # Backdate first session
         session_manager.db.execute(
@@ -239,14 +239,14 @@ class TestSessionEdgeCases:
             (session1.id,),
         )
 
-        # Create second handoff_ready session (more recent)
+        # Create second awaiting_handoff session (more recent)
         session2 = session_manager.register(
             external_id="parent-2",
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
-        session_manager.update_status(session2.id, "handoff_ready")
+        session_manager.update_status(session2.id, "awaiting_handoff")
 
         # Find parent - should return the more recent one
         parent = session_manager.find_parent(
@@ -270,7 +270,7 @@ class TestSessionEdgeCases:
             project_id=sample_project["id"],
             terminal_context={"tmux_pane": "%1", "tmux_socket_path": "/tmp/tmux"},
         )
-        session_manager.update_status(matching_parent.id, "handoff_ready")
+        session_manager.update_status(matching_parent.id, "awaiting_handoff")
         session_manager.db.execute(
             "UPDATE sessions SET updated_at = NOW() - INTERVAL '1 minute', last_activity = NOW() - INTERVAL '1 minute' WHERE id = %s",
             (matching_parent.id,),
@@ -282,7 +282,7 @@ class TestSessionEdgeCases:
             project_id=sample_project["id"],
             terminal_context={"tmux_pane": "%2", "tmux_socket_path": "/tmp/tmux"},
         )
-        session_manager.update_status(newer_wrong_parent.id, "handoff_ready")
+        session_manager.update_status(newer_wrong_parent.id, "awaiting_handoff")
 
         parent = session_manager.find_parent(
             machine_id="20000000-0000-4000-8000-000000000001",
@@ -307,7 +307,7 @@ class TestSessionEdgeCases:
                 source="claude",
                 project_id=sample_project["id"],
             )
-            session_manager.update_status(session.id, "handoff_ready")
+            session_manager.update_status(session.id, "awaiting_handoff")
 
         parent = session_manager.find_parent(
             machine_id="20000000-0000-4000-8000-000000000001",

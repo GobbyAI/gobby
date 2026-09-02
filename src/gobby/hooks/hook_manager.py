@@ -756,7 +756,7 @@ class HookManager(HookManagerDispatchMixin):
         session_id: str,
         background: bool = False,
         done_event: threading.Event | None = None,
-        set_handoff_ready: bool = False,
+        set_awaiting_handoff: bool = False,
     ) -> None:
         """Fire session summary generation."""
         dispatcher = build_session_summary_dispatcher(
@@ -773,7 +773,7 @@ class HookManager(HookManagerDispatchMixin):
             session_id,
             _background=background,
             done_event=done_event,
-            set_handoff_ready=set_handoff_ready,
+            set_awaiting_handoff=set_awaiting_handoff,
         )
 
     def shutdown(self) -> None:

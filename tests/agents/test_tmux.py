@@ -361,7 +361,7 @@ class TestTmuxTextInjection:
         assert commands == [["tmux", "send-keys", "-t", "%12", "Enter"]]
 
     @pytest.mark.asyncio
-    async def test_submit_literal_text_can_escape_before_paste(
+    async def test_submit_literal_text_can_clear_the_composer_before_paste(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -383,12 +383,13 @@ class TestTmuxTextInjection:
             "%12",
             "Message from Gobby daemon: New activity available.",
             enter_delay_seconds=0,
-            escape_before_submit=True,
+            clear_before_submit=True,
+            cli_source="claude",
         )
 
         buffer_name = commands[1][3]
         assert commands == [
-            ["tmux", "send-keys", "-t", "%12", "Escape"],
+            ["tmux", "send-keys", "-t", "%12", "C-l"],
             [
                 "tmux",
                 "set-buffer",
@@ -2037,30 +2038,6 @@ class TestTmuxSessionManagerExtended:
             result = await mgr.health_check()
         assert result is False
         mock_run.assert_awaited_once_with("list-sessions", timeout=5.0)
-
-    @pytest.mark.asyncio
-    async def test_list_pane_ids(self) -> None:
-        """list_pane_ids returns only panes that tmux reports as alive."""
-        mgr = TmuxSessionManager()
-        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (0, "%0\t0\n%5\t1\n%12\t0\n", "")
-            result = await mgr.list_pane_ids()
-        assert result == {"%0", "%12"}
-        mock_run.assert_awaited_once_with(
-            "list-panes",
-            "-a",
-            "-F",
-            "#{pane_id}\t#{pane_dead}",
-        )
-
-    @pytest.mark.asyncio
-    async def test_list_pane_ids_failure(self) -> None:
-        """list_pane_ids returns empty set on failure."""
-        mgr = TmuxSessionManager()
-        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (1, "", "no server")
-            result = await mgr.list_pane_ids()
-        assert result == set()
 
     @pytest.mark.asyncio
     async def test_create_session_already_exists_raises(self) -> None:

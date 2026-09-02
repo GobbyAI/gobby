@@ -1822,7 +1822,6 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
                 JSON.stringify({
                   type: "terminal_list",
                   request_id: message.request_id ?? "init",
-                  live_cli_session_ids: [],
                   sessions: [
                     {
                       name: "capture-session",

@@ -168,7 +168,6 @@ function makeGobbySession(overrides: Partial<GobbySession> = {}): GobbySession {
 function makeHookState(overrides: Partial<HookResult> = {}): HookResult {
   return {
     sessions: [],
-    liveCliSessionIds: [],
     connected: true,
     sessionsLoaded: false,
     attachedTarget: null,

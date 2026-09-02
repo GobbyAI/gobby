@@ -123,7 +123,7 @@ class TestClaimTaskTool:
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
             mock_session_manager.get.return_value = MagicMock(
                 project_id="11111111-1111-4111-8111-111111110001",
-                status="handoff_ready",
+                status="awaiting_handoff",
             )
             mock_session_manager.update_session_status.return_value = True
             MockSessionManager.return_value = mock_session_manager
@@ -184,7 +184,7 @@ class TestClaimTaskTool:
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
             mock_session_manager.get.return_value = MagicMock(
                 project_id="11111111-1111-4111-8111-111111110001",
-                status="handoff_ready",
+                status="awaiting_handoff",
             )
             mock_session_manager.update_session_status.return_value = False
             MockSessionManager.return_value = mock_session_manager

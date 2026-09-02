@@ -562,6 +562,10 @@ class TestCloseTask:
             patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockPM,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
             patch(
+                "gobby.mcp_proxy.tools.task_repo_paths.require_root",
+                return_value=str(repo_path.resolve()),
+            ),
+            patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
             ) as mock_vcr,
             patch(
@@ -591,6 +595,7 @@ class TestCloseTask:
             ) as mock_norm,
         ):
             MockPM.return_value.get.return_value = MagicMock()
+            MockPM.return_value.db = mock_task_manager.db
             MockSVM.return_value.get_variables.return_value = {
                 "task_edited_files": {task.id: ["src/owned.py"]},
             }
@@ -674,6 +679,7 @@ class TestCloseTask:
             ) as mock_norm,
         ):
             MockPM.return_value.get.return_value = MagicMock()
+            MockPM.return_value.db = mock_task_manager.db
             MockSVM.return_value.get_variables.return_value = {
                 "task_edited_files": {task.id: ["src/owned.py"]},
             }

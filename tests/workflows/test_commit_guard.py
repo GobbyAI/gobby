@@ -490,12 +490,12 @@ async def test_unscoped_commit_blocks_foreign_staged_path_with_owner_diagnostic(
 
 
 @pytest.mark.asyncio
-async def test_unscoped_commit_blocks_handoff_ready_owner(
+async def test_unscoped_commit_blocks_awaiting_handoff_owner(
     guard_harness: GuardHarness,
 ) -> None:
     guard_harness.session_manager.update_status(
         guard_harness.foreign_session.id,
-        "handoff_ready",
+        "awaiting_handoff",
     )
     (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
     _git(guard_harness.repo, "add", "--", "foreign.txt")

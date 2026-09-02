@@ -19,6 +19,7 @@ from tests.fixtures.isolated_checkout import (
     install_isolated_checkout_project,
     patch_local_machine_id,
 )
+from tests.mcp_proxy.named_server_test_support import attach_named_servers
 
 pytestmark = pytest.mark.unit
 
@@ -58,7 +59,7 @@ def _mock_linear_deps(
         "updated_at": now,
     }
     mcp_manager = MagicMock()
-    mcp_manager.has_server.return_value = True
+    attach_named_servers(mcp_manager, "linear", project_id=project_id)
     mcp_manager.health = {"linear": MagicMock(state="connected")}
     return task_manager, mcp_manager, project_manager, project_id
 

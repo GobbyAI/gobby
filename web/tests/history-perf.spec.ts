@@ -151,7 +151,6 @@ async function mocks(page: Page, box: { sendEpoch: number }) {
             type: "terminal_list",
             request_id: m.request_id,
             next_cursor: null,
-            live_cli_session_ids: [],
             items: [SESSION],
           }),
         );

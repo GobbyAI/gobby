@@ -5,12 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
-import stat
 import threading
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from gobby.sessions.compact_markers import (
@@ -52,8 +48,6 @@ __all__ = [
     "HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS",
     "HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
     "HANDOFF_COMPACT_CONTINUE_VARIABLE",
-    "CodexRolloutCursor",
-    "CodexRolloutObservationError",
     "LOADING_SKILLS_NAME",
     "WORKFLOW_REQUESTED_SKILLS_VARIABLE",
 ]
@@ -65,116 +59,6 @@ _HANDOFF_COMPACT_CONTINUATION_TASKS: set[asyncio.Task[Any]] = set()
 _CODEX_COMPACT_READY_STATUS_LINE = "• Context compacted"
 _CODEX_COMPACT_READY_POLL_SECONDS = 0.25
 CODEX_COMPACT_READY_CAPTURE_LINES = 100
-
-
-class CodexRolloutObservationError(RuntimeError):
-    """Raised when a rollout can no longer be observed safely."""
-
-
-@dataclass
-class CodexRolloutCursor:
-    """Read only fresh, complete JSONL records from a stable rollout file."""
-
-    path: Path
-    device: int
-    inode: int
-    offset: int
-    _buffer: bytes = field(default=b"", repr=False)
-    _discard_historical_partial: bool = field(default=False, repr=False)
-
-    @classmethod
-    def at_eof(cls, transcript_path: str | Path | None) -> CodexRolloutCursor:
-        """Create a cursor at the current EOF of a readable rollout."""
-        if transcript_path is None or not str(transcript_path).strip():
-            raise CodexRolloutObservationError("Codex session has no rollout transcript path")
-
-        path = Path(transcript_path).expanduser()
-        try:
-            with path.open("rb") as stream:
-                file_stat = os.fstat(stream.fileno())
-                if not stat.S_ISREG(file_stat.st_mode):
-                    raise CodexRolloutObservationError(
-                        f"Codex rollout transcript is not a regular file: {path}"
-                    )
-                discard_historical_partial = False
-                if file_stat.st_size:
-                    stream.seek(-1, os.SEEK_END)
-                    discard_historical_partial = stream.read(1) != b"\n"
-        except CodexRolloutObservationError:
-            raise
-        except OSError as exc:
-            raise CodexRolloutObservationError(
-                f"Codex rollout transcript is unavailable: {path}: {exc}"
-            ) from exc
-
-        return cls(
-            path=path,
-            device=file_stat.st_dev,
-            inode=file_stat.st_ino,
-            offset=file_stat.st_size,
-            _discard_historical_partial=discard_historical_partial,
-        )
-
-    def saw_fresh_turn_aborted(self) -> bool:
-        """Return whether newly appended complete records contain turn_aborted."""
-        chunk = self._read_appended_bytes()
-        if not chunk:
-            return False
-
-        if self._discard_historical_partial:
-            newline = chunk.find(b"\n")
-            if newline < 0:
-                return False
-            chunk = chunk[newline + 1 :]
-            self._discard_historical_partial = False
-
-        records = (self._buffer + chunk).split(b"\n")
-        self._buffer = records.pop()
-        for raw_record in records:
-            try:
-                record = json.loads(raw_record.rstrip(b"\r"))
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                continue
-            if not isinstance(record, dict) or record.get("type") != "event_msg":
-                continue
-            payload = record.get("payload")
-            if isinstance(payload, dict) and payload.get("type") == "turn_aborted":
-                return True
-        return False
-
-    def _read_appended_bytes(self) -> bytes:
-        try:
-            path_stat = self.path.stat()
-            self._validate_stat(path_stat)
-            with self.path.open("rb") as stream:
-                opened_stat = os.fstat(stream.fileno())
-                self._validate_stat(opened_stat)
-                stream.seek(self.offset)
-                chunk = stream.read()
-                read_stat = os.fstat(stream.fileno())
-            final_path_stat = self.path.stat()
-            self._validate_stat(read_stat, minimum_size=self.offset + len(chunk))
-            self._validate_stat(final_path_stat, minimum_size=self.offset + len(chunk))
-        except CodexRolloutObservationError:
-            raise
-        except OSError as exc:
-            raise CodexRolloutObservationError(
-                f"Codex rollout transcript became unavailable: {self.path}: {exc}"
-            ) from exc
-
-        self.offset += len(chunk)
-        return chunk
-
-    def _validate_stat(self, file_stat: os.stat_result, *, minimum_size: int | None = None) -> None:
-        if file_stat.st_dev != self.device or file_stat.st_ino != self.inode:
-            raise CodexRolloutObservationError(
-                f"Codex rollout transcript was replaced: {self.path}"
-            )
-        required_size = self.offset if minimum_size is None else minimum_size
-        if file_stat.st_size < required_size:
-            raise CodexRolloutObservationError(
-                f"Codex rollout transcript was truncated: {self.path}"
-            )
 
 
 class CompactResumeSkillTiers(TypedDict):
@@ -405,6 +289,7 @@ def schedule_handoff_compact_continuation(
         prompt,
         str(session_id),
         delay_seconds=delay_seconds,
+        cli_source=getattr(session, "source", None),
     )
     return _schedule_coroutine(coro, loop=loop)
 
@@ -551,10 +436,26 @@ async def _send_handoff_compact_continuation(
     session_id: str,
     *,
     delay_seconds: float,
+    cli_source: str | None = None,
 ) -> bool:
+    from gobby.terminals.composer import composer_clear_sequence
+    from gobby.terminals.pane_io import TmuxPaneIO
+
     if delay_seconds > 0:
         await asyncio.sleep(delay_seconds)
     try:
+        # An operator draft in the composer would be submitted with the pull
+        # prompt, so empty the box first (blind: the prompt reads fine regardless).
+        pane = TmuxPaneIO(tmux, target)
+        for key in composer_clear_sequence(cli_source):
+            ok, reason = await pane.send_key(key)
+            if not ok:
+                logger.warning(
+                    "Failed clearing the composer before set_handoff continuation for %s: %s",
+                    session_id,
+                    reason,
+                )
+                return False
         ok = await tmux.dispatch_keys(target, f"{prompt}\n", literal=True)
     except Exception:
         logger.warning(
@@ -673,6 +574,7 @@ async def _continue_after_codex_compaction_ready(
                 prompt,
                 pending_session_id,
                 delay_seconds=0,
+                cli_source="codex",
             )
             if not sent:
                 await asyncio.to_thread(
