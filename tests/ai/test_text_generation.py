@@ -33,7 +33,11 @@ from gobby.ai._text_generation_builder import (
     _daemon_text_generation_adapter_factories,
     _responses_text_generate_adapter_factory,
 )
-from gobby.ai._text_generation_helpers import _CandidateTimeoutError, _coerce_text_result
+from gobby.ai._text_generation_helpers import (
+    _CandidateTimeoutError,
+    _coerce_text_result,
+    _InvalidTextGenerationOutputError,
+)
 from gobby.ai._text_generation_service import (
     _gate_reasoning_effort,
     image_candidate_eligible,
@@ -2366,6 +2370,36 @@ async def test_text_generation_service_parses_json_text_fallback() -> None:
 
 
 @pytest.mark.asyncio
+async def test_text_generation_service_rejects_json_missing_required_key() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.3-codex",),
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"codex": JSONTextAdapter("codex")})
+
+    with pytest.raises(_InvalidTextGenerationOutputError, match="'theme' is a required property"):
+        await service.generate_json(
+            TextGenerationRequest(
+                prompt="classify",
+                provider="codex",
+                model="gpt-5.3-codex",
+                json_schema={
+                    "type": "object",
+                    "properties": {"theme": {"type": "string"}},
+                    "required": ["theme"],
+                },
+            )
+        )
+
+
+@pytest.mark.asyncio
 async def test_text_generation_service_json_parse_failure_reports_raw_preview() -> None:
     registry = AICapabilityRegistry(
         [
@@ -3553,6 +3587,41 @@ async def test_text_generation_service_falls_back_after_candidate_json_failure()
     )
 
     assert result == {"provider": "endpoint:good", "model": "good-model"}
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_falls_back_after_json_schema_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service = TextGenerationService(
+        _two_candidate_registry("endpoint:invalid", "endpoint:good"),
+        {
+            "endpoint:invalid": JSONAdapter("endpoint:invalid"),
+            "endpoint:good": JSONAdapter("endpoint:good"),
+        },
+    )
+    caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
+
+    result = await service.generate_json(
+        TextGenerationRequest(
+            prompt="classify",
+            candidates=("endpoint:invalid/slow-model", "endpoint:good/good-model"),
+            json_schema={
+                "type": "object",
+                "properties": {
+                    "provider": {"const": "endpoint:good"},
+                    "model": {"const": "good-model"},
+                },
+                "required": ["provider", "model"],
+                "additionalProperties": False,
+            },
+        )
+    )
+
+    assert result == {"provider": "endpoint:good", "model": "good-model"}
+    records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
+    assert records[0].__dict__["json_parse_outcome"] == "schema_failed"
+    assert records[1].__dict__["json_parse_outcome"] == "provider_structured"
 
 
 @pytest.mark.asyncio
