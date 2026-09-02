@@ -48,6 +48,13 @@ class HostEpochMismatchError(RuntimeError):
     """Raised when a native attach's live host epoch does not match the row."""
 
 
+class MachineOwnershipMismatchError(RuntimeError):
+    """Raised when a terminal row belongs to another machine."""
+
+    def __init__(self) -> None:
+        super().__init__("machine_ownership_mismatch")
+
+
 class UnresolvedWriteCapacityError(RuntimeError):
     """Raised when an unresolved-write latch would exceed durable bounds."""
 
@@ -592,6 +599,8 @@ class TerminalManager:
         row = self.get(terminal_id)
         if row is None:
             raise KeyError(terminal_id)
+        if row.machine_id != require_machine_id():
+            raise MachineOwnershipMismatchError
         stored = row.locator or {}
         host_socket = str(Path(socket_dir) / FRAMES_SOCKET_NAME)
         if row.backend == "native":

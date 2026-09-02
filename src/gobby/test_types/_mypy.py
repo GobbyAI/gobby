@@ -13,6 +13,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Final
 
 MYPY_TIMEOUT_SECONDS: Final = 900
+_MYPY_PROBE_TIMEOUT_SECONDS: Final = 30
 _OUTPUT_LIMIT: Final = 4_000
 _MYPY_FLAGS: Final = (
     "--show-error-codes",
@@ -65,7 +66,21 @@ def resolve_mypy_command(root: Path, override: str | None = None) -> tuple[str, 
         ("pdm.lock", "pdm", ("pdm", "run", "mypy")),
     )
     for marker, executable, command in package_managers:
-        if (root / marker).exists() and shutil.which(executable) is not None:
+        if not (root / marker).exists() or shutil.which(executable) is None:
+            continue
+        probe_options = ("--no-sync",) if executable == "uv" else ()
+        probe_command = (*command[:-1], *probe_options, "python", "-c", "import mypy")
+        try:
+            probe = subprocess.run(
+                probe_command,
+                cwd=root,
+                capture_output=True,
+                check=False,
+                timeout=_MYPY_PROBE_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if probe.returncode == 0:
             return command
 
     mypy_path = shutil.which("mypy")
@@ -147,7 +162,9 @@ def run_mypy(
             timeout=timeout,
         )
     except FileNotFoundError as exc:
-        raise MypyInvocationError(f"mypy executable not found: {command[0]}") from exc
+        raise MypyInvocationError(
+            f"mypy executable not found: {command[0]}; use --mypy-command to specify one"
+        ) from exc
     except subprocess.TimeoutExpired as exc:
         raise MypyInvocationError(
             f"mypy timed out after {timeout} seconds",

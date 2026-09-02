@@ -18,6 +18,7 @@ from gobby.terminals.ws_protocol import (
     inventory_item,
     parse_list_cursor,
 )
+from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -44,6 +45,7 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
         limit: int = Query(TERMINAL_LIST_DEFAULT_PAGE_SIZE),
     ) -> dict[str, Any]:
         manager = _manager()
+        machine_id = require_machine_id()
         page_size = max(1, min(limit, TERMINAL_LIST_MAX_PAGE_SIZE))
         parsed_states = _parse_states(states)
         try:
@@ -52,6 +54,7 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=400, detail="invalid cursor") from exc
         items, has_more = manager.list_page(
             [project_id],
+            machine_id=machine_id,
             states=parsed_states,
             backend=backend,
             cursor_created_at=created_at,
@@ -74,12 +77,13 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
     @router.get("/api/terminals/{terminal_id}")
     def get_terminal(terminal_id: str) -> dict[str, Any]:
         manager = _manager()
+        machine_id = require_machine_id()
         try:
             UUID(terminal_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="invalid terminal id") from exc
         row = manager.get(terminal_id)
-        if row is None:
+        if row is None or row.machine_id != machine_id:
             raise HTTPException(status_code=404, detail="terminal not found")
         return _row_json(row, _attach(server, manager, row))
 

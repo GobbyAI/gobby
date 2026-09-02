@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -23,10 +22,6 @@ pytestmark = pytest.mark.unit
 
 STAGED_EFFECTS_KEY = "_gobby_staged_effects"
 RECIPIENT_SESSION_ID = "11111111-1111-4111-8111-111111111111"
-_RECEIPT_MIGRATION = (
-    Path(__file__).resolve().parents[2]
-    / "crates/gcore/assets/schema/migrations/416_hook_receipt_effects.sql"
-)
 
 CONTEXT_PROVIDER_CASES: tuple[tuple[type[Any], str], ...] = (
     (ClaudeCodeAdapter, "user-prompt-submit"),
@@ -105,15 +100,6 @@ def _apply_acknowledged_receipt() -> Any:
 
 @pytest.fixture
 def receipts_db(temp_db: HubDatabase) -> HubDatabase:
-    sql = "\n".join(
-        line
-        for line in _RECEIPT_MIGRATION.read_text(encoding="utf-8").splitlines()
-        if not line.strip().startswith("--")
-    )
-    statements = [statement.strip() for statement in sql.split(";") if statement.strip()]
-    with temp_db.transaction() as conn:
-        for statement in statements:
-            conn.execute(statement)
     return temp_db
 
 

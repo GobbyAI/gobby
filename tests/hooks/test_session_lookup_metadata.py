@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, MissingHookMachineIdError, SessionSource
 from gobby.hooks.session_coordinator import SessionCoordinator
 from gobby.hooks.session_lookup import NON_MATERIALIZING_EVENTS, SessionLookupService
 from gobby.hooks.session_types import HookSessionManager
@@ -25,7 +25,11 @@ pytestmark = pytest.mark.unit
 _REAL_MACHINE_ID = "21000000-0000-4000-8000-000000000009"
 
 
-def _event(metadata: dict[str, Any] | None = None) -> HookEvent:
+def _event(
+    metadata: dict[str, Any] | None = None,
+    *,
+    machine_id: str | None = _REAL_MACHINE_ID,
+) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id="claude-external",
@@ -33,6 +37,7 @@ def _event(metadata: dict[str, Any] | None = None) -> HookEvent:
         timestamp=datetime.now(UTC),
         data={"terminal_context": {"tmux_pane": "%1"}},
         metadata=metadata or {},
+        machine_id=machine_id,
     )
 
 
@@ -47,10 +52,24 @@ def _service(
         session_manager=session_manager,
         session_coordinator=coordinator,
         session_task_manager=session_task_manager,
-        get_machine_id=lambda: "21000000-0000-4000-8000-000000000009",
         resolve_project_id=resolve_project_id,
         logger=logger or MagicMock(),
     )
+
+
+def test_session_lookup_requires_envelope_machine_id() -> None:
+    session_manager = MagicMock()
+    service = _service(session_manager, MagicMock(), MagicMock(return_value="project-1"))
+    event = _event(machine_id=None)
+    event.project_id = "project-1"
+
+    with pytest.raises(
+        MissingHookMachineIdError,
+        match="Hook envelope is missing required machine_id",
+    ):
+        service.resolve(event)
+
+    session_manager.get_session_id.assert_not_called()
 
 
 def test_valid_platform_session_metadata_is_preserved_and_enriched() -> None:
@@ -648,7 +667,6 @@ def test_expired_session_recovery_reports_status_through_the_real_path(
             session_manager=session_manager,
             session_coordinator=SessionCoordinator(session_storage=session_manager),
             session_task_manager=SessionTaskManager(temp_db),
-            get_machine_id=lambda: _REAL_MACHINE_ID,
             resolve_project_id=lambda *_: project_id,
             logger=logger,
         )
@@ -658,6 +676,7 @@ def test_expired_session_recovery_reports_status_through_the_real_path(
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"terminal_context": dict(terminal_context)},
+            machine_id=_REAL_MACHINE_ID,
             metadata={},
         )
 
