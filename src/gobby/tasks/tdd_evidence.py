@@ -21,16 +21,16 @@ from gobby.tasks.transcript_evidence import (
 )
 
 _ASSERTION_DETAIL_RE = re.compile(
-    r"AssertionError|assertion failed|\bassert\b|panicked at",
+    r"AssertionError|assertion failed|\bassert\b|panicked at|Failed:\s+DID NOT RAISE",
     re.IGNORECASE,
 )
 _PYTEST_FAILURE_HEADER_RE = re.compile(r"^_{2,}\s+(?P<name>\S+)\s+_{2,}\s*$")
 _PYTEST_LOCATION_RE = re.compile(
     r"^\s*(?P<path>\S+\.py):\d+:"
-    r"(?: in (?P<symbol>\S+)| [A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception))?\s*$"
+    r"(?: in (?P<symbol>\S+)| (?:[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)|Failed))?\s*$"
 )
 _PYTHON_EXCEPTION_DETAIL_RE = re.compile(
-    r"^\s*E\s+(?:[A-Za-z_][A-Za-z0-9_.]*)(?:Error|Exception):",
+    r"^\s*E\s+(?:[A-Za-z_][A-Za-z0-9_.]*)(?:Error|Exception)(?::|\s*$)",
     re.MULTILINE,
 )
 _PASS_STATUS_RE = re.compile(r"\b(?:PASSED|SKIPPED|XFAIL|XPASS)\b", re.IGNORECASE)
@@ -137,21 +137,38 @@ def evaluate_tdd_evidence(
             continue
         red = None
         green = None
+        red_rejection = None
         production_edit_seen = False
         for test_edit in test_edits:
-            first_production_edit = min(
+            production_edits = sorted(
                 (
                     edit
                     for edit in evidence.edits
                     if edit.order > test_edit.order and _is_production_edit_path(edit.path)
                 ),
                 key=lambda edit: edit.order,
-                default=None,
             )
-            if first_production_edit is None:
+            if not production_edits:
                 continue
             production_edit_seen = True
-            window_red = _find_red_run(test, evidence, test_edit.order, first_production_edit)
+            production_edit = production_edits[0]
+            window_red, window_rejection = _find_red_run(
+                test, evidence, test_edit.order, production_edit
+            )
+            red_rejection = window_rejection or red_rejection
+            if window_red is None:
+                for later_production_edit in production_edits[1:]:
+                    window_red, window_rejection = _find_red_run(
+                        test,
+                        evidence,
+                        production_edit.order,
+                        later_production_edit,
+                        require_not_implemented=True,
+                    )
+                    red_rejection = window_rejection or red_rejection
+                    if window_red is not None:
+                        production_edit = later_production_edit
+                        break
             if window_red is None:
                 continue
             if red is None:
@@ -160,11 +177,11 @@ def evaluate_tdd_evidence(
                 test,
                 evidence,
                 window_red,
-                after_order=first_production_edit.order,
+                after_order=production_edit.order,
             )
             if green is not None:
                 red = window_red
-                cycle = (red, first_production_edit)
+                cycle = (red, production_edit)
                 break
         if cycle is not None:
             break
@@ -172,10 +189,13 @@ def evaluate_tdd_evidence(
             findings.append(f"{test.reference}: no production edit follows the test edit")
             continue
         if red is None:
-            findings.append(
+            finding = (
                 f"{test.reference}: missing assertion or panic failure after the test edit "
-                "and before the first production edit"
+                "and before an implementation edit"
             )
+            if red_rejection is not None:
+                finding = f"{finding}; {red_rejection}"
+            findings.append(finding)
             continue
         if green is None:
             findings.append(
@@ -217,7 +237,10 @@ def _find_red_run(
     evidence: TranscriptEvidence,
     test_edit_order: int,
     first_non_test_edit: TranscriptEdit | None,
-) -> TranscriptValidationRun | None:
+    *,
+    require_not_implemented: bool = False,
+) -> tuple[TranscriptValidationRun | None, str | None]:
+    rejection = None
     for run in sorted(evidence.validation_runs, key=lambda item: item.order):
         if (
             run.outcome != "failure"
@@ -229,18 +252,23 @@ def _find_red_run(
             continue
         if not validation_run_names_test(run.command, run.output, test):
             continue
-        if _has_named_red_failure(run.command, run.output, test):
-            return run
-    return None
+        matched, reason = _has_named_red_failure(run.command, run.output, test)
+        if matched:
+            if not require_not_implemented or "NotImplementedError" in (run.output or ""):
+                return run, None
+            reason = "post-production red is not a NotImplementedError stub failure"
+        rejection = f"run {run.command!r} rejected: {reason}"
+    return None, rejection
 
 
-def _has_named_red_failure(command: str, output: str | None, test: AcceptanceTest) -> bool:
+def _has_named_red_failure(
+    command: str, output: str | None, test: AcceptanceTest
+) -> tuple[bool, str]:
     if not output:
-        return False
-    if validation_run_names_test(command, output, test) and _has_pytest_body_failure(
-        command, output, test
-    ):
-        return True
+        return False, "run produced no output"
+    matched, reason = _has_pytest_body_failure(command, output, test)
+    if validation_run_names_test(command, output, test) and matched:
+        return True, ""
     symbols = (
         test.symbol,
         test.symbol.replace(".", "::"),
@@ -257,16 +285,17 @@ def _has_named_red_failure(command: str, output: str | None, test: AcceptanceTes
             continue
         section = _failure_section(lines, index)
         if _ASSERTION_DETAIL_RE.search(section) and is_assertion_failure(section):
-            return True
-    return False
+            return True, ""
+    return False, reason
 
 
-def _has_pytest_body_failure(command: str, output: str, test: AcceptanceTest) -> bool:
+def _has_pytest_body_failure(command: str, output: str, test: AcceptanceTest) -> tuple[bool, str]:
     """Recognize a failure raised from a targeted pytest body, including RTK summaries."""
     if not is_assertion_failure(output):
-        return False
+        return False, "run output is not an assertion, panic, or test-body failure"
     artifact_nodes, same_file_nodes = _selected_pytest_nodes(command, test)
     lines = output.splitlines()
+    has_attributable_section = False
     for index, line in enumerate(lines):
         header = _PYTEST_FAILURE_HEADER_RE.match(line)
         if header is None or not _header_names_artifact(
@@ -274,13 +303,15 @@ def _has_pytest_body_failure(command: str, output: str, test: AcceptanceTest) ->
         ):
             continue
         section = _failure_section(lines, index)
-        if _section_has_artifact_location(section, test) and _section_has_failure_detail(section):
-            return True
+        if _section_has_artifact_location(section, test):
+            has_attributable_section = True
+            if _section_has_failure_detail(section):
+                return True, ""
     if not artifact_nodes:
         # Location-only shapes (RTK, --tb=short) carry no failure header, so an
         # unqualified frame symbol is attributable only through explicit node
         # selection on the command line.
-        return False
+        return False, _red_section_rejection(test, has_attributable_section)
     for index, line in enumerate(lines):
         match = _PYTEST_LOCATION_RE.match(line)
         if match is None:
@@ -292,10 +323,17 @@ def _has_pytest_body_failure(command: str, output: str, test: AcceptanceTest) ->
             or not _selected_node_matches(reported_symbol, artifact_nodes, same_file_nodes)
         ):
             continue
+        has_attributable_section = True
         section = _failure_section(lines, index)
         if _section_has_failure_detail(section):
-            return True
-    return False
+            return True, ""
+    return False, _red_section_rejection(test, has_attributable_section)
+
+
+def _red_section_rejection(test: AcceptanceTest, has_attributable_section: bool) -> str:
+    if has_attributable_section:
+        return f"attributable failure section for {test.symbol!r} has no accepted failure detail"
+    return f"no attributable failure section for {test.symbol!r}"
 
 
 def _selected_pytest_nodes(

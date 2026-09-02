@@ -27,7 +27,9 @@ Use this when a task requires TDD.
 
 The task handoff must include:
 
-- Red evidence: exact command and failure output summary from before implementation.
+- Red evidence: exact command and test-attributed failure output from before implementation:
+  assertion/panic, pytest `Failed: DID NOT RAISE`, or a test-body `*Error`/`*Exception`
+  (including bare `NotImplementedError` after a stub edit).
 - Green evidence: exact command and pass output summary after minimal implementation.
 - Refactor/final-green evidence: exact final command and pass output summary.
 - Test-quality audit evidence for supported touched test paths, or an
