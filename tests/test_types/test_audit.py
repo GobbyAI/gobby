@@ -3,6 +3,7 @@ from __future__ import annotations
 import shlex
 import shutil
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -160,6 +161,45 @@ def test_resolver_falls_through_missing_uv_to_path_mypy(
     assert resolve_mypy_command(tmp_path) == ("/tools/mypy",)
 
 
+def test_mypy_command_falls_back_when_lockfile_env_lacks_mypy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "uv.lock").touch()
+    probe_calls: list[tuple[str, ...]] = []
+
+    def fake_which(executable: str) -> str | None:
+        return {"uv": "/tools/uv", "mypy": "/tools/mypy"}.get(executable)
+
+    def fake_run(command: tuple[str, ...], **_: object) -> subprocess.CompletedProcess[str]:
+        probe_calls.append(command)
+        return subprocess.CompletedProcess(command, 1)
+
+    monkeypatch.setattr(shutil, "which", fake_which)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert resolve_mypy_command(tmp_path) == ("/tools/mypy",)
+    assert probe_calls == [("uv", "run", "--no-sync", "python", "-c", "import mypy")]
+
+
+def test_resolver_keeps_uv_when_lockfile_env_has_mypy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "uv.lock").touch()
+
+    def fake_which(executable: str) -> str | None:
+        return "/tools/uv" if executable == "uv" else None
+
+    def fake_run(command: tuple[str, ...], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(shutil, "which", fake_which)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert resolve_mypy_command(tmp_path) == ("uv", "run", "mypy")
+
+
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
@@ -182,7 +222,7 @@ def test_run_mypy_reports_non_finding_failures(
 
 
 def test_run_mypy_reports_missing_checker_and_timeout(tmp_path: Path) -> None:
-    with pytest.raises(MypyInvocationError, match="executable not found"):
+    with pytest.raises(MypyInvocationError, match="--mypy-command"):
         run_mypy(("tests",), root=tmp_path, mypy_command="definitely-missing-checker")
 
     command = _checker_command(tmp_path, "import time\ntime.sleep(5)\n")
