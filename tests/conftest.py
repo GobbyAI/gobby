@@ -224,6 +224,24 @@ def _restore_process_global_state() -> Generator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _restore_agy_version_gate() -> Generator[None]:
+    """Drop the published AGY support record around every test.
+
+    ``gobby.providers.version_gate`` caches the probe result in a module
+    global. Any test that calls ``ensure_agy_support`` publishes a real record
+    that otherwise leaks into every later test expecting the unpublished
+    sentinel.
+    """
+    from gobby.providers.version_gate import reset_agy_support_for_tests
+
+    reset_agy_support_for_tests()
+    try:
+        yield
+    finally:
+        reset_agy_support_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _restore_gobby_logger_state() -> Generator[None]:
     """Snapshot and restore the gobby logger tree around every test.
 
