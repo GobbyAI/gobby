@@ -13,8 +13,10 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
 _ARTIFACT_REF_RE = re.compile(
-    r"\b(?P<kind>test|file):(?:\s*`(?P<quoted>[^`]+)`|\s+(?P<bare>[^\s,;]+))",
-    re.IGNORECASE,
+    r"^\s*(?:>\s*)?(?:[-*+]\s+|\d+[.)]\s+)?"
+    r"(?:\*\*)?(?P<kind>test|file)(?:\*\*)?:"
+    r"(?:\s*`(?P<quoted>[^`]+)`|\s+(?P<bare>[^\s,;]+))",
+    re.IGNORECASE | re.MULTILINE,
 )
 # An unbackticked token only counts as a reference when it is shaped like one.
 # Backticks are an unconditional statement of intent, so they skip this filter and a
@@ -76,8 +78,10 @@ def extract_artifact_references(criteria: str, kind: str) -> tuple[str, ...]:
         if match.group("kind").casefold() != kind.casefold():
             continue
         value = (match.group("quoted") or match.group("bare") or "").strip().rstrip(".")
-        if match.group("quoted") is None and not _BARE_REF_SHAPE_RE.search(value):
-            continue
+        if match.group("quoted") is None:
+            value = value.rstrip("`")
+            if not _BARE_REF_SHAPE_RE.search(value):
+                continue
         if value and value not in references:
             references.append(value)
     return tuple(references)
