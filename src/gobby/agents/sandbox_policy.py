@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -392,10 +393,16 @@ def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
     return canonical_paths([str(path) for path in paths])
 
 
-def gcode_runtime_write_exceptions(env: Mapping[str, str]) -> list[str]:
-    """Allow renewal writes only inside this run's generated gcode home."""
-    runtime_home = env.get("GOBBY_CODE_INDEX_RUNTIME_HOME")
-    return canonical_paths([runtime_home]) if runtime_home else []
+def gcode_runtime_write_exceptions(workspace: Path) -> list[str]:
+    """Allow renewal writes only inside this workspace's generated gcode home."""
+    # Keep the key contract aligned with code_index._runtime_home_for_workspace().
+    try:
+        workspace_key = str(workspace.resolve(strict=False))
+    except OSError:
+        workspace_key = str(workspace)
+    digest = hashlib.sha256(workspace_key.encode("utf-8")).hexdigest()[:16]
+    runtime_home = get_gobby_home() / "gcode-runtime" / digest
+    return canonical_paths([str(runtime_home)])
 
 
 def mcp_config_read_exceptions(workspace: Path) -> list[str]:
