@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -12,6 +12,7 @@ from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
     SnapshotResult,
+    TerminalRuntime,
     TerminalWriteError,
 )
 
@@ -71,7 +72,7 @@ class _FakeTmux:
 @pytest.mark.asyncio
 async def test_runtime_pane_sends_named_keys_and_unsubmitted_text() -> None:
     runtime = _FakeRuntime()
-    pane = RuntimePaneIO(runtime, _Terminal())
+    pane = RuntimePaneIO(cast(TerminalRuntime, runtime), _Terminal())
 
     assert pane.backend == "native"
     assert pane.target == "term-1"
@@ -84,13 +85,16 @@ async def test_runtime_pane_sends_named_keys_and_unsubmitted_text() -> None:
 
 @pytest.mark.asyncio
 async def test_runtime_pane_reports_indeterminate_and_typed_failures() -> None:
-    indeterminate = RuntimePaneIO(_FakeRuntime(key_outcome=IndeterminateWrite("lost")), _Terminal())
+    indeterminate = RuntimePaneIO(
+        cast(TerminalRuntime, _FakeRuntime(key_outcome=IndeterminateWrite("lost"))), _Terminal()
+    )
     ok, reason = await indeterminate.send_key("escape")
     assert ok is False
     assert reason is not None and "indeterminate" in reason and "lost" in reason
 
     failed = RuntimePaneIO(
-        _FakeRuntime(text_outcome=TerminalWriteError(stage="partial")), _Terminal()
+        cast(TerminalRuntime, _FakeRuntime(text_outcome=TerminalWriteError(stage="partial"))),
+        _Terminal(),
     )
     ok, reason = await failed.type_text("/clear")
     assert ok is False
@@ -102,7 +106,7 @@ async def test_runtime_pane_snapshot_failure_returns_none() -> None:
     runtime = _FakeRuntime()
     runtime.snapshot_text = None
 
-    assert await RuntimePaneIO(runtime, _Terminal()).snapshot(3) is None
+    assert await RuntimePaneIO(cast(TerminalRuntime, runtime), _Terminal()).snapshot(3) is None
 
 
 @pytest.mark.asyncio

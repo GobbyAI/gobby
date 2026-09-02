@@ -434,7 +434,7 @@ class TestWakeTmuxSenders:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        calls: list[tuple[str, str, list[str], bool]] = []
+        calls: list[tuple[str, str, list[str], bool, str | None]] = []
 
         async def fake_submit_literal_text_to_tmux_target(
             pane_id: str,
