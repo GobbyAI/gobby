@@ -15,10 +15,10 @@ from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
 from gobby.sessions.compact_continuation import COMPACT_HANDOFF_MARKER_VARIABLE
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.observer_context_usage import detect_context_compact_guidance
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 from ._event_handler_helpers import make_event
 
@@ -195,13 +195,11 @@ class TestPostCompactHandler:
 
     def test_non_grok_post_compact_does_not_apply_in_place_closeout(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         hub_db: HubDatabase,
         mock_dependencies: dict[str, Any],
     ) -> None:
-        project = LocalProjectManager(hub_db).create(
-            name="post-compact-claude",
-            repo_path="/some/dir",
-        )
+        project = isolated_checkout_factory(hub_db, "post-compact-claude").project
         with patch(
             "gobby.utils.machine_id._cached_machine_id", "21000000-0000-4000-8000-000000000001"
         ):
@@ -241,13 +239,11 @@ class TestPostCompactHandler:
 
     def test_grok_post_compact_clears_queued_context(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         hub_db: HubDatabase,
         mock_dependencies: dict[str, Any],
     ) -> None:
-        project = LocalProjectManager(hub_db).create(
-            name="post-compact-grok",
-            repo_path="/some/dir",
-        )
+        project = isolated_checkout_factory(hub_db, "post-compact-grok").project
         with patch(
             "gobby.utils.machine_id._cached_machine_id", "21000000-0000-4000-8000-000000000001"
         ):

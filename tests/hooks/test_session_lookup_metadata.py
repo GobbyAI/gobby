@@ -14,11 +14,11 @@ from gobby.hooks.session_lookup import NON_MATERIALIZING_EVENTS, SessionLookupSe
 from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.compact_identity import CompactIdentityResolution
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_activity import SessionActivityResolution
 from gobby.storage.session_models import Session
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -616,6 +616,7 @@ def test_same_source_recovery_of_a_live_row_does_not_claim_a_mismatch() -> None:
 
 
 def test_expired_session_recovery_reports_status_through_the_real_path(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -627,14 +628,7 @@ def test_expired_session_recovery_reports_status_through_the_real_path(
     the service reports status at INFO instead of inventing a source mismatch.
     """
     with patch("gobby.utils.machine_id._cached_machine_id", _REAL_MACHINE_ID):
-        project_id = (
-            LocalProjectManager(temp_db)
-            .create(
-                name="lookup-project",
-                repo_path="/tmp/lookup-project",
-            )
-            .id
-        )
+        project_id = isolated_checkout_factory(temp_db, "lookup-project").project.id
         storage_sessions = SessionManager(temp_db)
         # hook_manager.py casts at this same boundary: SessionManager serves the
         # HookSessionManager protocol at runtime without nominally declaring it.

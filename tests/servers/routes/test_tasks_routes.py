@@ -22,6 +22,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -55,10 +56,10 @@ class FailingWebsocketServer:
 
 
 @pytest.fixture
-def project_id(temp_db) -> str:
+def project_id(isolated_checkout_factory: IsolatedCheckoutFactory, temp_db) -> str:
     """Create a real project in the DB and return its ID."""
     pm = LocalProjectManager(temp_db)
-    proj = pm.create(name="test-project", repo_path="/tmp/test-project")
+    proj = isolated_checkout_factory(pm.db, "test-project").project
     return proj.id
 
 

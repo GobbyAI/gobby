@@ -441,7 +441,13 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
             "feedback_ids": [],
         }
         empty = await registry.call("get_handoff", {})
-        assert empty["success"] is True and empty["found"] is False
+        assert empty == {
+            "success": True,
+            "found": False,
+            "session_id": None,
+            "handoff": "",
+            "leased_tool_schemas": [],
+        }
         renamed = await registry.call("set_title", {"title": "Manual title"})
         assert renamed["title"] == "Manual title"
 

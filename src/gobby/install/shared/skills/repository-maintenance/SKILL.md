@@ -100,5 +100,6 @@ correctly without it.
 - A session-name helper stays with `src/gobby/sessions/` unless `gcode` evidence
   proves a separate capability and consumer boundary.
 - `src/gobby/install/bundled_content_manifest.json` is a generated inventory.
-  Change the shared source, run the existing manifest generator, and verify the
-  regenerated output instead of hand-maintaining hashes.
+  Change the shared source, run
+  `uv run python -m gobby.install.manifest --write`, and verify the regenerated
+  output instead of hand-maintaining hashes.

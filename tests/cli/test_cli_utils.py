@@ -34,6 +34,7 @@ from gobby.cli.utils import (
     wait_for_port_available,
 )
 from gobby.cli.utils_process import get_port_listener_pid
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -123,25 +124,25 @@ class TestResolveProjectRef:
             result = resolve_project_ref(None)
             assert result is None
 
-    def test_uuid_lookup(self, hub_db) -> None:
+    def test_uuid_lookup(self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db) -> None:
         """Test direct UUID lookup."""
         # Create a project
         from gobby.storage.projects import LocalProjectManager
 
         manager = LocalProjectManager(hub_db)
-        project = manager.create(name="test-proj", repo_path="/tmp/test")
+        project = isolated_checkout_factory(manager.db, "test-proj").project
 
         with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):  # Don't actually close
                 result = resolve_project_ref(project.id)
                 assert result == project.id
 
-    def test_name_lookup(self, hub_db) -> None:
+    def test_name_lookup(self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db) -> None:
         """Test project name lookup."""
         from gobby.storage.projects import LocalProjectManager
 
         manager = LocalProjectManager(hub_db)
-        project = manager.create(name="my-named-project", repo_path="/tmp/test")
+        project = isolated_checkout_factory(manager.db, "my-named-project").project
 
         with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
@@ -171,14 +172,16 @@ class TestResolveProjectRef:
 class TestGetActiveSessionId:
     """Tests for get_active_session_id function."""
 
-    def test_with_active_session(self, hub_db) -> None:
+    def test_with_active_session(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
+    ) -> None:
         """Test finding an active session."""
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
         # Create a project first
         proj_manager = LocalProjectManager(hub_db)
-        project = proj_manager.create(name="test-proj", repo_path="/tmp/test")
+        project = isolated_checkout_factory(proj_manager.db, "test-proj").project
 
         # Create an active session using register method
         session_manager = SessionManager(hub_db)
@@ -216,13 +219,15 @@ class TestGetActiveSessionId:
 class TestResolveSessionId:
     """Tests for resolve_session_id function."""
 
-    def test_resolves_active_session(self, hub_db) -> None:
+    def test_resolves_active_session(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
+    ) -> None:
         """Test resolving to active session when no ref provided."""
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
         proj_manager = LocalProjectManager(hub_db)
-        project = proj_manager.create(name="test", repo_path="/tmp/test")
+        project = isolated_checkout_factory(proj_manager.db, "test").project
 
         session_manager = SessionManager(hub_db)
         session = session_manager.register(
@@ -245,13 +250,15 @@ class TestResolveSessionId:
                     resolve_session_id(None)
                 assert "No active session found" in str(exc_info.value)
 
-    def test_resolves_session_reference(self, hub_db) -> None:
+    def test_resolves_session_reference(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
+    ) -> None:
         """Test resolving a specific session reference."""
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
         proj_manager = LocalProjectManager(hub_db)
-        project = proj_manager.create(name="test", repo_path="/tmp/test")
+        project = isolated_checkout_factory(proj_manager.db, "test").project
 
         session_manager = SessionManager(hub_db)
         session = session_manager.register(
@@ -266,13 +273,15 @@ class TestResolveSessionId:
                 result = resolve_session_id(session.id)
                 assert result == session.id
 
-    def test_resolves_seq_num_with_project_context(self, hub_db) -> None:
+    def test_resolves_seq_num_with_project_context(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
+    ) -> None:
         """Test resolving #N format using project context."""
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
         proj_manager = LocalProjectManager(hub_db)
-        project = proj_manager.create(name="test", repo_path="/tmp/test")
+        project = isolated_checkout_factory(proj_manager.db, "test").project
 
         session_manager = SessionManager(hub_db)
         session = session_manager.register(
@@ -291,14 +300,16 @@ class TestResolveSessionId:
                     result = resolve_session_id("#1")
                     assert result == session.id
 
-    def test_resolves_seq_num_with_explicit_project_id(self, hub_db) -> None:
+    def test_resolves_seq_num_with_explicit_project_id(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
+    ) -> None:
         """Test resolving #N format with explicit project_id parameter."""
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
 
         proj_manager = LocalProjectManager(hub_db)
-        project1 = proj_manager.create(name="project1", repo_path="/tmp/p1")
-        project2 = proj_manager.create(name="project2", repo_path="/tmp/p2")
+        project1 = isolated_checkout_factory(proj_manager.db, "project1").project
+        project2 = isolated_checkout_factory(proj_manager.db, "project2").project
 
         session_manager = SessionManager(hub_db)
         session1 = session_manager.register(
@@ -334,13 +345,15 @@ class TestResolveSessionId:
 class TestListProjectNames:
     """Tests for list_project_names function."""
 
-    def test_lists_all_project_names(self, hub_db) -> None:
+    def test_lists_all_project_names(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
+    ) -> None:
         """Test listing all project names."""
         from gobby.storage.projects import LocalProjectManager
 
         manager = LocalProjectManager(hub_db)
-        manager.create(name="project-alpha", repo_path="/tmp/alpha")
-        manager.create(name="project-beta", repo_path="/tmp/beta")
+        isolated_checkout_factory(manager.db, "project-alpha")
+        isolated_checkout_factory(manager.db, "project-beta")
 
         with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):

@@ -457,8 +457,9 @@ async def _evaluate_close(
             "stale_bundled_content_manifest",
             manifest_check.errors[0],
             action=(
-                "Regenerate src/gobby/install/bundled_content_manifest.json from the committed "
-                "shared tree, commit it, and retry close_task."
+                "Run `uv run python -m gobby.install.manifest --write --repo-root . "
+                "--treeish HEAD` to regenerate src/gobby/install/bundled_content_manifest.json "
+                "from the committed shared tree, commit it, and retry close_task."
             ),
             details=details,
             extra={"bundled_manifest": details},

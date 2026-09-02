@@ -6,8 +6,8 @@ from unittest.mock import patch
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -20,16 +20,21 @@ def _local_machine_identity() -> Iterator[None]:
         yield
 
 
-def _create_source_project(db: HubDatabase, name: str) -> str:
-    return LocalProjectManager(db).create(name=name, repo_path=f"/tmp/{name}").id
+def _create_source_project(
+    isolated_checkout_factory: IsolatedCheckoutFactory, db: HubDatabase, name: str
+) -> str:
+    return isolated_checkout_factory(db, name).project.id
 
 
 def test_register_recovery_remints_seq_num_in_destination(
     session_manager: SessionManager,
     sample_project: dict,
     temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
 ) -> None:
-    source_project_id = _create_source_project(temp_db, "registration-move-source")
+    source_project_id = _create_source_project(
+        isolated_checkout_factory, temp_db, "registration-move-source"
+    )
     source = session_manager.register(
         external_id="registration-move",
         machine_id="20000000-0000-4000-8000-000000000001",
@@ -60,8 +65,11 @@ def test_update_project_id_remints_seq_num_in_destination(
     session_manager: SessionManager,
     sample_project: dict,
     temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
 ) -> None:
-    source_project_id = _create_source_project(temp_db, "update-move-source")
+    source_project_id = _create_source_project(
+        isolated_checkout_factory, temp_db, "update-move-source"
+    )
     source = session_manager.register(
         external_id="update-move",
         machine_id="20000000-0000-4000-8000-000000000001",

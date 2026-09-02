@@ -12,6 +12,7 @@ from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.mcp_models import MCPServer
 from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.secrets import SecretStore
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -414,11 +415,12 @@ class TestLocalMCPManager:
 
     def test_resolve_server_project_first_including_disabled(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         mcp_manager: LocalMCPManager,
         sample_project: dict,
         project_manager: LocalProjectManager,
     ) -> None:
-        other = project_manager.create(name="other-mcp-project", repo_path="/tmp/other-mcp")
+        other = isolated_checkout_factory(project_manager.db, "other-mcp-project").project
         global_server = mcp_manager.upsert(
             name="shared",
             transport="http",
@@ -920,16 +922,14 @@ class TestLocalMCPManager:
 
     def test_list_all_servers(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         mcp_manager: LocalMCPManager,
         project_manager: LocalProjectManager,
         sample_project: dict,
     ) -> None:
         """Test listing all servers across all projects."""
         # Create another project
-        project2 = project_manager.create(
-            name="project-2",
-            repo_path="/tmp/project-2",
-        )
+        project2 = isolated_checkout_factory(project_manager.db, "project-2").project
 
         # Add servers to both projects
         mcp_manager.upsert(

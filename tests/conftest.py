@@ -148,6 +148,10 @@ if TYPE_CHECKING:
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
     from gobby.tasks.validation import TaskValidator
+    from tests.fixtures.isolated_checkout import (
+        IsolatedCheckoutFactory,
+        IsolatedCheckoutProject,
+    )
 
 
 @pytest.fixture
@@ -469,17 +473,56 @@ def _init_git_repo(repo_path: Path) -> None:
 def sample_project(
     project_manager: "LocalProjectManager",
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> dict[str, Any]:
-    """Create a sample DB project with an isolated machine, marker, and checkout."""
+    """Create a sample DB project with a marker and checkout on the pinned local machine.
+
+    The checkout is registered on whichever machine id the test already treats as
+    local (read at call time, never re-pinned), so sessions the test registers with
+    its own pinned machine id keep passing the machine-ownership check.
+    """
+    from gobby.utils.machine_id import require_machine_id
     from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
     isolated = install_isolated_checkout_project(
         project_manager.db,
         tmp_path / "isolated-checkout",
-        monkeypatch=monkeypatch,
+        machine_id=require_machine_id(),
     )
     return isolated.project.to_dict()
+
+
+@pytest.fixture
+def isolated_checkout_factory(tmp_path: Path) -> "IsolatedCheckoutFactory":
+    """Create isolated-checkout projects on the machine the test already treats as local.
+
+    Replaces `LocalProjectManager(db).create(name=..., repo_path="/literal")`: each
+    call gets its own checkout directory under tmp_path plus a matching marker. The
+    checkout is registered on the currently pinned local machine (read at call time,
+    never re-pinned), so sessions the test registers against its own machine id keep
+    passing the machine-ownership check.
+    """
+    from gobby.utils.machine_id import require_machine_id
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    counter = 0
+
+    def make(
+        db: "HubDatabase",
+        name: str,
+        *,
+        github_url: str | None = None,
+    ) -> "IsolatedCheckoutProject":
+        nonlocal counter
+        counter += 1
+        return install_isolated_checkout_project(
+            db,
+            tmp_path / "checkouts" / f"{counter}-{name}",
+            name=name,
+            github_url=github_url,
+            machine_id=require_machine_id(),
+        )
+
+    return make
 
 
 @pytest.fixture

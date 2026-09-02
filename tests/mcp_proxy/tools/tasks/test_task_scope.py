@@ -13,7 +13,9 @@ import pytest
 from gobby.mcp_proxy.tools.tasks._task_scope import (
     TaskScopeEvaluation,
     collect_commit_paths,
+    collect_declared_task_targets,
     evaluate_task_scope,
+    find_targets_not_found,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_affected_files import TaskAffectedFileManager
@@ -61,6 +63,24 @@ def _evaluate(
         )
 
 
+def test_declared_targets_combine_description_and_affected_files(tmp_path: Path) -> None:
+    existing = tmp_path / "src/gobby/tasks/existing.py"
+    existing.parent.mkdir(parents=True)
+    existing.touch()
+
+    targets = collect_declared_task_targets(
+        description="Targets:\n- src/gobby/tasks/existing.py::future_symbol",
+        affected_files=[
+            "src/gobby/tasks/missing.py",
+            "./src/gobby/tasks/missing.py",
+            "../outside.py",
+        ],
+    )
+
+    assert targets == {"src/gobby/tasks/existing.py", "src/gobby/tasks/missing.py"}
+    assert find_targets_not_found(str(tmp_path), targets) == ["src/gobby/tasks/missing.py"]
+
+
 def test_tests_mirror_of_declared_source_stays_in_scope() -> None:
     evaluation = _evaluate(
         annotations=[_annotation("src/gobby/terminals/native_runtime.py", "manual")],
@@ -92,6 +112,24 @@ def test_criteria_test_references_expand_declared_scope() -> None:
         "tests/mcp_proxy/tools/tasks/test_task_scope.py",
     )
     assert evaluation.out_of_scope_paths == ()
+
+
+def test_inline_reference_examples_do_not_expand_declared_scope() -> None:
+    evaluation = _evaluate(
+        validation_criteria=(
+            "For example, `test: tests/other/test_feature.py::test_feature` and "
+            "file: docs/evidence/example.md are reference syntax examples."
+        ),
+        annotations=[_annotation("src/gobby/tasks/acceptance_artifacts.py", "manual")],
+        actual_paths={
+            "docs/evidence/example.md",
+            "src/gobby/tasks/acceptance_artifacts.py",
+            "tests/other/test_feature.py",
+        },
+    )
+
+    assert evaluation.declared_paths == ("src/gobby/tasks/acceptance_artifacts.py",)
+    assert evaluation.out_of_scope_paths == ("docs/evidence/example.md",)
 
 
 def test_bundled_manifest_in_scope_when_shared_tree_changes() -> None:

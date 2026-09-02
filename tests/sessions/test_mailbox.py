@@ -24,6 +24,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager, system_session_id
 from gobby.storage.tasks import LocalTaskManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -103,6 +104,7 @@ def _consume_clear(
 
 
 def _setup_broadcast_scenario(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     project_manager: LocalProjectManager,
     session_manager: SessionManager,
@@ -131,10 +133,7 @@ def _setup_broadcast_scenario(
     excluded_parent = register("excluded-parent")
     excluded_child = register("excluded-child", agent_depth=1)
     completed_child = register("completed-child", agent_depth=1)
-    other_project_id = project_manager.create(
-        name="other-project",
-        repo_path="/tmp/other-project",
-    ).id
+    other_project_id = isolated_checkout_factory(temp_db, "other-project").project.id
     other_project = register("other-project", target_project_id=other_project_id)
 
     session_manager.update_status(child_paused, "paused")
@@ -493,13 +492,12 @@ class TestMailboxDirectSend:
     @pytest.mark.asyncio
     async def test_session_target_delivers_across_projects(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
-        other_project = LocalProjectManager(temp_db).create(
-            name="game-goblins", repo_path="/tmp/game-goblins"
-        )
+        other_project = isolated_checkout_factory(temp_db, "game-goblins").project
         sender = _register_session(session_manager, other_project.id, "goblins-sender")
         recipient = _register_session(session_manager, sample_project["id"], "recipient")
 
@@ -516,13 +514,12 @@ class TestMailboxDirectSend:
     @pytest.mark.asyncio
     async def test_session_target_rejects_explicit_project_scope_mismatch(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
-        other_project = LocalProjectManager(temp_db).create(
-            name="game-goblins", repo_path="/tmp/game-goblins"
-        )
+        other_project = isolated_checkout_factory(temp_db, "game-goblins").project
         sender = _register_session(session_manager, other_project.id, "goblins-sender")
         recipient = _register_session(session_manager, sample_project["id"], "recipient")
 
@@ -648,12 +645,14 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_project_target_fans_out_to_active_agent_run_sessions(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
         project_manager: LocalProjectManager,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
         ids = _setup_broadcast_scenario(
+            isolated_checkout_factory,
             temp_db,
             project_manager,
             session_manager,
@@ -676,12 +675,14 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_project_target_uses_active_parent_when_child_session_expired(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
         project_manager: LocalProjectManager,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
         ids = _setup_broadcast_scenario(
+            isolated_checkout_factory,
             temp_db,
             project_manager,
             session_manager,
@@ -700,12 +701,14 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_project_target_enforces_project_scope_and_sender_exclusion(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
         project_manager: LocalProjectManager,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
         ids = _setup_broadcast_scenario(
+            isolated_checkout_factory,
             temp_db,
             project_manager,
             session_manager,
@@ -726,12 +729,14 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_project_target_writes_selector_metadata(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
         project_manager: LocalProjectManager,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
         ids = _setup_broadcast_scenario(
+            isolated_checkout_factory,
             temp_db,
             project_manager,
             session_manager,
@@ -782,6 +787,7 @@ class TestMailboxBroadcast:
     @pytest.mark.asyncio
     async def test_all_target_reaches_every_deliverable_non_system_session(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
         project_manager: LocalProjectManager,
         session_manager: SessionManager,
@@ -793,10 +799,9 @@ class TestMailboxBroadcast:
         expired = _register_session(session_manager, sample_project["id"], "expired")
         session_manager.update_status(paused.id, "paused")
         session_manager.update_status(expired.id, "expired")
-        other_project_id = project_manager.create(
-            name="other-all-project",
-            repo_path="/tmp/other-all-project",
-        ).id
+        other_project_id = isolated_checkout_factory(
+            project_manager.db, "other-all-project"
+        ).project.id
         foreign = _register_session(session_manager, other_project_id, "foreign-active")
         remote_system = _register_session(session_manager, sample_project["id"], "remote-system")
         with temp_db.transaction() as conn:
@@ -897,12 +902,13 @@ class TestMailboxBroadcast:
 
     def test_agent_cross_project_auth_cache_uses_ttl_and_skips_missing_task(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
         session_manager: SessionManager,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         mailbox = _mailbox(temp_db, session_manager)
-        project = LocalProjectManager(temp_db).create(name="sender-project", repo_path="/tmp/repo")
+        project = isolated_checkout_factory(temp_db, "sender-project").project
         sender = _register_session(session_manager, project.id, "sender")
         now = 100.0
         calls: list[tuple[str, str, str]] = []
@@ -962,12 +968,13 @@ class TestMailboxBroadcast:
 
     def test_agent_cross_project_auth_cache_invalidates_missing_sender(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
         session_manager: SessionManager,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         mailbox = _mailbox(temp_db, session_manager)
-        project = LocalProjectManager(temp_db).create(name="sender-project", repo_path="/tmp/repo")
+        project = isolated_checkout_factory(temp_db, "sender-project").project
         sender = _register_session(session_manager, project.id, "sender")
         calls = 0
 
@@ -1015,12 +1022,13 @@ class TestMailboxBroadcast:
 
     def test_agent_cross_project_auth_cache_is_bounded(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
         session_manager: SessionManager,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         mailbox = _mailbox(temp_db, session_manager)
-        project = LocalProjectManager(temp_db).create(name="sender-project", repo_path="/tmp/repo")
+        project = isolated_checkout_factory(temp_db, "sender-project").project
         sender = _register_session(session_manager, project.id, "sender")
 
         def allows_cross_project_build_coordinator(
