@@ -51,7 +51,6 @@ from gobby.sessions.compact_continuation import (
     clear_handoff_compact_continuation_pending,
     mark_handoff_compact_continuation_pending,
     persist_handoff_resume_leased_tools,
-    persist_handoff_resume_skills,
     schedule_codex_handoff_compact_continuation_readiness,
 )
 from gobby.sessions.handoff import (
@@ -564,7 +563,6 @@ def register_terminal_tools(
                 and web_chat_session_registry.find_session(resolved_session_id)[1] is None
             ):
                 compact_target = session_id
-            resume_skills = persist_handoff_resume_skills(db, resolved_session_id)
             persist_handoff_resume_leased_tools(db, resolved_session_id)
             attempt_id = uuid4().hex
             attempt_state = None
@@ -591,8 +589,6 @@ def register_terminal_tools(
             clear_queued_context(session_manager, resolved_session_id)
             result["attempt_id"] = attempt_id
             result["handoff_staged"] = True
-            if any(resume_skills.values()):
-                result["resume_skills"] = resume_skills
             return result
 
         if session_type != "terminal":
@@ -671,7 +667,6 @@ def register_terminal_tools(
                 "error_code": _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE,
             }
 
-        resume_skills = persist_handoff_resume_skills(db, resolved_session_id)
         persist_handoff_resume_leased_tools(db, resolved_session_id)
         continuation_prompt = build_handoff_continue_prompt()
         compact_attempt_id = uuid4().hex
@@ -764,8 +759,6 @@ def register_terminal_tools(
             "handoff_staged": True,
         }
         clear_queued_context(session_manager, resolved_session_id)
-        if any(resume_skills.values()):
-            result["resume_skills"] = resume_skills
         return result
 
     registry.register(

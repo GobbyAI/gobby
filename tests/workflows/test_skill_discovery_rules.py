@@ -196,7 +196,6 @@ class TestSkillDiscoverySync:
             if effect.type == "set_variable"
         }
         assert set_variables["loaded_skills"] == []
-        assert set_variables["workflow_requested_skills"] == []
         assert "memory_nudge_fired" not in set_variables
 
 
@@ -381,7 +380,6 @@ class TestBrevityRules:
         response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert skill_fetch_directive("brevity") not in (response.context or "")
-        assert "brevity" not in variables.get("workflow_requested_skills", [])
 
     def test_detect_brevity_contrastive_rule_uses_allowed_regex_patterns(self, db, manager) -> None:
         _sync_bundled(db)

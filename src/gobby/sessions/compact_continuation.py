@@ -7,23 +7,16 @@ import json
 import logging
 import threading
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.compact_markers import (
     COMPACT_HANDOFF_MARKER_VARIABLE,
-    COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS,
-    COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE,
-    COMPACT_RESUME_EXCLUDED_SKILLS,
     COMPACT_RESUME_LEASED_TOOLS_LIMIT,
     COMPACT_RESUME_LEASED_TOOLS_VARIABLE,
-    COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS,
-    COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
     HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
     HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS,
     HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
-    LOADING_SKILLS_NAME,
-    WORKFLOW_REQUESTED_SKILLS_VARIABLE,
 )
 from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
@@ -37,19 +30,12 @@ if TYPE_CHECKING:
 
 __all__ = [
     "COMPACT_HANDOFF_MARKER_VARIABLE",
-    "COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE",
-    "COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS",
-    "COMPACT_RESUME_EXCLUDED_SKILLS",
     "COMPACT_RESUME_LEASED_TOOLS_LIMIT",
     "COMPACT_RESUME_LEASED_TOOLS_VARIABLE",
-    "COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE",
-    "COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS",
     "HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS",
     "HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS",
     "HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
     "HANDOFF_COMPACT_CONTINUE_VARIABLE",
-    "LOADING_SKILLS_NAME",
-    "WORKFLOW_REQUESTED_SKILLS_VARIABLE",
 ]
 
 logger = logging.getLogger(__name__)
@@ -59,13 +45,6 @@ _HANDOFF_COMPACT_CONTINUATION_TASKS: set[asyncio.Task[Any]] = set()
 _CODEX_COMPACT_READY_STATUS_LINE = "• Context compacted"
 _CODEX_COMPACT_READY_POLL_SECONDS = 0.25
 CODEX_COMPACT_READY_CAPTURE_LINES = 100
-
-
-class CompactResumeSkillTiers(TypedDict):
-    """Skill names captured before compact resets the current-context ledgers."""
-
-    required: list[str]
-    advisory: list[str]
 
 
 def mark_handoff_compact_continuation_pending(
@@ -93,29 +72,6 @@ def mark_handoff_compact_continuation_pending(
             exc_info=True,
         )
         return False
-
-
-def persist_handoff_resume_skills(
-    db: HubDatabase,
-    session_id: str,
-) -> CompactResumeSkillTiers:
-    """Persist both pre-compact resume tiers and return them."""
-    variables = _load_session_variables(db, session_id)
-    skill_tiers = _collect_compact_resume_required_skills(variables)
-    for variable, values in (
-        (COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE, skill_tiers["required"]),
-        (COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE, skill_tiers["advisory"]),
-    ):
-        try:
-            _merge_session_variable(db, session_id, variable, values)
-        except Exception:
-            logger.warning(
-                "Failed to persist compact resume skills variable %s for session %s",
-                variable,
-                session_id,
-                exc_info=True,
-            )
-    return skill_tiers
 
 
 def persist_handoff_resume_leased_tools(db: HubDatabase, session_id: str) -> list[str]:
@@ -732,62 +688,6 @@ def _load_session_variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
         (session_id,),
     )
     return _load_variables(_row_variables(row))
-
-
-def _collect_compact_resume_required_skills(
-    variables: dict[str, Any],
-) -> CompactResumeSkillTiers:
-    required: list[str] = []
-    for key in COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS:
-        _extend_unique_strings(required, variables.get(key))
-
-    advisory: list[str] = []
-    for key in COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS:
-        _extend_unique_strings(advisory, variables.get(key))
-
-    return _prepare_compact_resume_skill_tiers({"required": required, "advisory": advisory})
-
-
-def _prepare_compact_resume_skill_tiers(
-    skill_tiers: CompactResumeSkillTiers,
-) -> CompactResumeSkillTiers:
-    required = [
-        skill
-        for skill in _unique_strings(skill_tiers["required"])
-        if skill not in COMPACT_RESUME_EXCLUDED_SKILLS
-    ]
-    required_names = set(required)
-    advisory = [
-        skill
-        for skill in _unique_strings(skill_tiers["advisory"])
-        if skill not in required_names and skill not in COMPACT_RESUME_EXCLUDED_SKILLS
-    ]
-    return {"required": required, "advisory": advisory}
-
-
-def _extend_unique_strings(target: list[str], values: Any) -> None:
-    for value in _iter_strings(values):
-        if value not in target:
-            target.append(value)
-
-
-def _unique_strings(values: list[str]) -> list[str]:
-    unique: list[str] = []
-    _extend_unique_strings(unique, values)
-    return unique
-
-
-def _iter_strings(values: Any) -> list[str]:
-    if isinstance(values, str):
-        return [values] if values else []
-    if not isinstance(values, list | tuple | set):
-        return []
-
-    result: list[str] = []
-    for value in values:
-        if isinstance(value, str) and value:
-            result.append(value)
-    return result
 
 
 def _remove_session_variable(db: HubDatabase, session_id: str, name: str) -> Any:

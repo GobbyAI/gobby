@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.sessions.compact_markers import SKILL_LIST_VARIABLE_NAMES
+from gobby.mcp_proxy.tools.workflows._variables import SKILL_LIST_VARIABLE_NAMES
 from gobby.storage.definitions.variables import SessionVariableDefaultRow
 from gobby.workflows.step_instances import AgentStepInstance
 from tests.workflows.step_instance_fixtures import make_step_instance
