@@ -44,6 +44,7 @@ def run_expansion_qa_coverage(
     regenerate: bool = False,
     evaluator: CoverageEvaluator | None = None,
     manifest_writer: ManifestWriter | None = None,
+    is_spawned_agent: bool = True,
 ) -> dict[str, Any]:
     """Run A4 coverage for an expansion run and persist QA artifacts.
 
@@ -106,7 +107,14 @@ def run_expansion_qa_coverage(
     )
     display_manifest = _display_path(written_manifest, repo_root)
     failures = _coverage_failures(report)
-    review_action = _review_action(root_task_ref, display_manifest, failures)
+    review_action = (
+        _review_action(root_task_ref, display_manifest, failures)
+        if is_spawned_agent
+        else {
+            "applicable": False,
+            "reason": "Review actions require a spawned expansion-stage reviewer.",
+        }
+    )
     qa_result = {
         "passed": not failures,
         "manifest_path": display_manifest,
