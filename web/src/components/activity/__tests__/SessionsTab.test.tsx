@@ -128,7 +128,6 @@ vi.mock("../../../hooks/useTmuxSessions", () => ({
         attached_bridge: null,
       },
     ],
-    liveCliSessionIds: [],
     connected: true,
     sessionsLoaded: true,
     attachedTarget: null,

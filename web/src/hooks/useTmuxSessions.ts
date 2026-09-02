@@ -105,7 +105,6 @@ type PendingRequest =
 
 interface TmuxSessionsResult {
   sessions: TmuxSession[];
-  liveCliSessionIds: string[];
   connected: boolean;
   sessionsLoaded: boolean;
   attachedTarget: TmuxTarget | null;
@@ -133,7 +132,6 @@ export function useTmuxSessions(
   projectId: string | null = null,
 ): TmuxSessionsResult {
   const [sessions, setSessions] = useState<TmuxSession[]>([]);
-  const [liveCliSessionIds, setLiveCliSessionIds] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [attachedTarget, setAttachedTarget] = useState<TmuxTarget | null>(null);
@@ -375,7 +373,6 @@ export function useTmuxSessions(
               return merged;
             });
           }
-          setLiveCliSessionIds((data.live_cli_session_ids as string[]) || []);
           setSessionsLoaded(true);
           const attached = attachedTargetRef.current;
           if (
@@ -856,7 +853,6 @@ export function useTmuxSessions(
 
   return {
     sessions,
-    liveCliSessionIds,
     connected,
     sessionsLoaded,
     attachedTarget,

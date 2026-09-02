@@ -15,7 +15,6 @@ _RAW_KILL_ALLOWLIST = {
     ("src/gobby/agents/tmux/session_manager.py", "TmuxSessionManager.destroy_session"),
     ("src/gobby/agents/tmux/spawner.py", "TmuxSpawner._async_spawn"),
     ("src/gobby/mcp_proxy/tools/spawn_agent/_failure_cleanup.py", "_terminate_spawn_process"),
-    ("src/gobby/servers/websocket/tmux.py", "TmuxMixin._handle_tmux_kill_session"),
     ("src/gobby/terminals/tmux_runtime.py", "TmuxTerminalRuntime.terminate"),
 }
 
