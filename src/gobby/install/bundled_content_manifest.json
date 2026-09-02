@@ -469,7 +469,7 @@
     "workflows/agents/expansion-qa.yaml": "7492f0d2f898ac144923b0ad242dac479dc9c95fcd8eb6762d6f34789fa3f6de",
     "workflows/agents/frontend-developer.yaml": "2da00f23b039e8efb103c9ab2763078517c94856575d1e54e61cfc805dcba020",
     "workflows/agents/fullstack-developer.yaml": "ca26ff9bbc33a3d1e2ec121309a4da870fe926e08954fac1524203955c1b41cb",
-    "workflows/agents/memory-curator.yaml": "566ea2ee5aa2b52c14b8e88fad31ce055c7f8f54751defa697db94dd2daedfab",
+    "workflows/agents/memory-curator.yaml": "9c5c0ff698d334dd29b9e8afec8e7e5d9091588cb5ef7496d0611910708d08e8",
     "workflows/agents/merge-orchestrator.yaml": "46adc5bef4657d9c1215314f3830250dac160d7a9a0af3dae744361e1421ef3e",
     "workflows/agents/merge-worker.yaml": "e7dd50470b514c8f2175a7fcace7d5ebe44efa4502d8ef4b3d6bee7a8767ba18",
     "workflows/agents/plan-adversary-taskless.yaml": "17b9d2022ead9e008a3fc62caf278fb140e3fcecd40849e73805562e39970184",
