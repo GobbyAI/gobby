@@ -1,6 +1,8 @@
 """Focused coverage tests for task MCP tools."""
 
 from collections.abc import Iterator
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,10 +12,48 @@ from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.utils.session_context import session_context_for_test
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture
+def canonical_task_session(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Session:
+    """Register the task-tool session against this test's isolated checkout."""
+    isolated = install_isolated_checkout_project(
+        temp_db,
+        tmp_path / "isolated-checkout",
+        monkeypatch=monkeypatch,
+    )
+    return SessionManager(temp_db).register(
+        external_id="task-create-coverage-session",
+        machine_id=isolated.machine_id,
+        source="codex",
+        project_id=isolated.project.id,
+        title="Task create coverage session",
+    )
+
+
+@pytest.fixture
+def personal_task_session(
+    temp_db: HubDatabase,
+    canonical_task_session: Session,
+) -> Session:
+    """Register a personal-project session on the isolated machine."""
+    return SessionManager(temp_db).register(
+        external_id="personal-task-create-coverage-session",
+        machine_id=canonical_task_session.machine_id,
+        source="codex",
+        project_id=None,
+        title="Personal task create coverage session",
+    )
 
 
 class TestCreateTaskTool:
@@ -66,6 +106,146 @@ class TestCreateTaskTool:
             "ref": "#42",
         }
         mock_task_manager.create_task_with_decomposition.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_reports_missing_target_paths_without_blocking(
+        self,
+        mock_task_manager: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Missing target files are advisory and do not prevent task creation."""
+        repo_path = tmp_path / "isolated-checkout"
+        existing_path = repo_path / "src/gobby/tasks/existing.py"
+        existing_path.parent.mkdir(parents=True, exist_ok=True)
+        existing_path.write_text("def existing() -> None:\n    pass\n")
+
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440002"
+        mock_task.seq_num = 43
+        mock_task_manager.create_task_with_decomposition.return_value = {
+            "task": {"id": mock_task.id, "title": "Check targets"},
+        }
+        mock_task_manager.get_task.return_value = mock_task
+
+        result = await create_task_registry(mock_task_manager).call(
+            "create_task",
+            {
+                "title": "Check targets",
+                "category": "code",
+                "implementation_domain": "backend",
+                "validation_criteria": "The target warning is returned.",
+                "description": (
+                    "Targets:\n"
+                    "- src/gobby/tasks/existing.py::missing_symbol\n"
+                    "- src/gobby/tasks/missing.py\n"
+                ),
+            },
+        )
+
+        assert result["targets_not_found"] == ["src/gobby/tasks/missing.py"]
+        mock_task_manager.create_task_with_decomposition.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_omits_target_warning_when_all_targets_exist(
+        self,
+        mock_task_manager: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        repo_path = tmp_path / "isolated-checkout"
+        existing_path = repo_path / "src/gobby/tasks/existing.py"
+        existing_path.parent.mkdir(parents=True, exist_ok=True)
+        existing_path.touch()
+
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440003"
+        mock_task.seq_num = 44
+        mock_task_manager.create_task_with_decomposition.return_value = {
+            "task": {"id": mock_task.id, "title": "Check existing target"},
+        }
+        mock_task_manager.get_task.return_value = mock_task
+
+        result = await create_task_registry(mock_task_manager).call(
+            "create_task",
+            {
+                "title": "Check existing target",
+                "category": "code",
+                "implementation_domain": "backend",
+                "validation_criteria": "No target warning is returned.",
+                "description": "Targets:\n- src/gobby/tasks/existing.py",
+            },
+        )
+
+        assert "targets_not_found" not in result
+
+    @pytest.mark.asyncio
+    async def test_update_reports_only_new_missing_targets(
+        self,
+        mock_task_manager: MagicMock,
+        canonical_task_session: Session,
+        tmp_path: Path,
+    ) -> None:
+        repo_path = tmp_path / "isolated-checkout"
+        existing_path = repo_path / "src/gobby/tasks/existing.py"
+        existing_path.parent.mkdir(parents=True, exist_ok=True)
+        existing_path.touch()
+        task = SimpleNamespace(
+            id="550e8400-e29b-41d4-a716-446655440004",
+            seq_num=45,
+            project_id=canonical_task_session.project_id,
+            task_type="task",
+            category="code",
+            validation_criteria="The target warning is returned.",
+            implementation_domain="backend",
+            is_escalated=False,
+        )
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.update_task.return_value = task
+
+        result = await create_task_registry(mock_task_manager).call(
+            "update_task",
+            {
+                "task_id": task.id,
+                "description": (
+                    "Targets:\n"
+                    "- src/gobby/tasks/existing.py::new_symbol\n"
+                    "- src/gobby/tasks/missing.py"
+                ),
+                "affected_files": ["src/gobby/tasks/missing.py"],
+            },
+        )
+
+        assert result["targets_not_found"] == ["src/gobby/tasks/missing.py"]
+        mock_task_manager.update_task.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_title_does_not_resolve_project_checkout(
+        self,
+        mock_task_manager: MagicMock,
+    ) -> None:
+        task = SimpleNamespace(
+            id="550e8400-e29b-41d4-a716-446655440005",
+            seq_num=46,
+            project_id="550e8400-e29b-41d4-a716-446655440099",
+            task_type="task",
+            category="research",
+            validation_criteria="The title changes.",
+            implementation_domain=None,
+            is_escalated=False,
+        )
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.update_task.return_value = task
+        registry = create_task_registry(mock_task_manager)
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._context.RegistryContext.get_project_repo_path"
+        ) as get_repo_path:
+            result = await registry.call(
+                "update_task",
+                {"task_id": task.id, "title": "Updated title"},
+            )
+
+        assert result == {}
+        get_repo_path.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_create_task_accepts_refactor_category(

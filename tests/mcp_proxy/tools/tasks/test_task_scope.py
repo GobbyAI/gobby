@@ -13,7 +13,9 @@ import pytest
 from gobby.mcp_proxy.tools.tasks._task_scope import (
     TaskScopeEvaluation,
     collect_commit_paths,
+    collect_declared_task_targets,
     evaluate_task_scope,
+    find_targets_not_found,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_affected_files import TaskAffectedFileManager
@@ -59,6 +61,24 @@ def _evaluate(
             repo_path=None,
             scope_justification=justification,
         )
+
+
+def test_declared_targets_combine_description_and_affected_files(tmp_path: Path) -> None:
+    existing = tmp_path / "src/gobby/tasks/existing.py"
+    existing.parent.mkdir(parents=True)
+    existing.touch()
+
+    targets = collect_declared_task_targets(
+        description="Targets:\n- src/gobby/tasks/existing.py::future_symbol",
+        affected_files=[
+            "src/gobby/tasks/missing.py",
+            "./src/gobby/tasks/missing.py",
+            "../outside.py",
+        ],
+    )
+
+    assert targets == {"src/gobby/tasks/existing.py", "src/gobby/tasks/missing.py"}
+    assert find_targets_not_found(str(tmp_path), targets) == ["src/gobby/tasks/missing.py"]
 
 
 def test_tests_mirror_of_declared_source_stays_in_scope() -> None:

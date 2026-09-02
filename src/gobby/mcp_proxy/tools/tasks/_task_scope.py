@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from gobby.plans.semantic_lint import find_file_paths_in_text
@@ -120,14 +120,37 @@ def collect_declared_task_scope(db: HubDatabase, task: Task) -> set[str]:
         if normalized is not None:
             declared.add(normalized)
 
-    for target_line in _iter_target_block_lines(task.description or ""):
-        declared.update(find_file_paths_in_text(target_line))
+    declared.update(collect_declared_task_targets(task.description))
     for kind in ("test", "file"):
         for reference in extract_artifact_references(task.validation_criteria or "", kind):
             normalized = _normalize_scope_entry(reference)
             if normalized is not None:
                 declared.add(normalized)
     return declared
+
+
+def collect_declared_task_targets(
+    description: str | None,
+    affected_files: Iterable[str] | None = None,
+) -> set[str]:
+    """Collect normalized paths supplied through Targets or affected_files."""
+    declared: set[str] = set()
+    for target_line in _iter_target_block_lines(description or ""):
+        for target in find_file_paths_in_text(target_line):
+            normalized = _normalize_scope_entry(target)
+            if normalized is not None:
+                declared.add(normalized)
+    for affected_file in affected_files or ():
+        normalized = _normalize_scope_entry(affected_file)
+        if normalized is not None:
+            declared.add(normalized)
+    return declared
+
+
+def find_targets_not_found(repo_path: str, targets: Iterable[str]) -> list[str]:
+    """Return declared target paths that do not exist beneath the project root."""
+    root = Path(repo_path)
+    return sorted({target for target in targets if not (root / target).exists()})
 
 
 def collect_commit_paths(commit_shas: Iterable[str], repo_path: str) -> set[str]:
