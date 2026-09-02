@@ -11,6 +11,7 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -36,9 +37,11 @@ def project_storage(temp_db: HubDatabase) -> LocalProjectManager:
 
 
 @pytest.fixture
-def test_project(project_storage: LocalProjectManager) -> dict:
+def test_project(
+    isolated_checkout_factory: IsolatedCheckoutFactory, project_storage: LocalProjectManager
+) -> dict:
     """Create a test project."""
-    project = project_storage.create(name="test-project", repo_path="/tmp/test")
+    project = isolated_checkout_factory(project_storage.db, "test-project").project
     return project.to_dict()
 
 
@@ -326,12 +329,13 @@ class TestSessionManagerLookup:
 
     def test_recover_session_none_project_cross_project_collision_returns_none(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         session_mgr: SessionManager,
         session_storage: SessionManager,
         project_storage: LocalProjectManager,
         test_project: dict,
     ) -> None:
-        other_project = project_storage.create(name="other-project", repo_path="/tmp/other")
+        other_project = isolated_checkout_factory(project_storage.db, "other-project").project
         session_storage.register(
             external_id="colliding-external-id",
             machine_id="21000000-0000-4000-8000-000000000003",
@@ -467,12 +471,13 @@ class TestSessionManagerCaching:
 
     def test_cache_session_mapping_is_scoped_by_project(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
         session_mgr: SessionManager,
         project_storage: LocalProjectManager,
     ) -> None:
-        project_a = project_storage.create(name="project-a", repo_path="/tmp/project-a")
-        project_b = project_storage.create(name="project-b", repo_path="/tmp/project-b")
+        project_a = isolated_checkout_factory(project_storage.db, "project-a").project
+        project_b = isolated_checkout_factory(project_storage.db, "project-b").project
         # register() unifies machine-neutral identity across projects, so seed
         # two same-source rows in different projects directly.
         session_a = str(uuid.uuid4())

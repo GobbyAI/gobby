@@ -21,8 +21,9 @@ from gobby.github_triage.service import (
 )
 from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore, TriageVerdict
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.tasks import LocalTaskManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -213,8 +214,10 @@ def test_webhook_rejects_bad_signature(
         service.accept_webhook_delivery(sample_project["id"], headers, raw_body)
 
 
-def test_webhook_rejects_empty_repository_allowlist(temp_db: HubDatabase) -> None:
-    project = LocalProjectManager(temp_db).create(name="no-repo", repo_path="/tmp/no-repo")
+def test_webhook_rejects_empty_repository_allowlist(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+) -> None:
+    project = isolated_checkout_factory(temp_db, "no-repo").project
     raw_body = _payload()
     GitHubTriageStore(temp_db).upsert_config(
         GitHubTriageConfig(

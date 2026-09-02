@@ -34,6 +34,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -79,12 +80,11 @@ def session_manager(test_db: HubDatabase) -> SessionManager:
 
 
 @pytest.fixture
-def test_project(project_manager: LocalProjectManager) -> dict:
+def test_project(
+    isolated_checkout_factory: IsolatedCheckoutFactory, project_manager: LocalProjectManager
+) -> dict:
     """Create a test project for session tests."""
-    project = project_manager.create(
-        name="test-project",
-        repo_path="/tmp/test-autonomous",
-    )
+    project = isolated_checkout_factory(project_manager.db, "test-project").project
     return project.to_dict()
 
 

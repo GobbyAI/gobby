@@ -6,6 +6,7 @@ import logging
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 from unittest.mock import patch
 from uuid import uuid4
@@ -17,13 +18,13 @@ from gobby.hooks.event_handlers._session_start.claims import (
     preserve_task_claim_state,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._transitions import close_task
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -108,11 +109,13 @@ class _ClaimHarness:
         return task
 
 
-def _make_harness(db: HubDatabase) -> _ClaimHarness:
-    project = LocalProjectManager(db).create(
+def _make_harness(db: HubDatabase, tmp_path: Path) -> _ClaimHarness:
+    project = install_isolated_checkout_project(
+        db,
+        tmp_path / "clear-claims",
         name=f"clear-claims-{uuid4().hex[:8]}",
-        repo_path="/tmp/clear-claims",
-    )
+        machine_id=LOCAL_MACHINE_ID,
+    ).project
     sessions = SessionManager(db)
     predecessor = sessions.register(
         external_id=f"pred-{uuid4()}",
@@ -162,8 +165,10 @@ def _claimed_task_ids(manager: SessionTaskManager, session_id: str) -> set[str]:
     }
 
 
-def test_preserve_transfers_predecessor_claims_and_claimed_link(hub_db: HubDatabase) -> None:
-    harness = _make_harness(hub_db)
+def test_preserve_transfers_predecessor_claims_and_claimed_link(
+    tmp_path: Path, hub_db: HubDatabase
+) -> None:
+    harness = _make_harness(hub_db, tmp_path)
     task = harness.create_claimed_task("Leaf owned by predecessor")
 
     preserve_task_claim_state(
@@ -183,8 +188,10 @@ def test_preserve_transfers_predecessor_claims_and_claimed_link(hub_db: HubDatab
     assert successor_vars.get("claimed_tasks") == {task.id: f"#{task.seq_num}"}
 
 
-def test_expected_owner_skips_claim_moved_to_third_session(hub_db: HubDatabase) -> None:
-    harness = _make_harness(hub_db)
+def test_expected_owner_skips_claim_moved_to_third_session(
+    tmp_path: Path, hub_db: HubDatabase
+) -> None:
+    harness = _make_harness(hub_db, tmp_path)
     kept = harness.create_claimed_task("Stays with predecessor")
     stolen = harness.create_claimed_task("Moved before successor bind")
     harness.task_manager.claim_task(stolen.id, session_id=harness.third_id, force=True)
@@ -206,9 +213,10 @@ def test_expected_owner_skips_claim_moved_to_third_session(hub_db: HubDatabase) 
 
 
 def test_link_failure_compensates_ownership_and_keeps_committed_transfer(
+    tmp_path: Path,
     hub_db: HubDatabase,
 ) -> None:
-    harness = _make_harness(hub_db)
+    harness = _make_harness(hub_db, tmp_path)
     kept = harness.create_claimed_task("Link succeeds")
     broken = harness.create_claimed_task("Link explodes")
     failing_links = _FailingLinkManager(harness.session_task_manager, {broken.id})
@@ -233,8 +241,10 @@ def test_link_failure_compensates_ownership_and_keeps_committed_transfer(
     )
 
 
-def test_per_task_errors_do_not_abort_remaining_transfers(hub_db: HubDatabase) -> None:
-    harness = _make_harness(hub_db)
+def test_per_task_errors_do_not_abort_remaining_transfers(
+    tmp_path: Path, hub_db: HubDatabase
+) -> None:
+    harness = _make_harness(hub_db, tmp_path)
     kept = harness.create_claimed_task("Survives sibling lookup failure")
     missing_id = str(uuid4())
     predecessor_vars = _predecessor_vars(kept)
@@ -254,8 +264,8 @@ def test_per_task_errors_do_not_abort_remaining_transfers(hub_db: HubDatabase) -
     assert missing_id not in (successor_vars.get("claimed_tasks") or {})
 
 
-def test_closed_task_is_skipped_without_aborting(hub_db: HubDatabase) -> None:
-    harness = _make_harness(hub_db)
+def test_closed_task_is_skipped_without_aborting(tmp_path: Path, hub_db: HubDatabase) -> None:
+    harness = _make_harness(hub_db, tmp_path)
     kept = harness.create_claimed_task("Still open")
     closed = harness.create_claimed_task("Already closed")
     close_task(hub_db, closed.id, reason="test")
@@ -275,8 +285,10 @@ def test_closed_task_is_skipped_without_aborting(hub_db: HubDatabase) -> None:
     assert successor_vars.get("claimed_tasks") == {kept.id: f"#{kept.seq_num}"}
 
 
-def test_filter_and_reassign_returns_only_committed_transfers(hub_db: HubDatabase) -> None:
-    harness = _make_harness(hub_db)
+def test_filter_and_reassign_returns_only_committed_transfers(
+    tmp_path: Path, hub_db: HubDatabase
+) -> None:
+    harness = _make_harness(hub_db, tmp_path)
     kept = harness.create_claimed_task("Committed")
     stolen = harness.create_claimed_task("Stolen")
     harness.task_manager.claim_task(stolen.id, session_id=harness.third_id, force=True)
@@ -298,8 +310,8 @@ def test_filter_and_reassign_returns_only_committed_transfers(hub_db: HubDatabas
     assert harness.task_manager.get_task(stolen.id).claimed_by_session_id == harness.third_id
 
 
-def test_concurrent_successors_transfer_exactly_once(hub_db: HubDatabase) -> None:
-    harness = _make_harness(hub_db)
+def test_concurrent_successors_transfer_exactly_once(tmp_path: Path, hub_db: HubDatabase) -> None:
+    harness = _make_harness(hub_db, tmp_path)
     task = harness.create_claimed_task("One successor may inherit")
     second_id = harness.register_session("succ-b")
     vars_payload = _predecessor_vars(task)

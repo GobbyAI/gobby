@@ -6,13 +6,15 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
+
 pytestmark = pytest.mark.unit
 
 
-def _project(temp_db, name: str = "observability") -> str:
-    from gobby.storage.projects import LocalProjectManager
-
-    return LocalProjectManager(temp_db).create(name=name, repo_path=f"/tmp/{name}").id
+def _project(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db, name: str = "observability"
+) -> str:
+    return isolated_checkout_factory(temp_db, name).project.id
 
 
 def _automated_task(temp_db, project_id: str, title: str = "Task"):
@@ -30,6 +32,7 @@ def _automated_task(temp_db, project_id: str, title: str = "Task"):
 
 
 def test_get_build_status_reports_agents_mutex_artifacts_events_and_comments(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db,
     tmp_path: Path,
 ) -> None:
@@ -41,7 +44,7 @@ def test_get_build_status_reports_agents_mutex_artifacts_events_and_comments(
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
     from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
 
-    project_id = _project(temp_db)
+    project_id = _project(isolated_checkout_factory, temp_db)
     ensure_system_session(temp_db)
     manager = LocalTaskManager(temp_db)
     task = _automated_task(temp_db, project_id)
@@ -110,6 +113,7 @@ def test_get_build_status_reports_agents_mutex_artifacts_events_and_comments(
 
 
 def test_get_build_status_reports_invalid_integration_worktree_artifact(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db,
     tmp_path: Path,
 ) -> None:
@@ -117,7 +121,7 @@ def test_get_build_status_reports_invalid_integration_worktree_artifact(
     from gobby.storage.tasks import TaskArtifactManager
     from gobby.storage.worktrees import LocalWorktreeManager
 
-    project_id = _project(temp_db, "observability-integration-health")
+    project_id = _project(isolated_checkout_factory, temp_db, "observability-integration-health")
     task = _automated_task(temp_db, project_id)
     invalid_path = tmp_path / "integration-worktree"
     invalid_path.mkdir()
@@ -151,14 +155,16 @@ def test_get_build_status_reports_invalid_integration_worktree_artifact(
     assert artifact["git_metadata_present"] is False
 
 
-def test_get_build_status_reports_active_run_expired_mutex_lease(temp_db) -> None:
+def test_get_build_status_reports_active_run_expired_mutex_lease(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db
+) -> None:
     from gobby.build.observability import explain_dispatch, get_build_status
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.sessions import ensure_system_session, system_session_id
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
     ensure_system_session(temp_db)
-    project_id = _project(temp_db, "observability-active-expired")
+    project_id = _project(isolated_checkout_factory, temp_db, "observability-active-expired")
     task = _automated_task(temp_db, project_id)
     run = LocalAgentRunManager(temp_db).create(
         parent_session_id=system_session_id(),
@@ -189,11 +195,13 @@ def test_get_build_status_reports_active_run_expired_mutex_lease(temp_db) -> Non
     assert explanation["mutex"]["state"] == "active_run_expired_lease"
 
 
-def test_get_build_status_counts_closed_and_escalated_nodes(temp_db) -> None:
+def test_get_build_status_counts_closed_and_escalated_nodes(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db
+) -> None:
     from gobby.build.observability import get_build_status
     from gobby.storage.tasks import LocalTaskManager
 
-    project_id = _project(temp_db, "observability-tree")
+    project_id = _project(isolated_checkout_factory, temp_db, "observability-tree")
     manager = LocalTaskManager(temp_db)
     root = manager.create_task(
         project_id=project_id,
@@ -227,13 +235,15 @@ def test_get_build_status_counts_closed_and_escalated_nodes(temp_db) -> None:
     assert by_id[escalated.id]["escalated"] is True
 
 
-def test_build_stop_target_disables_status_and_dispatch_for_tree(temp_db) -> None:
+def test_build_stop_target_disables_status_and_dispatch_for_tree(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db
+) -> None:
     from gobby.build.controls import build_stop_target
     from gobby.build.observability import explain_dispatch, get_build_status
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
 
-    project_id = _project(temp_db, "observability-stop-target")
+    project_id = _project(isolated_checkout_factory, temp_db, "observability-stop-target")
     manager = LocalTaskManager(temp_db)
     root = manager.create_task(
         project_id=project_id,
@@ -276,7 +286,9 @@ def test_build_stop_target_disables_status_and_dispatch_for_tree(temp_db) -> Non
 
 
 @pytest.mark.parametrize("action", ["stop", "resume", "clean", "restart"])
-def test_build_control_targets_reject_foreign_project_uuid(temp_db, action: str) -> None:
+def test_build_control_targets_reject_foreign_project_uuid(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db, action: str
+) -> None:
     from gobby.build.controls import (
         build_clean_target,
         build_restart_target,
@@ -285,8 +297,8 @@ def test_build_control_targets_reject_foreign_project_uuid(temp_db, action: str)
     )
     from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
 
-    local_project_id = _project(temp_db, "observability-stop-local")
-    foreign_project_id = _project(temp_db, "observability-stop-foreign")
+    local_project_id = _project(isolated_checkout_factory, temp_db, "observability-stop-local")
+    foreign_project_id = _project(isolated_checkout_factory, temp_db, "observability-stop-foreign")
     manager = LocalTaskManager(temp_db)
     artifact_manager = TaskArtifactManager(temp_db)
     foreign_task = manager.create_task(
@@ -343,13 +355,15 @@ def test_build_control_targets_reject_foreign_project_uuid(temp_db, action: str)
     assert artifacts.target_branch == "foreign-branch"
 
 
-def test_build_stop_target_preserves_review_approved_stage(temp_db) -> None:
+def test_build_stop_target_preserves_review_approved_stage(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db
+) -> None:
     from gobby.build.controls import build_stop_target
     from gobby.build.observability import explain_dispatch
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
 
-    project_id = _project(temp_db, "observability-stop-approved")
+    project_id = _project(isolated_checkout_factory, temp_db, "observability-stop-approved")
     manager = LocalTaskManager(temp_db)
     root = manager.create_task(
         project_id=project_id,
@@ -385,7 +399,9 @@ def test_build_stop_target_preserves_review_approved_stage(temp_db) -> None:
     assert explanation["proposed_action"]["stage_name"] == "expansion"
 
 
-def test_build_resume_target_reopens_project_gate_before_dispatch(temp_db, monkeypatch) -> None:
+def test_build_resume_target_reopens_project_gate_before_dispatch(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db, monkeypatch
+) -> None:
     from gobby.build import controls
     from gobby.build.dispatch_tick import DispatcherTickSummary
     from gobby.build.project_state import is_project_automation_enabled
@@ -393,7 +409,7 @@ def test_build_resume_target_reopens_project_gate_before_dispatch(temp_db, monke
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
 
-    project_id = _project(temp_db, "observability-resume-target")
+    project_id = _project(isolated_checkout_factory, temp_db, "observability-resume-target")
     manager = LocalTaskManager(temp_db)
     root = manager.create_task(
         project_id=project_id,
@@ -430,12 +446,14 @@ def test_build_resume_target_reopens_project_gate_before_dispatch(temp_db, monke
     assert manager.get_task(root.id).allow_automation is True
 
 
-def test_get_build_status_reports_closed_root_as_completed(temp_db) -> None:
+def test_get_build_status_reports_closed_root_as_completed(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db
+) -> None:
     from gobby.build.observability import get_build_status
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
 
-    project_id = _project(temp_db, "observability-completed-root")
+    project_id = _project(isolated_checkout_factory, temp_db, "observability-completed-root")
     manager = LocalTaskManager(temp_db)
     root = _automated_task(temp_db, project_id, "Completed Root")
     manager.lifecycle_events.record_lifecycle_event(
@@ -463,6 +481,7 @@ def test_get_build_status_reports_closed_root_as_completed(temp_db) -> None:
     ],
 )
 def test_get_build_status_reports_non_success_closed_root_state(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db,
     closed_reason: str,
     expected_state: str,
@@ -471,7 +490,7 @@ def test_get_build_status_reports_non_success_closed_root_state(
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
 
-    project_id = _project(temp_db, f"observability-{closed_reason}-root")
+    project_id = _project(isolated_checkout_factory, temp_db, f"observability-{closed_reason}-root")
     manager = LocalTaskManager(temp_db)
     root = _automated_task(temp_db, project_id, f"{closed_reason} Root")
     manager.lifecycle_events.record_lifecycle_event(
@@ -490,13 +509,15 @@ def test_get_build_status_reports_non_success_closed_root_state(
     assert status["summary"]["closed_tasks"] == 1
 
 
-def test_get_build_status_hides_stale_current_stage_for_closed_root(temp_db) -> None:
+def test_get_build_status_hides_stale_current_stage_for_closed_root(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db
+) -> None:
     from gobby.build.observability import get_build_status
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
     from tests.storage.tasks._stage_test_helpers import set_stage_state
 
-    project_id = _project(temp_db, "observability-stale-closed-root")
+    project_id = _project(isolated_checkout_factory, temp_db, "observability-stale-closed-root")
     manager = LocalTaskManager(temp_db)
     root = _automated_task(temp_db, project_id, "Stale Closed Root")
     manager.lifecycle_events.record_lifecycle_event(
@@ -526,11 +547,13 @@ def test_get_build_status_hides_stale_current_stage_for_closed_root(temp_db) -> 
     assert root_status["current_stage"] is None
 
 
-def test_list_build_history_resolves_task_refs(temp_db) -> None:
+def test_list_build_history_resolves_task_refs(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db
+) -> None:
     from gobby.build.observability import list_build_history
     from gobby.storage.build_history import BuildHistoryStorage
 
-    project_id = _project(temp_db, "observability-history")
+    project_id = _project(isolated_checkout_factory, temp_db, "observability-history")
     task = _automated_task(temp_db, project_id)
     history = BuildHistoryStorage(temp_db)
     run = history.record_run(
@@ -554,14 +577,16 @@ def test_list_build_history_resolves_task_refs(temp_db) -> None:
     assert payload["events"][0]["event_type"] == "build_completed"
 
 
-def test_explain_dispatch_reports_block_reasons_and_would_dispatch(temp_db) -> None:
+def test_explain_dispatch_reports_block_reasons_and_would_dispatch(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db
+) -> None:
     from gobby.build.observability import explain_dispatch
     from gobby.storage.sessions import ensure_system_session, system_session_id
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
     ensure_system_session(temp_db)
-    project_id = _project(temp_db, "observability-explain")
+    project_id = _project(isolated_checkout_factory, temp_db, "observability-explain")
     manager = LocalTaskManager(temp_db)
     disabled = _automated_task(temp_db, project_id, "Disabled")
     manager.update_task(disabled.id, allow_automation=False)
@@ -653,11 +678,13 @@ def test_explain_dispatch_reports_block_reasons_and_would_dispatch(temp_db) -> N
     assert blocked_explanation["ancestor_gate"]["stage_state"] == "needs_review"
 
 
-def test_explain_dispatch_reports_epic_descendant_gate(temp_db) -> None:
+def test_explain_dispatch_reports_epic_descendant_gate(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db
+) -> None:
     from gobby.build.observability import explain_dispatch
     from gobby.storage.tasks import LocalTaskManager
 
-    project_id = _project(temp_db, "observability-epic-gate")
+    project_id = _project(isolated_checkout_factory, temp_db, "observability-epic-gate")
     manager = LocalTaskManager(temp_db)
     root = manager.create_task(
         project_id=project_id,

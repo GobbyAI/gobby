@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager, Task
 
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -327,16 +328,16 @@ class TestSpawnAgentStepVariables:
     @pytest.mark.asyncio
     async def test_auto_claimed_task_starts_step_workflow_after_claim(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
-        from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
         from gobby.storage.tasks import LocalTaskManager
         from gobby.workflows.step_instances import AgentStepInstanceManager
 
-        project = LocalProjectManager(db).create(name="spawn-step-project", repo_path="/tmp/gobby")
+        project = isolated_checkout_factory(db, "spawn-step-project").project
         task_manager = LocalTaskManager(db)
         task = task_manager.create_task(
             project.id, "Review plan", validation_criteria="Test task completion is observable."
@@ -463,15 +464,15 @@ class TestSpawnAgentStepVariables:
         db: Any,
         mock_runner: MagicMock,
         *,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         project_name: str,
     ) -> tuple[dict[str, Any], LocalTaskManager, Task, str]:
         """Spawn a workflow-less agent against a fresh task and return the claim facts."""
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
-        from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
         from gobby.storage.tasks import LocalTaskManager
 
-        project = LocalProjectManager(db).create(name=project_name, repo_path="/tmp/gobby")
+        project = isolated_checkout_factory(db, project_name).project
         task_manager = LocalTaskManager(db)
         task = task_manager.create_task(
             project.id, "Implement widget", validation_criteria="Widget tests pass."
@@ -546,6 +547,7 @@ class TestSpawnAgentStepVariables:
 
     async def test_auto_claim_records_claimed_session_task_link(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
     ) -> None:
@@ -553,7 +555,10 @@ class TestSpawnAgentStepVariables:
         from gobby.storage.session_tasks import SessionTaskManager
 
         result, task_manager, task, child_id = await self._spawn_with_auto_claim(
-            db, mock_runner, project_name="spawn-link"
+            db,
+            mock_runner,
+            isolated_checkout_factory=isolated_checkout_factory,
+            project_name="spawn-link",
         )
 
         assert result["success"] is True, result
@@ -563,6 +568,7 @@ class TestSpawnAgentStepVariables:
 
     async def test_auto_claim_link_failure_is_best_effort(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
         caplog: pytest.LogCaptureFixture,
@@ -577,7 +583,10 @@ class TestSpawnAgentStepVariables:
             caplog.at_level(logging.DEBUG, logger="gobby.mcp_proxy.tools.spawn_agent"),
         ):
             result, task_manager, task, child_id = await self._spawn_with_auto_claim(
-                db, mock_runner, project_name="spawn-link-failure"
+                db,
+                mock_runner,
+                isolated_checkout_factory=isolated_checkout_factory,
+                project_name="spawn-link-failure",
             )
 
         assert result["success"] is True, result
@@ -592,6 +601,7 @@ class TestSpawnAgentStepVariables:
     async def _spawn_bundled_developer_agent(
         self,
         *,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
         repo_root: Path,
@@ -606,14 +616,11 @@ class TestSpawnAgentStepVariables:
         SpawnRequest,
     ]:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
-        from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
         from gobby.storage.tasks import LocalTaskManager
         from gobby.workflows.step_instances import AgentStepInstanceManager
 
-        project = LocalProjectManager(db).create(
-            name=f"{agent_name}-project", repo_path="/tmp/gobby"
-        )
+        project = isolated_checkout_factory(db, f"{agent_name}-project").project
         task_manager = LocalTaskManager(db)
         task = task_manager.create_task(
             project.id,
@@ -715,6 +722,7 @@ class TestSpawnAgentStepVariables:
     @pytest.mark.asyncio
     async def test_taskless_developer_spawn_skips_step_workflow(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
         repo_root: Path,
@@ -727,6 +735,7 @@ class TestSpawnAgentStepVariables:
             instance,
             spawn_request,
         ) = await self._spawn_bundled_developer_agent(
+            isolated_checkout_factory=isolated_checkout_factory,
             db=db,
             mock_runner=mock_runner,
             repo_root=repo_root,
@@ -754,6 +763,7 @@ class TestSpawnAgentStepVariables:
     @pytest.mark.asyncio
     async def test_initial_variable_task_assignment_starts_step_workflow(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
         repo_root: Path,
@@ -766,6 +776,7 @@ class TestSpawnAgentStepVariables:
             instance,
             spawn_request,
         ) = await self._spawn_bundled_developer_agent(
+            isolated_checkout_factory=isolated_checkout_factory,
             db=db,
             mock_runner=mock_runner,
             repo_root=repo_root,
@@ -786,6 +797,7 @@ class TestSpawnAgentStepVariables:
     @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])
     async def test_auto_claimed_developer_agent_without_additional_skills_loads_required_skill(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
         repo_root: Path,
@@ -798,6 +810,7 @@ class TestSpawnAgentStepVariables:
             instance,
             _spawn_request,
         ) = await self._spawn_bundled_developer_agent(
+            isolated_checkout_factory=isolated_checkout_factory,
             db=db,
             mock_runner=mock_runner,
             repo_root=repo_root,
@@ -822,6 +835,7 @@ class TestSpawnAgentStepVariables:
     @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])
     async def test_auto_claimed_developer_agent_with_optional_skill_still_loads_required_first(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
         repo_root: Path,
@@ -834,6 +848,7 @@ class TestSpawnAgentStepVariables:
             instance,
             _spawn_request,
         ) = await self._spawn_bundled_developer_agent(
+            isolated_checkout_factory=isolated_checkout_factory,
             db=db,
             mock_runner=mock_runner,
             repo_root=repo_root,

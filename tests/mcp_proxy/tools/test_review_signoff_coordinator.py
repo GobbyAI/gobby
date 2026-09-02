@@ -18,6 +18,7 @@ from gobby.storage.inter_session_messages import InterSessionMessage, InterSessi
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import Task
 from gobby.utils.session_context import session_context_for_test
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -33,6 +34,7 @@ def _local_machine_identity() -> Iterator[None]:
 def _coordinated_review_fixture(
     temp_db: HubDatabase,
     *,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     name: str,
     cross_project_coordinator: bool = False,
     stage_name: str = "planning",
@@ -40,20 +42,12 @@ def _coordinated_review_fixture(
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
     from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
     from gobby.storage.build_history import BuildHistoryStorage
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
 
-    project_manager = LocalProjectManager(temp_db)
-    project = project_manager.create(
-        f"review-signoff-{name}",
-        repo_path=f"/tmp/review-signoff-{name}",
-    )
+    project = isolated_checkout_factory(temp_db, f"review-signoff-{name}").project
     coordinator_project = (
-        project_manager.create(
-            f"review-signoff-coordinator-{name}",
-            repo_path=f"/tmp/review-signoff-coordinator-{name}",
-        )
+        isolated_checkout_factory(temp_db, f"review-signoff-coordinator-{name}").project
         if cross_project_coordinator
         else project
     )
@@ -130,6 +124,7 @@ async def _wait_for_messages(
 
 
 def test_signoff_relay_warning_includes_project_and_exception(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -138,6 +133,7 @@ def test_signoff_relay_warning_includes_project_and_exception(
 
     _registry, _coordinator, reviewer, task = _coordinated_review_fixture(
         temp_db,
+        isolated_checkout_factory=isolated_checkout_factory,
         name="schedule-warning",
     )
 
@@ -165,10 +161,12 @@ def test_signoff_relay_warning_includes_project_and_exception(
 
 @pytest.mark.asyncio
 async def test_approve_review_relays_signoff_summary_to_build_coordinator(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
 ) -> None:
     registry, coordinator, reviewer, task = _coordinated_review_fixture(
         temp_db,
+        isolated_checkout_factory=isolated_checkout_factory,
         name="approve",
         stage_name="development",
     )
@@ -205,10 +203,12 @@ async def test_approve_review_relays_signoff_summary_to_build_coordinator(
 
 @pytest.mark.asyncio
 async def test_approve_review_relays_authorized_cross_project_signoff_to_coordinator(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
 ) -> None:
     registry, coordinator, reviewer, task = _coordinated_review_fixture(
         temp_db,
+        isolated_checkout_factory=isolated_checkout_factory,
         name="approve-cross-project",
         cross_project_coordinator=True,
         stage_name="development",
@@ -242,10 +242,12 @@ async def test_approve_review_relays_authorized_cross_project_signoff_to_coordin
 
 @pytest.mark.asyncio
 async def test_reject_review_relays_signoff_summary_to_build_coordinator(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
 ) -> None:
     registry, coordinator, reviewer, task = _coordinated_review_fixture(
         temp_db,
+        isolated_checkout_factory=isolated_checkout_factory,
         name="reject",
     )
 

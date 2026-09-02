@@ -15,6 +15,7 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.merge_resolutions import MergeConflict, MergeResolution, MergeResolutionManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
 
@@ -108,12 +109,13 @@ class TestTaskStatusDuringMerge:
 
         assert hasattr(LocalTaskManager, "set_merge_status")
 
-    def test_task_manager_set_merge_status_persists(self, hub_db: HubDatabase) -> None:
+    def test_task_manager_set_merge_status_persists(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db: HubDatabase
+    ) -> None:
         """TaskManager persists task-level merge status."""
-        from gobby.storage.projects import LocalProjectManager
         from gobby.storage.tasks import LocalTaskManager
 
-        project = LocalProjectManager(hub_db).create(name="merge-status", repo_path="/tmp/repo")
+        project = isolated_checkout_factory(hub_db, "merge-status").project
         manager = LocalTaskManager(hub_db)
         task = manager.create_task(
             project_id=project.id,
@@ -136,16 +138,13 @@ class TestTaskStatusDuringMerge:
 
     def test_task_manager_update_task_merge_status_preserves_omitted_and_clears_false(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         hub_db: HubDatabase,
     ) -> None:
         """TaskManager keeps merge status binary while preserving omitted fields."""
-        from gobby.storage.projects import LocalProjectManager
         from gobby.storage.tasks import LocalTaskManager
 
-        project = LocalProjectManager(hub_db).create(
-            name="merge-status-update",
-            repo_path="/tmp/repo",
-        )
+        project = isolated_checkout_factory(hub_db, "merge-status-update").project
         manager = LocalTaskManager(hub_db)
         task = manager.create_task(
             project_id=project.id,
@@ -174,16 +173,13 @@ class TestTaskStatusDuringMerge:
 
     def test_task_manager_update_task_rejects_none_merge_status(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         hub_db: HubDatabase,
     ) -> None:
         """TaskManager rejects SQL NULL clears for binary merge status."""
-        from gobby.storage.projects import LocalProjectManager
         from gobby.storage.tasks import LocalTaskManager
 
-        project = LocalProjectManager(hub_db).create(
-            name="merge-status-none",
-            repo_path="/tmp/repo",
-        )
+        project = isolated_checkout_factory(hub_db, "merge-status-none").project
         manager = LocalTaskManager(hub_db)
         task = manager.create_task(
             project_id=project.id,
@@ -204,7 +200,9 @@ class TestTaskStatusDuringMerge:
 class TestMergeStatePersistence:
     """Tests for merge state persistence across daemon restarts."""
 
-    def test_merge_resolution_persists(self, hub_db: HubDatabase) -> None:
+    def test_merge_resolution_persists(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db: HubDatabase
+    ) -> None:
         """Merge resolution should persist in database."""
         from gobby.storage.merge_resolutions import MergeResolutionManager
         from gobby.storage.projects import LocalProjectManager
@@ -214,7 +212,7 @@ class TestMergeStatePersistence:
 
         # Create prerequisite data (project and worktree for foreign key)
         project_manager = LocalProjectManager(db)
-        project = project_manager.create(name="test-project", repo_path="/tmp/test-repo")
+        project = isolated_checkout_factory(project_manager.db, "test-project").project
 
         worktree_manager = LocalWorktreeManager(db)
         worktree = worktree_manager.create(
