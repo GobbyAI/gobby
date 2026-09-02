@@ -332,6 +332,8 @@ def test_symbol_absent_from_disk_keeps_the_unresolved_diagnostic(
     )
 
     def run_command(command: list[str], _repo_path: str) -> str:
+        if command[1] == "search-symbol":
+            raise RuntimeError("gcode command failed: search timed out after 30 seconds")
         assert command[1] != "index", "a symbol absent from disk must not trigger a reindex"
         return '{"results":[]}'
 

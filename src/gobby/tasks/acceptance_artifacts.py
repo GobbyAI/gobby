@@ -259,8 +259,6 @@ def _resolve_test_body(path: str, symbol: str, repo_path: str) -> str:
             repo_path,
             initial_search_error=str(search_error) if search_error else None,
         )
-    if search_error is not None and not candidates:
-        raise search_error
     if len(candidates) != 1:
         raise RuntimeError(f"expected one matching symbol, found {len(candidates)}")
     symbol_id = candidates[0].get("id")
