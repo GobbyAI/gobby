@@ -69,6 +69,61 @@ def test_operational_evidence_accepts_successful_transcript_actions() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "changes_summary",
+    [
+        "`uv sync` succeeded: Resolved 68 packages in 1ms; Installed 68 packages in 2ms.",
+        "`uv sync --frozen` succeeded: Audited 68 packages in 1ms.",
+        "`uv pip install -e .` succeeded: Successfully installed game-goblins-0.1.0.",
+        (
+            "`uv run --with pip python -m pip install --editable .` succeeded: "
+            "Successfully installed game-goblins-0.1.0."
+        ),
+    ],
+)
+def test_tool_native_install_output_is_affirmative_evidence(changes_summary: str) -> None:
+    criteria = "Package installation completed successfully."
+
+    assert missing_operational_evidence(criteria, changes_summary) == ()
+
+
+@pytest.mark.parametrize(
+    ("criteria", "changes_summary"),
+    [
+        ("Install the package.", "Packages installed successfully."),
+        ("Install the artifact.", "Artifacts installed successfully."),
+        ("Install the build.", "Builds installed successfully."),
+    ],
+)
+def test_plural_install_subjects_match_singular_requirements(
+    criteria: str,
+    changes_summary: str,
+) -> None:
+    assert missing_operational_evidence(criteria, changes_summary) == ()
+
+
+def test_smoke_completion_uses_the_containing_sentence() -> None:
+    criteria = "The smoke test passes."
+    changes_summary = (
+        "The smoke test exercised installation, startup, authenticated requests, and shutdown "
+        "across all supported providers and passed cleanly."
+    )
+
+    assert missing_operational_evidence(criteria, changes_summary) == ()
+
+
+def test_install_and_smoke_mentions_without_success_remain_rejected() -> None:
+    criteria = "Install the package and run a smoke test."
+    changes_summary = "`uv sync` was scheduled, and the smoke test remains pending."
+
+    assert missing_operational_evidence(criteria, changes_summary) == ("install", "smoke")
+
+
+def test_uv_project_commands_emit_install_markers() -> None:
+    assert operational_actions_from_command("uv sync --locked") == ("install",)
+    assert operational_actions_from_command("uv add httpx") == ("install",)
+
+
 def test_pending_or_negated_operations_are_not_completion_evidence() -> None:
     criteria = "Install the release and restart the daemon."
 
