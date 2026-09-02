@@ -383,3 +383,26 @@ async def test_criteria_review_receives_successful_transcript_operational_action
     assert await_args is not None
     facts = cast(dict[str, Any], await_args.kwargs["checklist_facts"])
     assert facts["transcript_operational_actions"] == ["restart:daemon,gobby"]
+
+
+async def test_21319_criterion_does_not_require_description_operational_evidence() -> None:
+    criterion = (
+        "Close evidence accepts one assertion-backed cycle across multiple named artifacts only "
+        "when every named artifact has later passing coverage, while collection/setup-only "
+        "failures remain rejected. test: "
+        "`tests/tasks/test_acceptance_artifacts.py::"
+        "test_tdd_evidence_accepts_one_cycle_with_multiple_green_artifacts`."
+    )
+    task = replace(
+        _task(escalated=False, validation_criteria=criterion),
+        description=(
+            "Repair close evidence evaluation so one named acceptance artifact supplies the "
+            "task's assertion-backed pre-production failure while every named artifact must "
+            "have post-production passing coverage. Implement on the 0.5.0 branch and restart "
+            "the daemon."
+        ),
+    )
+
+    evaluation = await _evaluate(task, override_justification=None)
+
+    assert evaluation.error is None
