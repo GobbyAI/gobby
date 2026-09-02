@@ -487,7 +487,7 @@ export ACCEPT_TOKEN="$(cat "$LOCAL_ACCEPT_HOME/local_cli_token")"
 export ACCEPT_API="http://127.0.0.1:$ACCEPT_HTTP_PORT/api"
 export ACCEPT_PROJECT_ID="$(
   GOBBY_HOME="$LOCAL_ACCEPT_HOME" uv run gobby projects list --json \
-    | jq -r '.[] | select(.repo_path == env.GOBBY_REPO) | .id' \
+    | jq -r '.[] | select(.checkout.root_path == env.GOBBY_REPO) | .id' \
     | head -n 1
 )"
 test -n "$ACCEPT_PROJECT_ID"

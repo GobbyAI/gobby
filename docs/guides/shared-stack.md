@@ -1,9 +1,16 @@
 # Shared Datastores Across Machines
 
 Gobby supports a `datastore_mode: remote` topology in which one hub machine owns
-PostgreSQL, Qdrant, and FalkorDB while every client machine runs its own Gobby daemon.
-The datastores are shared over a private Tailscale network; execution stays local to
-each client.
+PostgreSQL, Qdrant, and FalkorDB and every machine that uses them installs a Gobby
+daemon. The datastores are shared over a private Tailscale network; execution stays
+local to each machine.
+
+**Exactly one daemon is active per shared hub.** The singleton lease is scoped to the
+shared database, so a second daemon pointed at the same datastores starts as a standby
+and exposes only the lease-control surface (`gobby lease status|acquire|release`) until
+it is promoted. This is the M0 transition shape, before `gdaemon` grows `hub` and `node`
+modes; at that point every machine runs a daemon simultaneously and only the hub holds
+datastore credentials. See `ROADMAP.md` decisions 11 and 13.
 
 ```text
 workstation daemon --+
@@ -132,11 +139,29 @@ tailnet.
 ## M0 acceptance checklist
 
 Use the [remote Docker stack live-test runbook](remote-docker-acceptance.md) for the
-physical M0 acceptance run. The runbook writes captured artifacts to
-`.gobby/acceptance/<UTC-run-id>/`. Record the completed checklist and its evidence
-filenames in this section before closing #19600.
+physical M0 acceptance run, together with the hub-PC move plan
+(`.gobby/plans/hub-pc-datastore-move.md`, R0-R7). The runbook writes captured artifacts
+to `.gobby/acceptance/<UTC-run-id>/`. Fill in the checklist below from the runbook's
+Completion record before closing #19600.
 
-_Status: pending the operator-coordinated physical run._
+| # | Item | Runbook phase | Evidence | Result |
+| --- | --- | --- | --- | --- |
+| 1 | UTC run ID and exact commit/version on both machines | Topology, Phase 1 | `identity.txt`, `remote-version.txt` | |
+| 2 | Local installation protected and inventoried; bootstrap hash captured | Phase 1 | `local-status-before.txt`, `local-hub-backup.json`, `local-bootstrap.sha256`, `local-stack-before.txt` | |
+| 3 | Isolated PostgreSQL/Qdrant/FalkorDB stack provisioned on machine A | Phase 2 | `remote-stack-before.txt`, `docker-ports.txt` | |
+| 4 | Machine A and machine B IDs, roles, and Tailscale addresses recorded | Phase 3 | `machine-a.id`, `machine-b.id` | |
+| 5 | Local production runtime stopped without removal; active sessions captured | Phase 4 | `local-active-sessions-before-stop.json`, `local-stack-stop.txt` | |
+| 6 | Active daemon healthy on machine B; lease owner and schema identity recorded | Phase 5 | `daemon-health.json`, `remote-mode-status.txt`, `lease-status.txt`, `schema-version.json` | |
+| 7 | Embedding switch and doctor clean against the remote stack | Phase 5 | `embedding-switch-final.json`, `embedding-doctor.json` | |
+| 8 | Services bind tailnet-only; machine B reaches them and non-ACL machine C is refused | Phase 6 | `qdrant-health.txt`, `tailscale-ping.txt` | |
+| 9 | Task, session, memory, vector, and graph round trips through the daemon API | Phase 7 | `task-create.json`, `session-register.json`, `memory-create.json`, `vector-reindex.txt`, `graph-rebuild.txt`, `memory-recall.txt`, `graph-counts.json` | |
+| 10 | Continuity across a daemon restart; lease owner before and after | Phase 7 | `task-after-restart.json`, `sessions-after-restart.json`, `memory-after-restart.txt` | |
+| 11 | PostgreSQL connection count, maximum, and remaining headroom within pool capacity | Phase 8 | `postgres-capacity.txt` | |
+| 12 | Docker workload returned; original bootstrap hash and containers restored | Phase 9 | `remote-stack-stop.txt`, `local-stack-start.txt`, `local-status-restored.txt`, `local-lease-restored.txt`, `local-schema-restored.json`, `local-stack-restored.txt` | |
+| 13 | Five-minute clean local-daemon observation window; sessions resumed and continued | Phase 9 | `local-status-restored.txt` | |
+
+_Status: not yet run. Blocked on the daemon stability checkpoint and the two lease and
+terminal machine-scoping pre-flight fixes tracked under #21363._
 
 ## M0 operating boundary
 

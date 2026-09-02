@@ -87,9 +87,9 @@ them for audit history is not a requirement.
 
 ## Architecture direction
 
-`docs/architecture/evolution.md` still places the native terminal stack at Stage 0 and
-makes it the prerequisite for the later Rust daemon and hub/node stages. Its core
-direction remains current:
+`ROADMAP.md` “The path” still places the native terminal stack at Stage 0 and makes
+it a prerequisite for the later Rust daemon and hub/node stages. Its core direction
+remains current:
 
 - own the Herdr-derived terminal core;
 - keep `gterm` as a durable process separate from the daemon;

@@ -4,102 +4,365 @@ Gobby is a local-first control plane for AI coding tools: persistent sessions,
 task graphs, workflows, hooks, MCP proxying, agents, memory, and deterministic
 automation around the tools developers already use.
 
-Last refreshed: July 10, 2026.
+Last refreshed: 2026-09-01. This document is the roadmap and the architecture
+decision record. The live tracker is epic {{ROOT}}.
 
-The data migration is complete. PostgreSQL is the runtime hub, FalkorDB is the
-graph backend, and `.gobby/tasks.jsonl` is a gitignored local backup rather than
-a checked-in projection. The roadmap now tracks the post-migration release line.
+## Where we are (2026-09-01)
 
-## 0.5.0 - New Baseline
+- **Runtime**: the 0.5.0 Python daemon is the supported local-first runtime —
+  sessions, tasks, memory, workflows, rules, pipelines, agents, MCP proxy.
+  Operators start it with `gobby start`. HTTP `:60887`, WS `:60888`.
+- **Data**: PostgreSQL is the runtime hub; FalkorDB graph; Qdrant vectors.
+  Schema authority lives in Rust — `gcore` embeds one flattened `baseline@420`
+  with no stacked migrations, and `gdaemon schema apply/verify` owns DDL.
+- **Rust bridgehead**: `crates/` ships `gcode`, `gwiki`, `ghook`, `gdaemon`,
+  `gobby-terminal` (`gterm`), and `gobby-client` (`gclient`) over the shared
+  `gcore` library. gterminal and gclient are merged on `0.5.0` (`7ccd140a73`);
+  gclient is a skeleton owned by #21334.
+- **Completed foundations**: daemon-native runtime boundary (#18902 — it deleted
+  `GOBBY_RUNTIME_MODE`), reactive config store (#19645), account/machine
+  ownership (#19650), hub-owned files home (#20330 / #20238), path-independent
+  project identity (#19651).
+- **Shared datastores**: M0 code has landed (leases, remote DSNs, `machine_id`
+  scoping). The remaining gate is the physical two-machine smoke (#19600). The
+  M0 operating model is **one active daemon per shared hub**; standbys hold the
+  lease control surface only.
+- **Terminals**: `0.5.0` is still tmux-backed. The native PTY stack and the
+  `gclient` workspace are Stage 0 work under #21334.
 
-0.5.0 is the new baseline release after the PostgreSQL and FalkorDB cutover.
+## Naming
 
-- Ship the current Python daemon as the supported local-first runtime.
-- Treat PostgreSQL as the only runtime hub and FalkorDB as the supported graph
-  backend across daemon, web UI, admin payloads, setup, and docs.
-- Keep `.gobby/tasks.jsonl` and `.gobby/memories.jsonl` as automated pre-push
-  exports with manual-only import, so a lost hub is recoverable locally.
-- Tighten operator docs, install/status output, and release notes around the
-  new storage baseline.
+The switch happens at S3.2, as soon as the Rust client carries the daily
+operator verbs — not at Python retirement.
 
-## 0.5.0+ - UI Hardening And Rust Port Work
+| Today | Destination |
+| --- | --- |
+| `gobby` — Python daemon and its CLI | `gobby` — the Rust client and the interface people run all the time (package `gobby-client`) |
+| `gclient` — herdr-derived terminal client binary | gone; renamed to `gobby` |
+| `gdaemon` — Rust bridgehead binary | `gdaemon` — the daemon, in `standalone`, `hub`, or `node` mode (package `gobby-daemon`) |
+| `gterm` — PTY host | `gterm` — unchanged, permanently a separate supervised process (package `gobby-terminal`) |
+| — | `gobby-backend` — the transitional name of the Python package from S3.2 until it retires at S3.4 |
+| `gcode`, `gwiki`, `ghook` | unchanged |
 
-After the baseline release, the main work is web UI hardening and preparing the
-Rust port.
+## Destination
 
-- Harden chat, sessions, tasks, workflows, cron, projects, compact layouts, and
-  shared design tokens until the web UI is solid enough for daily Gobby Pro use.
-- Close attached-session parity gaps: context usage, mode/model sync,
-  attachments, persona switching, STT/TTS, and first-class web chat behavior.
-- Continue plan registry APIs and UI editors so stage and build-profile shape
-  can evolve without hand-editing storage or YAML internals.
-- Finish logging cleanup before enforcing logging-format rules: config reset,
-  runtime-vs-app log separation, normalized handlers, automation logs for cron
-  and dispatch, and quieter routine logging.
-- Prepare the Rust port by freezing route contracts (safe to start pre-ship;
-  they are contract docs and test artifacts). Compare/delegation plumbing and
-  sidecar implementation start after 0.5.0 ships. Shared-primitive extraction
-  under `crates/` is already essentially complete in `gobby-core`.
+### Three user stories
 
-## 0.6.0 - Rust Port Release
+**A. Solo self-hosted (one machine).** One install. `gobby start` brings up the
+daemon; it adopts or spawns the `gterm` PTY host. Bare `gobby` opens the
+terminal workspace: roster and attention over localhost, frames over a local
+Unix socket, keystrokes through the daemon's lease. A daemon restart adopts the
+running host — no agent terminal dies. The user never learns the word
+"topology."
 
-0.6.0 is the Rust port release. It is an incremental strangler port, not a
-rewrite. The destination shape is decided in
-`docs/architecture/evolution.md`: one daemon binary named `gdaemon`
-(package `gobby-daemon`) with standalone/hub/node modes. The interactive
-product people run is `gobby` (the TUI). The sidecar below is the
-transition vehicle, not the end state.
+**B. Multi-machine homelab (Tailscale).** A home server runs the hub daemon and
+the data stack. Workstation and laptop each run `gdaemon` in node mode plus a
+gterm host; agents and PTYs live where the checkout lives. The roster shows
+every machine's agents (hub data); an attention response routes to the owning
+machine's node daemon over its authenticated channel; remote terminal viewing
+rides the daemon WS proxy. Coming home, `gobby` attaches locally at full
+fidelity to the same terminals.
 
-- Python remains the public daemon and behavioral reference until each boundary
-  passes parity, observability, and rollback gates.
-- The `gobby-daemon` sidecar (`gdaemon`) runs on internal port `:60890`, with
-  Python delegating selected route families behind explicit flags.
-- Compare mode calls both implementations and returns the Python response until
-  parity is proven.
-- First wave: contract fixtures, compare/delegation plumbing, the sidecar
-  shell with health/config reads, then reduced `GET /api/tasks` as the first
-  DB-backed boundary.
-- Second wave: the external-MCP transport multiplexer as a delegated backend
-  behind Python's front door; internal MCP servers migrate only after it
-  exists.
-- The bridgehead lives under `crates/`: `gcode`, `ghook`, `gwiki`, and
-  `gobby-core` shared primitives.
-- Execution order and milestones live in `docs/plans/rust-migration-epic.md`.
+**C. Hosted Gobby — deferred.** gobby.ai runs the data stack and hub daemon.
+Story C differs from story B only in who hosts the hub and in WAN latency, which
+is why the story-B datastore tunnel is a LAN-era bridge. Deferred until Gobby is
+proven in local and Tailscale production. Datastore TLS and Qdrant
+authentication are prerequisites and are not yet tasks.
 
-## 0.6.0+ - Gobby Pro Sync
+### Target architecture
 
-Gobby Pro starts with remote sync from multiple Gobby-controlled machines.
+- **One daemon binary, `gdaemon`, three modes.** `standalone` (default; hub and
+  node on one box — story A), `hub` (owns the datastores and everything
+  database-backed: maintenance loops, dream, wiki, cron, retention, backups,
+  upgrades), `node` (per-machine: registers to a hub, authenticates with a
+  machine API key, never holds datastore credentials, forwards every semantic
+  call, runs only machine-local duties — agents, worktrees, gterm supervision,
+  hook ingress and its ledger). A node requires a hub connection; offline is a
+  typed error, never a fallback. One service container assembled per mode.
+- **`gterm` is permanently a separate supervised process.** It survives daemon
+  restarts, upgrades, and lease handoffs; the daemon adopts it by epoch. Folding
+  PTY ownership into the daemon would kill every agent terminal on every daemon
+  restart.
+- **`gobby` is permanently a separate interactive process.** Zero-to-N viewers,
+  each living exactly as long as a human is looking; a client crash must never
+  take PTYs down. It builds without the VT engine (`vt-engine` is host-only) and
+  couples to the daemon exclusively through the public HTTP/WS API.
+- **Protocols are the durable contract; implementations are disposable.** The
+  JSON-lines control protocol (daemon ↔ host), the bincode frame protocol
+  (clients ← host), and the backend-neutral WS terminal messages survive the
+  Python→Rust migration byte-for-byte. Committed golden wire corpora are the
+  enforcement.
+- **The public CLI plus daemon API is the plugin surface.** Manifest-driven
+  external processes on the public API only, in Rust, so plugins survive every
+  migration stage (#20201).
+- **HTTP splits machine checkouts from hub documents.** `/api/files` is the
+  checkout browser on this daemon; hub-owned `files_home` content is under
+  `/api/hub/...`; nodes reach hub routes through `hub_daemon_url` (one hop).
+  There is no shared mount of `$GOBBY_HOME/files`.
 
-- Multi-daemon discovery and handshake.
-- Opt-in encrypted sync for tasks, memories, and session metadata.
-- Operator controls for machines you own, with local-first behavior preserved.
-- Sync conflict handling, audit trails, and release packaging for the commercial
-  layer.
+### Destination HTTP and files_home
 
-## 0.7.0+ - Gobby Pro Beta
+| Job | Destination | Today | Bytes |
+| --- | --- | --- | --- |
+| Project checkout browser | `/api/files/*` | `/api/files/*` (except `user-md`) | Local repo on this machine |
+| Working profile | `GET`/`PUT /api/hub/user` | `GET`/`PUT /api/files/user-md` | Hub `files_home/USER.md` |
+| Hub wiki (personal, topic; project vaults after #18779) | `/api/hub/wiki/*` | `/api/wiki/*` with topic or personal scope | Hub `files_home/wiki/` |
+| Project / CodeWiki vault | `/api/wiki/*` with a real project id until #18779, then `/api/hub/wiki/*` | `/api/wiki/*` with project scope | `<checkout>/wiki` until #18779, then `files_home/wiki/<project.name>` |
+| Hub chat uploads | `/api/hub/chat/attachments` | `/api/chat/attachments` | Hub `files_home/attachments/<project-id>/...` |
+| Telegram inbound media | hub `files_home` at {{S4.8}} | machine-local | `~/.gobby/comms_attachments` until then |
 
-The Pro beta introduces fleet management and a shared dashboard for all Gobby
-machines.
+Destination on-disk tree on the hub host (`$GOBBY_HOME/files` standalone;
+`/var/lib/gobby/files` allowed on a dedicated server):
 
-- Fleet inventory, health, and remote command.
-- Shared task boards, team workflows, and review state across machines.
-- Dashboard views for sessions, builds, agents, validation, and sync health.
-- Enterprise controls for audit, policy, and team operations.
+```text
+<files_home>/
+  USER.md
+  _personal/                 # life-admin only; not a git repo; not a vault
+  wiki/                      # wiki home; not itself a vault
+    wikis.json
+    personal/                # personal vault
+    <topic>/
+    <project.name>/          # after #18779 only
+  attachments/               # all hub chat uploads, keyed by project id
+    <project-id>/<id[:2]>/<id>/<filename>
+```
 
-## Later - 1.0.0 Prep
+Reserved names at `<files_home>`: `USER.md`, `_personal`, `wiki`,
+`attachments`. Reserved vault name: `personal`. Chat uploads for a gobby-repo
+conversation are hub documents but not personal files; they belong under
+`attachments/<project-id>/`, and today's `_personal/attachments/...` writers are
+transitional.
 
-Once the Pro beta stabilizes, the focus moves to 1.0.0 readiness.
+## The path
 
-- Stabilize public APIs, configuration, workflow definitions, and hook behavior.
-- Polish install, upgrade, recovery, and operator documentation.
-- Add SWE-bench evaluation from `docs/plans/SWE-BENCH.md`: eval run/result
-  storage, `gobby eval`, Docker-backed harness, trajectory capture, leaderboard
-  artifacts, score tracking, and Gobby-enabled vs baseline A/B tests.
-- Use the benchmark results to drive final release gates for 1.0.0.
+Live tracker: epic {{ROOT}}. Nothing in this tree is dispatched by
+`gobby build`; every task carries `allow_automation=false`.
 
-## Baseline Already Shipped
+Two standards apply to every stage and are stated once here:
 
-0.4.x shipped the task-to-PR loop as the supported path: persistent sessions,
-cross-CLI handoffs, task lifecycle and validation, MCP progressive discovery,
-workflows, pipelines, rule enforcement, agent spawning, memory search, skills,
-integrations, and the web UI surfaces needed to operate Gobby locally.
+- **Per-boundary validation gate.** Every absorption plan must satisfy fixture
+  parity, error-path parity, side-by-side execution, route-scoped rollback via
+  the proxy table, and observability.
+- **Atomic-task standard.** One boundary, one rollback story, one validation
+  target per task. Boundary-first; no long-lived Rust branch.
+
+### PRE — pre-flight for the two-machine smoke
+
+Filed as `found-work` leaves under the #21363 feedback burndown, which is the
+stability feed for the checkpoint and is never itself a dependency.
+
+- {{FW.1}} — scope the daemon singleton lease to the shared database. Today it
+  is `$GOBBY_HOME`-path-scoped, so two Macs at `/Users/josh/.gobby` collide and
+  a Mac and a Linux hub both run active.
+- {{FW.2}} — machine-scope terminal list, get, and `attach_locator`. Files are
+  owned by the #21334 worktree; coordinate.
+- {{FW.3}} — remove the dormant hook `machine_id` fallbacks (does not gate the
+  smoke).
+- {{CHK}} — manual daemon stability checkpoint before the hub-PC move, closed by
+  a human after the #21363 burndown.
+
+**M0: shared datastores bridge and two-machine acceptance (#19585).** #19600 is
+its only open deliverable: the physical smoke per
+`docs/guides/hub-pc-datastore-move.md` R0–R7 and
+`docs/guides/remote-docker-acceptance.md` Phases 1–9. `blocked_by` {{CHK}},
+{{FW.1}}, {{FW.2}}.
+
+### Stage 0 — terminal client and native PTY runtime (#21334)
+
+`.gobby/plans/herdr-client-completion.md` plus the herdr foundation, terminal
+client, and QA-fix plans. Fork herdr at v0.8.0 and own the code: the
+`gobby-terminal` core with the Ghostty VT engine gated host-only, the `gterm`
+host, the `gclient` workspace, a durable `terminals` resource, and a
+backend-neutral `TerminalRuntime` with tmux wrapped first and native launches
+behind an evidence-gated default flip.
+
+### Stage 1 — the gdaemon front door owns the network boundary ({{S1}})
+
+The front door comes **first**. `gdaemon` takes `:60887`/`:60888`, reverse-
+proxies HTTP and WS to the Python daemon on an internal loopback port, and owns
+the mode enum, the singleton lease, and machine registration from day one.
+Subsystem absorption then happens behind that boundary, one routing-table change
+at a time. This inverts the older "Python front door delegating to a `:60890`
+sidecar" framing: no Python-side `rust_migration` flags, no `APIRoute` compare
+wrapper, no mismatch latch. Compare mode is a proxy feature.
+
+| Ref | Scope |
+| --- | --- |
+| {{S1.1}} | `gdaemon serve`: axum front door on `:60887`/`:60888` proxying HTTP and WS to Python on loopback; native `GET /api/health`; bearer pass-through; the WS proxy passes the `terminal_ws_golden` corpus and chat WS unchanged |
+| {{S1.2}} | Mode enum `standalone`/`hub`/`node` and the mode-assembled service container; boundary semantics only, duties come in Stage 4 |
+| {{S1.3}} | Singleton lease and Python backend lifecycle in Rust; retires the Python lease modules; `hub` and `standalone` lease, a node registers instead |
+| {{S1.4}} | Node registration over WS and machine API keys; `machines` gains platform/capabilities/heartbeat/endpoint columns; `/api/machines` |
+| {{S1.5}} | HTTP contract corpus for the proxied surface (`tests/contracts/http/`), dual-consumed by pytest and Rust; the parity gate for every Stage 2 takeover |
+| {{S1.6}} | Datastore tunnel for node mode: loopback PostgreSQL, Qdrant, and FalkorDB multiplexed over the authenticated channel to the hub, which connects as a machine-scoped PostgreSQL role under row-level security |
+
+Edges: `{{S1.2}}` ← `{{S1.1}}`; `{{S1.3}}` ← `{{S1.2}}`, `{{FW.1}}`;
+`{{S1.4}}` ← `{{S1.2}}`; `{{S1.6}}` ← `{{S1.4}}`; `{{S1.5}}` independent.
+Stage 1 starts now, in its own worktree, concurrent with #21334, #19664, and the
+#21363 burndown.
+
+### Stage 2 — strangler absorption behind the front door ({{S2}})
+
+Ordered so story B emerges mid-port; hook ingress lands late because the rule
+engine is entangled with sessions and MCP dispatch.
+
+{{S2.1}} `gcore` async Postgres layer · {{S2.2}} native WS transport ·
+{{S2.3}} config, runtime handshake, and grant issuing (first takeover) ·
+{{S2.4}} tasks family · {{S2.5}} sessions and transcripts · {{S2.6}} memory and
+search · {{S2.7}} attention, agents, dispatch, worktrees with machine scoping ·
+{{S2.8}} daemon-side gterm adoption and terminal WS · {{S2.9}} workflows, rules,
+pipelines, build, validation · {{S2.10}} external-MCP transport multiplexer as a
+delegated backend · {{S2.11}} hook ingress and the node-local envelope ledger ·
+{{S2.12}} MCP front door flip · {{S2.13}} remaining route families.
+
+Edges: `{{S2}}` ← `{{S1}}`; `{{S2.3}}` ← `{{S1.5}}`, `{{S2.1}}`;
+`{{S2.4}}` ← `{{S2.3}}`; `{{S2.5}}` ← `{{S2.4}}`, `{{S2.2}}`;
+`{{S2.6}}` ← `{{S2.4}}`; `{{S2.7}}` ← `{{S2.4}}`, `{{S1.4}}`;
+`{{S2.8}}` ← `{{S2.2}}`, `#21334`; `{{S2.9}}` ← `{{S2.5}}`, `{{S2.7}}`;
+`{{S2.10}}` ← `{{S2.4}}`; `{{S2.11}}` ← `{{S2.5}}`, `{{S2.9}}`, `{{S2.10}}`;
+`{{S2.12}}` ← `{{S2.10}}`, `{{S2.11}}`; `{{S2.13}}` ← `{{S2.4}}`, `{{S2.2}}`.
+
+### Stage 3 — the client takes the name, then Python retires ({{S3}})
+
+{{S3.1}} operator verbs on the client · {{S3.2}} the naming switch
+(`gclient` → `gobby`, Python → `gobby-backend`) · {{S3.3}} the parity ledger at
+`docs/contracts/parity-ledger.md` · {{S3.4}} retire `gobby-backend` in one
+commit.
+
+Edges: `{{S3.1}}` ← `#21334`, `{{S1.1}}`; `{{S3.2}}` ← `{{S3.1}}`;
+`{{S3.4}}` ← `{{S3.3}}`, `{{S2}}`. Stage 3 carries no stage-level edge; S3.1 and
+S3.2 start as soon as the client is real.
+
+### Stage 4 — hub and node live, story B ({{S4}})
+
+{{S4.1}} node mode (#17436), with {{S4.1a}} transitional Python node semantics
+and {{S4.1b}} Rust node duties · {{S4.2}} hub mode: everything database-backed
+runs only in `hub` and `standalone` · {{S4.3}} remote `gobby` attach (#20202,
+plan home stays under #21334) · {{S4.4}} per-user auth and multi-user (#17769) ·
+{{S4.5}} `gcode` and `gwiki` on nodes · {{S4.6}} hub transcript archive research
+(#19652) · {{S4.7}} hosted terminal-relay privacy stance (#20203, `hosted`,
+off-spine) · {{S4.8}} move Telegram/comms attachments onto hub `files_home`.
+
+Edges: `{{S4}}` ← `{{S1}}`, `#19600`; `{{S4.1a}}` ← `{{S1.2}}`, `{{S1.4}}`,
+`{{S1.6}}`, `{{S4.2}}`, `{{FW.2}}`; `{{S4.1b}}` ← `{{S2.7}}`, `{{S2.8}}`,
+`{{S2.11}}`; `{{S4.2}}` ← `{{S1.2}}`; `{{S4.4}}` ← `{{S1.4}}`;
+`{{S4.5}}` ← `{{S1.6}}`.
+
+**Story B is testable when Stage 1, {{S4.1a}}, and {{S4.2}} close** — months
+before agents, terminals, and hooks are absorbed, because the Python daemon can
+be a node behind the tunnel. Stage 4 as a whole closes with {{S4.1b}}.
+
+## Side quests
+
+Documented, allowed to run concurrently, labeled `sidequest` in the task graph,
+and **never a blocker of anything on the path**.
+
+- Wiki redesign and cutover: #19670 → #19664, #18779, #21504
+- Plugin system on the public API: #20201
+- Hosted privacy stance and story C: #20203; datastore TLS and Qdrant auth are
+  not yet tasks
+- Gobby Pro fleet: #17438 (and #19582)
+- UI design elevation: #19880
+- Fast-mode controls: #19564
+- Post-0.5.0 enhancement keeps: #18498
+- SWE-bench evaluation: `docs/plans/SWE-BENCH.md`
+
+The feedback-findings burndown **#21363** is not a side quest and not a
+dependency. It is the stability work that feeds {{CHK}} and hosts the
+`found-work` leaves gating #19600. It is recreated nightly by title, so nothing
+may depend on it — depend on its leaves.
+
+## Ports and the proxied surface
+
+- `:60887` HTTP and `:60888` WS are public and become `gdaemon`'s at {{S1.1}};
+  the Python daemon moves to an internal loopback port set in bootstrap.
+- `:60889` dev web UI. `:60891` managed PostgreSQL. `:60890` is released — the
+  sidecar it was reserved for is not being built.
+- Freeze set for the port: the three terminal protocols, the WS event envelope,
+  and the HTTP contract corpus ({{S1.5}}).
+- Error-envelope quirk that parity must preserve: internal failures return
+  HTTP 200 with `{"status":"error","message":"Internal error occurred but
+  request acknowledged","error_logged":true}`.
+- Deferred boundaries, carried by the proxy until their family moves:
+  `/api/admin/status`, `POST /api/hooks/execute`, and sessions
+  `include_resumability`.
+- The external-MCP transport multiplexer moves before any internal `gobby-*`
+  server ({{S2.10}} before {{S2.12}}).
+- Second pattern for CLI-shaped surfaces: a versioned CLI contract plus a thin
+  gateway.
+
+## Decision record
+
+1. **Fork herdr once at v0.8.0; no upstream tracking** (2026-08-13). Post-fork
+   fixes are deliberate per-commit cherry-picks logged in `UPSTREAM.md`.
+2. **Keep the Ghostty VT engine**, vendored with Zig, behind `vt-engine` so only
+   host builds pay for it (2026-08-13).
+3. **Import herdr's UI chrome and make it Gobby's** — rewired to daemon data,
+   restyled to the deutan-safe `.impeccable.md` token system (2026-08-13).
+4. **One daemon binary named `gdaemon`, three modes** (2026-08-13; amended
+   2026-09-01 to **mode boundary first, mode semantics last**). The boundary —
+   ports, datastore ownership, whether to register to a hub — lands at Stage 1;
+   the per-mode duties land at Stage 4.
+5. **gterm and the client stay separate processes and separate binaries**,
+   permanently (2026-08-13; amended 2026-09-01: the client ships as `gclient`
+   until the S3.2 rename, not "until the Stage-2 rename").
+6. **SRT sandbox wrapping has one chokepoint** at the TerminalRuntime spawn seam
+   (2026-08-13).
+7. **Plugins target the public API only** and live client-side in Rust
+   (2026-08-13).
+8. **Hub documents and machine checkouts are separate HTTP trees** (2026-08-19).
+   `/api/files` stays the local checkout browser; `/api/hub/*` is the hub
+   `files_home` surface.
+9. **The hook-envelope ledger stays node-local**; move it at the hook-route port,
+   not before (2026-09-01). The `ghook` inbox spool stays on the filesystem
+   permanently: its writer runs inside the SRT sandbox with no datastore
+   credentials. A hub-PostgreSQL table would put a hub round trip on every tool
+   call in story B and has no home in story C.
+10. **gdaemon is the front door first** (2026-09-01). It takes the public ports
+    and reverse-proxies to Python; absorption happens behind that boundary, one
+    routing-table change at a time. Compare mode is a proxy feature; the
+    Python-side migration flags are not built.
+11. **The M0 lease is database-wide — one active daemon per shared hub**, with
+    standbys exposing lease control only (2026-09-01). This is the Python-era
+    transition shape, not the destination.
+12. **`ROADMAP.md` is canonical; `docs/architecture/evolution.md` retires**
+    (2026-09-01). Everything off this path is a side quest: documented here,
+    labeled `sidequest`, concurrent, never a blocker.
+13. **Hub and node are the same daemon on every machine** (2026-09-01). `hub`
+    owns the datastores and everything database-backed. `node` registers,
+    authenticates with a machine API key, holds no datastore credential,
+    forwards every semantic call, runs only machine-local duties, and requires a
+    hub connection — offline is a typed error, never a fallback. `standalone` is
+    both on one box. This settles the authority matrix #19647 was chartered to
+    research.
+14. **The Python daemon can be a node** (2026-09-01). Node `gdaemon` brokers
+    PostgreSQL, Qdrant, and FalkorDB over the authenticated channel to the hub,
+    which connects as a machine-scoped PostgreSQL role under row-level security.
+    The Python daemon points its DSNs at localhost, holds no credential, and
+    loses access when the key is revoked. HTTP-only node semantics arrive with
+    the Rust node ({{S2.7}}).
+15. **Naming: `gobby` is the client and interface** (2026-09-01), taken from
+    `gclient` as soon as it carries the daily operator verbs ({{S3.2}}). The
+    Python package becomes `gobby-backend` until it retires at {{S3.4}};
+    `gdaemon` and `gterm` keep their names.
+
+## References
+
+Completed plans: `.gobby/plans/completed/daemon-native-runtime-boundary.md`,
+`shared-remote-stack.md`, `machine-scoped-worktrees-clones.md`,
+`project-checkout-identity.md`, `two-daemon-hub.md`,
+`hub-owned-files-home.md`, `account-identity-machine-ownership.md`,
+`reactive-config-store.md`.
+
+Live plans: `.gobby/plans/herdr-terminal-client.md`,
+`herdr-terminal-client-qa-fixes.md`, `herdr-foundation-landing.md`,
+`herdr-client-completion.md`, `m0-shared-datastores-bridge.md`,
+`hub-pc-datastore-move.md`, `wiki-output-design.md`.
+
+Architecture and guides: `docs/architecture/hub-owned-files-home.md`,
+`docs/guides/shared-stack.md`, `docs/guides/remote-docker-acceptance.md`,
+`docs/guides/dispatch.md`, `docs/contracts/plan-coverage.md`.
+
+Retired and deleted 2026-09-01: `docs/architecture/evolution.md`, whose durable
+content is absorbed above, together with the three superseded Rust-migration
+plan documents under `docs/plans/`. Umbrella #17488 is closed as a duplicate of
+{{S4.8}}; its history stays in the task graph.

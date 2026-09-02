@@ -10,7 +10,8 @@ sibling epic **Implement hub-owned files home** under #17435.
 
 ## Why this exists
 
-evolution.md story B: a home server runs the hub daemon and the data stack;
+`ROADMAP.md` “Destination” story B: a home server runs the hub daemon and the
+data stack;
 nodes own checkouts, agents, and PTYs. Story C: the machine never holds hub
 state.
 
@@ -117,7 +118,8 @@ Reserved names at `<hub-files>`: `USER.md`, `_personal`, `wiki`,
 project vault named `personal`, `_personal`, `wiki`, or `attachments` is a
 typed refusal.
 
-Destination HTTP (see `docs/architecture/evolution.md`): `/api/hub/user`,
+Destination HTTP (see `ROADMAP.md` “Destination HTTP and files_home”):
+`/api/hub/user`,
 `/api/hub/wiki/*`, `/api/hub/chat/attachments`. `/api/files` remains the
 machine-local checkout browser. Today's writers still persist chat
 uploads at `_personal/attachments/<project-id>/...` and serve
@@ -163,7 +165,7 @@ fixture vaults keep using explicit `gwiki --out` paths.
 
 Node access uses hub HTTP surfaces, not a local tree. Destination prefixes
 are `/api/hub/user`, `/api/hub/wiki/*`, and `/api/hub/chat/attachments`
-(`docs/architecture/evolution.md`). Until that cutover, nodes already
+(`ROADMAP.md` “Destination HTTP and files_home”). Until that cutover, nodes already
 proxy today's `/api/wiki` personal/topic scopes and `/api/chat/attachments`
 to the hub. Project/CodeWiki vaults stay checkout-local until #18779.
 - chat attachment upload / download / delete
@@ -230,7 +232,8 @@ Checked against the shipped #20330 leaves. Live owner paths are under
 and `~/wiki/topics` are migrate sources only, not live writes.
 
 Live resolution (transitional locators and prefixes; destination HTTP and
-`attachments/<project-id>/` are in `docs/architecture/evolution.md`):
+`attachments/<project-id>/` are in `ROADMAP.md` “Destination HTTP and
+files_home”):
 
 - `personal_project_path()` → `<files_home>/_personal`
 - `read_user_profile_content()` → `<files_home>/USER.md` on the owner;
