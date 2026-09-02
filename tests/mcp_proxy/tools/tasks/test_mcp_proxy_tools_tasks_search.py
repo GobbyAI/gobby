@@ -20,6 +20,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.tasks._search import create_reindex_registry, create_search_registry
 from gobby.storage.tasks import TaskNotFoundError
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -88,12 +89,11 @@ def task_manager(temp_db: HubDatabase) -> LocalTaskManager:
 
 
 @pytest.fixture
-def real_project(project_manager: LocalProjectManager) -> dict[str, Any]:
+def real_project(
+    isolated_checkout_factory: IsolatedCheckoutFactory, project_manager: LocalProjectManager
+) -> dict[str, Any]:
     """Create a real project for task scoping."""
-    project = project_manager.create(
-        name="search-test-project",
-        repo_path="/tmp/search-test",
-    )
+    project = isolated_checkout_factory(project_manager.db, "search-test-project").project
     return project.to_dict()
 
 
