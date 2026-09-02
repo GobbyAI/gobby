@@ -1682,7 +1682,12 @@ class TestMarkTaskNeedsReview:
 
         assert result["success"] is False
         assert result["error"] == "task_scope_mismatch"
+        assert result["declared_scope"] == ["tests/"]
+        assert result["actual_paths"] == ["src/gobby/service.py"]
         assert result["out_of_scope_paths"] == ["src/gobby/service.py"]
+        assert result["required_actions"] == [
+            "Pass a specific scope_justification between 20 and 1000 characters."
+        ]
         mock_task_manager.submit_for_review.assert_not_called()
 
     @pytest.mark.asyncio

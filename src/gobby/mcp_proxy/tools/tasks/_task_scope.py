@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from gobby.plans.semantic_lint import find_file_paths_in_text
 from gobby.storage.task_affected_files import TaskAffectedFileManager
+from gobby.tasks.acceptance_artifacts import extract_artifact_references
 from gobby.utils.git import run_git_command
 
 if TYPE_CHECKING:
@@ -24,6 +25,9 @@ _TARGET_LINE_RE = re.compile(r"^\s*Targets?\s*:\s*(?P<rest>.*)$", re.IGNORECASE)
 _ACCEPTANCE_RE = re.compile(r"^\s*Acceptance\s*:", re.IGNORECASE)
 _BULLET_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
 _DECLARED_ANNOTATION_SOURCES = frozenset({"manual", "expansion"})
+_TESTS_ROOT = "tests/"
+_SHARED_INSTALL_ROOT = "src/gobby/install/shared/"
+_BUNDLED_CONTENT_MANIFEST = "src/gobby/install/bundled_content_manifest.json"
 
 
 @dataclass(frozen=True)
@@ -77,6 +81,13 @@ def evaluate_task_scope(
             raise RuntimeError("No repository path is available for linked commit inspection.")
         actual_paths.update(collect_commit_paths(commit_list, repo_path))
 
+    if any(not _path_is_under(entry, _TESTS_ROOT) for entry in declared_paths):
+        actual_paths = {path for path in actual_paths if not _path_is_under(path, _TESTS_ROOT)}
+    if _BUNDLED_CONTENT_MANIFEST in actual_paths and any(
+        _path_is_under(path, _SHARED_INSTALL_ROOT) for path in actual_paths
+    ):
+        actual_paths.remove(_BUNDLED_CONTENT_MANIFEST)
+
     out_of_scope = (
         sorted(
             path
@@ -111,6 +122,11 @@ def collect_declared_task_scope(db: HubDatabase, task: Task) -> set[str]:
 
     for target_line in _iter_target_block_lines(task.description or ""):
         declared.update(find_file_paths_in_text(target_line))
+    for kind in ("test", "file"):
+        for reference in extract_artifact_references(task.validation_criteria or "", kind):
+            normalized = _normalize_scope_entry(reference)
+            if normalized is not None:
+                declared.add(normalized)
     return declared
 
 
@@ -187,6 +203,10 @@ def _scope_entry_covers(entry: str, path: str) -> bool:
     if entry.endswith("/"):
         return path.startswith(entry)
     return path == entry
+
+
+def _path_is_under(path: str, root: str) -> bool:
+    return path == root.rstrip("/") or path.startswith(root)
 
 
 def _validate_scope_justification(
