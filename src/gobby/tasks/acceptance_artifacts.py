@@ -241,13 +241,26 @@ def parse_test_reference(reference: str) -> tuple[str, str] | None:
 
 def _resolve_test_body(path: str, symbol: str, repo_path: str) -> str:
     query = symbol.rsplit("::", 1)[-1].rsplit(".", 1)[-1]
-    candidates = _search_symbol(path, symbol, query, repo_path)
+    search_error: RuntimeError | None = None
+    try:
+        candidates = _search_symbol(path, symbol, query, repo_path)
+    except RuntimeError as exc:
+        search_error = exc
+        candidates = []
     if not candidates and _symbol_defined_on_disk(path, query, repo_path):
         # A test written moments before the close is both the case this gate
         # exists to check and the case most likely to be missing from the index,
         # so a miss on a symbol that is on disk is index lag, not absence
         # (#21237). Index that one file and look again before failing.
-        candidates = _resolve_after_reindex(path, symbol, query, repo_path)
+        candidates = _resolve_after_reindex(
+            path,
+            symbol,
+            query,
+            repo_path,
+            initial_search_error=str(search_error) if search_error else None,
+        )
+    if search_error is not None and not candidates:
+        raise search_error
     if len(candidates) != 1:
         raise RuntimeError(f"expected one matching symbol, found {len(candidates)}")
     symbol_id = candidates[0].get("id")
@@ -270,6 +283,7 @@ def _search_symbol(path: str, symbol: str, query: str, repo_path: str) -> list[d
             "search-symbol",
             query,
             path,
+            "--allow-stale",
             "--format",
             "json",
             "--limit",
@@ -317,17 +331,28 @@ def _resolve_after_reindex(
     symbol: str,
     query: str,
     repo_path: str,
+    initial_search_error: str | None = None,
 ) -> list[dict[str, object]]:
     """Index the artifact's file, then search once more; explain a lasting miss."""
     reindex_error = _reindex_file(path, repo_path)
-    candidates = [] if reindex_error else _search_symbol(path, symbol, query, repo_path)
+    retry_error: str | None = None
+    try:
+        candidates = [] if reindex_error else _search_symbol(path, symbol, query, repo_path)
+    except RuntimeError as exc:
+        retry_error = str(exc)
+        candidates = []
     if candidates:
         return candidates
-    cause = reindex_error or "reindexing that file did not surface it"
+    cause = (
+        initial_search_error
+        or reindex_error
+        or retry_error
+        or "reindexing that file did not surface it"
+    )
     raise StaleCodeIndexError(
         f"{query} is defined in {path} on disk but the code index does not have it "
         f"({cause}); the acceptance artifact is valid and the index is behind. "
-        f"Run `gcode index --files {path}` and retry the close."
+        f"Run `gcode index --full --files {path}` and retry the close."
     )
 
 
@@ -338,7 +363,10 @@ def _reindex_file(path: str, repo_path: str) -> str | None:
     a held lock exits 3 and is reported as the cause instead of stalling the close.
     """
     try:
-        _run_command(["gcode", "index", "--files", path, "--skip-if-locked"], repo_path)
+        _run_command(
+            ["gcode", "index", "--full", "--files", path, "--skip-if-locked"],
+            repo_path,
+        )
     except RuntimeError as exc:
         return str(exc)
     return None
