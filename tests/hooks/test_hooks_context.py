@@ -114,6 +114,7 @@ def test_hook_event_task_id(mock_hook_manager: Any) -> None:
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={"prompt": "Hello"},
+        machine_id=mock_hook_manager.get_machine_id(),
     )
 
     # Execute handler
@@ -151,6 +152,7 @@ def test_session_start_context_injection(mock_hook_manager: Any) -> None:
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={"cwd": "/tmp"},
+        machine_id=mock_hook_manager.get_machine_id(),
         task_id=task_id,
         metadata={"_task_title": task_title},
     )
@@ -178,6 +180,7 @@ def test_session_start_context_injection(mock_hook_manager: Any) -> None:
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={"prompt": "Hello", "cwd": "/tmp"},
+        machine_id=mock_hook_manager.get_machine_id(),
         project_id="test-project-id",
         task_id=task_id,
         metadata={"_task_title": task_title, "_platform_session_id": platform_session_id},
