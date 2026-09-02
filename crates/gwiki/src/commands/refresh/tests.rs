@@ -8,6 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 
 fn test_scope(root: &Path) -> ResolvedScope {
+    crate::support::test_env::ensure_clean_effective_config();
     ResolvedScope::topic(
         "refresh-test".to_string(),
         root.to_path_buf(),
@@ -444,12 +445,14 @@ fn changed_local_file_replays_and_removes_old_raw_assets() {
     fs::write(&old_digest, "old digest").expect("write old digest");
     fs::write(temp.path().join("artifact.bin"), b"new").expect("change source");
 
-    let outcome = execute_resolved_with_fetcher(
-        test_scope(temp.path()),
-        vec![record.id.clone()],
-        false,
-        |_record, _fetched_at| unreachable!("local refresh does not fetch URLs"),
-    )
+    let outcome = crate::support::test_env::with_postgres_test_env(temp.path(), || {
+        execute_resolved_with_fetcher(
+            test_scope(temp.path()),
+            vec![record.id.clone()],
+            false,
+            |_record, _fetched_at| unreachable!("local refresh does not fetch URLs"),
+        )
+    })
     .expect("refresh local changed");
 
     assert_eq!(outcome.result.payload["status"], "refreshed");
@@ -513,12 +516,14 @@ fn changed_local_file_carries_compiled_status_forward() {
     .expect("mark compiled");
     fs::write(temp.path().join("artifact.txt"), b"new").expect("change source");
 
-    let outcome = execute_resolved_with_fetcher(
-        test_scope(temp.path()),
-        vec![record.id.clone()],
-        false,
-        |_record, _fetched_at| unreachable!("local refresh does not fetch URLs"),
-    )
+    let outcome = crate::support::test_env::with_postgres_test_env(temp.path(), || {
+        execute_resolved_with_fetcher(
+            test_scope(temp.path()),
+            vec![record.id.clone()],
+            false,
+            |_record, _fetched_at| unreachable!("local refresh does not fetch URLs"),
+        )
+    })
     .expect("refresh local changed");
 
     assert_eq!(outcome.result.payload["status"], "refreshed");

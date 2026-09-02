@@ -336,6 +336,7 @@ fn sync_session_archives_skips_connections_enrichment_when_disabled() {
     fs::create_dir(&wiki_dir).expect("wiki dir");
     let external_id = "bbbbcccc-dddd-eeee-ffff-000011112222";
     let body = "## Summary\n\nLinked [[session-index]] should stay inline only.\n\n## Key Claims\n\n- Connections enrichment is disabled.\n";
+    let mut store = FakeWikiStore::default();
     assert!(
         ConnectionsEnricher::resolve().enrich_body(body).is_some(),
         "fixture must prove enrichment would add a connections section"
@@ -343,7 +344,6 @@ fn sync_session_archives_skips_connections_enrichment_when_disabled() {
     ConnectionsEnricher::reset_resolve_count_for_test();
     write_session_wiki(&wiki_dir, external_id, body);
 
-    let mut store = FakeWikiStore::default();
     let report = sync_session_transcript_archives(
         vault,
         &mut store,
