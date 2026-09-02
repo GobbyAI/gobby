@@ -160,7 +160,7 @@ class TestHandlePlanModeEntry:
             "Always recommend **Lightweight** for bug fixes and maintenance",
             "regardless of breadth, risk, affected subsystems",
             "Recommend **Full** only for complex new features and complex refactors",
-            "decision-complete plan artifact",
+            "conversational, decision-complete plan",
             "**Full:**",
             "**Lightweight:**",
         ):
