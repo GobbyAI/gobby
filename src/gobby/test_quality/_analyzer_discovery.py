@@ -37,6 +37,10 @@ def _discover_files(paths: Sequence[str | Path], *, root: Path) -> _DiscoveryRes
         path = Path(raw_path)
         if not path.is_absolute():
             path = root / path
+        if not path.resolve().is_relative_to(root):
+            warning = _unresolved_path_warning(path, root)
+            warnings[warning.path or str(path)] = warning
+            continue
         if path.is_file() and _is_analyzable_file(path):
             files.add(path.resolve())
             continue
@@ -45,6 +49,7 @@ def _discover_files(paths: Sequence[str | Path], *, root: Path) -> _DiscoveryRes
             warnings[warning.path or str(path)] = warning
             continue
         if path.is_dir() and not _is_excluded_directory(path):
+            path_resolved = False
             for directory, dirnames, filenames in path.walk():
                 dirnames[:] = [
                     dirname
@@ -55,10 +60,16 @@ def _discover_files(paths: Sequence[str | Path], *, root: Path) -> _DiscoveryRes
                     candidate = directory / filename
                     if _is_analyzable_file(candidate):
                         files.add(candidate.resolve())
+                        path_resolved = True
                     elif _is_unsupported_test_file(candidate):
                         warning = _unsupported_language_warning(candidate.resolve(), root)
                         warnings[warning.path or str(candidate)] = warning
-    if not files and not warnings:
+                        path_resolved = True
+            if path_resolved:
+                continue
+        warning = _unresolved_path_warning(path, root)
+        warnings[warning.path or str(path)] = warning
+    if not files and all(warning.code == "UNRESOLVED_PATH" for warning in warnings.values()):
         warnings[""] = AuditWarning(
             code="NO_ANALYZABLE_FILES",
             message="No analyzable test files found for the requested paths.",
@@ -124,4 +135,13 @@ def _unsupported_language_warning(path: Path, root: Path) -> AuditWarning:
         code="UNSUPPORTED_LANGUAGE",
         path=relative_path,
         message=f"Unsupported test language for {relative_path}; audit attempted but unsupported",
+    )
+
+
+def _unresolved_path_warning(path: Path, root: Path) -> AuditWarning:
+    relative_path = _relative_path(path, root)
+    return AuditWarning(
+        code="UNRESOLVED_PATH",
+        path=relative_path,
+        message=f"Requested path could not be analyzed: {relative_path}",
     )

@@ -104,9 +104,11 @@ Manual `/clear` has no marker. Its new session is independent and receives no ha
 1. the caller row for an in-place compact marker;
 2. the caller's direct predecessor for a clear marker.
 
-A successful read atomically removes the pending marker and returns persisted Markdown
-plus required and advisory resume-skill tiers. Subsequent reads are empty. Missing,
-expired, malformed, or manually created boundaries fail open to the same empty result.
+A successful read atomically removes the pending marker and returns persisted Markdown.
+Subsequent reads are empty. Missing, expired, malformed, or manually created boundaries
+fail open to the same empty result. No skill tier rides the handoff: the session-start
+reset empties the loaded-skills ledger and the rule gates demand each skill again at its
+first use.
 The persisted Markdown remains available to UI/API session reads.
 
 No handoff content is injected through provider `additionalContext`; no bounded copy,

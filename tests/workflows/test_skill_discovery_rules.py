@@ -196,7 +196,6 @@ class TestSkillDiscoverySync:
             if effect.type == "set_variable"
         }
         assert set_variables["loaded_skills"] == []
-        assert set_variables["workflow_requested_skills"] == []
         assert "memory_nudge_fired" not in set_variables
 
 
@@ -381,7 +380,6 @@ class TestBrevityRules:
         response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert skill_fetch_directive("brevity") not in (response.context or "")
-        assert "brevity" not in variables.get("workflow_requested_skills", [])
 
     def test_detect_brevity_contrastive_rule_uses_allowed_regex_patterns(self, db, manager) -> None:
         _sync_bundled(db)
@@ -3921,6 +3919,35 @@ class TestCodeIndexNavigationRules:
             assert response.decision == "allow"
 
     @pytest.mark.asyncio
+    async def test_unexpanded_home_search_bypasses_code_index_rule(
+        self, db, tmp_path, monkeypatch
+    ) -> None:
+        _sync_bundled(db)
+        home = tmp_path / "home"
+        repo = tmp_path / "repo"
+        monkeypatch.setenv("HOME", str(home))
+
+        cases = (
+            ('rg -l "pat" "$HOME/Library/Application Support/rtk/tee"', False, "allow"),
+            ("rg foo src", True, "block"),
+        )
+        for command, expected_repo_scope, expected_decision in cases:
+            event = self._normalized_bash_event(
+                command,
+                cwd=str(repo),
+                project_path=str(repo),
+            )
+            assert event.data["canonical_code_navigation_repo_scope"] is expected_repo_scope
+
+            response = await RuleEngine(db).evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=self._variables(loaded=True),
+            )
+
+            assert response.decision == expected_decision
+
+    @pytest.mark.asyncio
     async def test_file_discovery_scope_controls_code_index_rules(
         self, db: HubDatabase, tmp_path: Path
     ) -> None:
@@ -4416,7 +4443,7 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_gcode_navigation_is_allowed_and_sets_turn_flag(self, db) -> None:
+    async def test_gcode_navigation_is_allowed_and_sets_turn_flag(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=True)
         before = self._event(

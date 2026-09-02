@@ -92,8 +92,8 @@ def audit(
             )
 
     zero_file_audit = any(warning.code == "NO_ANALYZABLE_FILES" for warning in report.warnings)
-    audit_failed = fail_on_new and (
-        zero_file_audit or (diff is not None and bool(diff.failing_issues))
+    audit_failed = zero_file_audit or (
+        fail_on_new and diff is not None and bool(diff.failing_issues)
     )
     baseline_write_refused = (
         write_baseline is not None and audit_failed and not allow_failing_baseline

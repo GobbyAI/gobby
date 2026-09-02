@@ -22,6 +22,7 @@ class CloseCriterionVerdict:
     criterion: str
     satisfied: bool
     gap: str | None
+    required_evidence: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -29,6 +30,7 @@ class CloseCriterionVerdict:
             "criterion": self.criterion,
             "satisfied": self.satisfied,
             "gap": self.gap,
+            "required_evidence": self.required_evidence,
         }
 
 
@@ -75,12 +77,18 @@ def parse_close_verdict(payload: object, expected_criteria: Sequence[str]) -> Cl
             gap = _coerce_gap(entry.get("gap"))
             if not satisfied and gap is None:
                 gap = feedback
+        required_evidence = (
+            _coerce_gap(entry.get("required_evidence"))
+            if entry is not None and not satisfied
+            else None
+        )
         criteria.append(
             CloseCriterionVerdict(
                 index=index,
                 criterion=criterion,
                 satisfied=satisfied,
                 gap=gap,
+                required_evidence=required_evidence,
             )
         )
     return CloseVerdict(status=status, criteria=tuple(criteria), feedback=feedback)

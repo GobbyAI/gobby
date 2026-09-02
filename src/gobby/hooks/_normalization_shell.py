@@ -53,6 +53,9 @@ _BENIGN_REDIRECT_TARGETS = frozenset({"/dev/null", "/dev/stdout", "/dev/stderr",
 
 # Characters that strongly imply an inline sed/awk script rather than a file path.
 _SCRIPT_LIKE_CHARS = frozenset({"{", "}", "$", ";", "(", ")"})
+# `$` opening a variable (`$VAR`, `${VAR}`), command substitution (`$(cmd)`),
+# positional parameter (`$1`), or special parameter — anything expanded at runtime.
+_UNEXPANDED_SHELL_REFERENCE = re.compile(r"\$[\w{(@*?#$!-]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -557,6 +560,11 @@ def _looks_path_target(candidate: str) -> bool:
     if any(ch in candidate for ch in _SCRIPT_LIKE_CHARS):
         return False
     return True
+
+
+def _contains_unexpanded_shell_reference(path: str) -> bool:
+    """Return whether ``path`` still contains a runtime shell expansion."""
+    return _UNEXPANDED_SHELL_REFERENCE.search(path) is not None
 
 
 def _has_sed_inplace_option(parts: list[str]) -> bool:

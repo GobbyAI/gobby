@@ -2,8 +2,6 @@
 
 HANDOFF_COMPACT_CONTINUE_VARIABLE = "handoff_compact_continue_pending"
 COMPACT_NOTIFICATION_STARTED_AT_VARIABLE = "compact_notification_started_at"
-COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE = "compact_resume_required_skills"
-COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE = "compact_resume_advisory_skills"
 COMPACT_RESUME_LEASED_TOOLS_VARIABLE = "compact_resume_leased_tools"
 COMPACT_RESUME_LEASED_TOOLS_LIMIT = 8
 COMPACT_HANDOFF_MARKER_VARIABLE = "handoff_source"
@@ -13,32 +11,3 @@ HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS = 1.0
 # follows it; a second Enter after this delay submits the trigger and is a
 # no-op when the first Enter already submitted (empty composer).
 HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS = 1.5
-LOADING_SKILLS_NAME = "loading-skills"
-# Meta-skills excluded from compact resume reload tiers: the per-turn reminder
-# rules and the proxy server instructions re-deliver their guidance every
-# epoch, so a post-compact reload only duplicates context.
-COMPACT_RESUME_EXCLUDED_SKILLS = frozenset({LOADING_SKILLS_NAME, "brevity"})
-# Written by the workflow engine's load_skill effect: the skills the session's
-# active workflow asked for, whether or not the agent got to them yet.
-WORKFLOW_REQUESTED_SKILLS_VARIABLE = "workflow_requested_skills"
-# Compact reload scope comes from current core, claimed-task, and workflow requirements.
-# `loaded_skills` is historical within the context epoch and can retain language skills
-# from already-closed work, so it is reset after compaction without entering the snapshot.
-COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS = (
-    "required_skills",
-    "claimed_task_required_skills",
-    WORKFLOW_REQUESTED_SKILLS_VARIABLE,
-)
-COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS = (
-    "additional_skills",
-    "claimed_task_additional_skills",
-)
-
-SKILL_LIST_VARIABLE_NAMES = frozenset(
-    (
-        *COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS,
-        *COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS,
-        COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
-        COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE,
-    )
-)

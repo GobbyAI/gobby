@@ -24,6 +24,7 @@ from gobby.runner_init.orchestration import (
 )
 from gobby.runner_lifecycle_subsystems import _start_system_automation_loop
 from gobby.telemetry.span_store import GobbySpanExporter
+from gobby.terminals.composer import composer_clear_sequence
 from gobby.wiki.codewiki_dormant import CodewikiCronReconciliation
 from tests.runner_helpers import (
     apply_safe_runner_config_defaults,
@@ -383,7 +384,7 @@ class TestWakeTmuxSenders:
         )
 
         assert runtime.write_log == [
-            ("key", "ctrl_l"),
+            *(("key", key) for key in composer_clear_sequence("claude")),
             ("text", "Message from Gobby daemon: New activity available."),
             ("key", "enter"),
         ]

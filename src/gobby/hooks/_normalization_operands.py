@@ -7,7 +7,11 @@ its operands name filesystem targets; the segment classifier in
 
 import posixpath
 
-from gobby.hooks._normalization_shell import _SHELL_CONTROL_TOKENS, _looks_path_target
+from gobby.hooks._normalization_shell import (
+    _SHELL_CONTROL_TOKENS,
+    _contains_unexpanded_shell_reference,
+    _looks_path_target,
+)
 
 _CURL_SHORT_OPTIONS_WITH_VALUES = frozenset("AbcCdDeEFHKmoPQrTtuwxXYz")
 
@@ -199,6 +203,9 @@ def _git_grep_is_revision_scoped(parts: list[str]) -> bool:
 
 
 def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
+    def is_path_operand(candidate: str) -> bool:
+        return _looks_path_target(candidate) or _contains_unexpanded_shell_reference(candidate)
+
     if cmd in {"rg", "grep"}:
         positional = _shell_positional_args_after(parts, 1)
         pattern_from_option = any(
@@ -206,18 +213,18 @@ def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
             for part in parts[1:]
         )
         candidate_paths = positional if pattern_from_option else positional[1:]
-        return [path for path in candidate_paths if _looks_path_target(path)]
+        return [path for path in candidate_paths if is_path_operand(path)]
 
     if cmd == "git":
         if len(parts) <= 1 or parts[1] != "grep":
             return []
         if "--" in parts:
             separator_index = parts.index("--")
-            return [path for path in parts[separator_index + 1 :] if _looks_path_target(path)]
+            return [path for path in parts[separator_index + 1 :] if is_path_operand(path)]
         if _git_grep_is_revision_scoped(parts):
             return []
         positional = _shell_positional_args_after(parts, 2)
-        return [path for path in positional[1:] if _looks_path_target(path)]
+        return [path for path in positional[1:] if is_path_operand(path)]
 
     if cmd == "find":
         paths: list[str] = []
@@ -228,7 +235,7 @@ def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
                 continue
             if part.startswith("-") or part in {"!", "(", ")"}:
                 break
-            if _looks_path_target(part):
+            if is_path_operand(part):
                 paths.append(part)
         return paths
 
