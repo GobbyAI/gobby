@@ -429,7 +429,9 @@ machine identity, wrapper, and policy files, plus write access only to sibling
 provider auth/config paths remain governed by their dedicated helpers.
 Toolchain executables, resolved interpreter/package targets, and shared caches
 are read-only; a provider or MCP subprocess that needs a writable cache uses
-the per-run cache. No other Gobby-home or shared mutable tool path is allowed.
+the per-run cache. For workspaces with a `.pre-commit-config.yaml`, hook execution
+uses a pre-warmed, writable per-run copy of the operator's pre-commit cache. No
+other Gobby-home or shared mutable tool path is allowed.
 
 Add `GOBBY_HOME/bootstrap.yaml`, `GOBBY_HOME/.secret_kek`,
 `GOBBY_HOME/local_cli_token`, the persistent gcode-runtime root, and

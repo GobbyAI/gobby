@@ -76,7 +76,7 @@ def _runner_process(
         if managed_credentials
         else {}
     )
-    run_paths = prepare_sandbox_run_paths(run_id, env)
+    run_paths = prepare_sandbox_run_paths(run_id, env, workspace=managed_execution_root())
     launch = SandboxLaunch(
         backend="srt",
         enforced=True,

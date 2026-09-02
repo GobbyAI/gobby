@@ -234,6 +234,11 @@ class GrantService:
     context: DeploymentGrantContext
     clock: Callable[[], int] | None = None
     revocations: GrantRevocationStore = field(default_factory=GrantRevocationStore)
+    _expected_schema_identity: SchemaIdentity = field(
+        default_factory=_schema_identity,
+        init=False,
+        repr=False,
+    )
 
     def issue(
         self,
@@ -257,7 +262,7 @@ class GrantService:
                 token=self.context.token,
                 fencing_epoch=self.context.fencing_epoch,
             ),
-            schema_identity=_schema_identity(),
+            schema_identity=self._expected_schema_identity,
             principal=principal,
             capabilities=capabilities_from_snapshot(snapshot, postgres),
             issued_at=issued_at,
@@ -278,7 +283,7 @@ class GrantService:
             raise InvalidGrantSignature("grant payload checksum is invalid")
         if grant.deployment.token != self.context.token:
             raise WrongDeploymentGrant("grant deployment token does not match")
-        if grant.schema_identity != _schema_identity():
+        if grant.schema_identity != self._expected_schema_identity:
             raise WrongSchemaGrant("grant schema identity does not match")
         if grant.api_contract != API_CONTRACT or grant.version != GRANT_VERSION:
             raise WrongApiContractGrant("grant API contract is not supported")

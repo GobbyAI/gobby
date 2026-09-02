@@ -218,7 +218,7 @@ suggestions:
       One short paragraph: the concrete change the planner would fold in, including
       any exact mechanism mandated by the plan or a cited contract.
     impact: high                 # low | med | high
-    effort: S                    # S | M | L
+    effort: small                # small | medium | large
     risk: low                    # low | med | high
     severity: opportunity        # ALWAYS opportunity — never blocking
 ```
@@ -235,7 +235,8 @@ Field semantics:
 - **`location`** — the phase/deliverable the suggestion targets, in the same
   `P<N> / § <id>` form the adversary uses, so the planner can map it to a
   section.
-- **`impact`** `low|med|high`, **`effort`** `S|M|L`, **`risk`** `low|med|high` —
+- **`impact`** `low|med|high`, **`effort`** `small|medium|large`, **`risk`**
+  `low|med|high` —
   drive the ranking and the human's accept/decline decision.
 - **`severity`** — always the literal `opportunity`. An enhancer suggestion is
   never a blocker; blocking belongs to the adversary alone.

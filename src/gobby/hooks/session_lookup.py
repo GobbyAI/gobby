@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from gobby.hooks.events import HookEvent, HookEventType
+from gobby.hooks.events import HookEvent, HookEventType, require_hook_machine_id
 from gobby.hooks.project_context import apply_project_id_to_event, resolve_hook_project_context
 from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.terminal_context import (
@@ -78,14 +78,12 @@ class SessionLookupService:
         session_manager: HookSessionManager,
         session_coordinator: SessionCoordinator,
         session_task_manager: SessionTaskManager,
-        get_machine_id: Callable[[], str | None],
         resolve_project_id: Callable[[str | None, str | None], str],
         logger: logging.Logger,
     ):
         self._session_manager = session_manager
         self._session_coordinator = session_coordinator
         self._session_task_manager = session_task_manager
-        self._get_machine_id = get_machine_id
         self._resolve_project_id = resolve_project_id
         self._logger = logger
 
@@ -276,7 +274,7 @@ class SessionLookupService:
 
     def _resolve_session_id(self, external_id: str, event: HookEvent) -> str | None:
         """Look up or create platform session ID for the given external_id."""
-        machine_id = event.machine_id or self._get_machine_id()
+        machine_id = require_hook_machine_id(event)
         project_id = event.project_id
         platform_session_id = self._session_manager.get_session_id(
             external_id,

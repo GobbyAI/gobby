@@ -197,6 +197,106 @@ def test_validation_run_names_class_qualified_pytest_node_id() -> None:
     )
 
 
+def test_rust_validation_runs_match_unit_test_module_path() -> None:
+    symbol = "project_name_lookup_deduplicates_repeated_local_checkout"
+    test = AcceptanceTest(
+        reference=f"crates/gcode/src/config/tests.rs::{symbol}",
+        path="crates/gcode/src/config/tests.rs",
+        symbol=symbol,
+        body=f"fn {symbol}() {{}}",
+    )
+
+    assert validation_run_covers_test(
+        "cargo nextest run -p gobby-code",
+        f"    PASS [0.004s] gobby-code config::tests::{symbol}",
+        test,
+    )
+    assert validation_run_names_test(
+        "cargo nextest run -p gobby-code",
+        f"    FAIL [0.004s] gobby-code config::tests::{symbol}\npanicked at 'failed'",
+        test,
+    )
+
+
+def test_rust_validation_runs_match_inline_tests_module() -> None:
+    test = AcceptanceTest(
+        reference="crates/gcode/src/cli_error.rs::reports_error",
+        path="crates/gcode/src/cli_error.rs",
+        symbol="reports_error",
+        body="fn reports_error() {}",
+    )
+
+    assert validation_run_covers_test(
+        "cargo test -p gobby-code reports_error",
+        "test cli_error::tests::reports_error ... ok",
+        test,
+    )
+    assert validation_run_names_test(
+        "cargo test -p gobby-code reports_error",
+        "test cli_error::tests::reports_error ... FAILED\npanicked at 'failed'",
+        test,
+    )
+
+
+def test_rust_validation_runs_match_integration_test_stem() -> None:
+    test = AcceptanceTest(
+        reference="crates/gterminal/tests/frame_protocol.rs::frame_round_trips",
+        path="crates/gterminal/tests/frame_protocol.rs",
+        symbol="frame_round_trips",
+        body="fn frame_round_trips() {}",
+    )
+
+    assert validation_run_covers_test(
+        "cargo nextest run -p gobby-terminal",
+        "    PASS [0.004s] gobby-terminal::frame_protocol frame_round_trips",
+        test,
+    )
+    assert validation_run_names_test(
+        "cargo nextest run -p gobby-terminal",
+        "    FAIL [0.004s] gobby-terminal::frame_protocol frame_round_trips\npanicked at 'failed'",
+        test,
+    )
+
+
+def test_rust_validation_runs_reject_different_symbol() -> None:
+    test = AcceptanceTest(
+        reference="crates/gcode/src/config/tests.rs::expected_symbol",
+        path="crates/gcode/src/config/tests.rs",
+        symbol="expected_symbol",
+        body="fn expected_symbol() {}",
+    )
+    output = "    PASS [0.004s] gobby-code config::tests::different_symbol"
+
+    assert not validation_run_covers_test("cargo nextest run -p gobby-code", output, test)
+    assert not validation_run_names_test("cargo nextest run -p gobby-code", output, test)
+
+
+def test_rust_validation_runs_reject_inconsistent_module_prefix() -> None:
+    test = AcceptanceTest(
+        reference="crates/gcode/src/config/tests.rs::expected_symbol",
+        path="crates/gcode/src/config/tests.rs",
+        symbol="expected_symbol",
+        body="fn expected_symbol() {}",
+    )
+    output = "    FAIL [0.004s] gobby-code other_mod::tests::expected_symbol"
+
+    assert not validation_run_covers_test("cargo nextest run -p gobby-code", output, test)
+    assert not validation_run_names_test("cargo nextest run -p gobby-code", output, test)
+
+
+def test_rust_validation_runs_require_symbol_word_boundary() -> None:
+    test = AcceptanceTest(
+        reference="crates/gcode/src/config/tests.rs::expected_symbol",
+        path="crates/gcode/src/config/tests.rs",
+        symbol="expected_symbol",
+        body="fn expected_symbol() {}",
+    )
+    output = "    PASS [0.004s] gobby-code config::tests::expected_symbol_extended"
+
+    assert not validation_run_covers_test("cargo nextest run -p gobby-code", output, test)
+    assert not validation_run_names_test("cargo nextest run -p gobby-code", output, test)
+
+
 def test_test_body_resolution_requests_gcode_json(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 

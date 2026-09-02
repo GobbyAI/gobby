@@ -48,8 +48,77 @@ export interface McpToolSchema {
   inputSchema: Record<string, unknown> | null;
 }
 
+export interface McpTemplateParam {
+  name: string;
+  required: boolean;
+  secret: boolean;
+  env: string | null;
+  arg_flag: string | null;
+  choices: string[];
+  description: string | null;
+}
+
+export interface McpTemplate {
+  name: string;
+  description: string;
+  owner: string | null;
+  scope: "global" | "project";
+  params: McpTemplateParam[];
+}
+
 function getBaseUrl(): string {
   return "";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseMcpTemplateParam(value: unknown): McpTemplateParam | null {
+  if (!isRecord(value) || typeof value.name !== "string") return null;
+  return {
+    name: value.name,
+    required: value.required === true,
+    secret: value.secret === true,
+    env: typeof value.env === "string" ? value.env : null,
+    arg_flag: typeof value.arg_flag === "string" ? value.arg_flag : null,
+    choices: Array.isArray(value.choices)
+      ? value.choices.filter(
+          (choice): choice is string => typeof choice === "string",
+        )
+      : [],
+    description:
+      typeof value.description === "string" ? value.description : null,
+  };
+}
+
+function parseMcpTemplates(value: unknown): McpTemplate[] {
+  if (!isRecord(value) || !Array.isArray(value.templates)) return [];
+  return value.templates.flatMap((item) => {
+    if (
+      !isRecord(item) ||
+      typeof item.name !== "string" ||
+      (item.scope !== "global" && item.scope !== "project")
+    ) {
+      return [];
+    }
+    const params = Array.isArray(item.params)
+      ? item.params.flatMap((param) => {
+          const parsed = parseMcpTemplateParam(param);
+          return parsed ? [parsed] : [];
+        })
+      : [];
+    return [
+      {
+        name: item.name,
+        description:
+          typeof item.description === "string" ? item.description : "",
+        owner: typeof item.owner === "string" ? item.owner : null,
+        scope: item.scope,
+        params,
+      },
+    ];
+  });
 }
 
 export function useMcp() {
@@ -58,9 +127,19 @@ export function useMcp() {
     {},
   );
   const [status, setStatus] = useState<McpStatus | null>(null);
+  const [templates, setTemplates] = useState<McpTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchText, setSearchText] = useState("");
   const mcpDebounceRef = useRef<number | null>(null);
+  const templatesLoadedKeyRef = useRef<string | null>(null);
+  const templatesRequestRef = useRef<{
+    key: string;
+    requestId: number;
+    promise: Promise<void>;
+  } | null>(null);
+  const templatesRequestIdRef = useRef(0);
 
   const fetchServers = useCallback(async () => {
     try {
@@ -101,6 +180,53 @@ export function useMcp() {
     } catch (e) {
       console.error("Failed to fetch MCP status:", e);
     }
+  }, []);
+
+  const fetchTemplates = useCallback(async (projectId?: string) => {
+    const key = projectId || "global";
+    if (templatesLoadedKeyRef.current === key) return;
+    if (templatesRequestRef.current?.key === key) {
+      return templatesRequestRef.current.promise;
+    }
+
+    const requestId = templatesRequestIdRef.current + 1;
+    templatesRequestIdRef.current = requestId;
+    setTemplatesLoading(true);
+    setTemplatesError(null);
+
+    const request = (async () => {
+      try {
+        const params = new URLSearchParams({
+          scope: projectId ? "project" : "global",
+        });
+        if (projectId) params.set("project_id", projectId);
+        const response = await fetch(
+          `${getBaseUrl()}/api/mcp/templates?${params.toString()}`,
+        );
+        if (!response.ok) {
+          throw new Error(
+            `Template request failed with status ${response.status}`,
+          );
+        }
+        const nextTemplates = parseMcpTemplates(await response.json());
+        if (templatesRequestIdRef.current !== requestId) return;
+        setTemplates(nextTemplates);
+        templatesLoadedKeyRef.current = key;
+      } catch (error: unknown) {
+        if (templatesRequestIdRef.current !== requestId) return;
+        templatesLoadedKeyRef.current = null;
+        setTemplatesError("MCP templates could not be loaded. Try again.");
+        console.error("Failed to fetch MCP templates:", error);
+      } finally {
+        if (templatesRequestIdRef.current === requestId) {
+          setTemplatesLoading(false);
+          templatesRequestRef.current = null;
+        }
+      }
+    })();
+
+    templatesRequestRef.current = { key, requestId, promise: request };
+    return request;
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -351,11 +477,15 @@ export function useMcp() {
     servers,
     toolsByServer,
     status,
+    templates,
+    templatesLoading,
+    templatesError,
     isLoading,
     totalToolCount,
     fetchServers,
     fetchTools,
     fetchStatus,
+    fetchTemplates,
     refreshAll,
     addServer,
     importServer,

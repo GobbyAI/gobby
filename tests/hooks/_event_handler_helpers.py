@@ -7,6 +7,8 @@ from unittest.mock import MagicMock
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 
+TEST_MACHINE_ID = "unknown-machine"
+
 
 def empty_database_mock() -> MagicMock:
     """Mock hub database whose reads behave like an empty database.
@@ -30,6 +32,7 @@ def make_event(
     source: str = "claude",
     data: dict | None = None,
     metadata: dict | None = None,
+    machine_id: str | None = TEST_MACHINE_ID,
 ) -> HookEvent:
     """Create a HookEvent with default test fields."""
     return HookEvent(
@@ -39,4 +42,5 @@ def make_event(
         timestamp=datetime.now(UTC),
         data=data or {},
         metadata=metadata or {},
+        machine_id=machine_id,
     )

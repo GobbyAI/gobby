@@ -792,6 +792,12 @@ class TestSpawnAgentStepVariables:
         assert instance.variables["task_claimed"] is False
         assert initial_variables is not None
         assert initial_variables["assigned_task_id"] == f"#{task.seq_num}"
+        assert initial_variables["parent_session_id"] == spawn_request.parent_session_id
+        from gobby.storage.sessions import SessionManager
+
+        parent_session = SessionManager(db).get(spawn_request.parent_session_id)
+        assert parent_session is not None
+        assert initial_variables["parent_session_ref"] == f"#{parent_session.seq_num}"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])
@@ -808,7 +814,7 @@ class TestSpawnAgentStepVariables:
             task_manager,
             task,
             instance,
-            _spawn_request,
+            spawn_request,
         ) = await self._spawn_bundled_developer_agent(
             isolated_checkout_factory=isolated_checkout_factory,
             db=db,
@@ -830,6 +836,10 @@ class TestSpawnAgentStepVariables:
         assert instance.variables["required_skills_loaded"] is False
         assert instance.variables["additional_skills"] == []
         assert instance.variables["additional_skills_loaded"] is True
+        assert spawn_request.initial_variables is not None
+        assert (
+            spawn_request.initial_variables["parent_session_id"] == spawn_request.parent_session_id
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])

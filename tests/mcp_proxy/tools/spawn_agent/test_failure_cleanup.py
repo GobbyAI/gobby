@@ -100,7 +100,7 @@ async def _start_run_or_cleanup(runner: SimpleNamespace) -> dict[str, object] | 
         task_manager=None,
         child_session_id="child-1",
         pid=4242,
-        tmux_session_name="tmux-1",
+        tmux_session_name="spawn-session",
         tmux_socket_name="gobby",
         tmux_socket_path=None,
     )
@@ -153,7 +153,7 @@ async def test_lost_cas_with_non_running_run_cleans_up_and_reports_error() -> No
         "task_manager": None,
         "child_session_id": "child-1",
         "pid": 4242,
-        "tmux_session_name": "tmux-1",
+        "tmux_session_name": "spawn-session",
         "tmux_socket_name": "gobby",
         "tmux_socket_path": None,
     }
@@ -177,6 +177,9 @@ async def test_start_raising_cleans_up_and_reports_error() -> None:
     assert cleanup.await_args.kwargs["pid"] == 4242
     assert cleanup.await_args.kwargs["tmux_session_name"] == "tmux-1"
     runner.run_storage.get.assert_not_called()
+    assert cleanup.await_args is not None
+    assert cleanup.await_args.kwargs["pid"] == 4242
+    assert cleanup.await_args.kwargs["tmux_session_name"] == "spawn-session"
 
 
 @pytest.mark.asyncio

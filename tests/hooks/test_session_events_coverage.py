@@ -19,6 +19,8 @@ from ._event_handler_helpers import empty_database_mock
 
 pytestmark = pytest.mark.unit
 
+TEST_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -32,6 +34,7 @@ def _make_event(
     data: dict | None = None,
     metadata: dict | None = None,
     task_id: str | None = None,
+    machine_id: str | None = TEST_MACHINE_ID,
 ) -> HookEvent:
     return HookEvent(
         event_type=event_type,
@@ -41,6 +44,7 @@ def _make_event(
         data=data or {},
         metadata=metadata or {},
         task_id=task_id,
+        machine_id=machine_id,
     )
 
 
@@ -178,7 +182,7 @@ class _TestHandler(SessionEventHandlerMixin):
         self._session_task_manager = None
         self._session_message_processors: dict[str, Any] = {}
         self._dispatch_session_summaries_fn = None
-        self._get_machine_id = MagicMock(return_value="21000000-0000-4000-8000-000000000001")
+        self._get_machine_id = MagicMock(return_value=TEST_MACHINE_ID)
         self._resolve_project_id = MagicMock(return_value="proj-1")
         self._handler_map = {}
 

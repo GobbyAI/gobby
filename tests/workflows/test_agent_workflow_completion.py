@@ -31,6 +31,8 @@ pytestmark = pytest.mark.unit
 # Session/project/instance id columns are native uuid in PostgreSQL; synthetic
 # ids like AGENT_SESSION_ID would fail with `invalid input syntax for type uuid`.
 AGENT_SESSION_ID = "11111111-1111-4111-8111-111111111111"
+PARENT_SESSION_UUID = "parent-session-uuid"
+PARENT_SESSION_REF = "#4242"
 PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
@@ -926,3 +928,110 @@ class TestAgentWorkflowCompletion:
         assert instance.current_step == "terminate"
         assert instance.variables["implementation_complete"] is True
         assert variables["step_workflow_complete"] is True
+
+    @pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+    @pytest.mark.parametrize("target_id", (PARENT_SESSION_UUID, PARENT_SESSION_REF))
+    @pytest.mark.asyncio
+    async def test_developer_task_blocker_handoff_to_parent_terminates(
+        self,
+        db: HubDatabase,
+        agent_name: str,
+        target_id: str,
+    ) -> None:
+        instance_manager = _register_bundled_agent_workflow(
+            db,
+            agent_name=agent_name,
+            current_step="implement",
+        )
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {
+            "parent_session_id": PARENT_SESSION_UUID,
+            "parent_session_ref": PARENT_SESSION_REF,
+        }
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-agents",
+                mcp_tool="send_message",
+                tool_arguments={
+                    "target": "session",
+                    "target_id": target_id,
+                    "message_type": "task_blocker",
+                    "content": "A daemon restart remains for the coordinator.",
+                },
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+        assert instance is not None
+        assert instance.current_step == "terminate"
+        assert instance.variables["blocker_handed_off"] is True
+        assert variables["step_workflow_complete"] is True
+
+    @pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+    @pytest.mark.asyncio
+    async def test_developer_non_blocker_messages_do_not_terminate(
+        self,
+        db: HubDatabase,
+        agent_name: str,
+    ) -> None:
+        instance_manager = _register_bundled_agent_workflow(
+            db,
+            agent_name=agent_name,
+            current_step="implement",
+        )
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {
+            "parent_session_id": PARENT_SESSION_UUID,
+            "parent_session_ref": PARENT_SESSION_REF,
+        }
+        non_blocker_arguments: tuple[dict[str, object], ...] = (
+            {
+                "target": "session",
+                "target_id": PARENT_SESSION_UUID,
+                "message_type": "message",
+                "content": "Implementation is progressing.",
+            },
+            {
+                "target": "session",
+                "target_id": "other-session-id",
+                "message_type": "task_blocker",
+                "content": "This blocker is addressed to another session.",
+            },
+            {
+                "target": "session",
+                "target_id": "#4243",
+                "message_type": "task_blocker",
+                "content": "This blocker is addressed to another session ref.",
+            },
+            {
+                "target": "agent",
+                "target_id": PARENT_SESSION_UUID,
+                "message_type": "task_blocker",
+                "content": "This blocker uses the wrong target type.",
+            },
+            {
+                "target": "session",
+                "message_type": "task_blocker",
+                "content": "This blocker names no target session.",
+            },
+        )
+
+        for tool_arguments in non_blocker_arguments:
+            await engine.evaluate(
+                _after_tool_event(
+                    mcp_server="gobby-agents",
+                    mcp_tool="send_message",
+                    tool_arguments=tool_arguments,
+                ),
+                session_id=AGENT_SESSION_ID,
+                variables=variables,
+            )
+
+            instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+            assert instance is not None
+            assert instance.current_step == "implement"
+            assert instance.variables["blocker_handed_off"] is False
+            assert "step_workflow_complete" not in variables

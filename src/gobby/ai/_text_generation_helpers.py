@@ -7,6 +7,8 @@ import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
+import jsonschema
+
 from gobby.ai._text_generation_contracts import TextGenerationRequest
 from gobby.config.feature_base import parse_feature_candidate
 
@@ -126,6 +128,21 @@ def _validate_text_generation_output(request: TextGenerationRequest, text: str) 
         raise _InvalidTextGenerationOutputError(
             f"text generation output failed validation: {reason}"
         )
+
+
+def _validate_json_generation_output(
+    request: TextGenerationRequest, payload: dict[str, Any]
+) -> None:
+    if request.json_schema is None:
+        return
+
+    try:
+        jsonschema.validate(payload, request.json_schema)
+    except jsonschema.ValidationError as exc:
+        reason = _bounded_output_validation_reason(exc.message)
+        raise _InvalidTextGenerationOutputError(
+            f"JSON generation output failed schema validation: {reason}"
+        ) from exc
 
 
 def _bounded_output_validation_reason(reason: str) -> str:
