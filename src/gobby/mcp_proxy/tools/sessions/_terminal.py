@@ -255,7 +255,7 @@ async def _send_terminal_compaction_command(
     observe_interrupt: Callable[[], bool | None] | None = None,
     settle_seconds: float | None = None,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
-    """Persist continuation state, confirm interruption, clear, verify, then compact."""
+    """Persist continuation state, confirm interruption, drain the composer, then compact."""
     return await _send_terminal_compaction_command_impl(
         pane,
         command,
