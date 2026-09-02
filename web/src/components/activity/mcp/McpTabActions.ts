@@ -1,4 +1,10 @@
-import type { McpServer } from "../../../hooks/useMcp";
+import type {
+  McpServer,
+  McpTemplate,
+  McpTemplateParam,
+} from "../../../hooks/useMcp";
+
+export type McpServerScope = "project" | "global";
 
 export interface McpServerDraft {
   name: string;
@@ -9,6 +15,9 @@ export interface McpServerDraft {
   args: string[];
   env: Record<string, string>;
   headers: Record<string, string>;
+  template: string;
+  values: Record<string, string>;
+  scope: McpServerScope;
   project_id: string;
   enabled: boolean;
   requires_oauth: boolean;
@@ -30,6 +39,40 @@ interface EditMcpServerSave {
 
 export type SaveMcpServerDraftOptions = CreateMcpServerSave | EditMcpServerSave;
 
+const TEMPLATE_ERROR_KEY = "$template";
+const SECRET_REFERENCE_PATTERN = /^\$secret:[A-Za-z_][A-Za-z0-9_.-]*$/;
+
+function templateParamLabel(param: McpTemplateParam): string {
+  return param.description?.trim() || param.name;
+}
+
+export function validateMcpTemplateSelection(
+  template: McpTemplate | undefined,
+  selection: Pick<McpServerDraft, "template" | "values">,
+): Record<string, string> {
+  if (!selection.template || !template) {
+    return { [TEMPLATE_ERROR_KEY]: "Choose an MCP template." };
+  }
+
+  const errors: Record<string, string> = {};
+  for (const param of template.params) {
+    const value = selection.values[param.name]?.trim() ?? "";
+    const label = templateParamLabel(param);
+    if (param.required && !value) {
+      errors[param.name] = `${label} is required.`;
+      continue;
+    }
+    if (value && param.secret && !SECRET_REFERENCE_PATTERN.test(value)) {
+      errors[param.name] = "Use a $secret:NAME reference.";
+      continue;
+    }
+    if (value && param.choices.length > 0 && !param.choices.includes(value)) {
+      errors[param.name] = `Choose a valid ${label.toLowerCase()}.`;
+    }
+  }
+  return errors;
+}
+
 function recordOrEmpty(
   value: Record<string, string> | null | undefined,
 ): Record<string, string> {
@@ -39,6 +82,8 @@ function recordOrEmpty(
 export function createMcpServerDraft(
   overrides: Partial<McpServerDraft> = {},
 ): McpServerDraft {
+  const scope =
+    overrides.scope ?? (overrides.project_id ? "project" : "global");
   return {
     name: "",
     description: "",
@@ -48,6 +93,9 @@ export function createMcpServerDraft(
     args: [],
     env: {},
     headers: {},
+    template: "",
+    values: {},
+    scope,
     project_id: "",
     enabled: true,
     requires_oauth: false,
@@ -100,6 +148,16 @@ export async function saveMcpServerDraft(
   options: SaveMcpServerDraftOptions,
 ): Promise<boolean> {
   if (options.mode === "create") {
+    if (options.draft.template) {
+      const { name, template, values, scope, project_id } = options.draft;
+      return sendMcpServerRequest("/api/mcp/servers", "POST", {
+        name,
+        template,
+        values,
+        scope,
+        project_id,
+      });
+    }
     return sendMcpServerRequest("/api/mcp/servers", "POST", options.draft);
   }
 

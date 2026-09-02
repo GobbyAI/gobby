@@ -243,6 +243,7 @@ class TestHookManagerHandle:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={},
+            machine_id=LOCAL_MACHINE_ID,
         )
 
         # Mock the event handlers to return None for any event type
@@ -1172,6 +1173,29 @@ class TestHookManagerBlockedObservability:
 
 class TestHookManagerHandlerErrors:
     """Tests for handler error handling."""
+
+    @pytest.mark.parametrize(
+        "event_type",
+        [HookEventType.SESSION_START, HookEventType.BEFORE_TOOL],
+    )
+    def test_handle_rejects_missing_hook_machine_id(
+        self,
+        hook_manager_with_mocks: HookManager,
+        temp_dir: Path,
+        event_type: HookEventType,
+    ) -> None:
+        event = HookEvent(
+            event_type=event_type,
+            session_id="missing-machine-id",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"cwd": str(temp_dir), "tool_name": "bash"},
+        )
+
+        response = hook_manager_with_mocks.handle(event)
+
+        assert response.decision == "block"
+        assert response.reason == "Hook envelope is missing required machine_id"
 
     def test_handle_handler_exception_fails_open(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
