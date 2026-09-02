@@ -149,6 +149,10 @@ async def finalize_executed_spawn(
             cleanup_isolation=cleanup_isolation_on_failure,
             task_manager=task_manager,
             child_session_id=spawn_result.child_session_id,
+            pid=spawn_result.pid,
+            tmux_session_name=tmux_session_name,
+            tmux_socket_name=tmux_socket_name,
+            tmux_socket_path=tmux_socket_path,
         )
         if start_error is not None:
             return start_error
