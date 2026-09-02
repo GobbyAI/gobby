@@ -471,6 +471,25 @@ class TestSyncBundledPipelines:
         assert renderer.should_run_step(fail_run, completed_context) is False
         assert renderer.should_run_step(validate_run, completed_context) is True
 
+    @pytest.mark.integration
+    def test_expand_task_coverage_is_opt_in(self) -> None:
+        """Render the coverage step only when interactive callers opt in."""
+        from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
+
+        path = get_bundled_pipelines_path() / "expand-task.yaml"
+        pipeline = PipelineDefinition(**yaml.safe_load(path.read_text(encoding="utf-8")))
+        renderer = StepRenderer(strict_conditions=True)
+        coverage = pipeline.get_step("coverage_check")
+
+        assert pipeline.inputs["run_coverage"]["default"] is False
+        assert coverage is not None
+        assert coverage.mcp is not None
+        assert coverage.mcp.server == "gobby-tasks-ops"
+        assert coverage.mcp.tool == "run_expansion_qa_coverage"
+        assert coverage.mcp.arguments == {"run_id": "${{ steps.start_run.output.run_id }}"}
+        assert renderer.should_run_step(coverage, {"inputs": {"run_coverage": False}}) is False
+        assert renderer.should_run_step(coverage, {"inputs": {"run_coverage": True}}) is True
+
     def test_missing_path_returns_error(self, db: HubDatabase) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 

@@ -10,6 +10,7 @@ description: |
     3. Inspect the stored run result
     4. Fail immediately when the run failed
     5. Run deterministic validation on the compiled/applied output
+    6. Optionally run plan coverage for interactive expansion
 
   The expansion run itself owns compile/apply state. The task tree is the only
   state written back onto tasks.
@@ -26,6 +27,10 @@ inputs:
   provider: "claude"
   model: null
   wait_timeout: 600
+  run_coverage:
+    type: boolean
+    default: false
+    description: "Run and persist plan coverage after expansion validation"
 
 outputs:
   run_id: "${{ steps.start_run.output.run_id }}"
@@ -81,3 +86,11 @@ steps:
       tool: fail_pipeline
       arguments:
         message: "Expansion validation failed: ${{ steps.validate_run.output }}"
+
+  - id: coverage_check
+    condition: "${{ inputs.run_coverage }}"
+    mcp:
+      server: gobby-tasks-ops
+      tool: run_expansion_qa_coverage
+      arguments:
+        run_id: "${{ steps.start_run.output.run_id }}"

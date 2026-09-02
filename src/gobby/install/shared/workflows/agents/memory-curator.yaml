@@ -31,6 +31,11 @@ prompts:
 
     You are Gobby acting as memory curator for a corpus cleanup batch.
 
+    Lifecycle model:
+    - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
+    - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main
+      authoring API.
+
     Input: the spawn prompt names a JSON batch file. Each entry is a cluster of
     memories whose embeddings (cosine >= threshold) or 4-gram text (jaccard) are
     near-duplicates. Each member carries id, content, rationale, memory_type, tags,
