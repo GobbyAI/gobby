@@ -138,7 +138,7 @@ def expire_stale_sessions(
             f"""
             UPDATE sessions
             SET status = 'expired', updated_at = CURRENT_TIMESTAMP
-            WHERE status IN ('active', 'paused', 'handoff_ready')
+            WHERE status IN ('active', 'paused', 'awaiting_handoff')
             AND source != %s
             AND NOT ({tmux_target_sql})
             AND (
@@ -170,16 +170,16 @@ def expire_orphaned_handoff_sessions(
     status_notifier: SessionStatusTransitionCallback | None = None,
 ) -> int:
     """
-    Expire handoff_ready sessions whose compact restart never arrived.
+    Expire awaiting_handoff sessions whose compact restart never arrived.
 
-    Compaction is an in-place handoff: the handoff_ready row IS the live
+    Compaction is an in-place handoff: the awaiting_handoff row IS the live
     session, so this sweep only flips status. Typed instances are kept for
     revival; prune_stale_compact_workflow_instances reclaims them once the
     revival horizon has passed.
 
     Args:
         db: Database connection.
-        timeout_minutes: Minutes before orphaned handoff_ready sessions expire.
+        timeout_minutes: Minutes before orphaned awaiting_handoff sessions expire.
 
     Returns:
         Number of sessions expired.
@@ -190,7 +190,7 @@ def expire_orphaned_handoff_sessions(
             f"""
             UPDATE sessions
             SET status = 'expired', updated_at = CURRENT_TIMESTAMP
-            WHERE status = 'handoff_ready'
+            WHERE status = 'awaiting_handoff'
               AND source != %s
               AND {updated_stale_sql}
             RETURNING *
@@ -202,7 +202,7 @@ def expire_orphaned_handoff_sessions(
                 status_notifier(SessionStatusTransition.from_session(Session.from_row(row)))
     count = len(rows)
     if count > 0:
-        logger.info("Expired %s orphaned handoff_ready sessions (>%sm)", count, timeout_minutes)
+        logger.info("Expired %s orphaned awaiting_handoff sessions (>%sm)", count, timeout_minutes)
     return count
 
 

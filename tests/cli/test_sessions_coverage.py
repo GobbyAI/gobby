@@ -126,10 +126,10 @@ class TestListSessionsEdgeCases:
         assert result.exit_code == 0
         assert "(no title)" in result.output
 
-    def test_list_handoff_ready_icon(
+    def test_list_awaiting_handoff_icon(
         self, runner: CliRunner, mock_session_manager: MagicMock
     ) -> None:
-        session = _make_session(status="handoff_ready")
+        session = _make_session(status="awaiting_handoff")
         mock_session_manager.list.return_value = [session]
         result = runner.invoke(sessions, ["list"])
         assert result.exit_code == 0

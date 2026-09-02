@@ -19,6 +19,7 @@ from gobby.terminals.host_client import (
 )
 from gobby.terminals.host_protocol import HostListRow, control_socket_path, frames_socket_path
 from gobby.terminals.host_reconcile import reconcile_host_inventory
+from gobby.terminals.key_bytes import encode_named_key
 from gobby.terminals.runtime import (
     MAX_INPUT_PAYLOAD_BYTES,
     CommitSpawnRefusedError,
@@ -327,7 +328,8 @@ class NativeTerminalRuntime:
         )
 
     async def write_key(self, terminal: Terminal, key: NamedKey) -> WriteOutcome:
-        return await self._write(terminal, kind="key", data=key.encode("utf-8"))
+        # gterm passes unknown key names through as literal bytes, so encode here.
+        return await self._write(terminal, kind="key", data=encode_named_key(key))
 
     async def write_paste(self, terminal: Terminal, text: str) -> WriteOutcome:
         encoded = text.encode("utf-8")

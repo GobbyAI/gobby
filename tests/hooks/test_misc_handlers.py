@@ -318,7 +318,7 @@ class TestPreCompactHandlerEdgeCases:
     """Test PRE_COMPACT handler edge cases."""
 
     def test_pre_compact_updates_session_status(self, mock_dependencies: dict) -> None:
-        """Test PRE_COMPACT updates session status to handoff_ready."""
+        """Test PRE_COMPACT updates session status to awaiting_handoff."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.PRE_COMPACT,
@@ -329,7 +329,7 @@ class TestPreCompactHandlerEdgeCases:
         handlers.handle_pre_compact(event)
 
         mock_dependencies["session_manager"].update_session_status.assert_called_once_with(
-            "sess-123", "handoff_ready"
+            "sess-123", "awaiting_handoff"
         )
         assert mock_dependencies["session_manager"].update_session_status.call_count == 1
         assert mock_dependencies["session_manager"].update_session_status.call_args is not None

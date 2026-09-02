@@ -21,8 +21,6 @@ from gobby.sessions.compact_continuation import (
     COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
     WORKFLOW_REQUESTED_SKILLS_VARIABLE,
-    CodexRolloutCursor,
-    CodexRolloutObservationError,
     _continue_after_codex_compaction_ready,
     _merge_session_variable,
     _pop_session_variable,
@@ -35,6 +33,7 @@ from gobby.sessions.compact_continuation import (
     schedule_handoff_compact_continuation,
 )
 from gobby.sessions.handoff import build_handoff_continue_prompt
+from gobby.sessions.transcript_cursor import CodexRolloutCursor, TranscriptObservationError
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleEffect
@@ -68,6 +67,11 @@ def session_db(hub_db: HubDatabase) -> HubDatabase:
         ),
     )
     return hub_db
+
+
+# Gobby clears the composer before typing the pull prompt; Codex has no whole-buffer
+# clear, so the drain sends kill-line/delete keys in passes.
+_CODEX_DRAIN = [("%12", key, False) for key in ("C-u", "C-k", "BSpace", "DC")] * 8
 
 
 def _append_bytes(path: Path, content: bytes) -> None:
@@ -105,7 +109,7 @@ def test_codex_rollout_cursor_rejects_replaced_transcript(tmp_path: Path) -> Non
     rollout.rename(tmp_path / "original-rollout.jsonl")
     rollout.write_bytes(TURN_ABORTED_RECORD)
 
-    with pytest.raises(CodexRolloutObservationError, match="replaced"):
+    with pytest.raises(TranscriptObservationError, match="replaced"):
         cursor.saw_fresh_turn_aborted()
 
 
@@ -115,7 +119,7 @@ def test_codex_rollout_cursor_rejects_truncated_transcript(tmp_path: Path) -> No
     cursor = CodexRolloutCursor.at_eof(rollout)
     rollout.write_bytes(b"")
 
-    with pytest.raises(CodexRolloutObservationError, match="truncated"):
+    with pytest.raises(TranscriptObservationError, match="truncated"):
         cursor.saw_fresh_turn_aborted()
 
 
@@ -146,6 +150,8 @@ async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() ->
     class BlockingTmux(_FakeTmux):
         async def send_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
             self.sent_keys.append((pane_id, text, literal))
+            if not literal:
+                return True
             send_started.set()
             await release_send.wait()
             return True
@@ -168,7 +174,7 @@ async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() ->
         await send_started.wait()
 
         assert len(_HANDOFF_COMPACT_CONTINUATION_TASKS) == 1
-        assert tmux.sent_keys == [("%12", f"{prompt}\n", True)]
+        assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", f"{prompt}\n", True)]
         task = next(iter(_HANDOFF_COMPACT_CONTINUATION_TASKS))
 
         release_send.set()
@@ -227,6 +233,7 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
     # The paste is followed by a settle-tolerant second Enter (a no-op when the
     # first Enter already submitted).
     assert tmux.sent_keys == [
+        *_CODEX_DRAIN,
         ("%12", f"{prompt}\n", True),
         ("%12", "Enter", False),
     ]
@@ -395,6 +402,7 @@ async def test_codex_detects_fresh_marker_when_old_marker_scrolls_out(
         )
 
     assert tmux.sent_keys == [
+        *_CODEX_DRAIN,
         ("%12", f"{prompt}\n", True),
         ("%12", "Enter", False),
     ]
@@ -438,6 +446,7 @@ async def test_codex_ignores_compaction_marker_text_in_prose(
         )
 
     assert tmux.sent_keys == [
+        *_CODEX_DRAIN,
         ("%12", f"{prompt}\n", True),
         ("%12", "Enter", False),
     ]

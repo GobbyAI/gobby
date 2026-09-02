@@ -29,7 +29,7 @@ class _LifecycleDelegateMixin:
         )
 
     def expire_orphaned_handoff_sessions(self: _ManagerState, timeout_minutes: int = 30) -> int:
-        """Expire orphaned handoff_ready sessions. Delegates to session_lifecycle."""
+        """Expire orphaned awaiting_handoff sessions. Delegates to session_lifecycle."""
         from gobby.storage.session_lifecycle import (
             expire_orphaned_handoff_sessions as _expire_orphaned,
         )

@@ -127,7 +127,7 @@ class TestSessionManagerLifecycle:
                 current_step="implement",
             )
         )
-        session_manager.update_status(session.id, "handoff_ready")
+        session_manager.update_status(session.id, "awaiting_handoff")
 
         reactivated = session_manager.register(
             external_id="compact-in-place",
@@ -250,7 +250,7 @@ class TestSessionManagerLifecycle:
 
         assert [transition.status for transition in transitions] == ["paused", "expired"]
 
-    def test_expire_if_active_expires_handoff_ready(
+    def test_expire_if_active_expires_awaiting_handoff(
         self,
         session_manager: SessionManager,
         sample_project: dict[str, str],
@@ -261,7 +261,7 @@ class TestSessionManagerLifecycle:
             source="claude",
             project_id=sample_project["id"],
         )
-        session_manager.update_status(session.id, "handoff_ready")
+        session_manager.update_status(session.id, "awaiting_handoff")
 
         expired = session_manager.expire_if_active(session.id)
 
@@ -929,7 +929,7 @@ class TestSessionManagerLifecycle:
             project_id=sample_project["id"],
             terminal_context=terminal_context,
         )
-        session_manager.update_status(newer.id, "handoff_ready")
+        session_manager.update_status(newer.id, "awaiting_handoff")
         caplog.set_level("INFO", logger="gobby.storage.sessions")
         notifications: list[tuple[str, str]] = []
         monkeypatch.setattr(
@@ -1023,7 +1023,7 @@ class TestSessionManagerLifecycle:
         assert live is not None
         assert live.status == "active"
 
-    @pytest.mark.parametrize("owner_status", ["active", "paused", "handoff_ready"])
+    @pytest.mark.parametrize("owner_status", ["active", "paused", "awaiting_handoff"])
     def test_validated_existing_interactive_owner_preserves_status(
         self,
         session_manager: SessionManager,
@@ -1454,7 +1454,7 @@ class TestSessionManagerLifecycle:
             project_id=other_project.id,
             terminal_context=terminal_context,
         )
-        session_manager.update_status(grok.id, "handoff_ready")
+        session_manager.update_status(grok.id, "awaiting_handoff")
         expired = session_manager.register(
             external_id="terminal-owner-expired",
             machine_id="20000000-0000-4000-8000-000000000001",
@@ -1561,7 +1561,7 @@ class TestSessionManagerLifecycle:
         session_manager: SessionManager,
         sample_project: dict[str, str],
     ) -> None:
-        """`/compact` on an expired terminal session revives it to handoff_ready."""
+        """`/compact` on an expired terminal session revives it to awaiting_handoff."""
         session = session_manager.register(
             external_id="compact-after-expiry",
             machine_id="20000000-0000-4000-8000-000000000001",
@@ -1571,11 +1571,11 @@ class TestSessionManagerLifecycle:
         )
         session_manager.update_status(session.id, "expired")
 
-        assert session_manager.update_session_status(session.id, "handoff_ready") is True
+        assert session_manager.update_session_status(session.id, "awaiting_handoff") is True
 
         updated = session_manager.get(session.id)
         assert updated is not None
-        assert updated.status == "handoff_ready"
+        assert updated.status == "awaiting_handoff"
 
     def test_update_session_status_expired_past_revival_horizon_stays_false(
         self,
@@ -1596,7 +1596,7 @@ class TestSessionManagerLifecycle:
             (expired_at, session.id),
         )
 
-        assert session_manager.update_session_status(session.id, "handoff_ready") is False
+        assert session_manager.update_session_status(session.id, "awaiting_handoff") is False
 
         updated = session_manager.get(session.id)
         assert updated is not None
@@ -1607,7 +1607,7 @@ class TestSessionManagerLifecycle:
         session_manager: SessionManager,
         sample_project: dict[str, str],
     ) -> None:
-        """Deleted sessions never revive, even toward handoff_ready."""
+        """Deleted sessions never revive, even toward awaiting_handoff."""
         session = session_manager.register(
             external_id="compact-deleted",
             machine_id="20000000-0000-4000-8000-000000000001",
@@ -1616,7 +1616,7 @@ class TestSessionManagerLifecycle:
         )
         session_manager.update_status(session.id, "deleted")
 
-        assert session_manager.update_session_status(session.id, "handoff_ready") is False
+        assert session_manager.update_session_status(session.id, "awaiting_handoff") is False
 
         updated = session_manager.get(session.id)
         assert updated is not None
@@ -1682,13 +1682,13 @@ class TestSessionManagerLifecycle:
             source="claude",
             project_id=sample_project["id"],
         )
-        session_manager.update_status(session.id, "handoff_ready")
+        session_manager.update_status(session.id, "awaiting_handoff")
 
         parent = session_manager.find_parent(
             machine_id="20000000-0000-4000-8000-000000000001",
             project_id=sample_project["id"],
             source="claude",
-            status="handoff_ready",
+            status="awaiting_handoff",
         )
         assert parent is not None
         assert parent.id == session.id

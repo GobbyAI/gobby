@@ -14,7 +14,7 @@ from typing import Any, Literal, Protocol
 import psutil
 
 TerminalIdentity = tuple[str, str, str]
-TERMINAL_OWNER_STATUSES = ("active", "paused", "handoff_ready")
+TERMINAL_OWNER_STATUSES = ("active", "paused", "awaiting_handoff")
 TERMINAL_INACTIVE_STATUSES = ("expired", "deleted")
 TERMINAL_TITLE_REPAIR_STATUSES = TERMINAL_OWNER_STATUSES + TERMINAL_INACTIVE_STATUSES
 OwnershipReason = Literal[

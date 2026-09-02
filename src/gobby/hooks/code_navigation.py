@@ -143,6 +143,16 @@ def search_navigation_metadata(paths: Sequence[str] = ()) -> dict[str, Any]:
     }
 
 
+def enumerate_navigation_metadata(paths: Sequence[str] = ()) -> dict[str, Any]:
+    """Return navigation metadata for filesystem enumeration over ``paths``."""
+    return {
+        "canonical_code_navigation_action": "enumerate",
+        "canonical_code_navigation_broad": (
+            not paths or any(_may_hold_source(path) for path in paths)
+        ),
+    }
+
+
 def gcode_navigation_metadata(parts: list[str]) -> tuple[str, dict[str, Any]] | None:
     if len(parts) < 2 or shell_command_name(parts[0]) != "gcode":
         return None

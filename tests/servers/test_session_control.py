@@ -1550,7 +1550,7 @@ class TestContinueInChatTerminalKill:
         source_session.seq_num = 43
         source_session.source = "agy"
         source_session.title = "Handoff Session"
-        source_session.status = "handoff_ready"
+        source_session.status = "awaiting_handoff"
         source_session.model = "gemini-2.5-pro"
         source_session.chat_mode = "plan"
         source_session.git_branch = "main"
@@ -1579,7 +1579,7 @@ class TestContinueInChatTerminalKill:
         payload = ws.send.await_args_list[0].args[0]
         response = json.loads(payload)
         assert response["type"] == "attach_to_session_result"
-        assert response["status"] == "handoff_ready"
+        assert response["status"] == "awaiting_handoff"
         assert response["can_proxy_attach"] is True
 
     @pytest.mark.parametrize(

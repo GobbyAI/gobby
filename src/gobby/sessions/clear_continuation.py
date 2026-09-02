@@ -18,9 +18,12 @@ from gobby.sessions.compact_continuation import (
     schedule_handoff_compact_continuation,
 )
 from gobby.sessions.handoff import (
+    HANDOFF_PULL_PENDING_VARIABLE,
     PENDING_HANDOFF_VARIABLE,
     FeedbackObservation,
     HandoffAttemptState,
+    _insert_feedback_rows,
+    _store_variables,
     restore_handoff_attempt,
     stage_handoff_attempt,
 )
@@ -42,9 +45,13 @@ from gobby.utils.datetime import utc_now
 __all__ = [
     "CLEAR_ATTEMPT_VARIABLE",
     "CLEAR_HANDOFF_TTL_SECONDS",
+    "AWAITING_HANDOFF_STATUS",
     "ClearContinuationResolution",
     "clear_failed_attempt",
     "commit_web_chat_clear_successor",
+    "mark_clear_command_sent",
+    "pending_clear_attempt",
+    "refresh_clear_attempt_content",
     "resolve_clear_continuation",
     "schedule_handoff_continuation",
     "stage_clear_attempt",
@@ -55,16 +62,25 @@ logger = logging.getLogger(__name__)
 
 CLEAR_HANDOFF_TTL_SECONDS = 600
 CLEAR_ATTEMPT_VARIABLE = "clear_attempt"
+# Status a clear predecessor holds from staging until its successor binds; the
+# startup context-reuse expiry and SessionEnd never touch rows in this status.
+AWAITING_HANDOFF_STATUS = "awaiting_handoff"
 MAX_CLEAR_CONTINUATION_CANDIDATES = 250
 
 
 @dataclass
 class ClearContinuationResolution:
-    """Successor-side resolution of a pending clear handoff."""
+    """Successor-side resolution of a pending clear handoff.
+
+    ``supersedes`` names a same-pane successor that bound the marker but never
+    pulled the handoff (an operator ran ``/clear`` again); the new session takes
+    the marker, parent, and claims over from it.
+    """
 
     predecessor: Session | None = None
     attempt_id: str | None = None
     degrade_reason: str | None = None
+    supersedes: str | None = None
 
 
 def stage_clear_attempt(
@@ -77,9 +93,10 @@ def stage_clear_attempt(
     terminal_context: dict[str, Any] | None,
     chat_context: dict[str, Any] | None,
 ) -> HandoffAttemptState:
-    """Write the one-shot clear-attempt marker on the predecessor row.
+    """Write the one-shot clear-attempt marker and move the row to ``awaiting_handoff``.
 
-    ``handoff_ready`` status is never set.
+    ``command_sent_at`` is stamped by :func:`mark_clear_command_sent` once ``/clear``
+    is on the pane; until then a failed delivery restores the row.
     """
     marker = {
         "attempt_id": attempt_id,
@@ -87,6 +104,7 @@ def stage_clear_attempt(
         "terminal_context": terminal_context,
         "chat": _chat_payload(chat_context),
         "consumed_by": None,
+        "command_sent_at": None,
     }
     return stage_handoff_attempt(
         db,
@@ -96,7 +114,99 @@ def stage_clear_attempt(
         observations=observations,
         clear_session=True,
         additional_markers={CLEAR_ATTEMPT_VARIABLE: marker},
+        transition_status=AWAITING_HANDOFF_STATUS,
     )
+
+
+def mark_clear_command_sent(db: HubDatabase, session_id: str, *, attempt_id: str) -> bool:
+    """Stamp ``command_sent_at`` on the unconsumed attempt after ``/clear`` is delivered."""
+    try:
+        with db.transaction() as conn:
+            row = conn.execute(
+                "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",
+                (session_id,),
+            ).fetchone()
+            variables = _load_variables(_row_variables(row))
+            marker = _marker_from_variables(variables)
+            if not _unconsumed_attempt(marker, attempt_id):
+                return False
+            marker["command_sent_at"] = _format_timestamp(datetime.now(UTC))
+            variables[CLEAR_ATTEMPT_VARIABLE] = marker
+            _store_variables(conn, session_id, variables, exists=row is not None)
+            return True
+    except Exception:
+        logger.warning(
+            "Failed marking clear command sent for attempt %s on session %s",
+            attempt_id,
+            session_id,
+            exc_info=True,
+        )
+        return False
+
+
+def pending_clear_attempt(db: HubDatabase, session_id: str) -> dict[str, Any] | None:
+    """Return the delivered, unconsumed, unexpired clear attempt for ``session_id``."""
+    row = db.fetchone(
+        "SELECT variables FROM session_variables WHERE session_id = %s",
+        (session_id,),
+    )
+    marker = _marker_from_variables(_load_variables(_row_variables(row)))
+    if (
+        marker is None
+        or marker.get("consumed_by")
+        or not marker.get("command_sent_at")
+        or _marker_expired(marker)
+        or not isinstance(marker.get("attempt_id"), str)
+    ):
+        return None
+    return marker
+
+
+def refresh_clear_attempt_content(
+    db: HubDatabase,
+    session_id: str,
+    *,
+    attempt_id: str,
+    handoff_markdown: str,
+    observations: Sequence[FeedbackObservation],
+) -> bool:
+    """Rewrite the handoff content of a still-pending attempt without re-staging it."""
+    try:
+        with db.transaction() as conn:
+            row = conn.execute(
+                "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",
+                (session_id,),
+            ).fetchone()
+            variables = _load_variables(_row_variables(row))
+            marker = _marker_from_variables(variables)
+            if not _unconsumed_attempt(marker, attempt_id):
+                return False
+            feedback_ids = _insert_feedback_rows(conn, session_id, observations)
+            for name in (CLEAR_ATTEMPT_VARIABLE, PENDING_HANDOFF_VARIABLE):
+                candidate = variables.get(name)
+                if not isinstance(candidate, dict) or candidate.get("attempt_id") != attempt_id:
+                    continue
+                existing = candidate.get("feedback_ids")
+                candidate = dict(candidate)
+                candidate["feedback_ids"] = [
+                    *(item for item in existing or () if isinstance(item, str)),
+                    *feedback_ids,
+                ]
+                variables[name] = candidate
+            conn.execute(
+                "UPDATE sessions SET handoff_markdown = %s, updated_at = %s WHERE id = %s",
+                (handoff_markdown, utc_now(), session_id),
+            )
+            _store_variables(conn, session_id, variables, exists=row is not None)
+            return True
+    except Exception:
+        logger.warning(
+            "Failed refreshing clear attempt %s content for session %s",
+            attempt_id,
+            session_id,
+            exc_info=True,
+        )
+        return False
 
 
 def resolve_clear_continuation(
@@ -168,6 +278,15 @@ def resolve_clear_continuation(
         return ClearContinuationResolution(predecessor=session, attempt_id=attempt_id)
     if len(matches) > 1:
         return ClearContinuationResolution(degrade_reason="ambiguous")
+    takeover = _resolve_bound_unpulled_successor(
+        db,
+        source=source,
+        project_id=project_id,
+        machine_id=machine_id,
+        terminal_context=terminal_context,
+    )
+    if takeover is not None:
+        return takeover
     if saw_identity_mismatch:
         return ClearContinuationResolution(degrade_reason="identity_mismatch")
     if saw_expired:
@@ -179,14 +298,99 @@ def resolve_clear_continuation(
     return ClearContinuationResolution()
 
 
+def _resolve_bound_unpulled_successor(
+    db: HubDatabase,
+    *,
+    source: str,
+    project_id: str,
+    machine_id: str,
+    terminal_context: dict[str, Any] | None,
+) -> ClearContinuationResolution | None:
+    """Find a same-pane successor that bound a marker but never pulled the handoff.
+
+    An operator who runs ``/clear`` by hand before ``get_handoff`` starts a third
+    session on the same pane; without this the handoff and claims would expire
+    with the middle row.
+    """
+    try:
+        rows = db.fetchall(
+            """
+            SELECT child.*, parent_vars.variables AS parent_variables
+              FROM sessions child
+              JOIN session_variables child_vars ON child_vars.session_id = child.id
+              JOIN sessions parent ON parent.id = child.parent_session_id
+              JOIN session_variables parent_vars ON parent_vars.session_id = parent.id
+             WHERE child.source = %s
+               AND child.project_id = %s
+               AND child.machine_id = %s
+               AND child.session_type = 'terminal'
+               AND child.status IN ('active', 'paused')
+               AND child_vars.variables ? %s
+               AND jsonb_typeof(parent_vars.variables -> %s) = 'object'
+               AND (parent_vars.variables -> %s ->> 'consumed_by') = child.id
+             ORDER BY child.updated_at DESC, child.id DESC
+             LIMIT %s
+            """,
+            (
+                source,
+                project_id,
+                machine_id,
+                HANDOFF_PULL_PENDING_VARIABLE,
+                CLEAR_ATTEMPT_VARIABLE,
+                CLEAR_ATTEMPT_VARIABLE,
+                MAX_CLEAR_CONTINUATION_CANDIDATES,
+            ),
+        )
+    except Exception:
+        logger.warning("Failed resolving clear successor takeover", exc_info=True)
+        return None
+
+    matches: list[tuple[Session, str, str]] = []
+    for row in rows:
+        stale = Session.from_row(row)
+        if not terminal_process_contexts_match(stale.terminal_context, terminal_context):
+            continue
+        marker = _marker_from_variables(_load_variables(row["parent_variables"]))
+        if marker is None or _marker_expired(marker):
+            continue
+        attempt_id = marker.get("attempt_id")
+        parent_id = stale.parent_session_id
+        if not isinstance(attempt_id, str) or not attempt_id or not parent_id:
+            continue
+        matches.append((stale, attempt_id, parent_id))
+    if len(matches) > 1:
+        return ClearContinuationResolution(degrade_reason="ambiguous")
+    if not matches:
+        return None
+    stale, attempt_id, parent_id = matches[0]
+    try:
+        parent_row = db.fetchone("SELECT * FROM sessions WHERE id = %s", (parent_id,))
+    except Exception:
+        logger.warning("Failed loading clear predecessor %s for takeover", parent_id, exc_info=True)
+        return None
+    if parent_row is None:
+        return None
+    return ClearContinuationResolution(
+        predecessor=Session.from_row(parent_row),
+        attempt_id=attempt_id,
+        supersedes=stale.id,
+    )
+
+
 def take_clear_handoff_marker(
     db: HubDatabase,
     predecessor_id: str,
     *,
     attempt_id: str,
     successor_id: str,
+    supersede_successor_id: str | None = None,
 ) -> bool:
-    """Atomically consume the marker and write successor parentage."""
+    """Atomically consume the marker and write successor parentage.
+
+    With ``supersede_successor_id`` the marker may already be consumed by that
+    stale successor; it is re-pointed at ``successor_id`` and the stale row's
+    agent runs move along with it.
+    """
     try:
         with db.transaction_immediate(SessionLineageMutation()) as conn:
             conn.acquire_additional_lock(SessionVariableMutation(session_id=predecessor_id))
@@ -204,7 +408,14 @@ def take_clear_handoff_marker(
                 return False
             variables = _load_variables(_row_variables(row))
             marker = _marker_from_variables(variables)
-            if not _unconsumed_attempt(marker, attempt_id):
+            if supersede_successor_id is not None:
+                if (
+                    marker is None
+                    or marker.get("attempt_id") != attempt_id
+                    or marker.get("consumed_by") != supersede_successor_id
+                ):
+                    return False
+            elif not _unconsumed_attempt(marker, attempt_id):
                 return False
             sanitized = sanitize_parent_session_id(
                 conn,
@@ -231,6 +442,11 @@ def take_clear_handoff_marker(
                 "UPDATE agent_runs SET parent_session_id = %s WHERE parent_session_id = %s",
                 (successor_id, predecessor_id),
             )
+            if supersede_successor_id is not None:
+                conn.execute(
+                    "UPDATE agent_runs SET parent_session_id = %s WHERE parent_session_id = %s",
+                    (successor_id, supersede_successor_id),
+                )
             return True
     except Exception:
         logger.warning(
@@ -295,6 +511,7 @@ def clear_failed_attempt(
             if not _unconsumed_attempt(marker, attempt_id):
                 return False
             feedback_ids = marker.get("feedback_ids")
+            prior_status = marker.get("prior_status")
             attempt_state = HandoffAttemptState(
                 session_id=session_id,
                 attempt_id=attempt_id,
@@ -302,6 +519,7 @@ def clear_failed_attempt(
                 prior_markers={},
                 missing_markers=frozenset({CLEAR_ATTEMPT_VARIABLE, PENDING_HANDOFF_VARIABLE}),
                 feedback_ids=tuple(item for item in feedback_ids or () if isinstance(item, str)),
+                prior_status=prior_status if isinstance(prior_status, str) else None,
             )
         return restore_handoff_attempt(db, attempt_state)
     except Exception:

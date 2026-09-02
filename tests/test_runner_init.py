@@ -348,7 +348,7 @@ class TestWakeTmuxSenders:
     """Tests for runner-level tmux wake sender wiring."""
 
     @pytest.mark.asyncio
-    async def test_session_wake_can_escape_before_submit(
+    async def test_session_wake_clears_the_composer_before_submit(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -378,11 +378,12 @@ class TestWakeTmuxSenders:
             "gobby-agent-abc",
             "Message from Gobby daemon: New activity available.",
             submit=True,
-            escape_before_submit=True,
+            clear_before_submit=True,
+            cli_source="claude",
         )
 
         assert runtime.write_log == [
-            ("key", "escape"),
+            ("key", "ctrl_l"),
             ("text", "Message from Gobby daemon: New activity available."),
             ("key", "enter"),
         ]
@@ -421,14 +422,15 @@ class TestWakeTmuxSenders:
                 terminal.id,
                 "Message from Gobby daemon: New activity available.",
                 submit=True,
-                escape_before_submit=True,
+                clear_before_submit=True,
+                cli_source="claude",
             )
         kinds = [kind for kind, _payload in runtime.write_log]
         assert kinds != ["key", "text", "key"]
         assert "enter" not in [payload for _kind, payload in runtime.write_log]
 
     @pytest.mark.asyncio
-    async def test_pane_wake_forwards_escape_before_submit(
+    async def test_pane_wake_forwards_clear_before_submit(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -439,9 +441,10 @@ class TestWakeTmuxSenders:
             message: str,
             *,
             tmux_cmd: list[str],
-            escape_before_submit: bool = False,
+            clear_before_submit: bool = False,
+            cli_source: str | None = None,
         ) -> None:
-            calls.append((pane_id, message, tmux_cmd, escape_before_submit))
+            calls.append((pane_id, message, tmux_cmd, clear_before_submit, cli_source))
 
         monkeypatch.setattr(
             "gobby.agents.tmux.text_injection.submit_literal_text_to_tmux_target",
@@ -453,7 +456,8 @@ class TestWakeTmuxSenders:
             "Message from Gobby daemon: New activity available.",
             "/tmp/tmux-501/gobby",
             submit=True,
-            escape_before_submit=True,
+            clear_before_submit=True,
+            cli_source="codex",
         )
 
         assert calls == [
@@ -462,6 +466,7 @@ class TestWakeTmuxSenders:
                 "Message from Gobby daemon: New activity available.",
                 ["tmux", "-S", "/tmp/tmux-501/gobby"],
                 True,
+                "codex",
             )
         ]
 

@@ -41,7 +41,7 @@ def resolve_compact_continuation(
         LEFT JOIN session_variables sv ON sv.session_id = s.id
         WHERE s.source = %s
           AND s.session_type = 'terminal'
-          AND s.status IN ('handoff_ready', 'expired')
+          AND s.status IN ('awaiting_handoff', 'expired')
         ORDER BY s.created_at DESC, s.id DESC
         LIMIT %s
         """,
@@ -51,7 +51,7 @@ def resolve_compact_continuation(
         candidate
         for row in rows
         if (
-            (candidate := Session.from_row(row)).status == "handoff_ready"
+            (candidate := Session.from_row(row)).status == "awaiting_handoff"
             or row["compact_marker"] == "compact"
         )
         and terminal_process_contexts_match(candidate.terminal_context, terminal_context)

@@ -361,7 +361,7 @@ class TestTmuxTextInjection:
         assert commands == [["tmux", "send-keys", "-t", "%12", "Enter"]]
 
     @pytest.mark.asyncio
-    async def test_submit_literal_text_can_escape_before_paste(
+    async def test_submit_literal_text_can_clear_the_composer_before_paste(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -383,12 +383,13 @@ class TestTmuxTextInjection:
             "%12",
             "Message from Gobby daemon: New activity available.",
             enter_delay_seconds=0,
-            escape_before_submit=True,
+            clear_before_submit=True,
+            cli_source="claude",
         )
 
         buffer_name = commands[1][3]
         assert commands == [
-            ["tmux", "send-keys", "-t", "%12", "Escape"],
+            ["tmux", "send-keys", "-t", "%12", "C-l"],
             [
                 "tmux",
                 "set-buffer",

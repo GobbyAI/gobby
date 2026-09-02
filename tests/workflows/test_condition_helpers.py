@@ -18,6 +18,7 @@ from gobby.workflows.condition_helpers import (
     first_tdd_test_path,
     is_gobby_build_command,
     is_task_complete,
+    paths_written_this_turn,
     shell_command_invokes_gcode,
     task_commit_project_path_allowlist_violation,
     task_needs_human_review,
@@ -115,6 +116,22 @@ class TestShellCommandInvokesGcode:
     )
     def test_skips_non_gcode_invocations(self, command: object) -> None:
         assert shell_command_invokes_gcode(command) is False
+
+
+class TestPathsWrittenThisTurn:
+    def test_matches_only_when_every_requested_path_was_written(self) -> None:
+        written = ["src/a.py", "src/b.py"]
+
+        assert paths_written_this_turn(["src/a.py"], written) is True
+        assert paths_written_this_turn(["src/a.py", "src/b.py"], written) is True
+        assert paths_written_this_turn(["src/a.py", "src/c.py"], written) is False
+
+    @pytest.mark.parametrize("paths", [None, "", [], [None]])
+    def test_rejects_missing_requested_paths(self, paths: object) -> None:
+        assert paths_written_this_turn(paths, ["src/a.py"]) is False
+
+    def test_normalizes_path_separators(self) -> None:
+        assert paths_written_this_turn([r"src\a.py"], ["src/a.py"]) is True
 
 
 class TestNormalizeTaskId:

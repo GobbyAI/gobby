@@ -35,6 +35,7 @@ class SessionStartResolution:
     clear_predecessor: Any | None = None
     clear_attempt_id: str | None = None
     clear_degrade_reason: str | None = None
+    clear_supersedes: str | None = None
 
     @property
     def is_compact(self) -> bool:
@@ -62,7 +63,7 @@ def resolve_session_start_identity(
     Compaction is an in-place handoff. A marked row with exact terminal process
     identity is canonical even when ingress carries a differing provider ID.
     Compact classification is one-shot: an explicit compact source, a
-    handoff_ready row, or an expired row with an unconsumed compact marker.
+    awaiting_handoff row, or an expired row with an unconsumed compact marker.
     Grok ``/clear`` emits ``source: "new"``; a unique matching unconsumed
     clear-attempt marker promotes that startup into a clear successor.
     """
@@ -192,7 +193,7 @@ def resolve_session_start_identity(
         or compact_candidate_resolved
         or (
             session is not None
-            and (status == "handoff_ready" or (status == "expired" and marker_present))
+            and (status == "awaiting_handoff" or (status == "expired" and marker_present))
         )
     )
     if not is_compact:
@@ -320,6 +321,7 @@ def _lookup_clear_continuation(
         clear_predecessor=resolved.predecessor,
         clear_attempt_id=resolved.attempt_id,
         clear_degrade_reason=resolved.degrade_reason,
+        clear_supersedes=resolved.supersedes,
     )
 
 

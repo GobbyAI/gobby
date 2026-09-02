@@ -136,7 +136,7 @@ Returns a JSON object with daemon health and runtime details:
   "sessions": {
     "active": 1,
     "paused": 0,
-    "handoff_ready": 0,
+    "awaiting_handoff": 0,
     "total": 12
   },
   "tasks": {

@@ -316,7 +316,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         session_stats: dict[str, Any] = {
             "active": 0,
             "paused": 0,
-            "handoff_ready": 0,
+            "awaiting_handoff": 0,
             "total": 0,
         }
         if server.session_manager is not None:
@@ -326,7 +326,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 session_stats["total"] = sum(status_counts.values())
                 session_stats["active"] = status_counts.get("active", 0)
                 session_stats["paused"] = status_counts.get("paused", 0)
-                session_stats["handoff_ready"] = status_counts.get("handoff_ready", 0)
+                session_stats["awaiting_handoff"] = status_counts.get("awaiting_handoff", 0)
             except Exception as e:
                 logger.warning("Failed to get session stats: %s", e)
 

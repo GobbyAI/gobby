@@ -37,7 +37,7 @@ class SessionSummaryDispatcher:
         session_id: str,
         _background: bool = False,
         done_event: threading.Event | None = None,
-        set_handoff_ready: bool = False,
+        set_awaiting_handoff: bool = False,
     ) -> None:
         """Fire session summary generation in the background."""
         from gobby.sessions.summarize import generate_session_summaries
@@ -50,7 +50,7 @@ class SessionSummaryDispatcher:
                     llm_service=self.llm_service,
                     session_summary_config=self.session_summary_config,
                     db=self.database,
-                    set_handoff_ready=set_handoff_ready,
+                    set_awaiting_handoff=set_awaiting_handoff,
                 )
             except Exception as exc:
                 self.logger.exception(

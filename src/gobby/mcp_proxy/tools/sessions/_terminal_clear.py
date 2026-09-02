@@ -12,11 +12,12 @@ from gobby.agents.terminal_delivery import (
     shielded_terminal_delivery,
 )
 from gobby.mcp_proxy.tools.sessions._terminal import (
+    _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE,
     _authorize_send_keys_target,
     _backfill_tmux_context_from_sibling,
-    _capture_pane_snapshot,
+    _interrupt_observer,
+    _resolve_pane_io,
     _resolve_session_for_compaction,
-    _resolve_tmux_target,
     _send_terminal_compaction_command,
 )
 from gobby.mcp_proxy.tools.sessions._terminal_webchat import (
@@ -26,12 +27,11 @@ from gobby.mcp_proxy.tools.sessions._terminal_webchat import (
 from gobby.sessions.clear_continuation import (
     CLEAR_ATTEMPT_VARIABLE,
     clear_failed_attempt,
+    mark_clear_command_sent,
+    pending_clear_attempt,
+    refresh_clear_attempt_content,
     schedule_handoff_continuation,
     stage_clear_attempt,
-)
-from gobby.sessions.compact_continuation import (
-    CodexRolloutCursor,
-    CodexRolloutObservationError,
 )
 from gobby.sessions.handoff import (
     FeedbackObservation,
@@ -43,15 +43,20 @@ from gobby.terminal_context import (
     terminal_context_has_tmux_target,
 )
 from gobby.terminal_ownership import terminal_session_identity
+from gobby.terminals.composer import (
+    COMPOSER_CAPTURE_LINES,
+    composer_line_is,
+    composer_prompt_line,
+)
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
-    from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
+    from gobby.terminals.pane_io import PaneIO
 
 logger = logging.getLogger(__name__)
 
@@ -69,12 +74,106 @@ _CODEX_CLEAR_BANNER_CAPTURE_LINES = 300
 _CODEX_CLEAR_CONTINUE_DELAY_SECONDS = 0.5
 
 CLEAR_COMMAND = "/clear"
+_PENDING_ATTEMPT_GUIDANCE = (
+    "/clear was delivered after a confirmed interrupt; the successor binds on its "
+    "SessionStart. Do not call set_handoff again."
+)
 
 __all__ = ["CLEAR_COMMAND", "execute_clear_session"]
 
 
 def _error(message: str, error_code: str) -> dict[str, Any]:
     return {"success": False, "error": message, "error_code": error_code}
+
+
+def _pending_timeout(session_id: str, attempt_id: str, *, reused_attempt: bool) -> dict[str, Any]:
+    """Ack timeout after a delivered /clear: the attempt stays staged for the successor."""
+    failure = _error(
+        "timed out waiting for clear-session acknowledgment",
+        "clear_acknowledgment_timeout",
+    )
+    failure.update(
+        {
+            "session_id": session_id,
+            "attempt_id": attempt_id,
+            "command_sent": True,
+            "attempt_restored": False,
+            "attempt_pending": True,
+            "reused_attempt": reused_attempt,
+            "guidance": _PENDING_ATTEMPT_GUIDANCE,
+        }
+    )
+    return failure
+
+
+def _acknowledged(
+    session_id: str,
+    attempt_id: str,
+    acknowledgment: tuple[str, str],
+    *,
+    reused_attempt: bool,
+) -> dict[str, Any]:
+    acknowledged_session_id, acknowledged_by = acknowledgment
+    success: dict[str, Any] = {
+        "success": True,
+        "session_id": session_id,
+        "attempt_id": attempt_id,
+        "handoff_staged": True,
+        "command_sent": True,
+        "acknowledged_by": acknowledged_by,
+        "reused_attempt": reused_attempt,
+    }
+    if acknowledged_by == "successor_binding":
+        success["successor_id"] = acknowledged_session_id
+    else:
+        success["observed_session_id"] = acknowledged_session_id
+    return success
+
+
+async def _resume_pending_clear_attempt(
+    pending: dict[str, Any],
+    handoff_markdown: str,
+    observations: list[FeedbackObservation],
+    *,
+    db: HubDatabase,
+    session_manager: SessionManager,
+    session: Any,
+    pane: PaneIO,
+) -> dict[str, Any]:
+    """Reuse a delivered-but-unacknowledged attempt instead of typing a second /clear."""
+    attempt_id = str(pending["attempt_id"])
+    refreshed = refresh_clear_attempt_content(
+        db,
+        session.id,
+        attempt_id=attempt_id,
+        handoff_markdown=handoff_markdown,
+        observations=observations,
+    )
+    # A swallowed Enter leaves the delivered command sitting in the composer;
+    # submitting it again is the only keystroke a retry may send.
+    capture = await pane.snapshot(COMPOSER_CAPTURE_LINES)
+    if capture is not None and composer_line_is(composer_prompt_line(capture), CLEAR_COMMAND):
+        ok, reason = await pane.send_key("enter")
+        logger.info(
+            "Resubmitted the pending /clear for session %s (ok=%s%s)",
+            session.id,
+            ok,
+            "" if ok else f", reason={reason}",
+        )
+    identity, baseline_ids = _clear_pane_baseline(session_manager, session)
+    acknowledgment = await _wait_for_clear_acknowledgment(
+        db,
+        session_manager,
+        session,
+        attempt_id=attempt_id,
+        identity=identity,
+        baseline_ids=baseline_ids,
+    )
+    if acknowledgment is None:
+        return _pending_timeout(session.id, attempt_id, reused_attempt=True)
+    result = _acknowledged(session.id, attempt_id, acknowledgment, reused_attempt=True)
+    result["content_refreshed"] = refreshed
+    return result
 
 
 def _clear_pane_baseline(
@@ -133,20 +232,14 @@ def _find_new_provider_session(
     return None
 
 
-async def _codex_thread_end_banner_count(
-    tmux: TmuxSessionManager,
-    target: str,
-    *,
-    thread_id: str,
-) -> int:
+async def _codex_thread_end_banner_count(pane: PaneIO, *, thread_id: str) -> int:
     """Count ``codex resume <thread_id>`` on the pane; Codex prints it when that thread ends."""
-    snapshot = await _capture_pane_snapshot(tmux, target, lines=_CODEX_CLEAR_BANNER_CAPTURE_LINES)
+    snapshot = await pane.snapshot(_CODEX_CLEAR_BANNER_CAPTURE_LINES)
     return (snapshot or "").count(f"codex resume {thread_id}")
 
 
 async def _wait_for_codex_thread_end(
-    tmux: TmuxSessionManager,
-    target: str,
+    pane: PaneIO,
     *,
     thread_id: str,
     baseline: int,
@@ -155,7 +248,7 @@ async def _wait_for_codex_thread_end(
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _CODEX_CLEAR_BANNER_TIMEOUT_SECONDS
     while True:
-        if await _codex_thread_end_banner_count(tmux, target, thread_id=thread_id) > baseline:
+        if await _codex_thread_end_banner_count(pane, thread_id=thread_id) > baseline:
             return True
         remaining = deadline - loop.time()
         if remaining <= 0:
@@ -213,8 +306,14 @@ async def execute_clear_session(
     db: HubDatabase,
     agent_run_manager: LocalAgentRunManager,
     web_chat_session_registry: WebChatSessionRegistry | None = None,
+    terminal_manager: Any | None = None,
+    terminal_runtime_registry: Any | None = None,
 ) -> dict[str, Any]:
-    """Stage a clear attempt, then deliver /clear through the compaction sender."""
+    """Stage a clear attempt, then deliver /clear through the compaction sender.
+
+    A delivered attempt that has not been acknowledged yet is reused: the handoff
+    content is refreshed and the wait resumes, but no second /clear is typed.
+    """
     if not handoff_markdown.strip():
         return _error("set_handoff requires rendered handoff content", "handoff_required")
 
@@ -293,10 +392,12 @@ async def execute_clear_session(
         return authorization_error
 
     source = getattr(session, "source", None)
-    target, tmux, error = _resolve_tmux_target(
+    pane, error = _resolve_pane_io(
         resolved_session_id,
         session_manager,
         agent_run_manager,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=terminal_runtime_registry,
     )
     if error and not terminal_context_has_tmux_target(session.terminal_context):
         recovered_session = _backfill_tmux_context_from_sibling(
@@ -306,48 +407,43 @@ async def execute_clear_session(
         )
         if recovered_session is not None:
             session = recovered_session
-            target, tmux, error = _resolve_tmux_target(
+            pane, error = _resolve_pane_io(
                 resolved_session_id,
                 session_manager,
                 agent_run_manager,
+                terminal_manager=terminal_manager,
+                terminal_runtime_registry=terminal_runtime_registry,
             )
     if error:
-        return _error(error, "tmux_target_unavailable")
-    assert target is not None
-    assert tmux is not None
+        return _error(error, "terminal_target_unavailable")
+    assert pane is not None
 
-    try:
-        pane_probe = await tmux.capture_pane(target, lines=1)
-    except Exception as exc:
-        logger.warning(
-            "Failed verifying clear-session tmux target %s for session %s",
-            target,
+    if await pane.snapshot(1) is None:
+        return _error(
+            f"{pane.backend} target {pane.target} is not live",
+            "terminal_target_not_live",
+        )
+
+    pending = pending_clear_attempt(db, resolved_session_id)
+    if pending is not None:
+        logger.info(
+            "Reusing pending clear attempt %s for session %s",
+            pending.get("attempt_id"),
             resolved_session_id,
-            extra={
-                "event": "clear_session_tmux_target_verification_failed",
-                "session_id": resolved_session_id,
-                "tmux_target": target,
-                "error_type": type(exc).__name__,
-                "error": str(exc),
-            },
-            exc_info=True,
         )
-        return _error(
-            f"failed to verify live tmux target {target}: {exc}",
-            "tmux_target_verification_failed",
-        )
-    if pane_probe is None:
-        return _error(
-            f"tmux target {target} is not live",
-            "tmux_target_not_live",
+        return await _resume_pending_clear_attempt(
+            pending,
+            handoff_markdown,
+            observations,
+            db=db,
+            session_manager=session_manager,
+            session=session,
+            pane=pane,
         )
 
-    observe_codex_interrupt = _codex_interrupt_observer(source, session)
-    if source == "codex" and observe_codex_interrupt is None:
-        return _error(
-            "Codex rollout transcript is unavailable for interrupt confirmation",
-            "codex_interrupt_observation_unavailable",
-        )
+    observe_interrupt, observer_error = _interrupt_observer(source, session)
+    if observer_error is not None:
+        return _error(observer_error, _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE)
 
     pane_identity, pane_baseline_ids = _clear_pane_baseline(session_manager, session)
     attempt_id = uuid4().hex
@@ -415,19 +511,16 @@ async def execute_clear_session(
                 )
             codex_thread_id = thread_id
             # Snapshot before /clear: only a thread-end banner beyond this count is new.
-            banner_baseline = await _codex_thread_end_banner_count(
-                tmux, target, thread_id=thread_id
-            )
+            banner_baseline = await _codex_thread_end_banner_count(pane, thread_id=thread_id)
         try:
             ok, reason, _pending, failure_detail = await _send_terminal_compaction_command(
-                tmux,
-                target,
+                pane,
                 CLEAR_COMMAND,
                 resolved_session_id,
                 cli_source=source if isinstance(source, str) else None,
                 mark_continuation_pending=lambda: True,
                 clear_continuation_pending=restore_failed_attempt,
-                observe_codex_interrupt=observe_codex_interrupt,
+                observe_interrupt=observe_interrupt,
             )
         except Exception as exc:
             restore_failed_attempt()
@@ -448,6 +541,15 @@ async def execute_clear_session(
                 failure.update(failure_detail)
             return failure
 
+        # From here on the command is on the pane: a later failure must leave the
+        # attempt staged so the successor can still bind and a retry reuses it.
+        if not mark_clear_command_sent(db, resolved_session_id, attempt_id=attempt_id):
+            logger.warning(
+                "Failed recording /clear delivery on attempt %s for session %s",
+                attempt_id,
+                resolved_session_id,
+            )
+
         if codex_thread_id is not None:
             # Codex never emits SessionStart for the post-/clear thread and writes its
             # rollout only on the first prompt, so the successor registers only once a
@@ -455,23 +557,15 @@ async def execute_clear_session(
             # the predecessor's thread-end banner; that prompt's UserPromptSubmit
             # materializes the successor and consumes the marker.
             if not await _wait_for_codex_thread_end(
-                tmux, target, thread_id=codex_thread_id, baseline=banner_baseline
+                pane, thread_id=codex_thread_id, baseline=banner_baseline
             ):
-                return failed(
-                    "timed out waiting for Codex to end the thread after /clear",
-                    "clear_successor_not_observed",
-                    command_sent=True,
-                )
+                return _pending_timeout(resolved_session_id, attempt_id, reused_attempt=False)
             if not schedule_handoff_continuation(
                 session,
                 build_handoff_continue_prompt(),
                 delay_seconds=_CODEX_CLEAR_CONTINUE_DELAY_SECONDS,
             ):
-                return failed(
-                    "failed to schedule the Codex clear continuation prompt",
-                    "clear_continuation_unscheduled",
-                    command_sent=True,
-                )
+                return _pending_timeout(resolved_session_id, attempt_id, reused_attempt=False)
             logger.info(
                 "Scheduled Codex clear continuation for session %s after thread %s ended",
                 resolved_session_id,
@@ -487,35 +581,8 @@ async def execute_clear_session(
             baseline_ids=pane_baseline_ids,
         )
         if acknowledgment is None:
-            restored = restore_failed_attempt()
-            failure = _error(
-                "timed out waiting for clear-session acknowledgment",
-                "clear_acknowledgment_timeout",
-            )
-            failure.update(
-                {
-                    "session_id": resolved_session_id,
-                    "attempt_id": attempt_id,
-                    "command_sent": True,
-                    "attempt_restored": restored,
-                }
-            )
-            return failure
-
-        acknowledged_session_id, acknowledged_by = acknowledgment
-        success = {
-            "success": True,
-            "session_id": resolved_session_id,
-            "attempt_id": attempt_id,
-            "handoff_staged": True,
-            "command_sent": True,
-            "acknowledged_by": acknowledged_by,
-        }
-        if acknowledged_by == "successor_binding":
-            success["successor_id"] = acknowledged_session_id
-        else:
-            success["observed_session_id"] = acknowledged_session_id
-        return success
+            return _pending_timeout(resolved_session_id, attempt_id, reused_attempt=False)
+        return _acknowledged(resolved_session_id, attempt_id, acknowledgment, reused_attempt=False)
 
     try:
         result = await shielded_terminal_delivery(
@@ -681,33 +748,3 @@ def _web_chat_attempt_context(live: Any, db_session: Any | None) -> dict[str, An
     if isinstance(mode, str) and mode:
         payload["mode"] = mode
     return payload or None
-
-
-def _codex_interrupt_observer(
-    source: Any,
-    session: Any,
-) -> Any | None:
-    if source != "codex":
-        return None
-    try:
-        cursor = CodexRolloutCursor.at_eof(getattr(session, "transcript_path", None))
-    except CodexRolloutObservationError as exc:
-        logger.warning(
-            "Cannot observe Codex interruption for clear-session handoff %s: %s",
-            getattr(session, "id", None),
-            exc,
-        )
-        return None
-
-    def observe_codex_rollout_interrupt() -> bool | None:
-        try:
-            return cursor.saw_fresh_turn_aborted()
-        except CodexRolloutObservationError as observe_exc:
-            logger.warning(
-                "Lost Codex interrupt observation for clear-session handoff %s: %s",
-                getattr(session, "id", None),
-                observe_exc,
-            )
-            return None
-
-    return observe_codex_rollout_interrupt
