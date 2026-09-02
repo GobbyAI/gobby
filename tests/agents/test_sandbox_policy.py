@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from gobby.agents import sandbox_policy
+from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 
 pytestmark = pytest.mark.unit
 
@@ -41,6 +42,43 @@ def _run_cache(
     )
     destination = Path(paths.environment("codex")["XDG_CACHE_HOME"]) / "pre-commit"
     return paths, destination
+
+
+def test_gcode_runtime_write_exception_matches_workspace_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gobby_home = Path("/Users/josh/.gobby")
+    workspace = gobby_home / "worktrees/gobby/task-21329-detach-close-criteria-review"
+    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+
+    assert sandbox_policy.gcode_runtime_write_exceptions(workspace) == [
+        str(gobby_home / "gcode-runtime/9717da2af3b3bf43")
+    ]
+
+
+def test_srt_policy_allows_only_current_workspace_gcode_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gobby_home = Path("/opt/gobby-home")
+    runtime_root = gobby_home / "gcode-runtime"
+    workspace = gobby_home / "worktrees/gobby/task-21620"
+    unrelated_runtime = runtime_root / "unrelated-run"
+    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+
+    paths = compute_sandbox_paths(
+        config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+        workspace_path=str(workspace),
+        provider="codex",
+        env={
+            "PATH": "",
+            "GOBBY_CODE_INDEX_RUNTIME_HOME": str(unrelated_runtime),
+        },
+    )
+
+    runtime_writes = [path for path in paths.write_paths if Path(path).is_relative_to(runtime_root)]
+    assert runtime_writes == sandbox_policy.gcode_runtime_write_exceptions(workspace)
+    assert str(unrelated_runtime) not in paths.write_paths
+    assert str(runtime_root) in paths.deny_write_paths
 
 
 def test_prepare_sandbox_run_paths_copies_writable_isolated_pre_commit_store(

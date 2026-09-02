@@ -300,7 +300,7 @@ def compute_sandbox_paths(
         [
             *default_write_paths(config, workspace),
             *git_paths,
-            *gcode_runtime_write_exceptions(policy_env),
+            *gcode_runtime_write_exceptions(workspace),
             *(provider_write_exceptions(provider) if provider else []),
             *(tuple(str(path) for path in rtk_paths.write_paths) if rtk_paths else ()),
         ]
