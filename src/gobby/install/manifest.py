@@ -103,8 +103,15 @@ def write_bundled_content_manifest(install_dir: Path) -> Path:
     shared_dir = install_dir / MANIFEST_ROOT
     if not shared_dir.is_dir():
         raise FileNotFoundError(f"Shared directory not found: {shared_dir}")
-    manifest_path = install_dir / MANIFEST_FILENAME
     manifest = build_bundled_content_manifest(shared_dir)
+    return _write_bundled_content_manifest(install_dir, manifest)
+
+
+def _write_bundled_content_manifest(
+    install_dir: Path,
+    manifest: BundledContentManifest,
+) -> Path:
+    manifest_path = install_dir / MANIFEST_FILENAME
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -182,16 +189,7 @@ def check_committed_bundled_content_manifest(
 ) -> CommittedManifestCheck:
     """Compare manifest-eligible blobs and the manifest from one committed Git tree."""
     try:
-        shared_files = _committed_shared_files(repo_root, treeish)
-        expected: BundledContentManifest = {
-            "schema_version": MANIFEST_SCHEMA_VERSION,
-            "hash_algorithm": MANIFEST_HASH_ALGORITHM,
-            "root": MANIFEST_ROOT,
-            "files": {
-                relative: hashlib.sha256(content).hexdigest()
-                for relative, content in shared_files.items()
-            },
-        }
+        expected = _build_committed_bundled_content_manifest(repo_root, treeish)
         raw_manifest = _git_bytes(
             repo_root,
             "show",
@@ -273,6 +271,22 @@ def _committed_shared_files(repo_root: Path, treeish: str) -> dict[str, bytes]:
     return dict(sorted(files.items()))
 
 
+def _build_committed_bundled_content_manifest(
+    repo_root: Path,
+    treeish: str,
+) -> BundledContentManifest:
+    shared_files = _committed_shared_files(repo_root, treeish)
+    return {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "hash_algorithm": MANIFEST_HASH_ALGORITHM,
+        "root": MANIFEST_ROOT,
+        "files": {
+            relative: hashlib.sha256(content).hexdigest()
+            for relative, content in shared_files.items()
+        },
+    }
+
+
 def _should_include_relative_path(relative: PurePosixPath) -> bool:
     if any(part.startswith(".") for part in relative.parts):
         return False
@@ -329,11 +343,30 @@ def _manifest_parity_errors(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Check committed bundled-content parity.")
+    parser = argparse.ArgumentParser(description="Check or write the bundled-content manifest.")
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
-    parser.add_argument("--treeish", default="HEAD")
+    parser.add_argument("--treeish")
+    parser.add_argument("--write", action="store_true")
     args = parser.parse_args(argv)
-    result = check_committed_bundled_content_manifest(args.repo_root, treeish=args.treeish)
+    if args.write:
+        install_dir = args.repo_root / _INSTALL_TREE_PATH
+        try:
+            if args.treeish is None:
+                manifest_path = write_bundled_content_manifest(install_dir)
+            else:
+                manifest = _build_committed_bundled_content_manifest(
+                    args.repo_root,
+                    args.treeish,
+                )
+                manifest_path = _write_bundled_content_manifest(install_dir, manifest)
+        except (OSError, subprocess.SubprocessError, tarfile.TarError) as exc:
+            print(f"Cannot write bundled content manifest: {_git_error_text(exc)}", file=sys.stderr)
+            return 1
+        print(manifest_path)
+        return 0
+
+    treeish = args.treeish or "HEAD"
+    result = check_committed_bundled_content_manifest(args.repo_root, treeish=treeish)
     if result.ok:
         print(
             f"Committed bundled content manifest matches {result.treeish} "

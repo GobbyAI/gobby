@@ -693,6 +693,9 @@ async def test_stale_committed_bundled_manifest_blocks_close() -> None:
 
     assert evaluation.error == "stale_bundled_content_manifest"
     assert evaluation.message == "Committed bundled content manifest is stale."
+    assert "uv run python -m gobby.install.manifest --write --repo-root . --treeish HEAD" in (
+        evaluation.action or ""
+    )
     check_manifest.assert_called_once_with(Path("/repo"), ["abc123"])
     review.assert_not_awaited()
 
