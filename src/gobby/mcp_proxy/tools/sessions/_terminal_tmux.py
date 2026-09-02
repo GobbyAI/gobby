@@ -1,4 +1,4 @@
-"""Pane resolution and verified command delivery for terminal handoff tools."""
+"""Pane resolution and command delivery for terminal handoff tools."""
 
 from __future__ import annotations
 
@@ -9,12 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.sessions.tmux_context import parse_terminal_context_value
-from gobby.terminals.composer import (
-    COMPOSER_CAPTURE_LINES,
-    composer_line_is,
-    composer_prompt_line,
-)
-from gobby.terminals.pane_io import PaneIO, clear_composer
+from gobby.terminals.pane_io import PaneIO, SendResult, clear_composer
 from gobby.terminals.runtime import NamedKey
 
 if TYPE_CHECKING:
@@ -42,8 +37,6 @@ _DEFAULT_INTERRUPT_SETTLE_SECONDS = 0.1
 _OBSERVED_INTERRUPT_SETTLE_SECONDS = 1.0
 _INTERRUPT_ATTEMPTS = 3
 _INTERRUPT_POLL_SECONDS = 0.05
-_COMPOSER_SETTLE_SECONDS = 0.05
-_COMMAND_VERIFY_SECONDS = 1.0
 _COMPACTION_REJECTION_SETTLE_SECONDS = 0.1
 _COMPACTION_REJECTION_CAPTURE_LINES = 30
 _COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
@@ -190,59 +183,13 @@ async def _confirm_interrupt(
     )
 
 
-async def _submit_verified_command(
-    pane: PaneIO,
-    command: str,
-    session_id: str,
-    *,
-    verify_seconds: float,
-    poll_seconds: float = _INTERRUPT_POLL_SECONDS,
-) -> tuple[bool, str | None, dict[str, Any] | None]:
-    """Type ``command``, require it alone on the prompt line, then press Enter."""
+async def _submit_command(pane: PaneIO, command: str, session_id: str) -> SendResult:
+    """Type ``command`` into the drained composer and press Enter."""
     ok, reason = await pane.type_text(command)
     if not ok:
         _log_pane_failure(pane, session_id, "typing compaction command", reason)
-        return False, reason, None
-
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + verify_seconds
-    prompt_line: str | None = None
-    while True:
-        capture = await pane.snapshot(COMPOSER_CAPTURE_LINES)
-        prompt_line = composer_prompt_line(capture) if capture is not None else None
-        if composer_line_is(prompt_line, command):
-            break
-        remaining = deadline - loop.time()
-        if remaining <= 0:
-            # Back the typed command out so the operator's draft is not submitted
-            # with it later; whatever preceded it stays in the box.
-            for _ in command:
-                await pane.send_key("backspace")
-            logger.warning(
-                "Composer on %s target %s did not show %s cleanly for session %s: %r",
-                pane.backend,
-                pane.target,
-                command,
-                session_id,
-                (prompt_line or "").strip(),
-            )
-            return (
-                False,
-                f"composer did not show {command} cleanly before submit",
-                {
-                    "error_code": _COMPOSER_NOT_CLEAN_ERROR_CODE,
-                    "continuation_pending": False,
-                    "prompt_line": (prompt_line or "").strip(),
-                },
-            )
-        await asyncio.sleep(min(poll_seconds, remaining))
-
-    ok, reason = await _send_pane_key(
-        pane, "enter", session_id, action="submitting compaction command"
-    )
-    if not ok:
-        return False, reason, None
-    return True, None, None
+        return False, reason
+    return await _send_pane_key(pane, "enter", session_id, action="submitting compaction command")
 
 
 async def _send_terminal_compaction_command(
@@ -260,7 +207,7 @@ async def _send_terminal_compaction_command(
     interrupt_settle_seconds: float = _DEFAULT_INTERRUPT_SETTLE_SECONDS,
     rejection_settle_seconds: float = _COMPACTION_REJECTION_SETTLE_SECONDS,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
-    """Confirm the interrupt, clear the composer, then submit the verified command.
+    """Confirm the interrupt, drain the composer, then submit the command.
 
     ``settle_seconds`` overrides every wait (tests); ``observe_interrupt`` is the
     transcript observer for CLIs that record interrupts, and its absence keeps the
@@ -319,8 +266,7 @@ async def _send_terminal_compaction_command(
             None,
         )
 
-    composer_settle = _COMPOSER_SETTLE_SECONDS if settle_seconds is None else settle_seconds
-    cleared, clear_reason = await clear_composer(pane, cli_source, settle_seconds=composer_settle)
+    cleared, clear_reason = await clear_composer(pane, cli_source)
     if not cleared:
         if continuation_pending:
             clear_continuation_pending()
@@ -332,17 +278,11 @@ async def _send_terminal_compaction_command(
             {"error_code": _COMPOSER_NOT_CLEAN_ERROR_CODE, "continuation_pending": False},
         )
 
-    verify_seconds = _COMMAND_VERIFY_SECONDS if settle_seconds is None else settle_seconds
-    ok, reason, failure_detail = await _submit_verified_command(
-        pane,
-        command,
-        session_id,
-        verify_seconds=verify_seconds,
-    )
+    ok, reason = await _submit_command(pane, command, session_id)
     if not ok:
         if continuation_pending:
             clear_continuation_pending()
-        return False, reason, False, failure_detail
+        return False, reason, False, None
 
     rejection_delay = rejection_settle_seconds if settle_seconds is None else settle_seconds
     if rejection_delay > 0:

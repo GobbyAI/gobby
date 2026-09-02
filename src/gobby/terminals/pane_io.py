@@ -8,16 +8,10 @@ raw tmux manager.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, Protocol
 
-from gobby.terminals.composer import (
-    COMPOSER_CAPTURE_LINES,
-    COMPOSER_DRAIN_MAX_ROUNDS,
-    composer_clear_sequence,
-    composer_is_bare,
-)
+from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.key_bytes import tmux_key_name
 from gobby.terminals.runtime import (
     Delivered,
@@ -28,6 +22,7 @@ from gobby.terminals.runtime import (
 )
 
 __all__ = [
+    "DEFAULT_SNAPSHOT_LINES",
     "PaneIO",
     "RuntimePaneIO",
     "SendResult",
@@ -40,6 +35,9 @@ logger = logging.getLogger(__name__)
 # tmux key names for the NamedKeys the senders use; the runtime path encodes
 # every NamedKey itself.
 SendResult = tuple[bool, str | None]
+# Lines a snapshot returns by default; senders compare pane output around a
+# submitted command with it, never the composer itself.
+DEFAULT_SNAPSHOT_LINES = 80
 
 
 class PaneIO(Protocol):
@@ -55,7 +53,7 @@ class PaneIO(Protocol):
 
     async def type_text(self, text: str) -> SendResult: ...
 
-    async def snapshot(self, lines: int = COMPOSER_CAPTURE_LINES) -> str | None: ...
+    async def snapshot(self, lines: int = DEFAULT_SNAPSHOT_LINES) -> str | None: ...
 
 
 class RuntimePaneIO:
@@ -91,7 +89,7 @@ class RuntimePaneIO:
             return False, f"{self.backend} text write failed ({exc.stage})"
         return _outcome_result(outcome, f"{self.backend} text write")
 
-    async def snapshot(self, lines: int = COMPOSER_CAPTURE_LINES) -> str | None:
+    async def snapshot(self, lines: int = DEFAULT_SNAPSHOT_LINES) -> str | None:
         try:
             result = await self._runtime.snapshot(self._terminal, lines)
         except Exception:
@@ -126,7 +124,7 @@ class TmuxPaneIO:
     async def type_text(self, text: str) -> SendResult:
         return await self._dispatch(text, literal=True, action="typing text")
 
-    async def snapshot(self, lines: int = COMPOSER_CAPTURE_LINES) -> str | None:
+    async def snapshot(self, lines: int = DEFAULT_SNAPSHOT_LINES) -> str | None:
         try:
             output = await self._tmux.snapshot_lines(self._target, lines=lines)
         except (TimeoutError, OSError, RuntimeError):
@@ -155,31 +153,10 @@ def _outcome_result(outcome: object, action: str) -> SendResult:
     return False, f"{action} was not delivered: {type(outcome).__name__}"
 
 
-async def clear_composer(
-    pane: PaneIO,
-    cli_source: str | None,
-    *,
-    settle_seconds: float = 0.05,
-) -> SendResult:
-    """Empty the composer and confirm from a snapshot that the prompt line is bare.
-
-    Returns ``(True, None)`` once the prompt line is bare, or once two consecutive
-    snapshots are identical (nothing left to drain; a placeholder hint may remain).
-    Returns ``(False, reason)`` when a key fails or the drain never settles.
-    """
-    sequence = composer_clear_sequence(cli_source)
-    previous: str | None = None
-    for _round in range(COMPOSER_DRAIN_MAX_ROUNDS):
-        for key in sequence:
-            ok, reason = await pane.send_key(key)
-            if not ok:
-                return False, reason
-        if settle_seconds > 0:
-            await asyncio.sleep(settle_seconds)
-        capture = await pane.snapshot(COMPOSER_CAPTURE_LINES)
-        if capture is None:
-            return False, f"{pane.backend} snapshot unavailable while clearing the composer"
-        if composer_is_bare(capture) or capture == previous:
-            return True, None
-        previous = capture
-    return False, f"composer on {pane.backend} target {pane.target} did not drain"
+async def clear_composer(pane: PaneIO, cli_source: str | None) -> SendResult:
+    """Drain the composer blind; the first key that fails to send aborts the drain."""
+    for key in composer_clear_sequence(cli_source):
+        ok, reason = await pane.send_key(key)
+        if not ok:
+            return False, reason
+    return True, None

@@ -507,16 +507,9 @@ def _pending_patches(
     return patches
 
 
-@pytest.mark.parametrize(
-    ("pane_text", "expected_keys"),
-    [("> /clear", ["enter"]), ("> ", [])],
-    ids=["resubmits-a-swallowed-enter", "idle-composer-sends-nothing"],
-)
-async def test_pending_attempt_is_reused_without_a_second_clear(
-    pane_text: str, expected_keys: list[str]
-) -> None:
+async def test_pending_attempt_is_reused_without_a_second_clear() -> None:
     session = _terminal_session(source="claude", external_id="claude-session")
-    pane = _Pane(pane_text)
+    pane = _Pane("> ")
     refresh = MagicMock(return_value=True)
     send_command = AsyncMock()
     stage_attempt = MagicMock()
@@ -537,7 +530,7 @@ async def test_pending_attempt_is_reused_without_a_second_clear(
     assert result["content_refreshed"] is True
     assert result["attempt_id"] == "attempt-9"
     assert result["successor_id"] == "successor-3"
-    assert pane.keys == expected_keys
+    assert pane.keys == []
     refresh.assert_called_once()
     assert refresh.call_args.kwargs == {
         "attempt_id": "attempt-9",

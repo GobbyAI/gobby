@@ -290,7 +290,7 @@ async def test_pending_attempt_is_reused_and_its_content_refreshed(
         chat_context=None,
     )
     assert mark_clear_command_sent(hub_db, predecessor.id, attempt_id="pending-clear")
-    pane = _Pane("> /clear")
+    pane = _Pane("> ")
     send_command = AsyncMock()
     patches = _patches(predecessor, pane, send_command)
     patches.append(patch.object(_terminal_clear, "_CLEAR_ACK_TIMEOUT_SECONDS", 0.0))
@@ -307,8 +307,8 @@ async def test_pending_attempt_is_reused_and_its_content_refreshed(
     assert result["attempt_pending"] is True
     assert result["attempt_id"] == "pending-clear"
     send_command.assert_not_awaited()
-    # A swallowed Enter is the only keystroke a retry may send.
-    assert pane.keys == ["enter"]
+    # A retry never touches the pane; the delivered command stands.
+    assert pane.keys == []
     assert _status(sessions, predecessor.id) == "awaiting_handoff"
 
     successor_id = sessions.register_session(

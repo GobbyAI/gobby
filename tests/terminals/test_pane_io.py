@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import pytest
 
-from gobby.terminals.composer import COMPOSER_DRAIN_MAX_ROUNDS
+from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.pane_io import RuntimePaneIO, TmuxPaneIO, clear_composer
 from gobby.terminals.runtime import (
     Delivered,
@@ -146,14 +146,13 @@ async def test_tmux_pane_reports_dispatch_failures() -> None:
     assert await TmuxPaneIO(tmux, "%7").snapshot(1) is None
 
 
-class _ScriptedPane:
-    """PaneIO fake whose snapshots follow a script, one entry per drain round."""
+class _RecordingPane:
+    """PaneIO fake that records keys and counts snapshots."""
 
     backend = "fake"
     target = "pane"
 
-    def __init__(self, captures: list[str | None], *, fail_key: str | None = None) -> None:
-        self.captures = list(captures)
+    def __init__(self, *, fail_key: str | None = None) -> None:
         self.fail_key = fail_key
         self.keys: list[str] = []
         self.snapshots = 0
@@ -169,49 +168,21 @@ class _ScriptedPane:
 
     async def snapshot(self, lines: int = 12) -> str | None:
         self.snapshots += 1
-        if self.captures:
-            return self.captures.pop(0)
-        return None
+        return "> "
 
 
 @pytest.mark.asyncio
-async def test_clear_composer_stops_once_the_prompt_line_is_bare() -> None:
-    pane = _ScriptedPane(["> "])
+async def test_clear_composer_sends_the_drain_blind() -> None:
+    pane = _RecordingPane()
 
-    assert await clear_composer(pane, "claude", settle_seconds=0) == (True, None)
-    assert pane.keys == ["ctrl_l"]
-    assert pane.snapshots == 1
-
-
-@pytest.mark.asyncio
-async def test_clear_composer_drains_until_bare_then_stops() -> None:
-    pane = _ScriptedPane(["> line two\n  line three", "> line three", "> "])
-
-    assert await clear_composer(pane, "codex", settle_seconds=0) == (True, None)
-    assert pane.snapshots == 3
-    assert len(pane.keys) == 3 * 32
+    assert await clear_composer(pane, "claude") == (True, None)
+    assert pane.keys == list(composer_clear_sequence("claude"))
+    assert pane.snapshots == 0
 
 
 @pytest.mark.asyncio
-async def test_clear_composer_accepts_a_stable_capture_with_placeholder_text() -> None:
-    pane = _ScriptedPane(["> Try 'fix the tests'", "> Try 'fix the tests'"])
+async def test_clear_composer_stops_at_the_first_failed_key() -> None:
+    pane = _RecordingPane(fail_key="ctrl_k")
 
-    assert await clear_composer(pane, "codex", settle_seconds=0) == (True, None)
-    assert pane.snapshots == 2
-
-
-@pytest.mark.asyncio
-async def test_clear_composer_fails_on_key_failure_snapshot_loss_or_no_drain() -> None:
-    failed_key = _ScriptedPane(["> "], fail_key="ctrl_l")
-    assert await clear_composer(failed_key, "claude", settle_seconds=0) == (False, "ctrl_l failed")
-
-    no_snapshot = _ScriptedPane([None])
-    ok, reason = await clear_composer(no_snapshot, "claude", settle_seconds=0)
-    assert ok is False
-    assert reason == "fake snapshot unavailable while clearing the composer"
-
-    churn = _ScriptedPane([f"> draft {index}" for index in range(COMPOSER_DRAIN_MAX_ROUNDS + 2)])
-    ok, reason = await clear_composer(churn, "claude", settle_seconds=0)
-    assert ok is False
-    assert reason == "composer on fake target pane did not drain"
-    assert churn.snapshots == COMPOSER_DRAIN_MAX_ROUNDS
+    assert await clear_composer(pane, "codex") == (False, "ctrl_k failed")
+    assert pane.keys == ["ctrl_u", "ctrl_k"]

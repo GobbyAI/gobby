@@ -43,11 +43,6 @@ from gobby.terminal_context import (
     terminal_context_has_tmux_target,
 )
 from gobby.terminal_ownership import terminal_session_identity
-from gobby.terminals.composer import (
-    COMPOSER_CAPTURE_LINES,
-    composer_line_is,
-    composer_prompt_line,
-)
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -138,9 +133,12 @@ async def _resume_pending_clear_attempt(
     db: HubDatabase,
     session_manager: SessionManager,
     session: Any,
-    pane: PaneIO,
 ) -> dict[str, Any]:
-    """Reuse a delivered-but-unacknowledged attempt instead of typing a second /clear."""
+    """Reuse a delivered-but-unacknowledged attempt instead of typing a second /clear.
+
+    The retry never touches the pane: the command was already submitted, and the
+    successor binds on its own SessionStart.
+    """
     attempt_id = str(pending["attempt_id"])
     refreshed = refresh_clear_attempt_content(
         db,
@@ -149,17 +147,6 @@ async def _resume_pending_clear_attempt(
         handoff_markdown=handoff_markdown,
         observations=observations,
     )
-    # A swallowed Enter leaves the delivered command sitting in the composer;
-    # submitting it again is the only keystroke a retry may send.
-    capture = await pane.snapshot(COMPOSER_CAPTURE_LINES)
-    if capture is not None and composer_line_is(composer_prompt_line(capture), CLEAR_COMMAND):
-        ok, reason = await pane.send_key("enter")
-        logger.info(
-            "Resubmitted the pending /clear for session %s (ok=%s%s)",
-            session.id,
-            ok,
-            "" if ok else f", reason={reason}",
-        )
     identity, baseline_ids = _clear_pane_baseline(session_manager, session)
     acknowledgment = await _wait_for_clear_acknowledgment(
         db,
@@ -438,7 +425,6 @@ async def execute_clear_session(
             db=db,
             session_manager=session_manager,
             session=session,
-            pane=pane,
         )
 
     observe_interrupt, observer_error = _interrupt_observer(source, session)
