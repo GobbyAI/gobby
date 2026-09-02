@@ -116,4 +116,4 @@ insta = { version = "1", features = ["json"] }
 proptest = "1"
 serial_test = "3"
 syn = { version = "2", features = ["full"] }
-temp-env = "0.3"
+temp-env = "0.3.6"
