@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from gobby.storage.hub.protocol import HubDatabase
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -709,12 +710,12 @@ def test_post_api_build_restart_empty_pr_creates_opts() -> None:
 
 
 def test_post_api_build_resolves_relative_hidden_plan_from_request_cwd(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.build.service import DispatcherTickSummary
     from gobby.servers.routes.build import create_build_router
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
 
     repo_path = tmp_path / "repo"
@@ -722,7 +723,7 @@ def test_post_api_build_resolves_relative_hidden_plan_from_request_cwd(
     plan_dir.mkdir(parents=True)
     plan_file = plan_dir / "foundation.md"
     plan_file.write_text("# Plan\n")
-    project = LocalProjectManager(temp_db).create(name="route-build", repo_path=str(repo_path))
+    project = isolated_checkout_factory(temp_db, "route-build", root=repo_path).project
     task_manager = LocalTaskManager(temp_db)
     server = SimpleNamespace(
         services=SimpleNamespace(

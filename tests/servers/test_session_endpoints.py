@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from datetime import UTC
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +14,7 @@ from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, patch_local_machine_id
 
 pytestmark = [
     pytest.mark.unit,
@@ -27,9 +28,8 @@ LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
 
 
 @pytest.fixture(autouse=True)
-def _local_machine_identity() -> Iterator[None]:
-    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
-        yield
+def _local_machine_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_local_machine_id(monkeypatch, LOCAL_MACHINE_ID)
 
 
 class TestSessionEndpoints:
@@ -59,16 +59,16 @@ class TestSessionEndpoints:
 
     def test_bulk_move_renumbers_and_broadcasts_only_committed_sessions(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         client: TestClient,
         http_server: HTTPServer,
         session_storage: SessionManager,
         test_project: dict[str, Any],
         tmp_path: Path,
     ) -> None:
-        destination = LocalProjectManager(session_storage.db).create(
-            name="bulk-move-destination",
-            repo_path=str(tmp_path / "bulk-move-destination"),
-        )
+        destination = isolated_checkout_factory(
+            session_storage.db, "bulk-move-destination", root=tmp_path / "bulk-move-destination"
+        ).project
         for index in range(2):
             session_storage.register(
                 external_id=f"destination-{index}",
@@ -429,6 +429,7 @@ class TestSessionEndpoints:
 
     def test_find_by_terminal_context_ignores_other_projects_and_inactive_sessions(
         self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
         client: TestClient,
         session_storage: SessionManager,
         project_storage: LocalProjectManager,
@@ -436,10 +437,9 @@ class TestSessionEndpoints:
         tmp_path: Path,
     ) -> None:
         """Lookup only considers active sessions in the requested project."""
-        other_project = project_storage.create(
-            name="other-terminal-project",
-            repo_path=str(tmp_path / "other"),
-        )
+        other_project = isolated_checkout_factory(
+            project_storage.db, "other-terminal-project", root=tmp_path / "other"
+        ).project
         session_storage.register(
             external_id="terminal-other-project",
             machine_id="21000000-0000-4000-8000-000000000003",

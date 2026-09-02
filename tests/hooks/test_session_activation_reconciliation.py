@@ -40,7 +40,6 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions import AgentDefinitionManager, get_definitions_revision
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import TERMINAL_SESSION_STATUSES, SessionManager
 from gobby.workflows.definitions import (
     RuleDefinitionBody,
@@ -51,6 +50,7 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.git_utils import DirtyFiles
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
@@ -77,8 +77,10 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def project_id(db: HubDatabase, tmp_path: Path) -> str:
-    project = LocalProjectManager(db).create(name="activation-test", repo_path=str(tmp_path))
+def project_id(
+    isolated_checkout_factory: IsolatedCheckoutFactory, db: HubDatabase, tmp_path: Path
+) -> str:
+    project = isolated_checkout_factory(db, "activation-test", root=tmp_path).project
     return project.id
 
 

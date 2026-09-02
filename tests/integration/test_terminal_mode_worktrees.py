@@ -37,6 +37,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
 
@@ -56,15 +57,14 @@ def temp_db(hub_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def project(temp_db: HubDatabase, tmp_path: Path) -> Project:
+def project(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase, tmp_path: Path
+) -> Project:
     """Create a test project."""
     project_manager = LocalProjectManager(temp_db)
     repo_path = tmp_path / "test-repo"
     repo_path.mkdir(parents=True, exist_ok=True)
-    return project_manager.create(
-        name="test-project",
-        repo_path=str(repo_path),
-    )
+    return isolated_checkout_factory(project_manager.db, "test-project", root=repo_path).project
 
 
 @pytest.fixture
@@ -375,6 +375,7 @@ class TestTmuxSpawnerDetection:
             result = spawner.spawn(
                 command=["echo", "test"],
                 cwd="/tmp",
+                spawn_key="terminal-mode-unavailable",
             )
 
             assert result.success is False

@@ -14,9 +14,9 @@ from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.workflows.imports import sync_imported_definition
 from gobby.workflows.pipeline_loader import PipelineLoader
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
 
@@ -36,15 +36,15 @@ steps:
 
 @pytest.mark.asyncio
 async def test_sync_imported_workflows_loads_project_and_global_files_without_restart(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_path = tmp_path / "project"
-    project = LocalProjectManager(temp_db).create(
-        "workflow-import-project",
-        repo_path=str(project_path),
-    )
+    project = isolated_checkout_factory(
+        temp_db, "workflow-import-project", root=project_path
+    ).project
     global_dir = tmp_path / "global-workflows"
     _write_pipeline(global_dir / "pipelines" / "global-import.yaml", "global-import")
     _write_pipeline(

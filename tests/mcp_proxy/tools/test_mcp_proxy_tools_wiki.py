@@ -17,8 +17,8 @@ from gobby.gwiki_gateway import (
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.wiki import create_wiki_registry
-from gobby.storage.projects import LocalProjectManager
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -430,8 +430,10 @@ async def test_wiki_trust_maps_gateway_command_errors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_project_scope_resolves_to_repo_path(temp_db: Any, tmp_path: Path) -> None:
-    project = LocalProjectManager(temp_db).create(name="wiki-mcp", repo_path=str(tmp_path))
+async def test_project_scope_resolves_to_repo_path(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: Any, tmp_path: Path
+) -> None:
+    project = isolated_checkout_factory(temp_db, "wiki-mcp", root=tmp_path).project
     registry = create_wiki_registry(
         db=temp_db,
         default_project_id=project.id,

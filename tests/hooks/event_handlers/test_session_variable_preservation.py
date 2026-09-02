@@ -20,9 +20,10 @@ from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.session_materialize import activate_deferred_session
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = [pytest.mark.unit]
 
@@ -92,7 +93,9 @@ def _make_hook_event(data: dict | None = None, external_id: str = "external-1") 
 
 
 def _make_project(db: HubDatabase, tmp_path: Path) -> str:
-    project = LocalProjectManager(db).create(name="variable-preservation", repo_path=str(tmp_path))
+    project = install_isolated_checkout_project(
+        db, tmp_path, name="variable-preservation", machine_id=require_machine_id()
+    ).project
     return project.id
 
 

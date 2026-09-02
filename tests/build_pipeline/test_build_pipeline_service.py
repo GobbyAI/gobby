@@ -15,8 +15,13 @@ import pytest
 
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import (
+    IsolatedCheckoutFactory,
+    insert_overlay,
+    install_isolated_checkout_project,
+)
 
 if TYPE_CHECKING:
     from gobby.build.service import BuildOptions, BuildResult
@@ -101,7 +106,9 @@ def _options(**overrides: Unpack[_OptionOverrides]) -> BuildOptions:
 def _project(temp_db: HubDatabase, tmp_path: Path) -> tuple[str, Path]:
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
-    project = LocalProjectManager(temp_db).create(name="phase-3", repo_path=str(repo_path))
+    project = install_isolated_checkout_project(
+        temp_db, repo_path, name="phase-3", machine_id=require_machine_id()
+    ).project
     return project.id, repo_path
 
 
@@ -236,6 +243,7 @@ async def test_build_coordinator_summary_survives_and_root_attaches_before_tick(
 
 @pytest.mark.asyncio
 async def test_build_rejects_coordinator_from_another_project(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
@@ -245,10 +253,9 @@ async def test_build_rejects_coordinator_from_another_project(
     project_id, _repo_path = _project(temp_db, tmp_path)
     other_repo = tmp_path / "other"
     other_repo.mkdir()
-    other_project = LocalProjectManager(temp_db).create(
-        name="other-coordinator-project",
-        repo_path=str(other_repo),
-    )
+    other_project = isolated_checkout_factory(
+        temp_db, "other-coordinator-project", root=other_repo
+    ).project
     task = LocalTaskManager(temp_db).create_task(
         project_id=project_id,
         title="Coordinated build",
@@ -273,6 +280,7 @@ async def test_build_rejects_coordinator_from_another_project(
 
 @pytest.mark.asyncio
 async def test_build_accepts_cross_project_uuid_coordinator_with_explicit_project(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
@@ -283,10 +291,9 @@ async def test_build_accepts_cross_project_uuid_coordinator_with_explicit_projec
     project_id, _repo_path = _project(temp_db, tmp_path)
     other_repo = tmp_path / "other"
     other_repo.mkdir()
-    other_project = LocalProjectManager(temp_db).create(
-        name="other-explicit-coordinator-project",
-        repo_path=str(other_repo),
-    )
+    other_project = isolated_checkout_factory(
+        temp_db, "other-explicit-coordinator-project", root=other_repo
+    ).project
     task = LocalTaskManager(temp_db).create_task(
         project_id=project_id,
         title="Cross project coordinated build",
@@ -398,6 +405,15 @@ async def test_plan_file_relative_path_resolves_from_request_cwd(
     project_id, _repo_path = _project(temp_db, tmp_path)
     target_repo = tmp_path / "target-repo"
     target_repo.mkdir()
+    # Relative plan paths resolve under the request cwd only when it is a
+    # registered overlay of the project on this machine.
+    insert_overlay(
+        temp_db,
+        project_id=project_id,
+        machine_id=require_machine_id(),
+        path=str(target_repo),
+        kind="worktree",
+    )
     plan_file = target_repo / "relative-plan.md"
     plan_file.write_text("# Plan\n", encoding="utf-8")
 

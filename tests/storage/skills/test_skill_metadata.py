@@ -14,8 +14,8 @@ from typing import Any
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase, Transaction
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.skills import DuplicateSkillError, LocalSkillManager, SkillFile
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 
 class RecordingNotifier:
@@ -95,19 +95,13 @@ def test_metadata_writes_reject_malformed_runtime(storage: LocalSkillManager) ->
 
 
 def test_create_skill_with_files_preserves_full_constructor_contract(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     notifier = RecordingNotifier()
     storage = LocalSkillManager(temp_db, notifier)
-    project_id = (
-        LocalProjectManager(temp_db)
-        .create(
-            name="skill-publication",
-            repo_path=str(tmp_path),
-        )
-        .id
-    )
+    project_id = isolated_checkout_factory(temp_db, "skill-publication", root=tmp_path).project.id
 
     skill = storage.create_skill_with_files(
         name="contract-skill",
@@ -141,18 +135,14 @@ def test_create_skill_with_files_preserves_full_constructor_contract(
 
 
 def test_create_skill_with_files_rejects_project_bundled_template(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     storage = LocalSkillManager(temp_db)
-    project_id = (
-        LocalProjectManager(temp_db)
-        .create(
-            name="bundled-template-guard",
-            repo_path=str(tmp_path),
-        )
-        .id
-    )
+    project_id = isolated_checkout_factory(
+        temp_db, "bundled-template-guard", root=tmp_path
+    ).project.id
 
     with pytest.raises(ValueError, match="bundled skill template"):
         storage.create_skill_with_files(

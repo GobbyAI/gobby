@@ -18,8 +18,9 @@ from gobby.skills.loader import SkillLoader
 from gobby.skills.parser import parse_skill_file
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.review_coverage_helpers import coverage_attestation
 from tests.review_learning.conftest import FakeMemoryManager, FakeTaskManager
 
@@ -48,7 +49,11 @@ def _body() -> str:
 
 
 def _skill_body(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+    """Return SKILL.md plus its paged references (skills were decomposed in #21187)."""
+    parts = [path.read_text(encoding="utf-8")]
+    for reference in sorted((path.parent / "references").glob("*.md")):
+        parts.append(reference.read_text(encoding="utf-8"))
+    return "\n".join(parts)
 
 
 def _manifest_entries(stem: str) -> list[dict[str, object]]:
@@ -107,7 +112,9 @@ def _review_setup(
 ) -> tuple[PlanReviewEvidenceService, str, str, Path]:
     root = tmp_path / stem
     root.mkdir()
-    project = LocalProjectManager(temp_db).create(name=stem, repo_path=str(root))
+    project = install_isolated_checkout_project(
+        temp_db, root, name=stem, machine_id=require_machine_id()
+    ).project
     session = SessionManager(temp_db).register(
         external_id=f"{stem}-parent",
         machine_id="21000000-0000-4000-8000-000000000002",
