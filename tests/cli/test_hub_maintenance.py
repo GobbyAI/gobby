@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import uuid
 from dataclasses import replace
@@ -24,6 +25,7 @@ from gobby.storage.maintenance_epoch import (
 )
 
 command = import_module("gobby.cli.hub_maintenance")
+shutdown_intent = import_module("gobby.shutdown_intent")
 
 
 def _record[T](events: list[str], event: str, value: T) -> T:
@@ -91,6 +93,16 @@ def _install_lifecycle_fakes(
         command,
         "stop_daemon",
         lambda **_kwargs: _record(events, "stop-daemon", True),
+    )
+    monkeypatch.setattr(
+        command,
+        "_refresh_maintenance_marker",
+        lambda: events.append("marker-refresh"),
+    )
+    monkeypatch.setattr(
+        command,
+        "clear_active_shutdown_intent",
+        lambda **_kwargs: events.append("marker-clear"),
     )
     monkeypatch.setattr(
         command,
@@ -260,6 +272,31 @@ def test_protected_maintenance_fails_closed_for_missing_or_malformed_database_na
     assert events == []
 
 
+def test_maintenance_marker_helper_writes_refreshes_and_clears(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    timestamps = iter((100.0, 300.0))
+    monkeypatch.setattr(command, "get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr(shutdown_intent.time, "time", lambda: next(timestamps))
+
+    command._refresh_maintenance_marker()
+    marker_path = tmp_path / "shutdown_intent_active.json"
+    first_marker = json.loads(marker_path.read_text(encoding="utf-8"))
+
+    command._refresh_maintenance_marker()
+    refreshed_marker = json.loads(marker_path.read_text(encoding="utf-8"))
+
+    assert first_marker["intent"] == "maintenance"
+    assert first_marker["source"] == "cli_hub_maintenance"
+    assert first_marker["timestamp"] == 100.0
+    assert refreshed_marker["timestamp"] == 300.0
+
+    command.clear_active_shutdown_intent(home=tmp_path)
+
+    assert not marker_path.exists()
+
+
 def test_run_owns_open_backup_apply_verify_release_and_restart(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -273,6 +310,7 @@ def test_run_owns_open_backup_apply_verify_release_and_restart(
     assert result.exit_code == 0, result.output
     assert events == [
         "stop-daemon",
+        "marker-refresh",
         "open",
         "batch",
         "backup",
@@ -282,6 +320,7 @@ def test_run_owns_open_backup_apply_verify_release_and_restart(
         "verify",
         "mark-verified",
         "release",
+        "marker-clear",
         "restart",
     ]
     assert str(epoch.id) in result.output
@@ -310,6 +349,7 @@ def test_resume_uses_only_hub_epoch_and_batch_state(
     assert result.exit_code == 0, result.output
     assert events == [
         "stop-daemon",
+        "marker-refresh",
         "discover",
         "load-batch",
         "backup",
@@ -319,6 +359,7 @@ def test_resume_uses_only_hub_epoch_and_batch_state(
         "verify",
         "mark-verified",
         "release",
+        "marker-clear",
         "restart",
     ]
     assert "reconcile" in result.output
@@ -366,6 +407,8 @@ def test_interrupted_run_keeps_epoch_open_and_daemon_stopped(
 
     assert result.exit_code != 0
     assert "injected campaign crash" in result.output
+    assert "marker-refresh" in events
+    assert "marker-clear" not in events
     assert "release" not in events
     assert "restart" not in events
 
@@ -393,6 +436,8 @@ def test_verification_failure_keeps_epoch_open_and_daemon_stopped(
     assert result.exit_code != 0
     assert "injected verification failure" in result.output
     assert events[-3:] == ["apply", "mark-applied", "verify"]
+    assert "marker-refresh" in events
+    assert "marker-clear" not in events
     assert "release" not in events
     assert "restart" not in events
 
@@ -428,6 +473,11 @@ def test_abort_requires_confirmation_and_records_disposition(
         "abort_maintenance_epoch",
         lambda *_args, **kwargs: _capture_abort(calls, kwargs, epoch),
     )
+    monkeypatch.setattr(
+        command,
+        "clear_active_shutdown_intent",
+        lambda **_kwargs: calls.append({"marker": "cleared"}),
+    )
     monkeypatch.setattr(command, "_start_daemon", lambda: calls.append({"restart": True}))
 
     rejected = CliRunner().invoke(
@@ -457,6 +507,7 @@ def test_abort_requires_confirmation_and_records_disposition(
             "disposition": "catalog verified at pre-cutover state",
             "confirmed": True,
         },
+        {"marker": "cleared"},
         {"restart": True},
     ]
     assert accepted.exit_code == 0, accepted.output

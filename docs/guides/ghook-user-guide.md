@@ -31,7 +31,7 @@ Or right-click the binary in Finder and choose *Open* once to approve it. `cargo
 ```text
 host AI CLI fires hook
   └─ runs ghook --gobby-owned --cli=<c> --type=<t>
-      ├─ Stop only: planned-shutdown marker + daemon health preflight
+      ├─ Stop/pre-compact: planned-shutdown marker + daemon health preflight
       │   └─ fresh marker + unreachable daemon → {"continue":true}; no stdin/enqueue
       ├─ resolves project root (walk up from cwd to .gobby/project.json or .gobby/gcode.json)
       ├─ reads stdin (the host CLI's hook payload)
@@ -47,25 +47,30 @@ host AI CLI fires hook
 
 Spool-first ordering is the whole point. If anything between ghook and the daemon goes wrong (sandbox FS denial, network blip, daemon restart), the envelope is already on disk and the daemon will pick it up on its next drain pass. Replay is invisible to the host CLI; the host-visible result follows the current per-CLI hook protocol.
 
-### Planned Shutdown Stop Handling
+### Planned Shutdown Fail-Open Handling
 
 When Gobby intentionally stops or restarts the daemon, a host CLI may fire a
-Stop hook after the daemon has already exited. For Stop hooks only, `ghook`
-checks `$GOBBY_HOME/shutdown_intent_active.json` before project lookup, stdin
-reads, terminal-context injection, or enqueue.
+Stop or pre-compact hook after the daemon has already exited. For Stop and the
+three registered pre-compact spellings (`pre-compact`, `PreCompact`, and
+`pre_compact`), `ghook` checks
+`$GOBBY_HOME/shutdown_intent_active.json` before project lookup, stdin reads,
+terminal-context injection, or enqueue.
 
 A marker is accepted when its `timestamp` is fresh and either its `intent` is
 `stop` or `restart`, or its `source` starts with `cli_`, `http_`, `service_`, or
-`mcp_`.
+`mcp_`. An `intent` of `maintenance` uses a 24-hour freshness window; the hub
+maintenance CLI refreshes it on run/resume and clears it when the campaign is
+released or aborted.
 If `{daemon_url}/api/health` is unreachable during that fresh window,
 `ghook` prints `{"continue":true}` and exits 0. This check is an aliveness
 probe only: any HTTP response from the endpoint counts as reachable, including
 4xx/5xx, and does not imply the daemon is healthy.
 
-If the daemon dies after enqueue but before the live Stop POST completes,
+If the daemon dies after enqueue but before the live POST completes,
 `ghook` suppresses only `Connect` and `Timeout` failures with a fresh marker. It
-deletes the just-enqueued Stop envelope first; delete failures, stale markers,
-HTTP errors, and non-Stop hooks keep the normal fail-closed behavior.
+deletes the just-enqueued Stop or pre-compact envelope first; delete failures,
+stale markers, HTTP errors, and other hooks keep the normal fail-closed
+behavior.
 
 Environment knobs:
 
@@ -75,7 +80,8 @@ Environment knobs:
   `GOBBY_DAEMON_URL` is not set.
 - `GOBBY_HOME` controls marker lookup; default is `~/.gobby`.
 - `GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS` overrides freshness when it is a positive
-  number; default is 120 seconds.
+  number; default is 120 seconds. Maintenance markers use their fixed 24-hour
+  window.
 
 ### Terminal Context
 
