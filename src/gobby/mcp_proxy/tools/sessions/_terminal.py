@@ -50,6 +50,7 @@ from gobby.sessions.compact_continuation import (
     CODEX_COMPACT_READY_CAPTURE_LINES,
     clear_handoff_compact_continuation_pending,
     mark_handoff_compact_continuation_pending,
+    persist_handoff_resume_leased_tools,
     persist_handoff_resume_skills,
     schedule_codex_handoff_compact_continuation_readiness,
 )
@@ -564,6 +565,7 @@ def register_terminal_tools(
             ):
                 compact_target = session_id
             resume_skills = persist_handoff_resume_skills(db, resolved_session_id)
+            persist_handoff_resume_leased_tools(db, resolved_session_id)
             attempt_id = uuid4().hex
             attempt_state = None
             try:
@@ -670,6 +672,7 @@ def register_terminal_tools(
             }
 
         resume_skills = persist_handoff_resume_skills(db, resolved_session_id)
+        persist_handoff_resume_leased_tools(db, resolved_session_id)
         continuation_prompt = build_handoff_continue_prompt()
         compact_attempt_id = uuid4().hex
         try:

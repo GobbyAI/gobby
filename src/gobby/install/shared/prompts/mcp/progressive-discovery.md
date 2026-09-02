@@ -40,7 +40,7 @@ Run `gcode --help` for all available commands.
 </code_search>
 
 <leases>
-Schema leases survive ordinary session resume and daemon restart. Context loss such as clear or compact resets schema leases, so fetch the schema again before the next ordinary call. Inventory observations from `list_tools` and `list_mcp_servers` are preserved.
+Schema leases survive ordinary session resume and daemon restart. Clear or compact resets them. After a Gobby-managed compact, `get_handoff` may restore up to eight recent leases by returning their schemas in `leased_tool_schemas`; fetch the schema before calling any other unleased tool. Inventory observations from `list_tools` and `list_mcp_servers` are preserved.
 </leases>
 
 <common_mistakes>

@@ -55,7 +55,12 @@ def record_schema_shown(
 
     key = tool_schema_key(server_name, tool_name)
     try:
-        manager.append_to_set_variable(resolved_session_id, UNLOCKED_TOOLS_VARIABLE, [key])
+        manager.append_to_set_variable(
+            resolved_session_id,
+            UNLOCKED_TOOLS_VARIABLE,
+            [key],
+            preserve_order=True,
+        )
     except Exception as exc:
         logger.debug("Failed to record schema latch for %s: %s", resolved_session_id, exc)
 

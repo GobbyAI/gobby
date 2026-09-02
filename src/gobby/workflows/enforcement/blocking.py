@@ -53,6 +53,11 @@ OPERATOR_TOOLS = {
 }
 
 
+# Proxy-routed tools whose schemas declare no arguments. Calling these cannot
+# rely on stale argument knowledge, so a schema lease adds no safety.
+ARGUMENTLESS_PROXY_TOOLS = frozenset({"gobby-sessions:get_handoff"})
+
+
 MESSAGE_DELIVERY_TOOLS = {"get_inter_session_message", "get_inter_session_messages"}
 
 
@@ -172,6 +177,13 @@ def is_operator_tool(tool_name: str | None) -> bool:
         True if this is an operator tool that bypasses enforcement
     """
     return tool_name in OPERATOR_TOOLS if tool_name else False
+
+
+def is_argumentless_proxy_tool(tool_input: dict[str, Any]) -> bool:
+    """Return whether a proxy-routed tool has no callable arguments."""
+    server = tool_input.get("server_name") or tool_input.get("server") or ""
+    tool = tool_input.get("tool_name") or tool_input.get("tool") or ""
+    return f"{server}:{tool}" in ARGUMENTLESS_PROXY_TOOLS
 
 
 def is_tool_unlocked(

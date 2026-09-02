@@ -19,6 +19,7 @@ from gobby.storage.session_resolution import is_session_uuid
 from gobby.workflows.enforcement.blocking import (
     claimed_task_source_code_write,
     get_touched_file_paths,
+    is_argumentless_proxy_tool,
     is_current_plan_artifact,
     is_discovery_tool,
     is_gobby_call_tool,
@@ -174,6 +175,7 @@ class TemplatingMixin:
         )
         funcs["isinstance"] = isinstance
         funcs["is_tool_unlocked"] = lambda ti: is_tool_unlocked(ti, variables)
+        funcs["is_argumentless_proxy_tool"] = is_argumentless_proxy_tool
         funcs["is_discovery_tool"] = is_discovery_tool
         funcs["is_operator_tool"] = is_operator_tool
         funcs["is_plan_file"] = is_plan_file

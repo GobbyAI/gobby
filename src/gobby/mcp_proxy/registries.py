@@ -240,6 +240,7 @@ def setup_internal_registries(
             terminal_manager=terminal_manager,
             terminal_runtime_registry=terminal_runtime_registry,
             write_coordinator=write_coordinator,
+            tool_proxy_getter=tool_proxy_getter,
         )
         manager.add_registry(session_messages_registry)
         logger.debug("Sessions registry initialized")

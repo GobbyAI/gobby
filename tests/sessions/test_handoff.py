@@ -6,12 +6,15 @@ from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
 
+from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
+from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+from gobby.sessions.compact_continuation import persist_handoff_resume_leased_tools
 from gobby.sessions.handoff import (
     HANDOFF_PULL_PENDING_VARIABLE,
     FeedbackObservation,
@@ -441,6 +444,83 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
         assert empty["success"] is True and empty["found"] is False
         renamed = await registry.call("set_title", {"title": "Manual title"})
         assert renamed["title"] == "Manual title"
+
+
+@pytest.mark.asyncio
+async def test_get_handoff_returns_and_restores_snapshotted_tool_schemas(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    session = _registered_session(session_manager)
+    variables = SessionVariableManager(temp_db)
+    leased_tools = ["gobby-tasks:create_task", "gobby-memory:search_memories"]
+    schemas = {
+        "create_task": {"type": "object", "properties": {"title": {"type": "string"}}},
+        "search_memories": {"type": "object", "properties": {"query": {"type": "string"}}},
+    }
+    tool_proxy = cast(
+        ToolProxyService,
+        SimpleNamespace(
+            _resolve_platform_session_id=lambda session_id: session_id,
+            _resolve_hook_manager=lambda: SimpleNamespace(_database=temp_db),
+            get_tool_schema=AsyncMock(
+                side_effect=lambda server_name, tool_name: {
+                    "success": True,
+                    "tool": {
+                        "name": tool_name,
+                        "inputSchema": schemas[tool_name],
+                    },
+                }
+            ),
+        ),
+    )
+    for key in leased_tools:
+        server_name, tool_name = key.split(":", maxsplit=1)
+        record_schema_shown(
+            tool_proxy,
+            session.id,
+            server_name=server_name,
+            tool_name=tool_name,
+        )
+    assert variables.get_variables(session.id)["unlocked_tools"] == leased_tools
+    persist_handoff_resume_leased_tools(temp_db, session.id)
+    variables.set_variable(session.id, "unlocked_tools", [])
+    stage_handoff_attempt(
+        temp_db,
+        session.id,
+        attempt_id="lease-restore",
+        markdown="Continue the implementation.",
+        observations=[],
+        clear_session=False,
+    )
+    registry = create_session_messages_registry(
+        session_manager=session_manager,
+        db=temp_db,
+        tool_proxy_getter=lambda: tool_proxy,
+    )
+
+    with session_context_for_test(session.id):
+        result = await registry.call("get_handoff", {})
+
+    assert result["leased_tool_schemas"] == [
+        {
+            "server_name": "gobby-memory",
+            "tool_name": "search_memories",
+            "schema": {
+                "name": "search_memories",
+                "inputSchema": schemas["search_memories"],
+            },
+        },
+        {
+            "server_name": "gobby-tasks",
+            "tool_name": "create_task",
+            "schema": {
+                "name": "create_task",
+                "inputSchema": schemas["create_task"],
+            },
+        },
+    ]
+    assert variables.get_variables(session.id)["unlocked_tools"] == list(reversed(leased_tools))
 
 
 def test_title_lifecycle_is_provisional_task_manual_and_clear_sticky(

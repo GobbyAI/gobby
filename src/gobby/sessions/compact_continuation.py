@@ -14,6 +14,8 @@ from gobby.sessions.compact_markers import (
     COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS,
     COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE,
     COMPACT_RESUME_EXCLUDED_SKILLS,
+    COMPACT_RESUME_LEASED_TOOLS_LIMIT,
+    COMPACT_RESUME_LEASED_TOOLS_VARIABLE,
     COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS,
     COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
     HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
@@ -38,6 +40,8 @@ __all__ = [
     "COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE",
     "COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS",
     "COMPACT_RESUME_EXCLUDED_SKILLS",
+    "COMPACT_RESUME_LEASED_TOOLS_LIMIT",
+    "COMPACT_RESUME_LEASED_TOOLS_VARIABLE",
     "COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE",
     "COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS",
     "HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS",
@@ -112,6 +116,51 @@ def persist_handoff_resume_skills(
                 exc_info=True,
             )
     return skill_tiers
+
+
+def persist_handoff_resume_leased_tools(db: HubDatabase, session_id: str) -> list[str]:
+    """Snapshot the newest schema leases for truthful post-compact restoration."""
+    variables = _load_session_variables(db, session_id)
+    raw_leases = variables.get("unlocked_tools")
+    leased_tools: list[str] = []
+    seen: set[str] = set()
+    if isinstance(raw_leases, list):
+        for value in reversed(raw_leases):
+            if not isinstance(value, str):
+                continue
+            key = value.strip()
+            server, separator, tool = key.partition(":")
+            if not separator or not server or not tool or key in seen:
+                continue
+            seen.add(key)
+            leased_tools.append(key)
+            if len(leased_tools) == COMPACT_RESUME_LEASED_TOOLS_LIMIT:
+                break
+
+    try:
+        _merge_session_variable(
+            db,
+            session_id,
+            COMPACT_RESUME_LEASED_TOOLS_VARIABLE,
+            leased_tools,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to persist compact resume tool leases for session %s",
+            session_id,
+            exc_info=True,
+        )
+    return leased_tools
+
+
+def consume_compact_resume_leased_tools(db: HubDatabase, session_id: str) -> list[str]:
+    """Consume the bounded schema-lease snapshot for a completed handoff."""
+    raw_leases = _pop_session_variable(db, session_id, COMPACT_RESUME_LEASED_TOOLS_VARIABLE)
+    if not isinstance(raw_leases, list):
+        return []
+    return [value for value in raw_leases if isinstance(value, str)][
+        :COMPACT_RESUME_LEASED_TOOLS_LIMIT
+    ]
 
 
 def consume_compact_handoff_marker(db: HubDatabase, session_id: str) -> bool:
