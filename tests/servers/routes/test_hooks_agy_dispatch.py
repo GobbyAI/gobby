@@ -28,6 +28,7 @@ from gobby.hooks.startup_claim_preflight import StartupClaimLease
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import StartupContextClaim
+from tests._timing import wait_for_condition
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -486,9 +487,11 @@ class TestAgyStartupClaimPreflight:
             run_adapter.assert_not_awaited()
             invalidate.assert_not_called()
             gate.set()
-            deadline = time.monotonic() + 2.0
-            while time.monotonic() < deadline and not invalidate.call_args_list:
-                time.sleep(0.02)
+            wait_for_condition(
+                lambda: invalidate.call_args_list,
+                timeout=2.0,
+                description="late lease invalidation",
+            )
             invalidate.assert_called_once_with(hook_manager, lease)
 
         marker = read_envelope_marker(envelope_id, processed_dir=_processed_dir(gobby_home))

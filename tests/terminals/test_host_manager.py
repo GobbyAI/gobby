@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import stat
 import tomllib
@@ -18,6 +17,7 @@ from gobby.config.terminals import TerminalConfig
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import Terminal, TerminalManager, native_locator_key
 from gobby.utils.machine_id import require_machine_id
+from tests._timing import wait_for_condition
 from tests.terminals.host_fakes import (
     FakeControlClient,
     FakeHostProcess,
@@ -514,14 +514,14 @@ async def test_reconcile_does_not_exit_inflight_spawn(
     assert promoted.state == "live"
 
     overdue = _pending(terminals, sample_project["id"])
-    await asyncio.sleep(0.02)
     host_overdue = _host(
         tmp_path,
         terminals,
         FakeControlClient(host_epoch=epoch, host_pid=7001, terminals=[]),
         spawn_in_doubt_seconds=0.001,
     )
-    await host_overdue.reconcile()
+    with patch("gobby.terminals.host_reconcile._age_seconds", return_value=1.0):
+        await host_overdue.reconcile()
     assert _loaded(terminals, overdue.id).state == "exited"
 
 
@@ -547,11 +547,11 @@ async def test_host_crash_reaps_sighup_ignoring_tree(
         child = os.fork()
         if child == 0:
             signal.signal(signal.SIGHUP, signal.SIG_IGN)
-            time.sleep(30)
+            signal.pause()
             os._exit(0)
         os.write(ready_w, b"ok")
         os.close(ready_w)
-        time.sleep(30)
+        signal.pause()
         os._exit(0)
 
     os.close(ready_w)
@@ -577,17 +577,20 @@ async def test_host_crash_reaps_sighup_ignoring_tree(
     host = _host(tmp_path, terminals, client)
     await host.handle_host_death()
     host.reap_recorded_process({"pgid": os.getpid(), "start_time": 0.0})
-    deadline = time.time() + 1.2
-    while time.time() < deadline:
+
+    def leader_reaped() -> bool:
         try:
-            os.kill(leader, 0)
-            time.sleep(0.05)
-        except ProcessLookupError:
-            break
-    try:
-        os.waitpid(leader, os.WNOHANG)
-    except ChildProcessError:
-        pass
+            reaped_pid, _status = os.waitpid(leader, os.WNOHANG)
+        except ChildProcessError:
+            return True
+        return reaped_pid == leader
+
+    wait_for_condition(
+        leader_reaped,
+        timeout=1.2,
+        interval=0.05,
+        description="SIGHUP-ignoring process group exit",
+    )
     with pytest.raises(ProcessLookupError):
         os.kill(leader, 0)
 
