@@ -108,7 +108,7 @@ def evaluate_validation_commands(
 
     fresh_runs = _fresh_runs(evidence)
     definitive = [run for run in fresh_runs if run.outcome != "unknown"]
-    attributed, ambiguous = _attribute_compound_failures(definitive)
+    attributed = _attribute_compound_failures(definitive)
     latest_by_category = _latest_definitive_by_category(attributed)
     unresolved = {
         run_category: run
@@ -123,9 +123,6 @@ def evaluate_validation_commands(
         }
         for run_category, run in sorted(unresolved.items())
     ]
-    ambiguous_failures = [
-        {"command": run.command, "completed_at": run.completed_at.isoformat()} for run in ambiguous
-    ]
     details = {
         **details,
         "fresh_run_count": len(fresh_runs),
@@ -134,26 +131,20 @@ def evaluate_validation_commands(
         },
         "unresolved_failure_categories": sorted(unresolved),
         "unresolved_failures": unresolved_failures,
-        "ambiguous_compound_failures": ambiguous_failures,
     }
 
-    if unresolved or ambiguous:
+    if unresolved:
         blockers = [
             f"{failure['category']}: {failure['command']!r} at {failure['completed_at']}"
             for failure in unresolved_failures
         ]
-        blockers.extend(
-            f"unattributed compound command {failure['command']!r} at {failure['completed_at']}"
-            for failure in ambiguous_failures
-        )
         return CloseGateResult(
             item=9,
             name="validation_commands",
             status="failed",
             message=(
                 f"A validation command is still failing ({'; '.join(blockers)}). "
-                "Re-run each category clean after the final task edit; run ambiguous compound "
-                "segments separately."
+                "Re-run each category clean after the final task edit."
             ),
             details=details,
         )
@@ -220,13 +211,20 @@ def _latest_definitive_by_category(
 
 def _attribute_compound_failures(
     runs: Iterable[TranscriptValidationRun],
-) -> tuple[list[TranscriptValidationRun], list[TranscriptValidationRun]]:
+) -> list[TranscriptValidationRun]:
+    """Split each compound failure into one run per validation segment.
+
+    When the output names exactly one failing segment, that segment fails and,
+    in an ``&&`` chain, the segments before it passed. Otherwise every
+    validation segment inherits the failure: the transcript cannot prove that
+    any of them passed, so each category needs its own later clean run, the
+    same cure an attributed failure requires.
+    """
     attributed: list[TranscriptValidationRun] = []
-    ambiguous: list[TranscriptValidationRun] = []
     for run in runs:
         segments = run.validation_segments
         parsed_command = parse_shell_command(run.command)
-        if run.outcome != "failure" or not parsed_command.operators:
+        if run.outcome != "failure" or not parsed_command.operators or not segments:
             attributed.append(run)
             continue
         failure_categories = infer_failure_categories(run.output)
@@ -235,16 +233,19 @@ def _attribute_compound_failures(
             for index, segment in enumerate(segments)
             if failure_categories.intersection(segment.categories)
         ]
-        if len(candidates) != 1:
-            ambiguous.append(run)
-            continue
-        failed_index = candidates[0]
-        preceding_segments_succeeded = set(parsed_command.operators) == {"&&"}
+        if len(candidates) == 1:
+            failed_indexes = {candidates[0]}
+            passed_indexes = (
+                set(range(candidates[0])) if set(parsed_command.operators) == {"&&"} else set()
+            )
+        else:
+            failed_indexes = set(range(len(segments)))
+            passed_indexes = set()
         for index, segment in enumerate(segments):
             outcome: EvidenceOutcome
-            if index == failed_index:
+            if index in failed_indexes:
                 outcome = "failure"
-            elif preceding_segments_succeeded and index < failed_index:
+            elif index in passed_indexes:
                 outcome = "success"
             else:
                 continue
@@ -254,40 +255,12 @@ def _attribute_compound_failures(
                     command=segment.command,
                     categories=segment.categories,
                     outcome=outcome,
-                    exit_code=run.exit_code
-                    if outcome == "failure"
-                    else 0
-                    if outcome == "success"
-                    else None,
+                    exit_code=run.exit_code if outcome == "failure" else 0,
                     unknown_reason=None,
                     validation_segments=(segment,),
                 )
             )
-    unresolved_ambiguous = [
-        run for run in ambiguous if not _later_successes_cover_every_segment(run, attributed)
-    ]
-    return attributed, unresolved_ambiguous
-
-
-def _later_successes_cover_every_segment(
-    failure: TranscriptValidationRun,
-    runs: Iterable[TranscriptValidationRun],
-) -> bool:
-    required_commands = {segment.command for segment in failure.validation_segments}
-    if not required_commands:
-        return False
-    successful_commands: set[str] = set()
-    failure_order = (failure.completed_at, failure.order)
-    for run in runs:
-        if run.outcome != "success" or (run.completed_at, run.order) <= failure_order:
-            continue
-        segments = run.validation_segments
-        if not segments:
-            successful_commands.add(run.command)
-            continue
-        if len(segments) == 1 or set(parse_shell_command(run.command).operators) == {"&&"}:
-            successful_commands.update(segment.command for segment in segments)
-    return required_commands.issubset(successful_commands)
+    return attributed
 
 
 def _validation_details(evidence: TranscriptEvidence) -> dict[str, Any]:
