@@ -57,6 +57,11 @@ def create_lifespan(
             "session_manager": server.services.session_manager,
             "memory_manager": server.services.memory_manager,
             "terminal_manager": getattr(server.services, "terminal_manager", None),
+            "terminal_runtime_registry": getattr(
+                server.services,
+                "terminal_runtime_registry",
+                None,
+            ),
         }
         if (
             server.services.agent_runner is not None

@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 PENDING_HANDOFF_VARIABLE = "set_handoff_pending"
 HANDOFF_PULL_PENDING_VARIABLE = "handoff_pull_pending"
+HANDOFF_DISPATCH_GATE_VARIABLE = "context_compact_handoff_result"
 
 _OPTIONAL_FEEDBACK_FIELDS = ("suggestion", "disposition")
 
@@ -67,6 +68,16 @@ class HandoffAttemptState:
     # Status the row held before a clear attempt moved it to awaiting_handoff;
     # None when staging did not transition the row.
     prior_status: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimedHandoffDelivery:
+    """Canonical staged handoff claimed for one terminal dispatch."""
+
+    session_id: str
+    attempt_id: str
+    handoff_record_id: str
+    clear_session: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,7 +316,12 @@ def stage_handoff_attempt(
     )
 
 
-def restore_handoff_attempt(db: HubDatabase, state: HandoffAttemptState) -> bool:
+def restore_handoff_attempt(
+    db: HubDatabase,
+    state: HandoffAttemptState,
+    *,
+    marker_updates: Mapping[str, Any] | None = None,
+) -> bool:
     """Compensate a failed provider dispatch without disturbing newer markers."""
     with db.transaction() as conn:
         variable_row = conn.execute(
@@ -334,6 +350,7 @@ def restore_handoff_attempt(db: HubDatabase, state: HandoffAttemptState) -> bool
             if not isinstance(current, Mapping) or current.get("attempt_id") == state.attempt_id:
                 variables.pop(name, None)
         variables.update(state.prior_markers)
+        variables.update(marker_updates or {})
         conn.execute(
             "UPDATE sessions SET handoff_markdown = %s, updated_at = %s WHERE id = %s",
             (state.prior_handoff_markdown, utc_now(), state.session_id),
@@ -350,7 +367,59 @@ def restore_handoff_attempt(db: HubDatabase, state: HandoffAttemptState) -> bool
     return True
 
 
-def restore_staged_handoff(db: HubDatabase, session_id: str, attempt_id: str) -> bool:
+def claim_staged_handoff_delivery(
+    db: HubDatabase,
+    session_id: str,
+    attempt_id: str,
+) -> ClaimedHandoffDelivery | None:
+    """Claim a staged terminal handoff after its successful tool result was persisted."""
+    with db.transaction() as conn:
+        variable_row = conn.execute(
+            "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",
+            (session_id,),
+        ).fetchone()
+        if variable_row is None:
+            return None
+        variables = _load_variables(variable_row["variables"])
+        marker = variables.get(PENDING_HANDOFF_VARIABLE)
+        gate = variables.get(HANDOFF_DISPATCH_GATE_VARIABLE)
+        if not isinstance(marker, Mapping) or not isinstance(gate, Mapping):
+            return None
+        clear_session = marker.get("clear_session")
+        if (
+            marker.get("attempt_id") != attempt_id
+            or marker.get("dispatch_started_at") is not None
+            or not isinstance(clear_session, bool)
+            or gate.get("handoff_staged") is not True
+            or gate.get("delivery_pending") is not True
+            or gate.get("attempt_id") != attempt_id
+            or gate.get("clear_session") is not clear_session
+        ):
+            return None
+        handoff_record_id = marker.get("handoff_record_id")
+        if not isinstance(handoff_record_id, str) or not handoff_record_id:
+            return None
+
+        variables[PENDING_HANDOFF_VARIABLE] = {
+            **marker,
+            "dispatch_started_at": utc_now().isoformat(),
+        }
+        _store_variables(conn, session_id, variables, exists=True)
+    return ClaimedHandoffDelivery(
+        session_id=session_id,
+        attempt_id=attempt_id,
+        handoff_record_id=handoff_record_id,
+        clear_session=clear_session,
+    )
+
+
+def restore_staged_handoff(
+    db: HubDatabase,
+    session_id: str,
+    attempt_id: str,
+    *,
+    failure_result: Mapping[str, Any] | None = None,
+) -> bool:
     """Restore an attempt later using compensation data stored in its pending marker."""
     row = db.fetchone(
         "SELECT variables FROM session_variables WHERE session_id = %s",
@@ -369,9 +438,17 @@ def restore_staged_handoff(db: HubDatabase, session_id: str, attempt_id: str) ->
         handoff_record_id=handoff_record_id,
         prior_handoff_markdown=marker.get("prior_handoff_markdown"),
         prior_markers={},
-        missing_markers=frozenset({PENDING_HANDOFF_VARIABLE}),
+        missing_markers=frozenset({PENDING_HANDOFF_VARIABLE, HANDOFF_PULL_PENDING_VARIABLE}),
+        prior_status=(
+            marker.get("prior_status") if isinstance(marker.get("prior_status"), str) else None
+        ),
     )
-    return restore_handoff_attempt(db, state)
+    updates = (
+        {HANDOFF_DISPATCH_GATE_VARIABLE: dict(failure_result)}
+        if failure_result is not None
+        else None
+    )
+    return restore_handoff_attempt(db, state, marker_updates=updates)
 
 
 def consume_pending_handoff(db: HubDatabase, caller_session_id: str) -> ConsumedHandoff | None:

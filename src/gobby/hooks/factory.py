@@ -140,6 +140,7 @@ class HookManagerFactory:
         code_index_trigger: Any | None = None,
         memory_manager: MemoryManager | None = None,
         terminal_manager: Any | None = None,
+        terminal_runtime_registry: Any | None = None,
     ) -> HookManagerComponents:
         """Create all HookManager subsystems.
 
@@ -280,6 +281,8 @@ class HookManagerFactory:
             resolve_project_id=resolve_project_id,
             code_index_trigger=code_index_trigger,
             terminal_manager=terminal_manager,
+            agent_run_manager=storage.agent_run,
+            terminal_runtime_registry=terminal_runtime_registry,
             event_loop=loop,
             logger=hook_logger,
         )

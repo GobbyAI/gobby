@@ -16,6 +16,8 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
     _resolve_tmux_target,
     register_terminal_tools,
 )
+from gobby.sessions.handoff import HandoffAttemptState
+from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
@@ -194,6 +196,128 @@ class TestIsSpeedCommand:
 
 class TestRegisterTerminalTools:
     """Tests for terminal interaction tool registration."""
+
+    @pytest.mark.parametrize("source", ["claude", "codex", "grok", "qwen", "droid"])
+    def test_set_handoff_stages_before_terminal_delivery(self, source: str) -> None:
+        registry = _TestRegistry(name="test", description="test")
+        session = MagicMock(
+            id="session-1",
+            project_id="project-1",
+            session_type="terminal",
+            source=source,
+            status="active",
+            terminal_context={"tmux_pane": "%12"},
+        )
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+        pane = MagicMock(backend="tmux", target="%12")
+        pane.snapshot = AsyncMock(return_value="ready")
+        state = HandoffAttemptState(
+            session_id="session-1",
+            attempt_id="unused",
+            handoff_record_id="handoff-1",
+            prior_handoff_markdown=None,
+            prior_markers={},
+            missing_markers=frozenset(),
+        )
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=MagicMock(),
+        ):
+            register_terminal_tools(registry, session_manager, MagicMock())
+        set_handoff = registry.get_tool("set_handoff")
+        assert set_handoff is not None
+
+        with (
+            session_context_for_test("session-1"),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._resolve_pane_io",
+                return_value=(pane, None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._interrupt_observer",
+                return_value=(None, None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.stage_handoff_attempt",
+                return_value=state,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._send_terminal_compaction_command",
+                new_callable=AsyncMock,
+            ) as send_command,
+        ):
+            result = asyncio.run(set_handoff(current_state="Ready.", next_steps=["Continue."]))
+
+        assert result["success"] is True
+        assert result["handoff_staged"] is True
+        assert result["delivery_pending"] is True
+        assert result["session_id"] == "session-1"
+        assert result["clear_session"] is False
+        send_command.assert_not_awaited()
+
+    def test_set_handoff_clear_stages_before_terminal_delivery(self) -> None:
+        registry = _TestRegistry(name="test", description="test")
+        session = MagicMock(
+            id="session-1",
+            project_id="project-1",
+            session_type="terminal",
+            source="qwen",
+            status="active",
+            terminal_context={"tmux_pane": "%12"},
+        )
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+        pane = MagicMock(backend="tmux", target="%12")
+        pane.snapshot = AsyncMock(return_value="ready")
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(registry, session_manager, MagicMock())
+        set_handoff = registry.get_tool("set_handoff")
+        assert set_handoff is not None
+
+        with (
+            session_context_for_test("session-1"),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal_clear._authorize_send_keys_target",
+                return_value=("session-1", None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal_clear._resolve_pane_io",
+                return_value=(pane, None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal_clear._interrupt_observer",
+                return_value=(None, None),
+            ),
+            patch("gobby.mcp_proxy.tools.sessions._terminal_clear.stage_clear_attempt"),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal_clear._send_terminal_compaction_command",
+                new_callable=AsyncMock,
+            ) as send_command,
+        ):
+            result = asyncio.run(
+                set_handoff(
+                    current_state="Ready.",
+                    next_steps=["Continue."],
+                    clear_session=True,
+                )
+            )
+
+        assert result["success"] is True
+        assert result["handoff_staged"] is True
+        assert result["delivery_pending"] is True
+        assert result["clear_session"] is True
+        assert result["command"] == "/clear"
+        send_command.assert_not_awaited()
 
     def test_send_keys_uses_tmux_manager_for_recorded_socket(self) -> None:
         """Interactive sessions should route through the manager for their recorded tmux server."""

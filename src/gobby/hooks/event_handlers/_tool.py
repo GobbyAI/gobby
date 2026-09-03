@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.adapters.codex_impl.execution_chain import (
     FUNCTIONS_EXEC_NAMES,
@@ -13,6 +13,7 @@ from gobby.code_index.eligibility import overlay_project_id_for_root
 from gobby.hooks._normalization_canonical import CANONICAL_WRITE_TOOL_NAMES
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.terminal_handoff_delivery import schedule_terminal_handoff_delivery
 from gobby.hooks.tool_error_tracker import is_wrapper_echo_event, track_tool_outcome
 from gobby.skills.formatting import format_skill_fetch_context
 from gobby.utils.git import is_path_gitignored
@@ -22,6 +23,9 @@ from gobby.workflows.task_claim_state import (
     active_task_id_for_edit,
     task_edited_file_set_for_checkout,
 )
+
+if TYPE_CHECKING:
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +210,22 @@ class ToolEventHandlerMixin(EventHandlersBase):
                         exc_info=True,
                     )
             self._record_autonomous_tool_progress(event, session_id, tool_name)
+
+            if self._session_manager is not None and self._agent_run_manager is not None:
+                try:
+                    schedule_terminal_handoff_delivery(
+                        event,
+                        session_manager=cast("SessionManager", self._session_manager),
+                        agent_run_manager=self._agent_run_manager,
+                        event_loop=self._event_loop,
+                        terminal_manager=getattr(self, "terminal_manager", None),
+                        terminal_runtime_registry=self._terminal_runtime_registry,
+                    )
+                except Exception:
+                    self.logger.warning(
+                        "Failed scheduling post-result terminal handoff delivery",
+                        exc_info=True,
+                    )
 
             # Structured edit tools and normalized shell writes both count as edits.
             is_canonical_edit = (

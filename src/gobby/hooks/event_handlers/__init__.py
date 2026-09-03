@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from gobby.hooks.session_end_auto_link import SessionEndAutoLinkWorker
     from gobby.hooks.skill_manager import HookSkillManager
     from gobby.sessions.liveness_monitor import SessionLivenessMonitor
+    from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.session_tasks import SessionTaskManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.terminals import TerminalManager
@@ -75,6 +76,8 @@ class EventHandlers(
         code_index_trigger: CodeIndexTrigger | None = None,
         attention_metadata_store: AttentionMetadataStore | None = None,
         terminal_manager: TerminalManager | None = None,
+        agent_run_manager: LocalAgentRunManager | None = None,
+        terminal_runtime_registry: Any | None = None,
         event_loop: asyncio.AbstractEventLoop | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -128,6 +131,8 @@ class EventHandlers(
         self._code_index_trigger = code_index_trigger
         self._attention_metadata_store = attention_metadata_store
         self.terminal_manager = terminal_manager
+        self._agent_run_manager = agent_run_manager
+        self._terminal_runtime_registry = terminal_runtime_registry
         self._event_loop = event_loop
         self._dispatch_session_summaries_fn: (
             Callable[[str, bool, threading.Event | None, bool], None] | None

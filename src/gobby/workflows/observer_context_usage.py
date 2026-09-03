@@ -11,6 +11,8 @@ import logging
 from typing import Any, Literal, Protocol
 
 from gobby.hooks.events import HookEvent
+from gobby.hooks.tool_outcomes import tool_outcome_from_data
+from gobby.sessions.handoff import HANDOFF_DISPATCH_GATE_VARIABLE
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +25,7 @@ LARGE_CONTEXT_STRONG_RATIO = 0.40
 LARGE_CONTEXT_WINDOW = 1_000_000
 UNKNOWN_USAGE_TURN_FALLBACK = 10
 
-HANDOFF_RESULT_VARIABLE = "context_compact_handoff_result"
+HANDOFF_RESULT_VARIABLE = HANDOFF_DISPATCH_GATE_VARIABLE
 HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE = "context_compact_highest_announced_threshold"
 PRESSURE_BAND_VARIABLE = "context_compact_mid_turn_pressure_band"
 
@@ -58,12 +60,20 @@ def detect_context_compact_guidance(
     variables["context_compact_guidance_message"] = ""
 
     gate = _handoff_gate(variables)
+    retry_guidance: str | None = None
     if gate == "pending" or variables.get("pending_context_reset") is True:
         _reset_epoch_state(variables)
     elif gate == "failed":
+        result = variables.get(HANDOFF_RESULT_VARIABLE)
+        if isinstance(result, dict) and isinstance(result.get("retry_guidance"), str):
+            retry_guidance = result["retry_guidance"]
         variables[HANDOFF_RESULT_VARIABLE] = None
 
     if _is_plan_mode(variables):
+        return
+    if retry_guidance:
+        variables["context_compact_guidance_kind"] = "failed"
+        variables["context_compact_guidance_message"] = retry_guidance
         return
 
     turn_seq = _next_turn_seq(variables)
@@ -143,6 +153,8 @@ def _record_handoff_result(event: HookEvent, variables: dict[str, Any]) -> None:
         return
     payload: Any = data.get("tool_output")
     if isinstance(payload, dict) and isinstance(payload.get("result"), dict):
+        if payload.get("success") is not True:
+            return
         payload = payload["result"]
     if not isinstance(payload, dict):
         return
@@ -152,6 +164,33 @@ def _record_handoff_result(event: HookEvent, variables: dict[str, Any]) -> None:
             _reset_epoch_state(variables)
         return
     if data.get("mcp_tool") != "set_handoff":
+        return
+    if tool_outcome_from_data(data).succeeded is not True:
+        return
+
+    if (
+        payload.get("success") is True
+        and payload.get("handoff_staged") is True
+        and payload.get("delivery_pending") is True
+        and isinstance(payload.get("attempt_id"), str)
+        and bool(payload["attempt_id"])
+        and isinstance(payload.get("session_id"), str)
+        and payload["session_id"] == event.metadata.get("_platform_session_id")
+        and isinstance(payload.get("clear_session"), bool)
+    ):
+        previous = variables.get(HANDOFF_RESULT_VARIABLE)
+        if (
+            isinstance(previous, dict)
+            and previous.get("delivery_failed") is True
+            and previous.get("attempt_id") == payload["attempt_id"]
+        ):
+            return
+        variables[HANDOFF_RESULT_VARIABLE] = {
+            "handoff_staged": True,
+            "delivery_pending": True,
+            "attempt_id": payload["attempt_id"],
+            "clear_session": payload["clear_session"],
+        }
         return
 
     compacted = payload.get("compacted")
@@ -176,9 +215,13 @@ def _handoff_gate(variables: dict[str, Any]) -> _HandoffGate:
     result = variables.get(HANDOFF_RESULT_VARIABLE)
     if not isinstance(result, dict):
         return None
-    if result.get("compacted") is True or result.get("attempt_pending") is True:
+    if (
+        result.get("compacted") is True
+        or result.get("attempt_pending") is True
+        or result.get("delivery_pending") is True
+    ):
         return "pending"
-    if result.get("compacted") is False:
+    if result.get("compacted") is False or result.get("delivery_failed") is True:
         return "failed"
     return None
 

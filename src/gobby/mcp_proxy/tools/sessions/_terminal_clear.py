@@ -33,10 +33,7 @@ from gobby.sessions.clear_continuation import (
     schedule_handoff_continuation,
     stage_clear_attempt,
 )
-from gobby.sessions.handoff import (
-    HandoffAttemptState,
-    build_handoff_continue_prompt,
-)
+from gobby.sessions.handoff import HandoffAttemptState, build_handoff_continue_prompt
 from gobby.sessions.handoff_records import HandoffPayload
 from gobby.terminal_context import (
     parse_terminal_context_value,
@@ -74,7 +71,12 @@ _PENDING_ATTEMPT_GUIDANCE = (
     "SessionStart. Do not call set_handoff again."
 )
 
-__all__ = ["CLEAR_COMMAND", "execute_clear_session"]
+__all__ = [
+    "CLEAR_COMMAND",
+    "deliver_staged_clear_session",
+    "execute_clear_session",
+    "prepare_clear_session",
+]
 
 
 def _error(message: str, error_code: str) -> dict[str, Any]:
@@ -283,7 +285,7 @@ async def _wait_for_clear_acknowledgment(
         await asyncio.sleep(min(_CLEAR_ACK_POLL_SECONDS, remaining))
 
 
-async def execute_clear_session(
+async def prepare_clear_session(
     handoff: HandoffPayload,
     *,
     session_manager: SessionManager,
@@ -293,7 +295,7 @@ async def execute_clear_session(
     terminal_manager: Any | None = None,
     terminal_runtime_registry: Any | None = None,
 ) -> dict[str, Any]:
-    """Stage a clear attempt, then deliver /clear through the compaction sender.
+    """Validate and stage a clear attempt without touching terminal input.
 
     A delivered attempt that has not been acknowledged yet is reused: the handoff
     content is refreshed and the wait resumes, but no second /clear is typed.
@@ -425,12 +427,9 @@ async def execute_clear_session(
     if observer_error is not None:
         return _error(observer_error, _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE)
 
-    pane_identity, pane_baseline_ids = _clear_pane_baseline(session_manager, session)
     attempt_id = uuid4().hex
-    staged = False
-    attempt_state: HandoffAttemptState | None = None
     try:
-        attempt_state = stage_clear_attempt(
+        stage_clear_attempt(
             db,
             resolved_session_id,
             attempt_id=attempt_id,
@@ -438,141 +437,196 @@ async def execute_clear_session(
             terminal_context=parse_terminal_context_value(session.terminal_context),
             chat_context=None,
         )
-        staged = True
     except Exception as exc:
         logger.warning(
             "Failed staging clear-session handoff for session %s",
             resolved_session_id,
             exc_info=True,
         )
-        if staged:
-            clear_failed_attempt(
-                db,
-                resolved_session_id,
-                attempt_id=attempt_id,
-                attempt_state=attempt_state,
-            )
         return _error(
             f"failed to stage clear-session handoff: {exc}",
             "staging_failed",
         )
 
-    def restore_failed_attempt() -> bool:
-        return clear_failed_attempt(
-            db,
+    return {
+        "success": True,
+        "handoff_staged": True,
+        "delivery_pending": True,
+        "attempt_id": attempt_id,
+        "session_id": resolved_session_id,
+        "clear_session": True,
+        "command": CLEAR_COMMAND,
+        "cli": source,
+        "via": pane.backend,
+    }
+
+
+async def deliver_staged_clear_session(
+    session_id: str,
+    attempt_id: str,
+    *,
+    session_manager: SessionManager,
+    db: HubDatabase,
+    agent_run_manager: LocalAgentRunManager,
+    terminal_manager: Any | None = None,
+    terminal_runtime_registry: Any | None = None,
+) -> dict[str, Any]:
+    """Deliver one already-staged /clear attempt after its MCP result completed."""
+
+    def failed(message: str, error_code: str, *, command_sent: bool = False) -> dict[str, Any]:
+        failure = _error(message, error_code)
+        failure.update(
+            {
+                "session_id": session_id,
+                "attempt_id": attempt_id,
+                "command_sent": command_sent,
+            }
+        )
+        return failure
+
+    resolved_session_id, session, error = _resolve_session_for_compaction(
+        session_id,
+        session_manager,
+    )
+    if error or session is None or resolved_session_id is None:
+        return _error(error or f"Session {session_id} not found", "session_not_found")
+    source = getattr(session, "source", None)
+    pane, error = _resolve_pane_io(
+        resolved_session_id,
+        session_manager,
+        agent_run_manager,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=terminal_runtime_registry,
+    )
+    if error:
+        return failed(error, "terminal_target_unavailable")
+    assert pane is not None
+    observe_interrupt, observer_error = _interrupt_observer(source, session)
+    if observer_error is not None:
+        return failed(observer_error, _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE)
+
+    pane_identity, pane_baseline_ids = _clear_pane_baseline(session_manager, session)
+    codex_thread_id: str | None = None
+    banner_baseline = 0
+    if source == "codex":
+        thread_id = getattr(session, "external_id", None)
+        if not isinstance(thread_id, str) or not thread_id:
+            return failed(
+                "Codex session has no thread id to confirm /clear",
+                "codex_thread_id_unavailable",
+            )
+        codex_thread_id = thread_id
+        banner_baseline = await _codex_thread_end_banner_count(pane, thread_id=thread_id)
+    try:
+        ok, reason, _pending, failure_detail = await _send_terminal_compaction_command(
+            pane,
+            CLEAR_COMMAND,
             resolved_session_id,
-            attempt_id=attempt_id,
-            attempt_state=attempt_state,
+            cli_source=source if isinstance(source, str) else None,
+            mark_continuation_pending=lambda: True,
+            clear_continuation_pending=lambda: True,
+            observe_interrupt=observe_interrupt,
         )
+    except Exception as exc:
+        logger.warning("Failed sending /clear for session %s", resolved_session_id, exc_info=True)
+        return _error(f"failed to send /clear: {exc}", "clear_send_failed")
+    if not ok:
+        failure = _error(reason or "failed to send /clear", "clear_send_failed")
+        if failure_detail is not None:
+            failure.update(failure_detail)
+        return failure
 
-    async def deliver_clear() -> dict[str, Any]:
-        def failed(message: str, error_code: str, *, command_sent: bool) -> dict[str, Any]:
-            failure = _error(message, error_code)
-            failure.update(
-                {
-                    "session_id": resolved_session_id,
-                    "attempt_id": attempt_id,
-                    "command_sent": command_sent,
-                    "attempt_restored": restore_failed_attempt(),
-                }
-            )
-            return failure
-
-        codex_thread_id: str | None = None
-        banner_baseline = 0
-        if source == "codex":
-            thread_id = getattr(session, "external_id", None)
-            if not isinstance(thread_id, str) or not thread_id:
-                return failed(
-                    "Codex session has no thread id to confirm /clear",
-                    "codex_thread_id_unavailable",
-                    command_sent=False,
-                )
-            codex_thread_id = thread_id
-            # Snapshot before /clear: only a thread-end banner beyond this count is new.
-            banner_baseline = await _codex_thread_end_banner_count(pane, thread_id=thread_id)
-        try:
-            ok, reason, _pending, failure_detail = await _send_terminal_compaction_command(
-                pane,
-                CLEAR_COMMAND,
-                resolved_session_id,
-                cli_source=source if isinstance(source, str) else None,
-                mark_continuation_pending=lambda: True,
-                clear_continuation_pending=restore_failed_attempt,
-                observe_interrupt=observe_interrupt,
-            )
-        except Exception as exc:
-            restore_failed_attempt()
-            logger.warning(
-                "Failed sending /clear for session %s",
-                resolved_session_id,
-                exc_info=True,
-            )
-            return _error(f"failed to send /clear: {exc}", "clear_send_failed")
-
-        if not ok:
-            restore_failed_attempt()
-            failure: dict[str, Any] = _error(
-                reason or "failed to send /clear",
-                "clear_send_failed",
-            )
-            if failure_detail is not None:
-                failure.update(failure_detail)
-            return failure
-
-        # From here on the command is on the pane: a later failure must leave the
-        # attempt staged so the successor can still bind and a retry reuses it.
-        if not mark_clear_command_sent(db, resolved_session_id, attempt_id=attempt_id):
-            logger.warning(
-                "Failed recording /clear delivery on attempt %s for session %s",
-                attempt_id,
-                resolved_session_id,
-            )
-
-        if codex_thread_id is not None:
-            # Codex never emits SessionStart for the post-/clear thread and writes its
-            # rollout only on the first prompt, so the successor registers only once a
-            # prompt is typed. Type the continuation ourselves as soon as the pane shows
-            # the predecessor's thread-end banner; that prompt's UserPromptSubmit
-            # materializes the successor and consumes the marker.
-            if not await _wait_for_codex_thread_end(
-                pane, thread_id=codex_thread_id, baseline=banner_baseline
-            ):
-                return _pending_timeout(resolved_session_id, attempt_id, reused_attempt=False)
-            if not schedule_handoff_continuation(
-                session,
-                build_handoff_continue_prompt(),
-                delay_seconds=_CODEX_CLEAR_CONTINUE_DELAY_SECONDS,
-            ):
-                return _pending_timeout(resolved_session_id, attempt_id, reused_attempt=False)
-            logger.info(
-                "Scheduled Codex clear continuation for session %s after thread %s ended",
-                resolved_session_id,
-                codex_thread_id,
-            )
-
-        acknowledgment = await _wait_for_clear_acknowledgment(
-            db,
-            session_manager,
-            session,
-            attempt_id=attempt_id,
-            identity=pane_identity,
-            baseline_ids=pane_baseline_ids,
+    if not mark_clear_command_sent(db, resolved_session_id, attempt_id=attempt_id):
+        logger.warning(
+            "Failed recording /clear delivery on attempt %s for session %s",
+            attempt_id,
+            resolved_session_id,
         )
-        if acknowledgment is None:
+    if codex_thread_id is not None:
+        if not await _wait_for_codex_thread_end(
+            pane,
+            thread_id=codex_thread_id,
+            baseline=banner_baseline,
+        ):
             return _pending_timeout(resolved_session_id, attempt_id, reused_attempt=False)
-        return _acknowledged(resolved_session_id, attempt_id, acknowledgment, reused_attempt=False)
+        if not schedule_handoff_continuation(
+            session,
+            build_handoff_continue_prompt(),
+            delay_seconds=_CODEX_CLEAR_CONTINUE_DELAY_SECONDS,
+        ):
+            return _pending_timeout(resolved_session_id, attempt_id, reused_attempt=False)
+        logger.info(
+            "Scheduled Codex clear continuation for session %s after thread %s ended",
+            resolved_session_id,
+            codex_thread_id,
+        )
 
+    acknowledgment = await _wait_for_clear_acknowledgment(
+        db,
+        session_manager,
+        session,
+        attempt_id=attempt_id,
+        identity=pane_identity,
+        baseline_ids=pane_baseline_ids,
+    )
+    if acknowledgment is None:
+        return _pending_timeout(resolved_session_id, attempt_id, reused_attempt=False)
+    return _acknowledged(
+        resolved_session_id,
+        attempt_id,
+        acknowledgment,
+        reused_attempt=False,
+    )
+
+
+async def execute_clear_session(
+    handoff: HandoffPayload,
+    *,
+    session_manager: SessionManager,
+    db: HubDatabase,
+    agent_run_manager: LocalAgentRunManager,
+    web_chat_session_registry: WebChatSessionRegistry | None = None,
+    terminal_manager: Any | None = None,
+    terminal_runtime_registry: Any | None = None,
+) -> dict[str, Any]:
+    """Compatibility wrapper that prepares and settles a clear delivery."""
+    prepared = await prepare_clear_session(
+        handoff,
+        session_manager=session_manager,
+        db=db,
+        agent_run_manager=agent_run_manager,
+        web_chat_session_registry=web_chat_session_registry,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=terminal_runtime_registry,
+    )
+    if prepared.get("delivery_pending") is not True:
+        return prepared
+    session_id = prepared["session_id"]
+    attempt_id = prepared["attempt_id"]
     try:
         result = await shielded_terminal_delivery(
-            f"clear-session:{resolved_session_id}",
-            deliver_clear,
+            f"clear-session:{session_id}",
+            lambda: deliver_staged_clear_session(
+                session_id,
+                attempt_id,
+                session_manager=session_manager,
+                db=db,
+                agent_run_manager=agent_run_manager,
+                terminal_manager=terminal_manager,
+                terminal_runtime_registry=terminal_runtime_registry,
+            ),
             raise_if_closed=True,
         )
     except TerminalDeliveryAdmissionClosedError as exc:
-        restore_failed_attempt()
-        return _error(str(exc), "clear_delivery_unavailable")
-    assert result is not None
+        result = _error(str(exc), "clear_delivery_unavailable")
+    if result.get("success") is not True and result.get("attempt_pending") is not True:
+        restored = clear_failed_attempt(
+            db,
+            session_id,
+            attempt_id=attempt_id,
+        )
+        if "command_sent" in result:
+            result["attempt_restored"] = restored
     return result
 
 

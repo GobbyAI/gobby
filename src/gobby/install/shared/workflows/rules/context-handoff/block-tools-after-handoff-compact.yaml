@@ -2,17 +2,39 @@ tags: [context-handoff, handoff, compact, enforcement, gobby, default]
 
 rules:
   block-tools-after-handoff-compact:
-    description: "End terminal turns promptly after set_handoff queues in-place compaction"
+    description: "End terminal turns promptly after set_handoff stages terminal delivery"
     event: before_tool
     enabled: true
     priority: 1
     when: >-
       event.metadata.get('session_type') != 'web_chat'
       and isinstance(variables.get('context_compact_handoff_result'), dict)
-      and variables.get('context_compact_handoff_result').get('compacted') is True
+      and (
+        variables.get('context_compact_handoff_result').get('delivery_pending') is True
+        or variables.get('context_compact_handoff_result').get('attempt_pending') is True
+      )
     effects:
       - type: block
         reason: >-
-          set_handoff already staged this session's handoff and queued /compact.
-          Stop calling tools and end your turn now so the queued compaction runs;
+          set_handoff already staged this session's handoff and queued terminal delivery.
+          Stop calling tools and end your turn now so the queued command runs;
           the continuation prompt resumes the work.
+
+  retry-terminal-handoff-after-delivery-failure:
+    description: "Keep terminal work gated when post-result handoff delivery fails"
+    event: before_tool
+    enabled: true
+    priority: 1
+    when: >-
+      event.metadata.get('session_type') != 'web_chat'
+      and isinstance(variables.get('context_compact_handoff_result'), dict)
+      and variables.get('context_compact_handoff_result').get('delivery_failed') is True
+      and not (
+        event.data.get('mcp_server') == 'gobby-sessions'
+        and event.data.get('mcp_tool') == 'set_handoff'
+      )
+    effects:
+      - type: block
+        reason: >-
+          Terminal handoff delivery failed after set_handoff returned. Retry
+          gobby-sessions:set_handoff; no other tool is safe until delivery succeeds.
