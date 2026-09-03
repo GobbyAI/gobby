@@ -87,12 +87,14 @@ authentication are prerequisites and are not yet tasks.
 
 - **One daemon binary, `gdaemon`, three modes.** `standalone` (default; hub and
   node on one box — story A), `hub` (owns the datastores and everything
-  database-backed: maintenance loops, dream, wiki, cron, retention, backups,
-  upgrades), `node` (per-machine: registers to a hub, authenticates with a
+  database-backed, and performs node duties for the hub machine), `node`
+  (per-machine: registers to a hub, authenticates with a
   machine API key, never holds datastore credentials, forwards every semantic
   call, runs only machine-local duties — agents, worktrees, gterm supervision,
   hook ingress and its ledger). A node requires a hub connection; offline is a
-  typed error, never a fallback. One service container assembled per mode.
+  typed error, never a fallback. Hub-owned launchers coordinate dispatch; the
+  selected local or remote node owns child execution. One service container is
+  assembled per mode.
 - **`gterm` is permanently a separate supervised process.** It survives daemon
   restarts, upgrades, and lease handoffs; the daemon adopts it by epoch. Folding
   PTY ownership into the daemon would kill every agent terminal on every daemon
@@ -356,13 +358,15 @@ may depend on it — depend on its leaves.
     and deleted; its durable content is absorbed here, and this file is both the
     roadmap and the decision record. Everything off this path is a side quest:
     documented here, labeled `sidequest`, concurrent, never a blocker.
-13. **Hub and node are the same daemon on every machine** (2026-09-01). `hub`
-    owns the datastores and everything database-backed. `node` registers,
-    authenticates with a machine API key, holds no datastore credential,
-    forwards every semantic call, runs only machine-local duties, and requires a
-    hub connection — offline is a typed error, never a fallback. `standalone` is
-    both on one box. This settles the authority matrix #19647 was chartered to
-    research.
+13. **Hub and node are the same daemon on every machine** (2026-09-01; clarified
+    2026-09-03). `hub` owns the datastores and everything database-backed while
+    also performing node duties for the hub machine. Hub-owned launchers
+    coordinate dispatch; the selected local or remote node owns child execution.
+    `node` registers, authenticates with a machine API key, holds no datastore
+    credential, forwards every semantic call, runs only machine-local duties, and
+    requires a hub connection — offline is a typed error, never a fallback.
+    `standalone` is both on one box. This settles the authority matrix #19647 was
+    chartered to research.
 14. **The Python daemon can be a node** (2026-09-01). Node `gdaemon` brokers
     PostgreSQL, Qdrant, and FalkorDB over the authenticated channel to the hub,
     which connects as a machine-scoped PostgreSQL role under row-level security.
