@@ -261,7 +261,6 @@ source-health, and provenance types.
 resolution.
 - `src/gobby/storage/model_metadata.py`: provider-independent model metadata.
 - `src/gobby/agents/reasoning.py`: spawn reasoning validation.
-- `src/gobby/servers/websocket/chat/local_openai_warmup.py`: local model warmup.
 - `web/src/components/chat/ProviderPicker.tsx`: provider picker UI.
 - `web/src/components/chat/ChatInputModelControls.tsx`: model controls.
 - `web/src/lib/providerModels.ts`: provider model API client.
