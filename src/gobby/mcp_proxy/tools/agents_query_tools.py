@@ -24,6 +24,7 @@ from gobby.agents.recovery_state import (
     daemon_resume_successor_id,
     is_daemon_stop_parked,
 )
+from gobby.agents.run_completion import agent_run_task_dirty_paths
 from gobby.mcp_proxy.tools.agent_live_activity import (
     overlay_live_activity,
     overlay_runs_live_activity,
@@ -197,10 +198,15 @@ def register_agent_query_tools(
                 "error_code": "daemon_resume_chain_corrupt",
             }
         run = await overlay_live_activity(run, ctx.transcript_reader)
+        dirty_paths = await asyncio.to_thread(agent_run_task_dirty_paths, ctx.runner, run)
         return {
             "success": True,
             "recovery_pending": recovery_pending,
-            **_agent_result_payload(run, include_prompt=include_prompt),
+            **_agent_result_payload(
+                run,
+                include_prompt=include_prompt,
+                dirty_paths=dirty_paths,
+            ),
         }
 
     def get_agent_capture(

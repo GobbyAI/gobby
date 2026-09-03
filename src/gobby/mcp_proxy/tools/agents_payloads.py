@@ -14,6 +14,7 @@ _AGENT_RESULT_CAPTURE_CHARS = 10_000
 _AGENT_CAPTURE_PAGE_DEFAULT_CHARS = 10_000
 _AGENT_CAPTURE_PAGE_MAX_CHARS = 10_000
 _CAPTURE_EXCERPT_LINES = 20
+_DIRTY_PATHS_UNSET = object()
 
 
 class AgentRunProtocol(Protocol):
@@ -115,10 +116,11 @@ def _agent_result_payload(
     run: AgentRunProtocol,
     *,
     include_prompt: bool = False,
+    dirty_paths: list[str] | None | object = _DIRTY_PATHS_UNSET,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "run_id": run.id,
-        "status": run.status,
+        "status": "blocked" if run.terminal_reason == "task_blocker" else run.status,
         "result": run.result,
         "error": run.error,
         "provider": run.provider,
@@ -130,6 +132,8 @@ def _agent_result_payload(
         "child_session_id": run.child_session_id,
         "terminal_reason": run.terminal_reason,
     }
+    if dirty_paths is not _DIRTY_PATHS_UNSET:
+        payload["dirty_paths"] = dirty_paths
     if include_prompt:
         payload["prompt"] = run.prompt
 

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from gobby.agents import runner_queries as _queries
 from gobby.agents.session import ChildSessionManager
-from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.agents import AgentRun, AgentRunTerminalReason, LocalAgentRunManager
 from gobby.utils.machine_id import require_machine_id
 
 __all__ = ["AgentRunner"]
@@ -140,9 +140,19 @@ class AgentRunner:
         """Cancel a running agent. Delegates to runner_queries."""
         return _queries.cancel_run(self, run_id)
 
-    def complete_run(self, run_id: str, result: str | None = None) -> bool:
+    def complete_run(
+        self,
+        run_id: str,
+        result: str | None = None,
+        terminal_reason: AgentRunTerminalReason | None = None,
+    ) -> bool:
         """Complete a running agent (self-termination). Delegates to runner_queries."""
-        return _queries.complete_run(self, run_id, result=result)
+        return _queries.complete_run(
+            self,
+            run_id,
+            result=result,
+            terminal_reason=terminal_reason,
+        )
 
     # -------------------------------------------------------------------------
     # Running Agents Management (DB-driven)

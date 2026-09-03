@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
-from gobby.storage.agents import AgentRunStatus
+from gobby.storage.agents import AgentRunStatus, AgentRunTerminalReason
 from gobby.utils.uuid_validation import parse_uuid_reference
 
 if TYPE_CHECKING:
@@ -89,7 +89,12 @@ def cancel_run(runner: AgentRunner, run_id: str) -> bool:
     return True
 
 
-def complete_run(runner: AgentRunner, run_id: str, result: str | None = None) -> bool:
+def complete_run(
+    runner: AgentRunner,
+    run_id: str,
+    result: str | None = None,
+    terminal_reason: AgentRunTerminalReason | None = None,
+) -> bool:
     """
     Complete a running agent (mark as success).
 
@@ -103,6 +108,7 @@ def complete_run(runner: AgentRunner, run_id: str, result: str | None = None) ->
         runner: The AgentRunner instance.
         run_id: The agent run ID.
         result: Optional result text. If None, preserves any existing result.
+        terminal_reason: Optional semantic reason for successful termination.
 
     Returns:
         True if the run was completed, False otherwise.
@@ -129,6 +135,7 @@ def complete_run(runner: AgentRunner, run_id: str, result: str | None = None) ->
         result=result,
         tool_calls_count=tool_calls_count,
         turns_used=turns_used,
+        terminal_reason=terminal_reason,
     )
     if completed_run is None:
         runner.logger.debug(
