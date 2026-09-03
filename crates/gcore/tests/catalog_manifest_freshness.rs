@@ -77,7 +77,7 @@ fn embedded_runner_applies_fresh_and_idempotently() -> anyhow::Result<()> {
 
     let first = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(first.baseline_applied);
-    assert_eq!(first.migrations_applied, 1);
+    assert_eq!(first.migrations_applied, 2);
     let baseline_receipts: i64 = client.query_one(
         "SELECT COUNT(*) FROM schema_migrations WHERE version = 420 AND filename = 'baseline@420'",
         &[],
@@ -436,7 +436,7 @@ fn guard_test_rejects_a_database_newer_than_the_embedded_runner() -> anyhow::Res
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
     client.execute(
-        "INSERT INTO schema_migrations(version, filename, checksum) VALUES (422, '422_future.sql', $1)",
+        "INSERT INTO schema_migrations(version, filename, checksum) VALUES (423, '423_future.sql', $1)",
         &[&"f".repeat(64)],
     )?;
 
