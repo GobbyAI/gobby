@@ -168,3 +168,86 @@ def test_first_incomplete_step_workflow_skips_missing_instance(
 ) -> None:
     _patch_step_instance(monkeypatch, None)
     assert first_incomplete_step_workflow(MagicMock(), "session-1") is None
+
+
+def _mcp_handler_step(
+    name: str,
+    *,
+    transitions: list[object] | None = None,
+    exit_when: str | None = None,
+) -> WorkflowStep:
+    return WorkflowStep(
+        name=name,
+        on_mcp_success=[
+            {
+                "server": "gobby-agents",
+                "tool": "end_agent_run",
+                "action": "set_variable",
+                "variable": "review_complete",
+                "value": True,
+            }
+        ],
+        transitions=transitions or [],
+        exit_when=exit_when,
+    )
+
+
+def _step_snapshot(step: WorkflowStep, exit_condition: str | None) -> AgentStepWorkflowBody:
+    return AgentStepWorkflowBody(steps=[step], exit_condition=exit_condition)
+
+
+def test_step_gated_only_on_mcp_success_is_flagged_mcp_progress_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The task-close-validator review step: allowed_tools 'all', MCP-only exit."""
+    _patch_step_instance(
+        monkeypatch,
+        _instance(
+            "task-close-validator",
+            "review",
+            snapshot=_step_snapshot(_mcp_handler_step("review"), "vars.review_complete"),
+        ),
+    )
+
+    context = get_active_step_workflow_context(MagicMock(), "session-1")
+
+    assert context is not None
+    assert context.allowed_tools == "all"
+    assert context.mcp_progress_only is True
+
+
+def test_step_with_transitions_is_not_mcp_progress_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    step = _mcp_handler_step("review", exit_when="vars.done")
+    _patch_step_instance(
+        monkeypatch,
+        _instance(
+            "task-close-validator",
+            "review",
+            snapshot=_step_snapshot(step, "vars.review_complete"),
+        ),
+    )
+
+    context = get_active_step_workflow_context(MagicMock(), "session-1")
+
+    assert context is not None
+    assert context.mcp_progress_only is False
+
+
+def test_step_without_mcp_handlers_is_not_mcp_progress_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_step_instance(
+        monkeypatch,
+        _instance(
+            "coder",
+            "implement",
+            snapshot=_step_snapshot(WorkflowStep(name="implement"), "vars.done"),
+        ),
+    )
+
+    context = get_active_step_workflow_context(MagicMock(), "session-1")
+
+    assert context is not None
+    assert context.mcp_progress_only is False

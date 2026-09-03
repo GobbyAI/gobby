@@ -10,6 +10,7 @@ import pytest
 from gobby.agents.watchdog.completed_turn_recovery import (
     CompletedTurnRecoveryHost,
     recover_completed_turn,
+    step_progress_requires_gobby_mcp,
     step_requires_gobby_proxy,
 )
 from gobby.agents.watchdog.models import (
@@ -33,16 +34,19 @@ def _step_context(
     allowed_tools: list[str] | str,
     *,
     is_entry_step: bool = True,
+    mcp_progress_only: bool = False,
+    current_step: str = "load_skill",
 ) -> StepWorkflowContext:
     return StepWorkflowContext(
         workflow_name="plan-adversary-taskless",
-        current_step="load_skill",
+        current_step=current_step,
         description=None,
         status_message=None,
         exit_condition=None,
         agent_name="plan-adversary-taskless",
         allowed_tools=cast("list[str]", allowed_tools),
         is_entry_step=is_entry_step,
+        mcp_progress_only=mcp_progress_only,
     )
 
 
@@ -153,8 +157,68 @@ async def test_toolless_run_in_mcp_only_step_fails_without_reprompts() -> None:
 
     assert await _recover(host) == 1
     assert len(host.failures) == 1
-    assert "MCP-only entry step 'load_skill'" in host.failures[0]
+    assert "MCP-gated entry step 'load_skill'" in host.failures[0]
     assert host.reprompts == []
+
+
+@pytest.mark.asyncio
+async def test_all_tools_step_gated_on_mcp_progress_fails_without_reprompts() -> None:
+    """The task-close-validator shape: every native tool allowed, MCP-only exit.
+
+    Run 7f9c1bfa reprompted to the watchdog cap for ~30 minutes holding an
+    `max_active_agents` slot, because the guard keyed on `allowed_tools` alone
+    and this step allows everything.
+    """
+    host = _FakeHost(
+        step_context=_step_context(
+            "all",
+            mcp_progress_only=True,
+            current_step="review",
+        ),
+        made_call=False,
+    )
+
+    assert await _recover(host) == 1
+    assert len(host.failures) == 1
+    assert "MCP-gated entry step 'review'" in host.failures[0]
+    assert host.reprompts == []
+
+
+@pytest.mark.asyncio
+async def test_all_tools_step_with_non_mcp_route_keeps_reprompt_path() -> None:
+    """A step carrying `transitions` or `exit_when` can still progress natively."""
+    host = _FakeHost(
+        step_context=_step_context("all", mcp_progress_only=False, current_step="review"),
+        made_call=False,
+    )
+
+    assert await _recover(host) == 1
+    assert host.failures == []
+    assert len(host.reprompts) == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_gated_later_step_keeps_reprompt_path() -> None:
+    host = _FakeHost(
+        step_context=_step_context("all", mcp_progress_only=True, is_entry_step=False),
+        made_call=False,
+    )
+
+    assert await _recover(host) == 1
+    assert host.failures == []
+    assert len(host.reprompts) == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_gated_step_with_successful_call_keeps_reprompt_path() -> None:
+    host = _FakeHost(
+        step_context=_step_context("all", mcp_progress_only=True),
+        made_call=True,
+    )
+
+    assert await _recover(host) == 1
+    assert host.failures == []
+    assert len(host.reprompts) == 1
 
 
 @pytest.mark.asyncio
@@ -205,6 +269,19 @@ def test_step_requires_gobby_proxy_boundaries() -> None:
     assert step_requires_gobby_proxy(_step_context([])) is False
     assert step_requires_gobby_proxy(_step_context(_MCP_ONLY_TOOLS)) is True
     assert step_requires_gobby_proxy(_step_context(["Bash", "mcp__gobby__call_tool"])) is False
+
+
+def test_step_progress_requires_gobby_mcp_boundaries() -> None:
+    assert step_progress_requires_gobby_mcp(None) is False
+    assert step_progress_requires_gobby_mcp(_step_context("all")) is False
+    assert step_progress_requires_gobby_mcp(_step_context(_MCP_ONLY_TOOLS)) is True
+    assert step_progress_requires_gobby_mcp(_step_context("all", mcp_progress_only=True)) is True
+    assert (
+        step_progress_requires_gobby_mcp(
+            _step_context(["Bash", "mcp__gobby__call_tool"], mcp_progress_only=True)
+        )
+        is True
+    )
 
 
 @pytest.mark.asyncio

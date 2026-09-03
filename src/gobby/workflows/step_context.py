@@ -25,6 +25,13 @@ class StepWorkflowContext:
     agent_name: str | None = None
     allowed_tools: list[str] | Literal["all"] = "all"
     is_entry_step: bool = False
+    mcp_progress_only: bool = False
+    """The step's only declared route forward is an ``on_mcp_success`` handler.
+
+    Such a step cannot advance without a successful MCP call, whatever its
+    ``allowed_tools`` permit. A step carrying `transitions` or an `exit_when`
+    has a non-MCP route and is excluded.
+    """
 
 
 @dataclass(frozen=True)
@@ -72,6 +79,9 @@ def _get_active_step_workflow_context(
             is_entry_step=bool(
                 instance.snapshot.steps and instance.current_step == instance.snapshot.steps[0].name
             ),
+            mcp_progress_only=bool(step.on_mcp_success)
+            and not step.transitions
+            and not step.exit_when,
         )
 
     return None

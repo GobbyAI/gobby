@@ -79,6 +79,20 @@ def step_requires_gobby_proxy(step_context: StepWorkflowContext | None) -> bool:
     return all(tool.startswith(_GOBBY_PROXY_TOOL_PREFIX) for tool in allowed)
 
 
+def step_progress_requires_gobby_mcp(step_context: StepWorkflowContext | None) -> bool:
+    """True when the step cannot advance without a successful Gobby MCP call.
+
+    Two shapes qualify. A step whose allowed tools are Gobby proxy tools only,
+    and a step whose sole declared route forward is an ``on_mcp_success``
+    handler — the latter can permit every native tool and still be unable to
+    progress, which is how `task-close-validator` (`allowed_tools: all`, exit
+    condition set only by `gobby-agents:end_agent_run`) wedges.
+    """
+    if step_context is None:
+        return False
+    return step_requires_gobby_proxy(step_context) or step_context.mcp_progress_only
+
+
 def workflow_fingerprint(
     run_id: str,
     step_context: StepWorkflowContext | None,
@@ -144,25 +158,25 @@ async def recover_completed_turn(
         lookup_succeeded
         and step_context is not None
         and step_context.is_entry_step
-        and step_requires_gobby_proxy(step_context)
+        and step_progress_requires_gobby_mcp(step_context)
         and await host._session_made_successful_mcp_call(run) is False
     ):
-        # The workflow's entry step admits only Gobby MCP proxy tools and the
-        # session has never completed one — the tools were almost certainly
+        # The workflow's entry step cannot advance without a Gobby MCP call and
+        # the session has never completed one — the tools were almost certainly
         # never registered in the provider runtime (e.g. Codex's MCP startup
         # timeout), so no number of reprompts can produce workflow progress.
-        # Later MCP-only steps are excluded: a session can legitimately reach
-        # them with zero MCP calls when earlier steps used native tools, and
-        # there a reprompt can still help.
+        # Later such steps are excluded: a session can legitimately reach them
+        # with zero MCP calls when earlier steps used native tools, and there a
+        # reprompt can still help.
         reason = (
             "Gobby MCP proxy tools unavailable: session made no successful Gobby MCP "
-            f"call while pinned in MCP-only entry step '{step_context.current_step}' "
+            f"call while pinned in MCP-gated entry step '{step_context.current_step}' "
             "(likely stdio bridge startup failure)"
         )
         logger.error("Failing idle agent %s without reprompts: %s", run.id, reason)
         await host._log_transcript_snapshot(
             run,
-            reason="failing toolless run pinned in MCP-only step",
+            reason="failing run pinned in MCP-gated step with no successful MCP call",
             snapshot=snapshot,
             level=logging.ERROR,
         )
