@@ -78,7 +78,33 @@ def test_srt_policy_allows_only_current_workspace_gcode_runtime(
     runtime_writes = [path for path in paths.write_paths if Path(path).is_relative_to(runtime_root)]
     assert runtime_writes == sandbox_policy.gcode_runtime_write_exceptions(workspace)
     assert str(unrelated_runtime) not in paths.write_paths
-    assert str(runtime_root) in paths.deny_write_paths
+    assert str(runtime_root) in paths.deny_read_paths
+    # sandbox-runtime gives denyWrite precedence over allowWrite, so no deny entry
+    # may sit at or above the workspace runtime allowance.
+    runtime_home = Path(runtime_writes[0])
+    assert str(runtime_root) not in paths.deny_write_paths
+    assert not any(
+        runtime_home == Path(denied) or runtime_home.is_relative_to(denied)
+        for denied in paths.deny_write_paths
+    )
+
+
+def test_sensitive_write_roots_exclude_gcode_runtime_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gobby_home = Path("/opt/gobby-home")
+    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+
+    write_roots = set(sandbox_policy.sensitive_write_roots())
+
+    assert {
+        str(gobby_home / "bootstrap.yaml"),
+        str(gobby_home / ".secret_kek"),
+        str(gobby_home / "local_cli_token"),
+        str(gobby_home / "tools" / "srt"),
+    } <= write_roots
+    assert str(gobby_home / "gcode-runtime") not in write_roots
+    assert str(gobby_home / "gcode-runtime") in sandbox_policy.sensitive_roots()
 
 
 def test_prepare_sandbox_run_paths_copies_writable_isolated_pre_commit_store(

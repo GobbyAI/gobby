@@ -914,10 +914,20 @@ class TestComputeSandboxPaths:
                 "tools/srt",
             )
         }
+        write_protected_names = ("bootstrap.yaml", ".secret_kek", "local_cli_token", "tools/srt")
+        literal_write_protected = {str(gobby_home / name) for name in write_protected_names}
+        resolved_write_protected = {
+            str((gobby_home / name).resolve()) for name in write_protected_names
+        }
         assert literal_protected <= set(paths.deny_read_paths)
         assert resolved_protected <= set(paths.deny_read_paths)
-        assert literal_protected <= set(paths.deny_write_paths)
-        assert resolved_protected <= set(paths.deny_write_paths)
+        assert literal_write_protected <= set(paths.deny_write_paths)
+        assert resolved_write_protected <= set(paths.deny_write_paths)
+        # The gcode-runtime parent stays out of denyWrite: sandbox-runtime gives
+        # denyWrite precedence over allowWrite, which would shadow runtime_home.
+        assert str(gobby_home / "gcode-runtime") not in paths.deny_write_paths
+        assert str((gobby_home / "gcode-runtime").resolve()) not in paths.deny_write_paths
+        assert str(runtime_home) in paths.write_paths
         for allowed in (*paths.read_paths, *paths.write_paths):
             allowed_path = Path(allowed)
             assert all(
@@ -1761,3 +1771,31 @@ class TestTmuxSocketAllowance:
 
         assert roots == [os.path.realpath(socket_root())]
         assert os.path.dirname(socket_path) in roots
+
+
+def test_workspace_gcode_runtime_home_is_writable_under_srt_write_precedence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """denyWrite outranks allowWrite, so the gcode-runtime parent stays out of it."""
+    gobby_home = tmp_path / "gobby-home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    runtime_home = Path(sandbox_policy.gcode_runtime_write_exceptions(workspace)[0])
+    other_grant = gobby_home / "gcode-runtime" / "other-workspace" / "grant.json"
+
+    paths = compute_sandbox_paths(
+        config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+        workspace_path=str(workspace),
+        provider="codex",
+        env={"PATH": "", "GOBBY_CODE_INDEX_RUNTIME_HOME": str(runtime_home)},
+    )
+
+    can_write = TestToolchainGrants._srt_can_write
+    can_read = TestToolchainGrants._srt_can_read
+    assert can_write(runtime_home / "grant.json.lock", paths)
+    assert can_write(runtime_home / "grant.json", paths)
+    assert not can_write(other_grant, paths)
+    assert not can_write(gobby_home / "gcode-runtime", paths)
+    assert can_read(runtime_home / "grant.json", paths)
+    assert not can_read(other_grant, paths)

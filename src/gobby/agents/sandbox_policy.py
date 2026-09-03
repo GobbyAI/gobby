@@ -319,18 +319,25 @@ def deny_paths(paths: list[str], *, base: Path | None = None) -> list[str]:
     return list(dict.fromkeys(variants))
 
 
+def _credential_roots() -> list[Path]:
+    """Return the Gobby files and directories no managed grant may read or write."""
+    gobby_home = get_gobby_home()
+    return [
+        gobby_home / "bootstrap.yaml",
+        gobby_home / ".secret_kek",
+        gobby_home / "local_cli_token",
+        gobby_home / "tools" / "srt",
+    ]
+
+
+def _gcode_runtime_root() -> Path:
+    """Return the parent of every workspace's generated gcode home."""
+    return get_gobby_home() / "gcode-runtime"
+
+
 def sensitive_roots() -> list[str]:
     """Return Gobby roots excluded from every managed allow surface."""
-    gobby_home = get_gobby_home()
-    return deny_paths(
-        [
-            str(gobby_home / "bootstrap.yaml"),
-            str(gobby_home / ".secret_kek"),
-            str(gobby_home / "local_cli_token"),
-            str(gobby_home / "gcode-runtime"),
-            str(gobby_home / "tools" / "srt"),
-        ]
-    )
+    return deny_paths([str(path) for path in (*_credential_roots(), _gcode_runtime_root())])
 
 
 def assert_sensitive_path_contract(*allow_lists: list[str]) -> None:
@@ -344,7 +351,16 @@ def assert_sensitive_path_contract(*allow_lists: list[str]) -> None:
 
 
 def sensitive_write_roots() -> list[str]:
-    """Return credential and daemon-state roots that no write grant may override."""
+    """Return credential and daemon-state roots that no write grant may override.
+
+    The gcode-runtime parent is deliberately absent. sandbox-runtime gives
+    denyWrite precedence over allowWrite (allowRead wins over denyRead), so
+    listing the parent would shadow the per-workspace renewal allowance from
+    gcode_runtime_write_exceptions() and gcode could not create its grant lock
+    from a sandboxed agent shell. Writes are default-denied, so every other
+    workspace's runtime home stays unwritable without the entry; reads keep
+    the parent in sensitive_roots().
+    """
     home = Path.home()
     roots = [
         home / ".ssh",
@@ -352,7 +368,7 @@ def sensitive_write_roots() -> list[str]:
         home / ".gnupg",
         home / ".kube",
         home / ".config" / "gcloud",
-        *map(Path, sensitive_roots()),
+        *_credential_roots(),
     ]
     return deny_paths([str(path) for path in roots])
 
@@ -401,7 +417,7 @@ def gcode_runtime_write_exceptions(workspace: Path) -> list[str]:
     except OSError:
         workspace_key = str(workspace)
     digest = hashlib.sha256(workspace_key.encode("utf-8")).hexdigest()[:16]
-    runtime_home = get_gobby_home() / "gcode-runtime" / digest
+    runtime_home = _gcode_runtime_root() / digest
     return canonical_paths([str(runtime_home)])
 
 
