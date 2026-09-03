@@ -425,7 +425,12 @@ class TestClaimTaskTool:
 
             # Should succeed (idempotent operation)
             assert "error" not in result
-            assert mock_task_manager.claim_task.call_count == 1
+            assert result["already_claimed"] is True
+            assert (
+                'get_task(task_id="550e8400-e29b-41d4-a716-446655440002", brief=false)'
+                in (result["message"])
+            )
+            mock_task_manager.claim_task.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_claim_task_not_found(self, mock_task_manager):

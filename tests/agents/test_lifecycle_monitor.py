@@ -1004,6 +1004,9 @@ async def test_stuck_check_skips_session_awaiting_close_review(
         close_arguments={"preview": True},
         review_fingerprint="review",
         evidence_fingerprint="evidence",
+        diff_sha="d" * 64,
+        test_bodies_sha="e" * 64,
+        stable_facts={},
     )
 
     with patch.object(

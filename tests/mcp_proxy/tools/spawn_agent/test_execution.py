@@ -166,6 +166,9 @@ class TestSpawnAgentIsolation:
                 return_value=agent_body,
             ),
             patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context"
+            ) as mock_factory_ctx,
+            patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
             ) as mock_ctx,
             patch(
@@ -183,6 +186,7 @@ class TestSpawnAgentIsolation:
                 "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
+            mock_factory_ctx.return_value = mock_ctx.return_value
             mock_handler = MagicMock()
             mock_handler.prepare_environment = AsyncMock(
                 return_value=IsolationContext(
@@ -335,6 +339,9 @@ class TestSpawnAgentIsolation:
                 return_value=agent_body,
             ),
             patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context"
+            ) as mock_factory_ctx,
+            patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
             ) as mock_ctx,
             patch(
@@ -352,6 +359,7 @@ class TestSpawnAgentIsolation:
                 "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
+            mock_factory_ctx.return_value = mock_ctx.return_value
             mock_handler = MagicMock()
             mock_handler.prepare_environment = AsyncMock(
                 return_value=IsolationContext(
@@ -898,6 +906,9 @@ class TestSpawnAgentPreRegistration:
                 return_value=agent_body,
             ),
             patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context"
+            ) as mock_factory_ctx,
+            patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
             ) as mock_ctx,
             patch(
@@ -916,6 +927,7 @@ class TestSpawnAgentPreRegistration:
                 "id": str(sample_project["id"]),
                 "project_path": str(sample_git_project["repo_path"]),
             }
+            mock_factory_ctx.return_value = mock_ctx.return_value
             mock_handler = MagicMock()
             mock_handler.prepare_environment = AsyncMock(
                 return_value=IsolationContext(

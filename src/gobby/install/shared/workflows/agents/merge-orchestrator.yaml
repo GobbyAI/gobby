@@ -34,14 +34,14 @@ prompts:
     target branch.
 
     Methodology:
-    After claiming the task, load the `merge-expert` and `build-coordinator`
-    skills before anything else. Call
+    Load the `merge-expert` and `build-coordinator` skills before anything else.
+    Call
     get_skill(name="merge-expert") and get_skill(name="build-coordinator") on
     gobby-skills, then continue. Follow merge-expert exactly:
     Survey -> Plan -> Execute -> Recover -> Verify -> Output (campaign report).
 
     PR stage workflow:
-    - Claim the assigned task and load merge-expert plus build-coordinator.
+    - Read the assigned task and load merge-expert plus build-coordinator.
     - Survey the relevant worktrees and target branch.
     - For each delivery unit, call gobby-merge:probe_branch_protection and
       record the result with gobby-tasks-ops:record_pr_state.
@@ -220,8 +220,10 @@ step_workflow:
       mcp_error_policy: stay
       description: "Claim the assigned campaign task"
       status_message: |
-        Claim the assigned campaign task with claim_task(task_id=assigned_task_id),
-        then read it with get_task to load worktree IDs and target branch.
+        Spawned agents normally arrive after assigned_task_id is already claimed and
+        skip this step. If this step is active, claim the assigned campaign task with
+        claim_task(task_id=assigned_task_id), then read it with get_task(brief=false)
+        to load worktree IDs and target branch.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -695,4 +697,3 @@ step_workflow:
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
         - "gobby-agents:end_agent_run"
-

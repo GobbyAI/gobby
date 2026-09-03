@@ -131,6 +131,35 @@ def test_restricted_skill_load_steps_use_gobby_proxy_guidance() -> None:
     assert inspected >= 1
 
 
+def test_claim_guidance_accounts_for_spawn_preclaim() -> None:
+    prompt_claim_phrases = (
+        "After claiming the task",
+        "After claiming and reading the task",
+    )
+    for path in sorted(AGENTS_DIR.glob("*.yaml")):
+        prompt = str(_load_yaml(path).get("prompts", {}).get("agent", ""))
+        for phrase in prompt_claim_phrases:
+            assert phrase not in prompt, path.name
+
+    agents_with_updated_claim_steps = (
+        "analyst",
+        "architect",
+        "backend-developer",
+        "frontend-developer",
+        "fullstack-developer",
+        "merge-orchestrator",
+        "product-manager",
+        "researcher",
+        "tech-writer",
+        "trajectory-monitor",
+    )
+    for agent_name in agents_with_updated_claim_steps:
+        status = _step(_agent(agent_name), "claim")["status_message"]
+        assert "Spawned agents normally arrive" in status, agent_name
+        assert "skip this step" in status, agent_name
+        assert "If this step is active" in status, agent_name
+
+
 def test_epic_review_skill_defines_methodology_and_verdict_block() -> None:
     skill_text = (SKILLS_DIR / "epic-review/SKILL.md").read_text()
 

@@ -83,6 +83,29 @@ def _advance_initial_step(
     return current_step
 
 
+def spawn_starts_after_claim(
+    snapshot: AgentStepWorkflowBody | None,
+    *,
+    task_owned_by_child: bool,
+) -> bool:
+    """Return whether spawn-time ownership skips an initial claim step."""
+    return bool(
+        task_owned_by_child
+        and snapshot is not None
+        and snapshot.steps
+        and snapshot.steps[0].name == "claim"
+    )
+
+
+def preclaimed_task_instruction(task_ref: str) -> str:
+    """Return the child-facing instruction paired with a skipped claim step."""
+    return (
+        f"Task {task_ref} is already claimed by this session at spawn; "
+        "do not call claim_task; read it with "
+        f'get_task(task_id="{task_ref}", brief=false).'
+    )
+
+
 def _normalize_string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -113,7 +136,7 @@ def initial_step_state_for_spawn(
     first_step = snapshot.steps[0]
     current_step = first_step.name
 
-    if task_owned_by_child and first_step.name == "claim":
+    if spawn_starts_after_claim(snapshot, task_owned_by_child=task_owned_by_child):
         step_variables["task_claimed"] = True
 
     current_step = _advance_initial_step(

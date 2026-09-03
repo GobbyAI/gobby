@@ -774,6 +774,38 @@ class TestSpawnAgentStepVariables:
         assert agent_body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
 
     @pytest.mark.asyncio
+    async def test_preclaimed_spawn_tells_agent_not_to_claim(
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        db: Any,
+        mock_runner: MagicMock,
+        repo_root: Path,
+    ) -> None:
+        (
+            result,
+            task_manager,
+            task,
+            instance,
+            spawn_request,
+        ) = await self._spawn_bundled_developer_agent(
+            isolated_checkout_factory=isolated_checkout_factory,
+            db=db,
+            mock_runner=mock_runner,
+            repo_root=repo_root,
+            agent_name="backend-developer",
+        )
+
+        assert result["success"] is True
+        assert task_manager.get_task(task.id).claimed_by_session_id is not None
+        assert instance is not None
+        assert instance.current_step == "load_required_skills"
+        assert (
+            f"Task #{task.seq_num} is already claimed by this session at spawn; "
+            "do not call claim_task; read it with "
+            f'get_task(task_id="#{task.seq_num}", brief=false).'
+        ) in spawn_request.prompt
+
+    @pytest.mark.asyncio
     async def test_initial_variable_task_assignment_starts_step_workflow(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,

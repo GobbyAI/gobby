@@ -93,6 +93,19 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             )
 
         current_owner = get_claimed_session_id(task)
+        if current_owner == resolved_session_id:
+            task_ref = f"#{task.seq_num}" if task.seq_num else resolved_id
+            return {
+                "success": True,
+                "task_id": resolved_id,
+                "already_claimed": True,
+                "message": (
+                    f"Task {task_ref} is already claimed by this session. Continue by reading "
+                    f'it with get_task(task_id="{task_ref}", brief=false); do not call '
+                    "claim_task again."
+                ),
+            }
+
         delegated_claim = False
         if current_owner and current_owner != resolved_session_id and not force:
             delegated_claim = has_delegated_agent_run(
