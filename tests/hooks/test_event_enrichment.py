@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -39,6 +39,7 @@ def _make_event(event_type: HookEventType, platform_session_id: str = "sess-abc"
         HookEventType.BEFORE_AGENT: "user-prompt-submit",
         HookEventType.BEFORE_TOOL: "pre-tool-use",
         HookEventType.AFTER_TOOL: "post-tool-use",
+        HookEventType.STOP: "stop",
         HookEventType.SESSION_END: "session-end",
     }
     return HookEvent(
@@ -256,6 +257,49 @@ class TestMessageDeliveryOrdering:
         assert response.context is not None
         assert "hello" in response.context
         enricher._inter_session_msg_manager.mark_delivered_batch.assert_not_called()
+        assert response.metadata["_gobby_staged_effects"]["pending_message_ids"] == ["msg-1"]
+
+    @pytest.mark.parametrize(
+        ("event_type", "native_hook_type"),
+        (
+            (HookEventType.BEFORE_TOOL, "PreToolUse"),
+            (HookEventType.STOP, "Stop"),
+        ),
+    )
+    def test_codex_pre_tool_use_does_not_consume_pending_messages(
+        self,
+        event_type: HookEventType,
+        native_hook_type: str,
+    ) -> None:
+        msg = _make_msg()
+        enricher = _make_enricher([msg])
+        message_manager = cast(MagicMock, enricher._inter_session_msg_manager)
+        event = _make_event(event_type)
+        event.source = SessionSource.CODEX
+        event.metadata["_native_hook_type"] = native_hook_type
+        response = HookResponse()
+
+        enricher.enrich(event, response)
+
+        assert response.context is None
+        assert "_gobby_staged_effects" not in response.metadata
+        message_manager.get_undelivered_messages.assert_not_called()
+        message_manager.mark_delivered_batch.assert_not_called()
+
+    def test_codex_post_tool_use_delivers_pending_messages(self) -> None:
+        msg = _make_msg()
+        enricher = _make_enricher([msg])
+        message_manager = cast(MagicMock, enricher._inter_session_msg_manager)
+        event = _make_event(HookEventType.AFTER_TOOL)
+        event.source = SessionSource.CODEX
+        event.metadata["_native_hook_type"] = "PostToolUse"
+        response = HookResponse()
+
+        enricher.enrich(event, response)
+
+        assert response.context is not None
+        assert "hello" in response.context
+        message_manager.mark_delivered_batch.assert_not_called()
         assert response.metadata["_gobby_staged_effects"]["pending_message_ids"] == ["msg-1"]
 
 

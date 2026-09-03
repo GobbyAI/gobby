@@ -225,11 +225,12 @@ class EventEnricher:
             capability = get_provider_capabilities(event.source).get_hook(native_hook_type)
         except ValueError:
             return False
-        return bool(
-            capability
-            and capability.event_type is event.event_type
-            and capability.context_channel is not ContextChannel.NONE
-        )
+        if not capability or capability.event_type is not event.event_type:
+            return False
+        if event.source == SessionSource.CODEX:
+            # Codex systemMessage output is not included in the model transcript.
+            return capability.context_channel is ContextChannel.ADDITIONAL_CONTEXT
+        return capability.context_channel is not ContextChannel.NONE
 
     def _resolve_sender_label(
         self, from_session: str | None, *, recipient_project_id: str | None = None
