@@ -205,7 +205,10 @@ async def test_oversized_review_fingerprint_tracks_every_close_input(
             "changes_summary": "Summary",
             "validation_criteria": "Criterion.",
             "diff_text": "diff --git a/a.py b/a.py\n+a",
-            "checklist_facts": {"acceptance_artifacts": {"test_references": ["tests/a.py"]}},
+            "checklist_facts": {
+                "commit_shas": ["abc1234"],
+                "acceptance_artifacts": {"test_references": ["tests/a.py"]},
+            },
             "test_bodies": "def test_a(): assert a()",
         }
         values.update(changes)
@@ -213,17 +216,32 @@ async def test_oversized_review_fingerprint_tracks_every_close_input(
             await validator.validate_task(**values)
         return raised.value.review_fingerprint
 
+    baseline = await fingerprint()
     fingerprints = {
-        await fingerprint(),
+        baseline,
         await fingerprint(description="Edited description"),
         await fingerprint(validation_criteria="Edited criterion."),
         await fingerprint(diff_text="diff --git a/b.py b/b.py\n+b"),
+        await fingerprint(test_bodies="def test_a(): assert b()"),
         await fingerprint(
-            checklist_facts={"acceptance_artifacts": {"test_references": ["tests/b.py"]}}
+            checklist_facts={
+                "commit_shas": ["def5678"],
+                "acceptance_artifacts": {"test_references": ["tests/a.py"]},
+            }
         ),
     }
 
-    assert len(fingerprints) == 5
+    assert len(fingerprints) == 6
+
+    # Transcript-derived facts are shown to the reviewer and excluded from the
+    # key, so evidence that only grew cannot stale a launched verdict (#21675).
+    transcript_only = await fingerprint(
+        checklist_facts={
+            "commit_shas": ["abc1234"],
+            "acceptance_artifacts": {"test_references": ["tests/b.py"]},
+        }
+    )
+    assert transcript_only == baseline
 
 
 def _multi_file_diff(paths: list[str], lines_per_file: int) -> str:

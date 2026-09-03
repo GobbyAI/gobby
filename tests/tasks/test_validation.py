@@ -196,3 +196,113 @@ async def test_rejection_evidence_reaches_response_and_next_review(
         commit_sha="second",
     )
     assert call_json_feature.await_count == 2
+
+
+_DELIVERABLE_FACTS: dict[str, Any] = {
+    "commit_count": 1,
+    "commit_shas": ["abc1234"],
+    "had_attributed_edits": True,
+    "attributed_paths": ["src/gobby/tasks/validation.py"],
+    "claim_started_at": "2026-09-03T05:00:00+00:00",
+}
+
+
+def _prepare(
+    temp_db: HubDatabase,
+    checklist_facts: dict[str, Any],
+) -> Any:
+    validator = TaskValidator(
+        TaskValidationConfig(),
+        cast(LLMService, SimpleNamespace(call_json_feature=AsyncMock())),
+        temp_db,
+    )
+    return validator.prepare_task_review(
+        title="Stable fingerprint",
+        changes_summary="summary",
+        validation_criteria="Focused tests pass.",
+        diff_text="diff --git a/x b/x",
+        checklist_facts=checklist_facts,
+        test_bodies="def test_x() -> None:\n    assert True",
+    )
+
+
+def test_additive_transcript_evidence_does_not_stale_a_launched_review(
+    temp_db: HubDatabase,
+) -> None:
+    """Running another validation command must not void an in-flight verdict.
+
+    The transcript-derived facts change on every command the launching session
+    runs. Keying the fingerprints on them made a session void its own verdict
+    simply by continuing to work (#21675).
+    """
+    at_launch = _prepare(
+        temp_db,
+        {
+            **_DELIVERABLE_FACTS,
+            "validation_commands": [{"command": "pytest tests/tasks/", "outcome": "success"}],
+            "transcript_operational_actions": ["pytest"],
+            "acceptance_artifacts": {"findings": [], "test_references": ["a::test_b"]},
+            "tdd_evidence": {"red_runs": [], "green_runs": ["pytest tests/tasks/"]},
+        },
+    )
+    at_verdict = _prepare(
+        temp_db,
+        {
+            **_DELIVERABLE_FACTS,
+            "validation_commands": [
+                {"command": "pytest tests/tasks/", "outcome": "success"},
+                {"command": "ruff check src/", "outcome": "success"},
+            ],
+            "transcript_operational_actions": ["pytest", "ruff"],
+            "acceptance_artifacts": {"findings": [], "test_references": ["a::test_b"]},
+            "tdd_evidence": {
+                "red_runs": [],
+                "green_runs": ["pytest tests/tasks/", "ruff check src/"],
+            },
+        },
+    )
+
+    assert at_verdict.evidence_fingerprint == at_launch.evidence_fingerprint
+    assert at_verdict.review_fingerprint == at_launch.review_fingerprint
+
+
+def test_reviewer_still_reads_the_transcript_facts_excluded_from_the_fingerprint(
+    temp_db: HubDatabase,
+) -> None:
+    """Narrowing the fingerprint must not narrow what the reviewer is shown."""
+    prepared = _prepare(
+        temp_db,
+        {**_DELIVERABLE_FACTS, "transcript_operational_actions": ["gobby-cutover-marker"]},
+    )
+
+    assert "gobby-cutover-marker" in prepared.prompt
+
+
+def test_new_commit_after_launch_still_stales_the_review(temp_db: HubDatabase) -> None:
+    at_launch = _prepare(temp_db, dict(_DELIVERABLE_FACTS))
+    with_new_commit = _prepare(
+        temp_db,
+        {**_DELIVERABLE_FACTS, "commit_count": 2, "commit_shas": ["abc1234", "def5678"]},
+    )
+
+    assert with_new_commit.evidence_fingerprint != at_launch.evidence_fingerprint
+    assert with_new_commit.review_fingerprint != at_launch.review_fingerprint
+
+
+def test_new_attributed_edit_after_launch_still_stales_the_review(
+    temp_db: HubDatabase,
+) -> None:
+    at_launch = _prepare(temp_db, dict(_DELIVERABLE_FACTS))
+    with_new_edit = _prepare(
+        temp_db,
+        {
+            **_DELIVERABLE_FACTS,
+            "attributed_paths": [
+                "src/gobby/tasks/validation.py",
+                "src/gobby/tasks/close_checklist.py",
+            ],
+        },
+    )
+
+    assert with_new_edit.evidence_fingerprint != at_launch.evidence_fingerprint
+    assert with_new_edit.review_fingerprint != at_launch.review_fingerprint
