@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 from gobby.llm.context_windows import resolve_context_window_with_source
@@ -8,6 +9,7 @@ from gobby.providers.capabilities.collectors import validate_snapshot
 from gobby.providers.capabilities.collectors.droid import (
     DROID_MODELS_URL,
     DroidCollector,
+    DroidSourceError,
 )
 from gobby.providers.capabilities.models import ReasoningSupport
 
@@ -31,6 +33,30 @@ def _collector(document: str = _MODELS_DOCUMENT) -> DroidCollector:
         return document
 
     return DroidCollector(fetch_text=fetch_text, clock=lambda: _OBSERVED_AT)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (httpx.ReadTimeout(""), "fetch failed: ReadTimeout"),
+        (httpx.ConnectError("boom"), "fetch failed: ConnectError: boom"),
+    ],
+)
+async def test_fetch_failure_names_the_exception_type_when_its_message_is_empty(
+    error: Exception, expected: str
+) -> None:
+    """httpx transport errors often carry an empty str(); the type must survive."""
+
+    async def fetch_text(url: str) -> str:
+        raise error
+
+    collector = DroidCollector(fetch_text=fetch_text, clock=lambda: _OBSERVED_AT)
+
+    with pytest.raises(DroidSourceError, match=expected) as excinfo:
+        await collector.collect()
+
+    assert excinfo.value.__cause__ is error
 
 
 @pytest.mark.asyncio

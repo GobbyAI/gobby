@@ -11,7 +11,7 @@ from decimal import Decimal
 
 import httpx
 
-from gobby.providers.capabilities.collectors.base import SourceSpec
+from gobby.providers.capabilities.collectors.base import SourceSpec, describe_fetch_error
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
@@ -132,7 +132,9 @@ class ClaudeCollector:
             try:
                 document = await self.fetch_text(source.url)
             except Exception as error:
-                raise ClaudeSourceError(source.source_key, f"fetch failed: {error}") from error
+                raise ClaudeSourceError(
+                    source.source_key, f"fetch failed: {describe_fetch_error(error)}"
+                ) from error
             if not document.strip():
                 raise ClaudeSourceError(source.source_key, "response was empty")
             return source.source_key, document
