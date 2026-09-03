@@ -43,6 +43,8 @@ from gobby.agents.tmux.text_injection import (
 )
 from gobby.config.tmux import TmuxConfig
 from gobby.config.tmux import TmuxConfig as TmuxConfigCanonical
+from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.key_bytes import tmux_key_name
 
 pytestmark = pytest.mark.unit
 
@@ -387,9 +389,18 @@ class TestTmuxTextInjection:
             cli_source="claude",
         )
 
-        buffer_name = commands[1][3]
+        # The composer drain never uses a key that could cancel a turn, so every
+        # drain key must have a tmux name and land before the paste.
+        drain_keys = composer_clear_sequence("claude")
+        clear_commands = [
+            ["tmux", "send-keys", "-t", "%12", name]
+            for key in drain_keys
+            if (name := tmux_key_name(key)) is not None
+        ]
+        assert len(clear_commands) == len(drain_keys)
+        buffer_name = commands[len(clear_commands)][3]
         assert commands == [
-            ["tmux", "send-keys", "-t", "%12", "C-l"],
+            *clear_commands,
             [
                 "tmux",
                 "set-buffer",
