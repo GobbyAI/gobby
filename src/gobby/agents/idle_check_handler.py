@@ -10,6 +10,7 @@ from gobby.agents.attention_tracker import AgentAttentionTracker
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.watchdog.completed_turn_recovery import completed_turn_recovery_due
 from gobby.agents.watchdog.models import WatchdogTranscriptSnapshot
+from gobby.agents.watchdog.quota import detect_provider_quota
 from gobby.agents.watchdog.recovery import WatchdogRecoveryCoordinator
 from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
 from gobby.sessions.activity import last_session_activity
@@ -246,7 +247,8 @@ class IdleCheckHandler:
                     session_recent = True
 
         session_source = session.source if session is not None else None
-        reader = self._watchdog_readers.for_provider(session_source or run.provider)
+        provider_id = session_source or run.provider
+        reader = self._watchdog_readers.for_provider(provider_id)
         has_capacity_probe = reader is not None and reader.capacity_pane_message is not None
         if session_recent and not has_capacity_probe:
             idle_detector.reset_idle(run.id)
@@ -263,6 +265,16 @@ class IdleCheckHandler:
             return 0
         if not attention_synced:
             await self._attention_tracker.sync(run, pane_output)
+        quota = detect_provider_quota(pane_output, provider_id)
+        if quota is not None:
+            logger.error(
+                "Failing agent %s because %s quota is exhausted%s",
+                run.id,
+                quota.provider,
+                f" until {quota.reset_time}" if quota.reset_time is not None else "",
+            )
+            await self._recovery.fail_provider_quota_agent(run, quota)
+            return 1
         capacity_candidate = self._recovery._pane_has_capacity_message(pane_output, reader)
 
         status = idle_detector.detect(pane_output)

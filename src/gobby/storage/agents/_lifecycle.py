@@ -345,6 +345,7 @@ class _AgentRunLifecycleMixin:
         tool_calls_count: int = 0,
         turns_used: int = 0,
         result: str | None = None,
+        terminal_reason: AgentRunTerminalReason | None = None,
     ) -> AgentRun | None:
         """
         Mark agent run as failed.
@@ -354,6 +355,7 @@ class _AgentRunLifecycleMixin:
             error: Error message.
             tool_calls_count: Number of tool calls made before failure.
             turns_used: Number of turns used before failure.
+            terminal_reason: Optional classified reason for the failure.
 
         Returns:
             Updated AgentRun.
@@ -367,7 +369,7 @@ class _AgentRunLifecycleMixin:
             SET status = 'error',
                 error = %s,
                 result = COALESCE(%s, result),
-                terminal_reason = NULL,
+                terminal_reason = %s,
                 pending_terminal_action = NULL,
                 pending_terminal_reason = NULL,
                 termination_requested_at = NULL,
@@ -379,7 +381,16 @@ class _AgentRunLifecycleMixin:
             WHERE id = %s
               AND status IN ('pending', 'running')
             """,
-            params=(error, result, tool_calls_count, turns_used, now, now, run_id),
+            params=(
+                error,
+                result,
+                terminal_reason,
+                tool_calls_count,
+                turns_used,
+                now,
+                now,
+                run_id,
+            ),
         )
 
     def timeout(
