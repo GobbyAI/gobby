@@ -319,7 +319,7 @@ async def test_attention_episode_native(temp_db: Any) -> None:
         )
     )
     assert isinstance(outcome, Delivered)
-    assert host.pty[-1] == b"\n"
+    assert host.pty[-1] == b"\r"
     await tracker.clear_after_injection(run)
     cleared = attention_manager.get("run:run-native")
     assert cleared is None or cleared.state is None
