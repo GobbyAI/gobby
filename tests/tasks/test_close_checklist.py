@@ -116,6 +116,17 @@ def test_latest_definitive_result_per_category_cures_failure() -> None:
 
     assert gate.status == "passed"
     assert gate.details["latest_outcomes"] == {"test": "success"}
+    # The winning run is recorded in full so the criteria reviewer can treat
+    # it as the authoritative account of the command instead of a receipt.
+    assert gate.details["latest_runs"] == [
+        {
+            "category": "test",
+            "command": "pytest",
+            "completed_at": (BASE_TIME + timedelta(seconds=2)).isoformat(),
+            "outcome": "success",
+            "exit_code": 0,
+        }
+    ]
 
 
 def test_unresolved_failure_blocks_even_when_required_category_passed() -> None:
