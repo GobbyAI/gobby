@@ -42,6 +42,7 @@ fn stderr_log_level(quiet: bool, rust_log: Option<&str>) -> log::LevelFilter {
 }
 
 fn ensure_project_fresh(ctx: &config::Context, disabled: bool) -> anyhow::Result<()> {
+    warn_if_freshness_skipped(ctx, disabled);
     if !disabled {
         warn_if_busy(
             ctx,
@@ -56,6 +57,7 @@ fn ensure_files_fresh(
     disabled: bool,
     files: Vec<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
+    warn_if_freshness_skipped(ctx, disabled);
     if !disabled {
         warn_if_busy(
             ctx,
@@ -70,6 +72,7 @@ fn ensure_file_fresh(ctx: &config::Context, disabled: bool, file: &str) -> anyho
 }
 
 fn ensure_symbol_fresh(ctx: &config::Context, disabled: bool, id: &str) -> anyhow::Result<()> {
+    warn_if_freshness_skipped(ctx, disabled);
     if !disabled {
         warn_if_busy(ctx, freshness::ensure_symbol_fresh(ctx, id)?);
     }
@@ -135,6 +138,16 @@ fn freshness_warning(quiet: bool, status: &freshness::FreshnessStatus) -> Option
              (pass --allow-stale to skip this check)"
         )),
         freshness::FreshnessStatus::Checked => None,
+    }
+}
+
+fn freshness_skip_notice(quiet: bool, allow_stale: bool) -> Option<&'static str> {
+    (allow_stale && !quiet).then_some("freshness check skipped (--allow-stale)")
+}
+
+fn warn_if_freshness_skipped(ctx: &config::Context, allow_stale: bool) {
+    if let Some(line) = freshness_skip_notice(ctx.quiet, allow_stale) {
+        eprintln!("{line}");
     }
 }
 

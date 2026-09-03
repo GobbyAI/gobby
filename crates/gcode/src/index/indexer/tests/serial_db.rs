@@ -204,6 +204,7 @@ fn parsed_reindex_preserves_summaries_for_immutable_content_versions() {
             indexer_version: None,
         },
         api::IndexWriteMode::Overlay,
+        true,
     )
     .expect("seed project row");
 
@@ -367,6 +368,7 @@ fn indexing_adopts_existing_content_version_without_reparse() {
             indexer_version: None,
         },
         api::IndexWriteMode::Overlay,
+        true,
     )
     .expect("seed first machine project state");
     let shared_file = IndexedFile {
@@ -492,6 +494,7 @@ fn full_indexing_reparses_previously_adopted_content() {
             indexer_version: None,
         },
         api::IndexWriteMode::Overlay,
+        true,
     )
     .expect("seed first machine project state");
     // Seed the shared content row with wrong stats: only a real re-parse
@@ -611,6 +614,7 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
             indexer_version: None,
         },
         api::IndexWriteMode::Overlay,
+        true,
     )
     .expect("seed parent project state");
     let parent_file = IndexedFile {
@@ -648,6 +652,7 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
             indexer_version: None,
         },
         api::IndexWriteMode::Overlay,
+        true,
     )
     .expect("seed first machine overlay project state");
     let overlay_file = IndexedFile {
@@ -749,6 +754,116 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
         .expect("load refreshed overlay stats");
     assert_eq!(overlay_stats.get::<_, i32>(0), 1);
     assert_eq!(overlay_stats.get::<_, i32>(1), 0);
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn explicit_file_index_preserves_last_indexed_at_until_full_index() {
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let project_root = tempfile::tempdir().expect("create project root");
+    let project_id = unique_test_uuid("gcode-explicit-index-stamp");
+    let rel = "src/lib.rs";
+    let absolute_path = project_root.path().join(rel);
+    std::fs::create_dir_all(absolute_path.parent().expect("file parent"))
+        .expect("create source directory");
+    std::fs::write(&absolute_path, b"pub fn indexed() {}\n").expect("write source file");
+
+    cleanup_summary_preservation_project(&mut conn, &project_id)
+        .expect("pre-clean explicit index rows");
+    let _cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: project_id.clone(),
+    };
+    seed_primary_checkout(&mut conn, &project_id, project_root.path())
+        .expect("seed primary checkout");
+
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("read machine id");
+    api::upsert_project_stats(
+        &mut conn,
+        &machine_id,
+        &IndexedProject {
+            id: project_id.clone(),
+            root_path: project_root.path().to_string_lossy().to_string(),
+            total_files: 0,
+            total_symbols: 0,
+            last_indexed_at: String::new(),
+            index_duration_ms: 0,
+            total_eligible_files: None,
+            indexer_version: None,
+        },
+        api::IndexWriteMode::Primary,
+        true,
+    )
+    .expect("seed project stats");
+    let project_uuid = test_uuid_param(&project_id);
+    let machine_uuid = test_uuid_param(&machine_id);
+    conn.execute(
+        "UPDATE code_indexed_project_states
+         SET last_indexed_at = TIMESTAMPTZ '2000-01-01 00:00:00+00'
+         WHERE machine_id = $1 AND project_id = $2",
+        &[&machine_uuid, &project_uuid],
+    )
+    .expect("set baseline index timestamp");
+
+    let ctx = Context {
+        database_url,
+        project_root: project_root.path().to_path_buf(),
+        project_id: project_id.clone(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: ProjectIndexScope::Single,
+    };
+    let last_indexed_at = |conn: &mut postgres::Client| -> String {
+        conn.query_one(
+            "SELECT last_indexed_at::TEXT FROM code_indexed_project_states
+             WHERE machine_id = $1 AND project_id = $2",
+            &[&machine_uuid, &project_uuid],
+        )
+        .expect("load last indexed timestamp")
+        .get(0)
+    };
+    let baseline = last_indexed_at(&mut conn);
+
+    index_files(
+        IndexRequest {
+            project_root: project_root.path().to_path_buf(),
+            path_filter: None,
+            explicit_files: vec![absolute_path],
+            full: false,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &ctx,
+        IndexOptions::default(),
+    )
+    .expect("index explicit file");
+    assert_eq!(last_indexed_at(&mut conn), baseline);
+
+    index_files(
+        IndexRequest {
+            project_root: project_root.path().to_path_buf(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: true,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &ctx,
+        IndexOptions::default(),
+    )
+    .expect("index full project");
+    assert_ne!(last_indexed_at(&mut conn), baseline);
 }
 
 fn connect_summary_preservation_test_db() -> (postgres::Client, String) {

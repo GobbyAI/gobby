@@ -67,6 +67,7 @@ fn hybrid_search_excludes_indexed_file_deleted_from_disk() -> anyhow::Result<()>
         &machine_id,
         &project,
         api::IndexWriteMode::Overlay,
+        true,
     )?;
     let indexed_file = IndexedFile {
         id: IndexedFile::make_id(&project_id, file_path, "indexed-before-delete"),

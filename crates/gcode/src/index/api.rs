@@ -590,6 +590,7 @@ pub fn upsert_project_stats(
     machine_id: &str,
     project: &IndexedProject,
     mode: IndexWriteMode,
+    advance_last_indexed_at: bool,
 ) -> anyhow::Result<()> {
     let machine_id = id_param(machine_id)?;
     let project_id = id_param(&project.id)?;
@@ -617,12 +618,15 @@ pub fn upsert_project_stats(
         INSERT INTO code_indexed_project_states (
             machine_id, project_id, root_path, total_files, total_symbols,
             last_indexed_at, index_duration_ms, indexer_version
-        ) SELECT $1,$2,$3,$4,$5,NOW(),$6,$7 FROM checkout
+        ) SELECT $1,$2,$3,$4,$5,CASE WHEN $8 THEN NOW() END,$6,$7 FROM checkout
         ON CONFLICT(machine_id, project_id) DO UPDATE SET
             root_path=excluded.root_path,
             total_files=excluded.total_files,
             total_symbols=excluded.total_symbols,
-            last_indexed_at=excluded.last_indexed_at,
+            last_indexed_at=COALESCE(
+                excluded.last_indexed_at,
+                code_indexed_project_states.last_indexed_at
+            ),
             index_duration_ms=excluded.index_duration_ms,
             indexer_version=COALESCE(
                 excluded.indexer_version,
@@ -634,12 +638,15 @@ pub fn upsert_project_stats(
             "INSERT INTO code_indexed_project_states (
             machine_id, project_id, root_path, total_files, total_symbols,
             last_indexed_at, index_duration_ms, indexer_version
-        ) VALUES ($1,$2,$3,$4,$5,NOW(),$6,$7)
+        ) VALUES ($1,$2,$3,$4,$5,CASE WHEN $8 THEN NOW() END,$6,$7)
         ON CONFLICT(machine_id, project_id) DO UPDATE SET
             root_path=excluded.root_path,
             total_files=excluded.total_files,
             total_symbols=excluded.total_symbols,
-            last_indexed_at=excluded.last_indexed_at,
+            last_indexed_at=COALESCE(
+                excluded.last_indexed_at,
+                code_indexed_project_states.last_indexed_at
+            ),
             index_duration_ms=excluded.index_duration_ms,
             indexer_version=COALESCE(
                 excluded.indexer_version,
@@ -658,6 +665,7 @@ pub fn upsert_project_stats(
             &to_i32(project.total_symbols),
             &to_i32(project.index_duration_ms as usize),
             &project.indexer_version.as_deref(),
+            &advance_last_indexed_at,
         ],
     )?;
     if written == 0 {

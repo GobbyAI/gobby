@@ -200,6 +200,7 @@ fn refresh_project_stats_propagates_checkout_fence_failure() {
         1,
         None,
         None,
+        true,
     )
     .expect_err("a failed stats fence must fail the index run");
     let cli = error
@@ -235,6 +236,7 @@ fn refresh_project_stats_propagates_checkout_fence_failure() {
         1,
         None,
         None,
+        true,
     )
     .expect("committed checkout root refreshes stats");
 }
@@ -287,6 +289,7 @@ fn primary_and_overlay_api_modes_enforce_checkout_contract() {
         &machine_id,
         &primary_stats,
         api::IndexWriteMode::Primary,
+        true,
     )
     .expect("matching primary stats");
     api::upsert_project_stats(
@@ -294,6 +297,7 @@ fn primary_and_overlay_api_modes_enforce_checkout_contract() {
         &machine_id,
         &contract_project(&project_id, stale_root.path()),
         api::IndexWriteMode::Primary,
+        true,
     )
     .expect_err("stale primary stats");
 
@@ -371,6 +375,7 @@ fn primary_and_overlay_api_modes_enforce_checkout_contract() {
         &machine_id,
         &contract_project(&overlay_id, overlay_root.path()),
         api::IndexWriteMode::Overlay,
+        true,
     )
     .expect("overlay stats without checkout");
     let overlay_file = contract_file(&overlay_id, "src/overlay.rs", "overlay-hash");
@@ -558,6 +563,7 @@ fn run_primary_writer(
             machine_id,
             &contract_project(project_id, root),
             api::IndexWriteMode::Primary,
+            true,
         ),
         PrimaryWriter::FileUpsert => {
             api::upsert_file_state(conn, machine_id, file, root, api::IndexWriteMode::Primary)

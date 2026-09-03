@@ -121,6 +121,15 @@ fn degraded_freshness_warning_is_suppressed_when_quiet() {
 }
 
 #[test]
+fn allow_stale_notice_is_one_line_and_respects_quiet() {
+    let notice = freshness_skip_notice(false, true).expect("allow-stale should emit a notice");
+    assert_eq!(notice, "freshness check skipped (--allow-stale)");
+    assert!(!notice.contains('\n'));
+    assert_eq!(freshness_skip_notice(true, true), None);
+    assert_eq!(freshness_skip_notice(false, false), None);
+}
+
+#[test]
 fn cli_error_uses_its_exit_status() {
     let error = anyhow::Error::from(CliError {
         code: "usage",

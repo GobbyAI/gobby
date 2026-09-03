@@ -249,6 +249,7 @@ fn seeded_file(prefix: &str, hash: &str) -> (postgres::Client, String, ProjectCl
             indexer_version: None,
         },
         api::IndexWriteMode::Overlay,
+        true,
     )
     .expect("seed project");
     upsert_content_version(&mut conn, &project_id, hash);

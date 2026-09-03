@@ -814,6 +814,7 @@ mod serial_db {
                 indexer_version: None,
             },
             api::IndexWriteMode::Overlay,
+            true,
         )
         .expect("seed project");
         (conn, project_id, guard)
