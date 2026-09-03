@@ -61,7 +61,13 @@ async def _send_tmux_session_wake(
 ) -> None:
     from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
     from gobby.terminals.composer import composer_clear_sequence
-    from gobby.terminals.runtime import Delivered, IndeterminateWrite
+    from gobby.terminals.runtime import (
+        AutomaticWriteDeclined,
+        AutomaticWriteQuarantined,
+        Delivered,
+        IndeterminateWrite,
+        Suppressed,
+    )
     from gobby.terminals.write_coordinator import SequenceDelay, WriteRequest
 
     manager, coordinator = _wake_write_services()
@@ -79,12 +85,13 @@ async def _send_tmux_session_wake(
             terminal = manager.get_live_for_session(identity)
     if terminal is None:
         raise RuntimeError(f"no terminal for wake identity {identity}")
+    action_key = f"wake:{terminal.id}"
     steps: list[WriteRequest | SequenceDelay] = []
     if not submit:
         steps.append(
             WriteRequest(
                 terminal_id=terminal.id,
-                action_key=f"wake:{terminal.id}",
+                action_key=action_key,
                 origin="automatic",
                 kind="text",
                 payload=message,
@@ -93,10 +100,11 @@ async def _send_tmux_session_wake(
     else:
         literal_text = message.rstrip("\n")
         if clear_before_submit:
+            _settle_earlier_wake(coordinator, terminal, action_key)
             steps.extend(
                 WriteRequest(
                     terminal_id=terminal.id,
-                    action_key=f"wake:{terminal.id}",
+                    action_key=action_key,
                     origin="automatic",
                     kind="key",
                     payload=key,
@@ -109,7 +117,7 @@ async def _send_tmux_session_wake(
             steps.append(
                 WriteRequest(
                     terminal_id=terminal.id,
-                    action_key=f"wake:{terminal.id}",
+                    action_key=action_key,
                     origin="automatic",
                     kind="text",
                     payload=literal_text,
@@ -119,7 +127,7 @@ async def _send_tmux_session_wake(
         steps.append(
             WriteRequest(
                 terminal_id=terminal.id,
-                action_key=f"wake:{terminal.id}",
+                action_key=action_key,
                 origin="automatic",
                 kind="key",
                 payload="enter",
@@ -127,14 +135,39 @@ async def _send_tmux_session_wake(
         )
     outcome = await coordinator.run_sequence(
         terminal.id,
-        action_key=f"wake:{terminal.id}",
+        action_key=action_key,
         origin="automatic",
         steps=steps,
     )
     if isinstance(outcome, IndeterminateWrite):
         raise outcome
+    if isinstance(outcome, Suppressed | AutomaticWriteQuarantined):
+        raise AutomaticWriteDeclined(outcome)
     if not isinstance(outcome, Delivered):
         raise RuntimeError(f"wake write to {identity} failed")
+
+
+def _settle_earlier_wake(coordinator: Any, terminal: Any, action_key: str) -> None:
+    """Release the latch of an earlier wake before a drained wake repeats it.
+
+    A drained wake empties the composer first, and every drain key is a no-op
+    on an empty buffer, so repeating the wake is safe whatever the earlier
+    attempt left on screen. Left latched, one wake whose reply was lost makes
+    the coordinator suppress every later wake to this terminal for as long as
+    the terminal lives (#21670). This is the settlement the watchdog applies to
+    ``idle-reprompt`` once its clear has emptied the composer.
+    """
+    unresolved = getattr(terminal, "unresolved_writes", None) or {}
+    quarantine_key = getattr(terminal, "automatic_write_quarantine_action_key", None)
+    if action_key not in unresolved and quarantine_key != action_key:
+        return
+    latched = unresolved.get(action_key) or {}
+    logger.info(
+        "Settling the unresolved earlier wake on terminal %s (latched at %s) before waking again",
+        terminal.id,
+        latched.get("at", "quarantine"),
+    )
+    coordinator.observe_resolved(terminal.id, action_key)
 
 
 async def _send_tmux_pane_wake(

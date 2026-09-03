@@ -396,8 +396,14 @@ def _seed_e2e_runtime_state(postgres_db: Any, project_dir: Path) -> Path:
     )
     from gobby.storage.project_checkouts import LocalProjectCheckoutManager
     from gobby.utils.checkout_root import validate_checkout_root
-    from tests.fixtures.isolated_checkout import insert_isolated_machine
+    from tests.fixtures.isolated_checkout import insert_isolated_machine, write_project_marker
 
+    # validate_checkout_root proves the root by its marker, so a bare temp dir
+    # (the runtime-contract and tmux-isolation callers) needs one; the
+    # e2e_project_dir fixture already wrote the same marker, and rewriting it
+    # is a no-op there (#21671).
+    if not (project_dir / ".gobby" / "project.json").exists():
+        write_project_marker(project_dir, project_id=project_id, name="E2E Test Project")
     insert_isolated_machine(postgres_db, machine_id)
     root = validate_checkout_root(
         postgres_db,
