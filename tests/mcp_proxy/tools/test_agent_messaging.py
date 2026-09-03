@@ -503,6 +503,59 @@ class TestSendMessage:
         ]
 
     @pytest.mark.asyncio
+    async def test_normal_send_queues_without_live_wake(
+        self,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+        mock_db: MagicMock,
+    ) -> None:
+        """Routine messages remain durable while active recipients continue working."""
+        from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
+
+        wake_dispatcher = FakeWakeDispatcher()
+        registry = InternalToolRegistry(
+            name="gobby-agents",
+            description="Agent messaging v2",
+        )
+        add_messaging_tools(
+            registry=registry,
+            message_manager=mock_message_manager,
+            session_manager=mock_session_manager,
+            db=mock_db,
+            wake_dispatcher=wake_dispatcher,
+        )
+        mock_session_manager.get.side_effect = lambda sid: {
+            "s-from": MockSession(id="s-from", project_id="project-1"),
+            "s-to": MockSession(id="s-to", project_id="project-1", status="active"),
+        }.get(sid)
+        mock_message_manager.create_message.side_effect = lambda **kwargs: MockMessage(
+            id="msg-routine",
+            from_session=kwargs["from_session"],
+            to_session=kwargs["to_session"],
+            content=kwargs["content"],
+            priority=kwargs["priority"],
+            message_type=kwargs["message_type"],
+            metadata_json=kwargs["metadata_json"],
+        )
+
+        result = await registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "target": "session",
+                "target_id": "s-to",
+                "content": "routine update",
+            },
+        )
+
+        assert result["success"] is True
+        assert result["wake_results"] == []
+        assert wake_dispatcher.calls == []
+        call_kwargs = mock_message_manager.create_message.call_args.kwargs
+        assert call_kwargs["priority"] == "normal"
+        assert call_kwargs["content"] == "routine update"
+
+    @pytest.mark.asyncio
     async def test_normal_send_does_not_interrupt_long_running_recipient_work(
         self,
         temp_db: HubDatabase,
