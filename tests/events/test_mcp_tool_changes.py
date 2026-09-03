@@ -99,8 +99,7 @@ class TestWaitTools:
 
         registry = create_workflows_registry(
             loader=MagicMock(),
-            executor_getter=lambda: MagicMock(),
-            execution_manager_getter=lambda: MagicMock(),
+            pipeline_executor_resolver=lambda _project_id: MagicMock(),
             completion_registry=MagicMock(),
         )
 

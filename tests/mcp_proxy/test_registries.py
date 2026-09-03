@@ -617,7 +617,6 @@ def test_setup_with_pipeline_executor() -> None:
         config_resolver=lambda: mock_config,
         pipeline_executor=MagicMock(),
         workflow_loader=MagicMock(),
-        pipeline_execution_manager=MagicMock(),
     )
 
     registries = manager.get_all_registries()
@@ -650,7 +649,6 @@ def test_setup_pipelines_tools_accessible() -> None:
         config_resolver=lambda: mock_config,
         pipeline_executor=MagicMock(),
         workflow_loader=MagicMock(),
-        pipeline_execution_manager=MagicMock(),
     )
 
     # Find the pipelines registry

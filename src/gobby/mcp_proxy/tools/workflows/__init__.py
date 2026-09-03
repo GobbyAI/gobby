@@ -97,8 +97,7 @@ def create_workflows_registry(
     mcp_manager_resolver: Callable[[], _ExternalMCPInventory | None] | None = None,
     project_id_resolver: Callable[[], str | None] | None = None,
     # Pipeline dependencies (resolved lazily at call time)
-    executor_getter: Callable[[], Any | None] | None = None,
-    execution_manager_getter: Callable[[], Any | None] | None = None,
+    pipeline_executor_resolver: Callable[[str], Any | None] | None = None,
     completion_registry: Any | None = None,
     detection_registry: DetectionManifestRegistry | None = None,
 ) -> InternalToolRegistry:
@@ -114,8 +113,7 @@ def create_workflows_registry(
         db: Database instance for creating default managers
         internal_manager: Internal registry inventory for semantic MCP checks
         mcp_manager_resolver: per-call resolver for the external MCP manager (optional)
-        executor_getter: Callable returning PipelineExecutor (or None) at call time
-        execution_manager_getter: Callable returning LocalPipelineExecutionManager
+        pipeline_executor_resolver: Per-project PipelineExecutor resolver
         completion_registry: CompletionEventRegistry for pipeline auto-subscriptions
 
     Returns:
@@ -603,8 +601,7 @@ def create_workflows_registry(
     register_pipeline_tools(
         registry,
         loader=_loader,
-        executor_getter=executor_getter,
-        execution_manager_getter=execution_manager_getter,
+        pipeline_executor_resolver=pipeline_executor_resolver,
         db=_db,
         session_manager=_session_manager,
         completion_registry=completion_registry,

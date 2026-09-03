@@ -111,7 +111,7 @@ class TestBuildInputSchema:
     """Tests for _build_input_schema."""
 
     def test_dict_input_with_type_and_description(self) -> None:
-        from gobby.mcp_proxy.tools.workflows._pipelines import _build_input_schema
+        from gobby.mcp_proxy.tools.workflows._pipeline_exposed import _build_input_schema
 
         pipeline = MagicMock()
         pipeline.inputs = {
@@ -130,7 +130,7 @@ class TestBuildInputSchema:
         assert "target" not in schema.get("required", [])
 
     def test_dict_input_without_default_is_required(self) -> None:
-        from gobby.mcp_proxy.tools.workflows._pipelines import _build_input_schema
+        from gobby.mcp_proxy.tools.workflows._pipeline_exposed import _build_input_schema
 
         pipeline = MagicMock()
         pipeline.inputs = {"target": {"type": "string", "description": "Target path"}}
@@ -139,7 +139,7 @@ class TestBuildInputSchema:
         assert "target" in schema["required"]
 
     def test_dict_input_without_type_defaults_to_string(self) -> None:
-        from gobby.mcp_proxy.tools.workflows._pipelines import _build_input_schema
+        from gobby.mcp_proxy.tools.workflows._pipeline_exposed import _build_input_schema
 
         pipeline = MagicMock()
         pipeline.inputs = {"target": {"description": "Target"}}
@@ -148,7 +148,7 @@ class TestBuildInputSchema:
         assert schema["properties"]["target"]["type"] == "string"
 
     def test_simple_value_input(self) -> None:
-        from gobby.mcp_proxy.tools.workflows._pipelines import _build_input_schema
+        from gobby.mcp_proxy.tools.workflows._pipeline_exposed import _build_input_schema
 
         pipeline = MagicMock()
         pipeline.inputs = {"mode": "fast"}
@@ -159,7 +159,7 @@ class TestBuildInputSchema:
 
     def test_no_longer_includes_session_id(self) -> None:
         """session_id is read from SessionContext ContextVar, not from pipeline schema."""
-        from gobby.mcp_proxy.tools.workflows._pipelines import _build_input_schema
+        from gobby.mcp_proxy.tools.workflows._pipeline_exposed import _build_input_schema
 
         pipeline = MagicMock()
         pipeline.inputs = {}
@@ -169,7 +169,7 @@ class TestBuildInputSchema:
         assert "session_id" not in schema.get("required", [])
 
     def test_includes_continuation_prompt(self) -> None:
-        from gobby.mcp_proxy.tools.workflows._pipelines import _build_input_schema
+        from gobby.mcp_proxy.tools.workflows._pipeline_exposed import _build_input_schema
 
         pipeline = MagicMock()
         pipeline.inputs = {}
@@ -191,7 +191,7 @@ class TestRegisterPipelineTools:
 
         registry = InternalToolRegistry("test-registry")
 
-        with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
+        with patch("gobby.mcp_proxy.tools.workflows._pipelines.register_exposed_pipeline_tools"):
             register_pipeline_tools(registry)
 
         # Check core tools were registered
@@ -210,7 +210,7 @@ class TestRegisterPipelineTools:
         db = MagicMock()
 
         with (
-            patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"),
+            patch("gobby.mcp_proxy.tools.workflows._pipelines.register_exposed_pipeline_tools"),
             patch("gobby.mcp_proxy.tools.workflows._pipelines.PipelineDefinitionManager") as MockDM,
         ):
             register_pipeline_tools(registry, db=db)
@@ -231,7 +231,7 @@ class TestToolFunctionErrors:
         from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
 
         registry = InternalToolRegistry("test")
-        with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
+        with patch("gobby.mcp_proxy.tools.workflows._pipelines.register_exposed_pipeline_tools"):
             register_pipeline_tools(registry)
 
         assert registry.get_schema("wait_for_completion") is None
@@ -241,7 +241,7 @@ class TestToolFunctionErrors:
         from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
 
         registry = InternalToolRegistry("test")
-        with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
+        with patch("gobby.mcp_proxy.tools.workflows._pipelines.register_exposed_pipeline_tools"):
             register_pipeline_tools(registry)
 
         result = await registry.call("get_pipeline_status", {"execution_id": "pe-1"})
@@ -252,7 +252,7 @@ class TestToolFunctionErrors:
         from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
 
         registry = InternalToolRegistry("test")
-        with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
+        with patch("gobby.mcp_proxy.tools.workflows._pipelines.register_exposed_pipeline_tools"):
             register_pipeline_tools(registry)
 
         result = await registry.call("list_pipeline_executions", {})
@@ -263,7 +263,7 @@ class TestToolFunctionErrors:
         from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
 
         registry = InternalToolRegistry("test")
-        with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
+        with patch("gobby.mcp_proxy.tools.workflows._pipelines.register_exposed_pipeline_tools"):
             register_pipeline_tools(registry)
 
         result = await registry.call("search_pipeline_executions", {"query": "test"})
@@ -274,7 +274,7 @@ class TestToolFunctionErrors:
         from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
 
         registry = InternalToolRegistry("test")
-        with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
+        with patch("gobby.mcp_proxy.tools.workflows._pipelines.register_exposed_pipeline_tools"):
             register_pipeline_tools(registry)
 
         result = await registry.call("approve_pipeline", {"token": "tok-1"})
@@ -285,7 +285,7 @@ class TestToolFunctionErrors:
         from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
 
         registry = InternalToolRegistry("test")
-        with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
+        with patch("gobby.mcp_proxy.tools.workflows._pipelines.register_exposed_pipeline_tools"):
             register_pipeline_tools(registry)
 
         result = await registry.call("reject_pipeline", {"token": "tok-1"})
@@ -296,7 +296,7 @@ class TestToolFunctionErrors:
         from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
 
         registry = InternalToolRegistry("test")
-        with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
+        with patch("gobby.mcp_proxy.tools.workflows._pipelines.register_exposed_pipeline_tools"):
             register_pipeline_tools(registry, loader=None)
 
         result = await registry.call("get_pipeline", {"name": "test"})
@@ -307,7 +307,7 @@ class TestToolFunctionErrors:
         from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
 
         registry = InternalToolRegistry("test")
-        with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
+        with patch("gobby.mcp_proxy.tools.workflows._pipelines.register_exposed_pipeline_tools"):
             register_pipeline_tools(registry)
 
         result = await registry.call(
@@ -322,7 +322,7 @@ class TestToolFunctionErrors:
         registry = InternalToolRegistry("test")
         db = MagicMock()
         loader = MagicMock()
-        with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
+        with patch("gobby.mcp_proxy.tools.workflows._pipelines.register_exposed_pipeline_tools"):
             register_pipeline_tools(registry, db=db, loader=loader)
 
         result = await registry.call("create_pipeline", {"yaml_content": ":\ninvalid: [yaml"})
@@ -336,7 +336,7 @@ class TestToolFunctionErrors:
         registry = InternalToolRegistry("test")
         db = MagicMock()
         loader = MagicMock()
-        with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
+        with patch("gobby.mcp_proxy.tools.workflows._pipelines.register_exposed_pipeline_tools"):
             register_pipeline_tools(registry, db=db, loader=loader)
 
         result = await registry.call("create_pipeline", {"yaml_content": "name: test\ntype: rule"})
@@ -348,7 +348,7 @@ class TestToolFunctionErrors:
         from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
 
         registry = InternalToolRegistry("test")
-        with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
+        with patch("gobby.mcp_proxy.tools.workflows._pipelines.register_exposed_pipeline_tools"):
             register_pipeline_tools(registry)
 
         result = await registry.call("export_pipeline", {"name": "test"})
@@ -364,29 +364,29 @@ class TestRegisterExposedPipelineTools:
     """Tests for _register_exposed_pipeline_tools."""
 
     def test_skips_when_no_loader(self) -> None:
-        from gobby.mcp_proxy.tools.workflows._pipelines import (
-            _register_exposed_pipeline_tools,
+        from gobby.mcp_proxy.tools.workflows._pipeline_exposed import (
+            register_exposed_pipeline_tools,
         )
 
         registry = InternalToolRegistry("test")
-        _register_exposed_pipeline_tools(registry, None, lambda: None)
+        register_exposed_pipeline_tools(registry, None, lambda _project_id: None)
         assert registry._tools == {}
 
     def test_handles_discovery_error(self) -> None:
-        from gobby.mcp_proxy.tools.workflows._pipelines import (
-            _register_exposed_pipeline_tools,
+        from gobby.mcp_proxy.tools.workflows._pipeline_exposed import (
+            register_exposed_pipeline_tools,
         )
 
         registry = InternalToolRegistry("test")
         loader = MagicMock()
         loader.discover_pipelines_sync.side_effect = RuntimeError("discover failed")
 
-        _register_exposed_pipeline_tools(registry, loader, lambda: None)
+        register_exposed_pipeline_tools(registry, loader, lambda _project_id: None)
         assert registry._tools == {}
 
     def test_skips_non_exposed_pipelines(self) -> None:
-        from gobby.mcp_proxy.tools.workflows._pipelines import (
-            _register_exposed_pipeline_tools,
+        from gobby.mcp_proxy.tools.workflows._pipeline_exposed import (
+            register_exposed_pipeline_tools,
         )
 
         registry = InternalToolRegistry("test")
@@ -396,13 +396,13 @@ class TestRegisterExposedPipelineTools:
         mock_wf.definition.expose_as_tool = False
         loader.discover_pipelines_sync.return_value = [mock_wf]
 
-        _register_exposed_pipeline_tools(registry, loader, lambda: None)
+        register_exposed_pipeline_tools(registry, loader, lambda _project_id: None)
         # Non-exposed pipeline: tool should NOT be registered
         assert registry.get_schema("pipeline:test") is None
 
     def test_registers_exposed_pipeline_tool(self) -> None:
-        from gobby.mcp_proxy.tools.workflows._pipelines import (
-            _register_exposed_pipeline_tools,
+        from gobby.mcp_proxy.tools.workflows._pipeline_exposed import (
+            register_exposed_pipeline_tools,
         )
 
         registry = InternalToolRegistry("test")
@@ -418,12 +418,12 @@ class TestRegisterExposedPipelineTools:
         mock_wf.definition = mock_pipeline
         loader.discover_pipelines_sync.return_value = [mock_wf]
 
-        _register_exposed_pipeline_tools(registry, loader, lambda: None)
+        register_exposed_pipeline_tools(registry, loader, lambda _project_id: None)
         assert registry.get_schema("pipeline:my-exposed") is not None
 
     def test_skips_disabled_exposed_pipeline(self) -> None:
-        from gobby.mcp_proxy.tools.workflows._pipelines import (
-            _register_exposed_pipeline_tools,
+        from gobby.mcp_proxy.tools.workflows._pipeline_exposed import (
+            register_exposed_pipeline_tools,
         )
 
         registry = InternalToolRegistry("test")
@@ -433,7 +433,7 @@ class TestRegisterExposedPipelineTools:
         mock_wf = MagicMock(definition=mock_pipeline)
         loader.discover_pipelines_sync.return_value = [mock_wf]
 
-        _register_exposed_pipeline_tools(registry, loader, lambda: None)
+        register_exposed_pipeline_tools(registry, loader, lambda _project_id: None)
 
         assert registry.get_schema("pipeline:disabled-exposed") is None
         assert registry._tools == {}

@@ -44,6 +44,24 @@ def _make_job(storage: CronJobStorage, action_type: str, action_config: dict) ->
     )
 
 
+def _agent_spawn_services(
+    *,
+    has_checkout: bool = True,
+    completion_registry: object | None = None,
+) -> SimpleNamespace:
+    git_manager = SimpleNamespace(repo_path=Path("/target/project"))
+
+    def get_git_manager(project_id: str) -> object | None:
+        assert project_id == PROJECT_ID
+        return git_manager if has_checkout else None
+
+    return SimpleNamespace(
+        completion_registry=completion_registry,
+        git_manager=git_manager,
+        get_git_manager=get_git_manager,
+    )
+
+
 @pytest.mark.asyncio
 async def test_shutdown_cancels_background_tasks(executor: CronExecutor) -> None:
     started = asyncio.Event()
@@ -248,7 +266,8 @@ async def test_execute_agent_spawn_with_mock_runner(
 ) -> None:
     """agent_spawn delegates to spawn_agent_impl and reports success."""
     mock_runner = MagicMock()
-    executor = CronExecutor(storage=cron_storage, agent_runner=mock_runner)
+    services = _agent_spawn_services()
+    executor = CronExecutor(storage=cron_storage, agent_runner=mock_runner, services=services)
 
     job = _make_job(
         cron_storage,
@@ -269,6 +288,35 @@ async def test_execute_agent_spawn_with_mock_runner(
     assert result.agent_run_id == "dddddddd-dddd-4ddd-8ddd-dddddddd0abc"
     assert "run_id=dddddddd-dddd-4ddd-8ddd-dddddddd0abc" in (result.output or "")
     mock_spawn.assert_called_once()
+    spawn_call = mock_spawn.call_args
+    assert spawn_call is not None
+    assert spawn_call.kwargs["project_path"] == "/target/project"
+    assert spawn_call.kwargs["git_manager"] is services.git_manager
+
+
+@pytest.mark.asyncio
+async def test_execute_agent_spawn_fails_without_project_checkout(
+    cron_storage: CronJobStorage,
+) -> None:
+    """agent_spawn fails closed when the cron job's project has no checkout."""
+    executor = CronExecutor(
+        storage=cron_storage,
+        agent_runner=MagicMock(),
+        services=_agent_spawn_services(has_checkout=False),
+    )
+    job = _make_job(cron_storage, "agent_spawn", {"prompt": "say hello"})
+    run = cron_storage.create_run(job.id)
+    assert run is not None
+
+    with patch(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        new_callable=AsyncMock,
+    ) as mock_spawn:
+        result = await executor.execute(job, run)
+
+    assert result.status == "failed"
+    assert result.error == f"No Git manager available for project '{PROJECT_ID}'"
+    mock_spawn.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -299,7 +347,11 @@ async def test_execute_agent_spawn_failure_records_failed_run(
 ) -> None:
     """agent_spawn success=false becomes a failed cron run."""
     mock_runner = MagicMock()
-    executor = CronExecutor(storage=cron_storage, agent_runner=mock_runner)
+    executor = CronExecutor(
+        storage=cron_storage,
+        agent_runner=mock_runner,
+        services=_agent_spawn_services(),
+    )
     job = _make_job(cron_storage, "agent_spawn", {"prompt": "say hello"})
     run = cron_storage.create_run(job.id)
 
@@ -320,7 +372,11 @@ async def test_execute_agent_spawn_success_without_run_id_fails(
 ) -> None:
     """agent_spawn success requires a structured run_id."""
     mock_runner = MagicMock()
-    executor = CronExecutor(storage=cron_storage, agent_runner=mock_runner)
+    executor = CronExecutor(
+        storage=cron_storage,
+        agent_runner=mock_runner,
+        services=_agent_spawn_services(),
+    )
     job = _make_job(cron_storage, "agent_spawn", {"prompt": "say hello"})
     run = cron_storage.create_run(job.id)
 
@@ -943,7 +999,11 @@ async def test_execute_agent_spawn_with_agent_definition(
 ) -> None:
     """agent_spawn with agent_definition prepends preamble to prompt and uses its provider."""
     mock_runner = MagicMock()
-    executor = CronExecutor(storage=cron_storage, agent_runner=mock_runner)
+    executor = CronExecutor(
+        storage=cron_storage,
+        agent_runner=mock_runner,
+        services=_agent_spawn_services(),
+    )
 
     job = _make_job(
         cron_storage,
@@ -988,7 +1048,11 @@ async def test_execute_agent_spawn_agent_definition_not_found(
 ) -> None:
     """agent_spawn continues without preamble if agent_definition not found."""
     mock_runner = MagicMock()
-    executor = CronExecutor(storage=cron_storage, agent_runner=mock_runner)
+    executor = CronExecutor(
+        storage=cron_storage,
+        agent_runner=mock_runner,
+        services=_agent_spawn_services(),
+    )
 
     job = _make_job(
         cron_storage,
@@ -1023,13 +1087,11 @@ async def test_agent_spawn_supplies_owning_completion_registry(
 ) -> None:
     """Plan 1.4.10: the cron surface passes its registry into spawn_agent_impl,
     so the deferred health check can wake a pre-registered waiter."""
-    from types import SimpleNamespace
-
     registry = object()
     executor = CronExecutor(
         storage=cron_storage,
         agent_runner=MagicMock(),
-        services=SimpleNamespace(completion_registry=registry),
+        services=_agent_spawn_services(completion_registry=registry),
     )
     job = _make_job(
         cron_storage,
@@ -1037,6 +1099,7 @@ async def test_agent_spawn_supplies_owning_completion_registry(
         {"prompt": "say hello", "provider": "claude", "timeout_seconds": 30},
     )
     run = cron_storage.create_run(job.id)
+    assert run is not None
 
     with patch(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",

@@ -38,12 +38,17 @@ def register_agent_spawn_tools(
             except ValueError:
                 resolved_parent = effective_parent_ref
 
-        if not project_path:
-            project_ctx = ctx.get_project_context()
-            if project_ctx:
-                context_project_path = project_ctx.get("project_path")
-                if isinstance(context_project_path, str):
-                    project_path = context_project_path
+        from gobby.mcp_proxy.tools.spawn_agent._factory import (
+            _project_id_from_context,
+            _resolve_spawn_project_context,
+        )
+
+        project_ctx, project_path = _resolve_spawn_project_context(
+            project_path=project_path,
+            parent_session_id=resolved_parent,
+            session_manager=ctx.session_manager,
+            db=ctx.db,
+        )
 
         eval_result = await evaluate_spawn(
             agent=agent,
@@ -55,11 +60,13 @@ def register_agent_spawn_tools(
             base_branch=base_branch,
             parent_session_id=resolved_parent,
             project_path=project_path,
+            target_project_id=_project_id_from_context(project_ctx),
             db=ctx.db,
             workflow_loader=ctx.workflow_loader,
             runner=ctx.runner,
             session_manager=ctx.session_manager,
             git_manager=ctx.git_manager,
+            git_manager_resolver=ctx.git_manager_resolver,
             worktree_storage=ctx.worktree_storage,
             clone_storage=ctx.clone_storage,
             clone_manager=ctx.clone_manager,
@@ -75,6 +82,7 @@ def register_agent_spawn_tools(
         task_manager=ctx.task_manager,
         worktree_storage=ctx.worktree_storage,
         git_manager=ctx.git_manager,
+        git_manager_resolver=ctx.git_manager_resolver,
         clone_storage=ctx.clone_storage,
         clone_manager=ctx.clone_manager,
         session_manager=ctx.session_manager,

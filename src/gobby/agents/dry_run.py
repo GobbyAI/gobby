@@ -8,6 +8,7 @@ and identifying misconfigurations before any resources are allocated.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -75,12 +76,14 @@ async def evaluate_spawn(
     base_branch: str | None = None,
     parent_session_id: str | None = None,
     project_path: str | None = None,
+    target_project_id: str | None = None,
     # Injected dependencies
     db: HubDatabase | None = None,
     workflow_loader: PipelineLoader | None = None,
     runner: AgentRunner | None = None,
     session_manager: Any | None = None,
     git_manager: Any | None = None,
+    git_manager_resolver: Callable[[str], Any | None] | None = None,
     worktree_storage: Any | None = None,
     clone_storage: Any | None = None,
     clone_manager: Any | None = None,
@@ -98,7 +101,14 @@ async def evaluate_spawn(
     from gobby.utils.project_context import get_project_context
 
     project_ctx = get_project_context(Path(project_path)) if project_path else get_project_context()
-    workflow_project_id = project_ctx.get("id") if project_ctx else None
+    raw_project_id = project_ctx.get("id") if project_ctx else None
+    workflow_project_id = target_project_id
+    if workflow_project_id is None and isinstance(raw_project_id, str):
+        workflow_project_id = raw_project_id
+    context_project_path = project_ctx.get("project_path") if project_ctx else None
+    resolved_project_path = (
+        context_project_path if isinstance(context_project_path, str) else project_path
+    )
 
     # ---- Layer 1: Agent Definition Resolution ----
     agent_body = None
@@ -197,8 +207,74 @@ async def evaluate_spawn(
 
     # ---- Layer 3: Isolation Resolution ----
     if eff_isolation in ("worktree", "clone"):
+        target_git_manager = git_manager
+        target_clone_manager = clone_manager
+        if git_manager_resolver is not None:
+            if workflow_project_id is None:
+                target_git_manager = None
+                result.items.append(
+                    EvaluationItem(
+                        layer="isolation",
+                        level="error",
+                        code="PROJECT_CONTEXT_MISSING",
+                        message="Could not resolve target project for isolation",
+                    )
+                )
+            else:
+                try:
+                    target_git_manager = git_manager_resolver(workflow_project_id)
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    target_git_manager = None
+                    result.items.append(
+                        EvaluationItem(
+                            layer="isolation",
+                            level="error",
+                            code="GIT_MANAGER_UNAVAILABLE",
+                            message=(
+                                "Could not resolve Git manager for project "
+                                f"'{workflow_project_id}': {exc}"
+                            ),
+                        )
+                    )
+                if target_git_manager is None and not any(
+                    item.code == "GIT_MANAGER_UNAVAILABLE" for item in result.items
+                ):
+                    result.items.append(
+                        EvaluationItem(
+                            layer="isolation",
+                            level="error",
+                            code="GIT_MANAGER_UNAVAILABLE",
+                            message=(
+                                f"No Git manager available for project '{workflow_project_id}'"
+                            ),
+                        )
+                    )
+
+        manager_repo_path = getattr(target_git_manager, "repo_path", None)
+        if git_manager_resolver is not None and manager_repo_path is not None:
+            resolved_project_path = str(manager_repo_path)
+
+        if eff_isolation == "clone" and target_git_manager is not None:
+            try:
+                from gobby.clones.git import CloneGitManager
+
+                target_clone_manager = CloneGitManager(target_git_manager.repo_path)
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                target_clone_manager = None
+                result.items.append(
+                    EvaluationItem(
+                        layer="isolation",
+                        level="error",
+                        code="CLONE_MANAGER_UNAVAILABLE",
+                        message=(
+                            "Could not create clone manager for project "
+                            f"'{workflow_project_id}': {exc}"
+                        ),
+                    )
+                )
+
         storage = worktree_storage if eff_isolation == "worktree" else clone_storage
-        manager_dep = git_manager if eff_isolation == "worktree" else clone_manager
+        manager_dep = target_git_manager if eff_isolation == "worktree" else target_clone_manager
 
         if manager_dep is None or storage is None:
             result.items.append(
@@ -209,7 +285,7 @@ async def evaluate_spawn(
                     message=f"{eff_isolation.title()} isolation requires dependencies",
                 )
             )
-        elif project_path:
+        elif resolved_project_path:
             from gobby.agents.isolation import SpawnConfig, generate_branch_name
 
             config = SpawnConfig(
@@ -220,8 +296,8 @@ async def evaluate_spawn(
                 branch_name=branch_name,
                 branch_prefix=None,
                 base_branch=base_branch or agent_body.base_branch,
-                project_id="",
-                project_path=project_path,
+                project_id=workflow_project_id or "",
+                project_path=resolved_project_path,
                 provider=eff_provider,
                 parent_session_id=parent_session_id or "",
             )
@@ -229,13 +305,13 @@ async def evaluate_spawn(
             result.branch_name = computed_branch
 
             try:
-                from gobby.utils.project_context import get_project_context
-
-                ctx = get_project_context()
-                proj_id = ctx.get("id", "") if ctx else ""
                 # worktrees/clones.project_id is a native uuid column; binding ""
                 # raises, so only check for an existing branch with a real project.
-                existing = storage.get_by_branch(proj_id, computed_branch) if proj_id else None
+                existing = (
+                    storage.get_by_branch(workflow_project_id, computed_branch)
+                    if workflow_project_id
+                    else None
+                )
                 if existing:
                     result.items.append(
                         EvaluationItem(

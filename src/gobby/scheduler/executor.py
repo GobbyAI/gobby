@@ -279,9 +279,7 @@ class CronExecutor:
         """Resolve pipeline infrastructure in the cron job's project scope."""
         getter = getattr(self.services, "get_pipeline_executor", None)
         if callable(getter):
-            executor = getter(project_id)
-            if executor is not None:
-                return cast("PipelineExecutor", executor)
+            return cast("PipelineExecutor | None", getter(project_id))
         return self.pipeline_executor
 
     async def _execute_agent_spawn(self, job: CronJob) -> ActionOutcome:
@@ -345,6 +343,15 @@ class CronExecutor:
         from gobby.agents.spawn_models import resolve_terminal_backend
 
         scheduled_backend = resolve_terminal_backend(None, daemon_config)
+        git_manager_getter = getattr(self.services, "get_git_manager", None)
+        project_git_manager = (
+            git_manager_getter(job.project_id) if callable(git_manager_getter) else None
+        )
+        if project_git_manager is None:
+            return ActionOutcome(
+                status="failed",
+                error=f"No Git manager available for project '{job.project_id}'",
+            )
         result = await spawn_agent_impl(
             prompt=prompt,
             runner=self.agent_runner,
@@ -352,6 +359,8 @@ class CronExecutor:
             workflow=workflow,
             timeout=timeout,
             parent_session_id=job.project_id,  # Cron jobs use project as parent context
+            project_path=str(project_git_manager.repo_path),
+            git_manager=project_git_manager,
             session_manager=getattr(self.agent_runner, "child_session_manager", None),
             db=self.storage.db,
             completion_registry=getattr(self.services, "completion_registry", None),

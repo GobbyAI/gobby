@@ -25,18 +25,15 @@ def _make_container(**overrides):
 class TestGetPipelineExecutor:
     """Tests for ServiceContainer.get_pipeline_executor()."""
 
-    @pytest.mark.parametrize("requested_project_id", [None, "", "proj-a"])
-    def test_returns_existing_executor_for_startup_project(
-        self, requested_project_id: str | None
-    ) -> None:
-        """The startup executor handles implicit and explicit startup-project requests."""
+    def test_returns_existing_executor_for_startup_project(self) -> None:
+        """The startup executor handles its explicit startup-project request."""
         existing_executor = MagicMock()
         container = _make_container(
             pipeline_executor=existing_executor,
             project_id="proj-a",
         )
 
-        result = container.get_pipeline_executor(requested_project_id)
+        result = container.get_pipeline_executor("proj-a")
 
         assert result is existing_executor
 
@@ -152,20 +149,21 @@ class TestGetPipelineExecutor:
         assert executor is not None
         assert executor.tool_proxy_getter is None
 
-    def test_uses_container_project_id_as_fallback(self) -> None:
-        """When no project_id is passed, falls back to container's project_id."""
+    def test_empty_project_id_does_not_fall_back_to_startup_executor(self) -> None:
+        """An unresolved target must never use the startup project's executor."""
+        startup_executor = MagicMock()
         container = _make_container(
             database=MagicMock(),
             workflow_loader=MagicMock(),
             project_id="default-proj",
+            pipeline_executor=startup_executor,
             pipeline_execution_manager=MagicMock(),
         )
 
-        executor = container.get_pipeline_executor()
+        executor = container.get_pipeline_executor("")
 
-        assert executor is not None
-        # Verify it was cached under the container's project_id
-        assert "default-proj" in container._project_infra_cache
+        assert executor is None
+        assert container._project_infra_cache == {}
 
     def test_lazy_creation_runs_startup_sweep(self) -> None:
         """Lazily created executors sweep restart-orphaned RUNNING executions.

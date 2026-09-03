@@ -27,7 +27,6 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.merge_resolutions import MergeResolutionManager
-    from gobby.storage.pipelines import LocalPipelineExecutionManager
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
@@ -57,13 +56,14 @@ def setup_internal_registries(
     worktree_delete_executor: WorktreeDeleteExecutor | None = None,
     clone_storage: LocalCloneManager | None = None,
     git_manager: WorktreeGitManager | None = None,
+    git_manager_resolver: Callable[[str], WorktreeGitManager | None] | None = None,
     merge_storage: MergeResolutionManager | None = None,
     merge_resolver: MergeResolver | None = None,
     project_id: str | None = None,
     inter_session_message_manager: InterSessionMessageManager | None = None,
     pipeline_executor: PipelineExecutor | None = None,
+    pipeline_executor_resolver: Callable[[str], PipelineExecutor | None] | None = None,
     workflow_loader: PipelineLoader | None = None,
-    pipeline_execution_manager: LocalPipelineExecutionManager | None = None,
     hook_manager_resolver: Callable[[], HookManager | None] | None = None,
     config_service_getter: Callable[[], ConfigValuesService] | None = None,
     memory_backup_manager_resolver: Callable[[], Any | None] | None = None,
@@ -105,13 +105,14 @@ def setup_internal_registries(
         agent_runner: Agent runner for spawning subagents
         worktree_storage: Worktree storage manager for worktree operations
         git_manager: Git manager for git worktree operations
+        git_manager_resolver: Per-project Git manager resolver for agent isolation
         merge_storage: Merge storage manager for conflict resolution
         merge_resolver: Merge resolver for AI resolution
         project_id: Default project ID for worktree operations
         inter_session_message_manager: Inter-session message manager for agent messaging
         pipeline_executor: Pipeline executor for running pipelines
+        pipeline_executor_resolver: Per-project pipeline executor resolver
         workflow_loader: Workflow loader for loading pipeline definitions
-        pipeline_execution_manager: Pipeline execution manager for tracking executions
         hook_manager_resolver: Lazy callable returning HookManager (or None).
             Solves timing: registries init before HookManager is created in HTTP lifespan.
         wake_dispatcher: Dispatcher used to wake live sessions after mailbox messages.
@@ -274,8 +275,8 @@ def setup_internal_registries(
         internal_manager=manager,
         mcp_manager_resolver=mcp_manager_resolver,
         project_id_resolver=lambda: project_id,
-        executor_getter=lambda: pipeline_executor,
-        execution_manager_getter=lambda: pipeline_execution_manager,
+        pipeline_executor_resolver=pipeline_executor_resolver
+        or (lambda _project_id: pipeline_executor),
         completion_registry=completion_registry,
         detection_registry=detection_registry,
     )
@@ -325,6 +326,7 @@ def setup_internal_registries(
             task_manager=task_manager,
             worktree_storage=worktree_storage,
             git_manager=git_manager,
+            git_manager_resolver=git_manager_resolver,
             clone_storage=clone_storage,
             clone_manager=clone_git_manager,
             db=db,

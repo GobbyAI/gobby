@@ -218,7 +218,7 @@ class ServiceContainer:
         except (ValueError, OSError):
             return None
 
-    def get_pipeline_executor(self, project_id: str | None = None) -> Any | None:
+    def get_pipeline_executor(self, project_id: str) -> Any | None:
         """Get or lazily create a PipelineExecutor with event broadcasting and tool proxy wired.
 
         Reuses startup infrastructure only for the startup project. Otherwise creates a
@@ -228,13 +228,16 @@ class ServiceContainer:
         Returns:
             PipelineExecutor instance or None if required services are unavailable.
         """
-        uses_startup_project = project_id in (None, "", self.project_id)
+        if not project_id:
+            return None
+
+        uses_startup_project = project_id == self.project_id
 
         # Fast path: executor already created for the startup project
         if uses_startup_project and self.pipeline_executor is not None:
             return self.pipeline_executor
 
-        pid = project_id or self.project_id or ""
+        pid = project_id
 
         # Check cache
         cached = self._project_infra_cache.get(pid, {}).get("pipeline_executor")

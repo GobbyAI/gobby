@@ -166,6 +166,88 @@ class TestWorkflowResolution:
 @pytest.mark.integration
 class TestIsolation:
     @pytest.mark.asyncio
+    async def test_target_project_scopes_manager_and_existing_worktree_lookup(
+        self,
+        definition_db: PostgresHubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        target_id = str(uuid4())
+        target_path = tmp_path / "target"
+        target_path.mkdir()
+        _create_agent(
+            definition_db,
+            isolation="worktree",
+            base_branch="target-base",
+            project_id=target_id,
+        )
+        monkeypatch.setattr(
+            "gobby.utils.project_context.get_project_context",
+            lambda _cwd=None: {"id": target_id, "project_path": str(target_path)},
+        )
+        target_git_manager = MagicMock()
+        target_git_manager.repo_path = target_path
+        startup_git_manager = MagicMock()
+        manager_resolver = MagicMock(return_value=target_git_manager)
+        worktree_storage = MagicMock()
+        worktree_storage.get_by_branch.return_value = None
+
+        result = await evaluate_spawn(
+            agent="test-agent",
+            project_path=str(target_path),
+            db=definition_db,
+            git_manager=startup_git_manager,
+            git_manager_resolver=manager_resolver,
+            worktree_storage=worktree_storage,
+        )
+
+        assert result.can_spawn is True
+        manager_resolver.assert_called_once_with(target_id)
+        worktree_storage.get_by_branch.assert_called_once()
+        assert worktree_storage.get_by_branch.call_args.args[0] == target_id
+        startup_git_manager.get_current_branch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_target_checkout_resolution_fails_closed(
+        self,
+        definition_db: PostgresHubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        target_id = str(uuid4())
+        startup_id = str(uuid4())
+        startup_path = tmp_path / "startup"
+        startup_path.mkdir()
+        _create_agent(
+            definition_db,
+            isolation="worktree",
+            project_id=target_id,
+        )
+        monkeypatch.setattr(
+            "gobby.utils.project_context.get_project_context",
+            lambda _cwd=None: {"id": startup_id, "project_path": str(startup_path)},
+        )
+        startup_git_manager = MagicMock()
+        manager_resolver = MagicMock(return_value=None)
+
+        result = await evaluate_spawn(
+            agent="test-agent",
+            project_path=str(startup_path),
+            target_project_id=target_id,
+            db=definition_db,
+            git_manager=startup_git_manager,
+            git_manager_resolver=manager_resolver,
+            worktree_storage=MagicMock(),
+        )
+
+        assert result.can_spawn is False
+        unavailable = [item for item in result.errors if item.code == "GIT_MANAGER_UNAVAILABLE"]
+        assert len(unavailable) == 1
+        assert target_id in unavailable[0].message
+        manager_resolver.assert_called_once_with(target_id)
+        startup_git_manager.get_current_branch.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_isolation_deps_missing_worktree(
         self, definition_db: PostgresHubDatabase
     ) -> None:

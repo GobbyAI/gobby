@@ -21,12 +21,21 @@ from tests.fixtures.isolated_checkout import patch_local_machine_id
 pytestmark = pytest.mark.unit
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+ALTERNATE_MACHINE_ID = "21000000-0000-4000-8000-000000000004"
 
 
 @pytest.fixture(autouse=True)
-def _local_machine_identity(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    patch_local_machine_id(monkeypatch, LOCAL_MACHINE_ID)
-    yield
+def _local_machine_identity() -> Iterator[None]:
+    with pytest.MonkeyPatch.context() as identity_patch:
+        patch_local_machine_id(identity_patch, LOCAL_MACHINE_ID)
+        yield
+
+
+@pytest.fixture
+def _alternate_local_machine_identity() -> Iterator[None]:
+    with pytest.MonkeyPatch.context() as identity_patch:
+        patch_local_machine_id(identity_patch, ALTERNATE_MACHINE_ID)
+        yield
 
 
 def _register_parent_session(temp_db, sample_project: dict[str, object], external_id: str) -> str:
@@ -665,20 +674,15 @@ class TestSpawnAgentPreRegistration:
         sample_git_project: dict[str, object],
         mock_runner,
         agent_body,
-        monkeypatch: pytest.MonkeyPatch,
+        _alternate_local_machine_identity: None,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
-
-        patch_local_machine_id(
-            monkeypatch,
-            "21000000-0000-4000-8000-000000000004",
-        )
 
         sample_project = sample_git_project
         session_manager = SessionManager(temp_db)
         parent_session_id = session_manager.register_session(
             external_id="parent-exception",
-            machine_id="21000000-0000-4000-8000-000000000004",
+            machine_id=ALTERNATE_MACHINE_ID,
             source="test",
             project_id=str(sample_project["id"]),
             title="Parent",
@@ -761,14 +765,10 @@ class TestSpawnAgentPreRegistration:
         sample_git_project: dict[str, object],
         mock_runner,
         agent_body,
-        monkeypatch: pytest.MonkeyPatch,
+        _alternate_local_machine_identity: None,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
-        patch_local_machine_id(
-            monkeypatch,
-            "21000000-0000-4000-8000-000000000004",
-        )
         sample_project = sample_git_project
         task_manager = LocalTaskManager(temp_db)
         task = task_manager.create_task(
@@ -779,7 +779,7 @@ class TestSpawnAgentPreRegistration:
         session_manager = SessionManager(temp_db)
         parent_session_id = session_manager.register_session(
             external_id="parent-attach",
-            machine_id="21000000-0000-4000-8000-000000000004",
+            machine_id=ALTERNATE_MACHINE_ID,
             source="test",
             project_id=str(sample_project["id"]),
             title="Parent",

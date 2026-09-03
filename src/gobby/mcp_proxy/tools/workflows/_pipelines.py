@@ -25,6 +25,7 @@ from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     resume_pipeline,
     run_pipeline,
 )
+from gobby.mcp_proxy.tools.workflows._pipeline_exposed import register_exposed_pipeline_tools
 from gobby.mcp_proxy.tools.workflows._pipeline_query import (
     clear_pipeline_execution_history,
     list_pipeline_executions,
@@ -337,8 +338,7 @@ def _auto_subscribe_lineage(
 def register_pipeline_tools(
     registry: InternalToolRegistry,
     loader: Any | None = None,
-    executor_getter: Callable[[], Any | None] | None = None,
-    execution_manager_getter: Callable[[], Any | None] | None = None,
+    pipeline_executor_resolver: Callable[[str], Any | None] | None = None,
     db: HubDatabase | None = None,
     session_manager: "SessionManager | None" = None,
     completion_registry: Any | None = None,
@@ -350,29 +350,39 @@ def register_pipeline_tools(
     Args:
         registry: The InternalToolRegistry to add pipeline tools to
         loader: PipelineLoader instance for discovering pipelines
-        executor_getter: Callable returning PipelineExecutor (or None) at call time
-        execution_manager_getter: Callable returning LocalPipelineExecutionManager
+        pipeline_executor_resolver: Per-project PipelineExecutor resolver
         db: Database instance for definition CRUD operations
         session_manager: Session manager for resolving session references
         completion_registry: CompletionEventRegistry for auto-subscribing callers
         def_manager: Typed pipeline manager for CRUD (created from db if not provided)
     """
     _loader = loader
-    _get_executor = executor_getter or (lambda: None)
-    _get_execution_manager = execution_manager_getter or (lambda: None)
+    _resolve_executor = pipeline_executor_resolver or (lambda _project_id: None)
     _def_manager = def_manager
     if _def_manager is None and db is not None:
         _def_manager = PipelineDefinitionManager(db)
     _completion_registry = completion_registry
 
+    def _project_executor() -> tuple[str | None, Any | None]:
+        project_ctx = get_project_context()
+        raw_project_id = project_ctx.get("id") if project_ctx else None
+        if not isinstance(raw_project_id, str) or not raw_project_id:
+            return None, None
+        return raw_project_id, _resolve_executor(raw_project_id)
+
+    def _project_execution_manager() -> tuple[str | None, Any | None]:
+        project_id, executor = _project_executor()
+        return project_id, getattr(executor, "execution_manager", None)
+
     # Register dynamic tools for pipelines with expose_as_tool=True
-    _register_exposed_pipeline_tools(
+    register_exposed_pipeline_tools(
         registry,
         _loader,
-        _get_executor,
+        _resolve_executor,
         session_manager,
         completion_registry=_completion_registry,
         db=db,
+        auto_subscribe_lineage=_auto_subscribe_lineage,
     )
 
     @registry.tool(
@@ -443,12 +453,18 @@ def register_pipeline_tools(
         if not resolved_id:
             return {"success": False, "error": "No session context available"}
 
-        project_ctx = get_project_context()
-        project_id = project_ctx.get("id", "") if project_ctx else ""
+        project_id, executor = _project_executor()
+        if project_id is None:
+            return {"success": False, "error": "No project context available"}
+        if executor is None:
+            return {
+                "success": False,
+                "error": f"Pipeline executor not available for project '{project_id}'",
+            }
 
         result = await run_pipeline(
             loader=_loader,
-            executor=_get_executor(),
+            executor=executor,
             name=name,
             inputs=inputs or {},
             project_id=project_id,
@@ -486,13 +502,24 @@ def register_pipeline_tools(
         if not resolved_id:
             return {"success": False, "error": "No session context available"}
 
-        project_ctx = get_project_context()
-        project_id = project_ctx.get("id", "") if project_ctx else ""
+        project_id, executor = _project_executor()
+        if project_id is None:
+            return {"success": False, "error": "No project context available"}
+        if executor is None:
+            return {
+                "success": False,
+                "error": f"Pipeline executor not available for project '{project_id}'",
+            }
 
-        em = _get_execution_manager()
+        em = getattr(executor, "execution_manager", None)
+        if em is None:
+            return {
+                "success": False,
+                "error": f"Pipeline execution manager not available for project '{project_id}'",
+            }
         result = await resume_pipeline(
             loader=_loader,
-            executor=_get_executor(),
+            executor=executor,
             execution_manager=em,
             execution_id=execution_id,
             project_id=project_id,
@@ -521,9 +548,14 @@ def register_pipeline_tools(
         token: str,
         approved_by: str | None = None,
     ) -> dict[str, Any]:
-        executor = _get_executor()
+        project_id, executor = _project_executor()
+        if project_id is None:
+            return {"success": False, "error": "No project context available"}
         if executor is None:
-            return {"success": False, "error": "Pipeline executor not available"}
+            return {
+                "success": False,
+                "error": f"Pipeline executor not available for project '{project_id}'",
+            }
         return await approve_pipeline(
             executor=executor,
             token=token,
@@ -538,9 +570,14 @@ def register_pipeline_tools(
         token: str,
         rejected_by: str | None = None,
     ) -> dict[str, Any]:
-        executor = _get_executor()
+        project_id, executor = _project_executor()
+        if project_id is None:
+            return {"success": False, "error": "No project context available"}
         if executor is None:
-            return {"success": False, "error": "Pipeline executor not available"}
+            return {
+                "success": False,
+                "error": f"Pipeline executor not available for project '{project_id}'",
+            }
         return await reject_pipeline(
             executor=executor,
             token=token,
@@ -554,9 +591,14 @@ def register_pipeline_tools(
     async def _cancel_pipeline(
         execution_id: str,
     ) -> dict[str, Any]:
-        em = _get_execution_manager()
+        project_id, em = _project_execution_manager()
+        if project_id is None:
+            return {"success": False, "error": "No project context available"}
         if em is None:
-            return {"success": False, "error": "Pipeline execution manager not available"}
+            return {
+                "success": False,
+                "error": f"Pipeline execution manager not available for project '{project_id}'",
+            }
         return await cancel_pipeline(
             execution_manager=em,
             execution_id=execution_id,
@@ -569,9 +611,14 @@ def register_pipeline_tools(
     def _get_pipeline_status(
         execution_id: str,
     ) -> dict[str, Any]:
-        em = _get_execution_manager()
+        project_id, em = _project_execution_manager()
+        if project_id is None:
+            return {"success": False, "error": "No project context available"}
         if em is None:
-            return {"success": False, "error": "Pipeline execution manager not available"}
+            return {
+                "success": False,
+                "error": f"Pipeline execution manager not available for project '{project_id}'",
+            }
         return get_pipeline_status(
             execution_manager=em,
             execution_id=execution_id,
@@ -595,9 +642,14 @@ def register_pipeline_tools(
         brief: bool = True,
         include_steps: bool = False,
     ) -> dict[str, Any]:
-        em = _get_execution_manager()
+        project_id, em = _project_execution_manager()
+        if project_id is None:
+            return {"success": False, "error": "No project context available"}
         if em is None:
-            return {"success": False, "error": "Pipeline execution manager not available"}
+            return {
+                "success": False,
+                "error": f"Pipeline execution manager not available for project '{project_id}'",
+            }
         return list_pipeline_executions(
             execution_manager=em,
             status=status,
@@ -627,9 +679,14 @@ def register_pipeline_tools(
         offset: int = 0,
         include_steps: bool = False,
     ) -> dict[str, Any]:
-        em = _get_execution_manager()
+        project_id, em = _project_execution_manager()
+        if project_id is None:
+            return {"success": False, "error": "No project context available"}
         if em is None:
-            return {"success": False, "error": "Pipeline execution manager not available"}
+            return {
+                "success": False,
+                "error": f"Pipeline execution manager not available for project '{project_id}'",
+            }
         return search_pipeline_executions(
             execution_manager=em,
             query=query,
@@ -654,9 +711,14 @@ def register_pipeline_tools(
         pipeline_name: str,
         confirm: bool = False,
     ) -> dict[str, Any]:
-        em = _get_execution_manager()
+        project_id, em = _project_execution_manager()
+        if project_id is None:
+            return {"success": False, "error": "No project context available"}
         if em is None:
-            return {"success": False, "error": "Pipeline execution manager not available"}
+            return {
+                "success": False,
+                "error": f"Pipeline execution manager not available for project '{project_id}'",
+            }
         return clear_pipeline_execution_history(
             execution_manager=em,
             pipeline_name=pipeline_name,
@@ -755,166 +817,3 @@ def register_pipeline_tools(
         if err:
             return err
         return export_pipeline_definition(_def_manager, name, definition_id)
-
-
-def _register_exposed_pipeline_tools(
-    registry: InternalToolRegistry,
-    loader: Any | None,
-    executor_getter: Callable[[], Any | None],
-    session_manager: "SessionManager | None" = None,
-    completion_registry: Any | None = None,
-    db: HubDatabase | None = None,
-) -> None:
-    """
-    Register dynamic tools for pipelines with expose_as_tool=True.
-
-    Each exposed pipeline becomes an MCP tool named "pipeline:<pipeline_name>".
-    """
-    if loader is None:
-        logger.debug("Skipping dynamic pipeline tools: no loader")
-        return
-
-    try:
-        discovered = loader.discover_pipelines_sync()
-    except Exception:
-        logger.warning("Failed to discover pipelines for dynamic tools", exc_info=True)
-        return
-
-    for workflow in discovered:
-        pipeline = workflow.definition
-
-        # Disabled pipelines must not remain callable through dynamic tools.
-        if not getattr(pipeline, "enabled", False):
-            continue
-
-        # Only expose pipelines with expose_as_tool=True
-        if not getattr(pipeline, "expose_as_tool", False):
-            continue
-
-        _create_pipeline_tool(
-            registry,
-            pipeline,
-            loader,
-            executor_getter,
-            session_manager,
-            completion_registry=completion_registry,
-            db=db,
-        )
-
-
-def _create_pipeline_tool(
-    registry: InternalToolRegistry,
-    pipeline: Any,
-    loader: Any,
-    executor_getter: Callable[[], Any | None],
-    session_manager: "SessionManager | None" = None,
-    completion_registry: Any | None = None,
-    db: HubDatabase | None = None,
-) -> None:
-    """Create a dynamic tool for a single pipeline."""
-    _completion_registry = completion_registry
-    tool_name = f"pipeline:{pipeline.name}"
-    description = pipeline.description or f"Run the {pipeline.name} pipeline"
-
-    # Build input schema from pipeline inputs
-    input_schema = _build_input_schema(pipeline)
-
-    # Create closure to capture pipeline name
-    pipeline_name = pipeline.name
-
-    async def _execute_pipeline(**kwargs: Any) -> dict[str, Any]:
-        # Pop meta-parameters (session_id may still arrive from old callers)
-        kwargs.pop("session_id", None)
-        continuation_prompt = kwargs.pop("continuation_prompt", None)
-
-        resolved_id = get_current_session_id()
-        if not resolved_id:
-            return {"success": False, "error": "No session context available"}
-
-        project_ctx = get_project_context()
-        project_id = project_ctx.get("id", "") if project_ctx else ""
-
-        result = await run_pipeline(
-            loader=loader,
-            executor=executor_getter(),
-            name=pipeline_name,
-            inputs=kwargs,
-            project_id=project_id,
-            session_id=resolved_id,
-            continuation_prompt=continuation_prompt,
-        )
-
-        # Auto-subscribe caller session + lineage to completion events
-        execution_id = result.get("execution_id")
-        if result.get("success") and execution_id and _completion_registry:
-            _auto_subscribe_lineage(
-                _completion_registry,
-                execution_id,
-                resolved_id,
-                session_manager,
-                continuation_prompt,
-                db,
-            )
-
-        return result
-
-    # Register the tool with the schema
-    registry.register(
-        name=tool_name,
-        description=description,
-        func=_execute_pipeline,
-        input_schema=input_schema,
-    )
-
-    logger.debug("Registered dynamic pipeline tool: %s", tool_name)
-
-
-def _build_input_schema(pipeline: Any) -> dict[str, Any]:
-    """Build JSON Schema for pipeline inputs."""
-    properties = {}
-    required = []
-
-    for name, input_def in pipeline.inputs.items():
-        if isinstance(input_def, dict):
-            # Input is already a schema-like dict
-            prop = {}
-            if "type" in input_def:
-                prop["type"] = input_def["type"]
-            else:
-                prop["type"] = "string"
-
-            if "description" in input_def:
-                prop["description"] = input_def["description"]
-
-            if "default" in input_def:
-                prop["default"] = input_def["default"]
-            else:
-                # No default means required
-                required.append(name)
-
-            properties[name] = prop
-        else:
-            # Input is a simple default value
-            properties[name] = {
-                "type": "string",
-                "default": input_def,
-            }
-
-    # Add continuation_prompt as optional meta-parameter
-    properties["continuation_prompt"] = {
-        "type": "string",
-        "description": (
-            "Instructions for what to do when the pipeline completes. "
-            "Included in the completion notification sent to subscribers."
-        ),
-    }
-
-    schema: dict[str, Any] = {
-        "type": "object",
-        "properties": properties,
-    }
-
-    if required:
-        schema["required"] = required
-
-    return schema

@@ -15,6 +15,36 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
+async def test_evaluate_spawn_tool_forwards_resolved_target_project(
+    temp_db: HubDatabase,
+) -> None:
+    evaluation = MagicMock()
+    evaluation.to_dict.return_value = {"can_spawn": False}
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._factory._resolve_spawn_project_context",
+            return_value=(
+                {"id": "target-project"},
+                "/daemon-workspace-fallback",
+            ),
+        ),
+        patch(
+            "gobby.agents.dry_run.evaluate_spawn",
+            new=AsyncMock(return_value=evaluation),
+        ) as evaluate,
+    ):
+        registry = create_agents_registry(MagicMock(), db=temp_db)
+        result = await registry._tools["evaluate_spawn"].func(agent="test-agent")
+
+    assert result == {"can_spawn": False}
+    call_args = evaluate.await_args
+    assert call_args is not None
+    assert call_args.kwargs["project_path"] == "/daemon-workspace-fallback"
+    assert call_args.kwargs["target_project_id"] == "target-project"
+
+
+@pytest.mark.asyncio
 async def test_evaluate_spawn_tool_runs_workflow_validation_with_combined_inventory(
     temp_db: HubDatabase,
 ) -> None:

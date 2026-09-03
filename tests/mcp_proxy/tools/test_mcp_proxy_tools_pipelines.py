@@ -5,7 +5,7 @@ TDD tests for the pipelines MCP registry and tools.
 
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -15,6 +15,8 @@ from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.loader_cache import DiscoveredWorkflow
 
 pytestmark = pytest.mark.unit
+
+CALLER_PROJECT_ID = "11111111-1111-4111-8111-111111110001"
 TEST_TIME = datetime(2026, 1, 1, tzinfo=UTC)
 
 
@@ -23,7 +25,7 @@ def _session_and_project_context() -> Iterator[None]:
     """Provide session and project context for all pipeline tests."""
     token = set_project_context(
         {
-            "id": "11111111-1111-4111-8111-111111110001",
+            "id": CALLER_PROJECT_ID,
             "name": "test-project",
             "path": "/tmp/test-project",
         }
@@ -81,8 +83,7 @@ class TestCreatePipelinesRegistry:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         assert isinstance(registry, InternalToolRegistry)
@@ -95,8 +96,7 @@ class TestCreatePipelinesRegistry:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         tools = registry.list_tools()
@@ -112,8 +112,7 @@ class TestCreatePipelinesRegistry:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         assert registry.name == "gobby-workflows"
@@ -126,8 +125,7 @@ class TestCreatePipelinesRegistry:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         tools = registry.list_tools()
@@ -142,8 +140,7 @@ class TestCreatePipelinesRegistry:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         tools = registry.list_tools()
@@ -158,8 +155,7 @@ class TestCreatePipelinesRegistry:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         tools = registry.list_tools()
@@ -181,8 +177,7 @@ class TestListPipelinesTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         # Reset mock after registry creation (which also calls discover for dynamic tools)
@@ -235,8 +230,7 @@ class TestListPipelinesTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         result = await registry.call("list_pipelines", {})
@@ -280,8 +274,7 @@ class TestListPipelinesTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         result = await registry.call("list_pipelines", {})
@@ -299,8 +292,7 @@ class TestListPipelinesTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         # Reset mock after registry creation (which also calls discover for dynamic tools)
@@ -325,8 +317,7 @@ class TestListPipelinesTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         result = await registry.call("list_pipelines", {})
@@ -346,8 +337,7 @@ class TestRunPipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         tools = registry.list_tools()
@@ -385,8 +375,7 @@ class TestRunPipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         await registry.call(
@@ -416,10 +405,10 @@ class TestRunPipelineTool:
         mock_loader.load_pipeline.return_value = pipeline
         mock_executor.execute = AsyncMock(return_value=MagicMock())
 
+        executor_resolver = MagicMock(return_value=mock_executor)
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=executor_resolver,
         )
 
         result = await registry.call(
@@ -429,6 +418,7 @@ class TestRunPipelineTool:
 
         # Execution record pre-created
         mock_execution_manager.create_execution.assert_called_once()
+        executor_resolver.assert_called_once_with(CALLER_PROJECT_ID)
         assert result["success"] is True
         assert result["status"] == "running"
         assert result["execution_id"] == "pe-abc123"
@@ -449,10 +439,10 @@ class TestRunPipelineTool:
         mock_loader.load_pipeline.return_value = pipeline
         mock_executor.execute = AsyncMock(return_value=MagicMock())
 
+        executor_resolver = MagicMock(return_value=mock_executor)
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=executor_resolver,
         )
 
         result = await registry.call(
@@ -463,6 +453,7 @@ class TestRunPipelineTool:
         assert result["success"] is True
         assert result["status"] == "running"
         assert result["execution_id"] == "pe-abc123"
+        executor_resolver.assert_called_once_with(CALLER_PROJECT_ID)
         assert "notified" in result["message"].lower() or "started" in result["message"].lower()
 
     @pytest.mark.asyncio
@@ -497,8 +488,7 @@ class TestRunPipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         result = await registry.call(
@@ -521,8 +511,7 @@ class TestRunPipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         result = await registry.call(
@@ -546,8 +535,7 @@ class TestRunPipelineTool:
         )
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         result = await registry.call(
@@ -580,8 +568,7 @@ class TestRunPipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         result = await registry.call(
@@ -603,8 +590,7 @@ class TestRunPipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: None,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: None,
         )
 
         result = await registry.call(
@@ -627,8 +613,7 @@ class TestApprovePipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         tools = registry.list_tools()
@@ -658,8 +643,7 @@ class TestApprovePipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         await registry.call(
@@ -697,8 +681,7 @@ class TestApprovePipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         result = await registry.call(
@@ -723,8 +706,7 @@ class TestApprovePipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         result = await registry.call(
@@ -744,8 +726,7 @@ class TestApprovePipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: None,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: None,
         )
 
         result = await registry.call(
@@ -768,8 +749,7 @@ class TestRejectPipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         tools = registry.list_tools()
@@ -799,8 +779,7 @@ class TestRejectPipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         await registry.call(
@@ -837,8 +816,7 @@ class TestRejectPipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         result = await registry.call(
@@ -863,8 +841,7 @@ class TestRejectPipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         result = await registry.call(
@@ -884,8 +861,7 @@ class TestRejectPipelineTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: None,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: None,
         )
 
         result = await registry.call(
@@ -908,8 +884,7 @@ class TestGetPipelineStatusTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         tools = registry.list_tools()
@@ -940,8 +915,7 @@ class TestGetPipelineStatusTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         result = await registry.call(
@@ -997,8 +971,7 @@ class TestGetPipelineStatusTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         result = await registry.call(
@@ -1027,8 +1000,7 @@ class TestGetPipelineStatusTool:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         result = await registry.call(
@@ -1046,10 +1018,10 @@ class TestGetPipelineStatusTool:
         """Test that get_pipeline_status returns error when no manager configured."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
+        mock_executor.execution_manager = None
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: None,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         result = await registry.call(
@@ -1095,8 +1067,7 @@ class TestDynamicPipelineTools:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         tools = registry.list_tools()
@@ -1134,8 +1105,7 @@ class TestDynamicPipelineTools:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         tools = registry.list_tools()
@@ -1170,8 +1140,7 @@ class TestDynamicPipelineTools:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         assert "pipeline:disabled-tool" not in {tool["name"] for tool in registry.list_tools()}
@@ -1206,8 +1175,7 @@ class TestDynamicPipelineTools:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         # Use get_schema to get the full schema with description
@@ -1249,8 +1217,7 @@ class TestDynamicPipelineTools:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         # Use get_schema to get the full schema with inputSchema
@@ -1305,10 +1272,10 @@ class TestDynamicPipelineTools:
         )
         mock_executor.execute = AsyncMock(return_value=execution)
 
+        executor_resolver = MagicMock(return_value=mock_executor)
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=executor_resolver,
         )
 
         result = await registry.call(
@@ -1319,6 +1286,7 @@ class TestDynamicPipelineTools:
         assert result["success"] is True
         assert result["status"] == "running"
         assert result["execution_id"] == "pe-abc123"
+        executor_resolver.assert_called_once_with(CALLER_PROJECT_ID)
 
     @pytest.mark.asyncio
     async def test_multiple_exposed_pipelines(
@@ -1376,8 +1344,7 @@ class TestDynamicPipelineTools:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
         )
 
         tools = registry.list_tools()
@@ -1386,6 +1353,78 @@ class TestDynamicPipelineTools:
         assert "pipeline:build" in tool_names
         assert "pipeline:test" in tool_names
         assert "pipeline:internal" not in tool_names
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "dependency_name", "expected_dependency", "is_async"),
+    [
+        ("resume_pipeline", {"execution_id": "pe-1"}, "resume_pipeline", "both", True),
+        ("approve_pipeline", {"token": "tok-1"}, "approve_pipeline", "executor", True),
+        ("reject_pipeline", {"token": "tok-1"}, "reject_pipeline", "executor", True),
+        ("cancel_pipeline", {"execution_id": "pe-1"}, "cancel_pipeline", "manager", True),
+        (
+            "get_pipeline_status",
+            {"execution_id": "pe-1"},
+            "get_pipeline_status",
+            "manager",
+            False,
+        ),
+        ("list_pipeline_executions", {}, "list_pipeline_executions", "manager", False),
+        (
+            "search_pipeline_executions",
+            {"query": "failure"},
+            "search_pipeline_executions",
+            "manager",
+            False,
+        ),
+        (
+            "clear_pipeline_execution_history",
+            {"pipeline_name": "deploy", "confirm": True},
+            "clear_pipeline_execution_history",
+            "manager",
+            False,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_runtime_tools_resolve_executor_for_caller_project(
+    tool_name: str,
+    arguments: dict[str, object],
+    dependency_name: str,
+    expected_dependency: str,
+    is_async: bool,
+    mock_loader: MagicMock,
+) -> None:
+    from types import SimpleNamespace
+
+    from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+
+    target_manager = MagicMock(name="target_execution_manager")
+    target_executor = SimpleNamespace(execution_manager=target_manager)
+    executor_resolver = MagicMock(return_value=target_executor)
+    dependency = (
+        AsyncMock(return_value={"success": True})
+        if is_async
+        else MagicMock(return_value={"success": True})
+    )
+    registry = create_workflows_registry(
+        loader=mock_loader,
+        pipeline_executor_resolver=executor_resolver,
+    )
+
+    with patch(
+        f"gobby.mcp_proxy.tools.workflows._pipelines.{dependency_name}",
+        new=dependency,
+    ):
+        result = await registry.call(tool_name, arguments)
+
+    assert result["success"] is True
+    executor_resolver.assert_called_once_with(CALLER_PROJECT_ID)
+    call_kwargs = dependency.call_args.kwargs
+    if expected_dependency in {"executor", "both"}:
+        assert call_kwargs["executor"] is target_executor
+    if expected_dependency in {"manager", "both"}:
+        assert call_kwargs["execution_manager"] is target_manager
 
 
 class TestWaitForCompletionRemoved:
@@ -1398,8 +1437,7 @@ class TestWaitForCompletionRemoved:
 
         registry = create_workflows_registry(
             loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
             completion_registry=None,
         )
 

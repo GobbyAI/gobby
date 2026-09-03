@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -107,11 +107,11 @@ async def test_project_scoped_pipeline_is_retrievable_and_runnable_from_context(
     execution_manager = LocalPipelineExecutionManager(temp_db, project_id=PROJECT_ID)
     execute = AsyncMock(return_value=None)
     executor = SimpleNamespace(execution_manager=execution_manager, execute=execute)
+    executor_resolver = MagicMock(return_value=executor)
     registry = create_workflows_registry(
         db=temp_db,
         loader=PipelineLoader(db=temp_db),
-        executor_getter=lambda: executor,
-        execution_manager_getter=lambda: execution_manager,
+        pipeline_executor_resolver=executor_resolver,
     )
 
     with _project_tool_context():
@@ -126,7 +126,63 @@ async def test_project_scoped_pipeline_is_retrievable_and_runnable_from_context(
     execution = execution_manager.get_execution(started["execution_id"])
     assert execution is not None
     assert execution.project_id == PROJECT_ID
+    executor_resolver.assert_called_once_with(PROJECT_ID)
     execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_exposed_pipeline_uses_caller_project_executor(temp_db: HubDatabase) -> None:
+    _create_project(temp_db)
+    temp_db.execute(
+        "INSERT INTO projects (id, name, created_at, updated_at) "
+        "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        (OTHER_PROJECT_ID, "Startup Project"),
+    )
+    PipelineDefinitionManager(temp_db).create(
+        name="scoped-exposed",
+        project_id=PROJECT_ID,
+        definition_json={
+            "name": "scoped-exposed",
+            "type": "pipeline",
+            "version": "1.0.0",
+            "expose_as_tool": True,
+            "steps": [{"id": "work", "exec": "echo scoped"}],
+        },
+    )
+    target_manager = LocalPipelineExecutionManager(temp_db, project_id=PROJECT_ID)
+    startup_manager = LocalPipelineExecutionManager(temp_db, project_id=OTHER_PROJECT_ID)
+    target_execute = AsyncMock(return_value=None)
+    startup_execute = AsyncMock(return_value=None)
+    target_executor = SimpleNamespace(
+        execution_manager=target_manager,
+        execute=target_execute,
+    )
+    startup_executor = SimpleNamespace(
+        execution_manager=startup_manager,
+        execute=startup_execute,
+    )
+    executor_resolver = MagicMock(
+        side_effect=lambda project_id: (
+            target_executor if project_id == PROJECT_ID else startup_executor
+        )
+    )
+    registry = create_workflows_registry(
+        db=temp_db,
+        loader=PipelineLoader(db=temp_db),
+        pipeline_executor_resolver=executor_resolver,
+    )
+
+    with _project_tool_context():
+        started = await registry.call("pipeline:scoped-exposed", {})
+        await drain_asyncio_tasks(cycles=2)
+
+    assert started["success"] is True, started
+    execution = target_manager.get_execution(started["execution_id"])
+    assert execution is not None
+    assert execution.project_id == PROJECT_ID
+    executor_resolver.assert_called_once_with(PROJECT_ID)
+    target_execute.assert_awaited_once()
+    startup_execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

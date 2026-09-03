@@ -354,6 +354,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             base_branch=req.base_branch,
             worktree_storage=server.services.worktree_storage,
             git_manager=server.services.git_manager,
+            git_manager_resolver=server.services.get_git_manager,
             clone_storage=server.services.clone_storage,
             clone_manager=None,
             workflow=effective_workflow,

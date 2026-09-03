@@ -38,6 +38,7 @@ def create_agents_registry(
     task_manager: LocalTaskManager | None = None,
     worktree_storage: LocalWorktreeManager | None = None,
     git_manager: WorktreeGitManager | None = None,
+    git_manager_resolver: Callable[[str], WorktreeGitManager | None] | None = None,
     clone_storage: LocalCloneManager | None = None,
     clone_manager: CloneGitManager | None = None,
     # For mode=self (workflow activation on caller session)
@@ -61,6 +62,7 @@ def create_agents_registry(
         task_manager: Task manager for spawn_agent task resolution.
         worktree_storage: Worktree storage for spawn_agent isolation.
         git_manager: Git manager for spawn_agent isolation.
+        git_manager_resolver: Per-project Git manager resolver for isolation.
         clone_storage: Clone storage for spawn_agent isolation.
         clone_manager: Clone git manager for spawn_agent isolation.
         db: Database instance for agent definition lookups.
@@ -98,6 +100,7 @@ def create_agents_registry(
         task_manager=task_manager,
         worktree_storage=worktree_storage,
         git_manager=git_manager,
+        git_manager_resolver=git_manager_resolver,
         clone_storage=clone_storage,
         clone_manager=clone_manager,
         db=db,

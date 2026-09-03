@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -102,6 +103,7 @@ async def spawn_agent_impl(
     # Storage/managers for isolation
     worktree_storage: Any | None = None,
     git_manager: Any | None = None,
+    git_manager_resolver: Callable[[str], Any | None] | None = None,
     clone_storage: Any | None = None,
     clone_manager: Any | None = None,
     # Execution
@@ -116,6 +118,7 @@ async def spawn_agent_impl(
     parent_session_id: str | None = None,
     caller_session_id: str | None = None,
     project_path: str | None = None,
+    target_project_id: str | None = None,
     initial_variables: dict[str, Any] | None = None,
     session_manager: Any | None = None,  # SessionManager
     db: Any | None = None,  # HubDatabase
@@ -264,6 +267,52 @@ async def spawn_agent_impl(
 
     effective_workflow = workflow
 
+    # 2. Resolve project-scoped isolation services before deriving Git defaults.
+    ctx = get_project_context(Path(project_path) if project_path else None)
+    if ctx is None and target_project_id is None:
+        return {"success": False, "error": "Could not resolve project context"}
+
+    context_project_id = (ctx.get("id") or ctx.get("project_id")) if ctx else None
+    project_id = target_project_id or context_project_id
+    resolved_project_path = ctx.get("project_path") if ctx else project_path
+
+    if not project_id or not isinstance(project_id, str):
+        return {"success": False, "error": "Could not resolve project_id from context"}
+
+    target_git_manager = git_manager
+    if git_manager_resolver is not None:
+        try:
+            target_git_manager = git_manager_resolver(project_id)
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return {
+                "success": False,
+                "error": f"Could not resolve Git manager for project '{project_id}': {exc}",
+            }
+        if target_git_manager is None:
+            return {
+                "success": False,
+                "error": f"No Git manager available for project '{project_id}'",
+            }
+
+    manager_repo_path = getattr(target_git_manager, "repo_path", None)
+    if git_manager_resolver is not None and manager_repo_path is not None:
+        resolved_project_path = str(manager_repo_path)
+
+    if not resolved_project_path or not isinstance(resolved_project_path, str):
+        return {"success": False, "error": "Could not resolve project_path from context"}
+
+    target_clone_manager = clone_manager
+    if target_git_manager is not None and (effective_isolation == "clone" or clone_id):
+        try:
+            from gobby.clones.git import CloneGitManager
+
+            target_clone_manager = CloneGitManager(target_git_manager.repo_path)
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return {
+                "success": False,
+                "error": f"Could not create clone manager for project '{project_id}': {exc}",
+            }
+
     effective_base_branch = base_branch
     if effective_base_branch is None and agent_body:
         effective_base_branch = agent_body.base_branch
@@ -271,9 +320,9 @@ async def spawn_agent_impl(
     if effective_base_branch == "inherit":
         effective_base_branch = None
     # Auto-detect current branch if no base_branch specified
-    if effective_base_branch is None and git_manager:
+    if effective_base_branch is None and target_git_manager:
         try:
-            effective_base_branch = git_manager.get_current_branch()
+            effective_base_branch = target_git_manager.get_current_branch()
         except Exception as e:
             logger.debug("Failed to auto-detect current branch: %s", e, exc_info=True)
             effective_base_branch = None
@@ -282,19 +331,6 @@ async def spawn_agent_impl(
     # Daemon-owned agent sandboxes inherit from config-store defaults only.
     effective_sandbox_config: SandboxConfig = agent_sandbox_config(daemon_config)
     requested_agent_name = agent_lookup_name or (agent_body.name if agent_body else None)
-
-    # 2. Resolve project context
-    ctx = get_project_context(Path(project_path) if project_path else None)
-    if ctx is None:
-        return {"success": False, "error": "Could not resolve project context"}
-
-    project_id = ctx.get("id") or ctx.get("project_id")
-    resolved_project_path = ctx.get("project_path")
-
-    if not project_id or not isinstance(project_id, str):
-        return {"success": False, "error": "Could not resolve project_id from context"}
-    if not resolved_project_path or not isinstance(resolved_project_path, str):
-        return {"success": False, "error": "Could not resolve project_path from context"}
 
     # 3. Validate parent_session_id and spawn depth
     if not parent_session_id:
@@ -362,22 +398,22 @@ async def spawn_agent_impl(
                 "error": f"Worktree directory missing: {existing_worktree.worktree_path} (stale record cleaned up)",
             }
 
-        if git_manager is None:
+        if target_git_manager is None:
             return {"success": False, "error": "git_manager is required to reuse a worktree"}
 
         try:
             isolation_ctx, handler = await prepare_reused_worktree(
                 existing_worktree=existing_worktree,
-                git_manager=git_manager,
+                git_manager=target_git_manager,
                 worktree_storage=worktree_storage,
-                clone_manager=clone_manager,
+                clone_manager=target_clone_manager,
                 clone_storage=clone_storage,
                 spawn_config=spawn_config,
                 main_repo_path=resolved_project_path,
             )
             effective_isolation = "worktree"
             context_handler: IsolationHandler = WorktreeIsolationHandler(
-                git_manager, worktree_storage
+                target_git_manager, worktree_storage
             )
         except Exception as e:
             return {"success": False, "error": f"Failed to prepare reused worktree: {e}"}
@@ -414,14 +450,16 @@ async def spawn_agent_impl(
         )
         effective_isolation = "clone"
         handler = get_isolation_handler("none")
-        context_handler = CloneIsolationHandler(clone_manager, clone_storage, git_manager)
+        context_handler = CloneIsolationHandler(
+            target_clone_manager, clone_storage, target_git_manager
+        )
     else:
         # Normal isolation flow
         handler = get_isolation_handler(
             effective_isolation,
-            git_manager=git_manager,
+            git_manager=target_git_manager,
             worktree_storage=worktree_storage,
-            clone_manager=clone_manager,
+            clone_manager=target_clone_manager,
             clone_storage=clone_storage,
         )
         context_handler = handler

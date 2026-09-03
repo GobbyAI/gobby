@@ -33,9 +33,9 @@ def _create_project(db: HubDatabase, project_path: Path) -> None:
         encoding="utf-8",
     )
     db.execute(
-        "INSERT INTO projects (id, name, repo_path, created_at, updated_at) "
-        "VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-        (PROJECT_ID, "Import Project", str(project_path)),
+        "INSERT INTO projects (id, name, created_at, updated_at) "
+        "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        (PROJECT_ID, "Import Project"),
     )
     db.execute(
         "INSERT INTO sessions "
@@ -160,8 +160,7 @@ version: 1.0
     registry = create_workflows_registry(
         db=temp_db,
         loader=loader,
-        executor_getter=lambda: executor,
-        execution_manager_getter=lambda: execution_manager,
+        pipeline_executor_resolver=lambda _project_id: executor,
     )
 
     with _tool_context(project_path):

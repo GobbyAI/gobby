@@ -38,6 +38,7 @@ class AgentsRegistryContext:
     task_manager: LocalTaskManager | None = None
     worktree_storage: LocalWorktreeManager | None = None
     git_manager: WorktreeGitManager | None = None
+    git_manager_resolver: Callable[[str], WorktreeGitManager | None] | None = None
     clone_storage: LocalCloneManager | None = None
     clone_manager: CloneGitManager | None = None
     db: HubDatabase | None = None
