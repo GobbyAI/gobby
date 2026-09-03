@@ -58,8 +58,8 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
     active_validation_backoff,
     record_validation_infrastructure_failure,
     validate_commit_requirements,
-    validate_uncommitted_task_edits,
     validate_parent_task,
+    validate_uncommitted_task_edits,
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._task_scope import evaluate_task_scope

@@ -26,7 +26,8 @@ from gobby.workflows.commit_guard import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AbstractSet, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
+    from collections.abc import Set as AbstractSet
 
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
     from gobby.tasks.validation import TaskValidator
