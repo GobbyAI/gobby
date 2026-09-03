@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -35,7 +36,12 @@ class SetupInternalRegistries(Protocol):
 
 
 class ProxyFactory(Protocol):
-    def __call__(self, port: int) -> DaemonProxy: ...
+    def __call__(
+        self,
+        port: int,
+        *,
+        startup_task: asyncio.Task[None] | None = None,
+    ) -> DaemonProxy: ...
 
 
 class RegisterProxyTools(Protocol):
@@ -94,6 +100,7 @@ def default_stdio_server_dependencies() -> StdioServerDependencies:
 def create_stdio_mcp_server(
     *,
     deps: StdioServerDependencies | None = None,
+    startup_task: asyncio.Task[None] | None = None,
 ) -> MCPServer:
     """Create stdio MCP server."""
     effective_deps = deps or default_stdio_server_dependencies()
@@ -120,7 +127,13 @@ def create_stdio_mcp_server(
         memory_manager_resolver=None,
     )
 
-    proxy = effective_deps.proxy_factory(bootstrap.daemon_port)
+    if startup_task is None:
+        proxy = effective_deps.proxy_factory(bootstrap.daemon_port)
+    else:
+        proxy = effective_deps.proxy_factory(
+            bootstrap.daemon_port,
+            startup_task=startup_task,
+        )
 
     @asynccontextmanager
     async def proxy_lifespan(_server: MCPServer[None]) -> AsyncIterator[None]:

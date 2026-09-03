@@ -124,8 +124,17 @@ def _proxy_dependencies() -> DaemonProxyDependencies:
 class DaemonProxy(_DaemonProxy):
     """Compatibility proxy using dependency names from this facade."""
 
-    def __init__(self, port: int):
-        super().__init__(port, deps_factory=_proxy_dependencies)
+    def __init__(
+        self,
+        port: int,
+        *,
+        startup_task: asyncio.Task[None] | None = None,
+    ):
+        super().__init__(
+            port,
+            deps_factory=_proxy_dependencies,
+            startup_task=startup_task,
+        )
 
 
 def _tool_registration_dependencies() -> ToolRegistrationDependencies:
@@ -154,9 +163,15 @@ def _server_dependencies() -> StdioServerDependencies:
     )
 
 
-def create_stdio_mcp_server() -> MCPServer:
+def create_stdio_mcp_server(
+    *,
+    startup_task: asyncio.Task[None] | None = None,
+) -> MCPServer:
     """Create stdio MCP server."""
-    return _create_stdio_mcp_server(deps=_server_dependencies())
+    return _create_stdio_mcp_server(
+        deps=_server_dependencies(),
+        startup_task=startup_task,
+    )
 
 
 def _daemon_dependencies() -> DaemonStartupDependencies:

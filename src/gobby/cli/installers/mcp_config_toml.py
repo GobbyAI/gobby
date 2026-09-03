@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from .mcp_config_shared import (
+    _CODEX_GOBBY_MCP_STARTUP_TIMEOUT_SEC,
     _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC,
     _GOBBY_MCP_COMMAND,
     _facade_time,
@@ -98,6 +99,7 @@ def configure_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> 
 [mcp_servers.{server_name}]
 command = "{_GOBBY_MCP_COMMAND}"
 args = ["mcp-server"]
+startup_timeout_sec = {_CODEX_GOBBY_MCP_STARTUP_TIMEOUT_SEC}
 tool_timeout_sec = {_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC}
 """
     updated = (existing.rstrip() + "\n" if existing.strip() else "") + mcp_config

@@ -15,6 +15,7 @@ _ORIGINAL_COPY2 = _copy2
 
 _GOBBY_MCP_COMMAND = "gobby"
 _GOBBY_MCP_ARGS = ["mcp-server"]
+_CODEX_GOBBY_MCP_STARTUP_TIMEOUT_SEC: int = 120
 _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC: int = 360
 
 
@@ -127,6 +128,14 @@ def _needs_codex_gobby_mcp_tool_timeout(server_config: Any) -> bool:
     return configured_timeout < _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC
 
 
+def _needs_codex_gobby_mcp_startup_timeout(server_config: Any) -> bool:
+    try:
+        configured_timeout = float(server_config.get("startup_timeout_sec"))
+    except (TypeError, ValueError):
+        return True
+    return configured_timeout < _CODEX_GOBBY_MCP_STARTUP_TIMEOUT_SEC
+
+
 def _is_repairable_stale_gobby_mcp_server_config(server_config: Any) -> bool:
     if _command_basename(server_config.get("command")) != "uv":
         return False
@@ -171,6 +180,8 @@ def _repair_stale_gobby_mcp_server_toml(
 
     if _needs_codex_gobby_mcp_tool_timeout(server_config):
         updates["tool_timeout_sec"] = _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC
+    if _needs_codex_gobby_mcp_startup_timeout(server_config):
+        updates["startup_timeout_sec"] = _CODEX_GOBBY_MCP_STARTUP_TIMEOUT_SEC
 
     if not updates:
         return None, None

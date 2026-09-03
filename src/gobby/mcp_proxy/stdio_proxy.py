@@ -102,6 +102,7 @@ class DaemonProxy:
         self,
         port: int,
         deps_factory: Callable[[], DaemonProxyDependencies] | None = None,
+        startup_task: asyncio.Task[None] | None = None,
     ):
         self.port = port
         self.base_url = f"http://127.0.0.1:{port}"
@@ -118,6 +119,7 @@ class DaemonProxy:
         self._client: httpx.AsyncClient | None = None
         self._tool_timeouts: dict[str, float] | None = None
         self._tool_timeouts_lock = asyncio.Lock()
+        self._startup_task = startup_task
 
     async def _get_tool_timeouts(self) -> dict[str, float]:
         """Cache the configured tool-timeout map after the first read attempt."""
@@ -159,6 +161,18 @@ class DaemonProxy:
         if self._client is client:
             self._client = None
 
+    async def _await_startup(self) -> dict[str, Any] | None:
+        startup_task = self._startup_task
+        if startup_task is None:
+            return None
+        try:
+            await asyncio.shield(startup_task)
+        except Exception as exc:
+            self._deps_factory().logger.error("Daemon startup task failed: %s", exc)
+            return _daemon_unavailable_result(self.port, f"startup failed: {exc}")
+        self._startup_task = None
+        return None
+
     async def _request(
         self,
         method: str,
@@ -171,6 +185,10 @@ class DaemonProxy:
         preflight: bool = False,
     ) -> dict[str, Any]:
         """Make HTTP request to daemon."""
+        startup_error = await self._await_startup()
+        if startup_error is not None:
+            return startup_error
+
         if preflight:
             now = time.monotonic()
             if now - self._last_health_ok_at >= DAEMON_PROXY_PREFLIGHT_CACHE_SECONDS:
