@@ -5,7 +5,7 @@ from typing import Any
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition, newer_than_now_expr
 from gobby.storage.tasks._models import task_type_filter_values
-from gobby.storage.tasks._queries import _ready_tasks_cte_sql
+from gobby.storage.tasks._queries import _awaiting_human_review_sql, _ready_tasks_cte_sql
 
 
 def _current_stage_join_sql(task_alias: str = "t", *, join_type: str = "LEFT JOIN") -> str:
@@ -297,6 +297,7 @@ def count_blocked_tasks(
         t.escalated_at IS NOT NULL
         OR COALESCE(t.is_escalated, FALSE) IS TRUE
         OR {_external_blocker_exists_sql("t")}
+        OR {_awaiting_human_review_sql("t")}
     )
     """
     params: list[Any] = []

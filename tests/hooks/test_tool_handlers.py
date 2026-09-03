@@ -698,6 +698,59 @@ class TestToolHandlerEdgeCases:
             checkout_root=str(worktree_root.resolve()),
         )
 
+    def test_cp_from_primary_to_worktree_attributes_only_destination(
+        self,
+        mock_dependencies: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        project_id = "21000000-0000-4000-8000-000000000074"
+        primary_root = tmp_path / "primary"
+        worktree_root = tmp_path / "worktree"
+        for root in (primary_root, worktree_root):
+            (root / ".gobby").mkdir(parents=True)
+            (root / ".gobby" / "project.json").write_text(
+                f'{{"id": "{project_id}"}}',
+                encoding="utf-8",
+            )
+        source = primary_root / "src" / "source.py"
+        destination = worktree_root / "src" / "destination.py"
+        source.parent.mkdir(parents=True)
+        source.write_text("source = True\n", encoding="utf-8")
+        destination.parent.mkdir(parents=True)
+        destination.write_text("source = True\n", encoding="utf-8")
+        mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data=normalize_tool_fields(
+                {
+                    "tool_name": "exec_command",
+                    "cwd": str(worktree_root),
+                    "project_path": str(worktree_root),
+                    "tool_input": {"command": f"cp {source} {destination}"},
+                }
+            ),
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        event.cwd = str(worktree_root)
+        event.project_id = project_id
+
+        with (
+            patch("gobby.hooks.event_handlers._tool.is_path_gitignored", return_value=False),
+            patch(
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+                return_value=True,
+            ) as record_files,
+        ):
+            response = handlers.handle_after_tool(event)
+
+        assert response.decision == "allow"
+        record_files.assert_called_once_with(
+            "sess-123",
+            ["src/destination.py"],
+            checkout_root=str(worktree_root.resolve()),
+        )
+
     def test_after_tool_notifies_code_index_with_project_root_path(
         self, mock_dependencies: dict[str, Any], tmp_path: Path
     ) -> None:
