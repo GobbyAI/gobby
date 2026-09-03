@@ -284,7 +284,11 @@ def preflight_provider_native_settings(
     policy_hash: str | None = None,
 ) -> dict[str, Any]:
     """Verify provider-native settings prove the sensitive-path contract."""
-    from gobby.agents.sandbox_policy import assert_sensitive_path_contract, sensitive_roots
+    from gobby.agents.sandbox_policy import (
+        assert_sensitive_path_contract,
+        sensitive_roots,
+        sensitive_write_roots,
+    )
 
     if provider != "claude":
         raise ValueError(f"{provider} cannot prove the sensitive-root contract")
@@ -307,8 +311,12 @@ def preflight_provider_native_settings(
         raise ValueError(f"{provider} emitted an unverifiable sensitive-root policy") from exc
 
     assert_sensitive_path_contract(paths.read_paths, paths.write_paths, allow_read, allow_write)
-    protected = set(sensitive_roots())
-    if not protected <= set(denied_read) or not protected <= set(denied_write):
+    # Reads deny every sensitive root; writes deny the credential roots only, because
+    # denyWrite outranks allowWrite and the gcode-runtime parent would shadow the
+    # workspace runtime allowance (sensitive_write_roots explains the split).
+    if not set(sensitive_roots()) <= set(denied_read):
+        raise ValueError(f"{provider} emitted an incomplete sensitive-root policy")
+    if not set(sensitive_write_roots()) <= set(denied_write):
         raise ValueError(f"{provider} emitted an incomplete sensitive-root policy")
 
     encoded = json.dumps(settings, sort_keys=True, separators=(",", ":")).encode()
