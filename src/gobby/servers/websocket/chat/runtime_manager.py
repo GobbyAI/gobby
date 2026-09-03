@@ -121,13 +121,7 @@ class WebChatRuntimeManager:
                 transcript_retry_delay_seconds=codex_transcript_retry_delay_seconds,
             )
         self._grok_backend = GrokWebChatBackend()
-        self._qwen_backend = QwenWebChatBackend(
-            local_generation_endpoints={
-                name: endpoint
-                for name, endpoint in self._generation_endpoints.items()
-                if endpoint.wire_api == "chat-completions"
-            },
-        )
+        self._qwen_backend = QwenWebChatBackend()
         self._droid_backend = DroidWebChatBackend()
         self._agy_backend = AgyWebChatBackend()
         # Discovered ACP SessionInfo payloads keyed by (provider, sessionId).

@@ -344,18 +344,12 @@ def test_coverage_audit_warns_for_missing_alias_target_and_logs_recovery(
 
 
 @pytest.mark.unit
-def test_coverage_audit_skips_configured_local_models(
+def test_coverage_audit_includes_unresolved_qwen_models(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    local_model = "local-model(openai)"
     remote_model = "remote-model(openai)"
-    store = _MemoryStore(_snapshot("qwen", local_model, remote_model, context_length=None))
-    auditor = ModelMetadataCoverageAuditor(
-        store,
-        _MetadataStore(),
-        [],
-        excluded_models=lambda: frozenset({("qwen", local_model)}),
-    )
+    store = _MemoryStore(_snapshot("qwen", remote_model, context_length=None))
+    auditor = ModelMetadataCoverageAuditor(store, _MetadataStore(), [])
 
     with caplog.at_level(logging.INFO, logger="gobby.providers.capabilities.coverage"):
         auditor.audit()
@@ -363,7 +357,6 @@ def test_coverage_audit_skips_configured_local_models(
     messages = [record.getMessage() for record in caplog.records]
     assert len(messages) == 1
     assert remote_model in messages[0]
-    assert local_model not in messages[0]
 
 
 @pytest.mark.unit

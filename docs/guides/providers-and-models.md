@@ -206,16 +206,15 @@ Relevant UI owners include `ProviderPicker`,
 `ChatInputModelControls`, `web/src/lib/providerModels.ts`, and
 `web/src/hooks/useChat/*`.
 
-## Local Model Warmup
+## Qwen and Local Endpoints
 
-Qwen can use OpenAI-compatible local backends when configured with OpenAI auth
-type. The warmup helper resolves local endpoints such as:
+Loopback-backed Qwen `modelProviders` entries are intentionally absent from the
+Qwen capability catalog and model picker. This applies to endpoints hosted on
+`localhost`, `127.0.0.1`, or `::1`; Qwen OAuth and non-loopback configured models
+remain available.
 
-- LM Studio on port `1234`.
-- Ollama on port `11434`.
-
-It reads Qwen settings from user and project settings files and can prepare the
-model before a chat run. This warmup does not write capability rows.
+Configured local generation endpoints remain separate `endpoint:<name>` providers.
+Qwen web chat uses the normal ACP attach path and has no special local-model warmup.
 
 ## CLI
 
@@ -262,7 +261,6 @@ source-health, and provenance types.
 resolution.
 - `src/gobby/storage/model_metadata.py`: provider-independent model metadata.
 - `src/gobby/agents/reasoning.py`: spawn reasoning validation.
-- `src/gobby/servers/websocket/chat/local_openai_warmup.py`: local model warmup.
 - `web/src/components/chat/ProviderPicker.tsx`: provider picker UI.
 - `web/src/components/chat/ChatInputModelControls.tsx`: model controls.
 - `web/src/lib/providerModels.ts`: provider model API client.

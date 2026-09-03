@@ -10,11 +10,7 @@ from gobby.adapters.acp_tool_names import normalize_acp_tool_name
 from gobby.adapters.qwen_acp_client import QwenACPClient
 from gobby.servers.websocket.chat.backends.acp import ACPWebChatBackend
 from gobby.servers.websocket.chat.backends.acp_session import ACPManagedChatSession
-from gobby.servers.websocket.chat.local_openai_warmup import (
-    ensure_qwen_local_openai_model_ready,
-)
 
-# Qwen's ACP backend can spend extra time warming the local OpenAI-compatible model.
 _QWEN_BACKEND_START_TIMEOUT_SECONDS = 60.0
 
 
@@ -36,20 +32,6 @@ class QwenWebChatBackend(ACPWebChatBackend):
     display_name: ClassVar[str] = "Qwen"
     start_timeout_seconds: ClassVar[float] = _QWEN_BACKEND_START_TIMEOUT_SECONDS
     acp_client_cls: ClassVar[type[ACPClient]] = QwenACPClient
-
-    async def attach_session(
-        self,
-        session: ACPManagedChatSession,
-        *,
-        model: str | None = None,
-    ) -> None:
-        resolved_model = model or session._model or self._default_model
-        await ensure_qwen_local_openai_model_ready(
-            resolved_model,
-            project_path=session.project_path,
-            local_generation_endpoints=self._local_generation_endpoints,
-        )
-        await super().attach_session(session, model=model)
 
 
 __all__ = [

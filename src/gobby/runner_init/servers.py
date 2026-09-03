@@ -31,8 +31,6 @@ from gobby.servers.provider_model_discovery import (
     codex_uses_loopback_model_endpoint,
     load_claude_settings,
     load_codex_config,
-    load_qwen_settings,
-    qwen_local_model_values,
 )
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
@@ -51,11 +49,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CREDENTIAL_ISSUANCE_FAILED = "credential issuance failed"
-
-
-def _local_model_metadata_exclusions() -> frozenset[tuple[str, str]]:
-    settings = load_qwen_settings(deep_merge=deep_merge, logger=logger)
-    return frozenset(("qwen", model) for model in qwen_local_model_values(settings))
 
 
 def _local_provider_metadata_exclusions() -> frozenset[str]:
@@ -108,7 +101,6 @@ def init_servers(runner: GobbyRunner) -> None:
         model_metadata_store,
         config.ai.model_metadata_aliases,
         run_db=getattr(runner.db_executor, "run", None),
-        excluded_models=_local_model_metadata_exclusions,
         excluded_providers=_local_provider_metadata_exclusions,
     )
     provider_capability_service = CapabilityRefreshCoordinator(

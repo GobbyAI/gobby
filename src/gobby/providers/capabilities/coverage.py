@@ -16,12 +16,7 @@ logger = logging.getLogger(__name__)
 
 _WARNING_MODEL_LIMIT = 10
 RunDatabase = Callable[..., Awaitable[object]]
-ExcludedModels = Callable[[], frozenset[tuple[str, str]]]
 ExcludedProviders = Callable[[], frozenset[str]]
-
-
-def _no_excluded_models() -> frozenset[tuple[str, str]]:
-    return frozenset()
 
 
 def _no_excluded_providers() -> frozenset[str]:
@@ -52,14 +47,12 @@ class ModelMetadataCoverageAuditor:
         model_metadata_aliases: list[ModelMetadataAlias],
         *,
         run_db: RunDatabase | None = None,
-        excluded_models: ExcludedModels | None = None,
         excluded_providers: ExcludedProviders | None = None,
     ) -> None:
         self._capability_store = capability_store
         self._model_metadata_store = model_metadata_store
         self._model_metadata_aliases = tuple(model_metadata_aliases)
         self._run_db = run_db
-        self._excluded_models = excluded_models or _no_excluded_models
         self._excluded_providers = excluded_providers or _no_excluded_providers
         self._lock = Lock()
         self._unresolved: dict[str, frozenset[str]] = {}
@@ -71,10 +64,6 @@ class ModelMetadataCoverageAuditor:
             aliases = {
                 (alias.provider, alias.provider_model_id): alias.openrouter_model_id
                 for alias in self._model_metadata_aliases
-            }
-            excluded_models = {
-                model_metadata_alias_source_key(provider, model)
-                for provider, model in self._excluded_models()
             }
             excluded_providers = {
                 provider.strip().lower() for provider in self._excluded_providers()
@@ -91,8 +80,6 @@ class ModelMetadataCoverageAuditor:
                         snapshot.provider,
                         model.canonical_model,
                     )
-                    if source_key in excluded_models:
-                        continue
                     if positive_context_window(model.context_length) is not None:
                         continue
                     if (

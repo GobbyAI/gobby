@@ -23,7 +23,6 @@ from gobby.servers.websocket.chat._stream_events import (
 from gobby.servers.websocket.chat._stream_persistence import ChatStreamPersistence
 from gobby.servers.websocket.chat._stream_transport import WebSocketChatStreamTransport
 from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
-from gobby.servers.websocket.chat.local_openai_warmup import LocalOpenAIModelWarmupError
 from gobby.servers.websocket.chat_attachments import PreparedMessageAttachments
 
 if TYPE_CHECKING:
@@ -327,9 +326,7 @@ class ChatStreamingMixin:
             )
             error_message = "Failed to start chat session. Please try again."
             error_code: str | None = None
-            if isinstance(exc, LocalOpenAIModelWarmupError):
-                error_message = str(exc)
-            elif isinstance(exc, ChatCheckoutRequiredError):
+            if isinstance(exc, ChatCheckoutRequiredError):
                 error_message = str(exc)
                 error_code = exc.code
             error_payload = transport.base_msg(

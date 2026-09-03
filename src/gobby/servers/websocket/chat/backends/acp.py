@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from gobby.adapters.acp_client import ACPClient, StreamEvent
 from gobby.adapters.acp_commands import normalize_available_commands
 from gobby.agents.trust import pre_approve_directory
-from gobby.config.ai import GenerationEndpointConfig
 from gobby.servers.websocket.chat.backends.base import (
     _BACKEND_START_TIMEOUT_SECONDS,
     ProviderBackendHealth,
@@ -46,14 +45,12 @@ class ACPWebChatBackend:
         *,
         client: ACPClient | None = None,
         default_model: str | None = None,
-        local_generation_endpoints: dict[str, GenerationEndpointConfig] | None = None,
     ) -> None:
         if not self.provider or not self.display_name:
             raise TypeError(
                 f"{type(self).__name__} must set provider and display_name class attributes"
             )
 
-        self._local_generation_endpoints = dict(local_generation_endpoints or {})
         # ACP CLI bootstrap currently hangs on macOS when launched
         # with daemon-wide Seatbelt flags. Keep daemon-owned ACP startup unsandboxed
         # and let the upstream CLI's own tool sandboxing handle tool execution.

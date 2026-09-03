@@ -30,6 +30,7 @@ from gobby.servers.provider_model_discovery import (
     discover_qwen_models,
     load_qwen_settings,
     normalize_qwen_model_labels,
+    qwen_local_model_values,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,17 +87,20 @@ async def _discover_acp(client_cls: type[ACPClient]) -> list[dict[str, object]]:
 
 
 async def _discover_qwen_models() -> Sequence[RawModel]:
+    settings = load_qwen_settings(deep_merge=deep_merge, logger=logger)
+
     def configured_models() -> list[dict[str, object]]:
-        settings = load_qwen_settings(deep_merge=deep_merge, logger=logger)
         return discover_qwen_configured_models(settings)
 
-    return await discover_qwen_models(
+    models = await discover_qwen_models(
         client_cls=QwenACPClient,
         acp_discoverer=_discover_acp,
         configured_model_discoverer=configured_models,
         label_normalizer=normalize_qwen_model_labels,
         which=shutil.which,
     )
+    loopback_models = qwen_local_model_values(settings)
+    return tuple(model for model in models if model.get("value") not in loopback_models)
 
 
 @dataclass(frozen=True)
