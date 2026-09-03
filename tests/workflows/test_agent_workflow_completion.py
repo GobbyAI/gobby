@@ -260,6 +260,96 @@ def _after_tool_event(
     )
 
 
+@pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+@pytest.mark.parametrize("task_id", ("#21617", ASSIGNED_TASK_UUID))
+@pytest.mark.asyncio
+async def test_task_blocker_for_assigned_task_terminates(
+    db: HubDatabase,
+    agent_name: str,
+    task_id: str,
+) -> None:
+    instance_manager = _register_bundled_agent_workflow(
+        db,
+        agent_name=agent_name,
+        current_step="implement",
+    )
+    engine = RuleEngine(db)
+    variables: dict[str, object] = {
+        "assigned_task_id": "#21617",
+        "assigned_task_uuid": ASSIGNED_TASK_UUID,
+        "parent_session_id": PARENT_SESSION_UUID,
+        "parent_session_ref": PARENT_SESSION_REF,
+    }
+
+    await engine.evaluate(
+        _after_tool_event(
+            mcp_server="gobby-agents",
+            mcp_tool="send_message",
+            tool_arguments={
+                "target": "session",
+                "target_id": PARENT_SESSION_UUID,
+                "message_type": "task_blocker",
+                "metadata": {"task_id": task_id},
+                "content": "The assigned task cannot proceed.",
+            },
+        ),
+        session_id=AGENT_SESSION_ID,
+        variables=variables,
+    )
+
+    instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+    assert instance is not None
+    assert instance.current_step == "terminate"
+    assert instance.variables["blocker_handed_off"] is True
+    assert variables["step_workflow_complete"] is True
+
+
+@pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+@pytest.mark.parametrize("metadata", ({"task_id": "#21618"}, None))
+@pytest.mark.asyncio
+async def test_task_blocker_for_other_task_does_not_terminate(
+    db: HubDatabase,
+    agent_name: str,
+    metadata: dict[str, object] | None,
+) -> None:
+    instance_manager = _register_bundled_agent_workflow(
+        db,
+        agent_name=agent_name,
+        current_step="implement",
+    )
+    engine = RuleEngine(db)
+    variables: dict[str, object] = {
+        "assigned_task_id": "#21617",
+        "assigned_task_uuid": ASSIGNED_TASK_UUID,
+        "parent_session_id": PARENT_SESSION_UUID,
+        "parent_session_ref": PARENT_SESSION_REF,
+    }
+    tool_arguments: dict[str, object] = {
+        "target": "session",
+        "target_id": PARENT_SESSION_UUID,
+        "message_type": "task_blocker",
+        "content": "This message does not block the assigned task.",
+    }
+    if metadata is not None:
+        tool_arguments["metadata"] = metadata
+
+    await engine.evaluate(
+        _after_tool_event(
+            mcp_server="gobby-agents",
+            mcp_tool="send_message",
+            tool_arguments=tool_arguments,
+        ),
+        session_id=AGENT_SESSION_ID,
+        variables=variables,
+    )
+
+    instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+    assert instance is not None
+    assert instance.current_step == "implement"
+    assert instance.variables["blocker_handed_off"] is False
+    assert "step_workflow_complete" not in variables
+
+
 class TestAgentWorkflowCompletion:
     @pytest.mark.asyncio
     async def test_exit_condition_terminalizes_agent_run_through_lifecycle_cleanup(
@@ -1017,47 +1107,6 @@ class TestAgentWorkflowCompletion:
         assert instance.current_step == "implement"
         assert instance.variables["implementation_complete"] is False
         assert "step_workflow_complete" not in variables
-
-    @pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
-    @pytest.mark.parametrize("target_id", (PARENT_SESSION_UUID, PARENT_SESSION_REF))
-    @pytest.mark.asyncio
-    async def test_developer_task_blocker_handoff_to_parent_terminates(
-        self,
-        db: HubDatabase,
-        agent_name: str,
-        target_id: str,
-    ) -> None:
-        instance_manager = _register_bundled_agent_workflow(
-            db,
-            agent_name=agent_name,
-            current_step="implement",
-        )
-        engine = RuleEngine(db)
-        variables: dict[str, object] = {
-            "parent_session_id": PARENT_SESSION_UUID,
-            "parent_session_ref": PARENT_SESSION_REF,
-        }
-
-        await engine.evaluate(
-            _after_tool_event(
-                mcp_server="gobby-agents",
-                mcp_tool="send_message",
-                tool_arguments={
-                    "target": "session",
-                    "target_id": target_id,
-                    "message_type": "task_blocker",
-                    "content": "A daemon restart remains for the coordinator.",
-                },
-            ),
-            session_id=AGENT_SESSION_ID,
-            variables=variables,
-        )
-
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
-        assert instance is not None
-        assert instance.current_step == "terminate"
-        assert instance.variables["blocker_handed_off"] is True
-        assert variables["step_workflow_complete"] is True
 
     @pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
     @pytest.mark.asyncio

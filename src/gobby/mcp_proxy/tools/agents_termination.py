@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
+from gobby.agents.run_completion import agent_run_task_dirty_paths
 from gobby.mcp_proxy.tools.agents_runtime import facade
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
+    from gobby.storage.agents import AgentRunTerminalReason
 
 
 async def _cleanup_terminal_artifacts(
@@ -59,17 +62,32 @@ async def _complete_self_terminated_run(
     agent_session_id = run.child_session_id
     result: dict[str, Any] = {}
 
-    notify_result: dict[str, Any] = {"status": "success", "run_id": run.id}
+    session_vars: dict[str, Any] = {}
     if agent_session_id:
         try:
             from gobby.workflows.state_manager import SessionVariableManager
 
             session_vars = SessionVariableManager(kill_db).get_variables(agent_session_id)
-            verdict = session_vars.get("adversary_verdict")
-            if isinstance(verdict, str) and verdict:
-                notify_result["signoff_message"] = verdict
         except Exception as e:
-            agents.logger.debug("Failed to read adversary_verdict for %s: %s", agent_session_id, e)
+            agents.logger.debug("Failed to read session variables for %s: %s", agent_session_id, e)
+
+    terminal_reason: AgentRunTerminalReason | None = (
+        "task_blocker" if session_vars.get("blocker_handed_off") is True else None
+    )
+    dirty_paths = agent_run_task_dirty_paths(runner, run, variables=session_vars)
+    notify_result: dict[str, Any] = {
+        "status": "blocked" if terminal_reason == "task_blocker" else "success",
+        "run_id": run.id,
+        "dirty_paths": dirty_paths,
+    }
+    if terminal_reason is not None:
+        notify_result["terminal_reason"] = terminal_reason
+    verdict = session_vars.get("adversary_verdict")
+    if isinstance(verdict, str) and verdict:
+        notify_result["signoff_message"] = verdict
+    completion_message = (
+        f"Agent {run.id} completed; dirty_paths={json.dumps(dirty_paths, separators=(',', ':'))}"
+    )
 
     async def complete_with_acknowledged_delivery() -> bool:
         return bool(
@@ -78,7 +96,8 @@ async def _complete_self_terminated_run(
                 run.id,
                 completion_registry=completion_registry,
                 notify_result=notify_result,
-                message=f"Agent {run.id} completed",
+                terminal_reason=terminal_reason,
+                message=completion_message,
             )
         )
 
@@ -154,6 +173,8 @@ async def _complete_self_terminated_run(
         else:
             result["status"] = "success"
 
+    if terminal_reason is not None:
+        result["terminal_reason"] = terminal_reason
     await agents._cleanup_terminal_artifacts(
         run_id=run.id,
         db=kill_db,

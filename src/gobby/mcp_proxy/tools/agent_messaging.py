@@ -121,7 +121,8 @@ def add_messaging_tools(
             "from_session defaults to the calling session's id from SessionContext "
             "when omitted. "
             "Optional fields such as priority, message_type, metadata, and include_wakeup "
-            "are keyword-only. include_wakeup=true is an explicit urgent terminal interrupt."
+            "are keyword-only. For message_type='task_blocker', metadata.task_id must name "
+            "the blocked assigned task. include_wakeup=true is an explicit urgent terminal interrupt."
         ),
     )
     async def send_message(
