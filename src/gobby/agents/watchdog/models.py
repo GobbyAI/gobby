@@ -289,4 +289,5 @@ class CapacityRecoveryState:
 class CompletedTurnRecoveryState:
     workflow_fingerprint: str | None = None
     last_completion_identity: tuple[str, int, datetime] | None = None
+    last_reprompt_at: datetime | None = None
     successful_reprompts: int = 0

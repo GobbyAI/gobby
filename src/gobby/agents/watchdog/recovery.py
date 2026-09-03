@@ -213,6 +213,7 @@ class WatchdogRecoveryCoordinator:
         session_id: str | None,
         transcript_path: str,
         snapshot: WatchdogTranscriptSnapshot,
+        idle_timeout_seconds: int,
     ) -> int:
         return await recover_completed_turn(
             self,
@@ -221,6 +222,7 @@ class WatchdogRecoveryCoordinator:
             session_id=session_id,
             transcript_path=transcript_path,
             snapshot=snapshot,
+            idle_timeout_seconds=idle_timeout_seconds,
         )
 
     def _write_target(self, run: AgentRun) -> tuple[Terminal, WriteCoordinator] | None:
