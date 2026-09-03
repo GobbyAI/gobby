@@ -114,7 +114,8 @@ def register_memory_review_tools(
     @registry.tool(
         name="review_task_memories",
         description=(
-            "Search project/global memories related to a task closed by the calling session. "
+            "Search project/global memories related to a task closed by the calling session or "
+            "one of its spawned descendants. "
             "Returns candidates for optional cleanup or durable capture; never writes memories. "
             "Reviewing every queued closure releases the post-close stop/compact review gate."
         ),
@@ -163,10 +164,19 @@ def register_memory_review_tools(
             )
         if task.closed_at is None:
             return _error("task_not_closed", f"Task {_task_ref(task)} is not closed.")
-        if task.closed_in_session_id != resolved_session_id:
+        closing_session_id = task.closed_in_session_id
+        if closing_session_id != resolved_session_id and (
+            closing_session_id is None
+            or not await asyncio.to_thread(
+                session_manager.is_ancestor,
+                resolved_session_id,
+                closing_session_id,
+            )
+        ):
             return _error(
                 "foreign_session_closure",
-                f"Task {_task_ref(task)} was not closed by the calling session.",
+                f"Task {_task_ref(task)} was not closed by the calling session or one of its "
+                "spawned descendants.",
             )
 
         query = f"{task.title}\n\n{summary}"

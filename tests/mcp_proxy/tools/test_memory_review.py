@@ -18,6 +18,7 @@ from gobby.storage.tasks import TaskNotFoundError
 pytestmark = pytest.mark.unit
 
 SESSION_ID = "11111111-1111-4111-8111-111111110042"
+CHILD_SESSION_ID = "22222222-2222-4222-8222-222222220042"
 PROJECT_ID = "11111111-1111-4111-8111-111111110001"
 TASK_ID = "22222222-2222-4222-8222-222222220001"
 
@@ -73,6 +74,7 @@ def _registry(
     session_manager.get.side_effect = lambda session_id: (
         session if session_id == SESSION_ID else None
     )
+    session_manager.is_ancestor.return_value = False
     registry = create_memory_registry(
         lambda: memory_manager,
         task_manager=task_manager,
@@ -241,6 +243,29 @@ async def test_review_resolves_session_reference_when_direct_lookup_misses() -> 
 
     assert result["success"] is True
     resolver.assert_called_once_with(session_manager.db, "1111")
+    memory_manager.search_memories.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_review_allows_ancestor_of_closing_session() -> None:
+    registry, memory_manager, _task_manager, session_manager = _registry(
+        task=_task(closed_in_session_id=CHILD_SESSION_ID)
+    )
+    session_manager.is_ancestor.return_value = True
+    state_manager = MagicMock()
+    state_manager.get_variables.return_value = {}
+
+    with patch(
+        "gobby.mcp_proxy.tools.memory_review.SessionVariableManager",
+        return_value=state_manager,
+    ):
+        result = await registry.call(
+            "review_task_memories",
+            {"task_id": "#42", "changes_summary": "Completed work.", "session_id": SESSION_ID},
+        )
+
+    assert result["success"] is True
+    session_manager.is_ancestor.assert_called_once_with(SESSION_ID, CHILD_SESSION_ID)
     memory_manager.search_memories.assert_awaited_once()
 
 
