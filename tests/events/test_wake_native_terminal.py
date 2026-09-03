@@ -240,6 +240,109 @@ async def test_indeterminate_terminal_wake_records_no_delivery_and_skips_the_pan
 
     assert retry.get("skipped") is None
     assert retry["method"] == "terminal"
+    # The lost reply latched `wake:<id>`; the drained retry settles it instead
+    # of being suppressed by it (#21670).
+    assert retry["delivered"] is True
+    assert managed_chain.store.rows[managed_chain.row.id].unresolved_writes == {}
+
+
+@pytest.mark.asyncio
+async def test_latched_wake_is_settled_by_the_delivered_composer_clear(
+    managed_chain: ManagedChain,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A latch persisted by an earlier daemon life must not suppress wakes forever."""
+    wake_key = f"wake:{managed_chain.row.id}"
+    managed_chain.store.persist_unresolved_write(managed_chain.row.id, wake_key, "automatic")
+    pane_sender = AsyncMock()
+    dispatcher = WakeDispatcher(
+        session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
+        ism_manager=MagicMock(),
+        tmux_sender=_send_tmux_session_wake,
+        tmux_pane_sender=pane_sender,
+        terminal_manager=managed_chain.store,
+    )
+
+    with caplog.at_level(logging.INFO, logger="gobby.runner_init.orchestration"):
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert result["delivered"] is True
+    assert result["method"] == "terminal"
+    assert managed_chain.native.write_log == WAKE_SEQUENCE
+    assert managed_chain.store.rows[managed_chain.row.id].unresolved_writes == {}
+    assert [record.getMessage() for record in caplog.records if "Settling" in record.getMessage()]
+    pane_sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_quarantined_terminal_wake_is_a_structured_decline_without_traceback(
+    managed_chain: ManagedChain,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A quarantine held for another action refuses the wake; nothing reaches the screen."""
+    managed_chain.store.set_automatic_write_quarantine(managed_chain.row.id, "handoff:compact")
+    pane_sender = AsyncMock()
+    dispatcher = WakeDispatcher(
+        session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
+        ism_manager=MagicMock(),
+        tmux_sender=_send_tmux_session_wake,
+        tmux_pane_sender=pane_sender,
+        terminal_manager=managed_chain.store,
+    )
+
+    with caplog.at_level(logging.INFO, logger="gobby.events.wake"):
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert result["delivered"] is False
+    assert result["method"] == "terminal"
+    assert result["error_code"] == "automatic_write_quarantined"
+    assert managed_chain.native.write_log == []
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert [record for record in caplog.records if "declined" in record.getMessage()]
+    pane_sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_quarantined_agent_terminal_wake_falls_back_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An agent's refused tmux wake keeps its pane fallback and logs no traceback."""
+    row = replace(
+        make_memory_terminal(terminal_id=REPRO_TERMINAL_ID),
+        session_id=REPRO_SESSION_ID,
+    )
+    store = UUIDValidatingTerminalStore(row)
+    store.set_automatic_write_quarantine(row.id, "handoff:compact")
+    runtime = FakeRuntime(backend="tmux")
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+    )
+    monkeypatch.setattr(
+        "gobby.runner_init.orchestration._wake_write_services",
+        lambda: (store, coordinator),
+    )
+    pane_sender = AsyncMock()
+    dispatcher = WakeDispatcher(
+        session_manager=_session_manager(
+            {"tmux_session": f"gobby-{REPRO_TERMINAL_ID}", "tmux_pane": "%21"},
+            session_id=REPRO_SESSION_ID,
+            agent_depth=1,
+        ),
+        ism_manager=MagicMock(),
+        tmux_sender=_send_tmux_session_wake,
+        tmux_pane_sender=pane_sender,
+    )
+
+    with caplog.at_level(logging.INFO, logger="gobby.events.wake"):
+        result = await dispatcher.dispatch_live_wake(REPRO_SESSION_ID)
+
+    assert result["delivered"] is True
+    assert result["method"] == "tmux_pane"
+    assert runtime.write_log == []
+    pane_sender.assert_awaited_once()
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
 
 
 @pytest.mark.asyncio

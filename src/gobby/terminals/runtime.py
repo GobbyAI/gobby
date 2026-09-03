@@ -154,6 +154,19 @@ class LoopMisuse:
 WriteOutcome = Delivered | IndeterminateWrite | Suppressed | AutomaticWriteQuarantined
 
 
+class AutomaticWriteDeclined(RuntimeError):
+    """The coordinator refused an automatic write before dispatch; nothing landed.
+
+    ``reason`` is the outcome's own reason, so a caller that needs the refusal
+    as an exception can report it structurally instead of as a traceback.
+    """
+
+    def __init__(self, outcome: Suppressed | AutomaticWriteQuarantined) -> None:
+        super().__init__(f"automatic write declined: {outcome.reason} ({outcome.action_key})")
+        self.outcome = outcome
+        self.reason = outcome.reason
+
+
 class UnregisteredBackendError(KeyError):
     """Raised when the runtime registry has no implementation for a backend."""
 

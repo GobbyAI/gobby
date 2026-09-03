@@ -357,7 +357,10 @@ class WakeDispatcher:
                         "method": "tmux",
                     }
                 except Exception as exc:
-                    from gobby.terminals.runtime import IndeterminateWrite
+                    from gobby.terminals.runtime import (
+                        AutomaticWriteDeclined,
+                        IndeterminateWrite,
+                    )
 
                     if isinstance(exc, IndeterminateWrite):
                         return {
@@ -367,12 +370,20 @@ class WakeDispatcher:
                             "indeterminate": True,
                             "error_message": exc.detail,
                         }
-                    logger.warning(
-                        "tmux wake failed for session %s (tmux=%s), trying SDK resume",
-                        session_id,
-                        wake_identity,
-                        exc_info=True,
-                    )
+                    if isinstance(exc, AutomaticWriteDeclined):
+                        logger.info(
+                            "tmux wake declined for session %s (tmux=%s): %s, trying SDK resume",
+                            session_id,
+                            wake_identity,
+                            exc.reason,
+                        )
+                    else:
+                        logger.warning(
+                            "tmux wake failed for session %s (tmux=%s), trying SDK resume",
+                            session_id,
+                            wake_identity,
+                            exc_info=True,
+                        )
 
         if terminal_context and self._tmux_pane_sender:
             tmux_pane = self._parse_tmux_pane(terminal_context)
@@ -480,7 +491,7 @@ class WakeDispatcher:
         identity and writes through the write coordinator, so the runtime comes
         from Terminal.backend and native rows are driven as well as tmux ones.
         """
-        from gobby.terminals.runtime import IndeterminateWrite
+        from gobby.terminals.runtime import AutomaticWriteDeclined, IndeterminateWrite
 
         terminal_id = str(terminal.id)
         try:
@@ -501,6 +512,21 @@ class WakeDispatcher:
                 "indeterminate": True,
                 "error_message": exc.detail,
             }
+        except AutomaticWriteDeclined as exc:
+            # The coordinator refused before dispatch, so nothing is on screen.
+            # A refusal is a designed outcome, not a failure worth a traceback.
+            logger.info(
+                "terminal wake declined for session %s (terminal=%s): %s",
+                session_id,
+                terminal_id,
+                exc.reason,
+            )
+            return self._live_wake_failure(
+                session_id,
+                method="terminal",
+                error_code=exc.reason,
+                error_message=str(exc),
+            )
         except Exception as exc:
             detail = str(exc) or type(exc).__name__
             logger.warning(
