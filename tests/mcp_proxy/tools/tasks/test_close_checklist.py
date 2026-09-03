@@ -6,13 +6,14 @@ from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
+import gobby.mcp_proxy.tools.tasks._lifecycle_validation as lifecycle_validation
 from gobby.mcp_proxy.tools.task_repo_paths import CloseWorktreeRoot
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
@@ -152,6 +153,9 @@ async def _evaluate(
     acceptance_evaluator: MagicMock | None = None,
     transcript: TranscriptEvidence | None = None,
     changes_summary: str = "Implemented and tested.",
+    dirty_paths: set[str] | None = None,
+    foreign_owner_sessions: dict[str, str] | None = None,
+    response_detail: Literal["concise", "diagnostic"] = "diagnostic",
 ) -> CloseEvaluation:
     review = review or AsyncMock(
         return_value=ValidationResult(
@@ -168,13 +172,27 @@ async def _evaluate(
         findings=(),
         evidence_files=(),
     )
+    attributed_paths = dirty_paths or {"src/a.py"}
+    foreign_owners = {
+        path: (SimpleNamespace(session_ref=session_ref),)
+        for path, session_ref in (foreign_owner_sessions or {}).items()
+    }
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
         patch.object(lifecycle, "resolve_close_worktree_root", return_value=close_root),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
-        patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
-        patch.object(lifecycle, "_has_committable_edits", return_value=False),
+        patch.object(
+            close_finalization,
+            "_committable_task_paths",
+            return_value=attributed_paths,
+        ),
+        patch.object(lifecycle, "_task_dirty_paths", return_value=dirty_paths or set()),
+        patch.object(
+            lifecycle_validation,
+            "foreign_owned_dirty_paths",
+            return_value=foreign_owners,
+        ),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
         patch.object(
             lifecycle,
@@ -202,7 +220,7 @@ async def _evaluate(
         patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=True),
         patch(
             "gobby.workflows.task_claim_state.task_edited_file_set",
-            return_value={"src/a.py"},
+            return_value=attributed_paths,
         ),
     ):
         return await _evaluate_close(
@@ -212,9 +230,53 @@ async def _evaluate(
             changes_summary=changes_summary,
             commit_sha="abc123",
             project_path=project_path,
-            response_detail="diagnostic",
+            response_detail=response_detail,
             override_justification=override_justification,
         )
+
+
+@pytest.mark.parametrize("response_detail", ["concise", "diagnostic"])
+@pytest.mark.asyncio
+async def test_uncommitted_task_edits_names_dirty_paths(
+    response_detail: Literal["concise", "diagnostic"],
+) -> None:
+    evaluation = await _evaluate(
+        _task(escalated=False),
+        override_justification=None,
+        dirty_paths={"src/z.py", "src/a.py"},
+        foreign_owner_sessions={"src/a.py": "#11380"},
+        response_detail=response_detail,
+    )
+
+    response = evaluation.response(preview=True)
+    assert response["error"] == "uncommitted_task_edits"
+    assert response["message"] == (
+        "Task-attributed files still have uncommitted changes: "
+        "src/a.py (dirty by session #11380), src/z.py. Commit them, or ask the owner "
+        "to commit or release_task_paths, and retry."
+    )
+    if response_detail == "diagnostic":
+        gate = next(item for item in response["checklist"] if item["item"] == 9)
+        assert gate["details"] == {
+            "dirty_paths": ["src/a.py", "src/z.py"],
+            "foreign_owner_sessions": {"src/a.py": "#11380", "src/z.py": None},
+        }
+    else:
+        assert "checklist" not in response
+
+
+@pytest.mark.asyncio
+async def test_uncommitted_task_edits_passes_when_clean() -> None:
+    evaluation = await _evaluate(
+        _task(escalated=False),
+        override_justification=None,
+        dirty_paths=set(),
+    )
+
+    gate = next(item for item in evaluation.gates if item.item == 9)
+    assert gate.status == "passed"
+    assert gate.message == "No task-attributed files are dirty."
+    assert gate.details == {}
 
 
 def _unresolved_artifacts() -> AcceptanceArtifactResult:
