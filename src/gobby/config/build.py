@@ -52,7 +52,7 @@ class StageCapOverride:
 class BuildConfig:
     """Configuration for build agent dispatch."""
 
-    max_active_agents: int = 10
+    max_active_agents: int = 20
 
 
 def load_build_config(
@@ -101,7 +101,7 @@ def _merge_config(target: dict[str, Any], updates: Mapping[str, Any]) -> None:
 
 def _build_config_from_mapping(raw: Mapping[str, Any]) -> BuildConfig:
     return BuildConfig(
-        max_active_agents=_normalize_int(raw.get("max_active_agents", 10), "max_active_agents"),
+        max_active_agents=_normalize_int(raw.get("max_active_agents", 20), "max_active_agents"),
     )
 
 

@@ -10,10 +10,8 @@ import yaml
 pytestmark = pytest.mark.unit
 
 
-def test_build_config_defaults_include_agent_limit() -> None:
-    from gobby.config.build import SKIPPABLE_STAGES, BuildConfig
-
-    cfg = BuildConfig()
+def test_skippable_stages_include_every_optional_stage() -> None:
+    from gobby.config.build import SKIPPABLE_STAGES
 
     assert SKIPPABLE_STAGES == frozenset(
         {
@@ -29,7 +27,12 @@ def test_build_config_defaults_include_agent_limit() -> None:
             "merge",
         }
     )
-    assert cfg.max_active_agents == 10
+
+
+def test_max_active_agents_default_is_twenty() -> None:
+    from gobby.config.build import BuildConfig
+
+    assert BuildConfig().max_active_agents == 20
 
 
 def test_load_build_config_merges_agent_limit_from_global_project_and_flags(
