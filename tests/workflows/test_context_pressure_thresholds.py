@@ -73,6 +73,7 @@ def _set_handoff_event(tool_output: Any, *, clear_session: bool = False) -> Hook
                 },
             },
             "tool_output": tool_output,
+            "tool_outcome": {"status": "succeeded"},
         }
     )
 
@@ -287,6 +288,23 @@ def test_failed_handoff_leaves_guidance_enabled(tool_output: Any, expected: str)
     assert expected in message
     assert variables[HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE] == "strong"
     assert _after_tool(variables, manager) == ""
+
+
+def test_background_delivery_failure_surfaces_retry_guidance_on_next_turn() -> None:
+    variables = _variables(
+        **{
+            HANDOFF_RESULT_VARIABLE: {
+                "compacted": False,
+                "delivery_failed": True,
+                "retry_guidance": "Retry gobby-sessions:set_handoff now.",
+            }
+        }
+    )
+
+    message = _turn_start(variables, _SessionManager(10_000, 200_000))
+
+    assert message == "Retry gobby-sessions:set_handoff now."
+    assert variables[HANDOFF_RESULT_VARIABLE] is None
 
 
 def test_unknown_guidance_is_emitted_once_per_epoch() -> None:

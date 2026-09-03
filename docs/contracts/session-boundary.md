@@ -88,11 +88,18 @@ Before provider dispatch, Gobby atomically stages:
 Synchronous and queued dispatch failures restore the previous handoff, delete the
 matching staged content row only when it has no delivery receipt, and compare-and-clear
 its markers. A newer or delivered attempt is never overwritten by stale compensation.
+For terminal sessions, `set_handoff` returns a staged-success result before any provider
+input is sent. The normalized successful `after_tool` event persists the old-epoch tool
+gate, atomically claims the attempt, and schedules one background delivery. Duplicate,
+failed, and malformed completion events cannot claim an attempt. A delivery failure
+restores the staged state and exposes guidance to retry `set_handoff`. Web-chat
+compaction and clear remain synchronous because they do not replace a terminal composer.
 
 ## Compact Path
 
-Compact dispatch uses the provider-specific command and continues on the same session
-row. The continuation prompt instructs the agent to call `get_handoff()`. Compact
+Compact dispatch interrupts the provider, clears its composer, submits `/compact` for
+Claude, Codex, and Grok or `/compress` for Qwen and Droid, and continues on the same
+session row. The continuation prompt instructs the agent to call `get_handoff()`. Compact
 SessionStart/PostCompact handling resets context-epoch tracking and consumes only the
 provider compact-identity marker; it leaves the `set_handoff` marker for retrieval.
 Successful dispatch records a compact delivery receipt. If that receipt write is
@@ -103,7 +110,8 @@ Manual or automatic provider compaction without `set_handoff` has no pending mar
 
 ## Clear Path
 
-Clear dispatch stages a one-shot predecessor marker before `/clear`. A matching
+Clear dispatch stages a one-shot predecessor marker before the post-result worker
+interrupts the provider, clears its composer, and submits `/clear`. A matching
 successor atomically consumes that marker, records the clear delivery receipt, records
 direct predecessor parentage, and expires the predecessor. Live task claims then move
 through expected-owner compare-and-swap. Web chat performs successor insertion in the

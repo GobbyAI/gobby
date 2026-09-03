@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from gobby.hooks.session_end_auto_link import SessionEndAutoLinkWorker
     from gobby.hooks.skill_manager import HookSkillManager
     from gobby.sessions.liveness_monitor import SessionLivenessMonitor
+    from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.session_tasks import SessionTaskManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
@@ -50,6 +51,8 @@ class EventHandlersBase:
     _code_index_trigger: Any | None
     _dispatch_session_summaries_fn: DispatchSessionSummariesFn | None
     _event_loop: asyncio.AbstractEventLoop | None
+    _agent_run_manager: LocalAgentRunManager | None
+    _terminal_runtime_registry: Any | None
     logger: logging.Logger
     _handler_map: dict[HookEventType, Callable[[HookEvent], HookResponse]]
 

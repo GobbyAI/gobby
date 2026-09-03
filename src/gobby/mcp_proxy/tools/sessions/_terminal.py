@@ -98,11 +98,125 @@ __all__ = [
     "_resolve_tmux_target",
     "_send_pane_key",
     "_send_terminal_compaction_command",
+    "deliver_staged_compact_handoff",
     "asyncio",
     "manager_for_terminal_context",
     "LocalAgentRunManager",
     "register_terminal_tools",
 ]
+
+
+async def deliver_staged_compact_handoff(
+    session_id: str,
+    attempt_id: str,
+    handoff_record_id: str,
+    *,
+    session_manager: SessionManager,
+    db: HubDatabase,
+    agent_run_manager: LocalAgentRunManager,
+    terminal_manager: Any | None = None,
+    terminal_runtime_registry: Any | None = None,
+) -> dict[str, Any]:
+    """Deliver one already-staged compact handoff after its MCP result completed."""
+    session = session_manager.get(session_id)
+    if session is None:
+        return {"compacted": False, "reason": f"Session {session_id} not found"}
+    source = getattr(session, "source", None)
+    command = _CLI_COMPACT_COMMANDS.get(source) if source else None
+    if command is None:
+        return {"compacted": False, "reason": f"no compaction command known for cli={source!r}"}
+    pane, error = _resolve_pane_io(
+        session_id,
+        session_manager,
+        agent_run_manager,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=terminal_runtime_registry,
+    )
+    if error:
+        return {"compacted": False, "reason": error}
+    assert pane is not None
+    observe_interrupt, observer_error = _interrupt_observer(source, session)
+    if observer_error is not None:
+        return {
+            "compacted": False,
+            "reason": observer_error,
+            "error_code": _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE,
+        }
+
+    schedule_readiness: Callable[[str | None], bool] | None = None
+    if source == "codex":
+
+        def schedule_readiness(before_command: str | None) -> bool:
+            return schedule_codex_handoff_compact_continuation_readiness(
+                db,
+                pending_session_id=session_id,
+                target_session=session,
+                before_command=before_command,
+                attempt_id=attempt_id,
+            )
+
+    try:
+        ok, reason, continuation_pending, failure_detail = await _send_terminal_compaction_command(
+            pane,
+            command,
+            session_id,
+            cli_source=source,
+            mark_continuation_pending=lambda: mark_handoff_compact_continuation_pending(
+                db,
+                session_id,
+                prompt=build_handoff_continue_prompt(),
+                attempt_id=attempt_id,
+            ),
+            clear_continuation_pending=lambda: clear_handoff_compact_continuation_pending(
+                db,
+                session_id,
+                attempt_id=attempt_id,
+            ),
+            schedule_continuation_readiness=schedule_readiness,
+            continuation_readiness_capture_lines=(
+                CODEX_COMPACT_READY_CAPTURE_LINES if source == "codex" else None
+            ),
+            observe_interrupt=observe_interrupt,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed delivering compact handoff for session %s", session_id, exc_info=True
+        )
+        return {"compacted": False, "reason": str(exc), "error_code": "dispatch_failed"}
+    if not ok:
+        result: dict[str, Any] = {"compacted": False, "reason": reason}
+        if failure_detail is not None:
+            result.update(failure_detail)
+        return result
+
+    clear_queued_context(session_manager, session_id)
+    try:
+        delivered = record_handoff_delivery(
+            db,
+            handoff_id=handoff_record_id,
+            attempt_id=attempt_id,
+            boundary_kind="compact",
+            continuation_session_id=session_id,
+        )
+    except Exception:
+        logger.warning(
+            "Failed recording compact handoff delivery %s for session %s",
+            attempt_id,
+            session_id,
+            exc_info=True,
+        )
+        delivered = False
+    return {
+        "compacted": True,
+        "command": command,
+        "cli": source,
+        "via": pane.backend,
+        "interrupted": True,
+        "continuation_pending": continuation_pending,
+        "attempt_id": attempt_id,
+        "handoff_staged": True,
+        "handoff_delivered": delivered,
+    }
 
 
 def _resolve_tmux_target(
@@ -515,9 +629,9 @@ def register_terminal_tools(
             return {"success": False, "error": str(exc), "error_code": "invalid_handoff"}
 
         if clear_session:
-            from gobby.mcp_proxy.tools.sessions._terminal_clear import execute_clear_session
+            from gobby.mcp_proxy.tools.sessions._terminal_clear import prepare_clear_session
 
-            return await execute_clear_session(
+            return await prepare_clear_session(
                 handoff,
                 session_manager=session_manager,
                 db=db,
@@ -682,10 +796,9 @@ def register_terminal_tools(
                 "error_code": _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE,
             }
 
-        continuation_prompt = build_handoff_continue_prompt()
         compact_attempt_id = uuid4().hex
         try:
-            attempt_state = stage_handoff_attempt(
+            stage_handoff_attempt(
                 db,
                 resolved_session_id,
                 attempt_id=compact_attempt_id,
@@ -698,98 +811,17 @@ def register_terminal_tools(
                 "reason": f"failed to stage handoff: {exc}",
                 "error_code": "staging_failed",
             }
-        schedule_continuation_readiness: Callable[[str | None], bool] | None = None
-        if source == "codex":
-
-            def schedule_codex_readiness(before_command: str | None) -> bool:
-                return schedule_codex_handoff_compact_continuation_readiness(
-                    db,
-                    pending_session_id=resolved_session_id,
-                    target_session=session,
-                    before_command=before_command,
-                    attempt_id=compact_attempt_id,
-                )
-
-            schedule_continuation_readiness = schedule_codex_readiness
-        try:
-            send_result = await _send_terminal_compaction_command(
-                pane,
-                command,
-                resolved_session_id,
-                cli_source=source,
-                mark_continuation_pending=lambda: mark_handoff_compact_continuation_pending(
-                    db,
-                    resolved_session_id,
-                    prompt=continuation_prompt,
-                    attempt_id=compact_attempt_id,
-                ),
-                clear_continuation_pending=lambda: clear_handoff_compact_continuation_pending(
-                    db,
-                    resolved_session_id,
-                    attempt_id=compact_attempt_id,
-                ),
-                schedule_continuation_readiness=schedule_continuation_readiness,
-                continuation_readiness_capture_lines=(
-                    CODEX_COMPACT_READY_CAPTURE_LINES if source == "codex" else None
-                ),
-                observe_interrupt=observe_interrupt,
-            )
-        except Exception as exc:
-            restore_handoff_attempt(db, attempt_state)
-            return {
-                "compacted": False,
-                "reason": str(exc),
-                "error_code": "dispatch_failed",
-            }
-        ok, reason, continuation_pending, failure_detail = send_result
-
-        if not ok:
-            restore_handoff_attempt(db, attempt_state)
-            if source == "codex":
-                try:
-                    session_manager.update_status(resolved_session_id, "active")
-                except Exception:
-                    logger.warning(
-                        "Failed restoring session %s to active after Codex compaction failure",
-                        resolved_session_id,
-                        exc_info=True,
-                    )
-            failure_result = {
-                "compacted": False,
-                "reason": reason,
-            }
-            if failure_detail is not None:
-                failure_result.update(failure_detail)
-            return failure_result
-        result = {
-            "compacted": True,
+        return {
+            "success": True,
+            "handoff_staged": True,
+            "delivery_pending": True,
+            "attempt_id": compact_attempt_id,
+            "session_id": resolved_session_id,
+            "clear_session": False,
             "command": command,
             "cli": source,
             "via": pane.backend,
-            "interrupted": True,
-            "continuation_pending": continuation_pending,
-            "attempt_id": compact_attempt_id,
-            "handoff_staged": True,
         }
-        clear_queued_context(session_manager, resolved_session_id)
-        try:
-            record_handoff_delivery(
-                db,
-                handoff_id=attempt_state.handoff_record_id,
-                attempt_id=compact_attempt_id,
-                boundary_kind="compact",
-                continuation_session_id=resolved_session_id,
-            )
-            result["handoff_delivered"] = True
-        except Exception:
-            logger.warning(
-                "Failed recording compact handoff delivery %s for session %s",
-                compact_attempt_id,
-                resolved_session_id,
-                exc_info=True,
-            )
-            result["handoff_delivered"] = False
-        return result
 
     registry.register(
         name="set_handoff",

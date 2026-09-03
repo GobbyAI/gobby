@@ -306,6 +306,13 @@ remains visible in the UI after consumption. While that marker is pending, turn-
 meta skill loads wait so the pull runs before `memory`, `loading-skills`, and
 `brevity` reloads.
 
+For terminal sessions, the tool result reports `handoff_staged=true` and
+`delivery_pending=true` before Gobby touches provider input. The successful normalized
+tool-completion event then arms the old-epoch tool gate and schedules one deduplicated
+background delivery. Delivery failure restores the previous handoff and clear status,
+removes the attempt markers, and asks the agent to retry `set_handoff`. Web-chat
+boundaries remain synchronous.
+
 ### Hookless Registration
 
 Clients that do not fire session-start hooks can register explicitly.
@@ -347,11 +354,16 @@ permission dialogs, or stalled terminals.
 sequenceDiagram
     participant Session
     participant Gobby
+    participant Hook as Successful after_tool
+    participant Provider
     participant Continuation
 
     Session->>Gobby: set_handoff(structured fields, clear_session)
     Gobby->>Gobby: atomically stage structured content, Markdown, and marker
-    Gobby->>Session: dispatch provider compact or clear
+    Gobby-->>Session: staged success (delivery_pending)
+    Session->>Hook: normalized tool completion
+    Hook->>Gobby: persist old-epoch gate and claim attempt once
+    Hook-->>Provider: interrupt, clear composer, command, Enter
     Gobby->>Gobby: record successful boundary receipt
     Continuation->>Gobby: get_handoff()
     Gobby->>Continuation: consume marker and return Markdown

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, TypeGuard
@@ -520,6 +521,7 @@ def clear_failed_attempt(
     *,
     attempt_id: str,
     attempt_state: HandoffAttemptState | None = None,
+    marker_updates: Mapping[str, Any] | None = None,
 ) -> bool:
     """Compare-and-clear an unconsumed marker and restore staged state."""
     try:
@@ -545,7 +547,7 @@ def clear_failed_attempt(
                 missing_markers=frozenset({CLEAR_ATTEMPT_VARIABLE, PENDING_HANDOFF_VARIABLE}),
                 prior_status=prior_status if isinstance(prior_status, str) else None,
             )
-        return restore_handoff_attempt(db, attempt_state)
+        return restore_handoff_attempt(db, attempt_state, marker_updates=marker_updates)
     except Exception:
         logger.warning(
             "Failed clearing handoff attempt %s for session %s",

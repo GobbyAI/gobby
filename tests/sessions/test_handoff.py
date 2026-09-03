@@ -14,12 +14,21 @@ import pytest
 from psycopg.errors import CheckViolation
 
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+from gobby.sessions.clear_continuation import (
+    CLEAR_ATTEMPT_VARIABLE,
+    clear_failed_attempt,
+    stage_clear_attempt,
+)
 from gobby.sessions.handoff import (
+    HANDOFF_DISPATCH_GATE_VARIABLE,
     HANDOFF_PULL_PENDING_VARIABLE,
+    PENDING_HANDOFF_VARIABLE,
+    claim_staged_handoff_delivery,
     consume_pending_handoff,
     normalize_feedback_observations,
     render_handoff_markdown,
     restore_handoff_attempt,
+    restore_staged_handoff,
     stage_handoff_attempt,
     write_feedback_batch,
 )
@@ -470,6 +479,88 @@ def test_delivery_receipt_is_idempotent_and_prevents_compensation(
         (state.handoff_record_id,),
     )
     assert row is not None
+
+
+def test_staged_terminal_delivery_claim_requires_gate_and_is_deduplicated(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    session = _registered_session(session_manager)
+    attempt_id = "d" * 32
+    handoff = build_handoff_payload(current_state="Ready.", next_steps=["Continue."])
+    state = stage_handoff_attempt(
+        temp_db,
+        session.id,
+        attempt_id=attempt_id,
+        handoff=handoff,
+        clear_session=False,
+    )
+
+    assert claim_staged_handoff_delivery(temp_db, session.id, attempt_id) is None
+    SessionVariableManager(temp_db).merge_variables(
+        session.id,
+        {
+            HANDOFF_DISPATCH_GATE_VARIABLE: {
+                "handoff_staged": True,
+                "delivery_pending": True,
+                "attempt_id": attempt_id,
+                "clear_session": False,
+            }
+        },
+    )
+
+    claimed = claim_staged_handoff_delivery(temp_db, session.id, attempt_id)
+
+    assert claimed is not None
+    assert claimed.handoff_record_id == state.handoff_record_id
+    assert claimed.clear_session is False
+    assert claim_staged_handoff_delivery(temp_db, session.id, attempt_id) is None
+    marker = SessionVariableManager(temp_db).get_variables(session.id)[PENDING_HANDOFF_VARIABLE]
+    assert marker["dispatch_started_at"]
+    failure = {"delivery_failed": True, "retry_guidance": "Retry set_handoff."}
+    assert restore_staged_handoff(
+        temp_db,
+        session.id,
+        attempt_id,
+        failure_result=failure,
+    )
+    variables = SessionVariableManager(temp_db).get_variables(session.id)
+    assert PENDING_HANDOFF_VARIABLE not in variables
+    assert HANDOFF_PULL_PENDING_VARIABLE not in variables
+    assert variables[HANDOFF_DISPATCH_GATE_VARIABLE] == failure
+
+
+def test_clear_delivery_compensation_restores_status_and_clears_markers(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    session = _registered_session(session_manager)
+    attempt_id = "e" * 32
+    state = stage_clear_attempt(
+        temp_db,
+        session.id,
+        attempt_id=attempt_id,
+        handoff=build_handoff_payload(current_state="Ready.", next_steps=["Continue."]),
+        terminal_context={"tmux_pane": "%1"},
+        chat_context=None,
+    )
+    failure = {"delivery_failed": True, "retry_guidance": "Retry set_handoff."}
+
+    assert clear_failed_attempt(
+        temp_db,
+        session.id,
+        attempt_id=attempt_id,
+        attempt_state=state,
+        marker_updates={HANDOFF_DISPATCH_GATE_VARIABLE: failure},
+    )
+
+    restored = session_manager.get(session.id)
+    assert restored is not None
+    assert restored.status == "active"
+    variables = SessionVariableManager(temp_db).get_variables(session.id)
+    assert PENDING_HANDOFF_VARIABLE not in variables
+    assert CLEAR_ATTEMPT_VARIABLE not in variables
+    assert variables[HANDOFF_DISPATCH_GATE_VARIABLE] == failure
 
 
 @pytest.mark.parametrize(

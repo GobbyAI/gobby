@@ -85,6 +85,7 @@ class HookManager(HookManagerDispatchMixin):
         code_index_trigger: Any | None = None,
         memory_manager: "MemoryManager | None" = None,
         terminal_manager: Any | None = None,
+        terminal_runtime_registry: Any | None = None,
     ) -> None:
         self.daemon_host = daemon_host
         self.daemon_port = daemon_port
@@ -141,6 +142,7 @@ class HookManager(HookManagerDispatchMixin):
             code_index_trigger=code_index_trigger,
             memory_manager=memory_manager,
             terminal_manager=terminal_manager,
+            terminal_runtime_registry=terminal_runtime_registry,
         )
 
         # Unpack all subsystems from factory components
