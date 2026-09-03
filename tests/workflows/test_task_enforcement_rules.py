@@ -14,10 +14,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.adapters.agy import AgyAdapter
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.mcp_proxy.tools.tasks._factory import create_task_registry
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
+from gobby.providers import provider_metadata
 from gobby.skills.formatting import (
     skill_fetch_directive,
     skill_fetch_proxy_path,
@@ -965,6 +967,76 @@ asyncio.run(main())
         result = evaluator.evaluate(condition)
         assert result is True, "Should block if any touched file needs a task"
 
+    @pytest.mark.parametrize(
+        ("tool_args", "expected_repo_mutation", "expected_block"),
+        [
+            (
+                {"TargetFile": "~/.gemini/antigravity-cli/brain/conversation/plan.md"},
+                False,
+                False,
+            ),
+            ({"TargetFile": str(Path.cwd() / "src/generated.py")}, True, True),
+            (
+                {
+                    "TargetFile": "~/.gemini/antigravity-cli/brain/conversation/plan.md",
+                    "AbsolutePath": str(Path.cwd() / "src/generated.py"),
+                },
+                True,
+                True,
+            ),
+            ({"CodeContent": "path unavailable"}, True, True),
+        ],
+    )
+    def test_agy_write_classification_drives_task_enforcement(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        tool_args: dict[str, str],
+        expected_repo_mutation: bool,
+        expected_block: bool,
+    ) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+        event = AgyAdapter().translate_to_hook_event(
+            {
+                "hook_type": "PreToolUse",
+                "input_data": {
+                    "hookEventName": "PreToolUse",
+                    "conversationId": "agy-enforcement-123",
+                    "workspacePaths": [str(Path.cwd())],
+                    "toolCall": {"name": "write_to_file", "args": tool_args},
+                },
+            }
+        )
+        _sync_bundled(db)
+        row = manager.get_by_name("require-task-before-edit")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.when is not None
+        context = {
+            "variables": {
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": False,
+            },
+            "event": event,
+            "tool_input": event.data["tool_input"],
+            "source": "agy",
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
+
+        blocked = bool(
+            SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs).evaluate(
+                body.when
+            )
+        )
+
+        assert event.data["canonical_tool_kind"] == "write"
+        assert event.data["canonical_repo_mutation"] is expected_repo_mutation
+        assert blocked is expected_block
+
 
 class TestRequireTasksSkillForMutations:
     """Verify one classifier covers interactive task mutations across event shapes."""
@@ -1465,6 +1537,18 @@ class TestIsPlanFile:
         from gobby.workflows.enforcement.blocking import is_plan_file
 
         assert is_plan_file("/home/user/.codex/config.toml") is False
+
+    @pytest.mark.parametrize(
+        "directory",
+        [".gobby", *(entry.user_directory for entry in provider_metadata())],
+    )
+    def test_markdown_under_every_provider_user_directory_is_a_plan_file(
+        self,
+        directory: str,
+    ) -> None:
+        from gobby.workflows.enforcement.blocking import is_plan_file
+
+        assert is_plan_file(f"/home/user/{directory}/notes/plan.md") is True
 
 
 class TestTouchedFileHelpers:

@@ -10,6 +10,7 @@ import logging
 import os
 from typing import Any
 
+from gobby.providers import provider_metadata
 from gobby.providers.path_policy import is_plan_scratch_path, is_project_plan_artifact_path
 
 logger = logging.getLogger(__name__)
@@ -285,10 +286,9 @@ def is_tool_unlocked(
 # CLI config directories whose .md files are exempt from task-before-edit
 # enforcement (plan files, notes, specs).  Any .md file under these dirs
 # qualifies — no "/plans/" subdirectory requirement.
-_CLI_DIR_SEGMENTS = (
-    f"{os.sep}.gobby{os.sep}",
-    f"{os.sep}.claude{os.sep}",
-    f"{os.sep}.codex{os.sep}",
+_CLI_DIR_SEGMENTS = tuple(
+    f"{os.sep}{directory}{os.sep}"
+    for directory in (".gobby", *(metadata.user_directory for metadata in provider_metadata()))
 )
 SOURCE_CODE_EXTENSIONS = frozenset(
     {
@@ -380,9 +380,8 @@ SOURCE_CODE_FILENAMES = frozenset(
 def is_plan_file(file_path: str, source: str | None = None) -> bool:
     """Check if a file is a plan file that may be edited without a task.
 
-    Any ``.md`` file under a recognised CLI config directory is treated as
-    a plan file.  Recognised directories: ``.gobby/``, ``.claude/``,
-    ``.codex/``.
+    Any ``.md`` file under ``.gobby`` or a registered provider's user
+    directory is treated as a plan file.
 
     Args:
         file_path: Absolute or relative path to the file being edited.

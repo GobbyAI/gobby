@@ -12,6 +12,14 @@ from gobby.hooks._normalization_paths import (
 from gobby.hooks._normalization_shell import canonicalize_shell_tool_name
 from gobby.hooks.tool_outcomes import normalize_tool_outcome
 
+_TOOL_INPUT_FIELD_ALIASES = (
+    ("CommandLine", "command"),
+    ("Cwd", "cwd"),
+    ("TargetFile", "file_path"),
+    ("AbsolutePath", "file_path"),
+    ("DirectoryPath", "file_path"),
+)
+
 
 def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     """Normalize tool-related fields in hook event data.
@@ -76,6 +84,9 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     # returned as a complete replacement instead of echoing normalized keys.
     if isinstance(tool_input, dict):
         data.setdefault("_raw_tool_input", dict(tool_input))
+        for provider_name, canonical_name in _TOOL_INPUT_FIELD_ALIASES:
+            if provider_name in tool_input and canonical_name not in tool_input:
+                tool_input[canonical_name] = tool_input[provider_name]
 
     compact_tool_name = _compact_tool_name(tool_name)
     if compact_tool_name == "applypatch":
