@@ -80,6 +80,9 @@ def _challenge_claims(body: ChallengeRequest) -> AgentApiTokenClaims | None:
         return None
     agent_run_id = raw.get("agent_run_id")
     managed_execution_id = raw.get("managed_execution_id")
+    kind = raw.get("kind")
+    if kind is not None and (not isinstance(kind, str) or not kind):
+        raise HandshakeRejection("challenge claims invalid kind", code="claims_mismatch")
     return AgentApiTokenClaims(
         session_id=_required_str(raw, "session_id"),
         project_id=_required_str(raw, "project_id"),
@@ -90,6 +93,7 @@ def _challenge_claims(body: ChallengeRequest) -> AgentApiTokenClaims | None:
         managed_execution_id=(
             managed_execution_id if isinstance(managed_execution_id, str) else None
         ),
+        kind=kind,
     )
 
 
