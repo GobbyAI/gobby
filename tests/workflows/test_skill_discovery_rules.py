@@ -3790,7 +3790,9 @@ class TestRequireCodeIndexSkillStructure:
             "reset-code-index-navigation",
             "track-code-index-navigation",
             "track-turn-written-paths",
+            "note-code-index-preflight-fail-open",
             "prefer-gcode-for-code-search",
+            "prefer-gcode-for-file-navigation",
             "prefer-gcode-for-source-read",
         }
         rules = {row.name for row in manager.list_all()}
@@ -3801,6 +3803,7 @@ class TestRequireCodeIndexSkillStructure:
         for rule_name in (
             "require-code-index-skill",
             "prefer-gcode-for-code-search",
+            "prefer-gcode-for-file-navigation",
             "prefer-gcode-for-source-read",
         ):
             row = manager.get_by_name(rule_name)
@@ -3857,6 +3860,19 @@ class TestCodeIndexNavigationRules:
         normalize_tool_fields(data)
         return cls._event(HookEventType.BEFORE_TOOL, data)
 
+    @staticmethod
+    def _linked_checkouts(tmp_path: Path) -> tuple[Path, Path]:
+        primary = tmp_path / "primary"
+        linked = tmp_path / "linked"
+        common_dir = primary / ".git"
+        linked_git_dir = common_dir / "worktrees" / "linked"
+        linked_git_dir.mkdir(parents=True)
+        (primary / "src").mkdir()
+        (linked / "src").mkdir(parents=True)
+        (linked / ".git").write_text(f"gitdir: {linked_git_dir}\n", encoding="utf-8")
+        (linked_git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+        return primary, linked
+
     @pytest.mark.asyncio
     async def test_first_rg_requires_code_index_skill(self, db) -> None:
         _sync_bundled(db)
@@ -3880,34 +3896,32 @@ class TestCodeIndexNavigationRules:
         assert "If that call fails, its recorded failure fails this rule open" in response.reason
 
     @pytest.mark.asyncio
-    async def test_search_over_non_source_targets_is_not_redirected(self, db: HubDatabase) -> None:
+    async def test_searchable_project_text_redirects_to_gcode_content_search(
+        self, db: HubDatabase
+    ) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
-        allowed = (
-            "git log --oneline | grep handoff",
+        searchable_text = (
             "grep -n '^#' .gobby/plans/herdr-terminal-client.md",
             "grep needle docs/research/agent-feedback-loops.md",
         )
 
         for loaded in (False, True):
             variables = self._variables(loaded=loaded)
-            for command in allowed:
+            for command in searchable_text:
                 response = await engine.evaluate(
                     self._normalized_bash_event(command),
                     session_id=SESSION_ID,
                     variables=variables,
                 )
-                assert response.decision == "allow", (loaded, command)
+                assert response.decision == "block", (loaded, command)
 
-            redirected = await engine.evaluate(
-                self._normalized_bash_event("grep needle src/gobby/x.py"),
+            shell_output_filter = await engine.evaluate(
+                self._normalized_bash_event("git log --oneline | grep handoff"),
                 session_id=SESSION_ID,
                 variables=variables,
             )
-            assert redirected.decision == "block", loaded
-            assert redirected.reason is not None
-            expected_rule = "prefer-gcode-for-code-search" if loaded else "require-code-index-skill"
-            assert expected_rule in redirected.reason
+            assert shell_output_filter.decision == "allow", loaded
 
     @pytest.mark.asyncio
     async def test_code_index_skill_proxy_error_fails_open_until_matching_success(
@@ -4037,6 +4051,45 @@ class TestCodeIndexNavigationRules:
         assert "follow the `recovery` directive" in response.reason
         assert "do NOT re-run the failing gcode call" in response.reason
 
+    @pytest.mark.parametrize(
+        ("code_index_available", "warning_message"),
+        [
+            pytest.param(False, "gcode_index_unavailable", id="unavailable"),
+            pytest.param(True, "gcode_index_stale", id="stale"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_preflight_unavailable_or_stale_allows_raw_search_with_note(
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+        code_index_available: bool,
+        warning_message: str,
+    ) -> None:
+        _sync_bundled(db)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        variables = self._variables(loaded=True)
+        variables["code_index_available"] = code_index_available
+        variables["code_index_preflight_warning"] = {
+            "preflight": "code_index",
+            "message": warning_message,
+        }
+
+        response = await RuleEngine(db).evaluate(
+            self._normalized_bash_event(
+                "rg pattern src",
+                cwd=str(repo),
+                project_path=str(repo),
+            ),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert response.decision == "allow"
+        assert "preflight reported this checkout unavailable or stale" in (response.context or "")
+        assert variables["code_index_preflight_note_shown"] is True
+
     @pytest.mark.asyncio
     async def test_log_search_bypasses_code_index_rules(self, db, tmp_path, monkeypatch) -> None:
         _sync_bundled(db)
@@ -4060,6 +4113,147 @@ class TestCodeIndexNavigationRules:
             )
 
             assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_session_scratchpad_search_is_explicitly_allowed(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        _sync_bundled(db)
+        repo, _ = self._linked_checkouts(tmp_path)
+        scratch_root = tmp_path / "scratchpad"
+        scratch_git_dir = repo / ".git" / "worktrees" / "scratch"
+        scratch_git_dir.mkdir()
+        (scratch_root / "src").mkdir(parents=True)
+        (scratch_root / ".git").write_text(f"gitdir: {scratch_git_dir}\n", encoding="utf-8")
+        (scratch_git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+        scratchpad = scratch_root / "src" / "session.log"
+
+        event = self._normalized_bash_event(
+            f"rg conflict {scratchpad}",
+            cwd=str(repo),
+            project_path=str(repo),
+        )
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert event.data["canonical_code_navigation_repo_scope"] is False
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_foreign_repo_search_is_explicitly_allowed(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        _sync_bundled(db)
+        repo = tmp_path / "repo"
+        foreign = tmp_path / "foreign"
+        (repo / ".git").mkdir(parents=True)
+        (foreign / ".git").mkdir(parents=True)
+        (foreign / "src").mkdir()
+
+        event = self._normalized_bash_event(
+            f"rg conflict {foreign / 'src'}",
+            cwd=str(repo),
+            project_path=str(repo),
+        )
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert event.data["canonical_code_navigation_repo_scope"] is False
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_linked_worktree_conflict_search_redirects_to_gcode_grep(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        _sync_bundled(db)
+        primary, linked = self._linked_checkouts(tmp_path)
+
+        event = self._normalized_bash_event(
+            f"rg conflict {linked / 'src'}",
+            cwd=str(primary),
+            project_path=str(primary),
+        )
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert event.data["canonical_code_navigation_repo_scope"] is True
+        assert response.decision == "block"
+        assert 'gcode grep "pattern"' in (response.reason or "")
+
+    @pytest.mark.asyncio
+    async def test_pathless_search_in_linked_worktree_defaults_scope_to_cwd(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        _sync_bundled(db)
+        primary, linked = self._linked_checkouts(tmp_path)
+
+        event = self._normalized_bash_event(
+            "rg conflict",
+            cwd=str(linked),
+            project_path=str(primary),
+        )
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert event.data.get("canonical_file_paths", []) == []
+        assert event.data["canonical_code_navigation_repo_scope"] is True
+        assert response.decision == "block"
+
+    @pytest.mark.asyncio
+    async def test_primary_checkout_search_from_worktree_redirects_to_gcode_grep(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        _sync_bundled(db)
+        primary, linked = self._linked_checkouts(tmp_path)
+
+        event = self._normalized_bash_event(
+            f"grep -R conflict {primary / 'src'}",
+            cwd=str(linked),
+            project_path=str(linked),
+        )
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert event.data["canonical_code_navigation_repo_scope"] is True
+        assert response.decision == "block"
+        assert 'gcode grep "pattern"' in (response.reason or "")
+
+    @pytest.mark.asyncio
+    async def test_mixed_scratchpad_and_indexed_paths_redirects_for_indexed_path(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        _sync_bundled(db)
+        primary, linked = self._linked_checkouts(tmp_path)
+        scratchpad = tmp_path / "scratchpad" / "session.log"
+
+        event = self._normalized_bash_event(
+            f"rg conflict {scratchpad} {linked / 'src'}",
+            cwd=str(primary),
+            project_path=str(primary),
+        )
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert event.data["canonical_code_navigation_repo_scope"] is True
+        assert response.decision == "block"
 
     @pytest.mark.asyncio
     async def test_unexpanded_home_search_bypasses_code_index_rule(
@@ -4124,12 +4318,11 @@ class TestCodeIndexNavigationRules:
         [
             "find . -maxdepth 1",
             "find docs -type d",
-            "find crates -newer Cargo.toml -name '*.rs'",
             "find crates -path '*migrations*' -name '*.sql'",
         ],
     )
     @pytest.mark.asyncio
-    async def test_find_enumeration_bypasses_code_index_rules(
+    async def test_find_navigation_redirects_to_gcode_tree(
         self, db: HubDatabase, command: str
     ) -> None:
         _sync_bundled(db)
@@ -4139,13 +4332,33 @@ class TestCodeIndexNavigationRules:
         assert event.data["canonical_tool_kind"] == "execute"
         assert event.data["canonical_code_navigation_action"] == "enumerate"
         assert event.data["canonical_code_navigation_broad"] is True
+        assert event.data["canonical_code_navigation_gcode_supported"] is True
         for loaded in (False, True):
             response = await engine.evaluate(
                 event,
                 session_id=SESSION_ID,
                 variables=self._variables(loaded=loaded),
             )
-            assert response.decision == "allow", (loaded, command)
+            assert response.decision == "block", (loaded, command)
+            assert "gcode" in (response.reason or "")
+            if loaded:
+                assert "gcode tree" in (response.reason or "")
+
+    @pytest.mark.asyncio
+    async def test_find_newer_filesystem_query_is_explicitly_allowed(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = self._normalized_bash_event("find crates -newer Cargo.toml -name '*.rs'")
+
+        assert event.data["canonical_code_navigation_action"] == "enumerate"
+        assert event.data["canonical_code_navigation_gcode_supported"] is False
+        for loaded in (False, True):
+            response = await engine.evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=self._variables(loaded=loaded),
+            )
+            assert response.decision == "allow", loaded
 
     @pytest.mark.parametrize(
         "command",
@@ -4212,7 +4425,7 @@ class TestCodeIndexNavigationRules:
             assert response.decision == "block", (loaded, command)
 
     @pytest.mark.asyncio
-    async def test_same_turn_written_path_bypasses_search_and_read_rules(
+    async def test_current_byte_verification_of_same_turn_write_is_explicitly_allowed(
         self, db: HubDatabase
     ) -> None:
         _sync_bundled(db)
@@ -4390,6 +4603,7 @@ class TestCodeIndexNavigationRules:
         for rule_name in (
             "require-code-index-skill",
             "prefer-gcode-for-code-search",
+            "prefer-gcode-for-file-navigation",
             "prefer-gcode-for-source-read",
         ):
             row = manager.get_by_name(rule_name)
@@ -4398,6 +4612,7 @@ class TestCodeIndexNavigationRules:
             assert body.when is not None
             assert "not variables.get('gcode_fail_open')" in body.when
             assert "not shell_command_invokes_gcode(tool_input.get('command'))" in body.when
+            assert "not variables.get('code_index_preflight_warning')" in body.when
 
     @pytest.mark.asyncio
     async def test_compound_search_after_pipeline_uses_persistent_shell_cwd(
@@ -4621,6 +4836,7 @@ class TestCodeIndexNavigationRules:
         [
             ("require-code-index-skill", 'gcode search-content "query" src'),
             ("prefer-gcode-for-code-search", 'gcode grep "pattern" src -m 50'),
+            ("prefer-gcode-for-file-navigation", "gcode tree src"),
             ("prefer-gcode-for-source-read", "gcode outline src/gobby/workflows/engine/core.py"),
         ],
     )
@@ -4714,6 +4930,36 @@ class TestCodeIndexNavigationRules:
         assert "follow the `recovery` directive" in broad_response.reason
         assert "use Read on the file instead" in broad_response.reason
         assert narrow_response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_plain_sed_range_read_is_explicitly_allowed(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        event = self._normalized_bash_event("sed -n '10,40p' src/gobby/hooks/events.py")
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert event.data["canonical_source_line_count"] == 31
+        assert event.data["canonical_narrow_source_context"] is True
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_wc_line_count_is_explicitly_allowed(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        event = self._normalized_bash_event("wc -l src/gobby/hooks/events.py")
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert event.data["canonical_tool_kind"] == "execute"
+        assert "canonical_code_navigation_action" not in event.data
+        assert response.decision == "allow"
 
     @pytest.mark.asyncio
     async def test_compound_broad_shell_read_and_search_block(self, db: HubDatabase) -> None:

@@ -1037,7 +1037,7 @@ class TestCanonicalToolMetadata:
             assert data["canonical_tool_kind"] == expected_kind
             assert data["canonical_file_path"] == expected_path
 
-    def test_exec_command_search_over_non_source_files_is_not_code_navigation(self) -> None:
+    def test_exec_command_search_over_project_text_is_code_navigation(self) -> None:
         for command in (
             "grep -n '^#' .gobby/plans/herdr-terminal-client.md",
             "grep pattern docs/research/agent-feedback-loops.md",
@@ -1050,7 +1050,7 @@ class TestCanonicalToolMetadata:
 
             assert data["canonical_tool_kind"] == "search", command
             assert data["canonical_code_navigation_action"] == "search", command
-            assert data["canonical_code_navigation_broad"] is False, command
+            assert data["canonical_code_navigation_broad"] is True, command
 
     def test_exec_command_search_reaching_source_stays_broad(self) -> None:
         for command in (
