@@ -16,6 +16,7 @@ CONSECUTIVE_TOOL_BLOCK_RULE = "consecutive-tool-block"
 _CODE_INDEX_REMEDIATION_RULES = {
     "require-code-index-skill",
     "prefer-gcode-for-code-search",
+    "prefer-gcode-for-file-navigation",
     "prefer-gcode-for-source-read",
 }
 _RULE_REASON_RE = re.compile(r"^Rule enforced by Gobby: \[([^\]]+)\]")

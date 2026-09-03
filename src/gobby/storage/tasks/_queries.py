@@ -19,6 +19,7 @@ from gobby.storage.tasks._models import Task, task_type_filter_values
 from gobby.storage.tasks._ordering import TaskOrderKey, order_task_keys
 from gobby.storage.tasks._read import _escape_like_pattern
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
+from gobby.tasks.state_semantics import AWAITING_HUMAN_REVIEW_LABEL
 
 
 def _current_stage_state_filter_sql(
@@ -121,6 +122,13 @@ def _external_blocker_exists_sql(task_alias: str = "t") -> str:
 
 def _no_external_blocker_sql(task_alias: str = "t") -> str:
     return f"NOT {_external_blocker_exists_sql(task_alias)}"
+
+
+def _awaiting_human_review_sql(task_alias: str = "t") -> str:
+    return (
+        f"COALESCE({task_alias}.labels, '[]'::jsonb) "
+        f"@> '[\"{AWAITING_HUMAN_REVIEW_LABEL}\"]'::jsonb"
+    )
 
 
 def list_tasks(
@@ -446,6 +454,7 @@ def _ready_tasks_cte_sql() -> str:
         )
         AND t.parent_task_id IS NULL
         AND {_no_external_blocker_sql("t")}
+        AND NOT {_awaiting_human_review_sql("t")}
 
         UNION ALL
 
@@ -461,6 +470,7 @@ def _ready_tasks_cte_sql() -> str:
             )
         )
         AND {_no_external_blocker_sql("t")}
+        AND NOT {_awaiting_human_review_sql("t")}
         AND rt.depth < 100
         AND NOT t.id = ANY(rt.path)
     )
@@ -555,6 +565,7 @@ def list_blocked_tasks(
         t.escalated_at IS NOT NULL
         OR COALESCE(t.is_escalated, FALSE) IS TRUE
         OR {_external_blocker_exists_sql("t")}
+        OR {_awaiting_human_review_sql("t")}
     )
     """
     params: list[Any] = []

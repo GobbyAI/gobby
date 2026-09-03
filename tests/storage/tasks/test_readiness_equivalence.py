@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._updates import update_task
 from tests.storage.tasks._stage_test_helpers import (
@@ -50,6 +52,37 @@ def test_ready_projection_uses_current_stage_state(temp_db, sample_project) -> N
     assert done.id not in ready_ids
     assert auto_manifest.id in ready_ids
     assert manager.count_ready_tasks(project_id=sample_project["id"]) == len(ready_ids)
+
+
+def test_awaiting_human_review_label_parks_task_until_removed(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = create_task(
+        temp_db,
+        sample_project,
+        title="Awaiting review",
+        category="test",
+        task_type="task",
+        labels=["llm-reviewed", "awaiting-human-review"],
+    )
+
+    ready_ids = {
+        candidate.id for candidate in manager.list_ready_tasks(project_id=sample_project["id"])
+    }
+    blocked_ids = {
+        candidate.id for candidate in manager.list_blocked_tasks(project_id=sample_project["id"])
+    }
+    assert task.id not in ready_ids
+    assert task.id in blocked_ids
+
+    update_task(temp_db, task.id, labels=["llm-reviewed", "human-reviewed"])
+
+    ready_ids = {
+        candidate.id for candidate in manager.list_ready_tasks(project_id=sample_project["id"])
+    }
+    assert task.id in ready_ids
 
 
 def test_blocked_projection_includes_escalated_and_external_blockers(

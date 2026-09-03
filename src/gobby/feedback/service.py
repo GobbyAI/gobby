@@ -11,16 +11,27 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import subprocess
 from collections import Counter
 from collections.abc import Callable
+from datetime import datetime
+from difflib import SequenceMatcher
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.feedback.storage import FeedbackReviewStore, FeedbackRow
 from gobby.prompts.loader import PromptLoader
 from gobby.sessions.handoff import FEEDBACK_TASK_REF_RE
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
+from gobby.storage.project_checkouts import require_root
+from gobby.tasks.state_semantics import (
+    AWAITING_HUMAN_REVIEW_LABEL,
+    get_claimed_session_id,
+    is_task_closed,
+)
 from gobby.utils.json_helpers import json_dumps
+from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.config.sessions import FeedbackReviewConfig
@@ -28,12 +39,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 FEEDBACK_TASK_LABEL = "feedback-review"
+LLM_REVIEWED_LABEL = "llm-reviewed"
+POSSIBLY_FIXED_LABEL = "possibly-fixed"
+UNVERIFIED_PREMISE_LABEL = "unverified-premise"
 FINDINGS_EPIC_TITLE = "[Gobby Feedback - Reviewed Findings]"
 GOBBY_PROJECT_NAME = "gobby"
 _RESOLVED_DISPOSITIONS = ("filed-task", "fixed")
 DISTILL_TOTAL_DEADLINE_SECONDS = 900.0
-_DEDUP_LOOKUP_LIMIT = 20
+_DEDUP_LOOKUP_PAGE_SIZE = 200
+_THEME_SIMILARITY_THRESHOLD = 0.72
 _CLASSIFICATIONS = ("defect", "guidance-gap", "noise", "praise")
+_OBSERVATION_LINE_RE = re.compile(
+    r"(?:Observations|Additional observations) \(session_feedback\.id\):\s*([^\n]+)",
+    re.IGNORECASE,
+)
+_THEME_LINE_RE = re.compile(r"^Theme:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 
 FEEDBACK_FINDINGS_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -44,6 +64,7 @@ FEEDBACK_FINDINGS_SCHEMA: dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "observation_ids": {"type": "array", "items": {"type": "string"}},
+                    "cited_paths": {"type": "array", "items": {"type": "string"}},
                     "theme": {"type": "string"},
                     "classification": {"type": "string", "enum": list(_CLASSIFICATIONS)},
                     "proposed_task": {
@@ -59,7 +80,13 @@ FEEDBACK_FINDINGS_SCHEMA: dict[str, Any] = {
                     },
                     "digest_note": {"type": "string"},
                 },
-                "required": ["observation_ids", "theme", "classification", "digest_note"],
+                "required": [
+                    "observation_ids",
+                    "cited_paths",
+                    "theme",
+                    "classification",
+                    "digest_note",
+                ],
                 "additionalProperties": False,
             },
         }
@@ -94,7 +121,9 @@ class ReviewTaskManagerProtocol(Protocol):
         project_id: str | None = ...,
         closed: bool | None = ...,
         title_like: str | None = ...,
+        label: str | None = ...,
         limit: int = ...,
+        offset: int = ...,
     ) -> list[Any]: ...
 
     def get_task(self, task_id: str, project_id: str | None = None) -> Any | None: ...
@@ -112,6 +141,8 @@ class ReviewTaskManagerProtocol(Protocol):
         parent_task_id: str | None = ...,
         task_type: str = ...,
     ) -> Any: ...
+
+    def update_task(self, task_id: str, *, description: str) -> Any: ...
 
 
 class FeedbackReviewService:
@@ -144,7 +175,7 @@ class FeedbackReviewService:
         )
         try:
             findings = await self._distill(rows)
-            actions = await self._apply_actions(findings, dry_run=dry_run)
+            actions = await self._apply_actions(findings, rows, dry_run=dry_run)
             if not dry_run:
                 actions["rows_marked_reviewed"] = self.store.mark_reviewed(
                     [row.id for row in rows], run_id
@@ -199,7 +230,13 @@ class FeedbackReviewService:
             raise ValueError("feedback.review response missing 'clusters' list")
         return {"clusters": [cluster for cluster in clusters if isinstance(cluster, dict)]}
 
-    async def _apply_actions(self, findings: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+    async def _apply_actions(
+        self,
+        findings: dict[str, Any],
+        rows: list[FeedbackRow],
+        *,
+        dry_run: bool,
+    ) -> dict[str, Any]:
         """File deduplicated tasks for actionable clusters; the LLM never writes."""
         actionable = [
             cluster
@@ -222,26 +259,73 @@ class FeedbackReviewService:
             return actions
         epic_id = await asyncio.to_thread(self._findings_epic_id, project_id)
         actions["epic_task_id"] = epic_id
+        open_tasks = await asyncio.to_thread(self._open_tasks, project_id)
+        rows_by_id = {row.id: row for row in rows}
+        repo_root: Path | None = None
 
-        seen_titles: set[str] = set()
         for cluster in actionable[: self.config.max_tasks_per_run]:
             proposed = cluster["proposed_task"]
             title = str(proposed.get("title") or "").strip()
             if not title:
                 continue
-            title_key = title.casefold()
-            if title_key in seen_titles or await asyncio.to_thread(
-                self._has_open_task_titled, project_id, title
-            ):
+            observation_ids = _cluster_observation_ids(cluster)
+            duplicate = _find_open_duplicate(open_tasks, cluster, title)
+            if duplicate is not None:
+                await asyncio.to_thread(
+                    self._append_observation_ids,
+                    duplicate,
+                    observation_ids,
+                )
                 actions["deduplicated"] += 1
                 continue
-            seen_titles.add(title_key)
-            labels = [FEEDBACK_TASK_LABEL]
+
+            labels = [FEEDBACK_TASK_LABEL, LLM_REVIEWED_LABEL, AWAITING_HUMAN_REVIEW_LABEL]
             if cluster.get("classification") == "guidance-gap":
                 labels.append("needs-decision")
+            proposed_priority = proposed.get("priority")
+            priority = int(proposed_priority) if isinstance(proposed_priority, int) else 2
+            cited_paths = _cluster_cited_paths(cluster)
+            missing_paths: list[str] = []
+            newest_touching_commit: str | None = None
+            if cited_paths:
+                if repo_root is None:
+                    repo_root = await asyncio.to_thread(self._gobby_repo_root, project_id)
+                missing_paths = await asyncio.to_thread(
+                    _missing_paths_at_head,
+                    repo_root,
+                    cited_paths,
+                )
+                if missing_paths:
+                    labels.append(UNVERIFIED_PREMISE_LABEL)
+                    priority = 3
+
+                newest_observation_at = _newest_observation_at(observation_ids, rows_by_id)
+                newest_touch = await asyncio.to_thread(
+                    _newest_touching_commit,
+                    repo_root,
+                    cited_paths,
+                )
+                if (
+                    newest_touch is not None
+                    and newest_observation_at is not None
+                    and newest_touch[1] > newest_observation_at
+                ):
+                    newest_touching_commit = newest_touch[0]
+                    labels.append(POSSIBLY_FIXED_LABEL)
+
             task = await asyncio.to_thread(
-                self._create_task, project_id, epic_id, title, cluster, proposed, labels
+                self._create_task,
+                project_id,
+                epic_id,
+                title,
+                cluster,
+                proposed,
+                labels,
+                priority,
+                missing_paths,
+                newest_touching_commit,
             )
+            open_tasks.append(task)
             actions["filed"].append(
                 {"task_id": str(getattr(task, "id", "")), "title": title, "labels": labels}
             )
@@ -278,7 +362,7 @@ class FeedbackReviewService:
             project_id=project_id,
             closed=False,
             title_like=FINDINGS_EPIC_TITLE,
-            limit=_DEDUP_LOOKUP_LIMIT,
+            limit=_DEDUP_LOOKUP_PAGE_SIZE,
         )
         title_key = FINDINGS_EPIC_TITLE.casefold()
         for candidate in candidates:
@@ -298,19 +382,41 @@ class FeedbackReviewService:
         )
         return str(epic.id)
 
-    def _has_open_task_titled(self, project_id: str, title: str) -> bool:
+    def _open_tasks(self, project_id: str) -> list[Any]:
         assert self.task_manager is not None
-        candidates = self.task_manager.list_tasks(
-            project_id=project_id,
-            closed=False,
-            title_like=title,
-            limit=_DEDUP_LOOKUP_LIMIT,
-        )
-        title_key = title.casefold()
-        return any(
-            str(getattr(candidate, "title", "")).strip().casefold() == title_key
-            for candidate in candidates
-        )
+        tasks: list[Any] = []
+        offset = 0
+        while True:
+            page = self.task_manager.list_tasks(
+                project_id=project_id,
+                closed=False,
+                limit=_DEDUP_LOOKUP_PAGE_SIZE,
+                offset=offset,
+            )
+            tasks.extend(page)
+            if len(page) < _DEDUP_LOOKUP_PAGE_SIZE:
+                return tasks
+            offset += len(page)
+
+    def _gobby_repo_root(self, project_id: str) -> Path:
+        return Path(require_root(self.db, project_id, require_machine_id()))
+
+    def _append_observation_ids(self, task: Any, observation_ids: list[str]) -> None:
+        assert self.task_manager is not None
+        description = str(getattr(task, "description", "") or "")
+        attached = _description_observation_ids(description)
+        new_ids = [
+            observation_id for observation_id in observation_ids if observation_id not in attached
+        ]
+        if not new_ids:
+            return
+        suffix = f"Additional observations (session_feedback.id): {', '.join(new_ids)}"
+        updated_description = f"{description.rstrip()}\n{suffix}".strip()
+        self.task_manager.update_task(str(task.id), description=updated_description)
+        try:
+            task.description = updated_description
+        except (AttributeError, TypeError):
+            pass
 
     def _create_task(
         self,
@@ -320,14 +426,21 @@ class FeedbackReviewService:
         cluster: dict[str, Any],
         proposed: dict[str, Any],
         labels: list[str],
+        priority: int,
+        missing_paths: list[str],
+        newest_touching_commit: str | None,
     ) -> Any:
         assert self.task_manager is not None
-        priority = proposed.get("priority")
         return self.task_manager.create_task(
             project_id,
             title,
-            _task_description(cluster, proposed),
-            priority=int(priority) if isinstance(priority, int) else 2,
+            _task_description(
+                cluster,
+                proposed,
+                missing_paths=missing_paths,
+                newest_touching_commit=newest_touching_commit,
+            ),
+            priority=priority,
             labels=labels,
             category="research",
             parent_task_id=epic_id,
@@ -339,21 +452,171 @@ class FeedbackReviewService:
         )
 
 
-def _task_description(cluster: dict[str, Any], proposed: dict[str, Any]) -> str:
+def _task_description(
+    cluster: dict[str, Any],
+    proposed: dict[str, Any],
+    *,
+    missing_paths: list[str] | None = None,
+    newest_touching_commit: str | None = None,
+) -> str:
     observation_ids = ", ".join(str(oid) for oid in cluster.get("observation_ids", []))
-    return (
+    cited_paths = ", ".join(_cluster_cited_paths(cluster))
+    description = (
         f"{proposed.get('description', '')}\n\n"
         f"Filed by the session-feedback review loop.\n"
         f"Theme: {cluster.get('theme', '')}\n"
         f"Classification: {cluster.get('classification', '')}\n"
         f"Observations (session_feedback.id): {observation_ids}"
-    ).strip()
+    )
+    if cited_paths:
+        description += f"\nCited repository paths: {cited_paths}"
+    if missing_paths:
+        description += f"\nPremise verification: missing at HEAD: {', '.join(missing_paths)}"
+    if newest_touching_commit:
+        description += (
+            "\nRecency check: possibly fixed by newest commit touching cited paths: "
+            f"{newest_touching_commit}"
+        )
+    return description.strip()
+
+
+def _cluster_observation_ids(cluster: dict[str, Any]) -> list[str]:
+    raw_ids = cluster.get("observation_ids")
+    if not isinstance(raw_ids, list):
+        return []
+    return list(dict.fromkeys(str(value).strip() for value in raw_ids if str(value).strip()))
+
+
+def _cluster_cited_paths(cluster: dict[str, Any]) -> list[str]:
+    raw_paths = cluster.get("cited_paths")
+    if not isinstance(raw_paths, list):
+        return []
+    return list(dict.fromkeys(str(value).strip() for value in raw_paths if str(value).strip()))
+
+
+def _description_observation_ids(description: str) -> set[str]:
+    attached: set[str] = set()
+    for match in _OBSERVATION_LINE_RE.finditer(description):
+        attached.update(value.strip() for value in match.group(1).split(",") if value.strip())
+    return attached
+
+
+def _description_theme(description: str) -> str:
+    match = _THEME_LINE_RE.search(description)
+    return match.group(1).strip() if match else ""
+
+
+def _normalized_theme(value: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
+
+
+def _themes_match(first: str, second: str) -> bool:
+    normalized_first = _normalized_theme(first)
+    normalized_second = _normalized_theme(second)
+    if not normalized_first or not normalized_second:
+        return False
+    return (
+        SequenceMatcher(None, normalized_first, normalized_second).ratio()
+        >= _THEME_SIMILARITY_THRESHOLD
+    )
+
+
+def _find_open_duplicate(candidates: list[Any], cluster: dict[str, Any], title: str) -> Any | None:
+    observation_ids = set(_cluster_observation_ids(cluster))
+    theme = str(cluster.get("theme") or "")
+    for candidate in candidates:
+        if str(getattr(candidate, "task_type", "task")) == "epic":
+            continue
+        candidate_description = str(getattr(candidate, "description", "") or "")
+        if observation_ids & _description_observation_ids(candidate_description):
+            return candidate
+        if _themes_match(theme, _description_theme(candidate_description)):
+            return candidate
+        if _themes_match(title, str(getattr(candidate, "title", "") or "")):
+            return candidate
+    return None
+
+
+def _repo_relative_path(value: str) -> str | None:
+    candidate = PurePosixPath(value.replace("\\", "/"))
+    if candidate.is_absolute() or not candidate.parts or ".." in candidate.parts:
+        return None
+    normalized = candidate.as_posix()
+    return normalized if normalized not in {"", "."} else None
+
+
+def _run_git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(repo_root), *args],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=30,
+    )
+
+
+def _require_git_head(repo_root: Path) -> None:
+    result = _run_git(repo_root, "rev-parse", "--verify", "HEAD")
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "unknown git error"
+        raise RuntimeError(f"unable to verify feedback paths at HEAD: {detail}")
+
+
+def _missing_paths_at_head(repo_root: Path, cited_paths: list[str]) -> list[str]:
+    _require_git_head(repo_root)
+    missing: list[str] = []
+    for cited_path in cited_paths:
+        repo_path = _repo_relative_path(cited_path)
+        if repo_path is None:
+            missing.append(cited_path)
+            continue
+        result = _run_git(repo_root, "cat-file", "-e", f"HEAD:{repo_path}")
+        if result.returncode != 0:
+            missing.append(cited_path)
+    return missing
+
+
+def _newest_touching_commit(
+    repo_root: Path,
+    cited_paths: list[str],
+) -> tuple[str, datetime] | None:
+    repo_paths = [path for value in cited_paths if (path := _repo_relative_path(value))]
+    if not repo_paths:
+        return None
+    result = _run_git(
+        repo_root,
+        "log",
+        "-1",
+        "--format=%H%x00%cI",
+        "--",
+        *repo_paths,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "unknown git error"
+        raise RuntimeError(f"unable to check feedback path recency: {detail}")
+    payload = result.stdout.strip()
+    if not payload:
+        return None
+    commit_sha, separator, committed_at = payload.partition("\x00")
+    if not separator:
+        raise RuntimeError("unable to check feedback path recency: malformed git log output")
+    return commit_sha, datetime.fromisoformat(committed_at)
+
+
+def _newest_observation_at(
+    observation_ids: list[str],
+    rows_by_id: dict[str, FeedbackRow],
+) -> datetime | None:
+    observed_at = [rows_by_id[value].created_at for value in observation_ids if value in rows_by_id]
+    return max(observed_at) if observed_at else None
 
 
 def _render_rows_json(rows: list[FeedbackRow]) -> str:
     payload = [
         {
             "id": row.id,
+            "session_id": row.session_id,
+            "source": row.source,
             "kind": row.kind,
             "kind_other_label": row.kind_other_label,
             "evidence": row.evidence,

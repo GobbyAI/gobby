@@ -54,6 +54,41 @@ GCODE_SEARCH_COMMANDS = frozenset(
     ("grep", "search", "search-symbol", "search-text", "search-content")
 )
 MAX_NARROW_SOURCE_LINES = 40
+_FIND_FILESYSTEM_ONLY_PREDICATES = frozenset(
+    {
+        "-amin",
+        "-anewer",
+        "-atime",
+        "-cmin",
+        "-cnewer",
+        "-ctime",
+        "-delete",
+        "-empty",
+        "-exec",
+        "-execdir",
+        "-executable",
+        "-fls",
+        "-fprint",
+        "-fprintf",
+        "-fstype",
+        "-inum",
+        "-links",
+        "-ls",
+        "-mmin",
+        "-mount",
+        "-mtime",
+        "-newer",
+        "-ok",
+        "-okdir",
+        "-perm",
+        "-printf",
+        "-readable",
+        "-samefile",
+        "-size",
+        "-writable",
+        "-xdev",
+    }
+)
 
 
 def shell_command_name(command: str) -> str:
@@ -131,15 +166,13 @@ def source_read_navigation_metadata(
 def search_navigation_metadata(paths: Sequence[str] = ()) -> dict[str, Any]:
     """Return search navigation metadata for a search over ``paths``.
 
-    A search that names only non-source files (a plan, a log, a config) is
-    narrow, mirroring the source-read rule; an unscoped search or one that
-    names a directory may reach source and is broad.
+    Gcode content search covers safe project text in addition to AST-supported
+    source files. Path scope later decides whether the targets belong to an
+    indexed checkout.
     """
     return {
         "canonical_code_navigation_action": "search",
-        "canonical_code_navigation_broad": (
-            not paths or any(_may_hold_source(path) for path in paths)
-        ),
+        "canonical_code_navigation_broad": True,
     }
 
 
@@ -151,6 +184,20 @@ def enumerate_navigation_metadata(paths: Sequence[str] = ()) -> dict[str, Any]:
             not paths or any(_may_hold_source(path) for path in paths)
         ),
     }
+
+
+def find_navigation_metadata(parts: Sequence[str], paths: Sequence[str] = ()) -> dict[str, Any]:
+    """Return navigation metadata for a ``find`` command.
+
+    Name, path, type, and depth predicates describe indexed-tree navigation and
+    map to ``gcode tree``. Predicates that depend on live filesystem metadata,
+    exact output formatting, or side effects remain ordinary shell operations.
+    """
+    metadata = enumerate_navigation_metadata(paths)
+    metadata["canonical_code_navigation_gcode_supported"] = not any(
+        part in _FIND_FILESYSTEM_ONLY_PREDICATES or part.startswith("-newer") for part in parts[1:]
+    )
+    return metadata
 
 
 def gcode_navigation_metadata(parts: list[str]) -> tuple[str, dict[str, Any]] | None:
