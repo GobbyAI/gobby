@@ -13,6 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from gobby.agents.completion_subscribers import subscribe_agent_completion
 from gobby.agents.isolation import (
     CloneIsolationHandler,
     IsolationHandler,
@@ -25,10 +26,11 @@ from gobby.agents.isolation import (
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.resume_metadata import build_resume_metadata
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
-from gobby.agents.spawn import cleanup_unlaunched_spawn, prepare_terminal_spawn
+from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
 from gobby.agents.spawn_models import SpawnRequest, resolve_terminal_backend
+from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.providers.version_gate import peek_agy_support
 from gobby.tasks.state_semantics import (
@@ -72,6 +74,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_spawn_background_tasks: dict[str, asyncio.Task[None]] = {}
+
 
 def _parent_session_ref(session_manager: Any | None, parent_session_id: str) -> str:
     """Return the coordinator's ``#N`` ref so a leaf can address it by either form."""
@@ -100,6 +104,7 @@ async def spawn_agent_impl(
     base_branch: str | None = None,
     clone_id: str | None = None,  # Reuse existing clone instead of creating new isolation
     worktree_id: str | None = None,  # Reuse existing worktree instead of creating new isolation
+    cleanup_isolation_on_failure: bool = False,
     # Storage/managers for isolation
     worktree_storage: Any | None = None,
     git_manager: Any | None = None,
@@ -123,6 +128,7 @@ async def spawn_agent_impl(
     session_manager: Any | None = None,  # SessionManager
     db: Any | None = None,  # HubDatabase
     completion_registry: Any | None = None,
+    notify_parent_on_completion: bool = False,
     daemon_config: Any | None = None,  # DaemonConfig
     code_index: Any | None = None,  # CodeIndexContext
     held_task_mutex: Any | None = None,
@@ -464,7 +470,6 @@ async def spawn_agent_impl(
         )
         context_handler = handler
 
-    cleanup_isolation_on_failure = not (worktree_id or clone_id)
     if isolation_ctx is None:
         try:
             isolation_ctx = await handler.prepare_environment(spawn_config)
@@ -624,6 +629,9 @@ async def spawn_agent_impl(
         child_session_manager = runner.child_session_manager
         if child_session_manager is None:
             task_spawn_lease.release_unattached()
+            await cleanup_created_isolation(
+                handler, spawn_config, cleanup=cleanup_isolation_on_failure
+            )
             return {"success": False, "error": "Session manager is required to spawn an agent"}
         try:
             prepared_spawn = prepare_terminal_spawn(
@@ -666,6 +674,32 @@ async def spawn_agent_impl(
                 "error": str(exc),
                 "reasoning": reasoning.to_dict(),
             }
+        spawn_identity = {
+            "run_id": run_id,
+            "worktree_id": isolation_ctx.worktree_id,
+            "branch_name": isolation_ctx.branch_name,
+        }
+        attach_error = task_spawn_lease.attach(run_id)
+        if attach_error is not None:
+            task_spawn_lease.release_unattached()
+            error = f"task spawn mutex attach failed: {attach_error}"
+            await cleanup_failed_spawn(
+                runner,
+                run_id,
+                error,
+                handler,
+                spawn_config,
+                completion_registry=completion_registry,
+                cleanup_isolation=cleanup_isolation_on_failure,
+                task_manager=task_manager,
+                child_session_id=prepared_spawn.session_id,
+            )
+            return {
+                "success": False,
+                "error": error,
+                **spawn_identity,
+                "reasoning": reasoning.to_dict(),
+            }
         if db is not None and agent_body is not None and agent_body.step_workflow is not None:
             try:
                 persist_initial_step_instance_if_resolved(
@@ -676,21 +710,21 @@ async def spawn_agent_impl(
                     initial_variables=effective_initial_variables,
                 )
             except Exception as exc:
-                cleanup_unlaunched_spawn(
-                    child_session_manager,
-                    session_id=prepared_spawn.session_id,
-                    agent_run_id=prepared_spawn.agent_run_id,
-                    prompt_file=prepared_spawn.prompt_file,
-                    managed_credential=prepared_spawn.managed_credential,
-                    credential_manager=runner.run_storage.credential_manager,
-                )
-                task_spawn_lease.release_unattached()
-                await cleanup_created_isolation(
-                    handler, spawn_config, cleanup=cleanup_isolation_on_failure
+                await cleanup_failed_spawn(
+                    runner,
+                    run_id,
+                    str(exc),
+                    handler,
+                    spawn_config,
+                    completion_registry=completion_registry,
+                    cleanup_isolation=cleanup_isolation_on_failure,
+                    task_manager=task_manager,
+                    child_session_id=prepared_spawn.session_id,
                 )
                 return {
                     "success": False,
                     "error": str(exc),
+                    **spawn_identity,
                     "reasoning": reasoning.to_dict(),
                 }
         spawn_request = SpawnRequest(
@@ -741,23 +775,12 @@ async def spawn_agent_impl(
             write_coordinator=getattr(runner, "write_coordinator", None),
             terminal_backend=resolved_terminal_backend,
         )
-        try:
-            spawn_result = await execute_spawn(spawn_request)
-            remember_spawn_pid(spawn_result.pid, run_id=run_id)
-        except Exception as exc:
-            cleanup_unlaunched_spawn(
-                child_session_manager,
-                session_id=prepared_spawn.session_id,
-                agent_run_id=prepared_spawn.agent_run_id,
-                prompt_file=prepared_spawn.prompt_file,
-                managed_credential=prepared_spawn.managed_credential,
-                credential_manager=runner.run_storage.credential_manager,
-            )
-            task_spawn_lease.release_unattached()
+
+        async def _spawn_failure(error: str) -> dict[str, Any]:
             await cleanup_failed_spawn(
                 runner,
                 run_id,
-                str(exc),
+                error,
                 handler,
                 spawn_config,
                 completion_registry=completion_registry,
@@ -767,29 +790,85 @@ async def spawn_agent_impl(
             )
             return {
                 "success": False,
-                "error": str(exc),
+                "error": error,
+                **spawn_identity,
                 "reasoning": reasoning.to_dict(),
             }
-        return await finalize_executed_spawn(
-            runner=runner,
-            run_id=run_id,
-            spawn_result=spawn_result,
-            spawn_request=spawn_request,
-            isolation_ctx=isolation_ctx,
-            effective_isolation=effective_isolation,
-            base_commit_sha=base_commit_sha,
-            handler=handler,
-            spawn_config=spawn_config,
-            completion_registry=completion_registry,
-            cleanup_isolation_on_failure=cleanup_isolation_on_failure,
-            task_manager=task_manager,
-            task_spawn_lease=task_spawn_lease,
-            parent_session_id=parent_session_id,
-            effective_provider=effective_provider,
-            resolved_task_id=resolved_task_id,
-            task_seq_num=task_seq_num,
-            db=db,
-            agent_body=agent_body,
-            effective_initial_variables=effective_initial_variables,
-            reasoning=reasoning,
-        )
+
+        async def _execute_spawn_phase() -> dict[str, Any]:
+            try:
+                spawn_result = await execute_spawn(spawn_request)
+                remember_spawn_pid(spawn_result.pid, run_id=run_id)
+                return await finalize_executed_spawn(
+                    runner=runner,
+                    run_id=run_id,
+                    spawn_result=spawn_result,
+                    spawn_request=spawn_request,
+                    isolation_ctx=isolation_ctx,
+                    effective_isolation=effective_isolation,
+                    base_commit_sha=base_commit_sha,
+                    handler=handler,
+                    spawn_config=spawn_config,
+                    completion_registry=completion_registry,
+                    cleanup_isolation_on_failure=cleanup_isolation_on_failure,
+                    task_manager=task_manager,
+                    parent_session_id=parent_session_id,
+                    effective_provider=effective_provider,
+                    resolved_task_id=resolved_task_id,
+                    task_seq_num=task_seq_num,
+                    db=db,
+                    agent_body=agent_body,
+                    effective_initial_variables=effective_initial_variables,
+                    reasoning=reasoning,
+                )
+            except asyncio.CancelledError:
+                await _spawn_failure("Agent spawn cancelled")
+                raise
+            except Exception as exc:
+                return await _spawn_failure(str(exc))
+
+        async def _run_spawn_phase() -> None:
+            result = await _execute_spawn_phase()
+            if not result.get("success"):
+                logger.warning(
+                    "Background agent boot failed for run %s: %s",
+                    run_id,
+                    result.get("error", "unknown error"),
+                )
+
+        if notify_parent_on_completion and completion_registry and parent_session_id:
+            try:
+                subscribe_agent_completion(
+                    completion_registry=completion_registry,
+                    run_id=run_id,
+                    subscriber_session_id=parent_session_id,
+                    db=db,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to subscribe parent session to agent completion for run %s",
+                    run_id,
+                    exc_info=True,
+                )
+
+        try:
+            schedule_background_task(
+                _spawn_background_tasks,
+                run_id,
+                _run_spawn_phase,
+                name=f"gobby-agent-spawn-{run_id}",
+                logger=logger,
+                description="Agent spawn background task",
+            )
+        except RuntimeError as exc:
+            return await _spawn_failure(str(exc))
+
+        return {
+            "success": True,
+            "status": "starting",
+            **spawn_identity,
+            "child_session_id": prepared_spawn.session_id,
+            "isolation": effective_isolation,
+            "clone_id": isolation_ctx.clone_id,
+            "reasoning": reasoning.to_dict(),
+        }

@@ -44,6 +44,7 @@ from gobby.mcp_proxy.wait_tools import (
 )
 from gobby.storage.agent_resume import register_daemon_resume_waiter
 from gobby.storage.agents import AgentRun, AgentRunStatus
+from gobby.storage.tasks import TaskNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -703,11 +704,13 @@ def register_agent_query_tools(
         description=(
             "List active agent runs. Defaults to build-wide scope. Pass "
             "scope='parent' or parent_session_id to filter by parent session; "
+            "pass task_id to filter by task; "
             "pass status='running' to match `gobby agents runs list --status running`."
         ),
     )
     async def list_running_agents(
         parent_session_id: str | None = None,
+        task_id: str | None = None,
         scope: str = "all",
         status: str = "active",
         limit: int = 100,
@@ -729,6 +732,23 @@ def register_agent_query_tools(
             return {"success": False, "error": "status must be one of: active, pending, running"}
 
         resolved_parent_id = None
+        resolved_task_id = None
+        if task_id is not None:
+            if ctx.task_manager is None:
+                return {"success": False, "error": "Task manager is required to filter by task_id"}
+            project_context = ctx.get_project_context()
+            project_id = project_context.get("id") if project_context else None
+            try:
+                from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
+
+                resolved_task_id = resolve_task_id_for_mcp(
+                    ctx.task_manager,
+                    task_id,
+                    str(project_id) if project_id else None,
+                )
+            except (TaskNotFoundError, ValueError) as exc:
+                return {"success": False, "error": f"Invalid task_id: {exc}"}
+        task_ids = [resolved_task_id] if resolved_task_id is not None else None
         if scope_key == "parent":
             effective_parent_ref = parent_session_id or ctx.get_current_session_id()
             if not effective_parent_ref:
@@ -741,15 +761,40 @@ def register_agent_query_tools(
             except ValueError as e:
                 return {"success": False, "error": str(e)}
             if status_key == "active":
-                runs = ctx.agent_run_manager.list_by_parent(resolved_parent_id, limit=limit)
+                if task_ids is None:
+                    runs = ctx.agent_run_manager.list_by_parent(resolved_parent_id, limit=limit)
+                else:
+                    runs = ctx.agent_run_manager.list_by_parent(
+                        resolved_parent_id,
+                        limit=limit,
+                        task_ids=task_ids,
+                    )
             else:
-                runs = ctx.agent_run_manager.list_by_parent(
-                    resolved_parent_id,
-                    limit=limit,
-                    status=cast(AgentRunStatus, status_key),
-                )
+                parent_status = cast(AgentRunStatus, status_key)
+                if task_ids is None:
+                    runs = ctx.agent_run_manager.list_by_parent(
+                        resolved_parent_id,
+                        limit=limit,
+                        status=parent_status,
+                    )
+                else:
+                    runs = ctx.agent_run_manager.list_by_parent(
+                        resolved_parent_id,
+                        limit=limit,
+                        status=parent_status,
+                        task_ids=task_ids,
+                    )
         elif status_key == "active":
-            runs = ctx.agent_run_manager.list_active_global(limit=limit)
+            if task_ids is None:
+                runs = ctx.agent_run_manager.list_active_global(limit=limit)
+            else:
+                runs = ctx.agent_run_manager.list_active_global(limit=limit, task_ids=task_ids)
+        elif resolved_task_id is not None:
+            runs = ctx.agent_run_manager.list_by_status(
+                status=status_key,
+                limit=limit,
+                task_ids=task_ids,
+            )
         elif status_key == "running":
             runs = ctx.agent_run_manager.list_running(limit=limit)
         else:
@@ -763,6 +808,7 @@ def register_agent_query_tools(
             "scope": scope_key,
             "status": status_key,
             "parent_session_id": resolved_parent_id,
+            "task_id": resolved_task_id,
         }
 
     @registry.tool(

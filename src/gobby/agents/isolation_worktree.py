@@ -189,9 +189,6 @@ class WorktreeIsolationHandler(IsolationHandler):
             provider=config.provider,
         )
 
-        # Success — clear partial state
-        self._partial_worktrees.pop(state_key, None)
-
         return IsolationContext(
             cwd=worktree.worktree_path,
             branch_name=worktree.branch_name,
@@ -203,8 +200,12 @@ class WorktreeIsolationHandler(IsolationHandler):
             },
         )
 
+    def commit_environment(self, config: SpawnConfig) -> None:
+        """Release rollback ownership after the agent run becomes running."""
+        self._partial_worktrees.pop(spawn_state_key(config), None)
+
     async def cleanup_environment(self, config: SpawnConfig) -> None:
-        """Clean up partially created worktree on prepare failure."""
+        """Clean up a newly created worktree that has not been committed."""
         partial_state = self._partial_worktrees.pop(spawn_state_key(config), None)
         if partial_state is None:
             logger.debug(
@@ -231,6 +232,14 @@ class WorktreeIsolationHandler(IsolationHandler):
                 logger.warning("Failed to clean up worktree %s: %s", worktree_path, e)
 
         if worktree_id:
+            try:
+                await asyncio.to_thread(
+                    TaskArtifactManager(self._worktree_storage.db).clear_worktree_references,
+                    worktree_id,
+                )
+                logger.info("Cleared task artifact references for worktree: %s", worktree_id)
+            except Exception as e:
+                logger.warning("Failed to clear task artifacts for worktree %s: %s", worktree_id, e)
             try:
                 await asyncio.to_thread(self._worktree_storage.delete, worktree_id)
                 logger.info("Cleaned up worktree storage record: %s", worktree_id)

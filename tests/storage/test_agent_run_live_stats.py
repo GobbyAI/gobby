@@ -121,13 +121,13 @@ def test_active_read_methods_use_child_session_stats(
         assert read_run.turns_used == 78, method
 
 
-def test_list_active_filters_by_task_ids_in_sql(
+def test_task_id_filters_apply_to_agent_run_list_queries(
     agent_manager: LocalAgentRunManager,
     session_manager: SessionManager,
     sample_project: dict,
     temp_db: HubDatabase,
 ) -> None:
-    """Task-scoped active-run lookup should only return matching task IDs."""
+    """Task-scoped run lookups should only return matching task IDs."""
     parent_id = _register_session(session_manager, sample_project, "parent-filter")
     task_manager = LocalTaskManager(temp_db)
     included_task = task_manager.create_task(
@@ -158,7 +158,15 @@ def test_list_active_filters_by_task_ids_in_sql(
     runs = agent_manager.list_active_global(task_ids=[included_task.id])
 
     assert [run.id for run in runs] == [included.id]
+    assert [
+        run.id for run in agent_manager.list_by_status("running", task_ids=[included_task.id])
+    ] == [included.id]
+    assert [
+        run.id for run in agent_manager.list_by_parent(parent_id, task_ids=[included_task.id])
+    ] == [included.id]
     assert agent_manager.list_active_global(task_ids=[]) == []
+    assert agent_manager.list_by_status("running", task_ids=[]) == []
+    assert agent_manager.list_by_parent(parent_id, task_ids=[]) == []
 
 
 def test_active_run_without_child_session_uses_parent_session_stats(

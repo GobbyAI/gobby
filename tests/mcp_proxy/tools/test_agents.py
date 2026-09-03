@@ -937,6 +937,35 @@ class TestListRunningAgents:
         runner.run_storage.list_active_global.assert_called_once_with(limit=100)
 
     @pytest.mark.asyncio
+    async def test_filters_running_agents_by_resolved_task_id(self) -> None:
+        runner = _make_runner_with_run_storage()
+        runner.run_storage.list_active_global.return_value = []
+        task_manager = MagicMock()
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks.resolve_task_id_for_mcp",
+                return_value="resolved-task-id",
+            ) as resolve_task,
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"id": "project-id"},
+            ),
+        ):
+            registry = create_agents_registry(runner, task_manager=task_manager)
+            list_running = registry._tools["list_running_agents"].func
+
+            result = await list_running(task_id="#42")
+
+        assert result["success"] is True
+        assert result["task_id"] == "resolved-task-id"
+        resolve_task.assert_called_once_with(task_manager, "#42", "project-id")
+        runner.run_storage.list_active_global.assert_called_once_with(
+            limit=100,
+            task_ids=["resolved-task-id"],
+        )
+
+    @pytest.mark.asyncio
     async def test_list_rows_have_only_compact_decision_fields(self) -> None:
         """Running-agent rows omit full record and resume state fields."""
         runner = _make_runner_with_run_storage()

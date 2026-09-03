@@ -137,6 +137,14 @@ class IsolationHandler(ABC):
             config: The same SpawnConfig passed to prepare_environment
         """
 
+    def commit_environment(self, config: SpawnConfig) -> None:
+        """Commit a prepared environment once its agent run is running.
+
+        Most handlers have no rollback state after preparation. Handlers that
+        retain rollback ownership override this hook and release it here.
+        """
+        return None
+
     @abstractmethod
     def build_context_prompt(self, original_prompt: str, ctx: IsolationContext) -> str:
         """

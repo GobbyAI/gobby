@@ -11,7 +11,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from gobby.agents.completion_subscribers import subscribe_agent_completion
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
@@ -314,6 +313,7 @@ def create_spawn_agent_registry(
         base_branch: str | None = None,
         clone_id: str | None = None,
         worktree_id: str | None = None,
+        cleanup_isolation_on_failure: bool = False,
         # Execution
         workflow: str | None = None,
         provider: str | None = None,
@@ -342,6 +342,7 @@ def create_spawn_agent_registry(
                     base_branch: Base branch for worktree/clone
                     clone_id: Existing clone ID to reuse
                     worktree_id: Existing worktree ID to reuse
+                    cleanup_isolation_on_failure: Delete freshly created isolation if boot fails
                     workflow: Workflow/pipeline to use
         provider: AI provider (claude/grok/qwen/codex/droid/agy)
                     model: Model to use
@@ -531,6 +532,7 @@ def create_spawn_agent_registry(
             base_branch=base_branch,
             clone_id=clone_id,
             worktree_id=worktree_id,
+            cleanup_isolation_on_failure=cleanup_isolation_on_failure,
             worktree_storage=worktree_storage,
             git_manager=git_manager,
             git_manager_resolver=git_manager_resolver,
@@ -550,33 +552,11 @@ def create_spawn_agent_registry(
             session_manager=session_manager,
             db=db,
             completion_registry=completion_registry,
+            notify_parent_on_completion=notify_parent_on_completion,
             daemon_config=config_resolver() if config_resolver is not None else None,
             code_index=code_index,
             terminal_backend=terminal_backend,
         )
-
-        # Auto-subscribe the declared parent session to agent completion events.
-        run_id = result.get("run_id")
-        if (
-            notify_parent_on_completion
-            and result.get("success")
-            and run_id
-            and completion_registry
-            and resolved_parent_session_id
-        ):
-            try:
-                subscribe_agent_completion(
-                    completion_registry=completion_registry,
-                    run_id=str(run_id),
-                    subscriber_session_id=resolved_parent_session_id,
-                    db=db,
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to subscribe parent session to agent completion for run %s",
-                    run_id,
-                    exc_info=True,
-                )
 
         return result
 

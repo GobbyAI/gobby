@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,6 +23,14 @@ def _stub_prelaunch_prepare(monkeypatch: pytest.MonkeyPatch) -> None:
         "gobby.mcp_proxy.tools.spawn_agent._implementation.prepare_terminal_spawn",
         lambda *args, **kwargs: prepared_spawn(),
     )
+
+
+async def _drain_spawn_background_tasks() -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
+
+    tasks = tuple(_spawn_background_tasks.values())
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
 class TestSpawnAgentImplErrorBranches:
@@ -293,6 +302,67 @@ class TestSpawnAgentImplErrorBranches:
             assert "prepare environment" in result["error"].lower()
 
     @pytest.mark.asyncio
+    async def test_missing_session_manager_cleans_fresh_isolation(self) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+
+        runner = MagicMock()
+        runner.can_spawn.return_value = (True, "ok", 0)
+        runner.child_session_manager = None
+        runner.run_storage = MagicMock()
+
+        prepared_context = IsolationContext(
+            cwd="/tmp/fresh-worktree",
+            branch_name="feature/fresh-worktree",
+            worktree_id="fresh-worktree-id",
+            isolation_type="worktree",
+            extra={"base_commit_sha": "base-sha"},
+        )
+        mock_handler = MagicMock()
+        mock_handler.prepare_environment = AsyncMock(return_value=prepared_context)
+        mock_handler.cleanup_environment = AsyncMock()
+        mock_handler.build_context_prompt.return_value = "isolated prompt"
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": "/path",
+                },
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler",
+                return_value=mock_handler,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
+                return_value=None,
+            ),
+        ):
+            result = await spawn_agent_impl(
+                terminal_backend="tmux",
+                prompt="test",
+                runner=runner,
+                provider="claude",
+                parent_session_id="sess-1",
+                isolation="worktree",
+                cleanup_isolation_on_failure=True,
+                git_manager=MagicMock(),
+                worktree_storage=MagicMock(),
+            )
+
+        assert result == {
+            "success": False,
+            "error": "Session manager is required to spawn an agent",
+        }
+        assert mock_handler.prepare_environment.await_count == 1
+        assert mock_handler.build_context_prompt.call_args.args == ("test", prepared_context)
+        assert mock_handler.cleanup_environment.await_count == 1
+        cleanup_config = mock_handler.cleanup_environment.await_args.args[0]
+        assert cleanup_config.project_id == "11111111-1111-4111-8111-111111110001"
+        assert cleanup_config.parent_session_id == "sess-1"
+
+    @pytest.mark.asyncio
     async def test_reused_worktree_persists_rebased_base_commit_sha(
         self, temp_db, sample_project, tmp_path
     ) -> None:
@@ -443,9 +513,10 @@ class TestSpawnAgentImplErrorBranches:
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
             )
+            await _drain_spawn_background_tasks()
 
         assert result["success"] is True
-        assert result["base_commit_sha"] == "base-sha"
+        assert result["status"] == "starting"
         sync.assert_awaited_once_with(
             git_manager=git_manager,
             worktree_path=str(worktree_path),
@@ -460,6 +531,7 @@ class TestSpawnAgentImplErrorBranches:
         spawn_request = mock_execute.await_args.args[0]
         assert spawn_request.cwd == str(worktree_path)
         assert spawn_request.worktree_id == "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"
+        assert spawn_request.initial_variables["base_commit_sha"] == "base-sha"
         assert (
             spawn_request.prompt
             == f"""Worktree context — you are working in an isolated git worktree, not the main repository.
@@ -530,8 +602,10 @@ test"""
                 clone_id="clone-1",
                 clone_storage=clone_storage,
             )
+            await _drain_spawn_background_tasks()
 
         assert result["success"] is True
+        assert result["status"] == "starting"
         spawn_request = mock_execute.await_args.args[0]
         assert spawn_request.cwd == str(clone_path)
         assert spawn_request.clone_id == "clone-1"
@@ -635,8 +709,10 @@ test"""
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
             )
+            await _drain_spawn_background_tasks()
 
         assert result["success"] is True
+        assert result["status"] == "starting"
         sync.assert_awaited_once_with(
             git_manager=git_manager,
             worktree_path=str(old_path),
@@ -732,8 +808,10 @@ test"""
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
             )
+            await _drain_spawn_background_tasks()
 
         assert result["success"] is True
+        assert result["status"] == "starting"
         assert events == ["sync", "repair", "spawn"]
         assert mock_execute.await_args.args[0].code_index_preflight_mode == "best_effort"
 
@@ -828,8 +906,10 @@ test"""
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
             )
+            await _drain_spawn_background_tasks()
 
         assert result["success"] is True
+        assert result["status"] == "starting"
         mock_execute.assert_awaited_once()
         spawn_request = mock_execute.await_args.args[0]
         assert spawn_request.cwd == str(worktree_path)
@@ -892,8 +972,10 @@ test"""
                 isolation="none",
                 initial_variables={"stage_name": "planning", "stage_state": stage_state},
             )
+            await _drain_spawn_background_tasks()
 
         assert result["success"] is True
+        assert result["status"] == "starting"
         mock_execute.assert_awaited_once()
         spawn_request = mock_execute.await_args.args[0]
         assert spawn_request.cwd == str(repo_path)
@@ -951,9 +1033,10 @@ test"""
                 isolation="none",
                 initial_variables={"stage_name": "planning", "stage_state": "in_progress"},
             )
+            await _drain_spawn_background_tasks()
 
-        assert result["success"] is False
-        assert result["error"].startswith("planner_code_index_unavailable:")
+        assert result["success"] is True
+        assert result["status"] == "starting"
         mock_execute.assert_awaited_once()
         execute_args = mock_execute.await_args
         assert execute_args is not None
@@ -1039,19 +1122,19 @@ test"""
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
             )
+            await _drain_spawn_background_tasks()
 
         assert result["success"] is True
-        assert result["warnings"] == [
-            {
-                "preflight": "code_index",
-                "cwd": str(worktree_path),
-                "message": "gcode_index_timeout:120s",
-            }
-        ]
+        assert result["status"] == "starting"
         mock_execute.assert_awaited_once()
         execute_args = mock_execute.await_args
         assert execute_args is not None
         spawn_request = execute_args.args[0]
+        assert spawn_request.code_index_preflight_warning == {
+            "preflight": "code_index",
+            "cwd": str(worktree_path),
+            "message": "gcode_index_timeout:120s",
+        }
         assert spawn_request.initial_variables["reused_worktree"] is True
         assert spawn_request.resume_metadata_json["initial_variables"]["reused_worktree"] is True
         assert spawn_request.code_index_preflight_mode == "best_effort"
@@ -1161,8 +1244,12 @@ test"""
                 parent_session_id="sess-1",
                 timeout=0,
             )
+            await _drain_spawn_background_tasks()
             assert result["success"] is True
-            assert "timeout" not in mock_execute.call_args.kwargs
+            assert result["status"] == "starting"
+            execute_call = mock_execute.await_args
+            assert execute_call is not None
+            assert execute_call.args[0].timeout_seconds is None
 
 
 class _RecordingWake:
