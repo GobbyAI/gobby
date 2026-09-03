@@ -76,8 +76,8 @@ step_workflow:
       mcp_error_policy: stay
       description: "Claim the assigned task"
       status_message: |
-        Claim assigned_task_id with claim_task. Spawn-time auto-claim may already
-        satisfy this step, so do not repeat the call after the workflow advances.
+        Spawned agents normally arrive after assigned_task_id is already claimed and
+        skip this step. If this step is active, claim assigned_task_id with claim_task.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -240,4 +240,3 @@ step_workflow:
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
         - "gobby-agents:end_agent_run"
-

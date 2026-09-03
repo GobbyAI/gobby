@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.storage.hub._ambient import ambient_transaction
+from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.enforcement.blocking import (
     canonical_gobby_tool_name,
@@ -127,6 +128,51 @@ class EnforcementCheckMixin:
         except TaskNotFoundError:
             return False
         return task.closed_at is not None
+
+    def _is_self_owned_claim_task(
+        self,
+        *,
+        session_id: str,
+        mcp_key: str,
+        tool_input: dict[str, Any],
+    ) -> bool:
+        """Return whether claim_task targets the active run's already-owned task."""
+        if mcp_key != "gobby-tasks:claim_task":
+            return False
+        handler_input = self._step_handler_tool_input(tool_input)
+        requested_ref = handler_input.get("task_id")
+        if not isinstance(requested_ref, str) or not requested_ref:
+            return False
+
+        active = self._active_agent_run(session_id)
+        if active is None:
+            return False
+        run, _storage = active
+        bound_task_id = getattr(run, "task_id", None)
+        if not isinstance(bound_task_id, str) or not bound_task_id:
+            return False
+
+        from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
+
+        task_manager = getattr(self, "_task_manager", None)
+        if task_manager is None:
+            db = getattr(self, "db", None)
+            if db is None:
+                return False
+            task_manager = LocalTaskManager(db)
+        try:
+            task = task_manager.get_task(bound_task_id)
+        except TaskNotFoundError:
+            return False
+        if get_claimed_session_id(task) != session_id:
+            return False
+
+        task_refs = {str(task.id)}
+        if isinstance(task.seq_num, int):
+            task_refs.update({str(task.seq_num), f"#{task.seq_num}"})
+        if isinstance(task.path_cache, str) and task.path_cache:
+            task_refs.add(task.path_cache)
+        return requested_ref in task_refs
 
     @staticmethod
     def _denial_scope(
@@ -446,7 +492,10 @@ class EnforcementCheckMixin:
             if canonical_tool not in {
                 canonical_gobby_tool_name(allowed) for allowed in step.allowed_tools
             }:
-                guidance = skill_load_block_guidance(step)
+                guidance = skill_load_block_guidance(
+                    step,
+                    {**variables, **instance.variables},
+                )
                 reason = (
                     f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                     f"Tool '{tool_name}' is not allowed in the '{step.name}' step.\n"
@@ -565,13 +614,38 @@ class EnforcementCheckMixin:
                             reason=reason,
                         )
 
+                if self._is_self_owned_claim_task(
+                    session_id=session_id,
+                    mcp_key=mcp_key,
+                    tool_input=tool_input,
+                ):
+                    self._reset_enforcement_denial_target(
+                        session_id,
+                        step,
+                        instance,
+                        allowed_target,
+                    )
+                    self._audit_step_tool_call(
+                        session_id,
+                        wf_name,
+                        step.name,
+                        tool_name,
+                        "allow",
+                        reason="claim_task targets the task already owned by this session",
+                        mcp_key=mcp_key,
+                    )
+                    return None
+
                 # Structured handoff preserves the active agent and is capability-neutral.
                 if mcp_tool_name == "set_handoff":
                     return None
 
                 if mcp_key and step.allowed_mcp_tools != "all":
                     if not self._mcp_tool_matches(mcp_key, step.allowed_mcp_tools):
-                        guidance = skill_load_block_guidance(step)
+                        guidance = skill_load_block_guidance(
+                            step,
+                            {**variables, **instance.variables},
+                        )
                         reason = (
                             f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                             f"MCP tool '{mcp_key}' is not allowed in the '{step.name}' step.\n"

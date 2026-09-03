@@ -48,8 +48,8 @@ prompts:
     project commands when the repository requires it.
 
     Additional skills:
-    After claiming the task, load development-discipline, restraint, and tasks
-    with gobby-skills. Then inspect the prompt's additional_skills list and call
+    Load development-discipline, restraint, and tasks with gobby-skills before
+    implementing. Then inspect the prompt's additional_skills list and call
     get_skill(name=<skill>) on gobby-skills for each entry before implementing.
     TDD-required leaves include test-driven-development in additional_skills.
 
@@ -92,7 +92,9 @@ step_workflow:
       mcp_error_policy: stay
       description: "Claim the assigned frontend leaf"
       status_message: |
-        Claim assigned_task_id with claim_task, then read it with get_task.
+        Spawned agents normally arrive after assigned_task_id is already claimed and
+        skip this step. If this step is active, claim assigned_task_id with claim_task,
+        then read it with get_task(brief=false).
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers

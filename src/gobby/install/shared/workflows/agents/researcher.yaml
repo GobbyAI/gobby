@@ -32,7 +32,7 @@ prompts:
     Your assigned task is in your session variables as assigned_task_id.
 
     Methodology:
-    After claiming and reading the task, load the `research` skill. Call
+    After reading the task, load the `research` skill. Call
     get_skill(name="research") on gobby-skills, then continue. Follow that
     methodology when drafting the `## Research Findings`.
 
@@ -83,7 +83,9 @@ step_workflow:
       mcp_error_policy: stay
       description: "Claim the assigned research task"
       status_message: |
-        Claim assigned_task_id with claim_task, then read it with get_task.
+        Spawned agents normally arrive after assigned_task_id is already claimed and
+        skip this step. If this step is active, claim assigned_task_id with claim_task,
+        then read it with get_task(brief=false).
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -155,4 +157,3 @@ step_workflow:
           variable: handoff_ready
           value: true
       transitions: []
-

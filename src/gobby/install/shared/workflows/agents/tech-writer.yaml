@@ -40,8 +40,8 @@ prompts:
     Your task ID is in assigned_task_id.
 
     Methodology:
-    After claiming the task, load the required session skills `tech-writer` and
-    `tasks` with get_skill on gobby-skills, then continue. Follow the
+    Load the required session skills `tech-writer` and `tasks` with get_skill on
+    gobby-skills before editing docs. Follow the
     tech-writer documentation workflow before editing docs.
 
     Handoff:
@@ -88,7 +88,9 @@ step_workflow:
       mcp_error_policy: stay
       description: "Claim the assigned docs leaf"
       status_message: |
-        Claim assigned_task_id with claim_task, then read it with get_task.
+        Spawned agents normally arrive after assigned_task_id is already claimed and
+        skip this step. If this step is active, claim assigned_task_id with claim_task,
+        then read it with get_task(brief=false).
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers

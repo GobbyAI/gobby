@@ -72,6 +72,17 @@ class BlockGate:
     delivery: str = "eager"
 
 
+def _repeat_block_reason(rule_name: str, reason: str) -> str:
+    """Collapse repeated detail while retaining its precise scope and recovery."""
+    first_line = reason.partition("\n")[0]
+    default_header = f"Rule enforced by Gobby: [{rule_name}]"
+    header = first_line if first_line.startswith("Rule enforced by Gobby: [") else default_header
+    return (
+        f"{header} (full reason shown earlier this turn — scroll up)."
+        + recovery_directive_suffix(reason)
+    )
+
+
 def _apply_staged_effects_metadata(meta: dict[str, Any], evaluation: EvaluationContext) -> None:
     """Copy worker-staged and on_receipt variable mutations onto the response."""
 
@@ -290,11 +301,7 @@ class EvaluationMixin:
                 evaluation.variables["_block_reasons_shown"] = shown
             block_signature = block_reason_signature(resolved_rule_name, response.reason)
             if block_signature in shown:
-                response.reason = (
-                    f"Rule enforced by Gobby: [{resolved_rule_name}] "
-                    "(full reason shown earlier this turn — scroll up)."
-                    + recovery_directive_suffix(response.reason)
-                )
+                response.reason = _repeat_block_reason(resolved_rule_name, response.reason)
             else:
                 shown.append(block_signature)
         if span.is_recording():

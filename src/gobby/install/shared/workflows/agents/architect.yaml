@@ -32,7 +32,7 @@ prompts:
     Your assigned task is in your session variables as assigned_task_id.
 
     Methodology:
-    After claiming and reading the task, load the `architecture` skill. Call
+    After reading the task, load the `architecture` skill. Call
     get_skill(name="architecture") on gobby-skills, then continue. It covers
     both methodologies — follow it when drafting the `## Architecture Brief`
     and `## Test Architecture`.
@@ -87,7 +87,9 @@ step_workflow:
       mcp_error_policy: stay
       description: "Claim the assigned architecture task"
       status_message: |
-        Claim assigned_task_id with claim_task, then read it with get_task.
+        Spawned agents normally arrive after assigned_task_id is already claimed and
+        skip this step. If this step is active, claim assigned_task_id with claim_task,
+        then read it with get_task(brief=false).
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -162,4 +164,3 @@ step_workflow:
           variable: handoff_ready
           value: true
       transitions: []
-

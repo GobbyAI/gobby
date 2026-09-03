@@ -65,7 +65,11 @@ from ._spawn_guards import (
     active_task_response_if_blocked,
     reserve_agent_slot,
 )
-from ._step_state import persist_initial_step_instance_if_resolved
+from ._step_state import (
+    persist_initial_step_instance_if_resolved,
+    preclaimed_task_instruction,
+    spawn_starts_after_claim,
+)
 from ._worktree_reuse import prepare_reused_worktree
 
 if TYPE_CHECKING:
@@ -374,6 +378,21 @@ async def spawn_agent_impl(
             return non_actionable_task_spawn_response(
                 resolved_task, task_ref=task_id, resolved_task_id=resolved_task_id
             )
+
+    task_will_be_owned_by_child = bool(
+        resolved_task_id
+        and resolved_task is not None
+        and is_task_actionable(resolved_task)
+        and claimed_session_id is None
+    )
+    if agent_body is not None and spawn_starts_after_claim(
+        agent_body.step_workflow,
+        task_owned_by_child=task_will_be_owned_by_child,
+    ):
+        assert resolved_task_id is not None
+        task_ref = f"#{task_seq_num}" if task_seq_num else resolved_task_id
+        prompt = f"{prompt}\n\n{preclaimed_task_instruction(task_ref)}"
+
     # 5. Build spawn config and handle worktree_id/clone_id reuse.
     spawn_config = SpawnConfig(
         prompt=prompt,
