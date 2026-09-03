@@ -227,6 +227,70 @@ def _write_source(root: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_sync_worker_waits_for_daemon_readiness_before_vector_sync(
+    tmp_path: Path,
+) -> None:
+    _write_source(tmp_path)
+    pending_file = _indexed_file(vectors_synced=False, graph_synced=True)
+    gcode_gateway = RecordingGcodeGateway()
+    context = cast(
+        CodeIndexContext,
+        SimpleNamespace(
+            gcode_gateway=gcode_gateway,
+            daemon_config_breaker=SyncCircuitBreaker(
+                name="test",
+                probe_target="daemon config",
+                operation="sync",
+            ),
+        ),
+    )
+    shutdown_flag = asyncio.Event()
+    startup_ready = asyncio.Event()
+    readiness_checked = asyncio.Event()
+
+    storage = MagicMock()
+    storage.list_indexed_projects.return_value = [_indexed_project(tmp_path)]
+    storage.get_file.return_value = pending_file
+
+    def pending_once(*_args: Any, **_kwargs: Any) -> list[IndexedFile]:
+        shutdown_flag.set()
+        return [pending_file]
+
+    def is_startup_ready() -> bool:
+        readiness_checked.set()
+        return startup_ready.is_set()
+
+    storage.get_pending_sync_files.side_effect = pending_once
+    worker_task = asyncio.create_task(
+        sync_worker_loop(
+            storage=storage,
+            context=context,
+            config=CodeIndexConfig(
+                embedding_enabled=True,
+                graph_enabled=False,
+                sync_worker_interval_seconds=0.01,
+            ),
+            shutdown_flag=shutdown_flag,
+            run_db=RecordingRunDb(),
+            startup_ready=is_startup_ready,
+        )
+    )
+
+    await asyncio.wait_for(readiness_checked.wait(), timeout=1)
+    assert gcode_gateway.vector_synced_files == []
+    storage.get_pending_sync_files.assert_not_called()
+
+    startup_ready.set()
+    await asyncio.wait_for(worker_task, timeout=1)
+
+    assert gcode_gateway.vector_synced_files == [(tmp_path, pending_file.file_path)]
+    storage.mark_vectors_synced.assert_called_once_with(
+        pending_file.id,
+        pending_file.content_hash,
+    )
+
+
+@pytest.mark.asyncio
 async def test_sync_worker_keeps_vectors_live_when_graph_gateway_fails(
     tmp_path: Path,
 ) -> None:

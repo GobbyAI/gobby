@@ -268,6 +268,7 @@ async def sync_worker_loop(
     config: CodeIndexConfig,
     shutdown_flag: asyncio.Event,
     run_db: Callable[..., Awaitable[Any]] | None = None,
+    startup_ready: Callable[[], bool] | None = None,
 ) -> None:
     """Continuous worker that syncs pending files to gcode projections.
 
@@ -291,6 +292,12 @@ async def sync_worker_loop(
         interval,
         batch_size,
     )
+
+    while not shutdown_flag.is_set() and startup_ready is not None and not startup_ready():
+        try:
+            await asyncio.wait_for(shutdown_flag.wait(), timeout=interval)
+        except TimeoutError:
+            pass
 
     while not shutdown_flag.is_set():
         gcode_gateway = context.gcode_gateway
