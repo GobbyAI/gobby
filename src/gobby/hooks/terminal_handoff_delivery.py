@@ -21,6 +21,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_clear import deliver_staged_clear_
 from gobby.sessions.clear_continuation import clear_failed_attempt
 from gobby.sessions.handoff import (
     HANDOFF_DISPATCH_GATE_VARIABLE,
+    PENDING_HANDOFF_VARIABLE,
     ClaimedHandoffDelivery,
     claim_staged_handoff_delivery,
     restore_staged_handoff,
@@ -102,10 +103,20 @@ def _validate_staged_result(
         return f"result session {session_id} is not the hook session {platform_session_id}"
     if event.source not in _TERMINAL_SOURCES:
         return f"session source {event.source.value!r} is not a terminal CLI"
-    session_type = event.metadata.get("session_type")
-    if session_type != "terminal":
-        return f"session_type {session_type!r} is not terminal"
+    # set_handoff reports delivery_pending only for terminal sessions, so the
+    # result is the session_type authority; AFTER_TOOL metadata carries none
+    # (live-verified 2026-09-03: "session_type None is not terminal", #21713).
     return StagedTerminalHandoff(session_id, attempt_id, clear_session)
+
+
+@dataclass(frozen=True, slots=True)
+class SkippedTerminalHandoff:
+    """A delivery-pending set_handoff completion the hook cannot dispatch."""
+
+    session_id: str | None
+    attempt_id: str | None
+    clear_session: bool | None
+    reason: str
 
 
 def _log_skipped_delivery(session_id: object, attempt_id: object, reason: str) -> None:
@@ -117,44 +128,88 @@ def _log_skipped_delivery(session_id: object, attempt_id: object, reason: str) -
     )
 
 
+def classify_set_handoff_completion(
+    event: HookEvent,
+) -> StagedTerminalHandoff | SkippedTerminalHandoff | None:
+    """Classify an AFTER_TOOL event as staged for delivery, skipped, or not a delivery."""
+    if not _is_successful_set_handoff_completion(event):
+        return None
+    platform_session_id = event.metadata.get("_platform_session_id")
+    payload, rejection = _unwrap_tool_output((event.data or {}).get("tool_output"))
+    if payload is None:
+        return SkippedTerminalHandoff(platform_session_id, None, None, rejection)
+    if payload.get("handoff_staged") is not True or payload.get("delivery_pending") is not True:
+        # Synchronous (web chat) and failed results stage nothing for terminal delivery.
+        return None
+    staged = _validate_staged_result(event, payload)
+    if isinstance(staged, str):
+        session_id = payload.get("session_id")
+        attempt_id = payload.get("attempt_id")
+        clear_session = payload.get("clear_session")
+        return SkippedTerminalHandoff(
+            session_id if isinstance(session_id, str) and session_id else platform_session_id,
+            attempt_id if isinstance(attempt_id, str) and attempt_id else None,
+            clear_session if isinstance(clear_session, bool) else None,
+            staged,
+        )
+    return staged
+
+
 def staged_handoff_from_event(event: HookEvent) -> StagedTerminalHandoff | None:
     """Validate a successful set_handoff completion whose result awaits terminal delivery.
 
     Every delivery-pending completion this rejects is logged at WARNING so a
     silent miss shows up in daemon.log.
     """
-    if not _is_successful_set_handoff_completion(event):
+    outcome = classify_set_handoff_completion(event)
+    if isinstance(outcome, SkippedTerminalHandoff):
+        _log_skipped_delivery(outcome.session_id, outcome.attempt_id, outcome.reason)
         return None
-    platform_session_id = event.metadata.get("_platform_session_id")
-    payload, rejection = _unwrap_tool_output((event.data or {}).get("tool_output"))
-    if payload is None:
-        _log_skipped_delivery(platform_session_id, None, rejection)
-        return None
-    if payload.get("handoff_staged") is not True or payload.get("delivery_pending") is not True:
-        # Synchronous (web chat) and failed results stage nothing for terminal delivery.
-        return None
-    staged = _validate_staged_result(event, payload)
-    if isinstance(staged, str):
-        _log_skipped_delivery(
-            payload.get("session_id") or platform_session_id,
-            payload.get("attempt_id"),
-            staged,
-        )
-        return None
-    return staged
+    return outcome
 
 
-def _log_unclaimed_delivery(db: HubDatabase, staged: StagedTerminalHandoff) -> None:
+def _settle_skipped_delivery(
+    db: HubDatabase,
+    event: HookEvent,
+    skipped: SkippedTerminalHandoff,
+) -> None:
+    """Fail the staged attempt so the session is not wedged behind a delivery that never runs."""
+    if (
+        skipped.session_id is None
+        or skipped.attempt_id is None
+        or skipped.clear_session is None
+        or skipped.session_id != event.metadata.get("_platform_session_id")
+    ):
+        _log_skipped_delivery(skipped.session_id, skipped.attempt_id, skipped.reason)
+        return
+    _compensate_delivery_failure(
+        db,
+        StagedTerminalHandoff(skipped.session_id, skipped.attempt_id, skipped.clear_session),
+        skipped.reason,
+    )
+
+
+def _settle_unclaimed_delivery(db: HubDatabase, staged: StagedTerminalHandoff) -> None:
     try:
         variables = SessionVariableManager(db).get_variables(staged.session_id)
         reason = staged_handoff_rejection(variables, staged.attempt_id)
     except Exception as exc:
-        reason = f"session variables unreadable: {exc}"
-    _log_skipped_delivery(
-        staged.session_id,
-        staged.attempt_id,
-        reason or "claim rejected although the staged marker now looks claimable",
+        _log_skipped_delivery(
+            staged.session_id, staged.attempt_id, f"session variables unreadable: {exc}"
+        )
+        return
+    reason = reason or "claim rejected although the staged marker now looks claimable"
+    marker = variables.get(PENDING_HANDOFF_VARIABLE)
+    attempt_is_idle = (
+        isinstance(marker, Mapping)
+        and marker.get("attempt_id") == staged.attempt_id
+        and marker.get("dispatch_started_at") is None
     )
+    if not attempt_is_idle:
+        # Already dispatched, superseded, or consumed: nothing is left to fail.
+        _log_skipped_delivery(staged.session_id, staged.attempt_id, reason)
+        return
+    _compensate_delivery_failure(db, staged, reason)
 
 
 def schedule_terminal_handoff_delivery(
@@ -167,13 +222,17 @@ def schedule_terminal_handoff_delivery(
     terminal_runtime_registry: Any | None = None,
 ) -> bool:
     """Atomically claim and schedule one post-result terminal handoff delivery."""
-    staged = staged_handoff_from_event(event)
-    if staged is None:
+    outcome = classify_set_handoff_completion(event)
+    if outcome is None:
         return False
     db = session_manager.db
+    if isinstance(outcome, SkippedTerminalHandoff):
+        _settle_skipped_delivery(db, event, outcome)
+        return False
+    staged = outcome
     claimed = claim_staged_handoff_delivery(db, staged.session_id, staged.attempt_id)
     if claimed is None:
-        _log_unclaimed_delivery(db, staged)
+        _settle_unclaimed_delivery(db, staged)
         return False
     if event_loop is None or event_loop.is_closed():
         _compensate_delivery_failure(db, claimed, "daemon event loop is unavailable")
@@ -273,7 +332,7 @@ def _delivery_succeeded(result: Mapping[str, Any], *, clear_session: bool) -> bo
 
 def _compensate_delivery_failure(
     db: HubDatabase,
-    claimed: ClaimedHandoffDelivery,
+    claimed: ClaimedHandoffDelivery | StagedTerminalHandoff,
     reason: str,
 ) -> None:
     failure = {

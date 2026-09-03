@@ -311,8 +311,12 @@ For terminal sessions, the tool result reports `handoff_staged=true` and
 tool's top-level `success` key from the nested result, so the tool-completion hook and
 the context-pressure observer key on those two fields and never on a nested `success`.
 The successful normalized tool-completion event then arms the old-epoch tool gate and
-schedules one deduplicated background delivery. A delivery-pending completion the hook
-rejects, or a staged marker it cannot claim, logs
+schedules one deduplicated background delivery. The hook trusts the tool result for the
+session type; hook metadata carries none. A delivery-pending completion the hook cannot
+dispatch (wrong CLI source, gate not armed) fails the still-idle attempt the same way a
+crashed delivery does, so the retry rule offers `set_handoff` again instead of leaving
+the session wedged behind the armed gate; an attempt that is already dispatched,
+superseded, or consumed only logs
 `Terminal handoff delivery skipped for session <id> attempt <id>: <reason>` at WARNING.
 Delivery failure restores the previous handoff and clear status, removes the attempt
 markers, and asks the agent to retry `set_handoff`. Web-chat boundaries remain

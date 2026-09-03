@@ -84,7 +84,6 @@ def _completion(
     source: SessionSource,
     output: object,
     *,
-    session_type: str = "terminal",
     outcome: str | None = None,
 ) -> HookEvent:
     data: dict[str, Any] = {
@@ -105,7 +104,9 @@ def _completion(
         source=source,
         timestamp=datetime.now(UTC),
         data=data,
-        metadata={"_platform_session_id": SESSION_ID, "session_type": session_type},
+        # Real AFTER_TOOL metadata carries no session_type; the tool result is
+        # the terminal-session authority (#21713).
+        metadata={"_platform_session_id": SESSION_ID},
     )
 
 
@@ -200,12 +201,6 @@ def test_failed_or_synchronous_completion_never_dispatches(
             f"result session {OTHER_SESSION_ID} is not the hook session {SESSION_ID}",
         ),
         (
-            lambda: _completion(SessionSource.CLAUDE, _staged_output(), session_type="web_chat"),
-            SESSION_ID,
-            ATTEMPT_ID,
-            "session_type 'web_chat' is not terminal",
-        ),
-        (
             lambda: _completion(SessionSource.PIPELINE, _staged_output()),
             SESSION_ID,
             ATTEMPT_ID,
@@ -224,7 +219,7 @@ def test_failed_or_synchronous_completion_never_dispatches(
             "tool_output is str, not the call_tool envelope",
         ),
     ],
-    ids=["wrong-session", "web-chat-session", "non-terminal-source", "no-attempt", "string"],
+    ids=["wrong-session", "non-terminal-source", "no-attempt", "string"],
 )
 def test_skipped_delivery_is_logged(
     make_event: Callable[[], HookEvent],
@@ -411,3 +406,75 @@ async def test_background_delivery_failure_compensates_with_retry_guidance() -> 
     assert failure["delivery_failed"] is True
     assert failure["delivery_pending"] is False
     assert "Retry gobby-sessions:set_handoff" in failure["retry_guidance"]
+
+
+def test_unclaimed_idle_attempt_is_failed_with_retry_guidance(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    event = _completion(SessionSource.CLAUDE, _staged_output())
+    variable_manager = MagicMock()
+    variable_manager.get_variables.return_value = {
+        PENDING_HANDOFF_VARIABLE: {
+            "attempt_id": ATTEMPT_ID,
+            "clear_session": False,
+            "handoff_record_id": "handoff-1",
+        }
+    }
+    restore = MagicMock(return_value=True)
+
+    with (
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.claim_staged_handoff_delivery",
+            return_value=None,
+        ),
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.SessionVariableManager",
+            return_value=variable_manager,
+        ),
+        patch("gobby.hooks.terminal_handoff_delivery.restore_staged_handoff", restore),
+    ):
+        scheduled = schedule_terminal_handoff_delivery(
+            event,
+            session_manager=MagicMock(),
+            agent_run_manager=MagicMock(),
+            event_loop=MagicMock(),
+        )
+
+    assert scheduled is False
+    restore.assert_called_once()
+    assert restore.call_args.args[1:] == (SESSION_ID, ATTEMPT_ID)
+    failure = restore.call_args.kwargs["failure_result"]
+    assert failure["delivery_failed"] is True
+    assert failure["reason"] == f"{HANDOFF_DISPATCH_GATE_VARIABLE} gate is not armed"
+    assert _warnings(caplog) == [
+        f"Terminal handoff delivery failed for session {SESSION_ID} attempt {ATTEMPT_ID}: "
+        f"{HANDOFF_DISPATCH_GATE_VARIABLE} gate is not armed"
+    ]
+
+
+def test_non_terminal_source_completion_is_failed_with_retry_guidance(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    event = _completion(SessionSource.PIPELINE, _staged_output())
+    restore = MagicMock(return_value=True)
+
+    with patch("gobby.hooks.terminal_handoff_delivery.restore_staged_handoff", restore):
+        scheduled = schedule_terminal_handoff_delivery(
+            event,
+            session_manager=MagicMock(),
+            agent_run_manager=MagicMock(),
+            event_loop=MagicMock(),
+        )
+
+    assert scheduled is False
+    restore.assert_called_once()
+    assert restore.call_args.args[1:] == (SESSION_ID, ATTEMPT_ID)
+    failure = restore.call_args.kwargs["failure_result"]
+    assert failure["reason"] == "session source 'pipeline' is not a terminal CLI"
+    assert "Retry gobby-sessions:set_handoff" in failure["retry_guidance"]
+    assert _warnings(caplog) == [
+        f"Terminal handoff delivery failed for session {SESSION_ID} attempt {ATTEMPT_ID}: "
+        "session source 'pipeline' is not a terminal CLI"
+    ]
