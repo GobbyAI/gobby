@@ -2315,6 +2315,54 @@ async def test_compound_run_records_every_segment_with_its_categories(tmp_path: 
     )
 
 
+@pytest.mark.asyncio
+async def test_compound_failure_is_attributed_to_reported_runner_segment(tmp_path: Path) -> None:
+    transcript = tmp_path / "compound-failure.jsonl"
+    command = (
+        "uv run ruff format --check src/gobby/x.py && "
+        "uv run ruff check src/gobby/x.py && "
+        "uv run mypy src/gobby/x.py && "
+        "uv run pytest tests/unit/test_x.py -q"
+    )
+    _write_jsonl(
+        transcript,
+        _codex_nested_exec_pair(
+            command=command,
+            result={
+                "exit_code": 1,
+                "output": (
+                    "1 file already formatted\n"
+                    "All checks passed!\n"
+                    "Success: no issues found in 1 source file\n"
+                    "FAILED tests/unit/test_x.py::test_x\n"
+                    "1 failed in 0.10s\n"
+                ),
+            },
+        ),
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+    )
+
+    assert gate.details["latest_outcomes"] == {
+        "format": "success",
+        "lint": "success",
+        "test": "failure",
+        "type_check": "success",
+    }
+    assert gate.details["unresolved_failure_categories"] == ["test"]
+
+
 async def test_edits_in_another_checkout_match_task_files_by_suffix(tmp_path: Path) -> None:
     """Worktree edits count when the close resolves a different checkout root."""
     repo_path = tmp_path / "main"
