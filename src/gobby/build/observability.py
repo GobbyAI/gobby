@@ -20,6 +20,7 @@ from gobby.dispatch.actions import (
     StartStageAction,
 )
 from gobby.dispatch.agent_counts import count_active_agents
+from gobby.dispatch.constants import MAX_ACTIVE_AGENTS as MAX_ACTIVE_AGENTS
 from gobby.dispatch.context import build_context, reload_candidate
 from gobby.dispatch.skill_composition import inspect_skill_composition
 from gobby.failure_categories import FailureCategory
@@ -37,8 +38,6 @@ from gobby.storage.tasks._epic_gate import find_epic_descendant_gate
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.datetime import parse_stored_datetime
 from gobby.workflows.agent_resolver import resolve_agent
-
-MAX_ACTIVE_AGENTS = 10
 
 
 def get_build_status(
