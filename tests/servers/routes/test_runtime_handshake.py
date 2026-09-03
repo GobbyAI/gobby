@@ -173,6 +173,39 @@ def test_challenge_proof_before_bearer(tmp_path: Path) -> None:
         assert allowed.json()["proof"] == expected
 
 
+def test_challenge_proof_matches_agent_run_token_kind(tmp_path: Path) -> None:
+    nonce = os.urandom(16)
+    token = issue_agent_api_token(
+        OPERATOR_TOKEN,
+        agent_run_id=AGENT_RUN_ID,
+        session_id=SESSION_ID,
+        project_id=PROJECT_ID,
+        machine_id=LOCAL_MACHINE_ID,
+        timeout_seconds=30,
+    )
+    _, encoded_claims, encoded_signature = token.split(".")
+    claims = json.loads(base64.urlsafe_b64decode(encoded_claims + "=" * (-len(encoded_claims) % 4)))
+    assert claims["kind"] == "agent_run"
+    signature = base64.urlsafe_b64decode(encoded_signature + "=" * (-len(encoded_signature) % 4))
+    expected = hmac.new(signature, nonce, hashlib.sha256).hexdigest()
+
+    server = create_http_server(config=DaemonConfig(), authenticated_requests=False)
+    token_file = tmp_path / "unused"
+    server.auth_service = AuthService(lambda: server.services.database, token_file=token_file)
+    with patch.object(server.auth_service, "local_token", return_value=OPERATOR_TOKEN):
+        response = TestClient(server.app).post(
+            "/api/runtime/handshake/challenge",
+            json={
+                "nonce": base64.urlsafe_b64encode(nonce).decode(),
+                "kind": "managed",
+                "claims": claims,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["proof"] == expected
+
+
 def test_challenge_rejects_oversized_nonce() -> None:
     server = create_http_server(config=DaemonConfig(), authenticated_requests=False)
     client = TestClient(server.app)
