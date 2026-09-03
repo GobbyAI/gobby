@@ -2220,7 +2220,7 @@ class TestKillAgentCapturePreemptedDelivery:
                 return_value={"success": True},
             ),
             patch(
-                "gobby.mcp_proxy.tools.agents_lifecycle_tools.terminalize_killed_agent_run",
+                "gobby.mcp_proxy.tools.agent_cancellation.terminalize_killed_agent_run",
                 new_callable=AsyncMock,
             ) as terminalize,
         ):

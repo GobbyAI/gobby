@@ -7,7 +7,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookResponse
-from gobby.storage.hub._ambient import ambient_transaction
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.enforcement.blocking import (
@@ -62,7 +61,7 @@ class EnforcementCheckMixin:
     """Tool restriction checks for agent and step workflow enforcement."""
 
     instance_manager: AgentStepInstanceManager
-    _pending_terminal_denial: tuple[Any, str, str] | None = None
+    _pending_terminal_denial: tuple[Any, Any, str] | None = None
 
     if TYPE_CHECKING:
         workflow_audit: WorkflowAuditManager
@@ -245,21 +244,47 @@ class EnforcementCheckMixin:
             f"workflow={instance.agent_name}, step={step.name}, "
             f"rule={rule}, target={target}"
         )
-        self._pending_terminal_denial = (storage, str(run.id), terminal_error)
-        if ambient_transaction(getattr(self, "db", None)) is None:
-            self._flush_pending_terminal_denial()
+        self._pending_terminal_denial = (run, storage, terminal_error)
         return (
             f"{reason}\nThe third identical denial transitioned agent run {run.id} "
             "to a terminal blocked state. The guarded step was not advanced."
         )
 
-    def _flush_pending_terminal_denial(self) -> None:
+    async def _flush_pending_terminal_denial(self) -> None:
         pending = self._pending_terminal_denial
         self._pending_terminal_denial = None
         if pending is None:
             return
-        storage, run_id, terminal_error = pending
-        storage.fail(run_id, terminal_error)
+        run, storage, terminal_error = pending
+        runner = getattr(self, "_runner", None)
+        if runner is None:
+            from gobby.workflows.engine._offload import offload
+
+            await offload(storage.fail, str(run.id), terminal_error)
+            return
+
+        from gobby.mcp_proxy.tools.agent_cancellation import terminate_agent_run
+        from gobby.storage.sessions import SessionManager
+
+        db = getattr(self, "db", None)
+        result = await terminate_agent_run(
+            run=run,
+            runner=runner,
+            agent_run_manager=storage,
+            db=db,
+            lifecycle_monitor=getattr(runner, "agent_lifecycle_monitor", None),
+            completion_registry=getattr(self, "_completion_registry", None),
+            task_manager=getattr(self, "_task_manager", None),
+            session_manager=SessionManager(db) if db is not None else None,
+            effective_status="error",
+            terminal_error=terminal_error,
+        )
+        if not result.get("success"):
+            logger.error(
+                "Terminal enforcement cleanup failed for agent run %s: %s",
+                run.id,
+                result.get("error", "unknown error"),
+            )
 
     def _reset_enforcement_denial_target(
         self,
@@ -426,13 +451,10 @@ class EnforcementCheckMixin:
 
         db = getattr(self, "db", None)
         lock = AgentStepInstanceMutation(session_id=session_id)
-        try:
-            if db is not None:
-                with db.transaction_immediate(lock):
-                    return self._check_step_tool_enforcement_locked(event, session_id, variables)
-            return self._check_step_tool_enforcement_locked(event, session_id, variables)
-        finally:
-            self._flush_pending_terminal_denial()
+        if db is not None:
+            with db.transaction_immediate(lock):
+                return self._check_step_tool_enforcement_locked(event, session_id, variables)
+        return self._check_step_tool_enforcement_locked(event, session_id, variables)
 
     def _check_step_tool_enforcement_locked(
         self, event: HookEvent, session_id: str, variables: dict[str, Any]

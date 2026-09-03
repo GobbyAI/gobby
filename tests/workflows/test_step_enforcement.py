@@ -247,8 +247,7 @@ async def test_third_denial_terminates_run(
     assert blocked_run.error is not None
     assert "blocked after 3 identical enforcement denials" in blocked_run.error
     instance = instance_mgr.get_for_session(SESSION_ID)
-    assert instance is not None
-    assert instance.current_step == "claim"
+    assert instance is None
 
 
 @pytest.mark.asyncio

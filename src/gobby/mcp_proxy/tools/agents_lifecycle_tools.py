@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Literal, cast
 
-from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
 from gobby.mcp_proxy.tools.agent_cancellation import (
     stop_agent_run,
-    terminalize_killed_agent_run,
+    terminate_agent_run,
 )
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.agents_runtime import facade
@@ -226,7 +225,6 @@ def register_agent_lifecycle_tools(
             return {"success": False, "error": f"Agent run {resolved_run_id} not found"}
 
         agent_session_id = db_run.child_session_id or resolved_session_id
-        terminal_id = db_run.terminal_id
 
         is_self_termination = False
         if agent_session_id:
@@ -256,65 +254,22 @@ def register_agent_lifecycle_tools(
                 ),
             )
 
-        from gobby.agents.terminal_delivery import (
-            deliver_existing_terminal_run_in_scope,
-            run_terminal_delivery_offload,
-            shielded_terminal_delivery,
+        termination_status: Literal["cancelled", "error"] = (
+            "error" if effective_status == "error" else "cancelled"
         )
-
-        async def kill_and_deliver() -> dict[str, Any]:
-            try:
-                result = cast(
-                    dict[str, Any],
-                    await agents._kill_agent_process(
-                        db_run,
-                        kill_db,
-                        signal_name=signal,
-                        close_terminal=not debug,
-                        terminal_services=getattr(ctx.runner, "terminal_services", None),
-                    ),
-                )
-                if (
-                    not result.get("success")
-                    and result.get("error_code") != KILL_ERROR_NO_TARGET_PID
-                ):
-                    return result
-
-                if not stop:
-                    result["workflow_stopped"] = False
-                    return result
-
-                result.update(
-                    await terminalize_killed_agent_run(
-                        runner=ctx.runner,
-                        run_id=resolved_run_id,
-                        effective_status=effective_status,
-                        lifecycle_monitor=ctx.lifecycle_monitor,
-                        completion_registry=ctx.completion_registry,
-                        task_manager=ctx.task_manager,
-                    )
-                )
-
-                await agents._cleanup_terminal_artifacts(
-                    run_id=resolved_run_id,
-                    db=kill_db,
-                    terminal_id=terminal_id,
-                    agent_session_id=agent_session_id,
-                    debug=debug,
-                    session_manager=ctx.session_manager,
-                    result=result,
-                )
-                return result
-            finally:
-                await deliver_existing_terminal_run_in_scope(
-                    db=kill_db,
-                    agent_run_manager=ctx.agent_run_manager,
-                    completion_registry=ctx.completion_registry,
-                    run_id=resolved_run_id,
-                    run_db=run_terminal_delivery_offload,
-                )
-
-        response = await shielded_terminal_delivery(resolved_run_id, kill_and_deliver)
-        if response is None:
-            return {"success": False, "error": "Daemon shutdown is in progress"}
-        return response
+        return await terminate_agent_run(
+            run=db_run,
+            runner=ctx.runner,
+            agent_run_manager=ctx.agent_run_manager,
+            db=kill_db,
+            lifecycle_monitor=ctx.lifecycle_monitor,
+            completion_registry=ctx.completion_registry,
+            task_manager=ctx.task_manager,
+            session_manager=ctx.session_manager,
+            effective_status=termination_status,
+            signal=signal,
+            debug=debug,
+            stop=stop,
+            kill_agent_process=agents._kill_agent_process,
+            cleanup_terminal_artifacts=agents._cleanup_terminal_artifacts,
+        )
