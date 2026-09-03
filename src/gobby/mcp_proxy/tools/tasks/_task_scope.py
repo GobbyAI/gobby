@@ -92,7 +92,7 @@ def evaluate_task_scope(
         sorted(
             path
             for path in actual_paths
-            if not any(_scope_entry_covers(entry, path) for entry in declared_paths)
+            if not any(_scope_entry_covers(entry, path, repo_path) for entry in declared_paths)
         )
         if declared_paths
         else []
@@ -121,6 +121,8 @@ def collect_declared_task_scope(db: HubDatabase, task: Task) -> set[str]:
             declared.add(normalized)
 
     declared.update(collect_declared_task_targets(task.description))
+    if not declared:
+        return declared
     for kind in ("test", "file"):
         for reference in extract_artifact_references(task.validation_criteria or "", kind):
             normalized = _normalize_scope_entry(reference)
@@ -222,9 +224,11 @@ def _normalize_repo_path(value: str) -> str | None:
     return path.as_posix()
 
 
-def _scope_entry_covers(entry: str, path: str) -> bool:
+def _scope_entry_covers(entry: str, path: str, repo_path: str | None) -> bool:
     if entry.endswith("/"):
         return path.startswith(entry)
+    if repo_path and Path(repo_path, entry).is_dir():
+        return path == entry or path.startswith(f"{entry}/")
     return path == entry
 
 
