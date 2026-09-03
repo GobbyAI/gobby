@@ -191,17 +191,17 @@ def test_compound_failure_names_attributed_command_and_timestamp() -> None:
     assert "2026-07-27T12:00:02+00:00" in gate.message
 
 
-def test_ambiguous_compound_failure_names_full_invocation() -> None:
-    command = "uv run ruff check src/example.py && uv run mypy src/example.py"
+def test_unattributable_compound_failure_charges_every_segment() -> None:
+    command = "uv run ruff format --check src/example.py; uv run pytest tests/test_example.py -q"
     compound = replace(
-        _run(2, outcome="failure", categories=("lint", "type_check"), command=command),
+        _run(2, outcome="failure", categories=("format", "test"), command=command),
         output="validation failed without runner-specific output",
         validation_segments=(
             TranscriptValidationSegment(
-                command="ruff check src/example.py", categories=("lint", "type_check")
+                command="ruff format --check src/example.py", categories=("format",)
             ),
             TranscriptValidationSegment(
-                command="mypy src/example.py", categories=("lint", "type_check")
+                command="pytest tests/test_example.py -q", categories=("test",)
             ),
         ),
     )
@@ -213,15 +213,25 @@ def test_ambiguous_compound_failure_names_full_invocation() -> None:
     )
 
     assert gate.status == "failed"
-    assert gate.details["latest_outcomes"] == {}
-    assert gate.details["ambiguous_compound_failures"] == [
-        {"command": command, "completed_at": "2026-07-27T12:00:02+00:00"}
+    assert gate.details["latest_outcomes"] == {"format": "failure", "test": "failure"}
+    assert gate.details["unresolved_failures"] == [
+        {
+            "category": "format",
+            "command": "ruff format --check src/example.py",
+            "completed_at": "2026-07-27T12:00:02+00:00",
+        },
+        {
+            "category": "test",
+            "command": "pytest tests/test_example.py -q",
+            "completed_at": "2026-07-27T12:00:02+00:00",
+        },
     ]
-    assert command in gate.message
+    assert "ruff format --check src/example.py" in gate.message
+    assert "pytest tests/test_example.py -q" in gate.message
     assert "2026-07-27T12:00:02+00:00" in gate.message
 
 
-def test_single_validation_segment_compound_failure_stays_ambiguous() -> None:
+def test_single_validation_segment_compound_failure_charges_that_segment() -> None:
     command = "uv run pytest tests/test_example.py -q && false"
     compound = replace(
         _run(2, outcome="failure", categories=("test",), command=command),
@@ -240,13 +250,17 @@ def test_single_validation_segment_compound_failure_stays_ambiguous() -> None:
     )
 
     assert gate.status == "failed"
-    assert gate.details["latest_outcomes"] == {}
-    assert gate.details["ambiguous_compound_failures"] == [
-        {"command": command, "completed_at": "2026-07-27T12:00:02+00:00"}
+    assert gate.details["latest_outcomes"] == {"test": "failure"}
+    assert gate.details["unresolved_failures"] == [
+        {
+            "category": "test",
+            "command": "pytest tests/test_example.py -q",
+            "completed_at": "2026-07-27T12:00:02+00:00",
+        }
     ]
 
 
-def test_later_clean_segments_clear_ambiguous_compound_failure() -> None:
+def test_later_clean_categories_clear_unattributable_compound_failure() -> None:
     command = "uv run ruff check src/example.py && uv run mypy src/example.py"
     ruff_segment = TranscriptValidationSegment(
         command="ruff check src/example.py", categories=("lint", "type_check")
@@ -260,12 +274,18 @@ def test_later_clean_segments_clear_ambiguous_compound_failure() -> None:
         validation_segments=(ruff_segment, mypy_segment),
     )
     clean_ruff = replace(
-        _run(3, categories=ruff_segment.categories, command=ruff_segment.command),
-        validation_segments=(ruff_segment,),
+        _run(3, categories=ruff_segment.categories, command="ruff check src/"),
+        validation_segments=(
+            TranscriptValidationSegment(
+                command="ruff check src/", categories=("lint", "type_check")
+            ),
+        ),
     )
     clean_mypy = replace(
-        _run(4, categories=mypy_segment.categories, command=mypy_segment.command),
-        validation_segments=(mypy_segment,),
+        _run(4, categories=mypy_segment.categories, command="mypy src/"),
+        validation_segments=(
+            TranscriptValidationSegment(command="mypy src/", categories=("lint", "type_check")),
+        ),
     )
 
     gate = evaluate_validation_commands(
@@ -277,7 +297,12 @@ def test_later_clean_segments_clear_ambiguous_compound_failure() -> None:
     )
 
     assert gate.status == "passed"
-    assert gate.details["ambiguous_compound_failures"] == []
+    assert gate.details["unresolved_failure_categories"] == []
+    assert gate.details["latest_outcomes"] == {
+        "lint": "success",
+        "test": "success",
+        "type_check": "success",
+    }
 
 
 def test_edit_after_clean_run_makes_validation_stale() -> None:
