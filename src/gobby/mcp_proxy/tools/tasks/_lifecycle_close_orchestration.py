@@ -106,6 +106,7 @@ async def launch_close_review(
         previous_verdict = await asyncio.to_thread(verdict_memo.get_previous)
         if previous_verdict is not None:
             prior_requirements = render_prior_requirements(previous_verdict)
+    validation_commands = evaluation.extra.get("validation_commands")
     prompt = build_agentic_review_prompt(
         review_id=review.id,
         task_id=task.id,
@@ -113,6 +114,9 @@ async def launch_close_review(
         changes_summary=str(close_arguments.get("changes_summary") or ""),
         review_fingerprint=review.review_fingerprint,
         evidence_fingerprint=review.evidence_fingerprint,
+        validation_commands=(
+            validation_commands if isinstance(validation_commands, Mapping) else None
+        ),
         prior_requirements=prior_requirements,
     )
     try:

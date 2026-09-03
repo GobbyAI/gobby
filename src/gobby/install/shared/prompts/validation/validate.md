@@ -1,7 +1,7 @@
 ---
 name: validation-validate
 description: Bounded task-close criteria review
-version: "3.4"
+version: "3.5"
 variables:
   title:
     type: str
@@ -47,6 +47,15 @@ Review whether the described work plausibly satisfies each stated criterion.
 Deterministic checks already own commits, dirty files, acceptance-artifact
 placebos, TDD sequencing, cumulative guards, and validation-command outcomes.
 Do not invent requirements, request receipt IDs, or demand fresh command output.
+
+The `validation_commands` checklist fact is gate 10's transcript-derived
+record of the validation commands the task sessions ran after the final task
+edit. Its `latest_runs` entries name the winning run per category with the
+command, `completed_at` timestamp, outcome, and exit code, and that record is
+authoritative: a criterion naming a validation command is satisfied on the
+command side by a `success` run of that exact command there. Never require a
+log, receipt, or other file committed to the repository as proof of a command
+run, and never ask for a run to be repeated or reproduced.
 
 Operational acceptance actions demanded by the numbered criteria, such as
 install, restart, deploy, publish, cutover, and live smoke checks, require
@@ -125,5 +134,6 @@ disposition justification that is missing, vague, or contradicted. Make every
 gap directly actionable. When rejecting evidence fidelity, `required_evidence`
 must state the complete evidence set the criterion needs: the entry point that
 must be invoked, whether collaborators must be real or may be fake, and the
-receipt or artifact that must result. Use null when the rejection does not
+artifact or observable outcome that must result; a committed log or receipt of
+a command run is never required evidence. Use null when the rejection does not
 depend on evidence fidelity.

@@ -46,9 +46,15 @@ def build_agentic_review_prompt(
     changes_summary: str,
     review_fingerprint: str,
     evidence_fingerprint: str,
+    validation_commands: Mapping[str, object] | None = None,
     prior_requirements: str | None = None,
 ) -> str:
-    """Build the fixed taskless validator prompt for one persisted review intent."""
+    """Build the fixed taskless validator prompt for one persisted review intent.
+
+    ``validation_commands`` is gate 10's transcript-derived run record. The
+    validator has no other access to it; without it the validator re-derives
+    its own evidence standard and asks for receipts gate 10 already holds.
+    """
     prompt = (
         "Perform the read-only task-close review. "
         f"review_id={review_id}; task_id={task_id}; "
@@ -56,6 +62,16 @@ def build_agentic_review_prompt(
         f"changes_summary={json.dumps(changes_summary)}; "
         f"review_fingerprint={review_fingerprint}; "
         f"deterministic_evidence_fingerprint={evidence_fingerprint}. "
+    )
+    if validation_commands is not None:
+        facts = json.dumps(validation_commands, sort_keys=True, default=str)
+        prompt += (
+            f"validation_commands={facts}. "
+            "validation_commands is gate 10's authoritative transcript record of the validation "
+            "runs after the final task edit: a success run of a criterion's exact command "
+            "satisfies that command without any committed log or receipt. "
+        )
+    prompt += (
         "Inspect the task, linked commits, exact acceptance tests, deterministic gate facts, "
         "and repository validations. Call submit_close_review with this exact review_id and "
         "only the structured verdict object, correct any rejected malformed submission, then "

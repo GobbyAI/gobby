@@ -43,6 +43,39 @@ def test_agentic_review_prompt_is_taskless_and_submission_driven() -> None:
     assert "retry close_task" not in prompt
     assert "oversized" not in prompt.lower()
     assert "prior_requirements=" not in prompt
+    assert "validation_commands=" not in prompt
+
+
+def test_launch_prompt_carries_gate10_validation_runs() -> None:
+    """The taskless validator cannot read the transcript, so gate 10's record rides along."""
+    validation_commands = {
+        "latest_outcomes": {"test": "success"},
+        "latest_runs": [
+            {
+                "category": "test",
+                "command": "uv run pytest tests/tasks/test_validation.py -q",
+                "completed_at": "2026-09-03T05:10:00+00:00",
+                "outcome": "success",
+                "exit_code": 0,
+            }
+        ],
+    }
+
+    prompt = build_agentic_review_prompt(
+        review_id="review",
+        task_id="task",
+        commit_shas=["abc"],
+        changes_summary="summary",
+        review_fingerprint="close",
+        evidence_fingerprint="evidence",
+        validation_commands=validation_commands,
+    )
+
+    facts = json.dumps(validation_commands, sort_keys=True, default=str)
+    assert f"validation_commands={facts}. " in prompt
+    assert "gate 10's authoritative transcript record" in prompt
+    assert "satisfies that command without any committed log or receipt" in prompt
+    assert prompt.index("validation_commands=") < prompt.index("Inspect the task")
 
 
 def test_launch_prompt_renders_prior_requirements() -> None:
@@ -101,9 +134,17 @@ def test_task_close_validator_definition_submits_then_terminates() -> None:
     assert "gobby-agents:end_agent_run" in step["allowed_mcp_tools"]
     assert "gobby-agents:send_message" not in step["allowed_mcp_tools"]
     assert "submit_close_review" in body["prompts"]["agent"]
-    assert body["version"] == "1.5"
+    assert body["version"] == "1.6"
     assert '"required_evidence": null|"complete evidence set"' in body["prompts"]["agent"]
     assert "complete evidence set the next close has to supply" in body["prompts"]["agent"]
+    # Gate 10's run record is the authority on command runs; the validator must
+    # never demand a committed receipt or its own reproduction instead.
+    guidance = body["prompts"]["agent"]
+    assert "validation_commands facts are gate 10's transcript-derived" in guidance
+    assert "That record is authoritative:" in guidance
+    assert "other file committed to the repository as proof of a command run" in guidance
+    assert "never reject a criterion because your own\nsandbox cannot reproduce it" in guidance
+    assert "receipt or artifact that must result" not in guidance
 
 
 @pytest.mark.parametrize(

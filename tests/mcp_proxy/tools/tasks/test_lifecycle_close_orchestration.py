@@ -74,6 +74,37 @@ async def test_close_persists_and_launches_one_taskless_validator(
 
 
 @pytest.mark.asyncio
+async def test_launch_prompt_carries_gate10_validation_facts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The evaluation's gate-10 record reaches the validator through its launch prompt."""
+    store = _Store(_review(status="launching", run_id=None))
+    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    ctx = _ctx(registry=registry)
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+    evaluation = _evaluation()
+    evaluation.extra["validation_commands"] = {
+        "latest_outcomes": {"test": "success"},
+        "latest_runs": [
+            {
+                "category": "test",
+                "command": "uv run pytest tests/tasks/ -q",
+                "completed_at": "2026-09-03T05:10:00+00:00",
+                "outcome": "success",
+                "exit_code": 0,
+            }
+        ],
+    }
+
+    await launch_close_review(ctx, evaluation=evaluation, close_arguments=_arguments())
+
+    launch_prompt = registry.call.await_args.args[1]["prompt"]
+    assert "validation_commands=" in launch_prompt
+    assert "uv run pytest tests/tasks/ -q" in launch_prompt
+    assert "gate 10's authoritative transcript record" in launch_prompt
+
+
+@pytest.mark.asyncio
 @pytest.mark.integration
 async def test_launch_after_rejected_verdict_carries_required_evidence(
     temp_db: HubDatabase,

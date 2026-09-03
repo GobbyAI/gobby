@@ -40,12 +40,18 @@ async def test_ordinary_review_detaches_without_awaiting_provider(
         inline_review,
         raising=False,
     )
+    validation_commands = {"latest_outcomes": {"test": "success"}, "latest_runs": []}
 
-    result = await asyncio.wait_for(_evaluate(), timeout=0.05)
+    result = await asyncio.wait_for(
+        _evaluate(checklist_facts={"validation_commands": validation_commands}),
+        timeout=0.05,
+    )
 
     assert result.error_type == "agentic_review_required"
     assert result.extra["review_fingerprint"] == "close"
     assert result.extra["deterministic_evidence_fingerprint"] == "evidence"
+    # Gate 10's record is forwarded for the validator launch prompt.
+    assert result.extra["validation_commands"] == validation_commands
     inline_review.assert_not_awaited()
     assert "spawn_request" not in result.extra
     assert "review_run_id" not in result.extra

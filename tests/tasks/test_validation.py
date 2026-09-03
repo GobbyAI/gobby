@@ -14,6 +14,8 @@ from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import evaluate_criteria_review
+from gobby.prompts.loader import PromptLoader
+from gobby.prompts.models import PromptTemplate, parse_frontmatter
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, Task
@@ -276,6 +278,45 @@ def test_reviewer_still_reads_the_transcript_facts_excluded_from_the_fingerprint
     )
 
     assert "gobby-cutover-marker" in prepared.prompt
+
+
+def test_reviewer_prompt_marks_gate10_validation_runs_authoritative(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_validation_prompt_loader: MagicMock,
+) -> None:
+    """Gate 10's run record reaches the reviewer as the authority on command runs."""
+    # tests/tasks/conftest.py stubs the loader with a variables-only render;
+    # render the bundled template through the real loader so its guidance is
+    # what is judged.
+    frontmatter, body = parse_frontmatter(_TEMPLATE_PATH.read_text(encoding="utf-8"))
+    bundled = PromptTemplate.from_frontmatter("validation/validate", frontmatter, body)
+    loader = PromptLoader(db=temp_db)
+    monkeypatch.setattr(loader, "load", lambda _path: bundled)
+    mock_validation_prompt_loader.render.side_effect = loader.render
+    run = {
+        "category": "test",
+        "command": "uv run pytest tests/tasks/test_validation.py -q",
+        "completed_at": "2026-09-03T05:10:00+00:00",
+        "outcome": "success",
+        "exit_code": 0,
+    }
+    prepared = _prepare(
+        temp_db,
+        {
+            **_DELIVERABLE_FACTS,
+            "validation_commands": {"latest_outcomes": {"test": "success"}, "latest_runs": [run]},
+        },
+    )
+
+    prompt = prepared.prompt
+    assert run["command"] in prompt
+    assert run["completed_at"] in prompt
+    assert '"exit_code":0' in prompt
+    assert "Its `latest_runs` entries name the winning run per category with the" in prompt
+    assert "authoritative: a criterion naming a validation command is satisfied on the" in prompt
+    assert "log, receipt, or other file committed to the repository as proof of a command" in prompt
+    assert "receipt or artifact that must result" not in prompt
 
 
 def test_new_commit_after_launch_still_stales_the_review(temp_db: HubDatabase) -> None:

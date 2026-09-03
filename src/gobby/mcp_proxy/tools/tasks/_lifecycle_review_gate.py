@@ -144,6 +144,9 @@ async def evaluate_close_criteria(
             "deterministic_evidence_fingerprint": prepared.evidence_fingerprint,
             "manifest_count": prepared.manifest_count,
             "excerpt_chars": prepared.excerpt_chars,
+            # Gate 10's run record travels to the validator launch prompt; the
+            # taskless validator cannot read the transcript itself.
+            "validation_commands": checklist_facts.get("validation_commands"),
         },
     )
 

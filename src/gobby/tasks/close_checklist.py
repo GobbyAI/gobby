@@ -83,7 +83,9 @@ def evaluate_validation_commands(
     Unknown outcomes are diagnostic only. A task-attributed edit makes every
     earlier run stale. Among fresh runs, the latest definitive outcome for each
     validation category wins, so a later clean run cures an earlier failure in
-    the same category.
+    the same category. ``latest_runs`` records those winning runs (command,
+    timestamp, outcome, exit code) so the criteria reviewer can treat them as
+    the authoritative account of what ran.
     """
     category = (task_category or "").strip().casefold()
     details = _validation_details(evidence)
@@ -129,6 +131,16 @@ def evaluate_validation_commands(
         "latest_outcomes": {
             run_category: run.outcome for run_category, run in sorted(latest_by_category.items())
         },
+        "latest_runs": [
+            {
+                "category": run_category,
+                "command": run.command,
+                "completed_at": run.completed_at.isoformat(),
+                "outcome": run.outcome,
+                "exit_code": run.exit_code,
+            }
+            for run_category, run in sorted(latest_by_category.items())
+        ],
         "unresolved_failure_categories": sorted(unresolved),
         "unresolved_failures": unresolved_failures,
     }
