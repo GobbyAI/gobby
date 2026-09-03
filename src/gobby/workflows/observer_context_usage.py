@@ -1,8 +1,9 @@
 """Context-pressure observer for compact guidance.
 
-Known model windows use percentage pressure bands. Sessions without a usable
-window retain the absolute-token fallback. Each band is announced once per
-context epoch, and a successful ``set_handoff`` silences the remaining epoch.
+Known model windows use percentage pressure bands with an absolute soft cap.
+Sessions without a usable window retain the absolute-token fallback. Each band
+is announced once per context epoch, and a successful ``set_handoff`` silences
+the remaining epoch.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 FALLBACK_SOFT_CONTEXT_TOKENS = 128_000
 FALLBACK_STRONG_CONTEXT_TOKENS = 256_000
+ABSOLUTE_SOFT_CONTEXT_TOKENS = 200_000
 DEFAULT_SOFT_CONTEXT_RATIO = 0.40
 DEFAULT_STRONG_CONTEXT_RATIO = 0.70
 LARGE_CONTEXT_SOFT_RATIO = 0.30
@@ -285,7 +287,8 @@ def _thresholds_from_session(session: _SessionValue | None) -> tuple[int, int]:
         soft_ratio, strong_ratio = LARGE_CONTEXT_SOFT_RATIO, LARGE_CONTEXT_STRONG_RATIO
     else:
         soft_ratio, strong_ratio = DEFAULT_SOFT_CONTEXT_RATIO, DEFAULT_STRONG_CONTEXT_RATIO
-    return round(window * soft_ratio), round(window * strong_ratio)
+    soft_threshold = min(round(window * soft_ratio), ABSOLUTE_SOFT_CONTEXT_TOKENS)
+    return soft_threshold, round(window * strong_ratio)
 
 
 def _set_guidance(

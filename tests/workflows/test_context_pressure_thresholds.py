@@ -133,7 +133,7 @@ def _after_tool(
             id="zero",
         ),
         pytest.param(200_000, (80_000, 140_000), id="standard-model"),
-        pytest.param(1_000_000, (300_000, 400_000), id="large-model"),
+        pytest.param(1_000_000, (200_000, 400_000), id="large-model"),
     ],
 )
 def test_thresholds_use_model_window_with_absolute_fallback(
@@ -149,6 +149,8 @@ def test_thresholds_use_model_window_with_absolute_fallback(
         pytest.param(79_999, 200_000, "", id="below-window-soft"),
         pytest.param(80_000, 200_000, "soft", id="window-soft"),
         pytest.param(140_000, 200_000, "strong", id="window-strong"),
+        pytest.param(250_000, 1_000_000, "soft", id="large-window-soft-cap"),
+        pytest.param(400_000, 1_000_000, "strong", id="large-window-strong"),
         pytest.param(128_000, None, "soft", id="fallback-soft"),
         pytest.param(256_000, None, "strong", id="fallback-strong"),
     ],
@@ -163,6 +165,18 @@ def test_turn_start_uses_selected_thresholds(
     _turn_start(variables, _SessionManager(used, window))
 
     assert variables["context_compact_guidance_kind"] == expected_kind
+
+
+def test_large_window_uses_capped_soft_threshold_mid_turn() -> None:
+    variables = _variables()
+    manager = _SessionManager(250_000, 1_000_000)
+
+    _after_tool(variables, manager)
+    assert variables["context_compact_guidance_kind"] == "soft"
+
+    manager.session.context_used_tokens = 400_000
+    _after_tool(variables, manager)
+    assert variables["context_compact_guidance_kind"] == "strong"
 
 
 def test_guidance_fires_once_per_increasing_threshold_in_an_epoch() -> None:
