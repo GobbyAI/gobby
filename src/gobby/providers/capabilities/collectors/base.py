@@ -28,6 +28,13 @@ class SourceSpec:
     required: bool
 
 
+def describe_fetch_error(error: BaseException) -> str:
+    """Name the exception type; httpx transport errors often carry an empty message."""
+    message = str(error).strip()
+    type_name = type(error).__name__
+    return f"{type_name}: {message}" if message else type_name
+
+
 class CapabilityCollector(Protocol):
     """Collector contract implemented by each capability provider adapter."""
 

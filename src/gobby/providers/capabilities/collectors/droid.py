@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 import httpx
 
-from gobby.providers.capabilities.collectors.base import SourceSpec
+from gobby.providers.capabilities.collectors.base import SourceSpec, describe_fetch_error
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
@@ -97,7 +97,7 @@ class DroidCollector:
         try:
             document = await self.fetch_text(source.url)
         except Exception as error:
-            raise DroidSourceError(f"fetch failed: {error}") from error
+            raise DroidSourceError(f"fetch failed: {describe_fetch_error(error)}") from error
         if not document.strip():
             raise DroidSourceError("response was empty")
         return document
