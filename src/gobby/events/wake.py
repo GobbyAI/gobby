@@ -173,6 +173,19 @@ class WakeDispatcher:
             )
             return {**failure, "ism_persisted": False}
 
+        priority = str(result.get("priority") or "normal")
+        # Context-capable hooks inject the durable message on the next model call.
+        # Submitting terminal input while a provider is active would steer that turn
+        # and cancel its in-flight tool batch.
+        if getattr(session, "status", None) == "active" and priority != "urgent":
+            return {
+                "session_id": session_id,
+                "delivered": False,
+                "method": "next_call_context",
+                "skipped": "session_active",
+                "ism_persisted": True,
+            }
+
         live_result = await self.dispatch_live_wake(session_id, session=session)
         return {**live_result, "ism_persisted": True}
 
@@ -667,6 +680,7 @@ class WakeDispatcher:
             completion_id = self._notification_completion_id(metadata)
             if completion_id and "completion_id" not in metadata:
                 metadata["completion_id"] = completion_id
+            priority = str(result.get("priority") or "normal")
             with self._ism_manager.db.bounded_transaction():
                 if completion_id and self._notification_exists(
                     session_id,
@@ -679,7 +693,7 @@ class WakeDispatcher:
                     to_session=session_id,
                     content=content,
                     message_type=message_type,
-                    priority="high",
+                    priority=priority,
                     metadata_json=json.dumps(metadata, default=str, sort_keys=True),
                 )
             return True

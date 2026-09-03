@@ -38,7 +38,7 @@ class FakeSession:
     agent_depth: int = 0
     terminal_context: object | None = None
     parent_session_id: str | None = None
-    status: str = "active"
+    status: str = "paused"  # Completion subscribers normally wait between turns.
     turn_count: int = 0
     session_type: str = "terminal"
 
@@ -64,6 +64,74 @@ def tmux_sender() -> AsyncMock:
 
 class TestWakeDispatch:
     """Route wake messages based on session type."""
+
+    @pytest.mark.asyncio
+    async def test_active_completion_uses_next_call_context(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+        tmux_sender: AsyncMock,
+    ) -> None:
+        """A routine completion must not interrupt an active tool batch."""
+        session_manager.get.return_value = FakeSession(
+            id=WAKE_SESSION_ID,
+            agent_depth=1,
+            terminal_context={"tmux_session": "gobby-agent-abc"},
+            status="active",
+        )
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_sender=tmux_sender,
+        )
+
+        result = await dispatcher.wake(
+            WAKE_SESSION_ID,
+            "Agent completed",
+            {"status": "success"},
+        )
+
+        assert result == {
+            "session_id": WAKE_SESSION_ID,
+            "delivered": False,
+            "method": "next_call_context",
+            "skipped": "session_active",
+            "ism_persisted": True,
+        }
+        tmux_sender.assert_not_awaited()
+        assert ism_manager.create_message.call_args.kwargs["priority"] == "normal"
+
+    @pytest.mark.asyncio
+    async def test_urgent_active_completion_interrupts_immediately(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+        tmux_sender: AsyncMock,
+    ) -> None:
+        """An explicitly urgent completion keeps the immediate wake path."""
+        session_manager.get.return_value = FakeSession(
+            id=WAKE_SESSION_ID,
+            agent_depth=1,
+            terminal_context={"tmux_session": "gobby-agent-abc"},
+            status="active",
+        )
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_sender=tmux_sender,
+        )
+
+        result = await dispatcher.wake(
+            WAKE_SESSION_ID,
+            "Agent requires attention",
+            {"status": "failed", "priority": "urgent"},
+        )
+
+        assert result["delivered"] is True
+        assert result["method"] == "tmux"
+        assert result["ism_persisted"] is True
+        tmux_sender.assert_awaited_once()
+        assert ism_manager.create_message.call_args.kwargs["priority"] == "urgent"
 
     @pytest.mark.asyncio
     async def test_wake_routes_database_work_through_owned_executor(
