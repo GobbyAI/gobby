@@ -1,9 +1,8 @@
 """Context-pressure observer for compact guidance.
 
-Pressure is measured in absolute resident tokens (``session.context_used_tokens``)
-against two window-independent cuts. The soft band asks the agent to consider a
-handoff on a K-tool cadence; the strong band demands one on every event until a
-``gobby-sessions:set_handoff`` result gates the loop or a compaction resets it.
+Known model windows use percentage pressure bands. Sessions without a usable
+window retain the absolute-token fallback. Each band is announced once per
+context epoch, and a successful ``set_handoff`` silences the remaining epoch.
 """
 
 from __future__ import annotations
@@ -15,15 +14,17 @@ from gobby.hooks.events import HookEvent
 
 logger = logging.getLogger(__name__)
 
-SOFT_CONTEXT_TOKENS = 128_000
-STRONG_CONTEXT_TOKENS = 256_000
-SOFT_NUDGE_EVERY_TOOLS = 5
+FALLBACK_SOFT_CONTEXT_TOKENS = 128_000
+FALLBACK_STRONG_CONTEXT_TOKENS = 256_000
+DEFAULT_SOFT_CONTEXT_RATIO = 0.40
+DEFAULT_STRONG_CONTEXT_RATIO = 0.70
+LARGE_CONTEXT_SOFT_RATIO = 0.30
+LARGE_CONTEXT_STRONG_RATIO = 0.40
+LARGE_CONTEXT_WINDOW = 1_000_000
 UNKNOWN_USAGE_TURN_FALLBACK = 10
-GUIDANCE_KINDS = frozenset({"soft", "strong", "unknown"})
 
-SOFT_NUDGE_COUNTER_VARIABLE = "context_compact_soft_nudge_tools"
 HANDOFF_RESULT_VARIABLE = "context_compact_handoff_result"
-SHOWN_KINDS_VARIABLE = "context_compact_guidance_shown_kinds"
+HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE = "context_compact_highest_announced_threshold"
 PRESSURE_BAND_VARIABLE = "context_compact_mid_turn_pressure_band"
 
 UNKNOWN_USAGE_MESSAGE = (
@@ -39,6 +40,9 @@ class _SessionValue(Protocol):
     @property
     def context_used_tokens(self) -> object: ...
 
+    @property
+    def context_window(self) -> object: ...
+
 
 class _SessionManager(Protocol):
     def get(self, session_id: str) -> _SessionValue | None: ...
@@ -52,7 +56,12 @@ def detect_context_compact_guidance(
     """Populate compact guidance variables for turn_start evaluation."""
     variables["context_compact_guidance_kind"] = ""
     variables["context_compact_guidance_message"] = ""
-    variables[HANDOFF_RESULT_VARIABLE] = None
+
+    gate = _handoff_gate(variables)
+    if gate == "pending" or variables.get("pending_context_reset") is True:
+        _reset_epoch_state(variables)
+    elif gate == "failed":
+        variables[HANDOFF_RESULT_VARIABLE] = None
 
     if _is_plan_mode(variables):
         return
@@ -72,20 +81,20 @@ def detect_context_compact_guidance(
     used = _used_tokens_from_session(session)
     if used is None:
         if turns_since_compact >= UNKNOWN_USAGE_TURN_FALLBACK:
-            _set_guidance(variables, "unknown", UNKNOWN_USAGE_MESSAGE, once=True)
+            _set_guidance(variables, "unknown", UNKNOWN_USAGE_MESSAGE)
         return
 
-    band = _pressure_band(used)
+    soft_threshold, strong_threshold = _thresholds_from_session(session)
+    band = _pressure_band(used, soft_threshold, strong_threshold)
     variables[PRESSURE_BAND_VARIABLE] = band
     if band == "none":
-        _reset_pressure_state(variables)
         return
 
     if band == "strong":
-        _set_guidance(variables, "strong", _strong_message(used), once=False)
+        _set_guidance(variables, "strong", _strong_message(used))
         return
 
-    _set_guidance(variables, "soft", _soft_message(used), once=True)
+    _set_guidance(variables, "soft", _soft_message(used))
 
 
 def detect_mid_turn_context_compact_guidance(
@@ -98,80 +107,105 @@ def detect_mid_turn_context_compact_guidance(
     variables["context_compact_guidance_kind"] = ""
     variables["context_compact_guidance_message"] = ""
 
+    _record_handoff_result(event, variables)
+
     if variables.get("pending_context_reset") is True or _is_plan_mode(variables):
-        _reset_pressure_state(variables)
-        return
-
-    just_failed = _record_handoff_result(event, variables)
-
-    session = _load_session(session_manager, session_id)
-    used = _used_tokens_from_session(session)
-    if used is None:
-        return
-
-    previous_band = str(variables.get(PRESSURE_BAND_VARIABLE) or "none")
-    band = _pressure_band(used)
-    variables[PRESSURE_BAND_VARIABLE] = band
-    if band == "none":
-        _reset_pressure_state(variables)
+        variables[PRESSURE_BAND_VARIABLE] = "none"
         return
 
     gate = _handoff_gate(variables)
     if gate == "pending":
         return
 
-    if band == "strong" and gate is None:
-        _set_guidance(variables, "strong", _strong_message(used), once=False)
+    session = _load_session(session_manager, session_id)
+    used = _used_tokens_from_session(session)
+    if used is None:
         return
 
-    if just_failed:
-        counter = 0
-    else:
-        counter = (_int_or_none(variables.get(SOFT_NUDGE_COUNTER_VARIABLE), default=0) or 0) + 1
-    variables[SOFT_NUDGE_COUNTER_VARIABLE] = counter
-
-    crossed = previous_band == "none" and band == "soft"
-    if not (just_failed or crossed or counter % SOFT_NUDGE_EVERY_TOOLS == 0):
+    soft_threshold, strong_threshold = _thresholds_from_session(session)
+    band = _pressure_band(used, soft_threshold, strong_threshold)
+    variables[PRESSURE_BAND_VARIABLE] = band
+    if band == "none":
         return
 
     if gate == "failed":
-        _set_guidance(variables, band, _failed_handoff_message(used, variables), once=False)
+        _set_guidance(variables, band, _failed_handoff_message(used, variables))
         return
-    _set_guidance(variables, "soft", _soft_message(used), once=False)
+
+    message = _strong_message(used) if band == "strong" else _soft_message(used)
+    _set_guidance(variables, band, message)
 
 
-def _record_handoff_result(event: HookEvent, variables: dict[str, Any]) -> bool:
-    """Store the ``set_handoff`` outcome from *event*; return True on a fresh failure."""
+def _record_handoff_result(event: HookEvent, variables: dict[str, Any]) -> None:
+    """Update epoch state from a terminal handoff tool outcome."""
     data = event.data or {}
-    if data.get("mcp_server") != "gobby-sessions" or data.get("mcp_tool") != "set_handoff":
-        return False
+    if data.get("mcp_server") != "gobby-sessions":
+        return
     payload: Any = data.get("tool_output")
     if isinstance(payload, dict) and isinstance(payload.get("result"), dict):
         payload = payload["result"]
     if not isinstance(payload, dict):
-        return False
+        return
+
+    if data.get("mcp_tool") == "get_handoff":
+        if payload.get("success") is True and payload.get("found") is True:
+            _reset_epoch_state(variables)
+        return
+    if data.get("mcp_tool") != "set_handoff":
+        return
+
     compacted = payload.get("compacted")
-    if not isinstance(compacted, bool):
-        return False
-    reason = payload.get("reason")
-    variables[HANDOFF_RESULT_VARIABLE] = {
-        "compacted": compacted,
-        "reason": reason if isinstance(reason, str) and reason else None,
-    }
-    return not compacted
+    if isinstance(compacted, bool):
+        reason = payload.get("reason")
+        variables[HANDOFF_RESULT_VARIABLE] = {
+            "compacted": compacted,
+            "reason": reason if isinstance(reason, str) and reason else None,
+        }
+        return
+
+    if _clear_session_requested(data) and _clear_attempt_is_pending(payload):
+        reason = payload.get("reason") or payload.get("error")
+        variables[HANDOFF_RESULT_VARIABLE] = {
+            "compacted": None,
+            "reason": reason if isinstance(reason, str) and reason else None,
+            "attempt_pending": True,
+        }
 
 
 def _handoff_gate(variables: dict[str, Any]) -> _HandoffGate:
     result = variables.get(HANDOFF_RESULT_VARIABLE)
-    if not isinstance(result, dict) or "compacted" not in result:
+    if not isinstance(result, dict):
         return None
-    return "pending" if result.get("compacted") is True else "failed"
+    if result.get("compacted") is True or result.get("attempt_pending") is True:
+        return "pending"
+    if result.get("compacted") is False:
+        return "failed"
+    return None
 
 
-def _reset_pressure_state(variables: dict[str, Any]) -> None:
+def _clear_session_requested(data: dict[str, Any]) -> bool:
+    raw_input = data.get("tool_input")
+    if not isinstance(raw_input, dict):
+        return False
+    raw_arguments = raw_input.get("arguments")
+    arguments = raw_arguments if isinstance(raw_arguments, dict) else raw_input
+    return arguments.get("clear_session") is True
+
+
+def _clear_attempt_is_pending(payload: dict[str, Any]) -> bool:
+    if payload.get("attempt_pending") is True:
+        return True
+    if payload.get("success") is not True and payload.get("queued") is not True:
+        return False
+    return any(
+        payload.get(field) is True
+        for field in ("handoff_staged", "command_sent", "queued", "cleared")
+    )
+
+
+def _reset_epoch_state(variables: dict[str, Any]) -> None:
     variables[PRESSURE_BAND_VARIABLE] = "none"
-    variables[SHOWN_KINDS_VARIABLE] = []
-    variables[SOFT_NUDGE_COUNTER_VARIABLE] = 0
+    variables[HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE] = "none"
     variables[HANDOFF_RESULT_VARIABLE] = None
 
 
@@ -197,32 +231,31 @@ def _used_tokens_from_session(session: _SessionValue | None) -> int | None:
     return used
 
 
+def _thresholds_from_session(session: _SessionValue | None) -> tuple[int, int]:
+    """Return soft and strong token thresholds for the session's model window."""
+    if session is None:
+        return FALLBACK_SOFT_CONTEXT_TOKENS, FALLBACK_STRONG_CONTEXT_TOKENS
+    window = _int_or_none(getattr(session, "context_window", None))
+    if window is None or window <= 0:
+        return FALLBACK_SOFT_CONTEXT_TOKENS, FALLBACK_STRONG_CONTEXT_TOKENS
+    if window >= LARGE_CONTEXT_WINDOW:
+        soft_ratio, strong_ratio = LARGE_CONTEXT_SOFT_RATIO, LARGE_CONTEXT_STRONG_RATIO
+    else:
+        soft_ratio, strong_ratio = DEFAULT_SOFT_CONTEXT_RATIO, DEFAULT_STRONG_CONTEXT_RATIO
+    return round(window * soft_ratio), round(window * strong_ratio)
+
+
 def _set_guidance(
     variables: dict[str, Any],
     kind: str,
     message: str,
-    *,
-    once: bool,
 ) -> None:
-    shown_kinds = _shown_guidance_kinds(variables)
-    if once and (kind in shown_kinds or (kind == "soft" and "strong" in shown_kinds)):
+    highest = str(variables.get(HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE) or "none")
+    if _pressure_band_rank(kind) <= _pressure_band_rank(highest):
         return
     variables["context_compact_guidance_kind"] = kind
     variables["context_compact_guidance_message"] = message
-    if kind not in shown_kinds:
-        shown_kinds.append(kind)
-    variables[SHOWN_KINDS_VARIABLE] = shown_kinds
-
-
-def _shown_guidance_kinds(variables: dict[str, Any]) -> list[str]:
-    raw_kinds = variables.get(SHOWN_KINDS_VARIABLE)
-    if not isinstance(raw_kinds, list):
-        return []
-    return list(
-        dict.fromkeys(
-            kind for kind in raw_kinds if isinstance(kind, str) and kind in GUIDANCE_KINDS
-        )
-    )
+    variables[HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE] = kind
 
 
 def _is_plan_mode(variables: dict[str, Any]) -> bool:
@@ -243,12 +276,16 @@ def _next_turn_seq(variables: dict[str, Any]) -> int:
     return current
 
 
-def _pressure_band(used: int) -> str:
-    if used >= STRONG_CONTEXT_TOKENS:
+def _pressure_band(used: int, soft_threshold: int, strong_threshold: int) -> str:
+    if used >= strong_threshold:
         return "strong"
-    if used >= SOFT_CONTEXT_TOKENS:
+    if used >= soft_threshold:
         return "soft"
     return "none"
+
+
+def _pressure_band_rank(band: str) -> int:
+    return {"none": -1, "unknown": 0, "soft": 1, "strong": 2}.get(band, -1)
 
 
 def _soft_message(used: int) -> str:

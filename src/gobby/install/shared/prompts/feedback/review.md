@@ -1,6 +1,6 @@
 ---
 description: Cluster session feedback and propose deduplicated follow-up tasks
-version: "2.0"
+version: "2.1"
 required_variables:
   - observations
   - max_tasks
@@ -13,7 +13,7 @@ assume a proposal is accepted.
 
 ## Observations
 
-Each observation has `id`, `kind` (friction | bug | noise | surprise |
+Each observation has `id`, `session_id`, `source`, `kind` (friction | bug | noise | surprise |
 missing-affordance | useful | other, with `kind_other_label` naming an unlisted
 kind), `evidence`, `impact`, `frequency` (once | repeated | always), and optional
 `suggestion` and `disposition` (worked-around | filed-task | fixed | escalated |
@@ -36,6 +36,10 @@ found work.
 1. Cluster observations that describe the same underlying behavior, tool, or
    workflow. Singleton clusters are fine. Every observation id must appear in
    exactly one cluster.
+   Copy every repository-relative path cited by a cluster's evidence or suggestion
+   into `cited_paths`; use an empty list when no repository path is cited. Do not
+   infer paths that the observations do not name. Deterministic intake code verifies
+   each path against HEAD and checks commits touching it after the observations.
 2. Classify each cluster:
    - `defect`: something is broken or misbehaving (most `bug` and reproducible
      `friction` clusters).
@@ -44,14 +48,15 @@ found work.
    - `noise`: one-off, stale, or unactionable observations.
    - `praise`: `useful` observations worth keeping visible; never a task.
 3. Propose a task (`proposed_task`) only for `defect` and `guidance-gap` clusters
-   that are actionable now. Respect dispositions: a cluster whose observations are
-   already has a ladder-compliant `fixed` or `filed-task` disposition gets
+   that are actionable now. Respect dispositions: a cluster whose observations
+   already have a ladder-compliant `fixed` or `filed-task` disposition gets
    `proposed_task: null` — mention the existing resolution and any task refs like
    `#12345` in `digest_note`. Treat an unclaimed or unlabeled `filed-task` ref as
    unresolved; deterministic digest code verifies the task state. Propose at most
    {{ max_tasks }} tasks; prioritize by frequency and impact.
-4. Task titles must be imperative, specific, and self-contained (they are
-   deduplicated against open tasks by exact title). Descriptions must carry the
+4. Task titles must be imperative, specific, and self-contained (deterministic
+   intake deduplicates them against open tasks by theme and attached
+   observation ids). Descriptions must carry the
    evidence: what happened, where, how often, and the suggested direction if the
    observations include one. Priority: 1 for recurring defects that block work,
    2 for the rest, 3 for minor polish.
@@ -66,6 +71,7 @@ Return strict JSON only, exactly this shape:
   "clusters": [
     {
       "observation_ids": ["b3d2…", "9f41…"],
+      "cited_paths": ["src/gobby/tasks/validation.py"],
       "theme": "close_task reruns validation after every retry",
       "classification": "defect",
       "proposed_task": {
@@ -79,7 +85,9 @@ Return strict JSON only, exactly this shape:
   ]
 }
 
-Every cluster requires `observation_ids`, `theme` (a short specific phrase naming
-the underlying behavior), `classification`, and `digest_note`; `proposed_task`
-is null when no task is warranted. Do not add other keys. Do not invent
-observation ids, task refs, or behavior beyond the evidence.
+Every cluster requires `observation_ids`, `cited_paths`, `theme` (a short specific
+phrase naming the underlying behavior), `classification`, and `digest_note`;
+`proposed_task` is null when no task is warranted. Tasks created from proposals are
+marked `llm-reviewed` and `awaiting-human-review`; a human removes the latter label
+after verification to make the task dispatchable. Do not add other keys. Do not
+invent observation ids, task refs, paths, or behavior beyond the evidence.

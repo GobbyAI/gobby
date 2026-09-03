@@ -24,6 +24,19 @@ _RUNNER_FAILURE_PATTERNS = (
     re.compile(r"(?m)^\s*Failing new (?:errors|issues) >= \w+: [1-9]\d*\b"),
 )
 
+_TYPE_CHECK_FAILURE_PATTERNS = (
+    re.compile(r"(?m)^Found [1-9]\d* errors? in [1-9]\d* files?\b"),
+    re.compile(r"(?m)^Failing new errors >= \w+: [1-9]\d*\b"),
+)
+_TEST_FAILURE_PATTERNS = (
+    re.compile(r"\b[1-9]\d*[^\S\n]+(?:failed|failures?)\b", re.IGNORECASE),
+    re.compile(
+        r"(?m)^\s*(?:FAILED\s+\S|ERROR\s+\S+::|---\s+FAIL:|FAIL\s+\S|test result:\s*FAILED\b)"
+    ),
+    re.compile(r"(?m)^=+ [1-9]\d* errors? in \d"),
+    re.compile(r"(?m)^Failing new issues >= \w+: [1-9]\d*\b"),
+)
+
 
 def extract_output(result: Any) -> tuple[str | None, bool]:
     """Extract bounded command output needed to classify validation failures."""
@@ -96,6 +109,18 @@ def extract_outcome(
                 unknown_reason = reason
                 break
     return "unknown", None, unknown_reason or "missing definitive provider outcome"
+
+
+def infer_failure_categories(output: str | None) -> frozenset[str]:
+    """Return validation categories identified by runner-specific failure output."""
+    if not output:
+        return frozenset()
+    categories: set[str] = set()
+    if any(pattern.search(output) for pattern in _TYPE_CHECK_FAILURE_PATTERNS):
+        categories.add("type_check")
+    if any(pattern.search(output) for pattern in _TEST_FAILURE_PATTERNS):
+        categories.add("test")
+    return frozenset(categories)
 
 
 def _runner_reported_failures(output: str | None) -> bool:

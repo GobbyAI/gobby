@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -98,12 +100,24 @@ class _FakeTaskManager:
         existing_open_titles: tuple[str, ...] = (),
         existing_epic_id: str | None = None,
         tasks_by_ref: dict[str, Any] | None = None,
+        existing_tasks: list[SimpleNamespace] | None = None,
     ) -> None:
         self.existing_open_titles = existing_open_titles
         self.existing_epic_id = existing_epic_id
         self.tasks_by_ref = tasks_by_ref or {}
+        self.existing_tasks = existing_tasks or [
+            SimpleNamespace(
+                id=f"existing-{index}",
+                title=title,
+                description="",
+                labels=["feedback-review"],
+                task_type="task",
+            )
+            for index, title in enumerate(existing_open_titles, start=1)
+        ]
         self.created: list[SimpleNamespace] = []
         self.epics: list[SimpleNamespace] = []
+        self.updated: list[SimpleNamespace] = []
 
     def get_task(self, task_id: str, project_id: str | None = None) -> Any | None:
         return self.tasks_by_ref.get(task_id)
@@ -114,24 +128,28 @@ class _FakeTaskManager:
         project_id: str | None = None,
         closed: bool | None = None,
         title_like: str | None = None,
+        label: str | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[Any]:
         assert closed is False
         wanted = (title_like or "").casefold()
-        rows = [
-            SimpleNamespace(title=title, task_type="task")
-            for title in self.existing_open_titles
-            if wanted in title.casefold()
-        ]
-        if self.existing_epic_id is not None and wanted in FINDINGS_EPIC_TITLE.casefold():
+        rows = [*self.existing_tasks, *self.created]
+        if self.existing_epic_id is not None:
             rows.append(
                 SimpleNamespace(
                     id=self.existing_epic_id,
                     title=FINDINGS_EPIC_TITLE,
+                    description="",
+                    labels=["feedback-review"],
                     task_type="epic",
                 )
             )
-        return rows[:limit]
+        if wanted:
+            rows = [row for row in rows if wanted in str(row.title).casefold()]
+        if label:
+            rows = [row for row in rows if label in (row.labels or [])]
+        return rows[offset : offset + limit]
 
     def create_task(
         self,
@@ -160,6 +178,14 @@ class _FakeTaskManager:
             task_type=task_type,
         )
         registry.append(task)
+        return task
+
+    def update_task(self, task_id: str, *, description: str) -> Any:
+        task = next(
+            task for task in [*self.existing_tasks, *self.created] if str(task.id) == task_id
+        )
+        task.description = description
+        self.updated.append(task)
         return task
 
 
@@ -195,6 +221,7 @@ def _cluster(
     title: str | None = None,
     priority: int | None = None,
     theme: str = "close-gate validation reruns",
+    cited_paths: list[str] | None = None,
 ) -> dict[str, Any]:
     proposed: dict[str, Any] | None = None
     if title is not None:
@@ -203,6 +230,7 @@ def _cluster(
             proposed["priority"] = priority
     return {
         "observation_ids": observation_ids,
+        "cited_paths": cited_paths or [],
         "theme": theme,
         "classification": classification,
         "proposed_task": proposed,
@@ -218,6 +246,32 @@ def _service(
 ) -> FeedbackReviewService:
     config = FeedbackReviewConfig(**config_overrides)
     return FeedbackReviewService(temp_db, llm, config, task_manager)
+
+
+def _git(repo: Path, *args: str, env: dict[str, str] | None = None) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        check=True,
+        env=env,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def _commit_file(repo: Path, relative_path: str, committed_at: datetime) -> str:
+    if not (repo / ".git").exists():
+        _git(repo, "init", "--initial-branch=main")
+        _git(repo, "config", "user.email", "feedback-tests@example.com")
+        _git(repo, "config", "user.name", "Feedback Tests")
+    target = repo / relative_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(f"content at {committed_at.isoformat()}\n", encoding="utf-8")
+    _git(repo, "add", "--", relative_path)
+    timestamp = committed_at.isoformat()
+    commit_env = {**os.environ, "GIT_AUTHOR_DATE": timestamp, "GIT_COMMITTER_DATE": timestamp}
+    _git(repo, "commit", "-m", f"Update {relative_path}", env=commit_env)
+    return _git(repo, "rev-parse", "HEAD")
 
 
 async def test_run_review_files_tasks_marks_rows_and_renders_digest(
@@ -253,7 +307,7 @@ async def test_run_review_files_tasks_marks_rows_and_renders_digest(
 
     task = task_manager.created[0]
     assert task.title == "Stop re-running validation at close"
-    assert task.labels == ["feedback-review"]
+    assert task.labels == ["feedback-review", "llm-reviewed", "awaiting-human-review"]
     assert task.category == "research"
     assert first in str(task.description)
 
@@ -307,12 +361,14 @@ async def test_run_review_dedupes_open_titles_and_in_batch_duplicates(
     temp_db: HubDatabase, session_id: str
 ) -> None:
     first = _insert_feedback(temp_db, session_id)
+    second = _insert_feedback(temp_db, session_id, created_at=_T0 + timedelta(minutes=1))
+    third = _insert_feedback(temp_db, session_id, created_at=_T0 + timedelta(minutes=2))
     llm = _FakeLLM(
         response={
             "clusters": [
                 _cluster([first], title="fix CLOSE-gate latency"),
-                _cluster([first], title="Improve digest wording"),
-                _cluster([first], title="improve digest WORDING"),
+                _cluster([second], title="Improve digest wording"),
+                _cluster([third], title="improve digest WORDING"),
             ]
         }
     )
@@ -324,6 +380,105 @@ async def test_run_review_dedupes_open_titles_and_in_batch_duplicates(
     # One dedupe against the open task, one against the batch itself.
     assert result["deduplicated"] == 2
     assert [task.title for task in task_manager.created] == ["Improve digest wording"]
+    assert first in str(task_manager.existing_tasks[0].description)
+
+
+async def test_run_review_appends_observations_to_open_task_matching_theme(
+    temp_db: HubDatabase, session_id: str
+) -> None:
+    current = _insert_feedback(temp_db, session_id)
+    existing = SimpleNamespace(
+        id="existing-theme",
+        title="Reduce redundant close validation",
+        description=(
+            "Prior finding.\n\n"
+            "Filed by the session-feedback review loop.\n"
+            "Theme: close-gate validation reruns\n"
+            "Observations (session_feedback.id): older-observation"
+        ),
+        labels=["feedback-review"],
+        task_type="task",
+    )
+    task_manager = _FakeTaskManager(existing_tasks=[existing])
+    llm = _FakeLLM(
+        response={
+            "clusters": [
+                _cluster(
+                    [current],
+                    title="Stop repeated close-gate checks",
+                    theme="close gate validation reruns",
+                )
+            ]
+        }
+    )
+
+    result = await _service(temp_db, llm, task_manager).run_review()
+
+    assert result["deduplicated"] == 1
+    assert task_manager.created == []
+    assert len(task_manager.updated) == 1
+    assert "older-observation" in existing.description
+    assert current in existing.description
+
+
+async def test_run_review_marks_missing_cited_path_unverified_at_priority_three(
+    temp_db: HubDatabase,
+    session_id: str,
+    tmp_path: Path,
+) -> None:
+    _commit_file(tmp_path / "gobby", "README.md", _T0 - timedelta(days=1))
+    observation_id = _insert_feedback(temp_db, session_id)
+    task_manager = _FakeTaskManager()
+    llm = _FakeLLM(
+        response={
+            "clusters": [
+                _cluster(
+                    [observation_id],
+                    title="Verify missing feedback path",
+                    priority=1,
+                    cited_paths=["src/gobby/missing.py"],
+                )
+            ]
+        }
+    )
+
+    await _service(temp_db, llm, task_manager).run_review()
+
+    task = task_manager.created[0]
+    assert task.priority == 3
+    assert "unverified-premise" in task.labels
+    assert "Premise verification: missing at HEAD: src/gobby/missing.py" in task.description
+
+
+async def test_run_review_marks_path_touched_after_observation_possibly_fixed(
+    temp_db: HubDatabase,
+    session_id: str,
+    tmp_path: Path,
+) -> None:
+    observation_id = _insert_feedback(temp_db, session_id, created_at=_T0)
+    commit_sha = _commit_file(
+        tmp_path / "gobby",
+        "src/gobby/example.py",
+        _T0 + timedelta(hours=1),
+    )
+    task_manager = _FakeTaskManager()
+    llm = _FakeLLM(
+        response={
+            "clusters": [
+                _cluster(
+                    [observation_id],
+                    title="Recheck recently changed feedback premise",
+                    cited_paths=["src/gobby/example.py"],
+                )
+            ]
+        }
+    )
+
+    await _service(temp_db, llm, task_manager).run_review()
+
+    task = task_manager.created[0]
+    assert "possibly-fixed" in task.labels
+    assert commit_sha in task.description
 
 
 async def test_run_review_dry_run_writes_digest_but_files_and_flips_nothing(
@@ -404,7 +559,12 @@ async def test_run_review_guidance_gap_gets_needs_decision_label(
     await service.run_review()
 
     task = task_manager.created[0]
-    assert task.labels == ["feedback-review", "needs-decision"]
+    assert task.labels == [
+        "feedback-review",
+        "llm-reviewed",
+        "awaiting-human-review",
+        "needs-decision",
+    ]
     assert task.priority == 3
 
 
