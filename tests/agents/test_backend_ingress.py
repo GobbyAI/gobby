@@ -29,7 +29,6 @@ SPAWN_REQUEST_SCAN_PATHS = (
     ROOT / "tests/agents/test_spawn_executor_droid.py",
     ROOT / "tests/agents/test_srt_spawn.py",
     ROOT / "tests/agents/test_verified_review_regressions.py",
-    ROOT / "tests/mcp_proxy/tools/test_spawn_agent_speed.py",
 )
 
 
