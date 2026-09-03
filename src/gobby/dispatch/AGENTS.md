@@ -59,7 +59,7 @@ Concurrency and audit data are adjacent to tasks:
 - Audit rows are append-only. Stage helpers write them when changing manifest
   rows; readers use them for history and diagnostics.
 
-The dispatcher enforces a global agent-slot cap (`max_active_agents`, default 10). When
+The dispatcher enforces a global agent-slot cap (`max_active_agents`, default 20). When
 the cap is full, no persistent queue is needed; the next heartbeat re-evaluates task
 manifest state.
 

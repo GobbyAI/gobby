@@ -5,6 +5,88 @@ import threading
 import pytest
 
 from gobby.mcp_proxy.tools.spawn_agent import _spawn_guards
+from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from gobby.tasks.agentic_close_review import TASK_CLOSE_VALIDATOR_AGENT
+from gobby.utils.session_context import session_context_for_test
+
+
+def test_validator_runs_excluded_from_active_count(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+) -> None:
+    project_id = str(sample_project["id"])
+    parent = SessionManager(temp_db).register(
+        external_id="validator-count-parent",
+        machine_id=None,
+        source="test",
+        project_id=project_id,
+    )
+    runs = LocalAgentRunManager(temp_db)
+    runs.create(
+        parent_session_id=parent.id,
+        provider="codex",
+        prompt="implement",
+        agent_name="backend-developer",
+    )
+    runs.create(
+        parent_session_id=parent.id,
+        provider="codex",
+        prompt="validate close",
+        agent_name=TASK_CLOSE_VALIDATOR_AGENT,
+    )
+
+    assert _spawn_guards._count_active_agents(temp_db, project_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_cap_error_reports_caller_owned_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+) -> None:
+    project_id = str(sample_project["id"])
+    sessions = SessionManager(temp_db)
+    caller = sessions.register(
+        external_id="cap-caller",
+        machine_id=None,
+        source="test",
+        project_id=project_id,
+    )
+    other = sessions.register(
+        external_id="cap-other",
+        machine_id=None,
+        source="test",
+        project_id=project_id,
+    )
+    runs = LocalAgentRunManager(temp_db)
+    for prompt in ("one", "two", "three"):
+        runs.create(
+            parent_session_id=caller.id,
+            provider="codex",
+            prompt=prompt,
+            agent_name="backend-developer",
+        )
+    runs.create(
+        parent_session_id=other.id,
+        provider="codex",
+        prompt="other",
+        agent_name="backend-developer",
+    )
+    monkeypatch.setattr(_spawn_guards, "max_active_agents_for_project", lambda _path: 4)
+
+    with session_context_for_test(caller.id):
+        async with _spawn_guards.reserve_agent_slot(
+            db=temp_db,
+            project_id=project_id,
+            project_path="/tmp/cap-error",
+        ) as response:
+            assert response is not None
+
+    assert response["error"] == (
+        "max_active_agents cap reached (4/4); 3 of these were spawned by this session"
+    )
 
 
 @pytest.mark.asyncio

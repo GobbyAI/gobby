@@ -12,6 +12,8 @@ from typing import Any
 from gobby.config.build import load_build_config
 from gobby.dispatch.constants import DISPATCH_TTL_SECONDS, MAX_ACTIVE_AGENTS
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.tasks.agentic_close_review import TASK_CLOSE_VALIDATOR_AGENT
+from gobby.utils.session_context import get_current_session_id
 
 from ._idempotency import active_task_spawn_response
 
@@ -142,9 +144,21 @@ async def reserve_agent_slot(
     async with lock:
         active_count = await asyncio.to_thread(_count_active_agents, db, project_id)
         if active_count >= cap:
+            caller_session_id = get_current_session_id()
+            caller_active_count = 0
+            if caller_session_id:
+                caller_active_count = await asyncio.to_thread(
+                    _count_active_agents,
+                    db,
+                    project_id,
+                    parent_session_id=caller_session_id,
+                )
             yield {
                 "success": False,
-                "error": f"max_active_agents cap reached ({active_count}/{cap})",
+                "error": (
+                    f"max_active_agents cap reached ({active_count}/{cap}); "
+                    f"{caller_active_count} of these were spawned by this session"
+                ),
                 "cap_reached": True,
             }
             return
@@ -170,16 +184,29 @@ def active_task_response_if_blocked(
     return active_task_spawn_response(active_run, task_ref)
 
 
-def _count_active_agents(db: Any, project_id: str) -> int:
+def _count_active_agents(
+    db: Any,
+    project_id: str,
+    *,
+    parent_session_id: str | None = None,
+) -> int:
+    parent_filter = "AND ar.parent_session_id = %s" if parent_session_id else ""
+    params = (
+        (project_id, TASK_CLOSE_VALIDATOR_AGENT, parent_session_id)
+        if parent_session_id
+        else (project_id, TASK_CLOSE_VALIDATOR_AGENT)
+    )
     row = db.fetchone(
-        """
+        f"""
         SELECT COUNT(*) AS count
         FROM agent_runs ar
         JOIN sessions parent_s ON parent_s.id = ar.parent_session_id
         WHERE ar.status IN ('pending', 'running')
           AND parent_s.project_id = %s
+          AND ar.agent_name IS DISTINCT FROM %s
+          {parent_filter}
         """,
-        (project_id,),
+        params,
     )
     return int(row["count"]) if row else 0
 
