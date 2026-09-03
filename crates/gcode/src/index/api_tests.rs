@@ -584,6 +584,7 @@ fn project_stats_preserve_and_replace_indexer_version() {
         &machine_id,
         &project,
         api::IndexWriteMode::Overlay,
+        true,
     )
     .expect("seed null version");
     assert_eq!(
@@ -598,6 +599,7 @@ fn project_stats_preserve_and_replace_indexer_version() {
         &machine_id,
         &project,
         api::IndexWriteMode::Overlay,
+        true,
     )
     .expect("stamp version");
     project.indexer_version = None;
@@ -606,6 +608,7 @@ fn project_stats_preserve_and_replace_indexer_version() {
         &machine_id,
         &project,
         api::IndexWriteMode::Overlay,
+        true,
     )
     .expect("preserve version");
     assert_eq!(
@@ -621,6 +624,7 @@ fn project_stats_preserve_and_replace_indexer_version() {
         &machine_id,
         &project,
         api::IndexWriteMode::Overlay,
+        true,
     )
     .expect("replace version");
     assert_eq!(
@@ -720,6 +724,7 @@ fn project_seed_modes_require_primary_checkout_and_allow_overlay() {
         &machine_id,
         &matching_stats,
         api::IndexWriteMode::Primary,
+        true,
     )
     .expect("matching primary stats");
     let mut stale_stats = matching_stats.clone();
@@ -729,6 +734,7 @@ fn project_seed_modes_require_primary_checkout_and_allow_overlay() {
         &machine_id,
         &stale_stats,
         api::IndexWriteMode::Primary,
+        true,
     )
     .expect_err("stale primary stats");
 
@@ -768,6 +774,7 @@ fn project_seed_modes_require_primary_checkout_and_allow_overlay() {
             &machine_id,
             &matching_stats,
             api::IndexWriteMode::Primary,
+            true,
         )
         .expect("stats writer holds checkout lock");
         let blocked = rebind_conn
@@ -811,6 +818,7 @@ fn project_seed_modes_require_primary_checkout_and_allow_overlay() {
         &machine_id,
         &matching_stats,
         api::IndexWriteMode::Primary,
+        true,
     )
     .expect_err("old-root stats cannot write after rebind");
     api::upsert_project_seed(
@@ -880,6 +888,7 @@ fn primary_writes_without_registered_checkout_fail_before_writing_project_rows()
             indexer_version: None,
         },
         api::IndexWriteMode::Primary,
+        true,
     )
     .expect_err("stats without a registered checkout");
     assert_eq!(
@@ -1271,6 +1280,7 @@ fn seed_project_for_machine(conn: &mut postgres::Client, machine_id: &str, proje
             indexer_version: None,
         },
         api::IndexWriteMode::Overlay,
+        true,
     )
     .expect("seed project row");
 }

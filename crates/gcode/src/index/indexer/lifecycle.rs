@@ -58,6 +58,7 @@ pub(super) fn refresh_project_stats(
     elapsed_ms: u64,
     total_eligible_files: Option<usize>,
     indexer_version: Option<&str>,
+    advance_last_indexed_at: bool,
 ) -> anyhow::Result<()> {
     let total_files = count_machine_rows(conn, machine_id, target.project_id, false);
     let total_symbols = count_machine_rows(conn, machine_id, target.project_id, true);
@@ -78,6 +79,7 @@ pub(super) fn refresh_project_stats(
             indexer_version: indexer_version.map(ToOwned::to_owned),
         },
         target.mode,
+        advance_last_indexed_at,
     )
     .with_context(|| {
         format!(

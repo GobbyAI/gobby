@@ -27,7 +27,7 @@ Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use
 Bare `gcode grep "pattern"` is regex-backed, and the dialect is Rust regex, not grep
 BRE. Write alternation as `a|b`: `a\|b` is a literal pipe, so it silently returns zero
 matches and exit 0 rather than erroring — indistinguishable from a genuine no-hit
-result. Use `-F` for literal text containing regex metacharacters like `(`, `)`, `[`, `]`, `.`, `*`, `+`, `?`, `|`, `^`, `$`, or `\`. For example, `gcode grep "TaskExpansionConfig(" tests/config/test_tasks.py --format text -m 120 --allow-stale` is an anti-pattern because `(` starts a regex group and fails with `error: unclosed group`. Use `gcode grep -F "TaskExpansionConfig(" tests/config/test_tasks.py --format text -m 120 --allow-stale` for a literal search, or `gcode grep "TaskExpansionConfig\\(" tests/config/test_tasks.py --format text -m 120 --allow-stale` when intentionally writing regex.
+result. Use `-F` for literal text containing regex metacharacters like `(`, `)`, `[`, `]`, `.`, `*`, `+`, `?`, `|`, `^`, `$`, or `\`. For example, `gcode grep "TaskExpansionConfig(" tests/config/test_tasks.py --format text -m 120` is an anti-pattern because `(` starts a regex group and fails with `error: unclosed group`. Use `gcode grep -F "TaskExpansionConfig(" tests/config/test_tasks.py --format text -m 120` for a literal search, or `gcode grep "TaskExpansionConfig\\(" tests/config/test_tasks.py --format text -m 120` when intentionally writing regex.
 
 ## Retrieval
 
