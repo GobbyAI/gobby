@@ -139,7 +139,7 @@ def _run() -> AgentRun:
     return cast(AgentRun, SimpleNamespace(id="run-1", child_session_id="sess-1"))
 
 
-async def _recover(host: _FakeHost) -> int:
+async def _recover(host: _FakeHost, *, pane_tail: str | None = None) -> int:
     return await recover_completed_turn(
         cast(CompletedTurnRecoveryHost, host),
         _run(),
@@ -148,6 +148,7 @@ async def _recover(host: _FakeHost) -> int:
         transcript_path="/tmp/transcript.jsonl",
         snapshot=_snapshot(),
         idle_timeout_seconds=300,
+        pane_tail=pane_tail,
     )
 
 
@@ -157,7 +158,7 @@ async def test_toolless_run_in_mcp_only_step_fails_without_reprompts() -> None:
 
     assert await _recover(host) == 1
     assert len(host.failures) == 1
-    assert "MCP-gated entry step 'load_skill'" in host.failures[0]
+    assert "MCP-gated step 'load_skill'" in host.failures[0]
     assert host.reprompts == []
 
 
@@ -180,7 +181,7 @@ async def test_all_tools_step_gated_on_mcp_progress_fails_without_reprompts() ->
 
     assert await _recover(host) == 1
     assert len(host.failures) == 1
-    assert "MCP-gated entry step 'review'" in host.failures[0]
+    assert "MCP-gated step 'review'" in host.failures[0]
     assert host.reprompts == []
 
 
@@ -198,19 +199,25 @@ async def test_all_tools_step_with_non_mcp_route_keeps_reprompt_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mcp_gated_later_step_keeps_reprompt_path() -> None:
+async def test_non_entry_mcp_gated_step_without_mcp_calls_fails_fast() -> None:
     host = _FakeHost(
         step_context=_step_context("all", mcp_progress_only=True, is_entry_step=False),
         made_call=False,
     )
+    startup_error = (
+        "MCP client for gobby failed to start: MCP startup failed: "
+        "handshaking with MCP server failed"
+    )
 
-    assert await _recover(host) == 1
-    assert host.failures == []
-    assert len(host.reprompts) == 1
+    assert await _recover(host, pane_tail=startup_error) == 1
+    assert len(host.failures) == 1
+    assert "MCP-gated step 'load_skill'" in host.failures[0]
+    assert startup_error in host.failures[0]
+    assert host.reprompts == []
 
 
 @pytest.mark.asyncio
-async def test_mcp_gated_step_with_successful_call_keeps_reprompt_path() -> None:
+async def test_entry_mcp_gated_step_with_successful_call_keeps_reprompt_path() -> None:
     host = _FakeHost(
         step_context=_step_context("all", mcp_progress_only=True),
         made_call=True,
@@ -222,15 +229,16 @@ async def test_mcp_gated_step_with_successful_call_keeps_reprompt_path() -> None
 
 
 @pytest.mark.asyncio
-async def test_later_mcp_only_step_keeps_reprompt_path() -> None:
+async def test_non_entry_mcp_only_step_without_mcp_calls_fails_fast() -> None:
     host = _FakeHost(
         step_context=_step_context(_MCP_ONLY_TOOLS, is_entry_step=False),
         made_call=False,
     )
 
     assert await _recover(host) == 1
-    assert host.failures == []
-    assert len(host.reprompts) == 1
+    assert len(host.failures) == 1
+    assert "MCP-gated step 'load_skill'" in host.failures[0]
+    assert host.reprompts == []
 
 
 @pytest.mark.asyncio

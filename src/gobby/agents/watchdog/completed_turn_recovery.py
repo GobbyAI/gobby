@@ -93,6 +93,17 @@ def step_progress_requires_gobby_mcp(step_context: StepWorkflowContext | None) -
     return step_requires_gobby_proxy(step_context) or step_context.mcp_progress_only
 
 
+def codex_mcp_startup_error(pane_tail: str | None) -> str | None:
+    """Return the Codex MCP startup failure line visible in the pane tail."""
+    if pane_tail is None:
+        return None
+    for raw_line in reversed(pane_tail.splitlines()):
+        line = raw_line.strip()
+        if "MCP client for" in line and "failed to start" in line:
+            return line
+    return None
+
+
 def workflow_fingerprint(
     run_id: str,
     step_context: StepWorkflowContext | None,
@@ -148,6 +159,7 @@ async def recover_completed_turn(
     transcript_path: str,
     snapshot: WatchdogTranscriptSnapshot,
     idle_timeout_seconds: int,
+    pane_tail: str | None = None,
 ) -> int:
     event = snapshot.latest_turn_event
     if event is None or event.timestamp is None:
@@ -157,22 +169,20 @@ async def recover_completed_turn(
     if (
         lookup_succeeded
         and step_context is not None
-        and step_context.is_entry_step
         and step_progress_requires_gobby_mcp(step_context)
         and await host._session_made_successful_mcp_call(run) is False
     ):
-        # The workflow's entry step cannot advance without a Gobby MCP call and
-        # the session has never completed one — the tools were almost certainly
-        # never registered in the provider runtime (e.g. Codex's MCP startup
-        # timeout), so no number of reprompts can produce workflow progress.
-        # Later such steps are excluded: a session can legitimately reach them
-        # with zero MCP calls when earlier steps used native tools, and there a
-        # reprompt can still help.
+        # This workflow step cannot advance without a Gobby MCP call and the
+        # session has never completed one, so no number of reprompts can produce
+        # workflow progress.
         reason = (
             "Gobby MCP proxy tools unavailable: session made no successful Gobby MCP "
-            f"call while pinned in MCP-gated entry step '{step_context.current_step}' "
+            f"call while pinned in MCP-gated step '{step_context.current_step}' "
             "(likely stdio bridge startup failure)"
         )
+        startup_error = codex_mcp_startup_error(pane_tail)
+        if startup_error is not None:
+            reason = f"{reason}; provider startup error: {startup_error}"
         logger.error("Failing idle agent %s without reprompts: %s", run.id, reason)
         await host._log_transcript_snapshot(
             run,
