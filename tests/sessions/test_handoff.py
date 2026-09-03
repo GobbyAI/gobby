@@ -11,11 +11,11 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+from psycopg.errors import CheckViolation
 
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.sessions.handoff import (
     HANDOFF_PULL_PENDING_VARIABLE,
-    FeedbackObservation,
     consume_pending_handoff,
     normalize_feedback_observations,
     render_handoff_markdown,
@@ -23,6 +23,7 @@ from gobby.sessions.handoff import (
     stage_handoff_attempt,
     write_feedback_batch,
 )
+from gobby.sessions.handoff_records import build_handoff_payload, record_handoff_delivery
 from gobby.sessions.title_lifecycle import (
     apply_clear_successor_title,
     clear_successor_title,
@@ -89,7 +90,10 @@ def test_render_handoff_is_structured_deterministic_and_excludes_feedback() -> N
     markdown = render_handoff_markdown(
         current_state="Implementation is staged.",
         next_steps=["Run focused tests", "Commit the change"],
+        what_was_accomplished=["Stored authored content"],
         key_decisions=["Use pull-only recovery"],
+        problems_encountered=["The old row mixed content and delivery state"],
+        what_didnt_work=["Inferring delivery from mutable Markdown"],
         blockers=["Await isolated database"],
         notes=["Preserve archival summaries"],
         references=["#21140", "src/gobby/sessions/handoff.py", "#21140"],
@@ -106,9 +110,21 @@ Implementation is staged.
 1. Run focused tests
 2. Commit the change
 
+## What Was Accomplished
+
+- Stored authored content
+
 ## Key Decisions
 
 - Use pull-only recovery
+
+## Problems Encountered
+
+- The old row mixed content and delivery state
+
+## What Didn’t Work
+
+- Inferring delivery from mutable Markdown
 
 ## Blockers
 
@@ -321,28 +337,32 @@ def test_handoff_consumes_once_for_compact_and_clear_successor(
     session_manager: SessionManager,
 ) -> None:
     predecessor = _registered_session(session_manager)
-    markdown = render_handoff_markdown(current_state="Ready.", next_steps=["Continue."])
-    stage_handoff_attempt(
+    handoff = build_handoff_payload(current_state="Ready.", next_steps=["Continue."])
+    compact_state = stage_handoff_attempt(
         temp_db,
         predecessor.id,
-        attempt_id="compact-attempt",
-        markdown=markdown,
-        observations=[],
+        attempt_id="a" * 32,
+        handoff=handoff,
         clear_session=False,
     )
     sv_mgr = SessionVariableManager(temp_db)
     assert sv_mgr.get_variables(predecessor.id).get(HANDOFF_PULL_PENDING_VARIABLE) is True
     compact = consume_pending_handoff(temp_db, predecessor.id)
-    assert compact is not None and compact.markdown == markdown
+    assert compact is not None and compact.markdown == handoff.rendered_markdown
+    compact_receipt = temp_db.fetchone(
+        "SELECT * FROM session_handoff_deliveries WHERE handoff_id = %s",
+        (compact_state.handoff_record_id,),
+    )
+    assert compact_receipt is not None
+    assert compact_receipt["boundary_kind"] == "compact"
     assert HANDOFF_PULL_PENDING_VARIABLE not in sv_mgr.get_variables(predecessor.id)
     assert consume_pending_handoff(temp_db, predecessor.id) is None
 
-    stage_handoff_attempt(
+    clear_state = stage_handoff_attempt(
         temp_db,
         predecessor.id,
-        attempt_id="clear-attempt",
-        markdown=markdown,
-        observations=[],
+        attempt_id="b" * 32,
+        handoff=handoff,
         clear_session=True,
     )
     assert HANDOFF_PULL_PENDING_VARIABLE not in sv_mgr.get_variables(predecessor.id)
@@ -353,6 +373,13 @@ def test_handoff_consumes_once_for_compact_and_clear_successor(
         project_id=predecessor.project_id,
         parent_session_id=predecessor.id,
     )
+    record_handoff_delivery(
+        temp_db,
+        handoff_id=clear_state.handoff_record_id,
+        attempt_id="b" * 32,
+        boundary_kind="clear",
+        continuation_session_id=successor_id,
+    )
     sv_mgr.merge_variables(successor_id, {HANDOFF_PULL_PENDING_VARIABLE: True})
     cleared = consume_pending_handoff(temp_db, successor_id)
     assert cleared is not None and cleared.session_id == predecessor.id
@@ -360,7 +387,7 @@ def test_handoff_consumes_once_for_compact_and_clear_successor(
     assert consume_pending_handoff(temp_db, successor_id) is None
 
 
-def test_failed_attempt_restores_handoff_and_deletes_attempt_feedback(
+def test_failed_attempt_restores_handoff_and_deletes_only_staged_content(
     temp_db: HubDatabase,
     session_manager: SessionManager,
 ) -> None:
@@ -369,12 +396,17 @@ def test_failed_attempt_restores_handoff_and_deletes_attempt_feedback(
         "UPDATE sessions SET handoff_markdown = %s WHERE id = %s",
         ("previous", session.id),
     )
+    feedback_ids = write_feedback_batch(
+        temp_db,
+        session.id,
+        normalize_feedback_observations([_observation()]),
+    )
+    handoff = build_handoff_payload(current_state="Replacement", next_steps=["Continue"])
     state = stage_handoff_attempt(
         temp_db,
         session.id,
-        attempt_id="failed-attempt",
-        markdown="replacement",
-        observations=[FeedbackObservation("agent", "friction", "evidence", "impact", "once")],
+        attempt_id="c" * 32,
+        handoff=handoff,
         clear_session=False,
     )
     sv_mgr = SessionVariableManager(temp_db)
@@ -387,11 +419,139 @@ def test_failed_attempt_restores_handoff_and_deletes_attempt_feedback(
         (session.id,),
     )
     assert row is not None and row["handoff_markdown"] == "previous"
-    count = temp_db.fetchone(
+    handoff_count = temp_db.fetchone(
+        "SELECT COUNT(*) AS count FROM session_handoffs WHERE session_id = %s",
+        (session.id,),
+    )
+    assert handoff_count is not None and handoff_count["count"] == 0
+    feedback_count = temp_db.fetchone(
         "SELECT COUNT(*) AS count FROM session_feedback WHERE session_id = %s",
         (session.id,),
     )
-    assert count is not None and count["count"] == 0
+    assert feedback_count is not None and feedback_count["count"] == len(feedback_ids) == 1
+
+
+def test_delivery_receipt_is_idempotent_and_prevents_compensation(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    session = _registered_session(session_manager)
+    state = stage_handoff_attempt(
+        temp_db,
+        session.id,
+        attempt_id="4" * 32,
+        handoff=build_handoff_payload(current_state="Delivered.", next_steps=["Continue."]),
+        clear_session=False,
+    )
+
+    assert (
+        record_handoff_delivery(
+            temp_db,
+            handoff_id=state.handoff_record_id,
+            attempt_id=state.attempt_id,
+            boundary_kind="compact",
+            continuation_session_id=session.id,
+        )
+        is True
+    )
+    assert (
+        record_handoff_delivery(
+            temp_db,
+            handoff_id=state.handoff_record_id,
+            attempt_id=state.attempt_id,
+            boundary_kind="compact",
+            continuation_session_id=session.id,
+        )
+        is False
+    )
+    assert restore_handoff_attempt(temp_db, state) is False
+    row = temp_db.fetchone(
+        "SELECT rendered_markdown FROM session_handoffs WHERE id = %s",
+        (state.handoff_record_id,),
+    )
+    assert row is not None
+
+
+@pytest.mark.parametrize(
+    ("assignment", "value", "constraint"),
+    [
+        ("payload_version = %s", 2, "session_handoffs_payload_version_valid"),
+        ("current_state = %s", " ", "session_handoffs_current_state_nonblank"),
+        (
+            "next_steps_json = %s::jsonb",
+            "[]",
+            "session_handoffs_next_steps_array",
+        ),
+        ("notes_json = %s::jsonb", "{}", "session_handoffs_notes_array"),
+        (
+            "rendered_markdown = %s",
+            " ",
+            "session_handoffs_rendered_markdown_nonblank",
+        ),
+        ("content_sha256 = %s", "nope", "session_handoffs_content_sha256_valid"),
+    ],
+)
+def test_handoff_schema_constraints_reject_malformed_rows(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    assignment: str,
+    value: object,
+    constraint: str,
+) -> None:
+    session = _registered_session(session_manager)
+    state = stage_handoff_attempt(
+        temp_db,
+        session.id,
+        attempt_id="5" * 32,
+        handoff=build_handoff_payload(current_state="Valid.", next_steps=["Continue."]),
+        clear_session=False,
+    )
+
+    with pytest.raises(CheckViolation) as exc_info:
+        temp_db.execute(
+            f"UPDATE session_handoffs SET {assignment} WHERE id = %s",
+            (value, state.handoff_record_id),
+        )
+
+    assert exc_info.value.diag.constraint_name == constraint
+
+
+def test_delivery_schema_constraints_boundary_and_attempt_id(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    session = _registered_session(session_manager)
+    state = stage_handoff_attempt(
+        temp_db,
+        session.id,
+        attempt_id="6" * 32,
+        handoff=build_handoff_payload(current_state="Valid.", next_steps=["Continue."]),
+        clear_session=False,
+    )
+    assert record_handoff_delivery(
+        temp_db,
+        handoff_id=state.handoff_record_id,
+        attempt_id=state.attempt_id,
+        boundary_kind="compact",
+        continuation_session_id=str(uuid4()),
+    )
+
+    with pytest.raises(CheckViolation) as boundary_error:
+        temp_db.execute(
+            "UPDATE session_handoff_deliveries SET boundary_kind = 'other' WHERE handoff_id = %s",
+            (state.handoff_record_id,),
+        )
+    assert (
+        boundary_error.value.diag.constraint_name
+        == "session_handoff_deliveries_boundary_kind_valid"
+    )
+
+    with pytest.raises(CheckViolation) as attempt_error:
+        temp_db.execute(
+            "UPDATE session_handoff_deliveries SET attempt_id = 'invalid' WHERE handoff_id = %s",
+            (state.handoff_record_id,),
+        )
+    assert attempt_error.value.diag.constraint_name == "session_handoff_deliveries_attempt_id_valid"
 
 
 @pytest.mark.asyncio
@@ -412,25 +572,23 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
     schema = registry.get_tool_metadata("set_handoff")
     assert schema is not None
     assert schema.input_schema["required"] == ["current_state", "next_steps"]
-    assert schema.input_schema["properties"]["gobby_feedback"]["items"]["required"] == [
-        "source",
-        "kind",
-        "evidence",
-        "impact",
-        "frequency",
-    ]
-    item_properties = schema.input_schema["properties"]["gobby_feedback"]["items"]["properties"]
-    assert item_properties["kind"]["enum"] == [
-        "friction",
-        "bug",
-        "noise",
-        "surprise",
-        "missing-affordance",
-        "useful",
-        "other",
-    ]
-    assert item_properties["frequency"]["enum"] == ["once", "repeated", "always"]
-    assert "kind_other_label" in item_properties
+    properties = schema.input_schema["properties"]
+    assert "gobby_feedback" not in properties
+    assert tuple(properties) == (
+        "current_state",
+        "next_steps",
+        "what_was_accomplished",
+        "key_decisions",
+        "problems_encountered",
+        "what_didnt_work",
+        "blockers",
+        "notes",
+        "references",
+        "clear_session",
+    )
+    assert properties["current_state"]["minLength"] == 1
+    assert properties["next_steps"]["minItems"] == 1
+    assert properties["next_steps"]["items"]["minLength"] == 1
 
     with session_context_for_test(session.id):
         assert await registry.call("feedback", {"observations": []}) == {
@@ -455,13 +613,12 @@ async def test_get_handoff_result_stays_below_offload_threshold(
     session_manager: SessionManager,
 ) -> None:
     session = _registered_session(session_manager)
-    handoff = "H" * 8_000
+    handoff = build_handoff_payload(current_state="H" * 8_000, next_steps=["Continue"])
     stage_handoff_attempt(
         temp_db,
         session.id,
-        attempt_id="handoff-size",
-        markdown=handoff,
-        observations=[],
+        attempt_id="d" * 32,
+        handoff=handoff,
         clear_session=False,
     )
     registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
@@ -473,7 +630,7 @@ async def test_get_handoff_result_stays_below_offload_threshold(
         "success": True,
         "found": True,
         "session_id": session.id,
-        "handoff": handoff,
+        "handoff": handoff.rendered_markdown,
     }
     assert len(json.dumps(result)) < 15_000
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, TypeGuard
@@ -20,14 +19,18 @@ from gobby.sessions.compact_continuation import (
 from gobby.sessions.handoff import (
     HANDOFF_PULL_PENDING_VARIABLE,
     PENDING_HANDOFF_VARIABLE,
-    FeedbackObservation,
     HandoffAttemptState,
-    _insert_feedback_rows,
     _store_variables,
     restore_handoff_attempt,
     stage_handoff_attempt,
 )
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
+from gobby.sessions.handoff_records import (
+    HandoffPayload,
+    delete_undelivered_handoff,
+    insert_delivery_receipt,
+    insert_handoff_record,
+)
 from gobby.sessions.title_lifecycle import clear_successor_title
 from gobby.storage.hub.protocol import (
     HubDatabase,
@@ -88,8 +91,7 @@ def stage_clear_attempt(
     session_id: str,
     *,
     attempt_id: str,
-    handoff_markdown: str,
-    observations: Sequence[FeedbackObservation],
+    handoff: HandoffPayload,
     terminal_context: dict[str, Any] | None,
     chat_context: dict[str, Any] | None,
 ) -> HandoffAttemptState:
@@ -110,8 +112,7 @@ def stage_clear_attempt(
         db,
         session_id,
         attempt_id=attempt_id,
-        markdown=handoff_markdown,
-        observations=observations,
+        handoff=handoff,
         clear_session=True,
         additional_markers={CLEAR_ATTEMPT_VARIABLE: marker},
         transition_status=AWAITING_HANDOFF_STATUS,
@@ -167,8 +168,7 @@ def refresh_clear_attempt_content(
     session_id: str,
     *,
     attempt_id: str,
-    handoff_markdown: str,
-    observations: Sequence[FeedbackObservation],
+    handoff: HandoffPayload,
 ) -> bool:
     """Rewrite the handoff content of a still-pending attempt without re-staging it."""
     try:
@@ -181,23 +181,30 @@ def refresh_clear_attempt_content(
             marker = _marker_from_variables(variables)
             if not _unconsumed_attempt(marker, attempt_id):
                 return False
-            feedback_ids = _insert_feedback_rows(conn, session_id, observations)
+            old_handoff_id = marker.get("handoff_record_id")
+            if not isinstance(old_handoff_id, str) or not old_handoff_id:
+                return False
+            delivered = conn.execute(
+                "SELECT 1 FROM session_handoff_deliveries WHERE handoff_id = %s",
+                (old_handoff_id,),
+            ).fetchone()
+            if delivered is not None:
+                return False
+            handoff_record_id, _authored_at = insert_handoff_record(conn, session_id, handoff)
             for name in (CLEAR_ATTEMPT_VARIABLE, PENDING_HANDOFF_VARIABLE):
                 candidate = variables.get(name)
                 if not isinstance(candidate, dict) or candidate.get("attempt_id") != attempt_id:
                     continue
-                existing = candidate.get("feedback_ids")
                 candidate = dict(candidate)
-                candidate["feedback_ids"] = [
-                    *(item for item in existing or () if isinstance(item, str)),
-                    *feedback_ids,
-                ]
+                candidate["handoff_record_id"] = handoff_record_id
                 variables[name] = candidate
             conn.execute(
                 "UPDATE sessions SET handoff_markdown = %s, updated_at = %s WHERE id = %s",
-                (handoff_markdown, utc_now(), session_id),
+                (handoff.rendered_markdown, utc_now(), session_id),
             )
             _store_variables(conn, session_id, variables, exists=row is not None)
+            if not delete_undelivered_handoff(conn, old_handoff_id, session_id):
+                raise RuntimeError("staged handoff became delivered while refresh held its marker")
             return True
     except Exception:
         logger.warning(
@@ -417,6 +424,9 @@ def take_clear_handoff_marker(
                     return False
             elif not _unconsumed_attempt(marker, attempt_id):
                 return False
+            handoff_record_id = marker.get("handoff_record_id")
+            if not isinstance(handoff_record_id, str) or not handoff_record_id:
+                return False
             sanitized = sanitize_parent_session_id(
                 conn,
                 child_session_id=successor_id,
@@ -438,6 +448,18 @@ def take_clear_handoff_marker(
                 "UPDATE sessions SET parent_session_id = %s, updated_at = %s WHERE id = %s",
                 (sanitized, now, successor_id),
             )
+            if supersede_successor_id is None:
+                insert_delivery_receipt(
+                    conn,
+                    handoff_id=handoff_record_id,
+                    attempt_id=attempt_id,
+                    boundary_kind="clear",
+                    continuation_session_id=successor_id,
+                )
+                conn.execute(
+                    "UPDATE sessions SET status = 'expired', updated_at = %s WHERE id = %s",
+                    (now, predecessor_id),
+                )
             conn.execute(
                 "UPDATE agent_runs SET parent_session_id = %s WHERE parent_session_id = %s",
                 (successor_id, predecessor_id),
@@ -510,15 +532,17 @@ def clear_failed_attempt(
             marker = _marker_from_variables(variables)
             if not _unconsumed_attempt(marker, attempt_id):
                 return False
-            feedback_ids = marker.get("feedback_ids")
+            handoff_record_id = marker.get("handoff_record_id")
+            if not isinstance(handoff_record_id, str) or not handoff_record_id:
+                return False
             prior_status = marker.get("prior_status")
             attempt_state = HandoffAttemptState(
                 session_id=session_id,
                 attempt_id=attempt_id,
+                handoff_record_id=handoff_record_id,
                 prior_handoff_markdown=marker.get("prior_handoff_markdown"),
                 prior_markers={},
                 missing_markers=frozenset({CLEAR_ATTEMPT_VARIABLE, PENDING_HANDOFF_VARIABLE}),
-                feedback_ids=tuple(item for item in feedback_ids or () if isinstance(item, str)),
                 prior_status=prior_status if isinstance(prior_status, str) else None,
             )
         return restore_handoff_attempt(db, attempt_state)
@@ -624,6 +648,9 @@ def _commit_web_chat_clear_successor_rows(
     marker = _marker_from_variables(variables)
     if not _unconsumed_attempt(marker, attempt_id):
         raise _ClearCommitAborted("clear attempt is not pending")
+    handoff_record_id = marker.get("handoff_record_id")
+    if not isinstance(handoff_record_id, str) or not handoff_record_id:
+        raise _ClearCommitAborted("clear attempt handoff record is missing")
 
     successor_id = str(uuid4())
     sanitized_parent = sanitize_parent_session_id(
@@ -696,6 +723,13 @@ def _commit_web_chat_clear_successor_rows(
          WHERE id = %s
         """,
         (now, predecessor_id),
+    )
+    insert_delivery_receipt(
+        conn,
+        handoff_id=handoff_record_id,
+        attempt_id=attempt_id,
+        boundary_kind="clear",
+        continuation_session_id=successor_id,
     )
     taken = dict(marker)
     taken["consumed_by"] = successor_id

@@ -237,17 +237,6 @@ def _bind_clear_successor(
             successor_id,
             exc,
         )
-    # The successor now owns the handoff and the claims: this is the only path
-    # that ends the predecessor's awaiting_handoff status.
-    try:
-        handler._session_manager.update_status_if_non_terminal(predecessor_id, "expired")
-    except Exception as exc:
-        handler.logger.warning(
-            "Failed to expire clear predecessor %s after successor %s bound: %s",
-            predecessor_id,
-            successor_id,
-            exc,
-        )
     return True
 
 

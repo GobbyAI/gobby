@@ -11,24 +11,35 @@ marker. It accepts:
 
 - required nonblank `current_state`;
 - at least one nonblank `next_steps` entry;
-- optional nonblank `key_decisions`, `blockers`, `notes`, and `references` entries;
-- optional structured `gobby_feedback` observations;
+- optional nonblank `what_was_accomplished`, `key_decisions`,
+  `problems_encountered`, `what_didnt_work`, `blockers`, `notes`, and `references`
+  entries;
 - `clear_session=false` for in-place compact or `true` for a bound clear successor.
 
 References are deduplicated in caller order. Validation completes before state mutation.
 
 ## Persisted State
 
-Rendered Markdown lives in `sessions.handoff_markdown` with sections in this order:
+Authored payloads live in `session_handoffs`; `sessions.handoff_markdown` remains the
+current rendered copy used by delivery and UI reads. Sections render in this order:
 
 1. Current State
 2. numbered Next Steps
-3. optional Key Decisions
-4. optional Blockers
-5. optional Notes
-6. optional References
+3. optional What Was Accomplished
+4. optional Key Decisions
+5. optional Problems Encountered
+6. optional What Didn’t Work
+7. optional Blockers
+8. optional Notes
+9. optional References
 
-Feedback is excluded from Markdown. Each observation becomes one `session_feedback` row
+Each content row stores the normalized field arrays, exact rendered Markdown, payload
+version, authored timestamp, and SHA-256 of the exact UTF-8 Markdown. Successful
+compact and clear boundaries create one immutable `session_handoff_deliveries` receipt;
+authorship alone is not delivery.
+
+Feedback is a separate `gobby-sessions:feedback` operation and is excluded from the
+handoff contract. Each observation becomes one `session_feedback` row
 with session, source, kind, evidence, impact, frequency, optional suggestion and
 disposition, `reviewed=false`, and a UTC creation timestamp. `kind` is an enum
 (`friction`, `bug`, `noise`, `surprise`, `missing-affordance`, `useful`, `other`);
@@ -68,14 +79,15 @@ as a live handoff.
 
 Before provider dispatch, Gobby atomically stages:
 
+- an immutable authored `session_handoffs` row;
 - the replacement `handoff_markdown`;
-- feedback rows for this attempt;
-- a pending handoff marker containing attempt identity and compact/clear mode;
+- a pending handoff marker containing attempt identity, handoff record identity, and
+  compact/clear mode;
 - the clear-attempt identity marker when `clear_session=true`.
 
-Synchronous and queued dispatch failures restore the previous handoff, delete only the
-attempt's feedback rows, and compare-and-clear its markers. A newer attempt is never
-overwritten by stale compensation.
+Synchronous and queued dispatch failures restore the previous handoff, delete the
+matching staged content row only when it has no delivery receipt, and compare-and-clear
+its markers. A newer or delivered attempt is never overwritten by stale compensation.
 
 ## Compact Path
 
@@ -83,6 +95,8 @@ Compact dispatch uses the provider-specific command and continues on the same se
 row. The continuation prompt instructs the agent to call `get_handoff()`. Compact
 SessionStart/PostCompact handling resets context-epoch tracking and consumes only the
 provider compact-identity marker; it leaves the `set_handoff` marker for retrieval.
+Successful dispatch records a compact delivery receipt. If that receipt write is
+interrupted, `get_handoff()` retries it idempotently while consuming the marker.
 
 Manual or automatic provider compaction without `set_handoff` has no pending marker, so
 `get_handoff()` returns an empty result.
@@ -90,10 +104,10 @@ Manual or automatic provider compaction without `set_handoff` has no pending mar
 ## Clear Path
 
 Clear dispatch stages a one-shot predecessor marker before `/clear`. A matching
-successor atomically consumes that marker, records direct predecessor parentage, and
-inherits live task claims through expected-owner compare-and-swap. Web chat performs
-predecessor expiry and successor insertion in one transaction; terminal hooks perform
-the equivalent binding after SessionStart.
+successor atomically consumes that marker, records the clear delivery receipt, records
+direct predecessor parentage, and expires the predecessor. Live task claims then move
+through expected-owner compare-and-swap. Web chat performs successor insertion in the
+same transaction; terminal hooks perform the equivalent binding after SessionStart.
 
 Manual `/clear` has no marker. Its new session is independent and receives no handoff.
 
@@ -132,9 +146,17 @@ the persisted title verbatim after terminal ownership checks.
 
 ## Archival Summaries And Memory
 
-Session-end summaries read the full available transcript and append a summary revision.
-Missing transcripts may leave `summary_markdown` empty. Rolling digest state, digest
-watermarks, delta summaries, and digest-derived titles do not exist.
+For an expired session, the newest validated handoff with a clear delivery receipt is
+the archival narrative without an LLM call. Deterministic sections append Active Task,
+task-linked or transcript-explicit Commits, session-attributed Files Changed, and exact
+bounded Unresolved Errors with retrieval IDs. Evidence lookup failures are recorded as
+metadata omissions and do not discard the handoff. The revision is `agent_authored` and
+idempotent by its immutable handoff source hash.
+
+Staged, compact-only, malformed, imported-without-receipt, and absent handoffs retain the
+full-transcript/LLM fallback. Missing transcripts may therefore still leave
+`summary_markdown` empty. Rolling digest state, digest watermarks, delta summaries, and
+digest-derived titles do not exist.
 
 Shadow-memory relevance judging runs from its own background `turn_end` rule through
 `gobby-memory:judge_shadow_relevance`; it is independent of archival summaries and

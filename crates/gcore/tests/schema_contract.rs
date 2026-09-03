@@ -18,18 +18,18 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 422);
+    assert_eq!(identity.latest_asset.version, 423);
     assert_eq!(
         identity.latest_asset.filename,
-        "422_restore_public_privilege_revokes.sql"
+        "423_add_session_handoffs.sql"
     );
     assert_eq!(
         identity.latest_asset.checksum,
-        "778e4101727b179ffa16a7a51eaa513ed6c52422b62eceb786c150900b2c19ef"
+        "fedc1a62b0a5cda9c104c99fc640ac7a8b36c27c65f5d10491541cef429f8cd5"
     );
     assert_eq!(
         identity.root_hash,
-        "0c16019331925fae4f245946db9cfb2427a5110063f4c0f976c846e4a021f3fa"
+        "b3e2cb62cbd92ee6596ebdd64206c4ed4df763811395aebeda788017a1fd2253"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();

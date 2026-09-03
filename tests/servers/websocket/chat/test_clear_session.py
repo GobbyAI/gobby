@@ -27,6 +27,7 @@ from gobby.sessions.clear_continuation import (
     commit_web_chat_clear_successor,
     stage_clear_attempt,
 )
+from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_tasks import SessionTaskManager
@@ -39,8 +40,12 @@ from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 pytestmark = pytest.mark.unit
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
-ATTEMPT_ID = "clear-attempt-web-1"
-HANDOFF = "Continue epic #20539: web-chat clear successor must resume this work."
+ATTEMPT_ID = "e" * 32
+HANDOFF_PAYLOAD = build_handoff_payload(
+    current_state="Continue epic #20539.",
+    next_steps=["Resume the web-chat clear successor work."],
+)
+HANDOFF = HANDOFF_PAYLOAD.rendered_markdown
 
 
 @pytest.fixture(autouse=True)
@@ -480,8 +485,7 @@ class TestCommitWebChatClearSuccessorTransaction:
             hub_db,
             predecessor.id,
             attempt_id=ATTEMPT_ID,
-            handoff_markdown=HANDOFF,
-            observations=[],
+            handoff=HANDOFF_PAYLOAD,
             terminal_context=None,
             chat_context={"model": "claude-opus", "mode": "normal"},
         )
@@ -531,8 +535,7 @@ class TestCommitWebChatClearSuccessorTransaction:
             hub_db,
             predecessor.id,
             attempt_id=ATTEMPT_ID,
-            handoff_markdown=HANDOFF,
-            observations=[],
+            handoff=HANDOFF_PAYLOAD,
             terminal_context=None,
             chat_context=None,
         )
@@ -592,8 +595,7 @@ class TestCommitWebChatClearSuccessorTransaction:
             hub_db,
             predecessor.id,
             attempt_id=ATTEMPT_ID,
-            handoff_markdown=HANDOFF,
-            observations=[],
+            handoff=HANDOFF_PAYLOAD,
             terminal_context=None,
             chat_context=None,
         )

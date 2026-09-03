@@ -1,21 +1,57 @@
-"""Transcript-only archival summary behavior."""
+"""Transcript and delivered-handoff archival summary behavior."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
-from unittest.mock import patch
+from typing import Literal
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.sessions.handoff_records import (
+    build_handoff_payload,
+    insert_handoff_record,
+    record_handoff_delivery,
+)
 from gobby.sessions.summarize import generate_session_summaries
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
 MACHINE_ID = "20000000-0000-4000-8000-000000000002"
+
+
+def _record_handoff(
+    db: HubDatabase,
+    manager: SessionManager,
+    session_id: str,
+    *,
+    boundary_kind: Literal["compact", "clear"],
+) -> tuple[str, str]:
+    payload = build_handoff_payload(
+        current_state="The implementation is ready for archival.",
+        next_steps=["Resume in the bound successor."],
+        key_decisions=["Use the delivered handoff without an LLM."],
+    )
+    with db.transaction() as conn:
+        handoff_id, _authored_at = insert_handoff_record(conn, session_id, payload)
+    attempt_id = "1" * 32
+    record_handoff_delivery(
+        db,
+        handoff_id=handoff_id,
+        attempt_id=attempt_id,
+        boundary_kind=boundary_kind,
+        continuation_session_id=session_id,
+    )
+    manager.update_status(session_id, "expired")
+    return handoff_id, payload.rendered_markdown
 
 
 @pytest.fixture(autouse=True)
@@ -91,3 +127,175 @@ async def test_transcript_fallback_persists_summary_revision(
     assert revision is not None
     assert revision["generation_mode"] == "full"
     assert revision["source_context_hash"]
+
+
+@pytest.mark.asyncio
+async def test_compact_delivery_does_not_bypass_missing_transcript_fallback(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+) -> None:
+    project = isolated_checkout_factory(temp_db, "compact-summary").project
+    manager = SessionManager(temp_db)
+    session_id = manager.register_session(
+        external_id="compact-only",
+        machine_id=MACHINE_ID,
+        source="claude",
+        project_id=project.id,
+        transcript_path="/tmp/does-not-exist.jsonl",
+    )
+    _record_handoff(temp_db, manager, session_id, boundary_kind="compact")
+
+    result = await generate_session_summaries(
+        session_id=session_id,
+        session_manager=manager,
+        db=temp_db,
+    )
+
+    assert result["success"] is False
+    session = manager.get(session_id)
+    assert session is not None and session.summary_markdown is None
+
+
+@pytest.mark.asyncio
+async def test_delivered_clear_handoff_builds_evidence_summary_without_llm(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+) -> None:
+    checkout = isolated_checkout_factory(temp_db, "clear-summary")
+    manager = SessionManager(temp_db)
+    session_id = manager.register_session(
+        external_id="clear-delivered",
+        machine_id=MACHINE_ID,
+        source="claude",
+        project_id=checkout.project.id,
+        transcript_path="/tmp/does-not-exist.jsonl",
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        checkout.project.id,
+        title="Archive delivered handoff",
+        validation_criteria="Summary contains bounded evidence.",
+    )
+    SessionTaskManager(temp_db).link_task(session_id, task.id, "claimed")
+    commit_sha = "abc1234def567890"
+    temp_db.execute(
+        "UPDATE tasks SET commits = %s::jsonb WHERE id = %s",
+        (json.dumps([commit_sha]), task.id),
+    )
+    evidence_file = Path(checkout.root_path) / "evidence.txt"
+    evidence_file.write_text("changed\n", encoding="utf-8")
+    SessionVariableManager(temp_db).merge_variables(
+        session_id,
+        {
+            "session_edited_files": ["evidence.txt", "../outside.txt"],
+            "open_tool_errors": [
+                {
+                    "tool": "Bash",
+                    "target_key": "focused-test",
+                    "error": "exact unresolved failure " + ("x" * 500),
+                    "first_at": "2026-09-03T10:00:00+00:00",
+                    "last_at": "2026-09-03T10:00:01+00:00",
+                    "count": 1,
+                }
+            ],
+        },
+    )
+    handoff_id, handoff_markdown = _record_handoff(
+        temp_db,
+        manager,
+        session_id,
+        boundary_kind="clear",
+    )
+    llm = MagicMock()
+    llm.call_feature = AsyncMock(side_effect=AssertionError("LLM must not be called"))
+
+    first = await generate_session_summaries(
+        session_id=session_id,
+        session_manager=manager,
+        llm_service=llm,
+        db=temp_db,
+    )
+    second = await generate_session_summaries(
+        session_id=session_id,
+        session_manager=manager,
+        llm_service=llm,
+        db=temp_db,
+    )
+
+    session = manager.get(session_id)
+    assert session is not None and session.summary_markdown is not None
+    assert first["generation_mode"] == "agent_authored"
+    assert second["generation_mode"] == "noop"
+    assert session.summary_markdown.startswith(handoff_markdown)
+    headings = [
+        "## Active Task",
+        "## Commits",
+        "## Files Changed",
+        "## Unresolved Errors",
+    ]
+    assert [session.summary_markdown.index(heading) for heading in headings] == sorted(
+        session.summary_markdown.index(heading) for heading in headings
+    )
+    assert f"#{task.seq_num} [in_progress] {task.title}" in session.summary_markdown
+    assert commit_sha in session.summary_markdown
+    assert "evidence.txt" in session.summary_markdown
+    assert "../outside.txt" not in session.summary_markdown
+    assert "error preview: exact unresolved failure" in session.summary_markdown
+    assert "full error: get_variable" in session.summary_markdown
+    assert not llm.call_feature.called
+
+    revisions = temp_db.fetchall(
+        "SELECT generation_mode, source_context_hash, metadata_json "
+        "FROM session_summary_revisions WHERE session_id = %s",
+        (session_id,),
+    )
+    assert len(revisions) == 1
+    revision = revisions[0]
+    assert revision["generation_mode"] == "agent_authored"
+    raw_metadata = revision["metadata_json"]
+    metadata = json.loads(raw_metadata) if isinstance(raw_metadata, str) else raw_metadata
+    assert metadata["source_kind"] == "session_handoff"
+    assert metadata["source_handoff_id"] == handoff_id
+    assert metadata["handoff_payload_version"] == 1
+    assert metadata["continuation_session_id"] == session_id
+    assert metadata["evidence"] == {
+        "active_task_id": task.id,
+        "commit_shas": [commit_sha],
+        "file_paths": ["evidence.txt"],
+        "open_tool_error_ids": metadata["evidence"]["open_tool_error_ids"],
+    }
+    assert len(metadata["evidence"]["open_tool_error_ids"]) == 1
+    assert metadata["evidence_omissions"] == ["transcript_commit_evidence_unavailable"]
+    assert len(revision["source_context_hash"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_malformed_clear_handoff_retains_transcript_fallback(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+) -> None:
+    project = isolated_checkout_factory(temp_db, "malformed-summary").project
+    manager = SessionManager(temp_db)
+    session_id = manager.register_session(
+        external_id="malformed-clear",
+        machine_id=MACHINE_ID,
+        source="claude",
+        project_id=project.id,
+        transcript_path="/tmp/does-not-exist.jsonl",
+    )
+    handoff_id, _markdown = _record_handoff(
+        temp_db,
+        manager,
+        session_id,
+        boundary_kind="clear",
+    )
+    temp_db.execute(
+        "UPDATE session_handoffs SET content_sha256 = %s WHERE id = %s",
+        ("0" * 64, handoff_id),
+    )
+
+    result = await generate_session_summaries(
+        session_id=session_id,
+        session_manager=manager,
+        db=temp_db,
+    )
+
+    assert result["success"] is False
+    session = manager.get(session_id)
+    assert session is not None and session.summary_markdown is None

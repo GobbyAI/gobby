@@ -28,8 +28,8 @@ from gobby.sessions.clear_continuation import (
 from gobby.sessions.handoff import (
     HANDOFF_PULL_PENDING_VARIABLE,
     consume_pending_handoff,
-    render_handoff_markdown,
 )
+from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
@@ -38,6 +38,7 @@ from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 pytestmark = pytest.mark.unit
 
 _DERIVED = "/home/user/.grok/sessions/%2Frepo/grok-external/updates.jsonl"
+_ATTEMPT_ID = "1" * 32
 
 
 def _manager(session: SimpleNamespace, updated: SimpleNamespace | None) -> MagicMock:
@@ -143,7 +144,7 @@ def test_deferred_activation_passes_matching_clear_resolution() -> None:
         session=None,
         session_source="clear",
         clear_predecessor=predecessor,
-        clear_attempt_id="attempt-1",
+        clear_attempt_id=_ATTEMPT_ID,
     )
     event = _event(
         {
@@ -205,12 +206,11 @@ def test_startup_source_with_clear_resolution_binds_without_prompt(
     stage_clear_attempt(
         temp_db,
         predecessor_id,
-        attempt_id="attempt-1",
-        handoff_markdown=render_handoff_markdown(
+        attempt_id=_ATTEMPT_ID,
+        handoff=build_handoff_payload(
             current_state="Ready.",
             next_steps=["Continue."],
         ),
-        observations=[],
         terminal_context=term,
         chat_context=None,
     )
@@ -244,7 +244,7 @@ def test_startup_source_with_clear_resolution_binds_without_prompt(
         session=None,
         session_source="clear",
         clear_predecessor=predecessor,
-        clear_attempt_id="attempt-1",
+        clear_attempt_id=_ATTEMPT_ID,
     )
 
     with (
@@ -312,9 +312,8 @@ def test_clear_session_start_types_pull_prompt_only_when_none_is_in_flight(
     stage_clear_attempt(
         temp_db,
         predecessor_id,
-        attempt_id="attempt-1",
-        handoff_markdown=render_handoff_markdown(current_state="Ready.", next_steps=["Continue."]),
-        observations=[],
+        attempt_id=_ATTEMPT_ID,
+        handoff=build_handoff_payload(current_state="Ready.", next_steps=["Continue."]),
         terminal_context=term,
         chat_context=None,
     )
@@ -349,7 +348,7 @@ def test_clear_session_start_types_pull_prompt_only_when_none_is_in_flight(
         session=None,
         session_source="clear",
         clear_predecessor=predecessor,
-        clear_attempt_id="attempt-1",
+        clear_attempt_id=_ATTEMPT_ID,
     )
     materialize = "gobby.hooks.event_handlers._session_start.materialize"
 
@@ -423,7 +422,7 @@ class _StagedClear:
             session=None,
             session_source="clear",
             clear_predecessor=self.sessions.get(self.predecessor_id),
-            clear_attempt_id="attempt-1",
+            clear_attempt_id=_ATTEMPT_ID,
         )
 
 
@@ -454,9 +453,8 @@ def _staged_clear(
     stage_clear_attempt(
         temp_db,
         staged.predecessor_id,
-        attempt_id="attempt-1",
-        handoff_markdown=render_handoff_markdown(current_state="Ready.", next_steps=["Continue."]),
-        observations=[],
+        attempt_id=_ATTEMPT_ID,
+        handoff=build_handoff_payload(current_state="Ready.", next_steps=["Continue."]),
         terminal_context=staged.term,
         chat_context=None,
     )
@@ -562,7 +560,7 @@ def test_next_clear_takes_over_a_bound_but_unpulled_successor(
     staged = _staged_clear(temp_db, tmp_path, monkeypatch, name="takeover", pane="%104")
     stale_id = staged.register("stale-ext")
     assert take_clear_handoff_marker(
-        temp_db, staged.predecessor_id, attempt_id="attempt-1", successor_id=stale_id
+        temp_db, staged.predecessor_id, attempt_id=_ATTEMPT_ID, successor_id=stale_id
     )
     staged.sessions.update_status_if_non_terminal(staged.predecessor_id, "expired")
     variables = SessionVariableManager(temp_db)
@@ -587,7 +585,7 @@ def test_next_clear_takes_over_a_bound_but_unpulled_successor(
     )
     assert resolved.predecessor is not None
     assert resolved.predecessor.id == staged.predecessor_id
-    assert (resolved.attempt_id, resolved.supersedes) == ("attempt-1", stale_id)
+    assert (resolved.attempt_id, resolved.supersedes) == (_ATTEMPT_ID, stale_id)
 
     handler = _handler(staged.sessions)
     preserve = MagicMock()

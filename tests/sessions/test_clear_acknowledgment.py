@@ -19,9 +19,12 @@ from gobby.sessions.clear_continuation import (
     take_clear_handoff_marker,
 )
 from gobby.sessions.handoff import consume_pending_handoff
+from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+_PENDING_ATTEMPT_ID = "f" * 32
 
 
 def _terminal_context(pane: str = "%91") -> dict[str, Any]:
@@ -109,8 +112,10 @@ async def _run_clear(
         for patcher in patches:
             stack.enter_context(patcher)
         return await _terminal_clear.execute_clear_session(
-            markdown,
-            [],
+            build_handoff_payload(
+                current_state=markdown.removeprefix("## Current State\n\n"),
+                next_steps=["Continue."],
+            ),
             session_manager=sessions,
             db=db,
             agent_run_manager=agent_runs,
@@ -175,7 +180,7 @@ async def test_clear_acknowledges_bound_successor_and_handoff_is_one_shot(
     assert result.get("acknowledged_by") == "successor_binding"
     # Staging moved the row to awaiting_handoff; only the successor's bind expires it.
     assert status_while_sending == "awaiting_handoff"
-    assert _status(sessions, predecessor.id) == "awaiting_handoff"
+    assert _status(sessions, predecessor.id) == "expired"
     assert pending_clear_attempt(hub_db, predecessor.id) is None
     handoff = consume_pending_handoff(hub_db, successor_id)
     assert handoff is not None
@@ -283,13 +288,15 @@ async def test_pending_attempt_is_reused_and_its_content_refreshed(
     stage_clear_attempt(
         hub_db,
         predecessor.id,
-        attempt_id="pending-clear",
-        handoff_markdown="## Current State\n\nFirst attempt content.",
-        observations=[],
+        attempt_id=_PENDING_ATTEMPT_ID,
+        handoff=build_handoff_payload(
+            current_state="First attempt content.",
+            next_steps=["Continue."],
+        ),
         terminal_context=_terminal_context(),
         chat_context=None,
     )
-    assert mark_clear_command_sent(hub_db, predecessor.id, attempt_id="pending-clear")
+    assert mark_clear_command_sent(hub_db, predecessor.id, attempt_id=_PENDING_ATTEMPT_ID)
     pane = _Pane("> ")
     send_command = AsyncMock()
     patches = _patches(predecessor, pane, send_command)
@@ -305,7 +312,7 @@ async def test_pending_attempt_is_reused_and_its_content_refreshed(
     assert result["error_code"] == "clear_acknowledgment_timeout"
     assert result["reused_attempt"] is True
     assert result["attempt_pending"] is True
-    assert result["attempt_id"] == "pending-clear"
+    assert result["attempt_id"] == _PENDING_ATTEMPT_ID
     send_command.assert_not_awaited()
     # A retry never touches the pane; the delivered command stands.
     assert pane.keys == []
@@ -319,7 +326,10 @@ async def test_pending_attempt_is_reused_and_its_content_refreshed(
         terminal_context=_terminal_context(),
     )
     assert take_clear_handoff_marker(
-        hub_db, predecessor.id, attempt_id="pending-clear", successor_id=successor_id
+        hub_db,
+        predecessor.id,
+        attempt_id=_PENDING_ATTEMPT_ID,
+        successor_id=successor_id,
     )
     handoff = consume_pending_handoff(hub_db, successor_id)
     assert handoff is not None
@@ -334,9 +344,11 @@ def test_pending_clear_attempt_parks_explicit_resume(
     attempt_state = stage_clear_attempt(
         hub_db,
         predecessor.id,
-        attempt_id="pending-clear",
-        handoff_markdown="## Current State\n\nPark the resume.",
-        observations=[],
+        attempt_id=_PENDING_ATTEMPT_ID,
+        handoff=build_handoff_payload(
+            current_state="Park the resume.",
+            next_steps=["Continue."],
+        ),
         terminal_context=_terminal_context(),
         chat_context=None,
     )
@@ -370,7 +382,7 @@ def test_pending_clear_attempt_parks_explicit_resume(
     assert clear_failed_attempt(
         hub_db,
         predecessor.id,
-        attempt_id="pending-clear",
+        attempt_id=_PENDING_ATTEMPT_ID,
         attempt_state=attempt_state,
     )
     resumed_after_restore, _ = rebind_resumed_session_start(

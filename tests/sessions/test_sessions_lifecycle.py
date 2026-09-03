@@ -541,7 +541,7 @@ class TestSessionLifecycleManager:
     async def test_process_pending_transcripts_skips_subagent_sessions(
         self, tmp_path: Path, manager: SessionLifecycleManager
     ) -> None:
-        """Subagent sessions (agent_depth > 0) skip memory extraction and summary generation."""
+        """Subagent sessions only attempt non-LLM handoff summary generation."""
         session = MagicMock(spec=Session)
         session.id = "s-sub"
         session.transcript_path = str(tmp_path / "transcript.jsonl")
@@ -563,14 +563,18 @@ class TestSessionLifecycleManager:
             processed = await manager._process_pending_transcripts(manager._capture_active())
 
             assert processed == 1
-            mock_sum.assert_not_awaited()
+            mock_sum.assert_awaited_once_with(
+                "s-sub",
+                manager._capture_active().session_summary,
+                allow_llm=False,
+            )
             manager.session_manager.mark_transcript_processed.assert_called_once_with("s-sub")
 
     @pytest.mark.asyncio
     async def test_process_pending_transcripts_skips_pipeline_sessions(
         self, tmp_path: Path, manager: SessionLifecycleManager
     ) -> None:
-        """Pipeline sessions skip summary generation."""
+        """Pipeline sessions only attempt non-LLM handoff summary generation."""
         session = MagicMock(spec=Session)
         session.id = "s-pipe"
         session.transcript_path = str(tmp_path / "transcript.jsonl")
@@ -592,7 +596,11 @@ class TestSessionLifecycleManager:
             processed = await manager._process_pending_transcripts(manager._capture_active())
 
             assert processed == 1
-            mock_sum.assert_not_awaited()
+            mock_sum.assert_awaited_once_with(
+                "s-pipe",
+                manager._capture_active().session_summary,
+                allow_llm=False,
+            )
             manager.session_manager.mark_transcript_processed.assert_called_once_with("s-pipe")
 
     @pytest.mark.asyncio
@@ -792,7 +800,7 @@ class TestSessionLifecycleManager:
     async def test_missing_transcript_with_handoff_marks_processed_without_summary(
         self, manager: SessionLifecycleManager
     ) -> None:
-        """A handoff never substitutes for a missing archival transcript."""
+        """A legacy handoff is checked but cannot bypass archival fallback rules."""
         digest = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
         session = MagicMock(spec=Session)
         session.id = "s1"
@@ -823,7 +831,11 @@ class TestSessionLifecycleManager:
         ):
             processed = await manager._process_pending_transcripts(manager._capture_active())
 
-        mock_gen.assert_not_awaited()
+        mock_gen.assert_awaited_once_with(
+            "s1",
+            manager._capture_active().session_summary,
+            allow_llm=False,
+        )
         manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
         assert session.handoff_markdown == digest
         assert processed == 1
@@ -832,7 +844,7 @@ class TestSessionLifecycleManager:
     async def test_missing_transcript_invalid_summary_marks_processed(
         self, manager: SessionLifecycleManager
     ) -> None:
-        """Missing transcripts may leave archival summaries empty."""
+        """Missing transcripts attempt a delivered handoff before remaining empty."""
         digest = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
         session = MagicMock(spec=Session)
         session.id = "s1"
@@ -860,7 +872,11 @@ class TestSessionLifecycleManager:
         ):
             processed = await manager._process_pending_transcripts(manager._capture_active())
 
-        mock_gen.assert_not_awaited()
+        mock_gen.assert_awaited_once_with(
+            "s1",
+            manager._capture_active().session_summary,
+            allow_llm=False,
+        )
         manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
         assert refreshed.summary_markdown is None
         assert processed == 1
@@ -869,7 +885,7 @@ class TestSessionLifecycleManager:
     async def test_missing_transcript_no_digest_marks_processed(
         self, manager: SessionLifecycleManager
     ) -> None:
-        """A purged transcript with no usable digest is finalized without synthesis."""
+        """A purged transcript checks for a delivered handoff without synthesis."""
         session = MagicMock(spec=Session)
         session.id = "s1"
         session.transcript_path = "/nonexistent/missing-s1.jsonl"
@@ -888,7 +904,11 @@ class TestSessionLifecycleManager:
         ):
             processed = await manager._process_pending_transcripts(manager._capture_active())
 
-        mock_gen.assert_not_awaited()  # short-circuited — nothing to synthesize
+        mock_gen.assert_awaited_once_with(
+            "s1",
+            manager._capture_active().session_summary,
+            allow_llm=False,
+        )
         manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
         assert manager.session_manager.get.call_count == 0
         assert session.handoff_markdown is None
@@ -1203,13 +1223,25 @@ class TestGenerateArtifactsIfNeeded:
 
     @pytest.mark.asyncio
     async def test_no_llm_service(self, manager: SessionLifecycleManager) -> None:
-        """Skips when llm_service is None."""
+        """Skips without an LLM when no delivered clear handoff exists."""
         _set_llm_service(manager, None)
-        await manager._generate_artifacts_if_needed(
-            "sess-1", manager._capture_active().session_summary
-        )
-        manager.session_manager.get.assert_not_called()
-        assert manager.session_manager.get.call_count == 0
+        session = MagicMock(spec=Session)
+        session.summary_markdown = None
+        session.status = "expired"
+        session.transcript_path = None
+        manager.session_manager.get.return_value = session
+
+        with patch(
+            "gobby.sessions.transcript_processing.latest_delivered_clear_handoff",
+            return_value=None,
+        ) as lookup:
+            await manager._generate_artifacts_if_needed(
+                "sess-1", manager._capture_active().session_summary
+            )
+
+        assert session.summary_markdown is None
+        manager.session_manager.get.assert_called_once_with("sess-1")
+        lookup.assert_called_once_with(manager.db, "sess-1")
 
     @pytest.mark.asyncio
     async def test_session_not_found(self, manager: SessionLifecycleManager) -> None:

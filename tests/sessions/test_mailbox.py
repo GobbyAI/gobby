@@ -6,6 +6,7 @@ import json
 import logging
 from dataclasses import replace
 from typing import Any, Protocol
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
@@ -15,6 +16,7 @@ from gobby.sessions.clear_continuation import (
     stage_clear_attempt,
     take_clear_handoff_marker,
 )
+from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.sessions.mailbox import MailboxSendResult, MailboxService
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.build_history import BuildHistoryStorage
@@ -85,22 +87,21 @@ def _consume_clear(
     *,
     attempt_id: str,
 ) -> None:
+    durable_attempt_id = uuid5(NAMESPACE_URL, attempt_id).hex
     stage_clear_attempt(
         db,
         predecessor.id,
-        attempt_id=attempt_id,
-        handoff_markdown="handoff",
-        observations=[],
+        attempt_id=durable_attempt_id,
+        handoff=build_handoff_payload(current_state="Handoff ready.", next_steps=["Continue."]),
         terminal_context=None,
         chat_context=None,
     )
     assert take_clear_handoff_marker(
         db,
         predecessor.id,
-        attempt_id=attempt_id,
+        attempt_id=durable_attempt_id,
         successor_id=successor.id,
     )
-    session_manager.update_status(predecessor.id, "expired")
 
 
 def _setup_broadcast_scenario(

@@ -36,6 +36,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/422_restore_public_privilege_revokes.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 423,
+        filename: "423_add_session_handoffs.sql",
+        checksum: "fedc1a62b0a5cda9c104c99fc640ac7a8b36c27c65f5d10491541cef429f8cd5",
+        sql: include_str!("../../assets/schema/migrations/423_add_session_handoffs.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

@@ -4061,6 +4061,90 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "session_handoff_deliveries.attempt_id",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_handoff_deliveries.boundary_kind",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_handoff_deliveries.continuation_session_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "session_handoff_deliveries.delivered_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "session_handoff_deliveries.handoff_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "session_handoffs.authored_at",
+      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+    },
+    {
+      "name": "session_handoffs.blockers_json",
+      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
+    },
+    {
+      "name": "session_handoffs.content_sha256",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_handoffs.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "session_handoffs.current_state",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_handoffs.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "session_handoffs.key_decisions_json",
+      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
+    },
+    {
+      "name": "session_handoffs.next_steps_json",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
+      "name": "session_handoffs.notes_json",
+      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
+    },
+    {
+      "name": "session_handoffs.payload_version",
+      "definition": "smallint|int2|NO|1|NEVER"
+    },
+    {
+      "name": "session_handoffs.problems_encountered_json",
+      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
+    },
+    {
+      "name": "session_handoffs.references_json",
+      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
+    },
+    {
+      "name": "session_handoffs.rendered_markdown",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_handoffs.session_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "session_handoffs.what_didnt_work_json",
+      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
+    },
+    {
+      "name": "session_handoffs.what_was_accomplished_json",
+      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
+    },
+    {
       "name": "session_skills.created_at",
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
@@ -7403,6 +7487,82 @@
       "definition": "CHECK (suggestion IS NULL OR btrim(suggestion) <> ''::text)"
     },
     {
+      "name": "session_handoff_deliveries.session_handoff_deliveries_attempt_id_key",
+      "definition": "UNIQUE (attempt_id)"
+    },
+    {
+      "name": "session_handoff_deliveries.session_handoff_deliveries_attempt_id_valid",
+      "definition": "CHECK (attempt_id ~ '^[0-9a-f]{32}$'::text)"
+    },
+    {
+      "name": "session_handoff_deliveries.session_handoff_deliveries_boundary_kind_valid",
+      "definition": "CHECK (boundary_kind = ANY (ARRAY['compact'::text, 'clear'::text]))"
+    },
+    {
+      "name": "session_handoff_deliveries.session_handoff_deliveries_handoff_id_fkey",
+      "definition": "FOREIGN KEY (handoff_id) REFERENCES session_handoffs(id) ON DELETE CASCADE DEFERRABLE"
+    },
+    {
+      "name": "session_handoff_deliveries.session_handoff_deliveries_pkey",
+      "definition": "PRIMARY KEY (handoff_id)"
+    },
+    {
+      "name": "session_handoffs.session_handoffs_blockers_array",
+      "definition": "CHECK (jsonb_typeof(blockers_json) = 'array'::text)"
+    },
+    {
+      "name": "session_handoffs.session_handoffs_content_sha256_valid",
+      "definition": "CHECK (content_sha256 ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
+      "name": "session_handoffs.session_handoffs_current_state_nonblank",
+      "definition": "CHECK (btrim(current_state) <> ''::text)"
+    },
+    {
+      "name": "session_handoffs.session_handoffs_key_decisions_array",
+      "definition": "CHECK (jsonb_typeof(key_decisions_json) = 'array'::text)"
+    },
+    {
+      "name": "session_handoffs.session_handoffs_next_steps_array",
+      "definition": "CHECK (jsonb_typeof(next_steps_json) = 'array'::text AND jsonb_array_length(next_steps_json) > 0)"
+    },
+    {
+      "name": "session_handoffs.session_handoffs_notes_array",
+      "definition": "CHECK (jsonb_typeof(notes_json) = 'array'::text)"
+    },
+    {
+      "name": "session_handoffs.session_handoffs_payload_version_valid",
+      "definition": "CHECK (payload_version = 1)"
+    },
+    {
+      "name": "session_handoffs.session_handoffs_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "session_handoffs.session_handoffs_problems_encountered_array",
+      "definition": "CHECK (jsonb_typeof(problems_encountered_json) = 'array'::text)"
+    },
+    {
+      "name": "session_handoffs.session_handoffs_references_array",
+      "definition": "CHECK (jsonb_typeof(references_json) = 'array'::text)"
+    },
+    {
+      "name": "session_handoffs.session_handoffs_rendered_markdown_nonblank",
+      "definition": "CHECK (btrim(rendered_markdown) <> ''::text)"
+    },
+    {
+      "name": "session_handoffs.session_handoffs_session_id_fkey",
+      "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE"
+    },
+    {
+      "name": "session_handoffs.session_handoffs_what_didnt_work_array",
+      "definition": "CHECK (jsonb_typeof(what_didnt_work_json) = 'array'::text)"
+    },
+    {
+      "name": "session_handoffs.session_handoffs_what_was_accomplished_array",
+      "definition": "CHECK (jsonb_typeof(what_was_accomplished_json) = 'array'::text)"
+    },
+    {
       "name": "session_skills.session_skills_pkey",
       "definition": "PRIMARY KEY (id)"
     },
@@ -9123,6 +9283,14 @@
       "definition": "CREATE INDEX idx_session_feedback_unreviewed ON $schema.session_feedback USING btree (created_at) WHERE (reviewed = false)"
     },
     {
+      "name": "idx_session_handoff_deliveries_continuation",
+      "definition": "CREATE INDEX idx_session_handoff_deliveries_continuation ON $schema.session_handoff_deliveries USING btree (continuation_session_id, delivered_at DESC)"
+    },
+    {
+      "name": "idx_session_handoffs_session_authored",
+      "definition": "CREATE INDEX idx_session_handoffs_session_authored ON $schema.session_handoffs USING btree (session_id, authored_at DESC, id DESC)"
+    },
+    {
       "name": "idx_session_skills_session",
       "definition": "CREATE INDEX idx_session_skills_session ON $schema.session_skills USING btree (session_id)"
     },
@@ -9705,6 +9873,18 @@
     {
       "name": "session_feedback_pkey",
       "definition": "CREATE UNIQUE INDEX session_feedback_pkey ON $schema.session_feedback USING btree (id)"
+    },
+    {
+      "name": "session_handoff_deliveries_attempt_id_key",
+      "definition": "CREATE UNIQUE INDEX session_handoff_deliveries_attempt_id_key ON $schema.session_handoff_deliveries USING btree (attempt_id)"
+    },
+    {
+      "name": "session_handoff_deliveries_pkey",
+      "definition": "CREATE UNIQUE INDEX session_handoff_deliveries_pkey ON $schema.session_handoff_deliveries USING btree (handoff_id)"
+    },
+    {
+      "name": "session_handoffs_pkey",
+      "definition": "CREATE UNIQUE INDEX session_handoffs_pkey ON $schema.session_handoffs USING btree (id)"
     },
     {
       "name": "session_skills_pkey",

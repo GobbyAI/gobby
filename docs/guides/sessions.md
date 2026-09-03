@@ -255,11 +255,8 @@ call_tool("gobby-sessions", "get_session_commits", {
 
 `set_handoff` operates on the current session context. It requires a nonblank
 current state and at least one nonblank next step. Optional entries reject blanks;
-references are deduplicated in their original order. `gobby_feedback` on
-`set_handoff` is optional extra capture and is stored in `session_feedback`; it
-is never rendered into the handoff. Bundled survey gates require the dedicated
-`gobby-sessions:feedback` tool and must not duplicate the same observations in
-`gobby_feedback` on retry.
+references are deduplicated in their original order. Feedback is captured only through
+the dedicated `gobby-sessions:feedback` tool and is not part of `set_handoff`.
 
 Observation labels are enums: `kind` is `friction`, `bug`, `noise`, `surprise`,
 `missing-affordance`, `useful`, or `other`; `frequency` is `once`, `repeated`, or
@@ -287,7 +284,10 @@ call_tool("gobby-sessions", "feedback", {
 call_tool("gobby-sessions", "set_handoff", {
     "current_state": "The storage migration and MCP schemas are complete.",
     "next_steps": ["Run the web-chat smoke test", "Commit and close the task"],
+    "what_was_accomplished": ["Stored the normalized handoff payload"],
     "key_decisions": ["Continuation recovery is pull-only"],
+    "problems_encountered": ["Delivery state was previously implicit"],
+    "what_didnt_work": ["Treating mutable Markdown as proof of delivery"],
     "references": ["#21140"],
     "clear_session": False
 })
@@ -350,15 +350,17 @@ sequenceDiagram
     participant Continuation
 
     Session->>Gobby: set_handoff(structured fields, clear_session)
-    Gobby->>Gobby: atomically stage Markdown, feedback, and marker
+    Gobby->>Gobby: atomically stage structured content, Markdown, and marker
     Gobby->>Session: dispatch provider compact or clear
+    Gobby->>Gobby: record successful boundary receipt
     Continuation->>Gobby: get_handoff()
     Gobby->>Continuation: consume marker and return Markdown
 ```
 
-Provider dispatch failure restores the previous handoff, deletes feedback rows from
-that attempt, and clears its marker. Archival `summary_markdown` remains independently
-generated from the full transcript at session end.
+Provider dispatch failure restores the previous handoff, deletes only undelivered
+content from that attempt, and clears its marker. A delivered clear handoff can become
+the archival `summary_markdown` without an LLM call; every other case retains the
+full-transcript fallback.
 
 ### Compaction Is In-Place
 

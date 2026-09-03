@@ -20,6 +20,11 @@ from gobby.sessions.analyzer_turns import (
     SUMMARY_ANALYZER_MAX_RECORDS,
     analyzer_turns_from_transcript,
 )
+from gobby.sessions.handoff_records import latest_delivered_clear_handoff
+from gobby.sessions.handoff_summary import (
+    build_handoff_summary,
+    find_handoff_summary_revision,
+)
 from gobby.sessions.machine_scope import (
     RemoteSessionOwnershipError,
     require_local_session_ownership,
@@ -54,6 +59,15 @@ logger = logging.getLogger(__name__)
 class _SummaryCoreResult:
     result: dict[str, Any]
     full_markdown: str
+
+
+@dataclass(frozen=True, slots=True)
+class _GeneratedSummary:
+    markdown: str
+    generation_mode: str
+    generation_error: str | None
+    source_hash: str
+    context_summary: dict[str, Any]
 
 
 class SummarySourceContext(NamedTuple):
@@ -263,56 +277,48 @@ async def _generate_session_summary_core(
     except RemoteSessionOwnershipError as exc:
         return _SummaryCoreResult({"success": False, "error": str(exc)}, "")
 
-    try:
-        source = await build_summary_source_context(
-            session,
-            db=db,
-            session_manager=session_manager,
-            session_summary_config=session_summary_config,
-            run_db=db_runner,
-        )
-    except TranscriptReadError as exc:
-        return _SummaryCoreResult({"success": False, "error": str(exc)}, "")
-    if source is None:
-        return _SummaryCoreResult(
-            {"success": False, "error": "Transcript file not found", "session_id": session_id},
-            "",
-        )
-
-    existing = getattr(session, "summary_markdown", None)
-    if getattr(
-        session, "summary_source_context_hash", None
-    ) == source.source_hash and is_summary_markdown_valid(existing):
-        full_markdown = str(existing)
-        generation_mode = "noop"
-        generation_error = None
+    handoff_summary = await _generate_delivered_handoff_summary(
+        session=session,
+        session_manager=session_manager,
+        db=db,
+        db_runner=db_runner,
+    )
+    if handoff_summary is not None:
+        generated_summary = handoff_summary
     else:
-        cwd = resolve_session_workspace(session, getattr(session, "transcript_path", None))
-        generated, generation_error = await _generate_full_summary(
+        try:
+            source = await build_summary_source_context(
+                session,
+                db=db,
+                session_manager=session_manager,
+                session_summary_config=session_summary_config,
+                run_db=db_runner,
+            )
+        except TranscriptReadError as exc:
+            return _SummaryCoreResult({"success": False, "error": str(exc)}, "")
+        if source is None:
+            return _SummaryCoreResult(
+                {
+                    "success": False,
+                    "error": "Transcript file not found",
+                    "session_id": session_id,
+                },
+                "",
+            )
+        generated_summary = await _generate_transcript_summary(
+            session_id=session_id,
             session=session,
-            turns=source.turns,
-            handoff_ctx=source.handoff_ctx,
+            source=source,
+            session_manager=session_manager,
             llm_service=llm_service,
             session_summary_config=session_summary_config,
             db=db,
-            session_manager=session_manager,
-            run_db=db_runner,
-            summary_context=source.summary_context,
-            prompt_template=source.prompt_template,
-            project_path=str(cwd),
+            db_runner=db_runner,
         )
-        full_markdown = generated or _format_transcript_summary(source.handoff_ctx)
-        generation_mode = "full"
-        if is_summary_markdown_valid(full_markdown):
-            await _persist_summary_markdown(
-                session_id=session_id,
-                session_manager=session_manager,
-                db_runner=db_runner,
-                summary_markdown=full_markdown,
-                generation_mode=generation_mode,
-                source_hash=source.source_hash,
-                metadata={"generation_error": generation_error},
-            )
+
+    full_markdown = generated_summary.markdown
+    generation_mode = generated_summary.generation_mode
+    generation_error = generated_summary.generation_error
 
     valid = is_summary_markdown_valid(full_markdown)
     wiki_result: dict[str, Any] = {"written": False, "skipped": "invalid_summary"}
@@ -335,18 +341,149 @@ async def _generate_session_summary_core(
         "full_length": len(full_markdown),
         "generation_mode": generation_mode,
         "generation_error": generation_error,
-        "source_context_hash": source.source_hash,
+        "source_context_hash": generated_summary.source_hash,
         "session_wiki_file": wiki_result,
-        "context_summary": {
+        "context_summary": generated_summary.context_summary,
+    }
+    if not valid:
+        result["error"] = "Unable to generate a valid session summary"
+    return _SummaryCoreResult(result, full_markdown if valid else "")
+
+
+async def _generate_delivered_handoff_summary(
+    *,
+    session: Any,
+    session_manager: SessionManagerProtocol,
+    db: HubDatabase | None,
+    db_runner: Callable[..., Awaitable[Any]] | None,
+) -> _GeneratedSummary | None:
+    if getattr(session, "status", None) != "expired":
+        return None
+    resolved_db = db or getattr(session_manager, "db", None)
+    if resolved_db is None:
+        return None
+    try:
+        handoff = await _run_db(
+            db_runner,
+            latest_delivered_clear_handoff,
+            resolved_db,
+            session.id,
+        )
+    except Exception as exc:
+        logger.warning("Clear handoff lookup failed for session %s: %s", session.id, exc)
+        return None
+    if handoff is None:
+        return None
+
+    summary = await build_handoff_summary(
+        session=session,
+        handoff=handoff,
+        db=resolved_db,
+        run_db=db_runner,
+    )
+    existing_revision = await _run_db(
+        db_runner,
+        find_handoff_summary_revision,
+        resolved_db,
+        session.id,
+        summary.source_hash,
+    )
+    if existing_revision is not None:
+        markdown = existing_revision
+        generation_mode = "noop"
+    else:
+        markdown = summary.markdown
+        generation_mode = "agent_authored"
+        if is_summary_markdown_valid(markdown):
+            await _persist_summary_markdown(
+                session_id=session.id,
+                session_manager=session_manager,
+                db_runner=db_runner,
+                summary_markdown=markdown,
+                generation_mode=generation_mode,
+                source_hash=summary.source_hash,
+                metadata=summary.metadata,
+            )
+    evidence = summary.metadata["evidence"]
+    return _GeneratedSummary(
+        markdown=markdown,
+        generation_mode=generation_mode,
+        generation_error=None,
+        source_hash=summary.source_hash,
+        context_summary={
+            "has_active_task": bool(evidence["active_task_id"]),
+            "files_modified_count": len(evidence["file_paths"]),
+            "git_commits_count": len(evidence["commit_shas"]),
+            "has_initial_goal": False,
+        },
+    )
+
+
+async def _generate_transcript_summary(
+    *,
+    session_id: str,
+    session: Any,
+    source: SummarySourceContext,
+    session_manager: SessionManagerProtocol,
+    llm_service: LLMServiceProtocol | None,
+    session_summary_config: SessionSummaryConfigProtocol | None,
+    db: HubDatabase | None,
+    db_runner: Callable[..., Awaitable[Any]] | None,
+) -> _GeneratedSummary:
+    existing = getattr(session, "summary_markdown", None)
+    if getattr(
+        session, "summary_source_context_hash", None
+    ) == source.source_hash and is_summary_markdown_valid(existing):
+        return _GeneratedSummary(
+            markdown=str(existing),
+            generation_mode="noop",
+            generation_error=None,
+            source_hash=source.source_hash,
+            context_summary={
+                "has_active_task": bool(source.handoff_ctx.active_gobby_task),
+                "files_modified_count": len(source.handoff_ctx.files_modified),
+                "git_commits_count": len(source.handoff_ctx.git_commits),
+                "has_initial_goal": bool(source.handoff_ctx.initial_goal),
+            },
+        )
+
+    cwd = resolve_session_workspace(session, getattr(session, "transcript_path", None))
+    generated, generation_error = await _generate_full_summary(
+        session=session,
+        turns=source.turns,
+        handoff_ctx=source.handoff_ctx,
+        llm_service=llm_service,
+        session_summary_config=session_summary_config,
+        db=db,
+        session_manager=session_manager,
+        run_db=db_runner,
+        summary_context=source.summary_context,
+        prompt_template=source.prompt_template,
+        project_path=str(cwd),
+    )
+    markdown = generated or _format_transcript_summary(source.handoff_ctx)
+    if is_summary_markdown_valid(markdown):
+        await _persist_summary_markdown(
+            session_id=session_id,
+            session_manager=session_manager,
+            db_runner=db_runner,
+            summary_markdown=markdown,
+            generation_mode="full",
+            source_hash=source.source_hash,
+            metadata={"generation_error": generation_error},
+        )
+    return _GeneratedSummary(
+        markdown=markdown,
+        generation_mode="full",
+        generation_error=generation_error,
+        source_hash=source.source_hash,
+        context_summary={
             "has_active_task": bool(source.handoff_ctx.active_gobby_task),
             "files_modified_count": len(source.handoff_ctx.files_modified),
             "git_commits_count": len(source.handoff_ctx.git_commits),
             "has_initial_goal": bool(source.handoff_ctx.initial_goal),
         },
-    }
-    if not valid:
-        result["error"] = "Unable to generate a valid session summary"
-    return _SummaryCoreResult(result, full_markdown if valid else "")
+    )
 
 
 def _remove_summary_task(

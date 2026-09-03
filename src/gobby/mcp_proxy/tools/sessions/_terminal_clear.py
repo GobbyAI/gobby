@@ -34,10 +34,10 @@ from gobby.sessions.clear_continuation import (
     stage_clear_attempt,
 )
 from gobby.sessions.handoff import (
-    FeedbackObservation,
     HandoffAttemptState,
     build_handoff_continue_prompt,
 )
+from gobby.sessions.handoff_records import HandoffPayload
 from gobby.terminal_context import (
     parse_terminal_context_value,
     terminal_context_has_tmux_target,
@@ -127,8 +127,7 @@ def _acknowledged(
 
 async def _resume_pending_clear_attempt(
     pending: dict[str, Any],
-    handoff_markdown: str,
-    observations: list[FeedbackObservation],
+    handoff: HandoffPayload,
     *,
     db: HubDatabase,
     session_manager: SessionManager,
@@ -144,8 +143,7 @@ async def _resume_pending_clear_attempt(
         db,
         session.id,
         attempt_id=attempt_id,
-        handoff_markdown=handoff_markdown,
-        observations=observations,
+        handoff=handoff,
     )
     identity, baseline_ids = _clear_pane_baseline(session_manager, session)
     acknowledgment = await _wait_for_clear_acknowledgment(
@@ -286,8 +284,7 @@ async def _wait_for_clear_acknowledgment(
 
 
 async def execute_clear_session(
-    handoff_markdown: str,
-    observations: list[FeedbackObservation],
+    handoff: HandoffPayload,
     *,
     session_manager: SessionManager,
     db: HubDatabase,
@@ -301,7 +298,7 @@ async def execute_clear_session(
     A delivered attempt that has not been acknowledged yet is reused: the handoff
     content is refreshed and the wait resumes, but no second /clear is typed.
     """
-    if not handoff_markdown.strip():
+    if not handoff.rendered_markdown.strip():
         return _error("set_handoff requires rendered handoff content", "handoff_required")
 
     session_id = get_current_session_id()
@@ -317,8 +314,7 @@ async def execute_clear_session(
     )
     if error:
         web_result = await _clear_web_chat_session(
-            handoff_markdown,
-            observations,
+            handoff,
             db=db,
             session_manager=session_manager,
             agent_run_manager=agent_run_manager,
@@ -340,8 +336,7 @@ async def execute_clear_session(
                 "session_deleted",
             )
         web_result = await _clear_web_chat_session(
-            handoff_markdown,
-            observations,
+            handoff,
             db=db,
             session_manager=session_manager,
             agent_run_manager=agent_run_manager,
@@ -420,8 +415,7 @@ async def execute_clear_session(
         )
         return await _resume_pending_clear_attempt(
             pending,
-            handoff_markdown,
-            observations,
+            handoff,
             db=db,
             session_manager=session_manager,
             session=session,
@@ -440,8 +434,7 @@ async def execute_clear_session(
             db,
             resolved_session_id,
             attempt_id=attempt_id,
-            handoff_markdown=handoff_markdown,
-            observations=observations,
+            handoff=handoff,
             terminal_context=parse_terminal_context_value(session.terminal_context),
             chat_context=None,
         )
@@ -584,8 +577,7 @@ async def execute_clear_session(
 
 
 async def _clear_web_chat_session(
-    handoff_markdown: str,
-    observations: list[FeedbackObservation],
+    handoff: HandoffPayload,
     *,
     db: HubDatabase,
     session_manager: SessionManager,
@@ -635,8 +627,7 @@ async def _clear_web_chat_session(
             db,
             predecessor_id,
             attempt_id=attempt_id,
-            handoff_markdown=handoff_markdown,
-            observations=observations,
+            handoff=handoff,
             terminal_context=None,
             chat_context=_web_chat_attempt_context(live, db_session),
         )

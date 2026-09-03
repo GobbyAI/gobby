@@ -23,6 +23,7 @@ from gobby.sessions.context_usage import (
     snapshot_from_token_usage,
     snapshot_from_window_metadata,
 )
+from gobby.sessions.handoff_records import latest_delivered_clear_handoff
 from gobby.sessions.message_stats import MessageProtocol, compute_message_stats
 from gobby.sessions.session_wiki_file import session_wiki_path_is_fresh
 from gobby.sessions.summary_validity import is_summary_markdown_valid
@@ -108,8 +109,8 @@ class TranscriptProcessingMixin:
         """Process transcripts for expired sessions.
 
         Runs summary generation outside `_process_session_transcript` after the
-        transcript parser persists authoritative stats. Missing transcripts are
-        finalized without an archival summary.
+        transcript parser persists authoritative stats. Missing transcripts can
+        still use a delivered clear handoff, without invoking an LLM.
         """
         config = active.session_lifecycle
         # Synchronous psycopg: a pool checkout runs its runtime-role check and
@@ -143,6 +144,11 @@ class TranscriptProcessingMixin:
                 session.transcript_path
             )
             if transcript_missing:
+                await self._generate_artifacts_if_needed(
+                    session.id,
+                    active.session_summary,
+                    allow_llm=False,
+                )
                 self.session_manager.mark_transcript_processed(session.id)
                 processed += 1
                 logger.info(
@@ -162,6 +168,11 @@ class TranscriptProcessingMixin:
             # Skip LLM-heavy steps for non-human sessions — subagents, pipelines,
             # and cron sessions are ephemeral and not worth the token cost.
             if skip_llm:
+                await self._generate_artifacts_if_needed(
+                    session.id,
+                    active.session_summary,
+                    allow_llm=False,
+                )
                 self.session_manager.mark_transcript_processed(session.id)
                 processed += 1
                 logger.debug(
@@ -225,6 +236,8 @@ class TranscriptProcessingMixin:
         self,
         session_id: str,
         session_summary_config: SessionSummaryConfig,
+        *,
+        allow_llm: bool = True,
     ) -> None:
         """Generate the session summary (and its mirror wiki file) when missing.
 
@@ -235,9 +248,6 @@ class TranscriptProcessingMixin:
         and restores a missing flat wiki file, so only the missing artifact is
         produced.
         """
-        if not self.llm_service:
-            return
-
         session = self.session_manager.get(session_id)
         if not session:
             return
@@ -247,7 +257,22 @@ class TranscriptProcessingMixin:
         ):
             return
 
-        if not session.transcript_path:
+        try:
+            has_delivered_handoff = session.status == "expired" and (
+                await asyncio.to_thread(
+                    latest_delivered_clear_handoff,
+                    self.db,
+                    session_id,
+                )
+                is not None
+            )
+        except Exception as exc:
+            logger.warning("Clear handoff lookup failed for session %s: %s", session_id, exc)
+            has_delivered_handoff = False
+
+        if not has_delivered_handoff and (not allow_llm or not self.llm_service):
+            return
+        if not session.transcript_path and not has_delivered_handoff:
             return
 
         try:

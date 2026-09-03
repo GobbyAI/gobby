@@ -15,10 +15,6 @@ from uuid import uuid4
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.hooks.grok_pending_context import clear_queued_context
-from gobby.mcp_proxy.tools.sessions._handoff import (
-    FEEDBACK_OBSERVATION_INPUT_SCHEMA,
-    build_feedback_task_resolver,
-)
 from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
     _CLI_COMPACT_COMMANDS,
     _CLI_COMPACT_INTERRUPT_KEYS,
@@ -53,12 +49,14 @@ from gobby.sessions.compact_continuation import (
     schedule_codex_handoff_compact_continuation_readiness,
 )
 from gobby.sessions.handoff import (
-    FeedbackObservation,
     build_handoff_continue_prompt,
-    normalize_feedback_observations,
-    render_handoff_markdown,
     restore_handoff_attempt,
     stage_handoff_attempt,
+)
+from gobby.sessions.handoff_records import (
+    HandoffPayload,
+    build_handoff_payload,
+    record_handoff_delivery,
 )
 from gobby.sessions.transcript_cursor import (
     TranscriptObservationError,
@@ -75,7 +73,6 @@ if TYPE_CHECKING:
     from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
-    from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
 
@@ -397,7 +394,6 @@ def register_terminal_tools(
     terminal_manager: Any | None = None,
     terminal_runtime_registry: Any | None = None,
     write_coordinator: Any | None = None,
-    task_manager: LocalTaskManager | None = None,
 ) -> None:
     """Register terminal control and structured handoff tools."""
 
@@ -494,43 +490,26 @@ def register_terminal_tools(
     async def set_handoff(
         current_state: str,
         next_steps: list[str],
+        what_was_accomplished: list[str] | None = None,
         key_decisions: list[str] | None = None,
+        problems_encountered: list[str] | None = None,
+        what_didnt_work: list[str] | None = None,
         blockers: list[str] | None = None,
         notes: list[str] | None = None,
         references: list[str] | None = None,
-        gobby_feedback: list[dict[str, Any]] | None = None,
         clear_session: bool = False,
     ) -> dict[str, Any]:
         try:
-            from gobby.utils.session_context import get_current_session_id
-
-            current_ref = get_current_session_id()
-            resolved_session_id: str | None = None
-            if current_ref:
-                try:
-                    resolved_session_id = session_manager.resolve_session_reference(current_ref)
-                except ValueError:
-                    resolved_session_id = None
-            markdown = render_handoff_markdown(
+            handoff = build_handoff_payload(
                 current_state=current_state,
                 next_steps=next_steps,
+                what_was_accomplished=what_was_accomplished or (),
                 key_decisions=key_decisions or (),
+                problems_encountered=problems_encountered or (),
+                what_didnt_work=what_didnt_work or (),
                 blockers=blockers or (),
                 notes=notes or (),
                 references=references or (),
-            )
-            observations = normalize_feedback_observations(
-                gobby_feedback,
-                resolve_task=(
-                    build_feedback_task_resolver(
-                        session_manager,
-                        task_manager,
-                        resolved_session_id,
-                    )
-                    if resolved_session_id is not None
-                    else None
-                ),
-                session_id=resolved_session_id,
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc), "error_code": "invalid_handoff"}
@@ -539,8 +518,7 @@ def register_terminal_tools(
             from gobby.mcp_proxy.tools.sessions._terminal_clear import execute_clear_session
 
             return await execute_clear_session(
-                markdown,
-                observations,
+                handoff,
                 session_manager=session_manager,
                 db=db,
                 agent_run_manager=agent_run_manager,
@@ -548,11 +526,10 @@ def register_terminal_tools(
                 terminal_manager=terminal_manager,
                 terminal_runtime_registry=terminal_runtime_registry,
             )
-        return await _compact_with_handoff(markdown, observations)
+        return await _compact_with_handoff(handoff)
 
     async def _compact_with_handoff(
-        handoff_markdown: str,
-        observations: list[FeedbackObservation],
+        handoff: HandoffPayload,
     ) -> dict[str, Any]:
         from gobby.utils.session_context import get_current_session_id
 
@@ -593,8 +570,7 @@ def register_terminal_tools(
                     db,
                     resolved_session_id,
                     attempt_id=attempt_id,
-                    markdown=handoff_markdown,
-                    observations=observations,
+                    handoff=handoff,
                     clear_session=False,
                 )
                 result = await web_chat_session_registry.compact_session(
@@ -609,6 +585,23 @@ def register_terminal_tools(
                 restore_handoff_attempt(db, attempt_state)
                 return result
             clear_queued_context(session_manager, resolved_session_id)
+            try:
+                record_handoff_delivery(
+                    db,
+                    handoff_id=attempt_state.handoff_record_id,
+                    attempt_id=attempt_id,
+                    boundary_kind="compact",
+                    continuation_session_id=resolved_session_id,
+                )
+                result["handoff_delivered"] = True
+            except Exception:
+                logger.warning(
+                    "Failed recording compact handoff delivery %s for session %s",
+                    attempt_id,
+                    resolved_session_id,
+                    exc_info=True,
+                )
+                result["handoff_delivered"] = False
             result["attempt_id"] = attempt_id
             result["handoff_staged"] = True
             return result
@@ -696,8 +689,7 @@ def register_terminal_tools(
                 db,
                 resolved_session_id,
                 attempt_id=compact_attempt_id,
-                markdown=handoff_markdown,
-                observations=observations,
+                handoff=handoff,
                 clear_session=False,
             )
         except Exception as exc:
@@ -780,12 +772,29 @@ def register_terminal_tools(
             "handoff_staged": True,
         }
         clear_queued_context(session_manager, resolved_session_id)
+        try:
+            record_handoff_delivery(
+                db,
+                handoff_id=attempt_state.handoff_record_id,
+                attempt_id=compact_attempt_id,
+                boundary_kind="compact",
+                continuation_session_id=resolved_session_id,
+            )
+            result["handoff_delivered"] = True
+        except Exception:
+            logger.warning(
+                "Failed recording compact handoff delivery %s for session %s",
+                compact_attempt_id,
+                resolved_session_id,
+                exc_info=True,
+            )
+            result["handoff_delivered"] = False
         return result
 
     registry.register(
         name="set_handoff",
         description=(
-            "Persist a structured handoff, optionally record Gobby feedback, then compact "
+            "Persist a structured handoff, then compact "
             "the current session or clear into a successor when clear_session=true. "
             "Requires nonblank current_state and at least one nonblank next step. In a "
             "terminal session the daemon interrupts the active turn, confirms the interrupt "
@@ -800,31 +809,45 @@ def register_terminal_tools(
         input_schema={
             "type": "object",
             "properties": {
-                "current_state": {"type": "string"},
-                "next_steps": {"type": "array", "items": {"type": "string"}},
+                "current_state": {"type": "string", "minLength": 1},
+                "next_steps": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "string", "minLength": 1},
+                },
+                "what_was_accomplished": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                    "default": [],
+                },
                 "key_decisions": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "minLength": 1},
+                    "default": [],
+                },
+                "problems_encountered": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                    "default": [],
+                },
+                "what_didnt_work": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
                     "default": [],
                 },
                 "blockers": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "minLength": 1},
                     "default": [],
                 },
                 "notes": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "minLength": 1},
                     "default": [],
                 },
                 "references": {
                     "type": "array",
-                    "items": {"type": "string"},
-                    "default": [],
-                },
-                "gobby_feedback": {
-                    "type": "array",
-                    "items": FEEDBACK_OBSERVATION_INPUT_SCHEMA,
+                    "items": {"type": "string", "minLength": 1},
                     "default": [],
                 },
                 "clear_session": {"type": "boolean", "default": False},

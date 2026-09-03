@@ -9,6 +9,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Never
 from uuid import uuid4
 
+from gobby.sessions.handoff_records import (
+    HandoffPayload,
+    build_handoff_payload,
+    delete_undelivered_handoff,
+    insert_delivery_receipt,
+    insert_handoff_record,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.datetime import utc_now
@@ -53,10 +60,10 @@ class FeedbackObservation:
 class HandoffAttemptState:
     session_id: str
     attempt_id: str
+    handoff_record_id: str
     prior_handoff_markdown: str | None
     prior_markers: dict[str, Any]
     missing_markers: frozenset[str]
-    feedback_ids: tuple[str, ...]
     # Status the row held before a clear attempt moved it to awaiting_handoff;
     # None when staging did not transition the row.
     prior_status: str | None = None
@@ -65,6 +72,8 @@ class HandoffAttemptState:
 @dataclass(frozen=True, slots=True)
 class ConsumedHandoff:
     session_id: str
+    handoff_id: str
+    attempt_id: str
     markdown: str
 
 
@@ -72,29 +81,26 @@ def render_handoff_markdown(
     *,
     current_state: str,
     next_steps: Sequence[str],
+    what_was_accomplished: Sequence[str] = (),
     key_decisions: Sequence[str] = (),
+    problems_encountered: Sequence[str] = (),
+    what_didnt_work: Sequence[str] = (),
     blockers: Sequence[str] = (),
     notes: Sequence[str] = (),
     references: Sequence[str] = (),
 ) -> str:
     """Validate and deterministically render the public handoff fields."""
-    state = _nonblank(current_state, "current_state")
-    normalized_next_steps = _nonblank_list(next_steps, "next_steps", required=True)
-    sections: list[str] = ["## Current State", "", state, "", "## Next Steps", ""]
-    sections.extend(f"{index}. {step}" for index, step in enumerate(normalized_next_steps, start=1))
-
-    optional_sections = (
-        ("Key Decisions", _nonblank_list(key_decisions, "key_decisions")),
-        ("Blockers", _nonblank_list(blockers, "blockers")),
-        ("Notes", _nonblank_list(notes, "notes")),
-        ("References", _deduplicate(_nonblank_list(references, "references"))),
-    )
-    for heading, entries in optional_sections:
-        if not entries:
-            continue
-        sections.extend(("", f"## {heading}", ""))
-        sections.extend(f"- {entry}" for entry in entries)
-    return "\n".join(sections).strip()
+    return build_handoff_payload(
+        current_state=current_state,
+        next_steps=next_steps,
+        what_was_accomplished=what_was_accomplished,
+        key_decisions=key_decisions,
+        problems_encountered=problems_encountered,
+        what_didnt_work=what_didnt_work,
+        blockers=blockers,
+        notes=notes,
+        references=references,
+    ).rendered_markdown
 
 
 def normalize_feedback_observations(
@@ -227,13 +233,12 @@ def stage_handoff_attempt(
     session_id: str,
     *,
     attempt_id: str,
-    markdown: str,
-    observations: Sequence[FeedbackObservation],
+    handoff: HandoffPayload,
     clear_session: bool,
     additional_markers: Mapping[str, Any] | None = None,
     transition_status: str | None = None,
 ) -> HandoffAttemptState:
-    """Atomically stage handoff Markdown, feedback, and delivery markers.
+    """Atomically stage authored content, handoff Markdown, and delivery markers.
 
     ``transition_status`` moves an ``active``/``paused`` row to that status inside
     the staging transaction (clear attempts use ``awaiting_handoff`` so startup
@@ -265,14 +270,14 @@ def stage_handoff_attempt(
         variables = _load_variables(variable_row["variables"] if variable_row else None)
         prior_markers = {name: variables[name] for name in marker_updates if name in variables}
         missing_markers = frozenset(name for name in marker_updates if name not in variables)
-        feedback_ids = [str(uuid4()) for _ in observations]
+        handoff_record_id, _authored_at = insert_handoff_record(conn, session_id, handoff)
         for name, value in marker_updates.items():
             if isinstance(value, dict) and value.get("attempt_id") == attempt_id:
                 marker_updates[name] = {
                     **value,
+                    "handoff_record_id": handoff_record_id,
                     "prior_handoff_markdown": session_row["handoff_markdown"],
                     "prior_status": prior_status,
-                    "feedback_ids": feedback_ids,
                 }
         variables.update(marker_updates)
 
@@ -280,23 +285,22 @@ def stage_handoff_attempt(
             conn.execute(
                 "UPDATE sessions SET handoff_markdown = %s, status = %s, updated_at = %s "
                 "WHERE id = %s",
-                (markdown, transition_status, utc_now(), session_id),
+                (handoff.rendered_markdown, transition_status, utc_now(), session_id),
             )
         else:
             conn.execute(
                 "UPDATE sessions SET handoff_markdown = %s, updated_at = %s WHERE id = %s",
-                (markdown, utc_now(), session_id),
+                (handoff.rendered_markdown, utc_now(), session_id),
             )
         _store_variables(conn, session_id, variables, exists=variable_row is not None)
-        _insert_feedback_rows(conn, session_id, observations, ids=feedback_ids)
 
     return HandoffAttemptState(
         session_id=session_id,
         attempt_id=attempt_id,
+        handoff_record_id=handoff_record_id,
         prior_handoff_markdown=session_row["handoff_markdown"],
         prior_markers=prior_markers,
         missing_markers=missing_markers,
-        feedback_ids=tuple(feedback_ids),
         prior_status=prior_status,
     )
 
@@ -312,7 +316,17 @@ def restore_handoff_attempt(db: HubDatabase, state: HandoffAttemptState) -> bool
             return False
         variables = _load_variables(variable_row["variables"])
         pending = variables.get(PENDING_HANDOFF_VARIABLE)
-        if not isinstance(pending, Mapping) or pending.get("attempt_id") != state.attempt_id:
+        if (
+            not isinstance(pending, Mapping)
+            or pending.get("attempt_id") != state.attempt_id
+            or pending.get("handoff_record_id") != state.handoff_record_id
+        ):
+            return False
+        if not delete_undelivered_handoff(
+            conn,
+            state.handoff_record_id,
+            state.session_id,
+        ):
             return False
 
         for name in state.missing_markers:
@@ -333,11 +347,6 @@ def restore_handoff_attempt(db: HubDatabase, state: HandoffAttemptState) -> bool
                 (state.prior_status, utc_now(), state.session_id),
             )
         _store_variables(conn, state.session_id, variables, exists=True)
-        if state.feedback_ids:
-            conn.executemany(
-                "DELETE FROM session_feedback WHERE id = %s AND session_id = %s",
-                [(feedback_id, state.session_id) for feedback_id in state.feedback_ids],
-            )
     return True
 
 
@@ -351,14 +360,16 @@ def restore_staged_handoff(db: HubDatabase, session_id: str, attempt_id: str) ->
     marker = variables.get(PENDING_HANDOFF_VARIABLE)
     if not isinstance(marker, Mapping) or marker.get("attempt_id") != attempt_id:
         return False
-    feedback_ids = marker.get("feedback_ids")
+    handoff_record_id = marker.get("handoff_record_id")
+    if not isinstance(handoff_record_id, str) or not handoff_record_id:
+        return False
     state = HandoffAttemptState(
         session_id=session_id,
         attempt_id=attempt_id,
+        handoff_record_id=handoff_record_id,
         prior_handoff_markdown=marker.get("prior_handoff_markdown"),
         prior_markers={},
         missing_markers=frozenset({PENDING_HANDOFF_VARIABLE}),
-        feedback_ids=tuple(item for item in feedback_ids or () if isinstance(item, str)),
     )
     return restore_handoff_attempt(db, state)
 
@@ -375,7 +386,12 @@ def consume_pending_handoff(db: HubDatabase, caller_session_id: str) -> Consumed
     for candidate_id, expects_clear in candidates:
         if not isinstance(candidate_id, str) or not candidate_id:
             continue
-        consumed = _consume_candidate(db, candidate_id, expects_clear=expects_clear)
+        consumed = _consume_candidate(
+            db,
+            candidate_id,
+            continuation_session_id=caller_session_id,
+            expects_clear=expects_clear,
+        )
         if consumed is not None:
             if expects_clear:
                 _clear_handoff_pull_pending(db, caller_session_id)
@@ -387,6 +403,7 @@ def _consume_candidate(
     db: HubDatabase,
     session_id: str,
     *,
+    continuation_session_id: str,
     expects_clear: bool,
 ) -> ConsumedHandoff | None:
     with db.transaction() as conn:
@@ -409,11 +426,40 @@ def _consume_candidate(
         attempt_id = marker.get("attempt_id")
         if not isinstance(attempt_id, str) or not attempt_id:
             return None
+        handoff_id = marker.get("handoff_record_id")
+        if not isinstance(handoff_id, str) or not handoff_id:
+            return None
+        handoff_row = conn.execute(
+            "SELECT rendered_markdown FROM session_handoffs WHERE id = %s AND session_id = %s",
+            (handoff_id, session_id),
+        ).fetchone()
+        if handoff_row is None:
+            return None
+        if expects_clear:
+            delivery = conn.execute(
+                """
+                SELECT 1 FROM session_handoff_deliveries
+                WHERE handoff_id = %s
+                  AND attempt_id = %s
+                  AND boundary_kind = 'clear'
+                """,
+                (handoff_id, attempt_id),
+            ).fetchone()
+            if delivery is None:
+                return None
+        else:
+            insert_delivery_receipt(
+                conn,
+                handoff_id=handoff_id,
+                attempt_id=attempt_id,
+                boundary_kind="compact",
+                continuation_session_id=continuation_session_id,
+            )
         variables.pop(PENDING_HANDOFF_VARIABLE, None)
         variables.pop(HANDOFF_PULL_PENDING_VARIABLE, None)
         _store_variables(conn, session_id, variables, exists=True)
-        markdown = str(session_row["handoff_markdown"] or "")
-        return ConsumedHandoff(session_id, markdown)
+        markdown = str(handoff_row["rendered_markdown"])
+        return ConsumedHandoff(session_id, handoff_id, attempt_id, markdown)
 
 
 def _clear_handoff_pull_pending(db: HubDatabase, session_id: str) -> None:
@@ -504,23 +550,3 @@ def _nonblank(value: Any, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field} must be a nonblank string")
     return value.strip()
-
-
-def _nonblank_list(
-    values: Sequence[str] | None,
-    field: str,
-    *,
-    required: bool = False,
-) -> list[str]:
-    if values is None:
-        values = ()
-    if isinstance(values, (str, bytes)):
-        raise ValueError(f"{field} must be a list of nonblank strings")
-    normalized = [_nonblank(value, f"{field}[{index}]") for index, value in enumerate(values)]
-    if required and not normalized:
-        raise ValueError(f"{field} must contain at least one nonblank string")
-    return normalized
-
-
-def _deduplicate(values: Sequence[str]) -> list[str]:
-    return list(dict.fromkeys(values))

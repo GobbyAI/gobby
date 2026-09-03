@@ -122,7 +122,6 @@ def create_session_messages_registry(
             terminal_manager=terminal_manager,
             terminal_runtime_registry=terminal_runtime_registry,
             write_coordinator=write_coordinator,
-            task_manager=task_manager,
         )
 
     return registry

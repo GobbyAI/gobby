@@ -13,11 +13,12 @@ import pytest
 from gobby.mcp_proxy.tools.sessions import _terminal_clear
 from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
 from gobby.sessions.handoff import build_handoff_continue_prompt
+from gobby.sessions.handoff_records import build_handoff_payload
 
 _THREAD_ID = "01a0580a-b0c8-7552-aa18-8927ff248f85"
 _THREAD_END_BANNER = f"To continue this session, run codex resume {_THREAD_ID}\n"
 _IDLE_PANE = "› Ask Codex to do anything\n"
-_HANDOFF = "## Current State\n\nReady to continue."
+_HANDOFF = build_handoff_payload(current_state="Ready to continue.", next_steps=["Continue."])
 
 
 def _terminal_session(**overrides: Any) -> SimpleNamespace:
@@ -94,7 +95,6 @@ async def _run_clear(patches: list[Any]) -> dict[str, Any]:
             stack.enter_context(patcher)
         return await _terminal_clear.execute_clear_session(
             _HANDOFF,
-            [],
             session_manager=MagicMock(),
             db=MagicMock(),
             agent_run_manager=agent_run_manager,
@@ -149,7 +149,6 @@ async def test_clear_delivery_survives_caller_cancellation() -> None:
         caller = asyncio.create_task(
             _terminal_clear.execute_clear_session(
                 _HANDOFF,
-                [],
                 session_manager=MagicMock(),
                 db=MagicMock(),
                 agent_run_manager=agent_run_manager,
@@ -534,8 +533,7 @@ async def test_pending_attempt_is_reused_without_a_second_clear() -> None:
     refresh.assert_called_once()
     assert refresh.call_args.kwargs == {
         "attempt_id": "attempt-9",
-        "handoff_markdown": _HANDOFF,
-        "observations": [],
+        "handoff": _HANDOFF,
     }
     assert refresh.call_args.args[1] == session.id
     send_command.assert_not_awaited()
