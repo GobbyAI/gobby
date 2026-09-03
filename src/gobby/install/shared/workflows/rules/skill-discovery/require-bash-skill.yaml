@@ -10,12 +10,12 @@ rules:
       not skill_loaded('bash')
       and event.data.get('canonical_tool_kind') == 'write'
       and (
-        event.data.get('canonical_file_path', '').endswith((
+        event.data.get('canonical_write_file_path', '').endswith((
           '.sh', '.bash', '.bats',
           '.sh.j2', '.bash.j2', '.sh.tpl', '.bash.tpl',
           '.sh.tmpl', '.bash.tmpl', '.sh.template', '.bash.template'
         ))
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in (
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in (
           '.bashrc', '.bash_profile', '.bash_login', '.bash_logout',
           '.bash_aliases', '.bash_completion', '.shellcheckrc', 'Bashfile', 'PKGBUILD'
         )

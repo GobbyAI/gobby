@@ -1213,7 +1213,21 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "write"
         assert data["canonical_repo_mutation"] is True
         assert data["canonical_file_path"] == "src/app.py"
+        assert data["canonical_write_file_path"] == "src/app.py"
         assert data["tool_input"]["file_path"] == "src/app.py"
+
+    def test_exec_command_compound_mutation_keeps_content_write_target_separate(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "rm old.py; printf '{}' > config.json"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_file_paths"] == ["old.py", "config.json"]
+        assert data["canonical_write_file_paths"] == ["config.json"]
+        assert data["canonical_write_file_path"] == "config.json"
 
     @pytest.mark.parametrize(
         ("command", "expected_kind"),
@@ -1351,6 +1365,7 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "write"
         assert data["canonical_repo_mutation"] is True
         assert data["canonical_file_path"] == "src/app.py"
+        assert data["canonical_write_file_path"] == "src/app.py"
 
     def test_exec_command_cd_sed_in_place_rebases_write_path(self) -> None:
         data = {
@@ -1398,6 +1413,7 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "write"
         assert data["canonical_repo_mutation"] is True
         assert data["canonical_file_path"] == "/repo/main.py"
+        assert data["canonical_write_file_path"] == "/repo/main.py"
 
     def test_write_tool_scratchpad_path_is_not_repo_mutation(self, tmp_path) -> None:
         repo = tmp_path / "repo"
@@ -1454,6 +1470,7 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "write"
         assert data["canonical_repo_mutation"] is True
         assert data["canonical_file_path"] == "/repo/main.py"
+        assert data["canonical_write_file_path"] == "/repo/main.py"
 
     def test_apply_patch_sets_canonical_write_paths(self) -> None:
         data = {
@@ -1475,28 +1492,67 @@ class TestCanonicalToolMetadata:
         assert data["canonical_repo_mutation"] is True
         assert data["canonical_file_path"] == "src/main.py"
         assert data["canonical_file_paths"] == ["src/main.py", "docs/plan.md"]
+        assert data["canonical_write_file_paths"] == ["src/main.py", "docs/plan.md"]
+
+    def test_apply_patch_delete_has_no_canonical_write_path(self) -> None:
+        data = {
+            "tool_name": "apply_patch",
+            "tool_input": ("*** Begin Patch\n*** Delete File: config.json\n*** End Patch\n"),
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert data["canonical_file_paths"] == ["config.json"]
+        assert "canonical_write_file_path" not in data
+        assert "canonical_write_file_paths" not in data
+
+    def test_apply_patch_mixed_delete_and_update_only_exposes_update_target(self) -> None:
+        data = {
+            "tool_name": "apply_patch",
+            "tool_input": (
+                "*** Begin Patch\n"
+                "*** Delete File: old.json\n"
+                "*** Update File: src/main.py\n"
+                "@@\n"
+                "-old\n"
+                "+new\n"
+                "*** End Patch\n"
+            ),
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_file_paths"] == ["old.json", "src/main.py"]
+        assert data["canonical_write_file_paths"] == ["src/main.py"]
+        assert data["canonical_write_file_path"] == "src/main.py"
 
     @pytest.mark.parametrize(
-        ("command", "expected_paths"),
+        ("command", "expected_paths", "expected_write_paths"),
         [
             pytest.param(
                 "cp /repo/src.py /worktree/dst.py",
+                ["/worktree/dst.py"],
                 ["/worktree/dst.py"],
                 id="cp",
             ),
             pytest.param(
                 "cp -r /repo/src /worktree/dst",
                 ["/worktree/dst"],
+                ["/worktree/dst"],
                 id="cp-recursive",
             ),
             pytest.param(
                 "install /repo/src.py /worktree/dst.py",
+                ["/worktree/dst.py"],
                 ["/worktree/dst.py"],
                 id="install",
             ),
             pytest.param(
                 "mv /repo/src.py /worktree/dst.py",
                 ["/repo/src.py", "/worktree/dst.py"],
+                [],
                 id="mv",
             ),
         ],
@@ -1505,6 +1561,7 @@ class TestCanonicalToolMetadata:
         self,
         command: str,
         expected_paths: list[str],
+        expected_write_paths: list[str],
     ) -> None:
         data = {"tool_name": "exec_command", "tool_input": {"command": command}}
 
@@ -1513,6 +1570,49 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "write"
         assert data["canonical_repo_mutation"] is True
         assert data["canonical_file_paths"] == expected_paths
+        assert data.get("canonical_write_file_paths", []) == expected_write_paths
+
+    @pytest.mark.parametrize(
+        ("tool_name", "tool_input", "expected_paths"),
+        [
+            ("delete_file", {"file_path": "/repo/config.json"}, ["/repo/config.json"]),
+            (
+                "move_file",
+                {
+                    "source_path": "/repo/config.json",
+                    "destination_path": "/repo/archive/config.json",
+                },
+                ["/repo/config.json", "/repo/archive/config.json"],
+            ),
+        ],
+    )
+    def test_structured_non_authoring_mutations_have_no_write_targets(
+        self,
+        tool_name: str,
+        tool_input: dict[str, str],
+        expected_paths: list[str],
+    ) -> None:
+        data = {"tool_name": tool_name, "tool_input": tool_input}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert data["canonical_file_paths"] == expected_paths
+        assert "canonical_write_file_path" not in data
+        assert "canonical_write_file_paths" not in data
+
+    @pytest.mark.parametrize("command", ["rm config.json", "rmdir config.json"])
+    def test_shell_deletions_have_no_write_targets(self, command: str) -> None:
+        data: dict[str, Any] = {"tool_name": "exec_command", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert data["canonical_file_path"] == "config.json"
+        assert "canonical_write_file_path" not in data
+        assert "canonical_write_file_paths" not in data
 
     def test_exec_command_truncate_sets_all_canonical_write_paths(self) -> None:
         data = {
@@ -1547,7 +1647,7 @@ class TestCanonicalToolMetadata:
         repo = tmp_path / "repo"
         monkeypatch.delenv("GOBBY_HOME", raising=False)
         monkeypatch.setenv("HOME", str(home))
-        data = {
+        data: dict[str, Any] = {
             "tool_name": "exec_command",
             "cwd": str(repo),
             "project_path": str(repo),
@@ -1568,7 +1668,7 @@ class TestCanonicalToolMetadata:
         gobby_home = tmp_path / "gobby-home"
         log_dir = gobby_home / "logs"
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
-        data = {
+        data: dict[str, Any] = {
             "tool_name": "exec_command",
             "cwd": str(repo),
             "project_path": str(repo),
@@ -1599,7 +1699,7 @@ class TestCanonicalToolMetadata:
         repo = tmp_path / "repo"
         monkeypatch.setenv("HOME", str(home))
         monkeypatch.setenv("TMPDIR", str(tmp_path / "tmp"))
-        data = {
+        data: dict[str, Any] = {
             "tool_name": "exec_command",
             "cwd": str(repo),
             "project_path": str(repo),
@@ -1616,7 +1716,7 @@ class TestCanonicalToolMetadata:
     )
     def test_exec_command_rg_repo_search_is_repo_scoped(self, command: str, tmp_path) -> None:
         repo = tmp_path / "repo"
-        data = {
+        data: dict[str, Any] = {
             "tool_name": "exec_command",
             "cwd": str(repo),
             "project_path": str(repo),

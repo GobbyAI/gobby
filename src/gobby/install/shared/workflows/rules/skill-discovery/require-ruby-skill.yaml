@@ -10,9 +10,9 @@ rules:
       not skill_loaded('ruby')
       and event.data.get('canonical_tool_kind') == 'write'
       and (
-        event.data.get('canonical_file_path', '').endswith(('.rb', '.rake', '.gemspec', '.ru', '.erb', '.rbs', '.jbuilder', '.builder', '.haml', '.slim'))
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('Gemfile', 'Gemfile.lock', 'gems.rb', 'gems.locked', 'Rakefile', 'Guardfile', 'Capfile', 'Dangerfile', 'Podfile', 'Brewfile', 'Fastfile', 'Appfile', 'Pluginfile', 'Deliverfile', 'Matchfile', 'Snapfile', 'Scanfile', 'Gymfile', 'config.ru', '.ruby-version', '.ruby-gemset', '.rspec', '.rubocop.yml', '.rubocop_todo.yml', '.standard.yml', 'Steepfile')
-        or event.data.get('canonical_file_path', '').endswith('sorbet/config')
+        event.data.get('canonical_write_file_path', '').endswith(('.rb', '.rake', '.gemspec', '.ru', '.erb', '.rbs', '.jbuilder', '.builder', '.haml', '.slim'))
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('Gemfile', 'Gemfile.lock', 'gems.rb', 'gems.locked', 'Rakefile', 'Guardfile', 'Capfile', 'Dangerfile', 'Podfile', 'Brewfile', 'Fastfile', 'Appfile', 'Pluginfile', 'Deliverfile', 'Matchfile', 'Snapfile', 'Scanfile', 'Gymfile', 'config.ru', '.ruby-version', '.ruby-gemset', '.rspec', '.rubocop.yml', '.rubocop_todo.yml', '.standard.yml', 'Steepfile')
+        or event.data.get('canonical_write_file_path', '').endswith('sorbet/config')
       )
     effects:
       - type: block

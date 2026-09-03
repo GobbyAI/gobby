@@ -4,7 +4,7 @@ import re as _re
 from collections.abc import Mapping
 from typing import Any
 
-_APPLY_PATCH_FILE_RE = _re.compile(r"^\*\*\* (?:Update|Add|Delete) File: (.+)$")
+_APPLY_PATCH_FILE_RE = _re.compile(r"^\*\*\* (?P<operation>Update|Add|Delete) File: (?P<path>.+)$")
 _APPLY_PATCH_MOVE_RE = _re.compile(r"^\*\*\* Move to: (.+)$")
 _PATH_FIELDS = (
     "file_path",
@@ -152,11 +152,35 @@ def _parse_apply_patch_paths(patch_text: str) -> list[str]:
         line = raw_line.strip()
         file_match = _APPLY_PATCH_FILE_RE.match(line)
         if file_match:
-            _append_unique_path(paths, file_match.group(1))
+            _append_unique_path(paths, file_match.group("path"))
             continue
 
         move_match = _APPLY_PATCH_MOVE_RE.match(line)
         if move_match:
+            _append_unique_path(paths, move_match.group(1))
+
+    return paths
+
+
+def extract_apply_patch_write_paths(tool_input: Any) -> list[str]:
+    """Extract paths whose contents are authored by an apply_patch payload."""
+    patch_text = _extract_apply_patch_text(tool_input)
+    if not patch_text:
+        return []
+
+    paths: list[str] = []
+    current_file_is_authored = False
+    for raw_line in patch_text.splitlines():
+        line = raw_line.strip()
+        file_match = _APPLY_PATCH_FILE_RE.match(line)
+        if file_match:
+            current_file_is_authored = file_match.group("operation") != "Delete"
+            if current_file_is_authored:
+                _append_unique_path(paths, file_match.group("path"))
+            continue
+
+        move_match = _APPLY_PATCH_MOVE_RE.match(line)
+        if move_match and current_file_is_authored:
             _append_unique_path(paths, move_match.group(1))
 
     return paths

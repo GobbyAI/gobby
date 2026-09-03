@@ -8,7 +8,7 @@ rules:
     when: >
       not skill_loaded('objc')
       and event.data.get('canonical_tool_kind') == 'write'
-      and event.data.get('canonical_file_path', '').endswith(('.m', '.mm', '.h', '.pch'))
+      and event.data.get('canonical_write_file_path', '').endswith(('.m', '.mm', '.h', '.pch'))
     effects:
       - type: block
         reason: '{{ skill_fetch_directive("objc") }}'

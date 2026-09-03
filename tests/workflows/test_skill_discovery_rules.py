@@ -127,6 +127,13 @@ SKILL_DISCOVERY_RULES = {
     "reset-skill-injection",
 }
 
+LANGUAGE_SKILL_RULES = {
+    rule_name
+    for rule_name in SKILL_DISCOVERY_RULES
+    if rule_name.startswith("require-")
+    and rule_name not in {"require-impeccable-skill", "require-plan-skill"}
+}
+
 REPLACED_SKILL_RULES = {
     "inject-python-skill",
     "inject-rust-skill",
@@ -183,6 +190,19 @@ class TestSkillDiscoverySync:
                 body = RuleDefinitionBody.model_validate(row.definition_json)
                 assert body.event is not None
                 assert body.effects
+
+
+class TestLanguageSkillWriteTargetContract:
+    """Language rules inspect content-write targets, not every touched path."""
+
+    @pytest.mark.parametrize("rule_name", sorted(LANGUAGE_SKILL_RULES))
+    def test_rule_uses_canonical_write_target(self, rule_name: str) -> None:
+        condition = _bundled_rule_condition(
+            f"skill-discovery/{rule_name}.yaml",
+            rule_name,
+        )
+
+        assert "event.data.get('canonical_write_file_path'" in condition
 
     def test_reset_skill_injection_clears_only_skill_ledgers(self, db, manager) -> None:
         _sync_bundled(db)
@@ -821,6 +841,7 @@ class TestRequireRustSkillCondition:
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
                     "canonical_file_path": file_path,
+                    "canonical_write_file_path": file_path,
                 }
             ),
             "tool_input": {},
@@ -3063,15 +3084,9 @@ class TestRequireJsonSkillStructure:
 class TestRequireJsonSkillCondition:
     """Test the require-json-skill condition evaluates correctly."""
 
-    CONDITION = (
-        "not skill_loaded('json') "
-        "and event.data.get('canonical_tool_kind') == 'write' "
-        "and ("
-        "event.data.get('canonical_file_path', '').endswith(('.json', '.jsonc', '.json5')) "
-        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
-        "in ('.babelrc', '.eslintrc', '.firebaserc', '.hintrc', '.prettierrc', "
-        "'.stylelintrc', '.swcrc')"
-        ")"
+    CONDITION = _bundled_rule_condition(
+        "skill-discovery/require-json-skill.yaml",
+        "require-json-skill",
     )
 
     def _eval(
@@ -3079,20 +3094,22 @@ class TestRequireJsonSkillCondition:
         file_path: str,
         *,
         canonical_tool_kind: str = "write",
+        content_write: bool = True,
         loaded_skills: list[str] | None = None,
         injected_skills: list[str] | None = None,
     ) -> bool:
         variables = {"loaded_skills": loaded_skills or []}
         if injected_skills is not None:
             variables["injected_skills"] = injected_skills
+        event_data = {
+            "canonical_tool_kind": canonical_tool_kind,
+            "canonical_file_path": file_path,
+        }
+        if content_write:
+            event_data["canonical_write_file_path"] = file_path
         context = {
             "variables": variables,
-            "event": SimpleNamespace(
-                data={
-                    "canonical_tool_kind": canonical_tool_kind,
-                    "canonical_file_path": file_path,
-                }
-            ),
+            "event": SimpleNamespace(data=event_data),
             "tool_input": {},
         }
         allowed_funcs = build_condition_helpers(context=context)
@@ -3156,6 +3173,9 @@ class TestRequireJsonSkillCondition:
 
     def test_skips_non_edit_write_tool(self) -> None:
         assert self._eval("/project/package.json", canonical_tool_kind="read") is False
+
+    def test_skips_non_authoring_mutation(self) -> None:
+        assert self._eval("/project/package.json", content_write=False) is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False

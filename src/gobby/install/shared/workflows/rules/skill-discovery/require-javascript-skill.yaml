@@ -10,12 +10,12 @@ rules:
       not skill_loaded('javascript')
       and event.data.get('canonical_tool_kind') == 'write'
       and (
-        event.data.get('canonical_file_path', '').endswith(('.js', '.jsx', '.mjs', '.cjs'))
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] == 'package.json'
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] == 'jsconfig.json'
+        event.data.get('canonical_write_file_path', '').endswith(('.js', '.jsx', '.mjs', '.cjs'))
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] == 'package.json'
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] == 'jsconfig.json'
         or (
-          event.data.get('canonical_file_path', '').rpartition('/')[2].startswith('jsconfig.')
-          and event.data.get('canonical_file_path', '').rpartition('/')[2].endswith('.json')
+          event.data.get('canonical_write_file_path', '').rpartition('/')[2].startswith('jsconfig.')
+          and event.data.get('canonical_write_file_path', '').rpartition('/')[2].endswith('.json')
         )
       )
     effects:

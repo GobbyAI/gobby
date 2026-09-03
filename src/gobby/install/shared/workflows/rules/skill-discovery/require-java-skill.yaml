@@ -10,9 +10,9 @@ rules:
       not skill_loaded('java')
       and event.data.get('canonical_tool_kind') == 'write'
       and (
-        event.data.get('canonical_file_path', '').endswith('.java')
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('pom.xml', 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts', 'gradle.properties')
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('maven.config', 'jvm.config', 'checkstyle.xml', 'pmd.xml', 'spotbugs-exclude.xml', 'lombok.config')
+        event.data.get('canonical_write_file_path', '').endswith('.java')
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('pom.xml', 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts', 'gradle.properties')
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('maven.config', 'jvm.config', 'checkstyle.xml', 'pmd.xml', 'spotbugs-exclude.xml', 'lombok.config')
       )
     effects:
       - type: block

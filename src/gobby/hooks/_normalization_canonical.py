@@ -25,6 +25,7 @@ from gobby.hooks._normalization_operands import (
 from gobby.hooks._normalization_paths import (
     _extract_tool_input_paths,
     _setdefault_tool_input_paths,
+    extract_apply_patch_write_paths,
     extract_structured_mutation_paths,
 )
 from gobby.hooks._normalization_shell import (
@@ -106,6 +107,7 @@ _MCP_FILE_MUTATION_LEAF_TOOLS = frozenset(
         "write_file",
     }
 )
+_STRUCTURED_NON_AUTHORING_TOOL_NAMES = frozenset({"deletefile", "movefile"})
 _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
     {"cat", "cut", "grep", "head", "jq", "rg", "sed", "sort", "tail", "tr", "uniq", "wc"}
 )
@@ -127,6 +129,7 @@ class _ShellSegment:
 class _ShellSegmentMetadata:
     kind: str
     paths: tuple[str, ...] = ()
+    write_paths: tuple[str, ...] = ()
     extra: Mapping[str, Any] | None = None
     repo_mutation: bool = False
     confidence: str = "high"
@@ -143,6 +146,7 @@ def _build_canonical_tool_metadata(
     kind: str,
     *,
     paths: list[str] | None = None,
+    write_paths: list[str] | None = None,
     repo_mutation: bool = False,
     confidence: str = "high",
     extra: Mapping[str, Any] | None = None,
@@ -155,6 +159,9 @@ def _build_canonical_tool_metadata(
     if paths:
         data["canonical_file_paths"] = paths
         data["canonical_file_path"] = paths[0]
+    if write_paths:
+        data["canonical_write_file_paths"] = write_paths
+        data["canonical_write_file_path"] = write_paths[0]
     if repo_mutation:
         data["canonical_repo_mutation"] = True
     if extra:
@@ -181,6 +188,26 @@ def _is_structured_file_mutation(data: Mapping[str, Any], tool_name: Any) -> boo
     if not isinstance(mcp_tool, str):
         return False
     return mcp_tool.casefold() in _MCP_FILE_MUTATION_LEAF_TOOLS
+
+
+def _is_structured_non_authoring_mutation(data: Mapping[str, Any], tool_name: Any) -> bool:
+    """Return whether a structured mutation only removes or relocates files."""
+    candidates = (tool_name, data.get("_original_tool_name"), data.get("mcp_tool"))
+    return any(
+        _compact_tool_name(candidate) in _STRUCTURED_NON_AUTHORING_TOOL_NAMES
+        for candidate in candidates
+    )
+
+
+def _structured_write_paths(
+    data: Mapping[str, Any], tool_name: Any, canonical_paths: list[str]
+) -> list[str]:
+    """Return content-authoring targets for a structured file mutation."""
+    if _is_structured_non_authoring_mutation(data, tool_name):
+        return []
+    if _compact_tool_name(data.get("_original_tool_name")) == "applypatch":
+        return extract_apply_patch_write_paths(data.get("tool_input"))
+    return canonical_paths
 
 
 def _is_read_only_pipeline_stage(tokens: list[ShellToken], parts: list[str]) -> bool:
@@ -339,6 +366,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
 
     paths: list[str] = []
     mutation_paths: list[str] = []
+    write_paths: list[str] = []
     mutation_scope_unknown = False
     navigation_scope_unknown = False
     for item in active:
@@ -358,6 +386,9 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
                 paths.append(path)
             if item.repo_mutation and path not in mutation_paths:
                 mutation_paths.append(path)
+        for path in item.write_paths:
+            if not _contains_unexpanded_shell_reference(path) and path not in write_paths:
+                write_paths.append(path)
 
     pure_gcode_navigation = any(item.pure_gcode_navigation for item in metadata) and all(
         item.neutral_setup or item.pure_gcode_navigation or item.read_only_pipeline_filter
@@ -393,6 +424,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     return _build_canonical_tool_metadata(
         kind,
         paths=effective_paths or None,
+        write_paths=write_paths or None,
         repo_mutation=any(item.repo_mutation for item in active),
         confidence="low" if any(item.confidence == "low" for item in active) else "high",
         extra=extra or None,
@@ -483,9 +515,11 @@ def _classify_stdin_python(
         is_mutation = inline_classification is _InlineProgramClassification.MUTATION
         is_read_only = inline_classification is _InlineProgramClassification.READ_ONLY
     if is_mutation:
+        rebased_targets = tuple(_rebase_shell_paths(list(targets), flagged[0].cwd))
         replacement = _ShellSegmentMetadata(
             "write",
-            paths=tuple(_rebase_shell_paths(list(targets), flagged[0].cwd)),
+            paths=rebased_targets,
+            write_paths=rebased_targets,
             repo_mutation=True,
         )
     else:
@@ -541,10 +575,15 @@ def _classify_shell_segment(
         base_metadata = _classify_shell_segment_without_redirection(plain_parts, cwd)
         extra = _without_code_index_navigation(base_metadata.extra)
         base_paths = list(base_metadata.paths)
+        base_write_paths = list(base_metadata.write_paths)
         return _ShellSegmentMetadata(
             "write",
             paths=tuple(
                 base_paths + [path for path in redirection_paths if path not in base_paths]
+            ),
+            write_paths=tuple(
+                base_write_paths
+                + [path for path in redirection_paths if path not in base_write_paths]
             ),
             extra=extra,
             repo_mutation=True,
@@ -565,6 +604,7 @@ def _classify_shell_segment(
         return _ShellSegmentMetadata(
             base_metadata.kind,
             paths=tuple(base_paths + [path for path in input_paths if path not in base_paths]),
+            write_paths=base_metadata.write_paths,
             extra=base_metadata.extra,
             repo_mutation=base_metadata.repo_mutation,
             neutral_setup=base_metadata.neutral_setup,
@@ -693,9 +733,11 @@ def _classify_shell_segment_without_redirection(
                 return _ShellSegmentMetadata("execute")
             if python_classification is _PythonExecutionClassification.INDETERMINATE:
                 return _ShellSegmentMetadata("execute", confidence="low")
+            rebased_targets = tuple(_rebase_shell_paths(list(targets), cwd))
             return _ShellSegmentMetadata(
                 "write",
-                paths=tuple(_rebase_shell_paths(list(targets), cwd)),
+                paths=rebased_targets,
+                write_paths=rebased_targets,
                 repo_mutation=True,
             )
         has_inline_program = (interpreter == "ruby" and "-e" in interpreter_args) or (
@@ -721,9 +763,11 @@ def _classify_shell_segment_without_redirection(
     if cmd == "curl":
         writes_file, paths = _curl_output_paths(parts)
         if writes_file:
+            rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
             return _ShellSegmentMetadata(
                 "write",
-                paths=tuple(_rebase_shell_paths(paths, cwd)),
+                paths=rebased_paths,
+                write_paths=rebased_paths,
                 repo_mutation=True,
             )
         return _ShellSegmentMetadata("execute")
@@ -777,9 +821,11 @@ def _classify_shell_segment_without_redirection(
         candidate = positional[-1] if positional else None
         if _has_sed_inplace_option(parts):
             paths = [candidate] if candidate and _looks_path_target(candidate) else []
+            rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
             return _ShellSegmentMetadata(
                 "write",
-                paths=tuple(_rebase_shell_paths(paths, cwd)),
+                paths=rebased_paths,
+                write_paths=rebased_paths,
                 repo_mutation=True,
             )
         paths = _rebase_navigation_shell_paths(
@@ -806,22 +852,37 @@ def _classify_shell_segment_without_redirection(
         positional = _shell_positional_args(parts)
         candidate = positional[-1] if positional else None
         paths = [candidate] if candidate and _looks_path_target(candidate) else []
+        rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
         return _ShellSegmentMetadata(
             "write",
-            paths=tuple(_rebase_shell_paths(paths, cwd)),
+            paths=rebased_paths,
+            write_paths=rebased_paths,
             repo_mutation=True,
         )
 
     if cmd == "tee":
         positional = _shell_positional_args(parts)
         paths = [candidate for candidate in positional if _looks_path_target(candidate)]
+        rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
         return _ShellSegmentMetadata(
             "write",
-            paths=tuple(_rebase_shell_paths(paths, cwd)),
+            paths=rebased_paths,
+            write_paths=rebased_paths,
             repo_mutation=True,
         )
 
-    if cmd in {"touch", "rm", "mkdir", "rmdir"}:
+    if cmd == "touch":
+        positional = _shell_positional_args(parts)
+        paths = [candidate for candidate in positional if _looks_path_target(candidate)]
+        rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
+        return _ShellSegmentMetadata(
+            "write",
+            paths=rebased_paths,
+            write_paths=rebased_paths,
+            repo_mutation=True,
+        )
+
+    if cmd in {"rm", "mkdir", "rmdir"}:
         positional = _shell_positional_args(parts)
         paths = [candidate for candidate in positional if _looks_path_target(candidate)]
         return _ShellSegmentMetadata(
@@ -834,9 +895,11 @@ def _classify_shell_segment_without_redirection(
         positional = _shell_positional_args(parts)
         candidate = positional[-1] if positional else None
         paths = [candidate] if candidate and _looks_path_target(candidate) else []
+        rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
         return _ShellSegmentMetadata(
             "write",
-            paths=tuple(_rebase_shell_paths(paths, cwd)),
+            paths=rebased_paths,
+            write_paths=rebased_paths,
             repo_mutation=True,
         )
 
@@ -854,6 +917,7 @@ def _classify_shell_segment_without_redirection(
         return _ShellSegmentMetadata(
             "write",
             paths=tuple(paths),
+            write_paths=tuple(paths),
             repo_mutation=True,
         )
 
@@ -873,9 +937,11 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
         metadata = _build_canonical_tool_metadata("read")
     elif is_structured_mutation:
         canonical_paths = extract_structured_mutation_paths(data)
+        write_paths = _structured_write_paths(data, tool_name, canonical_paths)
         metadata = _build_canonical_tool_metadata(
             "write",
             paths=canonical_paths,
+            write_paths=write_paths or None,
             repo_mutation=True,
         )
         metadata["canonical_structured_mutation"] = True

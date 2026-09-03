@@ -10,8 +10,8 @@ rules:
       not skill_loaded('scala')
       and event.data.get('canonical_tool_kind') == 'write'
       and (
-        event.data.get('canonical_file_path', '').endswith(('.scala', '.sc', '.sbt'))
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('.scala-version', '.scalafmt.conf', '.scalafix.conf', '.sbtopts')
+        event.data.get('canonical_write_file_path', '').endswith(('.scala', '.sc', '.sbt'))
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('.scala-version', '.scalafmt.conf', '.scalafix.conf', '.sbtopts')
       )
     effects:
       - type: block

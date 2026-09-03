@@ -10,10 +10,10 @@ rules:
       not skill_loaded('c')
       and event.data.get('canonical_tool_kind') == 'write'
       and (
-        event.data.get('canonical_file_path', '').endswith(('.c', '.h', '.c.in', '.h.in', '.pc', '.pc.in'))
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('Makefile', 'makefile', 'GNUmakefile', 'CMakeLists.txt', 'meson.build', 'meson_options.txt')
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('configure.ac', 'configure.in', 'Makefile.am', 'Makefile.in', 'compile_flags.txt', 'compile_commands.json')
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('.clang-format', '.clang-tidy', '.clangd')
+        event.data.get('canonical_write_file_path', '').endswith(('.c', '.h', '.c.in', '.h.in', '.pc', '.pc.in'))
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('Makefile', 'makefile', 'GNUmakefile', 'CMakeLists.txt', 'meson.build', 'meson_options.txt')
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('configure.ac', 'configure.in', 'Makefile.am', 'Makefile.in', 'compile_flags.txt', 'compile_commands.json')
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('.clang-format', '.clang-tidy', '.clangd')
       )
     effects:
       - type: block

@@ -10,8 +10,8 @@ rules:
       not skill_loaded('lua')
       and event.data.get('canonical_tool_kind') == 'write'
       and (
-        event.data.get('canonical_file_path', '').endswith(('.lua', '.rockspec'))
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('.busted', '.lua-format', '.luacheckrc', '.luacov', '.luarc.json', '.luarc.jsonc', '.stylua.toml', 'stylua.toml', 'selene.toml')
+        event.data.get('canonical_write_file_path', '').endswith(('.lua', '.rockspec'))
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('.busted', '.lua-format', '.luacheckrc', '.luacov', '.luarc.json', '.luarc.jsonc', '.stylua.toml', 'stylua.toml', 'selene.toml')
       )
     effects:
       - type: block

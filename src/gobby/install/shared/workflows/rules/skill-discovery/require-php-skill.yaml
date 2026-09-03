@@ -10,9 +10,9 @@ rules:
       not skill_loaded('php')
       and event.data.get('canonical_tool_kind') == 'write'
       and (
-        event.data.get('canonical_file_path', '').endswith('.php')
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('composer.json', 'composer.lock', 'symfony.lock', 'phpunit.xml', 'phpunit.xml.dist', 'pest.php', 'phpstan.neon', 'phpstan.neon.dist', 'psalm.xml', 'psalm.xml.dist')
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('rector.php', 'ecs.php', 'pint.json', 'phpcs.xml', 'phpcs.xml.dist', 'infection.json', '.php-cs-fixer.php', '.php-cs-fixer.dist.php')
+        event.data.get('canonical_write_file_path', '').endswith('.php')
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('composer.json', 'composer.lock', 'symfony.lock', 'phpunit.xml', 'phpunit.xml.dist', 'pest.php', 'phpstan.neon', 'phpstan.neon.dist', 'psalm.xml', 'psalm.xml.dist')
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('rector.php', 'ecs.php', 'pint.json', 'phpcs.xml', 'phpcs.xml.dist', 'infection.json', '.php-cs-fixer.php', '.php-cs-fixer.dist.php')
       )
     effects:
       - type: block

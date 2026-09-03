@@ -10,9 +10,9 @@ rules:
       not skill_loaded('csharp')
       and event.data.get('canonical_tool_kind') == 'write'
       and (
-        event.data.get('canonical_file_path', '').endswith(('.cs', '.csx', '.csproj', '.sln', '.slnx', '.razor', '.cshtml', '.cake'))
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('global.json', 'nuget.config', 'NuGet.Config', 'packages.lock.json', 'dotnet-tools.json', 'omnisharp.json', 'stylecop.json')
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('Directory.Build.props', 'Directory.Build.targets', 'Directory.Packages.props')
+        event.data.get('canonical_write_file_path', '').endswith(('.cs', '.csx', '.csproj', '.sln', '.slnx', '.razor', '.cshtml', '.cake'))
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('global.json', 'nuget.config', 'NuGet.Config', 'packages.lock.json', 'dotnet-tools.json', 'omnisharp.json', 'stylecop.json')
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('Directory.Build.props', 'Directory.Build.targets', 'Directory.Packages.props')
       )
     effects:
       - type: block

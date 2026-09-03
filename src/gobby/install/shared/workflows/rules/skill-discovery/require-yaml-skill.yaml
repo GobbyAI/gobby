@@ -10,17 +10,17 @@ rules:
       not skill_loaded('yaml')
       and event.data.get('canonical_tool_kind') == 'write'
       and (
-        event.data.get('canonical_file_path', '').endswith('.yaml')
-        or event.data.get('canonical_file_path', '').endswith('.yml')
-        or event.data.get('canonical_file_path', '').endswith('.yaml.j2')
-        or event.data.get('canonical_file_path', '').endswith('.yml.j2')
-        or event.data.get('canonical_file_path', '').endswith('.yaml.tpl')
-        or event.data.get('canonical_file_path', '').endswith('.yml.tpl')
-        or event.data.get('canonical_file_path', '').endswith('.yaml.tmpl')
-        or event.data.get('canonical_file_path', '').endswith('.yml.tmpl')
-        or event.data.get('canonical_file_path', '').endswith('.yaml.template')
-        or event.data.get('canonical_file_path', '').endswith('.yml.template')
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] == '.yamllint'
+        event.data.get('canonical_write_file_path', '').endswith('.yaml')
+        or event.data.get('canonical_write_file_path', '').endswith('.yml')
+        or event.data.get('canonical_write_file_path', '').endswith('.yaml.j2')
+        or event.data.get('canonical_write_file_path', '').endswith('.yml.j2')
+        or event.data.get('canonical_write_file_path', '').endswith('.yaml.tpl')
+        or event.data.get('canonical_write_file_path', '').endswith('.yml.tpl')
+        or event.data.get('canonical_write_file_path', '').endswith('.yaml.tmpl')
+        or event.data.get('canonical_write_file_path', '').endswith('.yml.tmpl')
+        or event.data.get('canonical_write_file_path', '').endswith('.yaml.template')
+        or event.data.get('canonical_write_file_path', '').endswith('.yml.template')
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] == '.yamllint'
       )
     effects:
       - type: block

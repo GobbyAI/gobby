@@ -10,11 +10,11 @@ rules:
       not skill_loaded('swift')
       and event.data.get('canonical_tool_kind') == 'write'
       and (
-        event.data.get('canonical_file_path', '').endswith('.swift')
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('Package.swift', 'Package.resolved', '.swift-version', '.swiftlint.yml', '.swiftlint.yaml', 'swiftlint.yml', 'swiftlint.yaml', '.swiftformat', '.swift-format', 'swift-format.json', '.swift-format.json')
+        event.data.get('canonical_write_file_path', '').endswith('.swift')
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('Package.swift', 'Package.resolved', '.swift-version', '.swiftlint.yml', '.swiftlint.yaml', 'swiftlint.yml', 'swiftlint.yaml', '.swiftformat', '.swift-format', 'swift-format.json', '.swift-format.json')
         or (
-          '.xcodeproj/' in event.data.get('canonical_file_path', '')
-          and event.data.get('canonical_file_path', '').rpartition('/')[2] == 'project.pbxproj'
+          '.xcodeproj/' in event.data.get('canonical_write_file_path', '')
+          and event.data.get('canonical_write_file_path', '').rpartition('/')[2] == 'project.pbxproj'
         )
       )
     effects:

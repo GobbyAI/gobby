@@ -10,9 +10,9 @@ rules:
       not skill_loaded('go')
       and event.data.get('canonical_tool_kind') == 'write'
       and (
-        event.data.get('canonical_file_path', '').endswith('.go')
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('go.mod', 'go.sum', 'go.work', 'go.work.sum')
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('.golangci.yml', '.golangci.yaml', 'golangci.yml', 'golangci.yaml')
+        event.data.get('canonical_write_file_path', '').endswith('.go')
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('go.mod', 'go.sum', 'go.work', 'go.work.sum')
+        or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('.golangci.yml', '.golangci.yaml', 'golangci.yml', 'golangci.yaml')
       )
     effects:
       - type: block
