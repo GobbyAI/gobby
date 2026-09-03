@@ -3403,7 +3403,7 @@ Add `AgyCollector` in the new module `src/gobby/providers/capabilities/collector
 (`provider = "agy"`, one `SourceSpec` keyed `agy_models_cli`), modelled on
 `GrokCollector.collect` / `DroidCollector.collect`: it runs `agy --output-format json models`
 under the 30 s source timeout, parses the 1.1.20 envelope (`command.data.models[].{id,
-label}`) into `ModelCapability`/`ModelRoute` rows — family and effort derived from the id
+label}`) into `ModelCapability` rows — family and effort derived from the id
 (`<family>-<effort>` suffix split; no suffix means a single fixed effort), label from
 `label`, context window from the bundled family table since the CLI reports none — with
 per-field `FactProvenance` (`agy_models_cli` for id/label/effort, `bundled` for the

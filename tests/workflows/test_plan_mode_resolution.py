@@ -263,7 +263,7 @@ def test_plan_mode_suppresses_turn_start_and_mid_turn_guidance_across_surfaces(
     assert variables["plan_mode"] is True
     assert variables["context_compact_guidance_message"] == ""
     assert variables["context_compact_mid_turn_pressure_band"] == "none"
-    assert variables["context_compact_guidance_shown_kinds"] == []
+    assert "context_compact_highest_announced_threshold" not in variables
 
 
 def test_structured_hook_mode_precedes_provider_state_and_prompt_markers() -> None:
