@@ -5,21 +5,79 @@ Pipeline definition CLI commands.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import sys
 from importlib import import_module
+from pathlib import Path
 from typing import Any
 
 import click
 
 from gobby.utils.json_helpers import json_dumps
 from gobby.workflows.dry_run import evaluate_pipeline_definition
+from gobby.workflows.loader_cache import DiscoveredWorkflow
+from gobby.workflows.pipeline_models import PipelineDefinition
 from gobby.workflows.pipeline_state import ApprovalRequired
 
 _FACADE_MODULE = "gobby.cli.pipelines"
+logger = logging.getLogger(__name__)
 
 
 def _facade() -> Any:
     return sys.modules.get(_FACADE_MODULE) or import_module(_FACADE_MODULE)
+
+
+def _parse_daemon_pipeline(row: dict[str, Any]) -> PipelineDefinition:
+    """Convert a pipeline-definition API row to the loader's domain model."""
+    raw_definition = row.get("definition_json")
+    data = json.loads(raw_definition) if isinstance(raw_definition, str) else raw_definition
+    if not isinstance(data, dict):
+        raise ValueError("definition_json must be a JSON object")
+    data = dict(data)
+    data["name"] = row["name"]
+    data["enabled"] = row.get("enabled", True)
+    if row.get("version"):
+        data["version"] = row["version"]
+    return PipelineDefinition.model_validate(data)
+
+
+def _discover_daemon_pipelines(rows: list[dict[str, Any]]) -> list[DiscoveredWorkflow]:
+    """Build loader-compatible discovery results from daemon API rows."""
+    discovered: dict[str, DiscoveredWorkflow] = {}
+    for row in rows:
+        try:
+            definition = _parse_daemon_pipeline(row)
+            is_project = row.get("project_id") is not None
+            existing = discovered.get(definition.name)
+            if existing is not None and existing.is_project and not is_project:
+                continue
+            discovered[definition.name] = DiscoveredWorkflow(
+                name=definition.name,
+                definition=definition,
+                priority=definition.priority,
+                is_project=is_project,
+                path=Path(f"db://{row['id']}"),
+            )
+        except (KeyError, TypeError, ValueError) as e:
+            logger.warning("Failed to parse daemon pipeline definition: %s", e)
+    return sorted(
+        discovered.values(),
+        key=lambda item: (0 if item.is_project else 1, item.priority, item.name),
+    )
+
+
+def _load_daemon_pipeline(
+    rows: list[dict[str, Any]], name: str, project_id: str
+) -> PipelineDefinition | None:
+    """Select the same project-first row used by the DB loader and parse it."""
+    matching = [row for row in rows if row.get("name") == name]
+    if project_id:
+        project_match = next((row for row in matching if row.get("project_id") == project_id), None)
+        if project_match is not None:
+            return _parse_daemon_pipeline(project_match)
+    global_match = next((row for row in matching if row.get("project_id") is None), None)
+    return _parse_daemon_pipeline(global_match) if global_match is not None else None
 
 
 @click.command("list")
@@ -28,10 +86,13 @@ def _facade() -> Any:
 def list_pipelines(ctx: click.Context, json_format: bool) -> None:
     """List available pipeline definitions."""
     facade = _facade()
-    loader = facade.get_workflow_loader()
     project_id = facade._get_project_id()
-
-    discovered = loader.discover_pipelines_sync(project_id or None)
+    daemon_rows = facade._try_daemon_catalog(project_id)
+    if daemon_rows is None:
+        loader = facade.get_workflow_loader()
+        discovered = loader.discover_pipelines_sync(project_id or None)
+    else:
+        discovered = _discover_daemon_pipelines(daemon_rows)
 
     if json_format:
         pipeline_list = []
@@ -68,10 +129,13 @@ def list_pipelines(ctx: click.Context, json_format: bool) -> None:
 def show_pipeline(ctx: click.Context, name: str, json_format: bool) -> None:
     """Show pipeline definition details."""
     facade = _facade()
-    loader = facade.get_workflow_loader()
     project_id = facade._get_project_id()
-
-    pipeline = loader.load_pipeline_sync(name, project_id or None)
+    daemon_rows = facade._try_daemon_catalog(project_id)
+    if daemon_rows is None:
+        loader = facade.get_workflow_loader()
+        pipeline = loader.load_pipeline_sync(name, project_id or None)
+    else:
+        pipeline = _load_daemon_pipeline(daemon_rows, name, project_id)
     if not pipeline:
         click.echo(f"Pipeline '{name}' not found.", err=True)
         raise SystemExit(1)

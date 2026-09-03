@@ -6931,16 +6931,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/servers/test_auth_service.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 112,
-      "message": "Module \"gobby.servers.auth_service\" does not explicitly export attribute \"time\"",
-      "occurrences": 2,
-      "path": "tests/servers/test_auth_service.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/servers/test_chat_session_helpers.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 48,

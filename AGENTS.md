@@ -72,6 +72,22 @@ how the system behaves so you can work with it instead of being surprised by it.
 11. Agent depth limit of 5 — no deeper recursive agent chains.
 12. Cross-session messaging goes through `gobby-agents:send_message`. Reserve
     `gobby-sessions:send_keys` for terminal control.
+13. A denied call is about that call, never a standing policy. Approval prompts
+    do not always name the tool being invoked, so a rejection can mean "not that,
+    not now" or simply a misread. Adjust and continue. If you decide to stop
+    invoking something a hook, gate, or rule keeps asking for, say so in text on
+    that turn and ask — silently carrying a denial forward as an unstated rule
+    hides the conflict from the one person who can resolve it.
+
+## Session Handoff
+
+`gobby-sessions:set_handoff` compacts the session into a structured handoff —
+current state, next steps, key decisions, blockers, notes, references — and the
+next session reads it with no-argument `gobby-sessions:get_handoff`. Context-
+pressure guidance asks for it by name as the window fills; write it at the next
+pause rather than at the end of a turn you may not reach. Canonical usage lives
+in `docs/guides/sessions.md` (§Creating And Reading Handoffs), with compaction,
+`/clear`, and provider-handoff semantics in `docs/contracts/session-boundary.md`.
 
 ## Development Commands
 
