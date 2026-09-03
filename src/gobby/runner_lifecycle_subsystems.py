@@ -549,6 +549,7 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
                 config=config.code_index,
                 shutdown_flag=sync_shutdown,
                 run_db=runner.code_indexer.run_db,
+                startup_ready=lambda: runner.http_server.services.startup_ready,
             ),
             name="code-index-sync-worker",
         )
