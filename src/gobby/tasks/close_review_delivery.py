@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from gobby.autonomous.progress_tracker import ProgressTracker, ProgressType
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
@@ -75,7 +76,15 @@ def mark_terminal_review_delivered(
     review = store.get(review_id)
     if review is None or review.caller_session_id not in delivered_session_ids:
         return False
-    return store.mark_delivered(review.id)
+    if not store.mark_delivered(review.id):
+        return False
+    ProgressTracker(db).record_event(
+        review.caller_session_id,
+        ProgressType.TASK_CLOSE_REVIEW_COMPLETED,
+        tool_name="task_close_review_completed",
+        details={"review_id": review.id, "status": review.status},
+    )
+    return True
 
 
 __all__ = ["mark_terminal_review_delivered", "terminal_review_delivery"]
