@@ -1111,10 +1111,14 @@ class TestVariablePersistence:
     async def test_codex_schema_lookup_rehydrates_and_prompts_transition_skill(self, db) -> None:
         """Codex AFTER_TOOL should rehydrate get_tool_schema context for skill directive."""
         from gobby.workflows.engine.core import RuleEngine
+        from gobby.workflows.state_manager import SessionVariableManager
         from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
         sync_bundled_rules(db, get_bundled_rules_path())
         db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
+
+        # require-tasks-skill-for-mutations gates on the interactive agent.
+        SessionVariableManager(db=db).merge_variables(SESSION_ID, {"_agent_type": "default"})
 
         rule_engine = RuleEngine(db=db)
         handler = WorkflowHookHandler(rule_engine=rule_engine)

@@ -144,6 +144,8 @@ async def test_oversized_get_skill_wrapper_result_survives_codex_normalization_a
             "baseline_dirty_files": [],
             "session_edited_files": [],
             "enforce_tool_schema_check": False,
+            # require-tasks-skill-for-mutations gates on the interactive agent.
+            "_agent_type": "default",
         },
     )
     handler = WorkflowHookHandler(rule_engine=RuleEngine(db))

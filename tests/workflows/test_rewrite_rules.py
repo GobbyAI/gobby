@@ -149,7 +149,7 @@ class TestBundledBlockReasonFraming:
     def test_skill_fetch_template_is_the_only_marker_exception(self) -> None:
         reasons = _bundled_before_tool_block_reasons()
 
-        assert reasons["require-claimed-task-required-skills"] == _SKILL_FETCH_TEMPLATE
+        assert reasons["require-claimed-task-extra-skills"] == _SKILL_FETCH_TEMPLATE
         assert skill_fetch_batch_directive(["python", "rust"]).startswith(
             "Load and fully read these skills"
         )

@@ -91,10 +91,14 @@ rules:
         or event.data.get('canonical_code_navigation_gcode_supported')
       )
     effects:
+      # One-shot note: the guard variable and its payload must land together, or
+      # a suppressed delivery marks the note shown without ever showing it.
       - type: set_variable
         variable: code_index_preflight_note_shown
         value: true
+        delivery: on_receipt
       - type: inject_context
+        delivery: on_receipt
         template: >-
           Code-index preflight reported this checkout unavailable or stale; raw filesystem navigation is allowed for this session.
 
