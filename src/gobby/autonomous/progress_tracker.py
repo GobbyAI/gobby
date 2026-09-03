@@ -16,6 +16,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.normalization import canonicalize_shell_tool_name, is_shell_tool
+from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.utils.datetime import parse_stored_datetime, require_stored_datetime
 
 if TYPE_CHECKING:
@@ -39,6 +40,7 @@ class ProgressType(str, Enum):
     BUILD_FAILED = "build_failed"  # Build failed
     COMMIT_CREATED = "commit_created"  # Git commit was created
     MCP_MUTATION = "mcp_mutation"  # A state-mutating MCP tool call succeeded
+    TASK_CLOSE_REVIEW_COMPLETED = "task_close_review_completed"
     ERROR_OCCURRED = "error_occurred"  # An error occurred
 
 
@@ -59,6 +61,7 @@ HIGH_VALUE_PROGRESS = {
     ProgressType.TASK_COMPLETED,
     ProgressType.COMMIT_CREATED,
     ProgressType.MCP_MUTATION,
+    ProgressType.TASK_CLOSE_REVIEW_COMPLETED,
     ProgressType.TEST_PASSED,
     ProgressType.BUILD_SUCCEEDED,
 }
@@ -305,6 +308,7 @@ class ProgressTracker:
             stagnation_threshold: Seconds without any progress event before stagnant
         """
         self.db = db
+        self._task_close_review_store = TaskCloseReviewStore(db)
         self._lock = threading.Lock()
         self._consecutive_passive_waits: dict[str, int] = {}
         self.stagnation_threshold = stagnation_threshold or self.DEFAULT_STAGNATION_THRESHOLD
@@ -608,6 +612,9 @@ class ProgressTracker:
             return False, 0.0
 
         duration = (datetime.now(UTC) - last_event_at).total_seconds()
+        if self._task_close_review_store.get_active_for_caller_session(session_id) is not None:
+            logger.debug("Session %s is awaiting an active task-close review", session_id)
+            return False, duration
         if last_event_type is ProgressType.TOOL_STARTED and not last_event_is_passive_wait:
             return False, duration
 

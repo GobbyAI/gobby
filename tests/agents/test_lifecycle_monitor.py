@@ -31,7 +31,8 @@ import gobby.agents.lifecycle_monitor as lifecycle_monitor_module
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.lifecycle_reconciliation import has_dispatch_stage_context
 from gobby.agents.tmux import configure_tmux
-from gobby.autonomous.stuck_detector import StuckDetectionResult
+from gobby.autonomous.progress_tracker import ProgressTracker, ProgressType
+from gobby.autonomous.stuck_detector import StuckDetectionResult, StuckDetector
 from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.sessions import activity as session_activity
@@ -41,6 +42,7 @@ from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_states import StageManifestSpec
@@ -973,6 +975,47 @@ def _make_progress_stagnation_monitor(
         requested_reasoning_effort=requested_reasoning_effort,
     )
     return monitor, run, stuck_detector
+
+
+async def test_stuck_check_skips_session_awaiting_close_review(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+) -> None:
+    monitor, run, _stuck_detector = _make_progress_stagnation_monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        sample_session=sample_session,
+    )
+    tracker = ProgressTracker(temp_db, stagnation_threshold=60)
+    tracker.record_event(sample_session["id"], ProgressType.FILE_MODIFIED)
+    temp_db.execute(
+        "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s",
+        (
+            (datetime.now(UTC) - timedelta(seconds=120)).isoformat(),
+            sample_session["id"],
+        ),
+    )
+    monitor._stuck_detector = StuckDetector(temp_db, progress_tracker=tracker)
+    TaskCloseReviewStore(temp_db).create_or_get_active(
+        task_id=str(uuid.uuid4()),
+        task_ref="#42",
+        caller_session_id=sample_session["id"],
+        close_arguments={"preview": True},
+        review_fingerprint="review",
+        evidence_fingerprint="evidence",
+    )
+
+    with patch.object(
+        monitor._cleanup_handler,
+        "cleanup_agent",
+        new_callable=AsyncMock,
+    ) as cleanup_agent:
+        handled = await monitor.check_autonomous_stuck_agents()
+
+    assert handled == 0
+    assert run.id not in monitor._stuck_interventions
+    cleanup_agent.assert_not_awaited()
 
 
 @pytest.mark.parametrize("suggested_action", ["stop", "escalate"])

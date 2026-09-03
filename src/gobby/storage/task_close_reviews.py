@@ -257,6 +257,12 @@ class TaskCloseReviewStore:
             (task_id, list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES)),
         )
 
+    def get_active_for_caller_session(self, session_id: str) -> TaskCloseReview | None:
+        return self._get(
+            "caller_session_id = %s AND status = ANY(%s)",
+            (session_id, list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES)),
+        )
+
     def bind_run(self, review_id: str, run_id: str) -> TaskCloseReview | None:
         """Bind a successful launch and move the review to running."""
         now = datetime.now(UTC)
