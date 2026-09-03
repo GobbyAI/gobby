@@ -73,6 +73,9 @@ _PYTHON_PIPELINE_BLOCKED_NODES = (
 _PYTHON_REFLECTION_ESCAPE_NAMES = frozenset(
     {"__import__", "attrgetter", "compile", "delattr", "eval", "exec", "getattr", "setattr"}
 )
+_PYTHON_METADATA_DUNDER_ATTRIBUTES = frozenset(
+    {"__doc__", "__file__", "__module__", "__name__", "__version__"}
+)
 # Module-level filesystem mutations, each with the positional arguments that
 # name the paths it mutates (a copy's source is only read).
 _PYTHON_FILESYSTEM_MUTATION_CALL_TARGETS: Mapping[str, tuple[int, ...]] = {
@@ -676,7 +679,9 @@ def _proven_python_mutation(
                     return _UNKNOWN_SCOPE_MUTATION
         elif isinstance(node, ast.Attribute):
             attribute_name = _python_attribute_name(node)
-            if _has_dunder_name(attribute_name or node.attr):
+            if _has_dunder_name(attribute_name or node.attr) and not (
+                isinstance(node.ctx, ast.Load) and node.attr in _PYTHON_METADATA_DUNDER_ATTRIBUTES
+            ):
                 return _UNKNOWN_SCOPE_MUTATION
             if (
                 node.attr in _PYTHON_REFLECTION_ESCAPE_NAMES

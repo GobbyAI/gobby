@@ -301,6 +301,50 @@ def test_python_pipeline_normalization_marks_aws_mcp_diagnostic_indeterminate() 
 
 
 @pytest.mark.parametrize(
+    "command",
+    [
+        'python3 -c "import websockets; print(websockets.__version__)"',
+        'python3 -c "print(type(v).__name__)"',
+        'python3 -c "print(pkg.__file__)"',
+        'python3 -c "print(pkg.__doc__)"',
+        'python3 -c "print(pkg.__module__)"',
+    ],
+)
+def test_metadata_dunder_attribute_load_is_not_mutation(command: str) -> None:
+    data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "execute"
+    assert data["canonical_tool_confidence"] == "low"
+    assert "canonical_repo_mutation" not in data
+
+
+@pytest.mark.parametrize(
+    "attribute",
+    [
+        "__import__",
+        "__builtins__",
+        "__class__",
+        "__subclasses__",
+        "__dict__",
+        "__globals__",
+    ],
+)
+def test_escape_dunder_still_classifies_as_mutation(attribute: str) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": f'python3 -c "print(value.{attribute})"'},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_tool_confidence"] == "high"
+    assert data["canonical_repo_mutation"] is True
+
+
+@pytest.mark.parametrize(
     "script",
     [
         "open('notes.md', 'w').write('changed')",
