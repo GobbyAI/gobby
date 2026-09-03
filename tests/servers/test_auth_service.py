@@ -109,7 +109,7 @@ def test_verify_bearer_rotation_refresh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = [100.0]
-    monkeypatch.setattr(auth_service_module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr("gobby.servers.auth_service.time.monotonic", lambda: clock[0])
     token_file = tmp_path / "local_cli_token"
     token_file.write_text("old-token")
     _set_api_token(temp_db, "old-token")
@@ -271,7 +271,7 @@ def test_local_token_refreshes_after_rotation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = [200.0]
-    monkeypatch.setattr(auth_service_module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr("gobby.servers.auth_service.time.monotonic", lambda: clock[0])
     token_file = tmp_path / "local_cli_token"
     token_file.write_text("old-token")
     _set_api_token(temp_db, "old-token")
@@ -401,6 +401,9 @@ def test_agent_capability_matrix(
     bearer_only = {"Authorization": f"Bearer {token}"}
     assert service.is_request_authenticated(
         _request(bearer_only, method="GET", path="/api/comms/channels")
+    )
+    assert service.is_request_authenticated(
+        _request(bearer_only, method="GET", path="/api/pipelines/definitions")
     )
     # ... but a present-and-wrong identity header still rejects.
     assert not service.is_request_authenticated(

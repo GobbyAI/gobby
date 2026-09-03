@@ -690,8 +690,8 @@ class TestCloseTask:
                 return_value=None,
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close._has_committable_edits",
-                return_value=False,
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close._task_dirty_paths",
+                return_value=set(),
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization._has_committable_edits",
@@ -781,8 +781,8 @@ class TestCloseTask:
                 return_value=None,
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close._has_committable_edits",
-                return_value=False,
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close._task_dirty_paths",
+                return_value=set(),
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization._has_committable_edits",
