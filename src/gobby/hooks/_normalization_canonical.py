@@ -23,9 +23,16 @@ from gobby.hooks._normalization_operands import (
     _truncate_positional_paths,
 )
 from gobby.hooks._normalization_paths import (
+    CANONICAL_WRITE_TOOL_NAMES as CANONICAL_WRITE_TOOL_NAMES,
+)
+from gobby.hooks._normalization_paths import (
+    _compact_tool_name as _compact_tool_name,
+)
+from gobby.hooks._normalization_paths import (
     _extract_tool_input_paths,
+    _is_structured_file_mutation,
     _setdefault_tool_input_paths,
-    extract_apply_patch_write_paths,
+    _structured_write_paths,
     extract_structured_mutation_paths,
 )
 from gobby.hooks._normalization_shell import (
@@ -69,45 +76,6 @@ from gobby.hooks.code_navigation import (
 )
 
 _CANONICAL_READ_TOOL_NAMES = frozenset({"read"})
-CANONICAL_WRITE_TOOL_NAMES = frozenset(
-    {
-        "apply_patch",
-        "applypatch",
-        "create",
-        "create_file",
-        "createfile",
-        "delete_file",
-        "deletefile",
-        "edit",
-        "edit_file",
-        "editfile",
-        "move_file",
-        "movefile",
-        "notebook_edit",
-        "notebookedit",
-        "patch_file",
-        "patchfile",
-        "replace",
-        "search_replace",
-        "searchreplace",
-        "write",
-        "write_file",
-        "writefile",
-    }
-)
-_MCP_FILE_MUTATION_LEAF_TOOLS = frozenset(
-    {
-        "apply_patch",
-        "create_file",
-        "delete_file",
-        "edit_file",
-        "move_file",
-        "patch_file",
-        "replace_file",
-        "write_file",
-    }
-)
-_STRUCTURED_NON_AUTHORING_TOOL_NAMES = frozenset({"deletefile", "movefile"})
 _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
     {"cat", "cut", "grep", "head", "jq", "rg", "sed", "sort", "tail", "tr", "uniq", "wc"}
 )
@@ -167,47 +135,6 @@ def _build_canonical_tool_metadata(
     if extra:
         data.update(extra)
     return data
-
-
-def _compact_tool_name(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    return "".join(character for character in value.casefold() if character.isalnum())
-
-
-def _is_structured_file_mutation(data: Mapping[str, Any], tool_name: Any) -> bool:
-    """Classify provider-native and known MCP file mutation tools."""
-    tool_name_lower = tool_name.casefold() if isinstance(tool_name, str) else ""
-    if (
-        tool_name_lower in CANONICAL_WRITE_TOOL_NAMES
-        or _compact_tool_name(tool_name) in CANONICAL_WRITE_TOOL_NAMES
-    ):
-        return True
-
-    mcp_tool = data.get("mcp_tool")
-    if not isinstance(mcp_tool, str):
-        return False
-    return mcp_tool.casefold() in _MCP_FILE_MUTATION_LEAF_TOOLS
-
-
-def _is_structured_non_authoring_mutation(data: Mapping[str, Any], tool_name: Any) -> bool:
-    """Return whether a structured mutation only removes or relocates files."""
-    candidates = (tool_name, data.get("_original_tool_name"), data.get("mcp_tool"))
-    return any(
-        _compact_tool_name(candidate) in _STRUCTURED_NON_AUTHORING_TOOL_NAMES
-        for candidate in candidates
-    )
-
-
-def _structured_write_paths(
-    data: Mapping[str, Any], tool_name: Any, canonical_paths: list[str]
-) -> list[str]:
-    """Return content-authoring targets for a structured file mutation."""
-    if _is_structured_non_authoring_mutation(data, tool_name):
-        return []
-    if _compact_tool_name(data.get("_original_tool_name")) == "applypatch":
-        return extract_apply_patch_write_paths(data.get("tool_input"))
-    return canonical_paths
 
 
 def _is_read_only_pipeline_stage(tokens: list[ShellToken], parts: list[str]) -> bool:
