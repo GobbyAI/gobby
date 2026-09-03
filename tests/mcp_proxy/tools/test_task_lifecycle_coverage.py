@@ -210,6 +210,9 @@ def _create_registry(
             prompt_limit=256_000,
             review_fingerprint="close",
             evidence_fingerprint="evidence",
+            diff_sha="diff",
+            test_bodies_sha="tests",
+            stable_facts={},
             manifest_count=1,
             excerpt_chars=10,
         )

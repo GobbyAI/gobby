@@ -29,7 +29,8 @@ TERMINAL_TASK_CLOSE_REVIEW_STATUSES: tuple[TerminalTaskCloseReviewStatus, ...] =
 
 _COLUMNS = """
     id, task_id, task_ref, caller_session_id, agent_run_id,
-    close_arguments, review_fingerprint, evidence_fingerprint, status,
+    close_arguments, review_fingerprint, evidence_fingerprint,
+    diff_sha, test_bodies_sha, stable_facts, status,
     result_payload, error, launched_at, completed_at, delivered_at,
     created_at, updated_at
 """
@@ -62,6 +63,9 @@ class TaskCloseReview:
     delivered_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    diff_sha: str | None = None
+    test_bodies_sha: str | None = None
+    stable_facts: dict[str, Any] | None = None
 
     @property
     def active(self) -> bool:
@@ -87,6 +91,9 @@ class TaskCloseReviewStore:
         close_arguments: Mapping[str, Any],
         review_fingerprint: str,
         evidence_fingerprint: str,
+        diff_sha: str,
+        test_bodies_sha: str,
+        stable_facts: Mapping[str, object],
     ) -> tuple[TaskCloseReview, bool]:
         """Create one launching review or return the task's concurrent active review."""
         review_id = str(uuid4())
@@ -97,10 +104,14 @@ class TaskCloseReviewStore:
                 f"""
                 INSERT INTO task_close_reviews (
                     id, task_id, task_ref, caller_session_id, close_arguments,
-                    review_fingerprint, evidence_fingerprint, status,
+                    review_fingerprint, evidence_fingerprint,
+                    diff_sha, test_bodies_sha, stable_facts, status,
                     created_at, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, 'launching', %s, %s)
+                VALUES (
+                    %s, %s, %s, %s, %s::jsonb, %s, %s,
+                    %s, %s, %s::jsonb, 'launching', %s, %s
+                )
                 ON CONFLICT (task_id)
                 WHERE status = ANY (
                     ARRAY['launching'::text, 'running'::text, 'finalizing'::text]
@@ -116,6 +127,9 @@ class TaskCloseReviewStore:
                     _json(close_arguments),
                     review_fingerprint,
                     evidence_fingerprint,
+                    diff_sha,
+                    test_bodies_sha,
+                    _json(stable_facts),
                     now,
                     now,
                 ),
@@ -425,6 +439,11 @@ def _review_from_row(row: object) -> TaskCloseReview:
         delivered_at=cast(datetime | None, row["delivered_at"]),
         created_at=cast(datetime, row["created_at"]),
         updated_at=cast(datetime, row["updated_at"]),
+        diff_sha=str(row["diff_sha"]) if row["diff_sha"] is not None else None,
+        test_bodies_sha=(
+            str(row["test_bodies_sha"]) if row["test_bodies_sha"] is not None else None
+        ),
+        stable_facts=_json_object(row["stable_facts"]),
     )
 
 

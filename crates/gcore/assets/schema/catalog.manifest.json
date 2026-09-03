@@ -4889,6 +4889,10 @@
       "definition": "timestamp with time zone|timestamptz|YES||NEVER"
     },
     {
+      "name": "task_close_reviews.diff_sha",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "task_close_reviews.error",
       "definition": "text|text|YES||NEVER"
     },
@@ -4913,6 +4917,10 @@
       "definition": "text|text|NO||NEVER"
     },
     {
+      "name": "task_close_reviews.stable_facts",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
       "name": "task_close_reviews.status",
       "definition": "text|text|NO|'launching'::text|NEVER"
     },
@@ -4923,6 +4931,10 @@
     {
       "name": "task_close_reviews.task_ref",
       "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "task_close_reviews.test_bodies_sha",
+      "definition": "text|text|YES||NEVER"
     },
     {
       "name": "task_close_reviews.updated_at",
@@ -7771,6 +7783,10 @@
       "definition": "CHECK (jsonb_typeof(close_arguments) = 'object'::text)"
     },
     {
+      "name": "task_close_reviews.task_close_reviews_diff_sha_valid",
+      "definition": "CHECK (diff_sha IS NULL OR diff_sha ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
       "name": "task_close_reviews.task_close_reviews_pkey",
       "definition": "PRIMARY KEY (id)"
     },
@@ -7779,8 +7795,16 @@
       "definition": "CHECK (result_payload IS NULL OR jsonb_typeof(result_payload) = 'object'::text)"
     },
     {
+      "name": "task_close_reviews.task_close_reviews_stable_facts_object",
+      "definition": "CHECK (stable_facts IS NULL OR jsonb_typeof(stable_facts) = 'object'::text)"
+    },
+    {
       "name": "task_close_reviews.task_close_reviews_status_check",
       "definition": "CHECK (status = ANY (ARRAY['launching'::text, 'running'::text, 'finalizing'::text, 'closed'::text, 'invalid'::text, 'stale'::text, 'error'::text]))"
+    },
+    {
+      "name": "task_close_reviews.task_close_reviews_test_bodies_sha_valid",
+      "definition": "CHECK (test_bodies_sha IS NULL OR test_bodies_sha ~ '^[0-9a-f]{64}$'::text)"
     },
     {
       "name": "task_comments.task_comments_parent_comment_id_fkey",

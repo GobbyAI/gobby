@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import threading
-from typing import Any
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
+from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import (
+    SubmittedCloseReview,
+    evaluate_close_criteria,
+)
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import Task
 from gobby.tasks.close_verdict import CloseVerdict
 from gobby.tasks.close_verdict_memo import CloseVerdictMemo
 from gobby.tasks.validation import TaskValidator
@@ -118,6 +126,57 @@ async def test_changed_evidence_misses_the_memo_and_runs_a_fresh_review() -> Non
     assert call_json_feature.await_count == 2
     assert len(memo.entries) == 2
     assert memo.lookups[0] != memo.lookups[1]
+
+
+@pytest.mark.asyncio
+async def test_stale_review_names_changed_component() -> None:
+    validator, _call_json_feature = _validator()
+    launched = validator.prepare_task_review(
+        title="Name stale evidence",
+        changes_summary="Implemented the close-review fix.",
+        validation_criteria="The linked commit is reviewed.",
+        diff_text="diff --git a/x b/x",
+        checklist_facts={"commit_count": 1, "commit_shas": ["abc123"]},
+    )
+    task = Task(
+        id="task-1",
+        project_id="project-1",
+        title="Name stale evidence",
+        priority=1,
+        task_type="bug",
+        validation_criteria="The linked commit is reviewed.",
+        created_at=datetime(2026, 9, 3, tzinfo=UTC),
+        updated_at=datetime(2026, 9, 3, tzinfo=UTC),
+    )
+
+    result = await evaluate_close_criteria(
+        task=task,
+        task_validator=validator,
+        ctx=cast(RegistryContext, SimpleNamespace()),
+        resolved_id=task.id,
+        changes_summary="Implemented the close-review fix.",
+        diff_text="diff --git a/x b/x",
+        checklist_facts={
+            "commit_count": 2,
+            "commit_shas": ["abc123", "def456"],
+        },
+        validation_config=None,
+        reason="completed",
+        description="",
+        test_bodies="Named acceptance tests: none.",
+        submitted_review=SubmittedCloseReview(
+            verdict={"status": "valid", "criteria": [], "feedback": "Complete."},
+            review_fingerprint=launched.review_fingerprint,
+            evidence_fingerprint=launched.evidence_fingerprint,
+            diff_sha=launched.diff_sha,
+            test_bodies_sha=launched.test_bodies_sha,
+            stable_facts=launched.stable_facts,
+        ),
+    )
+
+    assert result.error_type == "agentic_review_stale"
+    assert "commit set +def456" in (result.message or "")
+    assert "commit set +def456" in result.extra["invalidating_deltas"]
 
 
 @pytest.mark.asyncio

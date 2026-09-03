@@ -36,6 +36,9 @@ def test_review_lifecycle_preserves_arguments_payload_and_delivery(temp_db: HubD
     running = store.bind_run(review.id, _RUN_ID)
     assert running is not None and running.status == "running"
     assert running.close_arguments == _ARGUMENTS
+    assert running.diff_sha == "d" * 64
+    assert running.test_bodies_sha == "e" * 64
+    assert running.stable_facts == {"commit_shas": ["abc123"]}
     assert store.get_by_run(_RUN_ID) == running
 
     finalizing = store.claim_finalizing(review.id, _RUN_ID)
@@ -187,4 +190,7 @@ def _intent() -> dict[str, Any]:
         "close_arguments": _ARGUMENTS,
         "review_fingerprint": "review",
         "evidence_fingerprint": "evidence",
+        "diff_sha": "d" * 64,
+        "test_bodies_sha": "e" * 64,
+        "stable_facts": {"commit_shas": ["abc123"]},
     }
