@@ -208,13 +208,14 @@ Relevant UI owners include `ProviderPicker`,
 
 ## Qwen and Local Endpoints
 
-Loopback-backed Qwen `modelProviders` entries are intentionally absent from the
-Qwen capability catalog and model picker. This applies to endpoints hosted on
-`localhost`, `127.0.0.1`, or `::1`; Qwen OAuth and non-loopback configured models
-remain available.
+Qwen models come from ACP discovery, like Grok. When the active Qwen model uses a
+loopback-backed `modelProviders` entry, Qwen is excluded provider-wide from metadata
+coverage, matching Codex and Claude. Discovery uses only Qwen's ACP model catalog;
+Gobby performs zero settings-file model discovery, post-discovery loopback filtering,
+or special local-model warmup.
 
 Configured local generation endpoints remain separate `endpoint:<name>` providers.
-Qwen web chat uses the normal ACP attach path and has no special local-model warmup.
+Qwen web chat uses the normal ACP attach path.
 
 ## CLI
 

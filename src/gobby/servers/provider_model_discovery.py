@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import json
 import logging
 import os
 import tomllib
-from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -43,11 +41,7 @@ CLAUDE_ALIASES = (
     ("fable", "Fable"),
 )
 CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
-QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})
 _LOCAL_ENDPOINT_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
-# qwen-code reports its built-in Qwen OAuth coder alias as the opaque id "coder-model"
-# with no friendly name; relabel known aliases for the model picker.
-QWEN_ALIAS_LABELS = {"coder-model": "Qwen Coder (OAuth)"}
 
 
 def extract_reasoning(model: dict[str, Any]) -> dict[str, Any] | None:
@@ -71,48 +65,6 @@ def extract_reasoning(model: dict[str, Any]) -> dict[str, Any] | None:
     if default_effort is not None:
         result["default_effort"] = str(default_effort)
     return result
-
-
-def format_qwen_model_value(model_id: str, auth_type: str | None) -> str:
-    if not auth_type:
-        return model_id
-    return f"{model_id}({auth_type})"
-
-
-def split_qwen_model_value(value: str) -> tuple[str, str | None]:
-    trimmed = value.strip()
-    close_idx = trimmed.rfind(")")
-    open_idx = trimmed.rfind("(")
-    if open_idx >= 0 and close_idx == len(trimmed) - 1 and open_idx < close_idx:
-        model_id = trimmed[:open_idx].strip()
-        auth_type = trimmed[open_idx + 1 : close_idx].strip()
-        if model_id and auth_type in QWEN_AUTH_TYPES:
-            return model_id, auth_type
-    return trimmed, None
-
-
-def merge_models(
-    primary: list[dict[str, Any]],
-    secondary: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    by_value: dict[str, dict[str, Any]] = {}
-
-    for item in [*primary, *secondary]:
-        value = str(item.get("value") or "").strip()
-        if not value:
-            continue
-        if value in by_value:
-            existing = by_value[value]
-            for key, field_value in item.items():
-                if key not in existing:
-                    existing[key] = copy.deepcopy(field_value)
-            continue
-        entry = copy.deepcopy(item)
-        by_value[value] = entry
-        merged.append(entry)
-
-    return merged
 
 
 async def discover_codex_models(
@@ -203,84 +155,6 @@ async def discover_grok_models_with_source(
     return static_models(), "static"
 
 
-async def discover_qwen_models(
-    *,
-    client_cls: type[ACPClient],
-    acp_discoverer: ACPDiscoverer,
-    configured_model_discoverer: Callable[[], list[dict[str, Any]]],
-    label_normalizer: Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
-    which: Which,
-) -> list[dict[str, Any]]:
-    if not which(client_cls.cli_name):
-        raise FileNotFoundError("qwen CLI not found in PATH")
-
-    acp_error: Exception | None = None
-    try:
-        acp_models = await acp_discoverer(client_cls)
-    except Exception as exc:
-        acp_models = []
-        acp_error = exc
-
-    models = merge_models(acp_models, configured_model_discoverer())
-    if models:
-        return label_normalizer(models)
-    if acp_error is not None:
-        raise acp_error
-    return []
-
-
-def discover_qwen_configured_models(settings: dict[str, Any]) -> list[dict[str, Any]]:
-    model_providers = settings.get("modelProviders")
-    if not isinstance(model_providers, dict):
-        return []
-
-    models: list[dict[str, Any]] = []
-    for auth_type, configured_models in model_providers.items():
-        if auth_type not in QWEN_AUTH_TYPES or auth_type == "qwen-oauth":
-            continue
-        if not isinstance(configured_models, list):
-            continue
-        for configured_model in configured_models:
-            if not isinstance(configured_model, dict):
-                continue
-            model_id = str(configured_model.get("id") or "").strip()
-            if not model_id:
-                continue
-            entry: dict[str, Any] = {
-                "value": format_qwen_model_value(model_id, auth_type),
-                "label": str(configured_model.get("name") or model_id),
-            }
-            description = configured_model.get("description")
-            if isinstance(description, str) and description.strip():
-                entry["description"] = description.strip()
-            models.append(entry)
-    return models
-
-
-def qwen_local_model_values(settings: dict[str, Any]) -> frozenset[str]:
-    """Return configured Qwen model identities backed by loopback endpoints."""
-    model_providers = settings.get("modelProviders")
-    if not isinstance(model_providers, dict):
-        return frozenset()
-
-    models: set[str] = set()
-    for auth_type, configured_models in model_providers.items():
-        if auth_type not in QWEN_AUTH_TYPES or auth_type == "qwen-oauth":
-            continue
-        if not isinstance(configured_models, list):
-            continue
-        for configured_model in configured_models:
-            if not isinstance(configured_model, dict):
-                continue
-            model_id = str(configured_model.get("id") or "").strip()
-            base_url = configured_model.get("baseUrl")
-            if not model_id or not isinstance(base_url, str):
-                continue
-            if is_loopback_model_endpoint(base_url):
-                models.add(format_qwen_model_value(model_id, auth_type))
-    return frozenset(models)
-
-
 def codex_uses_loopback_model_endpoint(config: Mapping[str, Any]) -> bool:
     """Return whether Codex's active model provider uses a loopback endpoint."""
     provider_id = config.get("model_provider")
@@ -304,6 +178,27 @@ def claude_uses_loopback_model_endpoint(
         if isinstance(configured_environment, Mapping):
             base_url = configured_environment.get("ANTHROPIC_BASE_URL")
     return is_loopback_model_endpoint(base_url)
+
+
+def qwen_uses_loopback_model_endpoint(settings: Mapping[str, Any]) -> bool:
+    """Return whether Qwen's active model uses a configured loopback endpoint."""
+    model = settings.get("model")
+    providers = settings.get("modelProviders")
+    if not isinstance(model, Mapping) or not isinstance(providers, Mapping):
+        return False
+    model_name = model.get("name")
+    if not isinstance(model_name, str) or not model_name.strip():
+        return False
+
+    for configured_models in providers.values():
+        if not isinstance(configured_models, list):
+            continue
+        for configured_model in configured_models:
+            if not isinstance(configured_model, Mapping):
+                continue
+            if configured_model.get("id") == model_name:
+                return is_loopback_model_endpoint(configured_model.get("baseUrl"))
+    return False
 
 
 def is_loopback_model_endpoint(value: object) -> bool:
@@ -388,45 +283,6 @@ def _load_merged_json_settings(
         deep_merge(merged, payload)
 
     return merged
-
-
-def normalize_qwen_model_labels(
-    models: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    relabeled: list[dict[str, Any]] = []
-    for model in models:
-        value = str(model.get("value") or "")
-        model_id, _ = split_qwen_model_value(value)
-        alias_label = QWEN_ALIAS_LABELS.get(model_id)
-        if alias_label and str(model.get("label") or "") in ("", model_id, value):
-            entry = copy.deepcopy(model)
-            entry["label"] = alias_label
-            relabeled.append(entry)
-        else:
-            relabeled.append(model)
-    models = relabeled
-
-    base_id_counts = Counter(
-        model_id
-        for model in models
-        if (model_id := split_qwen_model_value(str(model.get("value") or ""))[0])
-    )
-    if not any(count > 1 for count in base_id_counts.values()):
-        return models
-
-    normalized: list[dict[str, Any]] = []
-    for model in models:
-        entry = copy.deepcopy(model)
-        value = str(entry.get("value") or "")
-        model_id, auth_type = split_qwen_model_value(value)
-        if not auth_type or base_id_counts[model_id] <= 1:
-            normalized.append(entry)
-            continue
-        label = str(entry.get("label") or value)
-        if f"({auth_type})" not in label:
-            entry["label"] = f"{label} ({auth_type})"
-        normalized.append(entry)
-    return normalized
 
 
 async def discover_acp_models(

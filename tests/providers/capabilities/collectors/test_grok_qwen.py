@@ -1,9 +1,12 @@
+import shutil
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
+from gobby.adapters.qwen_acp_client import QwenACPClient
+from gobby.agents.trust import authorize_model_discovery_trust
 from gobby.providers.capabilities.collectors import qwen as qwen_capabilities
 from gobby.providers.capabilities.collectors import validate_snapshot
 from gobby.providers.capabilities.collectors.grok import GrokCollector, GrokSourceError
@@ -102,54 +105,33 @@ async def test_missing_cli_is_source_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_qwen_discovery_filters_loopback_models_after_sources_are_merged(
+async def test_qwen_discovery_uses_acp_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = {
-        "modelProviders": {
-            "openai": [
-                {
-                    "id": "acp-local",
-                    "name": "ACP Local",
-                    "baseUrl": "http://localhost:1234/v1",
-                },
-                {
-                    "id": "configured-local",
-                    "baseUrl": "http://127.0.0.1:11434/v1",
-                },
-                {
-                    "id": "remote-configured",
-                    "baseUrl": "https://models.example.test/v1",
-                },
-            ],
-            "anthropic": [
-                {
-                    "id": "ipv6-local",
-                    "baseUrl": "http://[::1]:8080/v1",
-                }
-            ],
-        }
-    }
-    settings_loader = MagicMock(return_value=settings)
-
-    async def discover_acp(_client_cls: object) -> list[dict[str, object]]:
-        return [
+    discover_acp = AsyncMock(
+        return_value=[
             {"value": "acp-local(openai)", "label": "ACP Local (openai)"},
             {"value": "oauth-model(qwen-oauth)", "label": "OAuth (qwen-oauth)"},
         ]
+    )
+    monkeypatch.setattr(qwen_capabilities, "discover_acp_models", discover_acp)
+    collector = QwenCollector(clock=lambda: _OBSERVED_AT)
 
-    monkeypatch.setattr(qwen_capabilities, "load_qwen_settings", settings_loader)
-    monkeypatch.setattr(qwen_capabilities, "_discover_acp", discover_acp)
-    monkeypatch.setattr(
-        "gobby.providers.capabilities.collectors.qwen.shutil.which",
-        lambda _name: "/usr/bin/qwen",
+    snapshot = validate_snapshot(await collector.collect(), collector.sources)
+
+    assert {model.canonical_model for model in snapshot.models} == {
+        "acp-local(openai)",
+        "oauth-model(qwen-oauth)",
+    }
+    discover_acp.assert_awaited_once_with(
+        client_cls=QwenACPClient,
+        which=shutil.which,
+        model_discovery_cwd=qwen_capabilities._model_discovery_cwd,
+        authorize_trust=authorize_model_discovery_trust,
+        cleanup_tree=shutil.rmtree,
+        logger=qwen_capabilities.logger,
     )
 
-    models = await qwen_capabilities._discover_qwen_models()
-
-    assert len(models) == 2
-    assert {model["value"] for model in models} == {
-        "oauth-model(qwen-oauth)",
-        "remote-configured(openai)",
-    }
-    settings_loader.assert_called_once()
+    discover_acp.side_effect = RuntimeError("ACP discovery failed")
+    with pytest.raises(QwenSourceError, match="ACP discovery failed"):
+        await collector.collect()

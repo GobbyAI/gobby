@@ -32,7 +32,7 @@ from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.servers.provider_model_discovery import (
     claude_uses_loopback_model_endpoint,
     codex_uses_loopback_model_endpoint,
-    qwen_local_model_values,
+    qwen_uses_loopback_model_endpoint,
 )
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -378,31 +378,33 @@ def test_coverage_audit_skips_provider_using_local_endpoint(
 
 
 @pytest.mark.unit
-def test_qwen_local_model_values_uses_loopback_base_urls() -> None:
-    settings = {
-        "modelProviders": {
-            "openai": [
-                {
-                    "id": "lm-studio-model",
-                    "baseUrl": "http://127.0.0.1:1234/v1",
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    (
+        (
+            {
+                "model": {"name": "local-model"},
+                "modelProviders": {
+                    "openai": [{"id": "local-model", "baseUrl": "http://127.0.0.1:1234/v1"}]
                 },
-                {
-                    "id": "remote-model",
-                    "baseUrl": "https://models.example.test/v1",
+            },
+            True,
+        ),
+        (
+            {
+                "model": {"name": "remote-model"},
+                "modelProviders": {
+                    "openai": [{"id": "remote-model", "baseUrl": "https://models.example.test/v1"}]
                 },
-            ],
-            "anthropic": [
-                {
-                    "id": "ollama-model",
-                    "baseUrl": "http://[::1]:11434/v1",
-                }
-            ],
-        }
-    }
-
-    assert qwen_local_model_values(settings) == frozenset(
-        {"lm-studio-model(openai)", "ollama-model(anthropic)"}
-    )
+            },
+            False,
+        ),
+        ({"modelProviders": {"openai": []}}, False),
+        ({"model": {"name": "missing-model"}}, False),
+    ),
+)
+def test_qwen_uses_loopback_model_endpoint(settings: dict[str, object], expected: bool) -> None:
+    assert qwen_uses_loopback_model_endpoint(settings) is expected
 
 
 @pytest.mark.unit

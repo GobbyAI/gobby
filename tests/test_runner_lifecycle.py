@@ -500,9 +500,30 @@ class TestInitSubsystems:
                 "gobby.runner_init.servers.ProviderCapacityService.create_default",
                 return_value=capacity_service,
             ) as capacity_factory,
+            patch("gobby.runner_init.servers.load_codex_config", return_value={}),
+            patch("gobby.runner_init.servers.load_claude_settings", return_value={}),
+            patch(
+                "gobby.runner_init.servers.load_qwen_settings",
+                return_value={
+                    "model": {"name": "local-model"},
+                    "modelProviders": {
+                        "openai": [
+                            {
+                                "id": "local-model",
+                                "baseUrl": "http://localhost:1234/v1",
+                            }
+                        ]
+                    },
+                },
+            ),
             patch("gobby.runner_init.servers.set_app_context"),
         ):
             init_servers(runner)
+            assert coverage_factory.call_args is not None
+            excluded_providers = cast(
+                Callable[[], frozenset[str]],
+                coverage_factory.call_args.kwargs["excluded_providers"],
+            )()
 
         assert runner.codex_client is fake_client
         assert http_init["codex_client"] is fake_client
@@ -517,6 +538,7 @@ class TestInitSubsystems:
         assert coverage_factory.call_args is not None
         assert "excluded_models" not in coverage_factory.call_args.kwargs
         assert callable(coverage_factory.call_args.kwargs["excluded_providers"])
+        assert excluded_providers == frozenset({"qwen"})
         capacity_factory.assert_called_once_with(
             runner.database,
             machine_id="machine-1",
