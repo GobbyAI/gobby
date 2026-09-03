@@ -58,7 +58,7 @@ from gobby.hooks._python_pipeline_classifier import (
 )
 from gobby.hooks.code_navigation import (
     count_option_line_count,
-    enumerate_navigation_metadata,
+    find_navigation_metadata,
     gcode_navigation_metadata,
     line_count_from_tool_input,
     search_navigation_metadata,
@@ -733,7 +733,7 @@ def _classify_shell_segment_without_redirection(
         return _ShellSegmentMetadata(
             "execute",
             paths=tuple(paths),
-            extra=enumerate_navigation_metadata(paths),
+            extra=find_navigation_metadata(parts, paths),
             repo_mutation=_find_has_mutation_predicate(parts),
         )
 

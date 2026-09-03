@@ -124,16 +124,20 @@ def code_navigation_may_touch_project(
     cwd: Path | None,
     project_root: Path | None,
 ) -> bool:
-    """Return True when broad read/search navigation may inspect project code.
+    """Return True when navigation may inspect an indexed checkout of this repo.
 
-    In-project membership wins over the known-external roots so a project
-    checked out beneath an external root (a worktree under a CLI state home)
-    still counts as project navigation.
+    The active checkout and Git-linked checkouts sharing its common directory
+    count as repository navigation. Session scratchpads stay external even when
+    a CLI temporarily registers one as a Git worktree.
     """
     if not paths:
         if cwd is None:
             return True
         if project_root is not None and _is_relative_to(cwd, project_root):
+            return True
+        if _is_temp_agent_scratchpad_path(cwd):
+            return False
+        if project_root is not None and _shares_git_repository(cwd, project_root):
             return True
         if _is_known_external_path(cwd):
             return False
@@ -145,11 +149,65 @@ def code_navigation_may_touch_project(
             return True
         if project_root is not None and _is_relative_to(path, project_root):
             return True
+        if _is_temp_agent_scratchpad_path(path):
+            continue
+        if project_root is not None and _shares_git_repository(path, project_root):
+            return True
         if _is_known_external_path(path):
             continue
         if project_root is None:
             return True
     return False
+
+
+def _shares_git_repository(path: Path, project_root: Path) -> bool:
+    """Return whether two checkout paths resolve to the same Git common dir."""
+    candidate_common_dir = _git_common_dir(path)
+    project_common_dir = _git_common_dir(project_root)
+    return candidate_common_dir is not None and candidate_common_dir == project_common_dir
+
+
+def _git_common_dir(path: Path) -> Path | None:
+    """Resolve a checkout's Git common dir without spawning a subprocess."""
+    start = path if path.is_dir() else path.parent
+    for directory in (start, *start.parents):
+        marker = directory / ".git"
+        if marker.is_dir():
+            return marker.resolve(strict=False)
+        if not marker.is_file():
+            continue
+        git_dir = _linked_git_dir(marker)
+        if git_dir is None:
+            return None
+        common_dir_marker = git_dir / "commondir"
+        try:
+            raw_common_dir = common_dir_marker.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError):
+            return git_dir.resolve(strict=False)
+        if not raw_common_dir:
+            return git_dir.resolve(strict=False)
+        common_dir = Path(raw_common_dir)
+        if not common_dir.is_absolute():
+            common_dir = git_dir / common_dir
+        return common_dir.resolve(strict=False)
+    return None
+
+
+def _linked_git_dir(marker: Path) -> Path | None:
+    try:
+        first_line = marker.read_text(encoding="utf-8").splitlines()[0]
+    except (OSError, UnicodeError, IndexError):
+        return None
+    prefix = "gitdir:"
+    if not first_line.lower().startswith(prefix):
+        return None
+    raw_git_dir = first_line[len(prefix) :].strip()
+    if not raw_git_dir:
+        return None
+    git_dir = Path(raw_git_dir)
+    if not git_dir.is_absolute():
+        git_dir = marker.parent / git_dir
+    return git_dir.resolve(strict=False)
 
 
 def resolve_tool_path(path: Any, cwd: Path | None) -> Path | None:
