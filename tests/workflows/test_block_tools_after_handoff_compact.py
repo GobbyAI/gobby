@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,20 +19,50 @@ pytestmark = pytest.mark.unit
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 RULE_NAME = "block-tools-after-handoff-compact"
+NUDGE_RULE_NAMES = (
+    "nudge-compact-on-context-pressure",
+    "nudge-compact-on-context-pressure-mid-turn",
+)
 BLOCK_REASON = "Stop calling tools and end your turn now so the queued compaction runs"
+EFFECT_COPY = "persists the handoff, then compacts the current session in place"
+
+
+@dataclass
+class _Session:
+    context_used_tokens: int = 0
+    context_window: int = 200_000
+    session_type: str = "terminal"
+    chat_mode: str = "normal"
+    transcript_path: str | None = None
+
+
+class _SessionManager:
+    def __init__(self) -> None:
+        self.session = _Session()
+
+    def get(self, _session_id: str) -> _Session:
+        return self.session
 
 
 @pytest.fixture
-def handler(temp_db: HubDatabase) -> WorkflowHookHandler:
-    """Load only the bundled pending-compaction rule into the real rule engine."""
+def session_manager() -> Any:
+    return _SessionManager()
+
+
+@pytest.fixture
+def handler(temp_db: HubDatabase, session_manager: Any) -> WorkflowHookHandler:
+    """Load the bundled pending-compaction and context-nudge rules."""
     sync_bundled_rules(temp_db, get_bundled_rules_path())
     with temp_db.transaction() as conn:
         conn.execute("UPDATE rule_definitions SET source = 'installed', enabled = FALSE")
         conn.execute(
-            "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
-            (RULE_NAME,),
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name IN (%s, %s, %s)",
+            (RULE_NAME, *NUDGE_RULE_NAMES),
         )
-    return WorkflowHookHandler(rule_engine=RuleEngine(temp_db))
+    return WorkflowHookHandler(
+        rule_engine=RuleEngine(temp_db),
+        session_manager=session_manager,
+    )
 
 
 def _event(
@@ -86,6 +117,107 @@ def _arbitrary_tool_event(*, session_type: str = "terminal") -> HookEvent:
         session_type=session_type,
         data={"tool_name": "Bash", "tool_input": {"command": "pwd"}},
     )
+
+
+def _arbitrary_after_tool_event() -> HookEvent:
+    return _event(
+        HookEventType.AFTER_TOOL,
+        data={"tool_name": "Read", "tool_input": {"file_path": "/repo/a.py"}},
+    )
+
+
+@pytest.mark.asyncio
+async def test_nudge_fires_once_per_threshold_crossing_with_real_engine(
+    handler: WorkflowHookHandler,
+    temp_db: HubDatabase,
+    session_manager: Any,
+) -> None:
+    session_manager.session.context_used_tokens = 100_000
+
+    soft = await handler._evaluate_rules(_event(HookEventType.BEFORE_AGENT))
+    repeated_soft = await handler._evaluate_rules(_arbitrary_after_tool_event())
+    session_manager.session.context_used_tokens = 150_000
+    strong = await handler._evaluate_rules(_arbitrary_after_tool_event())
+    repeated_strong = await handler._evaluate_rules(_arbitrary_after_tool_event())
+    stored = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+
+    assert "Context is 100k tokens" in (soft.context or "")
+    assert EFFECT_COPY in (soft.context or "")
+    assert repeated_soft.context is None
+    assert "Context is 150k tokens" in (strong.context or "")
+    assert EFFECT_COPY in (strong.context or "")
+    assert repeated_strong.context is None
+    assert stored["context_compact_highest_announced_threshold"] == "strong"
+
+
+@pytest.mark.asyncio
+async def test_handoff_marker_suppresses_nudges_and_blocks_tools_until_turn_start(
+    handler: WorkflowHookHandler,
+    temp_db: HubDatabase,
+    session_manager: Any,
+) -> None:
+    session_manager.session.context_used_tokens = 150_000
+
+    after_handoff = await handler._evaluate_rules(
+        _set_handoff_event({"success": True, "result": {"compacted": True}})
+    )
+    after_tool = await handler._evaluate_rules(_arbitrary_after_tool_event())
+    before_tool = await handler._evaluate_rules(_arbitrary_tool_event())
+    turn_end = await handler._evaluate_rules(_event(HookEventType.STOP))
+    stored_pending = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+    successor_start = await handler._evaluate_rules(_event(HookEventType.BEFORE_AGENT))
+    stored_successor = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+
+    assert after_handoff.context is None
+    assert after_tool.context is None
+    assert before_tool.context is None
+    assert before_tool.decision == "block"
+    assert BLOCK_REASON in (before_tool.reason or "")
+    assert turn_end.context is None
+    assert stored_pending["context_compact_handoff_result"]["compacted"] is True
+    assert "Context is 150k tokens" in (successor_start.context or "")
+    assert stored_successor["context_compact_handoff_result"] is None
+
+
+@pytest.mark.asyncio
+async def test_failed_handoff_keeps_real_engine_nudges_enabled(
+    handler: WorkflowHookHandler,
+    session_manager: Any,
+) -> None:
+    session_manager.session.context_used_tokens = 150_000
+
+    failed = await handler._evaluate_rules(
+        _set_handoff_event({"success": True, "result": {"compacted": False, "reason": "no pane"}})
+    )
+    before_tool = await handler._evaluate_rules(_arbitrary_tool_event())
+
+    assert "set_handoff could not compact (no pane)" in (failed.context or "")
+    assert EFFECT_COPY in (failed.context or "")
+    assert before_tool.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_pending_clear_session_attempt_suppresses_real_engine_nudges(
+    handler: WorkflowHookHandler,
+    temp_db: HubDatabase,
+    session_manager: Any,
+) -> None:
+    session_manager.session.context_used_tokens = 150_000
+    pending = {
+        "success": False,
+        "error": "timed out waiting for clear-session acknowledgment",
+        "attempt_pending": True,
+    }
+
+    after_handoff = await handler._evaluate_rules(_set_handoff_event(pending, clear_session=True))
+    after_tool = await handler._evaluate_rules(_arbitrary_after_tool_event())
+    before_tool = await handler._evaluate_rules(_arbitrary_tool_event())
+    stored = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+
+    assert after_handoff.context is None
+    assert after_tool.context is None
+    assert before_tool.decision == "allow"
+    assert stored["context_compact_handoff_result"]["attempt_pending"] is True
 
 
 @pytest.mark.asyncio

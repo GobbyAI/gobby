@@ -1,7 +1,7 @@
 """Tests for context-handoff rules.
 
 Covers the autonomous ``clear_session`` block on ``gobby-sessions:set_handoff``
-and the pressure-state resets carried by ``preserve-context-on-compact``.
+and the pre-compact state boundary carried by ``preserve-context-on-compact``.
 """
 
 from __future__ import annotations
@@ -147,7 +147,7 @@ class TestBlockAutonomousClearSession:
 
 
 class TestPreserveContextOnCompact:
-    def test_resets_pressure_cadence_and_handoff_gate(self, db: HubDatabase) -> None:
+    def test_defers_epoch_marker_reset_until_successor_turn_start(self, db: HubDatabase) -> None:
         row = RuleDefinitionManager(db).get_by_name("preserve-context-on-compact")
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
@@ -159,7 +159,6 @@ class TestPreserveContextOnCompact:
             if effect.type == "set_variable"
         }
 
-        assert assignments["context_compact_soft_nudge_tools"] == 0
-        assert assignments["context_compact_handoff_result"] is None
-        assert assignments["context_compact_guidance_shown_kinds"] == []
         assert assignments["context_compact_mid_turn_pressure_band"] == "none"
+        assert "context_compact_handoff_result" not in assignments
+        assert "context_compact_highest_announced_threshold" not in assignments

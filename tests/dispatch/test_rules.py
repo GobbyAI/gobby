@@ -1040,3 +1040,23 @@ def test_merge_rule_escalates_when_merge_agent_missing() -> None:
 
     assert isinstance(action, EscalateAction)
     assert action.reason == "merge_no_agent"
+
+
+def test_awaiting_human_review_label_parks_dispatch_until_removed() -> None:
+    from collections.abc import Callable
+    from typing import Any, cast
+
+    from gobby.dispatch.actions import StartStageAction
+
+    evaluate_task = cast(Callable[[Any], object | None], _evaluate)
+
+    task = _task_at(
+        "development",
+        "ready",
+        labels=["llm-reviewed", "awaiting-human-review"],
+    )
+
+    assert evaluate_task(task) is None
+
+    task.labels = ["llm-reviewed", "human-reviewed"]
+    assert isinstance(evaluate_task(task), StartStageAction)
