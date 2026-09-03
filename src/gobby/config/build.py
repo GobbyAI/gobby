@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 import yaml
 
+from gobby.dispatch.constants import MAX_ACTIVE_AGENTS
+
 DeliveryMode = Literal["auto", "pull_request"]
 Isolation = Literal["none", "worktree", "clone"]
 SkippableStage = Literal[
@@ -52,7 +54,7 @@ class StageCapOverride:
 class BuildConfig:
     """Configuration for build agent dispatch."""
 
-    max_active_agents: int = 20
+    max_active_agents: int = MAX_ACTIVE_AGENTS
 
 
 def load_build_config(
@@ -101,7 +103,9 @@ def _merge_config(target: dict[str, Any], updates: Mapping[str, Any]) -> None:
 
 def _build_config_from_mapping(raw: Mapping[str, Any]) -> BuildConfig:
     return BuildConfig(
-        max_active_agents=_normalize_int(raw.get("max_active_agents", 20), "max_active_agents"),
+        max_active_agents=_normalize_int(
+            raw.get("max_active_agents", MAX_ACTIVE_AGENTS), "max_active_agents"
+        ),
     )
 
 
