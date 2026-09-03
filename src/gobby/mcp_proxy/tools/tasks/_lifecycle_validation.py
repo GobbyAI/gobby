@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -19,12 +20,19 @@ from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.tasks.validation import ValidationPromptTooLarge
 from gobby.tasks.validation_history import ValidationHistoryManager
 from gobby.utils.datetime import utc_now
+from gobby.workflows.commit_guard import (
+    DirtyEditOwnershipInspectionError,
+    foreign_owned_dirty_paths,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from collections.abc import Set as AbstractSet
 
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
     from gobby.tasks.validation import TaskValidator
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -70,6 +78,58 @@ def validate_commit_requirements(
                 extra={"stale_shas": stale},
             )
     return ValidationResult(can_close=True)
+
+
+def validate_uncommitted_task_edits(
+    ctx: RegistryContext,
+    *,
+    dirty_paths: AbstractSet[str],
+    owner_session_id: str,
+    project_id: str,
+    repo_path: str,
+) -> ValidationResult:
+    """Name every dirty task path and its active foreign owner, when present."""
+    ordered_paths = sorted(dirty_paths)
+    if not ordered_paths:
+        return ValidationResult(can_close=True)
+
+    try:
+        foreign_owners = foreign_owned_dirty_paths(
+            ctx.task_manager.db,
+            session_id=owner_session_id,
+            project_id=project_id,
+            checkout_root=repo_path,
+            paths=set(ordered_paths),
+        )
+    except DirtyEditOwnershipInspectionError:
+        logger.warning(
+            "Dirty-path ownership inspection failed during close_task; "
+            "reporting dirty paths without owners",
+            extra={"project_id": project_id, "session_id": owner_session_id},
+            exc_info=True,
+        )
+        foreign_owners = {}
+
+    owner_sessions = {
+        path: owners[0].session_ref if (owners := foreign_owners.get(path)) else None
+        for path in ordered_paths
+    }
+    rendered_paths = ", ".join(
+        f"{path} (dirty by session {owner})" if owner else path
+        for path, owner in owner_sessions.items()
+    )
+    return ValidationResult(
+        can_close=False,
+        error_type="uncommitted_task_edits",
+        message=(
+            f"Task-attributed files still have uncommitted changes: {rendered_paths}. "
+            "Commit them, or ask the owner to commit or release_task_paths, and retry."
+        ),
+        extra={
+            "dirty_paths": ordered_paths,
+            "foreign_owner_sessions": owner_sessions,
+        },
+    )
 
 
 def validate_parent_task(
@@ -398,5 +458,6 @@ __all__ = [
     "evaluate_criteria_review",
     "record_validation_infrastructure_failure",
     "validate_commit_requirements",
+    "validate_uncommitted_task_edits",
     "validate_parent_task",
 ]

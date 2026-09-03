@@ -28,9 +28,6 @@ from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     derive_close_transcript_evidence as _derive_close_transcript_evidence,
 )
-from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
-    has_committable_edits as _has_committable_edits,
-)
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization import (
     capture_attribution as _capture_attribution,
@@ -62,6 +59,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
     record_validation_infrastructure_failure,
     validate_commit_requirements,
     validate_parent_task,
+    validate_uncommitted_task_edits,
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._task_scope import evaluate_task_scope
@@ -83,6 +81,7 @@ from gobby.tasks.transcript_evidence import (
     TranscriptEvidenceUnavailable,
 )
 from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
+from gobby.workflows.task_dirty_state import task_dirty_paths as _task_dirty_paths
 
 _DELIBERATE_CLOSE_SKIP = "Skipped for a justified deliberate close of an escalated task."
 logger = logging.getLogger(__name__)
@@ -519,15 +518,28 @@ async def _evaluate_close(
                 skipped=not scope.declared_paths,
             )
 
-    has_dirty_edits = bool(evaluation.edited_paths) and await asyncio.to_thread(
-        _has_committable_edits, evaluation.edited_paths, repo_path
+    dirty_paths = (
+        await asyncio.to_thread(_task_dirty_paths, evaluation.edited_paths, repo_path)
+        if evaluation.edited_paths
+        else set()
     )
-    if has_dirty_edits:
+    if dirty_paths is None:
+        dirty_paths = set(evaluation.edited_paths)
+    dirty_result = await asyncio.to_thread(
+        validate_uncommitted_task_edits,
+        ctx,
+        dirty_paths=dirty_paths,
+        owner_session_id=attribution.owner_session_id,
+        project_id=task.project_id,
+        repo_path=repo_path,
+    )
+    if not dirty_result.can_close:
         evaluation.collect_failure(
             9,
             "uncommitted_task_edits",
-            "uncommitted_task_edits",
-            "Task-attributed files still have uncommitted changes. Commit them and retry.",
+            dirty_result.error_type or "uncommitted_task_edits",
+            dirty_result.message or "Task-attributed files still have uncommitted changes.",
+            details=dirty_result.extra,
         )
     else:
         evaluation.pass_gate(9, "uncommitted_task_edits", "No task-attributed files are dirty.")
@@ -941,6 +953,5 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
 __all__ = [
     "_commit_close",
     "_evaluate_close",
-    "_has_committable_edits",
     "register_close_task",
 ]

@@ -163,7 +163,7 @@ async def _evaluate_named_test_close(
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_linked_commit_paths", return_value=frozenset()),
         patch.object(close_finalization, "_committable_task_paths", return_value=set()),
-        patch.object(lifecycle, "_has_committable_edits", return_value=False),
+        patch.object(lifecycle, "_task_dirty_paths", return_value=set()),
         patch.object(
             lifecycle,
             "resolve_close_commit_shas",
@@ -382,7 +382,7 @@ async def test_ready_leaf_detaches_criteria_review_and_records_latency() -> None
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_linked_commit_paths", linked_paths),
         patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
-        patch.object(lifecycle, "_has_committable_edits", return_value=False),
+        patch.object(lifecycle, "_task_dirty_paths", return_value=set()),
         patch.object(
             lifecycle,
             "resolve_close_commit_shas",
@@ -471,7 +471,7 @@ async def _evaluate_with_tagged_scan(
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_linked_commit_paths", return_value=frozenset({"a"})),
         patch.object(close_finalization, "_committable_task_paths", return_value={"a"}),
-        patch.object(lifecycle, "_has_committable_edits", return_value=False),
+        patch.object(lifecycle, "_task_dirty_paths", return_value=set()),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
         patch.object(lifecycle, "unlinked_tagged_commits", tagged_scan),
         patch.object(
@@ -618,7 +618,11 @@ async def test_scope_dirty_and_acceptance_failures_report_together() -> None:
             return_value=ValidationResult(can_close=True),
         ),
         patch.object(lifecycle, "evaluate_task_scope", return_value=scope),
-        patch.object(lifecycle, "_has_committable_edits", return_value=True),
+        patch.object(
+            lifecycle,
+            "_task_dirty_paths",
+            return_value={"src/gobby/service.py"},
+        ),
         patch.object(lifecycle, "active_validation_backoff", return_value=None),
         patch.object(lifecycle, "_derive_close_transcript_evidence", transcript),
         patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
@@ -650,7 +654,8 @@ async def test_scope_dirty_and_acceptance_failures_report_together() -> None:
     assert evaluation.extra["out_of_scope_paths"] == ["src/gobby/service.py"]
     assert response["blocking_reasons"] == [
         "A scope_justification is required for out-of-scope paths.",
-        "Task-attributed files still have uncommitted changes. Commit them and retry.",
+        "Task-attributed files still have uncommitted changes: src/gobby/service.py. "
+        "Commit them, or ask the owner to commit or release_task_paths, and retry.",
         "Named acceptance test cannot be resolved.",
     ]
     assert len(response["required_actions"]) == 3
@@ -946,7 +951,7 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_linked_commit_paths", return_value=frozenset()),
         patch.object(close_finalization, "_committable_task_paths", return_value=set()),
-        patch.object(lifecycle, "_has_committable_edits", return_value=False),
+        patch.object(lifecycle, "_task_dirty_paths", return_value=set()),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
         patch.object(
             lifecycle,
@@ -1500,7 +1505,7 @@ async def test_dirty_attributed_edit_is_collected_before_acceptance() -> None:
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
-        patch.object(lifecycle, "_has_committable_edits", return_value=True),
+        patch.object(lifecycle, "_task_dirty_paths", return_value={"src/a.py"}),
         patch.object(
             lifecycle,
             "resolve_close_commit_shas",
@@ -1774,7 +1779,7 @@ async def test_close_resolves_commits_and_validates_them_off_the_event_loop() ->
         patch.object(lifecycle, "resolve_close_commit_shas", record_resolve),
         patch.object(lifecycle, "validate_commit_requirements", record_validate),
         patch.object(lifecycle, "evaluate_task_scope", return_value=scope),
-        patch.object(lifecycle, "_has_committable_edits", return_value=False),
+        patch.object(lifecycle, "_task_dirty_paths", return_value=set()),
         patch.object(lifecycle, "active_validation_backoff", return_value=None),
         patch.object(lifecycle, "_derive_close_transcript_evidence", transcript),
         patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
