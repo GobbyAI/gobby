@@ -37,6 +37,9 @@ def _create_active_review(db: HubDatabase, session_id: str) -> TaskCloseReview:
         close_arguments={"preview": True},
         review_fingerprint="review",
         evidence_fingerprint="evidence",
+        diff_sha="d" * 64,
+        test_bodies_sha="e" * 64,
+        stable_facts={},
     )
     assert created is True
     return review
