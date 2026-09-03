@@ -126,11 +126,12 @@ class ACPHookAdapter(BaseAdapter):
         from gobby.hooks.normalization import normalize_tool_fields
 
         data = dict(input_data)
+        provider_tool_name = (
+            data.get("tool_name") or data.get("toolName") or data.get("function_name")
+        )
+        if isinstance(provider_tool_name, str):
+            data["tool_name"] = self.normalize_tool_name(provider_tool_name)
         normalize_tool_fields(data)
-
-        # Provider-specific: map tool names to Claude Code conventions.
-        if "tool_name" in data:
-            data["tool_name"] = self.normalize_tool_name(data["tool_name"])
 
         # ACP-style AfterAgent hooks can expose the model reply as ``prompt_response``.
         # Normalize it so downstream transcript and hook consumers can rely on

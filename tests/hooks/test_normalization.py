@@ -788,6 +788,47 @@ class TestWriteNormalization:
 class TestCanonicalToolMetadata:
     """Tests for derived canonical tool semantics."""
 
+    def test_pascal_case_tool_input_aliases_preserve_raw_payload(self) -> None:
+        shell_input = {
+            "CommandLine": "printf content > generated.py",
+            "Cwd": "/repo/src",
+        }
+        expected_shell_input = dict(shell_input)
+        shell_data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": shell_input,
+            "project_path": "/repo",
+        }
+
+        normalize_tool_fields(shell_data)
+
+        assert shell_data["tool_input"]["command"] == shell_input["CommandLine"]
+        assert shell_data["tool_input"]["cwd"] == shell_input["Cwd"]
+        assert shell_data["canonical_file_paths"] == ["generated.py"]
+        assert shell_data["_raw_tool_input"] == expected_shell_input
+
+        write_input = {
+            "TargetFile": "/repo/target.py",
+            "AbsolutePath": "/repo/absolute.py",
+            "DirectoryPath": "/repo/directory",
+        }
+        expected_write_input = dict(write_input)
+        write_data: dict[str, Any] = {
+            "tool_name": "Write",
+            "tool_input": write_input,
+            "project_path": "/repo",
+        }
+
+        normalize_tool_fields(write_data)
+
+        assert write_data["tool_input"]["file_path"] == write_input["TargetFile"]
+        assert write_data["canonical_file_paths"] == [
+            "/repo/target.py",
+            "/repo/absolute.py",
+            "/repo/directory",
+        ]
+        assert write_data["_raw_tool_input"] == expected_write_input
+
     def test_read_tool_sets_canonical_read_fields(self) -> None:
         data = {"tool_name": "Read", "tool_input": {"file_path": "/repo/main.py"}}
 

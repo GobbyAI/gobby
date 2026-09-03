@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from gobby.hooks import _path_scope
+from gobby.providers import provider_metadata
 
 pytestmark = pytest.mark.unit
 
@@ -15,6 +16,22 @@ def test_current_project_root_uses_project_path(tmp_path: Path) -> None:
     project_path.mkdir()
 
     assert _path_scope.current_project_root({"project_path": str(project_path)}) == project_path
+
+
+@pytest.mark.parametrize("user_directory", [entry.user_directory for entry in provider_metadata()])
+def test_every_provider_user_directory_is_external_path_scope(
+    user_directory: str,
+) -> None:
+    candidate = Path.home() / user_directory / "scratch" / "plan.md"
+
+    assert (
+        _path_scope.paths_may_touch_project(
+            [str(candidate)],
+            cwd=Path.cwd(),
+            project_root=Path.cwd(),
+        )
+        is False
+    )
 
 
 def test_current_project_root_ignores_legacy_project_root_key(tmp_path: Path) -> None:

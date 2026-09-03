@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import MagicMock
 
@@ -83,6 +84,59 @@ def test_pre_tool_use_normalizes_agy_shell_tool_name() -> None:
     assert event.data["tool_name"] == "Bash"
     assert event.metadata["original_tool_name"] == "run_shell_command"
     assert event.metadata["normalized_tool_name"] == "Bash"
+
+
+def test_pre_tool_use_normalizes_agy_write_before_canonical_metadata() -> None:
+    target = "~/.gemini/antigravity-cli/brain/conversation/plan.md"
+    raw_input = {"TargetFile": target, "Overwrite": True}
+    expected_raw_input = dict(raw_input)
+
+    event = AgyAdapter().translate_to_hook_event(
+        {
+            "hook_type": "PreToolUse",
+            "input_data": {
+                "hookEventName": "PreToolUse",
+                "conversationId": "agy-write-123",
+                "workspacePaths": [str(Path.cwd())],
+                "toolCall": {"name": "write_to_file", "args": raw_input},
+            },
+        }
+    )
+
+    assert event.data["tool_name"] == "Write"
+    assert event.data["tool_input"]["file_path"] == target
+    assert event.data["canonical_tool_kind"] == "write"
+    assert event.data["canonical_file_paths"] == [target]
+    assert event.data["canonical_repo_mutation"] is False
+    assert event.data["_raw_tool_input"] == expected_raw_input
+
+
+def test_pre_tool_use_normalizes_agy_command_line_and_cwd() -> None:
+    raw_input = {
+        "CommandLine": "printf content > src/generated.py",
+        "Cwd": str(Path.cwd()),
+        "WaitMsBeforeAsync": 1000,
+    }
+    expected_raw_input = dict(raw_input)
+
+    event = AgyAdapter().translate_to_hook_event(
+        {
+            "hook_type": "PreToolUse",
+            "input_data": {
+                "hookEventName": "PreToolUse",
+                "conversationId": "agy-shell-123",
+                "workspacePaths": [str(Path.cwd())],
+                "toolCall": {"name": "run_command", "args": raw_input},
+            },
+        }
+    )
+
+    assert event.data["tool_name"] == "Bash"
+    assert event.data["tool_input"]["command"] == raw_input["CommandLine"]
+    assert event.data["tool_input"]["cwd"] == raw_input["Cwd"]
+    assert event.data["canonical_tool_kind"] == "write"
+    assert event.data["canonical_repo_mutation"] is True
+    assert event.data["_raw_tool_input"] == expected_raw_input
 
 
 def test_pre_tool_use_allow_response_is_compact() -> None:
@@ -312,7 +366,11 @@ class TestAgyCamelCasePayload:
         assert event.event_type is HookEventType.BEFORE_TOOL
         assert event.session_id == "conv-tool"
         assert event.data["tool_name"] == "Ls"
-        assert event.data["tool_input"] == {"DirectoryPath": "/repo"}
+        assert event.data["tool_input"] == {
+            "DirectoryPath": "/repo",
+            "file_path": "/repo",
+        }
+        assert event.data["_raw_tool_input"] == {"DirectoryPath": "/repo"}
         assert event.metadata["original_tool_name"] == "list_dir"
 
     def test_workspace_paths_zero_fills_cwd_when_absent(self) -> None:

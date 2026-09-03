@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.paths import get_gobby_home
+from gobby.providers import provider_metadata
 from gobby.utils.project_context import find_project_root
 
 _SCRATCHPAD_MARKERS = frozenset(
@@ -33,14 +34,7 @@ _EXTRA_TEMP_ROOTS = ("/tmp", "/private/tmp")
 # code; navigation there must not trip code-index preference rules. Project
 # worktrees checked out beneath these roots still classify as in-project
 # because project-root membership is checked first.
-_AGENT_STATE_HOME_DIRS = (
-    ".claude",
-    ".codex",
-    ".factory",
-    ".gemini",
-    ".grok",
-    ".qwen",
-)
+_AGENT_STATE_HOME_DIRS = tuple(metadata.user_directory for metadata in provider_metadata())
 
 
 def apply_path_scope_metadata(
