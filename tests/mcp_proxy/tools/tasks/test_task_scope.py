@@ -51,6 +51,7 @@ def _evaluate(
     annotations: list[SimpleNamespace],
     actual_paths: set[str],
     justification: str | None = None,
+    repo_path: str | None = None,
 ) -> TaskScopeEvaluation:
     with patch.object(TaskAffectedFileManager, "get_files", return_value=annotations):
         return evaluate_task_scope(
@@ -58,7 +59,7 @@ def _evaluate(
             task=_task(description, validation_criteria),
             commit_shas=(),
             attributed_paths=actual_paths,
-            repo_path=None,
+            repo_path=repo_path,
             scope_justification=justification,
         )
 
@@ -94,8 +95,22 @@ def test_tests_mirror_of_declared_source_stays_in_scope() -> None:
     assert evaluation.out_of_scope_paths == ()
 
 
+def test_directory_entry_without_trailing_slash_covers_children(tmp_path: Path) -> None:
+    (tmp_path / "src/gobby/tasks").mkdir(parents=True)
+
+    evaluation = _evaluate(
+        annotations=[_annotation("src/gobby/tasks", "manual")],
+        actual_paths={"src/gobby/tasks/_task_scope.py"},
+        repo_path=str(tmp_path),
+    )
+
+    assert evaluation.declared_paths == ("src/gobby/tasks",)
+    assert evaluation.out_of_scope_paths == ()
+
+
 def test_criteria_test_references_expand_declared_scope() -> None:
     evaluation = _evaluate(
+        description="Targets:\n- src/gobby/tasks/_task_scope.py",
         validation_criteria=(
             "- test: `tests/mcp_proxy/tools/tasks/test_task_scope.py::test_criteria`\n"
             "- file: `docs/evidence/task-scope.md`"
@@ -109,8 +124,26 @@ def test_criteria_test_references_expand_declared_scope() -> None:
 
     assert evaluation.declared_paths == (
         "docs/evidence/task-scope.md",
+        "src/gobby/tasks/_task_scope.py",
         "tests/mcp_proxy/tools/tasks/test_task_scope.py",
     )
+    assert evaluation.out_of_scope_paths == ()
+
+
+def test_criteria_refs_do_not_create_scope_without_targets() -> None:
+    evaluation = _evaluate(
+        validation_criteria=(
+            "- test: `tests/mcp_proxy/tools/tasks/test_task_scope.py::test_criteria`\n"
+            "- file: `docs/evidence/task-scope.md`"
+        ),
+        annotations=[],
+        actual_paths={
+            "src/gobby/mcp_proxy/tools/tasks/_task_scope.py",
+            "tests/mcp_proxy/tools/tasks/test_task_scope.py",
+        },
+    )
+
+    assert evaluation.declared_paths == ()
     assert evaluation.out_of_scope_paths == ()
 
 
