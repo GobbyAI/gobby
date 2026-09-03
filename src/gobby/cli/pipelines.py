@@ -9,7 +9,8 @@ import getpass
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+from urllib.parse import urlencode
 
 import click
 import httpx
@@ -34,6 +35,7 @@ from gobby.cli.pipelines_runs import (
 )
 from gobby.cli.runtime import require_cli_database
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.daemon_client import DaemonAuthenticationError
 from gobby.utils.daemon_url import DaemonUrlError
 from gobby.utils.json_helpers import json_dumps
 from gobby.workflows.lobster_compat import (
@@ -79,6 +81,48 @@ def _get_project_id() -> str:
             return str(project_id) if project_id else ""
     except Exception:
         return ""
+
+
+def _try_daemon_catalog(project_id: str) -> list[dict[str, Any]] | None:
+    """Read enabled pipeline definitions from the daemon, falling back only if unavailable."""
+    query = {"enabled": "true"}
+    if project_id:
+        query["project_id"] = project_id
+    endpoint = f"/api/pipelines/definitions?{urlencode(query)}"
+
+    try:
+        from gobby.cli.utils_config import get_daemon_client
+
+        response = get_daemon_client().call_http_api(endpoint, method="GET")
+        if response.status_code != 200:
+            click.echo(
+                "Pipeline catalog request failed in daemon: "
+                f"{_daemon_error_message(_daemon_error_detail(response))}",
+                err=True,
+            )
+            raise SystemExit(1)
+        try:
+            payload = response.json()
+            definitions = payload["definitions"]
+            if not isinstance(definitions, list) or not all(
+                isinstance(item, dict) for item in definitions
+            ):
+                raise TypeError("'definitions' must be a list of objects")
+        except (KeyError, TypeError, ValueError) as e:
+            click.echo(
+                f"Pipeline catalog request failed in daemon: invalid response: {e}", err=True
+            )
+            raise SystemExit(1) from None
+        return cast(list[dict[str, Any]], definitions)
+    except (click.ClickException, DaemonUrlError, ValueError) as e:
+        logger.debug("Daemon pipeline catalog unavailable: %s", e, exc_info=True)
+        return None
+    except (httpx.RequestError, ConnectionError, OSError) as e:
+        logger.debug("Daemon pipeline catalog request failed: %s", e, exc_info=True)
+        return None
+    except DaemonAuthenticationError as e:
+        click.echo(str(e), err=True)
+        raise SystemExit(1) from None
 
 
 def get_pipeline_executor() -> Any:
