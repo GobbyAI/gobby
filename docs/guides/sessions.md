@@ -307,11 +307,16 @@ meta skill loads wait so the pull runs before `memory`, `loading-skills`, and
 `brevity` reloads.
 
 For terminal sessions, the tool result reports `handoff_staged=true` and
-`delivery_pending=true` before Gobby touches provider input. The successful normalized
-tool-completion event then arms the old-epoch tool gate and schedules one deduplicated
-background delivery. Delivery failure restores the previous handoff and clear status,
-removes the attempt markers, and asks the agent to retry `set_handoff`. Web-chat
-boundaries remain synchronous.
+`delivery_pending=true` before Gobby touches provider input. The proxy strips the
+tool's top-level `success` key from the nested result, so the tool-completion hook and
+the context-pressure observer key on those two fields and never on a nested `success`.
+The successful normalized tool-completion event then arms the old-epoch tool gate and
+schedules one deduplicated background delivery. A delivery-pending completion the hook
+rejects, or a staged marker it cannot claim, logs
+`Terminal handoff delivery skipped for session <id> attempt <id>: <reason>` at WARNING.
+Delivery failure restores the previous handoff and clear status, removes the attempt
+markers, and asks the agent to retry `set_handoff`. Web-chat boundaries remain
+synchronous.
 
 ### Hookless Registration
 

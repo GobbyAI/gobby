@@ -30,6 +30,7 @@ from gobby.sessions.handoff import (
     restore_handoff_attempt,
     restore_staged_handoff,
     stage_handoff_attempt,
+    staged_handoff_rejection,
     write_feedback_batch,
 )
 from gobby.sessions.handoff_records import build_handoff_payload, record_handoff_delivery
@@ -788,3 +789,46 @@ def test_clear_successor_task_title_uses_successor_session_ref(
 
     assert title == (f"(handoff-test-S#99): Task #{task.seq_num} - Continue claimed work")
     assert title_source == "task"
+
+
+def test_staged_handoff_rejection_names_the_blocking_condition(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    session = _registered_session(session_manager)
+    attempt_id = "e" * 32
+    handoff = build_handoff_payload(current_state="Ready.", next_steps=["Continue."])
+    stage_handoff_attempt(
+        temp_db,
+        session.id,
+        attempt_id=attempt_id,
+        handoff=handoff,
+        clear_session=False,
+    )
+    manager = SessionVariableManager(temp_db)
+
+    assert staged_handoff_rejection({}, attempt_id) == f"no {PENDING_HANDOFF_VARIABLE} marker"
+    assert staged_handoff_rejection(manager.get_variables(session.id), attempt_id) == (
+        f"{HANDOFF_DISPATCH_GATE_VARIABLE} gate is not armed"
+    )
+
+    manager.merge_variables(
+        session.id,
+        {
+            HANDOFF_DISPATCH_GATE_VARIABLE: {
+                "handoff_staged": True,
+                "delivery_pending": True,
+                "attempt_id": attempt_id,
+                "clear_session": False,
+            }
+        },
+    )
+
+    assert staged_handoff_rejection(manager.get_variables(session.id), attempt_id) is None
+    assert staged_handoff_rejection(manager.get_variables(session.id), "f" * 32) == (
+        f"{PENDING_HANDOFF_VARIABLE} holds attempt {attempt_id!r}"
+    )
+    assert claim_staged_handoff_delivery(temp_db, session.id, attempt_id) is not None
+    rejection = staged_handoff_rejection(manager.get_variables(session.id), attempt_id)
+    assert rejection is not None
+    assert rejection.startswith("dispatch already started at ")

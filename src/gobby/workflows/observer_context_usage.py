@@ -161,8 +161,10 @@ def _record_handoff_result(event: HookEvent, variables: dict[str, Any]) -> None:
     if not isinstance(payload, dict):
         return
 
+    # The proxy strips the nested ``success`` key from sub-tool results; only the
+    # envelope's ``success`` (checked above) is meaningful here (#21713).
     if data.get("mcp_tool") == "get_handoff":
-        if payload.get("success") is True and payload.get("found") is True:
+        if payload.get("found") is True:
             _reset_epoch_state(variables)
         return
     if data.get("mcp_tool") != "set_handoff":
@@ -171,8 +173,7 @@ def _record_handoff_result(event: HookEvent, variables: dict[str, Any]) -> None:
         return
 
     if (
-        payload.get("success") is True
-        and payload.get("handoff_staged") is True
+        payload.get("handoff_staged") is True
         and payload.get("delivery_pending") is True
         and isinstance(payload.get("attempt_id"), str)
         and bool(payload["attempt_id"])

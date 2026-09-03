@@ -26,8 +26,8 @@ NUDGE_RULE_NAMES = (
 )
 BLOCK_REASON = "Stop calling tools and end your turn now so the queued command runs"
 EFFECT_COPY = "persists the handoff, then compacts the current session in place"
+# The nested result as the proxy delivers it: the tool's ``success`` key is stripped.
 STAGED_RESULT = {
-    "success": True,
     "handoff_staged": True,
     "delivery_pending": True,
     "attempt_id": "a" * 32,

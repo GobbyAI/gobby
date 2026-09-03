@@ -33,7 +33,11 @@ from gobby.sessions.clear_continuation import (
     schedule_handoff_continuation,
     stage_clear_attempt,
 )
-from gobby.sessions.handoff import HandoffAttemptState, build_handoff_continue_prompt
+from gobby.sessions.handoff import (
+    HandoffAttemptState,
+    build_handoff_continue_prompt,
+    staged_handoff_tool_result,
+)
 from gobby.sessions.handoff_records import HandoffPayload
 from gobby.terminal_context import (
     parse_terminal_context_value,
@@ -448,17 +452,14 @@ async def prepare_clear_session(
             "staging_failed",
         )
 
-    return {
-        "success": True,
-        "handoff_staged": True,
-        "delivery_pending": True,
-        "attempt_id": attempt_id,
-        "session_id": resolved_session_id,
-        "clear_session": True,
-        "command": CLEAR_COMMAND,
-        "cli": source,
-        "via": pane.backend,
-    }
+    return staged_handoff_tool_result(
+        attempt_id=attempt_id,
+        session_id=resolved_session_id,
+        clear_session=True,
+        command=CLEAR_COMMAND,
+        cli=source,
+        via=pane.backend,
+    )
 
 
 async def deliver_staged_clear_session(

@@ -24,6 +24,7 @@ from gobby.sessions.handoff import (
     ClaimedHandoffDelivery,
     claim_staged_handoff_delivery,
     restore_staged_handoff,
+    staged_handoff_rejection,
 )
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -56,44 +57,104 @@ class StagedTerminalHandoff:
     clear_session: bool
 
 
-def staged_handoff_from_event(event: HookEvent) -> StagedTerminalHandoff | None:
-    """Validate a normalized successful set_handoff completion."""
+def _is_successful_set_handoff_completion(event: HookEvent) -> bool:
     data = event.data or {}
-    if (
-        event.event_type is not HookEventType.AFTER_TOOL
-        or event.source not in _TERMINAL_SOURCES
-        or event.metadata.get("session_type") != "terminal"
-        or data.get("mcp_server") != "gobby-sessions"
-        or data.get("mcp_tool") != "set_handoff"
-        or tool_outcome_from_data(data).succeeded is not True
-    ):
-        return None
+    return (
+        event.event_type is HookEventType.AFTER_TOOL
+        and data.get("mcp_server") == "gobby-sessions"
+        and data.get("mcp_tool") == "set_handoff"
+        and tool_outcome_from_data(data).succeeded is True
+    )
 
-    output = data.get("tool_output")
+
+def _unwrap_tool_output(output: object) -> tuple[Mapping[str, Any] | None, str]:
+    """Return the set_handoff result inside the call_tool envelope, or a rejection reason.
+
+    The proxy strips the tool's top-level ``success`` key from the nested result,
+    so only the envelope's ``success`` carries meaning here (#21713).
+    """
     if not isinstance(output, Mapping):
-        return None
-    payload: Mapping[str, Any] = output
+        return None, f"tool_output is {type(output).__name__}, not the call_tool envelope"
     nested = output.get("result")
-    if isinstance(nested, Mapping):
-        if output.get("success") is not True:
-            return None
-        payload = nested
+    if not isinstance(nested, Mapping):
+        return output, ""
+    if output.get("success") is not True:
+        return None, "call_tool envelope success is not true"
+    return nested, ""
+
+
+def _validate_staged_result(
+    event: HookEvent,
+    payload: Mapping[str, Any],
+) -> StagedTerminalHandoff | str:
+    """Return the staged dispatch for a delivery-pending result, or the rejection reason."""
     session_id = payload.get("session_id")
     attempt_id = payload.get("attempt_id")
     clear_session = payload.get("clear_session")
-    if (
-        payload.get("success") is not True
-        or payload.get("handoff_staged") is not True
-        or payload.get("delivery_pending") is not True
-        or not isinstance(session_id, str)
-        or not session_id
-        or session_id != event.metadata.get("_platform_session_id")
-        or not isinstance(attempt_id, str)
-        or not attempt_id
-        or not isinstance(clear_session, bool)
-    ):
-        return None
+    if not isinstance(session_id, str) or not session_id:
+        return "result has no session_id"
+    if not isinstance(attempt_id, str) or not attempt_id:
+        return "result has no attempt_id"
+    if not isinstance(clear_session, bool):
+        return "result clear_session is not a bool"
+    platform_session_id = event.metadata.get("_platform_session_id")
+    if session_id != platform_session_id:
+        return f"result session {session_id} is not the hook session {platform_session_id}"
+    if event.source not in _TERMINAL_SOURCES:
+        return f"session source {event.source.value!r} is not a terminal CLI"
+    session_type = event.metadata.get("session_type")
+    if session_type != "terminal":
+        return f"session_type {session_type!r} is not terminal"
     return StagedTerminalHandoff(session_id, attempt_id, clear_session)
+
+
+def _log_skipped_delivery(session_id: object, attempt_id: object, reason: str) -> None:
+    logger.warning(
+        "Terminal handoff delivery skipped for session %s attempt %s: %s",
+        session_id or "unknown",
+        attempt_id or "unknown",
+        reason,
+    )
+
+
+def staged_handoff_from_event(event: HookEvent) -> StagedTerminalHandoff | None:
+    """Validate a successful set_handoff completion whose result awaits terminal delivery.
+
+    Every delivery-pending completion this rejects is logged at WARNING so a
+    silent miss shows up in daemon.log.
+    """
+    if not _is_successful_set_handoff_completion(event):
+        return None
+    platform_session_id = event.metadata.get("_platform_session_id")
+    payload, rejection = _unwrap_tool_output((event.data or {}).get("tool_output"))
+    if payload is None:
+        _log_skipped_delivery(platform_session_id, None, rejection)
+        return None
+    if payload.get("handoff_staged") is not True or payload.get("delivery_pending") is not True:
+        # Synchronous (web chat) and failed results stage nothing for terminal delivery.
+        return None
+    staged = _validate_staged_result(event, payload)
+    if isinstance(staged, str):
+        _log_skipped_delivery(
+            payload.get("session_id") or platform_session_id,
+            payload.get("attempt_id"),
+            staged,
+        )
+        return None
+    return staged
+
+
+def _log_unclaimed_delivery(db: HubDatabase, staged: StagedTerminalHandoff) -> None:
+    try:
+        variables = SessionVariableManager(db).get_variables(staged.session_id)
+        reason = staged_handoff_rejection(variables, staged.attempt_id)
+    except Exception as exc:
+        reason = f"session variables unreadable: {exc}"
+    _log_skipped_delivery(
+        staged.session_id,
+        staged.attempt_id,
+        reason or "claim rejected although the staged marker now looks claimable",
+    )
 
 
 def schedule_terminal_handoff_delivery(
@@ -112,6 +173,7 @@ def schedule_terminal_handoff_delivery(
     db = session_manager.db
     claimed = claim_staged_handoff_delivery(db, staged.session_id, staged.attempt_id)
     if claimed is None:
+        _log_unclaimed_delivery(db, staged)
         return False
     if event_loop is None or event_loop.is_closed():
         _compensate_delivery_failure(db, claimed, "daemon event loop is unavailable")

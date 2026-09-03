@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -17,14 +18,75 @@ from gobby.hooks.terminal_handoff_delivery import (
     schedule_terminal_handoff_delivery,
     staged_handoff_from_event,
 )
-from gobby.sessions.handoff import ClaimedHandoffDelivery
+from gobby.sessions.handoff import (
+    HANDOFF_DISPATCH_GATE_VARIABLE,
+    PENDING_HANDOFF_VARIABLE,
+    ClaimedHandoffDelivery,
+    staged_handoff_tool_result,
+)
 
 pytestmark = pytest.mark.unit
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
+OTHER_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+ATTEMPT_ID = "a" * 32
+LOGGER_NAME = "gobby.hooks.terminal_handoff_delivery"
+TERMINAL_SOURCES = [
+    SessionSource.CLAUDE,
+    SessionSource.CODEX,
+    SessionSource.GROK,
+    SessionSource.QWEN,
+    SessionSource.DROID,
+]
+
+# The call_tool envelope a Claude tmux session actually received on 2026-09-03
+# (game-goblins S#98, #21713). The proxy strips the tool's top-level ``success``.
+REAL_SET_HANDOFF_OUTPUT: dict[str, Any] = {
+    "success": True,
+    "result": {
+        "handoff_staged": True,
+        "delivery_pending": True,
+        "attempt_id": "b2db8b6dbe1543c4b891f6a36324eefe",
+        "session_id": SESSION_ID,
+        "clear_session": False,
+        "command": "/compact",
+        "cli": "claude",
+        "via": "tmux",
+    },
+    "response_time_ms": 663.4,
+}
 
 
-def _completion(source: SessionSource, output: object) -> HookEvent:
+def _proxy_envelope(tool_result: dict[str, Any]) -> dict[str, Any]:
+    """Wrap a sub-tool result the way mcp_proxy/server.py hands it to the CLI."""
+    return {
+        "success": True,
+        "result": {key: value for key, value in tool_result.items() if key != "success"},
+        "response_time_ms": 1.0,
+    }
+
+
+def _staged_output(**overrides: Any) -> dict[str, Any]:
+    """Derive the fixture from the tool's result builder so drift fails these tests."""
+    result = staged_handoff_tool_result(
+        attempt_id=ATTEMPT_ID,
+        session_id=SESSION_ID,
+        clear_session=False,
+        command="/compact",
+        cli="claude",
+        via="tmux",
+    )
+    result.update(overrides)
+    return _proxy_envelope(result)
+
+
+def _completion(
+    source: SessionSource,
+    output: object,
+    *,
+    session_type: str = "terminal",
+    outcome: str | None = None,
+) -> HookEvent:
     data: dict[str, Any] = {
         "tool_name": "mcp__gobby__call_tool",
         "tool_input": {
@@ -35,78 +97,209 @@ def _completion(source: SessionSource, output: object) -> HookEvent:
         "tool_output": output,
     }
     normalize_tool_fields(data)
+    if outcome is not None:
+        data["tool_outcome"] = {"status": outcome}
     return HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id="provider-session",
         source=source,
         timestamp=datetime.now(UTC),
         data=data,
-        metadata={"_platform_session_id": SESSION_ID, "session_type": "terminal"},
+        metadata={"_platform_session_id": SESSION_ID, "session_type": session_type},
     )
 
 
-@pytest.mark.parametrize(
-    "source",
-    [
-        SessionSource.CLAUDE,
-        SessionSource.CODEX,
-        SessionSource.GROK,
-        SessionSource.QWEN,
-        SessionSource.DROID,
-    ],
-)
-def test_successful_normalized_completion_returns_staged_dispatch(source: SessionSource) -> None:
-    staged = {
-        "success": True,
-        "handoff_staged": True,
-        "delivery_pending": True,
-        "attempt_id": "a" * 32,
-        "session_id": SESSION_ID,
-        "clear_session": False,
-    }
+def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == LOGGER_NAME and record.levelno >= logging.WARNING
+    ]
 
-    dispatch = staged_handoff_from_event(_completion(source, {"success": True, "result": staged}))
+
+@pytest.mark.parametrize("source", TERMINAL_SOURCES)
+def test_successful_normalized_completion_returns_staged_dispatch(
+    source: SessionSource,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+
+    dispatch = staged_handoff_from_event(_completion(source, _staged_output()))
 
     assert dispatch is not None
     assert dispatch.session_id == SESSION_ID
-    assert dispatch.attempt_id == "a" * 32
+    assert dispatch.attempt_id == ATTEMPT_ID
     assert dispatch.clear_session is False
+    assert _warnings(caplog) == []
+
+
+def test_staged_handoff_accepts_real_set_handoff_result(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+
+    dispatch = staged_handoff_from_event(_completion(SessionSource.CLAUDE, REAL_SET_HANDOFF_OUTPUT))
+
+    assert dispatch is not None
+    assert dispatch.session_id == SESSION_ID
+    assert dispatch.attempt_id == "b2db8b6dbe1543c4b891f6a36324eefe"
+    assert dispatch.clear_session is False
+    assert _warnings(caplog) == []
+
+
+def test_fixture_matches_the_observed_tool_result_shape() -> None:
+    derived = _staged_output()
+
+    assert set(derived["result"]) == set(REAL_SET_HANDOFF_OUTPUT["result"])
+    assert "success" not in derived["result"]
+
+
+def test_clear_session_result_returns_clear_dispatch() -> None:
+    dispatch = staged_handoff_from_event(
+        _completion(
+            SessionSource.CODEX,
+            _staged_output(clear_session=True, command="/clear"),
+        )
+    )
+
+    assert dispatch is not None
+    assert dispatch.clear_session is True
 
 
 @pytest.mark.parametrize(
     "output",
     [
         {"success": False, "error": "outer failure"},
-        {"success": True, "result": {"success": False, "error": "inner failure"}},
-        {"success": True, "result": {"success": True, "handoff_staged": True}},
-        "malformed",
-    ],
-)
-def test_failed_or_malformed_completion_never_dispatches(output: object) -> None:
-    assert staged_handoff_from_event(_completion(SessionSource.CLAUDE, output)) is None
-
-
-def test_duplicate_completion_schedules_only_the_claimed_attempt() -> None:
-    event = _completion(
-        SessionSource.CODEX,
+        {"success": True, "result": {"compacted": False, "reason": "no pane"}},
+        {"success": True, "result": {"handoff_staged": True}},
         {
             "success": True,
-            "result": {
-                "success": True,
-                "handoff_staged": True,
-                "delivery_pending": True,
-                "attempt_id": "a" * 32,
-                "session_id": SESSION_ID,
-                "clear_session": False,
-            },
+            "result": {"compacted": True, "handoff_staged": True, "attempt_id": ATTEMPT_ID},
         },
+        "malformed",
+    ],
+    ids=["outer-failure", "compact-failed", "no-delivery-pending", "web-chat-sync", "string"],
+)
+def test_failed_or_synchronous_completion_never_dispatches(
+    output: object,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+
+    assert staged_handoff_from_event(_completion(SessionSource.CLAUDE, output)) is None
+    assert _warnings(caplog) == []
+
+
+@pytest.mark.parametrize(
+    ("make_event", "session_text", "attempt_text", "fragment"),
+    [
+        (
+            lambda: _completion(SessionSource.CLAUDE, _staged_output(session_id=OTHER_SESSION_ID)),
+            OTHER_SESSION_ID,
+            ATTEMPT_ID,
+            f"result session {OTHER_SESSION_ID} is not the hook session {SESSION_ID}",
+        ),
+        (
+            lambda: _completion(SessionSource.CLAUDE, _staged_output(), session_type="web_chat"),
+            SESSION_ID,
+            ATTEMPT_ID,
+            "session_type 'web_chat' is not terminal",
+        ),
+        (
+            lambda: _completion(SessionSource.PIPELINE, _staged_output()),
+            SESSION_ID,
+            ATTEMPT_ID,
+            "session source 'pipeline' is not a terminal CLI",
+        ),
+        (
+            lambda: _completion(SessionSource.CLAUDE, _staged_output(attempt_id="")),
+            SESSION_ID,
+            "unknown",
+            "result has no attempt_id",
+        ),
+        (
+            lambda: _completion(SessionSource.CLAUDE, "malformed", outcome="succeeded"),
+            SESSION_ID,
+            "unknown",
+            "tool_output is str, not the call_tool envelope",
+        ),
+    ],
+    ids=["wrong-session", "web-chat-session", "non-terminal-source", "no-attempt", "string"],
+)
+def test_skipped_delivery_is_logged(
+    make_event: Callable[[], HookEvent],
+    session_text: str,
+    attempt_text: str,
+    fragment: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+
+    assert staged_handoff_from_event(make_event()) is None
+
+    (message,) = _warnings(caplog)
+    assert message == (
+        f"Terminal handoff delivery skipped for session {session_text} "
+        f"attempt {attempt_text}: {fragment}"
     )
-    claimed = ClaimedHandoffDelivery(SESSION_ID, "a" * 32, "handoff-1", False)
+
+
+def test_unclaimed_completion_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    event = _completion(SessionSource.CLAUDE, _staged_output())
+    variable_manager = MagicMock()
+    variable_manager.get_variables.return_value = {
+        PENDING_HANDOFF_VARIABLE: {
+            "attempt_id": ATTEMPT_ID,
+            "dispatch_started_at": "2026-09-03T21:47:00+00:00",
+            "clear_session": False,
+            "handoff_record_id": "handoff-1",
+        },
+        HANDOFF_DISPATCH_GATE_VARIABLE: {
+            "handoff_staged": True,
+            "delivery_pending": True,
+            "attempt_id": ATTEMPT_ID,
+            "clear_session": False,
+        },
+    }
+
+    with (
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.claim_staged_handoff_delivery",
+            return_value=None,
+        ),
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.SessionVariableManager",
+            return_value=variable_manager,
+        ),
+    ):
+        scheduled = schedule_terminal_handoff_delivery(
+            event,
+            session_manager=MagicMock(),
+            agent_run_manager=MagicMock(),
+            event_loop=MagicMock(),
+        )
+
+    assert scheduled is False
+    assert _warnings(caplog) == [
+        f"Terminal handoff delivery skipped for session {SESSION_ID} attempt {ATTEMPT_ID}: "
+        "dispatch already started at 2026-09-03T21:47:00+00:00"
+    ]
+
+
+def test_duplicate_completion_schedules_only_the_claimed_attempt(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    event = _completion(SessionSource.CODEX, _staged_output())
+    claimed = ClaimedHandoffDelivery(SESSION_ID, ATTEMPT_ID, "handoff-1", False)
     session_manager = MagicMock()
     settle = AsyncMock(return_value=None)
     event_loop = MagicMock()
     event_loop.is_closed.return_value = False
     scheduled = MagicMock()
+    variable_manager = MagicMock()
+    variable_manager.get_variables.return_value = {}
 
     with (
         patch(
@@ -118,6 +311,10 @@ def test_duplicate_completion_schedules_only_the_claimed_attempt() -> None:
             "gobby.hooks.terminal_handoff_delivery.asyncio.run_coroutine_threadsafe",
             return_value=scheduled,
         ) as run_coroutine_threadsafe,
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.SessionVariableManager",
+            return_value=variable_manager,
+        ),
     ):
         first = schedule_terminal_handoff_delivery(
             event,
@@ -140,6 +337,10 @@ def test_duplicate_completion_schedules_only_the_claimed_attempt() -> None:
     coroutine.close()
     completion_callback = scheduled.add_done_callback.call_args.args[0]
     completion_callback(scheduled)
+    assert _warnings(caplog) == [
+        f"Terminal handoff delivery skipped for session {SESSION_ID} attempt {ATTEMPT_ID}: "
+        f"no {PENDING_HANDOFF_VARIABLE} marker"
+    ]
 
 
 def test_after_tool_handler_routes_normalized_completion_to_scheduler() -> None:
@@ -151,20 +352,7 @@ def test_after_tool_handler_routes_normalized_completion_to_scheduler() -> None:
         agent_run_manager=agent_run_manager,
         event_loop=event_loop,
     )
-    event = _completion(
-        SessionSource.GROK,
-        {
-            "success": True,
-            "result": {
-                "success": True,
-                "handoff_staged": True,
-                "delivery_pending": True,
-                "attempt_id": "a" * 32,
-                "session_id": SESSION_ID,
-                "clear_session": False,
-            },
-        },
-    )
+    event = _completion(SessionSource.GROK, _staged_output())
 
     with patch(
         "gobby.hooks.event_handlers._tool.schedule_terminal_handoff_delivery",
@@ -185,7 +373,7 @@ def test_after_tool_handler_routes_normalized_completion_to_scheduler() -> None:
 
 @pytest.mark.asyncio
 async def test_background_delivery_failure_compensates_with_retry_guidance() -> None:
-    claimed = ClaimedHandoffDelivery(SESSION_ID, "a" * 32, "handoff-1", False)
+    claimed = ClaimedHandoffDelivery(SESSION_ID, ATTEMPT_ID, "handoff-1", False)
     session_manager = MagicMock()
     restore = MagicMock(return_value=True)
 

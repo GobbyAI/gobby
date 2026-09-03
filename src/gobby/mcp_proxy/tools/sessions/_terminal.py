@@ -52,6 +52,7 @@ from gobby.sessions.handoff import (
     build_handoff_continue_prompt,
     restore_handoff_attempt,
     stage_handoff_attempt,
+    staged_handoff_tool_result,
 )
 from gobby.sessions.handoff_records import (
     HandoffPayload,
@@ -811,17 +812,14 @@ def register_terminal_tools(
                 "reason": f"failed to stage handoff: {exc}",
                 "error_code": "staging_failed",
             }
-        return {
-            "success": True,
-            "handoff_staged": True,
-            "delivery_pending": True,
-            "attempt_id": compact_attempt_id,
-            "session_id": resolved_session_id,
-            "clear_session": False,
-            "command": command,
-            "cli": source,
-            "via": pane.backend,
-        }
+        return staged_handoff_tool_result(
+            attempt_id=compact_attempt_id,
+            session_id=resolved_session_id,
+            clear_session=False,
+            command=command,
+            cli=source,
+            via=pane.backend,
+        )
 
     registry.register(
         name="set_handoff",

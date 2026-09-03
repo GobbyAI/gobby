@@ -367,6 +367,61 @@ def restore_handoff_attempt(
     return True
 
 
+def staged_handoff_tool_result(
+    *,
+    attempt_id: str,
+    session_id: str,
+    clear_session: bool,
+    command: str,
+    cli: str | None,
+    via: str,
+) -> dict[str, Any]:
+    """Build the ``set_handoff`` result for a staged terminal delivery.
+
+    The MCP proxy strips the top-level ``success`` key before the CLI and the
+    tool-completion hook see this dict, so every reader keys on
+    ``handoff_staged`` and ``delivery_pending`` instead (#21713).
+    """
+    return {
+        "success": True,
+        "handoff_staged": True,
+        "delivery_pending": True,
+        "attempt_id": attempt_id,
+        "session_id": session_id,
+        "clear_session": clear_session,
+        "command": command,
+        "cli": cli,
+        "via": via,
+    }
+
+
+def staged_handoff_rejection(variables: Mapping[str, Any], attempt_id: str) -> str | None:
+    """Explain why ``attempt_id`` cannot be claimed for delivery; ``None`` when it can."""
+    marker = variables.get(PENDING_HANDOFF_VARIABLE)
+    if not isinstance(marker, Mapping):
+        return f"no {PENDING_HANDOFF_VARIABLE} marker"
+    if marker.get("attempt_id") != attempt_id:
+        return f"{PENDING_HANDOFF_VARIABLE} holds attempt {marker.get('attempt_id')!r}"
+    if marker.get("dispatch_started_at") is not None:
+        return f"dispatch already started at {marker['dispatch_started_at']}"
+    clear_session = marker.get("clear_session")
+    if not isinstance(clear_session, bool):
+        return f"{PENDING_HANDOFF_VARIABLE} clear_session is not a bool"
+    handoff_record_id = marker.get("handoff_record_id")
+    if not isinstance(handoff_record_id, str) or not handoff_record_id:
+        return f"{PENDING_HANDOFF_VARIABLE} has no handoff_record_id"
+    gate = variables.get(HANDOFF_DISPATCH_GATE_VARIABLE)
+    if not isinstance(gate, Mapping):
+        return f"{HANDOFF_DISPATCH_GATE_VARIABLE} gate is not armed"
+    if gate.get("handoff_staged") is not True or gate.get("delivery_pending") is not True:
+        return f"{HANDOFF_DISPATCH_GATE_VARIABLE} gate is not delivery_pending"
+    if gate.get("attempt_id") != attempt_id:
+        return f"{HANDOFF_DISPATCH_GATE_VARIABLE} gate holds attempt {gate.get('attempt_id')!r}"
+    if gate.get("clear_session") is not clear_session:
+        return f"{HANDOFF_DISPATCH_GATE_VARIABLE} gate clear_session disagrees with the marker"
+    return None
+
+
 def claim_staged_handoff_delivery(
     db: HubDatabase,
     session_id: str,
@@ -381,25 +436,9 @@ def claim_staged_handoff_delivery(
         if variable_row is None:
             return None
         variables = _load_variables(variable_row["variables"])
-        marker = variables.get(PENDING_HANDOFF_VARIABLE)
-        gate = variables.get(HANDOFF_DISPATCH_GATE_VARIABLE)
-        if not isinstance(marker, Mapping) or not isinstance(gate, Mapping):
+        if staged_handoff_rejection(variables, attempt_id) is not None:
             return None
-        clear_session = marker.get("clear_session")
-        if (
-            marker.get("attempt_id") != attempt_id
-            or marker.get("dispatch_started_at") is not None
-            or not isinstance(clear_session, bool)
-            or gate.get("handoff_staged") is not True
-            or gate.get("delivery_pending") is not True
-            or gate.get("attempt_id") != attempt_id
-            or gate.get("clear_session") is not clear_session
-        ):
-            return None
-        handoff_record_id = marker.get("handoff_record_id")
-        if not isinstance(handoff_record_id, str) or not handoff_record_id:
-            return None
-
+        marker = variables[PENDING_HANDOFF_VARIABLE]
         variables[PENDING_HANDOFF_VARIABLE] = {
             **marker,
             "dispatch_started_at": utc_now().isoformat(),
@@ -408,8 +447,8 @@ def claim_staged_handoff_delivery(
     return ClaimedHandoffDelivery(
         session_id=session_id,
         attempt_id=attempt_id,
-        handoff_record_id=handoff_record_id,
-        clear_session=clear_session,
+        handoff_record_id=marker["handoff_record_id"],
+        clear_session=marker["clear_session"],
     )
 
 

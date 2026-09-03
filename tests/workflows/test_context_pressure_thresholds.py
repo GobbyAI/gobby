@@ -241,7 +241,7 @@ def test_get_handoff_consumption_starts_a_new_threshold_epoch() -> None:
     message = _after_tool(
         variables,
         manager,
-        _get_handoff_event({"success": True, "result": {"success": True, "found": True}}),
+        _get_handoff_event({"success": True, "result": {"found": True}}),
     )
 
     assert message == STRONG_150K
