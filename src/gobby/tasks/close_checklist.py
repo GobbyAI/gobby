@@ -225,7 +225,8 @@ def _attribute_compound_failures(
     ambiguous: list[TranscriptValidationRun] = []
     for run in runs:
         segments = run.validation_segments
-        if run.outcome != "failure" or len(segments) < 2:
+        parsed_command = parse_shell_command(run.command)
+        if run.outcome != "failure" or not parsed_command.operators:
             attributed.append(run)
             continue
         failure_categories = infer_failure_categories(run.output)
@@ -238,8 +239,7 @@ def _attribute_compound_failures(
             ambiguous.append(run)
             continue
         failed_index = candidates[0]
-        operators = parse_shell_command(run.command).operators
-        preceding_segments_succeeded = bool(operators) and set(operators) == {"&&"}
+        preceding_segments_succeeded = set(parsed_command.operators) == {"&&"}
         for index, segment in enumerate(segments):
             outcome: EvidenceOutcome
             if index == failed_index:
@@ -263,7 +263,31 @@ def _attribute_compound_failures(
                     validation_segments=(segment,),
                 )
             )
-    return attributed, ambiguous
+    unresolved_ambiguous = [
+        run for run in ambiguous if not _later_successes_cover_every_segment(run, attributed)
+    ]
+    return attributed, unresolved_ambiguous
+
+
+def _later_successes_cover_every_segment(
+    failure: TranscriptValidationRun,
+    runs: Iterable[TranscriptValidationRun],
+) -> bool:
+    required_commands = {segment.command for segment in failure.validation_segments}
+    if not required_commands:
+        return False
+    successful_commands: set[str] = set()
+    failure_order = (failure.completed_at, failure.order)
+    for run in runs:
+        if run.outcome != "success" or (run.completed_at, run.order) <= failure_order:
+            continue
+        segments = run.validation_segments
+        if not segments:
+            successful_commands.add(run.command)
+            continue
+        if len(segments) == 1 or set(parse_shell_command(run.command).operators) == {"&&"}:
+            successful_commands.update(segment.command for segment in segments)
+    return required_commands.issubset(successful_commands)
 
 
 def _validation_details(evidence: TranscriptEvidence) -> dict[str, Any]:
