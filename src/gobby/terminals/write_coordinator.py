@@ -166,7 +166,16 @@ class WriteCoordinator:
         steps: Sequence[WriteRequest | SequenceDelay],
         attachment_id: str | None = None,
         expected_lease_generation: int | None = None,
+        latch: bool = True,
     ) -> WriteOutcome:
+        """Write one logical action as an ordered sequence under the terminal lock.
+
+        ``latch=False`` skips the write-ahead latch for an action whose steps
+        are idempotent on the terminal, such as a composer drain: a lost reply
+        then leaves no ``unresolved_writes`` entry to suppress the next attempt,
+        because repeating the action cannot double-write anything. Quarantine
+        still applies to unlatched automatic actions.
+        """
         lock = self._lock(terminal_id)
         async with lock:
             blocked = self._blocked_automatic(terminal_id, action_key, origin)
@@ -175,7 +184,8 @@ class WriteCoordinator:
             dispatched = False
             in_flight: asyncio.Task[WriteOutcome] | None = None
             try:
-                self._persist(terminal_id, action_key, origin)
+                if latch:
+                    self._persist(terminal_id, action_key, origin)
                 for step in steps:
                     if isinstance(step, SequenceDelay):
                         await asyncio.sleep(step.seconds)

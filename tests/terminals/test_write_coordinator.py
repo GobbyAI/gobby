@@ -13,6 +13,7 @@ from gobby.storage.terminals import (
     UnresolvedWriteCapacityError,
 )
 from gobby.terminals.runtime import (
+    AutomaticWriteQuarantined,
     Delivered,
     IndeterminateWrite,
     TerminalWriteError,
@@ -702,3 +703,63 @@ async def test_unregistered_backend_is_a_stage_none_write_error() -> None:
     # A provably-empty write must not leave the action latched, or every later
     # automatic write to this terminal is suppressed as a duplicate.
     assert _unresolved(store, terminal.id) == {}
+
+
+def _drain_step(terminal_id: str) -> WriteRequest:
+    return WriteRequest(
+        terminal_id=terminal_id,
+        action_key="drain",
+        origin="automatic",
+        kind="key",
+        payload="ctrl_u",
+    )
+
+
+@pytest.mark.asyncio
+async def test_unlatched_sequence_leaves_no_entry_for_a_lost_reply() -> None:
+    """An idempotent action opts out of the latch, so a lost reply cannot suppress its retry."""
+    coordinator, runtime, store = _coordinator(
+        FakeRuntime(outcomes=[IndeterminateWrite(detail="lost")])
+    )
+    terminal = next(iter(store.rows.values()))
+
+    lost = await coordinator.run_sequence(
+        terminal.id,
+        action_key="drain",
+        origin="automatic",
+        steps=[_drain_step(terminal.id)],
+        latch=False,
+    )
+
+    assert isinstance(lost, IndeterminateWrite)
+    assert _unresolved(store, terminal.id) == {}
+
+    retried = await coordinator.run_sequence(
+        terminal.id,
+        action_key="drain",
+        origin="automatic",
+        steps=[_drain_step(terminal.id)],
+        latch=False,
+    )
+
+    assert isinstance(retried, Delivered)
+    assert runtime.write_log == [("key", "ctrl_u"), ("key", "ctrl_u")]
+
+
+@pytest.mark.asyncio
+async def test_unlatched_sequence_still_honours_quarantine() -> None:
+    """Opting out of the latch does not opt out of another action's quarantine."""
+    coordinator, runtime, store = _coordinator()
+    terminal = next(iter(store.rows.values()))
+    store.set_automatic_write_quarantine(terminal.id, "handoff:compact")
+
+    outcome = await coordinator.run_sequence(
+        terminal.id,
+        action_key="drain",
+        origin="automatic",
+        steps=[_drain_step(terminal.id)],
+        latch=False,
+    )
+
+    assert isinstance(outcome, AutomaticWriteQuarantined)
+    assert runtime.write_log == []

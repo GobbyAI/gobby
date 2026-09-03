@@ -275,6 +275,48 @@ async def test_latched_wake_is_settled_by_the_delivered_composer_clear(
 
 
 @pytest.mark.asyncio
+async def test_undelivered_composer_clear_leaves_the_earlier_wake_latched(
+    managed_chain: ManagedChain,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only a Delivered drain proves the composer is empty; a lost one settles nothing."""
+    wake_key = f"wake:{managed_chain.row.id}"
+    clear_key = f"wake-clear:{managed_chain.row.id}"
+    managed_chain.store.persist_unresolved_write(managed_chain.row.id, wake_key, "automatic")
+    managed_chain.native.outcomes = [IndeterminateWrite(detail="lost")]
+    pane_sender = AsyncMock()
+    dispatcher = WakeDispatcher(
+        session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
+        ism_manager=MagicMock(),
+        tmux_sender=_send_tmux_session_wake,
+        tmux_pane_sender=pane_sender,
+        terminal_manager=managed_chain.store,
+    )
+
+    with caplog.at_level(logging.INFO, logger="gobby.runner_init.orchestration"):
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert result["delivered"] is False
+    assert result["indeterminate"] is True
+    assert result["method"] == "terminal"
+    assert managed_chain.native.write_log == [WAKE_SEQUENCE[0]]
+    unresolved = managed_chain.store.rows[managed_chain.row.id].unresolved_writes
+    assert wake_key in unresolved
+    # The drain is idempotent, so its lost reply latches nothing of its own.
+    assert clear_key not in unresolved
+    assert not [record for record in caplog.records if "Settling" in record.getMessage()]
+    pane_sender.assert_not_awaited()
+
+    # The next wake repeats the drain instead of being suppressed by the lost
+    # reply, and only its delivery settles the earlier wake.
+    retry = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert retry["delivered"] is True
+    assert managed_chain.native.write_log == [WAKE_SEQUENCE[0], *WAKE_SEQUENCE]
+    assert managed_chain.store.rows[managed_chain.row.id].unresolved_writes == {}
+
+
+@pytest.mark.asyncio
 async def test_quarantined_terminal_wake_is_a_structured_decline_without_traceback(
     managed_chain: ManagedChain,
     caplog: pytest.LogCaptureFixture,
