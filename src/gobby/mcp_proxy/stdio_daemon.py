@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import urlsplit
@@ -41,7 +42,7 @@ class StartDaemonProcess(Protocol):
 
 
 class CreateStdioMcpServer(Protocol):
-    def __call__(self) -> MCPServer: ...
+    def __call__(self, *, startup_task: asyncio.Task[None]) -> MCPServer: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +175,15 @@ async def main(
     create_server: CreateStdioMcpServer,
 ) -> None:
     """Main entry point for stdio MCP server."""
-    await ensure_daemon_running(deps=deps)
-    mcp = create_server()
-    await mcp.run_stdio_async()
+    startup_task = asyncio.create_task(
+        ensure_daemon_running(deps=deps),
+        name="gobby-stdio-daemon-startup",
+    )
+    try:
+        mcp = create_server(startup_task=startup_task)
+        await mcp.run_stdio_async()
+    finally:
+        if not startup_task.done():
+            startup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await startup_task

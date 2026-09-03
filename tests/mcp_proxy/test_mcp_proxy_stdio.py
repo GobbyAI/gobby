@@ -1602,7 +1602,10 @@ class TestDaemonProxyMethods:
             }
             result = await proxy.list_mcp_servers()
             assert result["total"] == 2
-            assert result["servers"] == ["srv1", "srv2"]
+            assert result["servers"] == [
+                {"name": "srv1", "state": "connected", "enabled": True, "transport": "http"},
+                {"name": "srv2", "state": "connected", "enabled": True, "transport": "stdio"},
+            ]
             assert "issues" not in result
 
     @pytest.mark.asyncio
@@ -1620,7 +1623,10 @@ class TestDaemonProxyMethods:
                 ],
             }
             result = await proxy.list_mcp_servers()
-            assert result["servers"] == ["srv1", "srv2"]
+            assert result["servers"] == [
+                {"name": "srv1", "state": "connected", "enabled": True, "transport": "http"},
+                {"name": "srv2", "state": "pending", "enabled": True, "transport": "stdio"},
+            ]
             assert result["issues"] == [{"name": "srv2", "state": "pending", "transport": "stdio"}]
 
     @pytest.mark.asyncio
@@ -1785,7 +1791,7 @@ class TestMCPToolsWrapper:
 
         # 9. remove_mcp_server
         await run_tool("remove_mcp_server", name="n")
-        mock_proxy.remove_mcp_server.assert_called_with("n")
+        mock_proxy.remove_mcp_server.assert_called_with("n", scope="project")
 
         # 10. import_mcp_server
         await run_tool("import_mcp_server", from_project="p")
