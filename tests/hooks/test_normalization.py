@@ -1037,7 +1037,7 @@ class TestCanonicalToolMetadata:
             assert data["canonical_tool_kind"] == expected_kind
             assert data["canonical_file_path"] == expected_path
 
-    def test_exec_command_search_over_non_source_files_is_not_code_navigation(self) -> None:
+    def test_exec_command_search_over_project_text_is_code_navigation(self) -> None:
         for command in (
             "grep -n '^#' .gobby/plans/herdr-terminal-client.md",
             "grep pattern docs/research/agent-feedback-loops.md",
@@ -1050,7 +1050,7 @@ class TestCanonicalToolMetadata:
 
             assert data["canonical_tool_kind"] == "search", command
             assert data["canonical_code_navigation_action"] == "search", command
-            assert data["canonical_code_navigation_broad"] is False, command
+            assert data["canonical_code_navigation_broad"] is True, command
 
     def test_exec_command_search_reaching_source_stays_broad(self) -> None:
         for command in (
@@ -1476,6 +1476,44 @@ class TestCanonicalToolMetadata:
         assert data["canonical_file_path"] == "src/main.py"
         assert data["canonical_file_paths"] == ["src/main.py", "docs/plan.md"]
 
+    @pytest.mark.parametrize(
+        ("command", "expected_paths"),
+        [
+            pytest.param(
+                "cp /repo/src.py /worktree/dst.py",
+                ["/worktree/dst.py"],
+                id="cp",
+            ),
+            pytest.param(
+                "cp -r /repo/src /worktree/dst",
+                ["/worktree/dst"],
+                id="cp-recursive",
+            ),
+            pytest.param(
+                "install /repo/src.py /worktree/dst.py",
+                ["/worktree/dst.py"],
+                id="install",
+            ),
+            pytest.param(
+                "mv /repo/src.py /worktree/dst.py",
+                ["/repo/src.py", "/worktree/dst.py"],
+                id="mv",
+            ),
+        ],
+    )
+    def test_copy_and_move_commands_attribute_only_mutated_operands(
+        self,
+        command: str,
+        expected_paths: list[str],
+    ) -> None:
+        data = {"tool_name": "exec_command", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert data["canonical_file_paths"] == expected_paths
+
     def test_exec_command_truncate_sets_all_canonical_write_paths(self) -> None:
         data = {
             "tool_name": "exec_command",
@@ -1599,7 +1637,10 @@ def test_gcode_callees_and_graph_view_are_navigation() -> None:
         ("gcode graph view --view=fcg --symbol Derived", "read"),
         ("gcode graph view --view=class-hierarchy --symbol Derived", "read"),
     ):
-        data = {"tool_name": "exec_command", "tool_input": {"command": command}}
+        data: dict[str, Any] = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": command},
+        }
         normalize_tool_fields(data)
         assert data["canonical_tool_kind"] == expected_kind
         assert data["canonical_code_index_navigation"] is True

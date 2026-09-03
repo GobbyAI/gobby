@@ -55,6 +55,7 @@ from gobby.dispatch.actions import (
 from gobby.dispatch.audit import has_audit_marker
 from gobby.dispatch.discovery_artifacts import discovery_artifact_ready
 from gobby.dispatch.prompts import PROMPT_BUILDERS as PROMPT_BUILDERS
+from gobby.tasks.state_semantics import is_awaiting_human_review
 
 Rule = Callable[[object, object], Action | None]
 
@@ -85,6 +86,8 @@ _dispatch_inputs = _rule_dispatch_inputs
 
 def evaluate(task: object, context: object, rules: Sequence[Rule] | None = None) -> Action | None:
     """Return the first action emitted by the ordered rule list."""
+    if is_awaiting_human_review(task):
+        return None
     for rule in rules or RULES:
         action = rule(task, context)
         if action is not None:

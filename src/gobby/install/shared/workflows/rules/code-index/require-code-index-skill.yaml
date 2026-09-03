@@ -1,5 +1,17 @@
 tags: [code-index, gobby, default]
 
+# Observation-shape classification (task #21614):
+# | Shape | Decision | Replacement or exception rationale |
+# | grep/rg over indexed project text | redirect | gcode grep/search-content |
+# | same-repo primary/linked-worktree search | redirect | gcode indexes each checkout |
+# | simple find path/name/type/depth navigation | redirect | gcode tree |
+# | find live metadata/format/action predicates | allow | gcode must not emulate filesystem state/actions |
+# | sed/head/tail range of at most 40 lines | allow | exact current line context |
+# | wc byte/line counts | allow | exact current filesystem aggregate |
+# | read/search of a path written this turn | allow | verify current bytes before refresh |
+# | session scratchpad navigation | allow | scratchpads are never indexed |
+# | ~/.gobby state/log navigation | allow | daemon state and logs are never indexed |
+
 rules:
   reset-code-index-navigation:
     description: "Clear per-turn gcode navigation state"
@@ -63,6 +75,29 @@ rules:
         variable: gcode_fail_open
         value: true
 
+  note-code-index-preflight-fail-open:
+    description: "Explain why indexed-checkout navigation is allowed after preflight failure"
+    event: before_tool
+    enabled: true
+    priority: 29
+    when: >
+      variables.get('code_index_preflight_warning')
+      and not variables.get('code_index_preflight_note_shown')
+      and not event.data.get('canonical_code_index_navigation')
+      and event.data.get('canonical_code_navigation_broad')
+      and event.data.get('canonical_code_navigation_repo_scope') is not False
+      and (
+        event.data.get('canonical_code_navigation_action') != 'enumerate'
+        or event.data.get('canonical_code_navigation_gcode_supported')
+      )
+    effects:
+      - type: set_variable
+        variable: code_index_preflight_note_shown
+        value: true
+      - type: inject_context
+        template: >-
+          Code-index preflight reported this checkout unavailable or stale; raw filesystem navigation is allowed for this session.
+
   require-code-index-skill:
     description: "Block first code navigation until code-index skill is loaded"
     event: before_tool
@@ -80,7 +115,10 @@ rules:
       and not event.data.get('canonical_code_index_navigation')
       and not shell_command_invokes_gcode(tool_input.get('command'))
       and not event.data.get('canonical_search_revision_scoped')
-      and event.data.get('canonical_code_navigation_action') != 'enumerate'
+      and (
+        event.data.get('canonical_code_navigation_action') != 'enumerate'
+        or event.data.get('canonical_code_navigation_gcode_supported')
+      )
       and event.data.get('canonical_code_navigation_broad')
       and event.data.get('canonical_code_navigation_repo_scope') is not False
     effects:
@@ -96,6 +134,7 @@ rules:
       variables.get('code_index_available')
       and skill_loaded('code-index')
       and not variables.get('gcode_fail_open')
+      and not variables.get('code_index_preflight_warning')
       and not event.data.get('canonical_code_index_navigation')
       and not shell_command_invokes_gcode(tool_input.get('command'))
       and not event.data.get('canonical_search_revision_scoped')
@@ -107,6 +146,26 @@ rules:
       - type: block
         reason: 'Use compact `gcode grep "pattern" -m 50` (supports -F -i -w -l -g; exit 0 even with no matches) or `gcode search-content "query"` — the code index has full access to this repo and returns ranked, token-cheap pages. Patterns are Rust regex, not grep BRE: write alternation as `a|b`, because `a\|b` matches a literal pipe and silently returns nothing. Run any printed continuation command exactly. If gcode errors, read its one-line JSON and follow the `recovery` directive; do NOT re-run the failing gcode call — its recorded failure fails this rule open, so re-run the grep/rg command that was blocked instead.'
 
+  prefer-gcode-for-file-navigation:
+    description: "Block gcode-replicable find navigation in indexed checkouts"
+    event: before_tool
+    enabled: true
+    priority: 31
+    when: >
+      variables.get('code_index_available')
+      and skill_loaded('code-index')
+      and not variables.get('gcode_fail_open')
+      and not variables.get('code_index_preflight_warning')
+      and not event.data.get('canonical_code_index_navigation')
+      and not shell_command_invokes_gcode(tool_input.get('command'))
+      and event.data.get('canonical_code_navigation_action') == 'enumerate'
+      and event.data.get('canonical_code_navigation_gcode_supported')
+      and event.data.get('canonical_code_navigation_broad')
+      and event.data.get('canonical_code_navigation_repo_scope') is not False
+    effects:
+      - type: block
+        reason: 'Use `gcode tree [PATH...]` for indexed file and directory navigation; translate find name/path/type/depth predicates into path or glob filters and run any printed continuation command exactly.'
+
   prefer-gcode-for-source-read:
     description: "Block broad source reads in indexed projects after code-index is loaded"
     event: before_tool
@@ -116,6 +175,7 @@ rules:
       variables.get('code_index_available')
       and skill_loaded('code-index')
       and not variables.get('gcode_fail_open')
+      and not variables.get('code_index_preflight_warning')
       and not event.data.get('canonical_code_index_navigation')
       and not shell_command_invokes_gcode(tool_input.get('command'))
       and event.data.get('canonical_code_navigation_action') == 'read'
