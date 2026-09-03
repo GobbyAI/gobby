@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
+from gobby.config.shell_lexing import parse_shell_command
 from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
+from gobby.tasks.transcript_outcomes import EvidenceOutcome, infer_failure_categories
 
 GateStatus = Literal["passed", "failed", "skipped"]
 
@@ -106,12 +108,24 @@ def evaluate_validation_commands(
 
     fresh_runs = _fresh_runs(evidence)
     definitive = [run for run in fresh_runs if run.outcome != "unknown"]
-    latest_by_category = _latest_definitive_by_category(definitive)
+    attributed, ambiguous = _attribute_compound_failures(definitive)
+    latest_by_category = _latest_definitive_by_category(attributed)
     unresolved = {
         run_category: run
         for run_category, run in latest_by_category.items()
         if run.outcome == "failure"
     }
+    unresolved_failures = [
+        {
+            "category": run_category,
+            "command": run.command,
+            "completed_at": run.completed_at.isoformat(),
+        }
+        for run_category, run in sorted(unresolved.items())
+    ]
+    ambiguous_failures = [
+        {"command": run.command, "completed_at": run.completed_at.isoformat()} for run in ambiguous
+    ]
     details = {
         **details,
         "fresh_run_count": len(fresh_runs),
@@ -119,17 +133,27 @@ def evaluate_validation_commands(
             run_category: run.outcome for run_category, run in sorted(latest_by_category.items())
         },
         "unresolved_failure_categories": sorted(unresolved),
+        "unresolved_failures": unresolved_failures,
+        "ambiguous_compound_failures": ambiguous_failures,
     }
 
-    if unresolved:
-        failed_categories = ", ".join(sorted(unresolved))
+    if unresolved or ambiguous:
+        blockers = [
+            f"{failure['category']}: {failure['command']!r} at {failure['completed_at']}"
+            for failure in unresolved_failures
+        ]
+        blockers.extend(
+            f"unattributed compound command {failure['command']!r} at {failure['completed_at']}"
+            for failure in ambiguous_failures
+        )
         return CloseGateResult(
             item=9,
             name="validation_commands",
             status="failed",
             message=(
-                "A validation command is still failing for "
-                f"{failed_categories}. Re-run each category clean after the final task edit."
+                f"A validation command is still failing ({'; '.join(blockers)}). "
+                "Re-run each category clean after the final task edit; run ambiguous compound "
+                "segments separately."
             ),
             details=details,
         )
@@ -192,6 +216,54 @@ def _latest_definitive_by_category(
         for category in run.categories:
             latest[category] = run
     return latest
+
+
+def _attribute_compound_failures(
+    runs: Iterable[TranscriptValidationRun],
+) -> tuple[list[TranscriptValidationRun], list[TranscriptValidationRun]]:
+    attributed: list[TranscriptValidationRun] = []
+    ambiguous: list[TranscriptValidationRun] = []
+    for run in runs:
+        segments = run.validation_segments
+        if run.outcome != "failure" or len(segments) < 2:
+            attributed.append(run)
+            continue
+        failure_categories = infer_failure_categories(run.output)
+        candidates = [
+            index
+            for index, segment in enumerate(segments)
+            if failure_categories.intersection(segment.categories)
+        ]
+        if len(candidates) != 1:
+            ambiguous.append(run)
+            continue
+        failed_index = candidates[0]
+        operators = parse_shell_command(run.command).operators
+        preceding_segments_succeeded = bool(operators) and set(operators) == {"&&"}
+        for index, segment in enumerate(segments):
+            outcome: EvidenceOutcome
+            if index == failed_index:
+                outcome = "failure"
+            elif preceding_segments_succeeded and index < failed_index:
+                outcome = "success"
+            else:
+                continue
+            attributed.append(
+                replace(
+                    run,
+                    command=segment.command,
+                    categories=segment.categories,
+                    outcome=outcome,
+                    exit_code=run.exit_code
+                    if outcome == "failure"
+                    else 0
+                    if outcome == "success"
+                    else None,
+                    unknown_reason=None,
+                    validation_segments=(segment,),
+                )
+            )
+    return attributed, ambiguous
 
 
 def _validation_details(evidence: TranscriptEvidence) -> dict[str, Any]:
