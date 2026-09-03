@@ -479,6 +479,7 @@ class AgentCleanupHandler:
         terminal_payload: str,
         is_success: bool = False,
         is_timeout: bool = False,
+        terminal_reason: AgentRunTerminalReason | None = None,
     ) -> None:
         """Full cleanup chain for an agent that needs cleanup.
 
@@ -520,12 +521,17 @@ class AgentCleanupHandler:
                         terminal_payload,
                     )
             else:
+                fail_kwargs: dict[str, Any] = {
+                    "error": terminal_payload,
+                    "tool_calls_count": tool_calls_count,
+                    "turns_used": turns_used,
+                }
+                if terminal_reason is not None:
+                    fail_kwargs["terminal_reason"] = terminal_reason
                 updated = await self._run_db(
                     self._agent_run_manager.fail,
                     run.id,
-                    error=terminal_payload,
-                    tool_calls_count=tool_calls_count,
-                    turns_used=turns_used,
+                    **fail_kwargs,
                 )
                 if updated is not None:
                     terminal_run = updated
@@ -546,6 +552,8 @@ class AgentCleanupHandler:
                 notification_result = {"status": "completed"}
             else:
                 notification_result = {"status": "error", "error": terminal_payload}
+                if terminal_reason is not None:
+                    notification_result["terminal_reason"] = terminal_reason
             notification_message = f"Agent {run.id} {'completed' if is_success else 'failed'}"
         else:
             current = await self._run_db(self._agent_run_manager.get, run.id)

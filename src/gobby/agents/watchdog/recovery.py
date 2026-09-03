@@ -41,6 +41,8 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
 
+from .quota import ProviderQuotaExhaustion
+
 logger = logging.getLogger(__name__)
 WATCHDOG_ACTOR = "agent_idle_watchdog"
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -624,6 +626,35 @@ class WatchdogRecoveryCoordinator:
             await self._cleanup_handler.cleanup_agent(
                 run,
                 terminal_payload=captured or payload,
+            )
+            return cast(
+                "AgentRun | None",
+                await self._run_db(self._agent_run_manager.get, run.id),
+            )
+
+        await self._terminalize_idle_agent(
+            run,
+            action="fail",
+            payload=payload,
+            terminalize=terminalize,
+        )
+
+    async def fail_provider_quota_agent(
+        self,
+        run: AgentRun,
+        quota: ProviderQuotaExhaustion,
+    ) -> None:
+        """Fail a quota-exhausted run while preserving its classified error."""
+        payload = quota.error
+
+        async def terminalize(
+            _action: TerminalAction,
+            _captured: str | None,
+        ) -> AgentRun | None:
+            await self._cleanup_handler.cleanup_agent(
+                run,
+                terminal_payload=payload,
+                terminal_reason="provider_quota_exhausted",
             )
             return cast(
                 "AgentRun | None",

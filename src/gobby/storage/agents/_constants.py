@@ -7,7 +7,12 @@ from typing import Literal
 
 AgentRunStatus = Literal["pending", "running", "success", "error", "timeout", "cancelled"]
 AgentRunTerminalReason = Literal[
-    "user_cancelled", "daemon_stop", "task_completed", "spawn_rollback", "task_blocker"
+    "user_cancelled",
+    "daemon_stop",
+    "task_completed",
+    "spawn_rollback",
+    "task_blocker",
+    "provider_quota_exhausted",
 ]
 
 STATUS_PENDING: AgentRunStatus = "pending"
