@@ -266,6 +266,42 @@ async def test_broadcast_event_session_start_source_new_alias(
 
 
 @pytest.mark.asyncio
+async def test_broadcast_event_before_agent_without_prompt_text(
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """AGY PreInvocation carries no prompt, yet the turn start still broadcasts."""
+    from datetime import UTC, datetime
+
+    if "user-prompt-submit" not in default_config.hook_extensions.websocket.broadcast_events:
+        default_config.hook_extensions.websocket.broadcast_events.append("user-prompt-submit")
+
+    caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id="agy-session",
+        source=SessionSource.AGY,
+        timestamp=datetime.now(UTC),
+        data={
+            "external_id": "agy-session",
+            "artifactDirectoryPath": "/tmp/artifacts",
+            "conversationId": "agy-session",
+            "invocationNum": 0,
+        },
+    )
+
+    await broadcaster.broadcast_event(event)
+
+    mock_websocket_server.broadcast.assert_called_once()
+    call_args = mock_websocket_server.broadcast.call_args[0][0]
+    assert call_args["event_type"] == "user-prompt-submit"
+    assert call_args["data"]["prompt_text"] == ""
+    assert not any("Failed to broadcast event" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("event_type", "event_data", "expected_event_type"),
     [

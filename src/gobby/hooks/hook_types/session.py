@@ -84,7 +84,13 @@ class UserPromptSubmitInput(HookInput):
     """
 
     external_id: str = Field(..., min_length=1, description="Unique session identifier")
-    prompt_text: str = Field(..., min_length=1, description="User's prompt text to validate")
+    prompt_text: str = Field(
+        default="",
+        description=(
+            "User's prompt text to validate; empty when the CLI hook carries none "
+            "(AGY PreInvocation reports a turn start without the prompt)"
+        ),
+    )
     estimated_tokens: int | None = Field(default=None, ge=0, description="Estimated token count")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     machine_id: str | None = Field(default=None, description="Unique machine identifier")

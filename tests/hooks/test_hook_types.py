@@ -340,7 +340,12 @@ class TestUserPromptSubmitInput:
     def test_required_fields(self) -> None:
         """Test required fields."""
         with pytest.raises(ValidationError):
-            UserPromptSubmitInput(external_id="key")  # Missing prompt_text
+            UserPromptSubmitInput(prompt_text="hello")  # Missing external_id
+
+    def test_prompt_text_defaults_to_empty(self) -> None:
+        """A turn start without prompt text (AGY PreInvocation) still validates."""
+        input_data = UserPromptSubmitInput(external_id="key")
+        assert input_data.prompt_text == ""
 
     def test_valid_input(self) -> None:
         """Test valid input."""
