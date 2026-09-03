@@ -134,6 +134,9 @@ async def test_launch_after_rejected_verdict_carries_required_evidence(
         {
             "review_fingerprint": "first-review",
             "deterministic_evidence_fingerprint": "first-evidence",
+            "diff_sha": "a" * 64,
+            "test_bodies_sha": "b" * 64,
+            "stable_facts": {"commit_shas": ["def"]},
         }
     )
     registry = SimpleNamespace(
@@ -213,6 +216,9 @@ async def test_launch_after_rejected_verdict_carries_required_evidence(
         {
             "review_fingerprint": "second-review",
             "deterministic_evidence_fingerprint": "second-evidence",
+            "diff_sha": "c" * 64,
+            "test_bodies_sha": "d" * 64,
+            "stable_facts": {"commit_shas": ["def"]},
         }
     )
     ctx = cast(
@@ -607,6 +613,9 @@ def _evaluation(*, ready: bool = False) -> CloseEvaluation:
         {
             "review_fingerprint": "close",
             "deterministic_evidence_fingerprint": "evidence",
+            "diff_sha": "diff",
+            "test_bodies_sha": "tests",
+            "stable_facts": {},
             "criteria_review_duration_ms": 4.25,
         }
     )

@@ -65,7 +65,16 @@ async def launch_close_review(
         or evaluation.extra.get("evidence_fingerprint")
         or ""
     )
-    if not review_fingerprint or not evidence_fingerprint:
+    diff_sha = str(evaluation.extra.get("diff_sha") or "")
+    test_bodies_sha = str(evaluation.extra.get("test_bodies_sha") or "")
+    stable_facts = evaluation.extra.get("stable_facts")
+    if (
+        not review_fingerprint
+        or not evidence_fingerprint
+        or not diff_sha
+        or not test_bodies_sha
+        or not isinstance(stable_facts, Mapping)
+    ):
         return evaluation.response(preview=bool(close_arguments.get("preview")))
 
     task = evaluation.task
@@ -78,6 +87,9 @@ async def launch_close_review(
         close_arguments=close_arguments,
         review_fingerprint=review_fingerprint,
         evidence_fingerprint=evidence_fingerprint,
+        diff_sha=diff_sha,
+        test_bodies_sha=test_bodies_sha,
+        stable_facts=stable_facts,
     )
     if not created:
         return pending_review_response(review)
@@ -230,6 +242,9 @@ async def submit_close_review(
                 verdict=verdict,
                 review_fingerprint=claimed.review_fingerprint,
                 evidence_fingerprint=claimed.evidence_fingerprint,
+                diff_sha=claimed.diff_sha,
+                test_bodies_sha=claimed.test_bodies_sha,
+                stable_facts=claimed.stable_facts,
             ),
         )
     except Exception as exc:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import json
 import re
 import subprocess
 import textwrap
@@ -40,13 +39,9 @@ _NON_ASSERTION_FAILURE_RE = re.compile(
 )
 
 
-class StaleCodeIndexError(RuntimeError):
-    """The named symbol is present on disk but the code index does not have it."""
-
-
 @dataclass(frozen=True, slots=True)
 class AcceptanceTest:
-    """One exact test reference and its gcode-resolved body."""
+    """One exact test reference and its commit-pinned body."""
 
     reference: str
     path: str
@@ -103,7 +98,7 @@ def evaluate_acceptance_artifacts(
     commit_shas: list[str],
 ) -> AcceptanceArtifactResult:
     """Resolve named tests, reject placebo bodies, and verify local evidence provenance."""
-    tests, resolution_findings = resolve_acceptance_tests(criteria, repo_path)
+    tests, resolution_findings = resolve_acceptance_tests(criteria, repo_path, commit_shas)
     findings = list(resolution_findings)
     for test in tests:
         findings.extend(_test_body_findings(test))
@@ -127,8 +122,9 @@ def evaluate_acceptance_artifacts(
 def resolve_acceptance_tests(
     criteria: str,
     repo_path: str,
+    commit_shas: list[str],
 ) -> tuple[tuple[AcceptanceTest, ...], tuple[str, ...]]:
-    """Resolve every named acceptance test through gcode."""
+    """Resolve every named acceptance test from the last linked commit."""
     tests: list[AcceptanceTest] = []
     findings = list(malformed_test_reference_findings(criteria))
     for reference in extract_artifact_references(criteria, "test"):
@@ -140,13 +136,13 @@ def resolve_acceptance_tests(
         if path_error:
             findings.append(f"{reference}: {path_error}")
             continue
-        try:
-            body = _resolve_test_body(path, symbol, repo_path)
-        except StaleCodeIndexError as exc:
-            findings.append(f"{reference}: {exc}")
+        if not commit_shas:
+            findings.append(f"{reference}: a linked commit is required to resolve the test body")
             continue
+        try:
+            body = _resolve_test_body(path, symbol, repo_path, commit_shas[-1])
         except (OSError, RuntimeError, ValueError) as exc:
-            findings.append(f"{reference}: gcode could not resolve the exact test body: {exc}")
+            findings.append(f"{reference}: could not resolve the committed test body: {exc}")
             continue
         tests.append(AcceptanceTest(reference, path, symbol, body))
     return tuple(tests), tuple(findings)
@@ -156,7 +152,7 @@ def render_acceptance_test_bodies(tests: tuple[AcceptanceTest, ...]) -> str:
     """Render exact named test bodies for criteria-review evidence."""
     if not tests:
         return "Named acceptance tests: none."
-    parts = ["Named acceptance tests (exact gcode-resolved bodies):"]
+    parts = ["Named acceptance tests (exact bodies from the last linked commit):"]
     for test in tests:
         parts.append(f"\n### {test.reference}\n{test.body}")
     return "\n".join(parts)
@@ -298,135 +294,131 @@ def parse_test_reference(reference: str) -> tuple[str, str] | None:
     return (path, symbol) if path and symbol else None
 
 
-def _resolve_test_body(path: str, symbol: str, repo_path: str) -> str:
-    query = symbol.rsplit("::", 1)[-1].rsplit(".", 1)[-1]
-    search_error: RuntimeError | None = None
-    try:
-        candidates = _search_symbol(path, symbol, query, repo_path)
-    except RuntimeError as exc:
-        search_error = exc
-        candidates = []
-    if not candidates and _symbol_defined_on_disk(path, query, repo_path):
-        # A test written moments before the close is both the case this gate
-        # exists to check and the case most likely to be missing from the index,
-        # so a miss on a symbol that is on disk is index lag, not absence
-        # (#21237). Index that one file and look again before failing.
-        candidates = _resolve_after_reindex(
-            path,
-            symbol,
-            query,
-            repo_path,
-            initial_search_error=str(search_error) if search_error else None,
-        )
-    if len(candidates) != 1:
-        raise RuntimeError(f"expected one matching symbol, found {len(candidates)}")
-    symbol_id = candidates[0].get("id")
-    if not isinstance(symbol_id, str):
-        raise RuntimeError("gcode result omitted symbol id")
-    symbol_raw = _run_command(["gcode", "symbol", symbol_id, "--format", "json"], repo_path)
-    try:
-        source = json.loads(symbol_raw).get("source")
-    except (AttributeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("invalid gcode symbol response") from exc
-    if not isinstance(source, str) or not source.strip():
-        raise RuntimeError("gcode symbol response omitted source")
-    return source
+def _resolve_test_body(path: str, symbol: str, repo_path: str, commit_sha: str) -> str:
+    source = _read_test_file_from_commit(path, commit_sha, repo_path)
+    if Path(path).suffix.casefold() == ".py":
+        return _extract_python_test_body(source, symbol)
+    return _extract_braced_test_body(source, symbol)
 
 
-def _search_symbol(path: str, symbol: str, query: str, repo_path: str) -> list[dict[str, object]]:
-    search_raw = _run_command(
-        [
-            "gcode",
-            "search-symbol",
-            query,
-            path,
-            "--allow-stale",
-            "--format",
-            "json",
-            "--limit",
-            "20",
-        ],
-        repo_path,
+def _read_test_file_from_commit(path: str, commit_sha: str, repo_path: str) -> str:
+    result = subprocess.run(
+        ["git", "show", f"{commit_sha}:{path}"],
+        cwd=repo_path,
+        text=True,
+        errors="replace",
+        capture_output=True,
+        timeout=30,
+        check=False,
     )
-    try:
-        rows = json.loads(search_raw).get("results", [])
-    except (AttributeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("invalid gcode search response") from exc
-    return [
-        row
-        for row in rows
-        if isinstance(row, dict)
-        and row.get("file_path") == path
-        and (
-            row.get("name") == query
-            or str(row.get("qualified_name", "")).replace(".", "::").endswith(symbol)
-        )
-    ]
+    if result.returncode != 0:
+        raise RuntimeError(f"last linked commit {commit_sha[:12]} does not contain {path}")
+    return result.stdout
 
 
-def _symbol_defined_on_disk(path: str, query: str, repo_path: str) -> bool:
-    """Whether the working copy actually defines the named symbol."""
-    try:
-        source = (Path(repo_path) / path).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return False
-    if Path(path).suffix.casefold() != ".py":
-        return re.search(rf"\b{re.escape(query)}\b", source) is not None
+def _extract_python_test_body(source: str, symbol: str) -> str:
     try:
         tree = ast.parse(source)
-    except SyntaxError:
-        return False
-    return any(
-        isinstance(node, ast.AsyncFunctionDef | ast.ClassDef | ast.FunctionDef)
-        and node.name == query
-        for node in ast.walk(tree)
+    except SyntaxError as exc:
+        raise RuntimeError("committed test file is not parseable Python") from exc
+    requested = tuple(part for part in re.split(r"::|\.", symbol) if part)
+    matches: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+
+    def visit(nodes: list[ast.stmt], parents: tuple[str, ...]) -> None:
+        for node in nodes:
+            if isinstance(node, ast.ClassDef):
+                visit(node.body, (*parents, node.name))
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                qualified = (*parents, node.name)
+                if requested and qualified[-len(requested) :] == requested:
+                    matches.append(node)
+                visit(node.body, qualified)
+
+    visit(tree.body, ())
+    if len(matches) != 1:
+        raise RuntimeError(f"expected one matching symbol, found {len(matches)}")
+    node = matches[0]
+    start_line = min(
+        (decorator.lineno for decorator in node.decorator_list),
+        default=node.lineno,
     )
+    if node.end_lineno is None:
+        raise RuntimeError("committed Python symbol has no source boundary")
+    return "".join(source.splitlines(keepends=True)[start_line - 1 : node.end_lineno])
 
 
-def _resolve_after_reindex(
-    path: str,
-    symbol: str,
-    query: str,
-    repo_path: str,
-    initial_search_error: str | None = None,
-) -> list[dict[str, object]]:
-    """Index the artifact's file, then search once more; explain a lasting miss."""
-    reindex_error = _reindex_file(path, repo_path)
-    retry_error: str | None = None
-    try:
-        candidates = [] if reindex_error else _search_symbol(path, symbol, query, repo_path)
-    except RuntimeError as exc:
-        retry_error = str(exc)
-        candidates = []
-    if candidates:
-        return candidates
-    cause = (
-        initial_search_error
-        or reindex_error
-        or retry_error
-        or "reindexing that file did not surface it"
+def _extract_braced_test_body(source: str, symbol: str) -> str:
+    name = symbol.rsplit("::", 1)[-1].rsplit(".", 1)[-1]
+    escaped = re.escape(name)
+    patterns = (
+        rf'(?m)^[ \t]*(?:(?:pub(?:\([^)]*\))?|async|unsafe|const|extern\s+"[^"]+")\s+)*fn\s+{escaped}\b',
+        rf"(?m)^[ \t]*(?:export\s+)?(?:async\s+)?function\s+{escaped}\b",
+        rf"(?m)^[ \t]*func(?:\s+\([^)]*\))?\s+{escaped}\b",
+        rf"(?m)^[ \t]*(?:const|let|var)\s+{escaped}\s*=.*?=>",
     )
-    raise StaleCodeIndexError(
-        f"{query} is defined in {path} on disk but the code index does not have it "
-        f"({cause}); the acceptance artifact is valid and the index is behind. "
-        f"Run `gcode index --full --files {path}` and retry the close."
-    )
+    matches = [match for pattern in patterns for match in re.finditer(pattern, source)]
+    if len(matches) != 1:
+        raise RuntimeError(f"expected one matching symbol, found {len(matches)}")
+    declaration_start = matches[0].start()
+    body_start = source.find("{", matches[0].end())
+    if body_start < 0:
+        raise RuntimeError("matching symbol has no braced body")
+    body_end = _matching_brace_end(source, body_start)
+    start = _include_symbol_attributes(source, declaration_start)
+    return source[start:body_end]
 
 
-def _reindex_file(path: str, repo_path: str) -> str | None:
-    """Index one file in place, returning why that was not possible when it failed.
+def _include_symbol_attributes(source: str, declaration_start: int) -> int:
+    start = declaration_start
+    while start > 0:
+        previous_end = start - 1
+        previous_start = source.rfind("\n", 0, previous_end) + 1
+        previous = source[previous_start:previous_end].strip()
+        if not previous.startswith(("#[", "///", "@")):
+            break
+        start = previous_start
+    return start
 
-    ``--skip-if-locked`` keeps a close gate from blocking behind another indexer:
-    a held lock exits 3 and is reported as the cause instead of stalling the close.
-    """
-    try:
-        _run_command(
-            ["gcode", "index", "--full", "--files", path, "--skip-if-locked"],
-            repo_path,
-        )
-    except RuntimeError as exc:
-        return str(exc)
-    return None
+
+def _matching_brace_end(source: str, opening: int) -> int:
+    depth = 0
+    index = opening
+    quote: str | None = None
+    escaped = False
+    line_comment = False
+    block_comment = False
+    while index < len(source):
+        char = source[index]
+        following = source[index + 1] if index + 1 < len(source) else ""
+        if line_comment:
+            line_comment = char != "\n"
+        elif block_comment:
+            if char == "*" and following == "/":
+                block_comment = False
+                index += 1
+        elif quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char == "/" and following == "/":
+            line_comment = True
+            index += 1
+        elif char == "/" and following == "*":
+            block_comment = True
+            index += 1
+        elif char in {'"', "`"}:
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    raise RuntimeError("matching symbol has an unclosed braced body")
 
 
 def _test_body_findings(test: AcceptanceTest) -> list[str]:

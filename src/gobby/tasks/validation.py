@@ -92,6 +92,9 @@ class PreparedCloseReview:
     prompt_limit: int
     review_fingerprint: str
     evidence_fingerprint: str
+    diff_sha: str
+    test_bodies_sha: str
+    stable_facts: dict[str, object]
     manifest_count: int
     excerpt_chars: int
 
@@ -282,6 +285,7 @@ class TaskValidator:
 
         diff_evidence = build_close_diff_evidence(diff_text, criteria=validation_criteria)
         complete_evidence_sha = diff_evidence.sha256
+        test_bodies_sha = hashlib.sha256(test_bodies.encode()).hexdigest()
         fingerprint_prompt = render(
             diff_evidence.text, _NO_PRIOR_REQUIREMENTS, facts=stable_facts_text
         )
@@ -326,6 +330,9 @@ class TaskValidator:
             prompt_limit=self.config.close_review_prompt_max_chars,
             review_fingerprint=review_fingerprint,
             evidence_fingerprint=evidence_fingerprint,
+            diff_sha=complete_evidence_sha,
+            test_bodies_sha=test_bodies_sha,
+            stable_facts=stable_facts,
             manifest_count=diff_evidence.manifest_count,
             excerpt_chars=diff_evidence.excerpt_chars,
         )

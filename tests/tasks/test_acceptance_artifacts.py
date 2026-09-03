@@ -297,224 +297,58 @@ def test_rust_validation_runs_require_symbol_word_boundary() -> None:
     assert not validation_run_names_test("cargo nextest run -p gobby-code", output, test)
 
 
-def test_test_body_resolution_requests_gcode_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[list[str]] = []
-
-    def run_command(command: list[str], _repo_path: str) -> str:
-        calls.append(command)
-        if command[1] == "search-symbol":
-            return (
-                '{"results":[{"id":"symbol-id","file_path":"tests/test_feature.py",'
-                '"name":"test_feature","qualified_name":"test_feature"}]}'
-            )
-        return '{"source":"def test_feature(): pass"}'
-
-    monkeypatch.setattr(artifacts_module, "_run_command", run_command)
-
-    body = artifacts_module._resolve_test_body("tests/test_feature.py", "test_feature", "/repo")
-
-    assert body == "def test_feature(): pass"
-    assert calls[0] == [
-        "gcode",
-        "search-symbol",
-        "test_feature",
-        "tests/test_feature.py",
-        "--allow-stale",
-        "--format",
-        "json",
-        "--limit",
-        "20",
-    ]
-    assert calls[1] == ["gcode", "symbol", "symbol-id", "--format", "json"]
-
-
-def test_stale_index_names_the_index_and_the_reindex_command(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """An artifact on disk but absent from the index is index lag, not an invalid artifact.
-
-    The close gate resolves `path::test_symbol` through gcode, so a test written
-    moments earlier reported `found 0` and read as a bad acceptance criterion
-    (#21237). Here the reindex cannot run, which is the wedged-lock case.
-    """
-    test_file = tmp_path / "tests" / "test_feature.py"
-    test_file.parent.mkdir(parents=True)
-    test_file.write_text("def test_feature() -> None:\n    assert compute() == 3\n")
-
-    def run_command(command: list[str], _repo_path: str) -> str:
-        if command[1] == "index":
-            raise RuntimeError("index lock busy for project abc; skipped")
-        return '{"results":[]}'
-
-    monkeypatch.setattr(artifacts_module, "_run_command", run_command)
+def test_test_bodies_pinned_to_linked_commit(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    test_file = repo / "tests" / "test_feature.py"
+    test_file.parent.mkdir()
+    test_file.write_text(
+        "def test_feature() -> None:\n    assert feature() == 'committed'\n",
+        encoding="utf-8",
+    )
+    linked_sha = _commit(repo, "committed acceptance test")
+    test_file.write_text(
+        "def test_feature() -> None:\n    assert feature() == 'working-tree'\n",
+        encoding="utf-8",
+    )
 
     result = evaluate_acceptance_artifacts(
         criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
-        repo_path=str(tmp_path),
-        commit_shas=[],
-    )
-
-    assert result.passed is False
-    assert result.findings == (
-        "tests/test_feature.py::test_feature: test_feature is defined in "
-        "tests/test_feature.py on disk but the code index does not have it "
-        "(index lock busy for project abc; skipped); the acceptance artifact is "
-        "valid and the index is behind. Run `gcode index --full --files "
-        "tests/test_feature.py` and retry the close.",
-    )
-
-
-def test_stale_index_is_repaired_by_reindexing_the_artifact_file(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """The common case self-heals: index the one named file, then resolve it."""
-    test_file = tmp_path / "tests" / "test_feature.py"
-    test_file.parent.mkdir(parents=True)
-    test_file.write_text("def test_feature() -> None:\n    assert compute() == 3\n")
-    commands: list[list[str]] = []
-
-    def run_command(command: list[str], _repo_path: str) -> str:
-        commands.append(command)
-        if command[1] == "index":
-            return "{}"
-        if command[1] == "symbol":
-            return '{"source":"def test_feature() -> None:\\n    assert compute() == 3\\n"}'
-        if any(cmd[1] == "index" for cmd in commands):
-            return (
-                '{"results":[{"id":"symbol-id","file_path":"tests/test_feature.py",'
-                '"name":"test_feature","qualified_name":"test_feature"}]}'
-            )
-        return '{"results":[]}'
-
-    monkeypatch.setattr(artifacts_module, "_run_command", run_command)
-
-    result = evaluate_acceptance_artifacts(
-        criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
-        repo_path=str(tmp_path),
-        commit_shas=[],
-    )
-
-    assert result.findings == ()
-    assert result.passed is True
-    assert commands[1] == [
-        "gcode",
-        "index",
-        "--full",
-        "--files",
-        "tests/test_feature.py",
-        "--skip-if-locked",
-    ]
-
-
-def test_search_timeout_is_repaired_by_reindexing_the_artifact_file(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    test_file = tmp_path / "tests" / "test_feature.py"
-    test_file.parent.mkdir(parents=True)
-    test_file.write_text("def test_feature() -> None:\n    assert compute() == 3\n")
-    commands: list[list[str]] = []
-
-    def run_command(command: list[str], _repo_path: str) -> str:
-        commands.append(command)
-        if command[1] == "search-symbol":
-            if sum(item[1] == "search-symbol" for item in commands) == 1:
-                raise RuntimeError("gcode command failed: search timed out after 30 seconds")
-            return (
-                '{"results":[{"id":"symbol-id","file_path":"tests/test_feature.py",'
-                '"name":"test_feature","qualified_name":"test_feature"}]}'
-            )
-        if command[1] == "index":
-            return "{}"
-        if command[1] == "symbol":
-            return '{"source":"def test_feature() -> None:\\n    assert compute() == 3\\n"}'
-        if command[0] == "git":
-            return ""
-        raise AssertionError(f"unexpected command: {command}")
-
-    monkeypatch.setattr(artifacts_module, "_run_command", run_command)
-
-    result = evaluate_acceptance_artifacts(
-        criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
-        repo_path=str(tmp_path),
-        commit_shas=[],
+        repo_path=str(repo),
+        commit_shas=[linked_sha],
     )
 
     assert result.passed is True
-    assert result.findings == ()
+    assert len(result.tests) == 1
+    assert "'committed'" in result.tests[0].body
+    assert "'working-tree'" not in result.tests[0].body
 
 
-def test_search_timeout_and_failed_reindex_name_the_stale_index(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    test_file = tmp_path / "tests" / "test_feature.py"
-    test_file.parent.mkdir(parents=True)
-    test_file.write_text("def test_feature() -> None:\n    assert compute() == 3\n")
-    timeout_error = "gcode command failed: search timed out after 30 seconds"
-
-    def run_command(command: list[str], _repo_path: str) -> str:
-        if command[1] == "search-symbol":
-            raise RuntimeError(timeout_error)
-        if command[1] == "index":
-            raise RuntimeError("index lock busy for project abc; skipped")
-        if command[0] == "git":
-            return ""
-        raise AssertionError(f"unexpected command: {command}")
-
-    monkeypatch.setattr(artifacts_module, "_run_command", run_command)
-
-    result = evaluate_acceptance_artifacts(
-        criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
-        repo_path=str(tmp_path),
-        commit_shas=[],
-    )
-
-    assert result.passed is False
-    assert result.findings == (
-        "tests/test_feature.py::test_feature: test_feature is defined in "
-        "tests/test_feature.py on disk but the code index does not have it "
-        f"({timeout_error}); the acceptance artifact is valid and the index is behind. "
-        "Run `gcode index --full --files tests/test_feature.py` and retry the close.",
-    )
-
-
-def test_symbol_absent_from_disk_keeps_the_unresolved_diagnostic(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """A named test that genuinely does not exist is not reported as index lag.
-
-    The file names ``test_feature`` in prose and calls it, so only a definition
-    check tells absence apart from lag; a bare text match would misreport this.
-    """
-    test_file = tmp_path / "tests" / "test_feature.py"
+def test_rust_test_body_is_extracted_from_linked_commit(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    test_file = repo / "crates" / "example" / "tests" / "feature.rs"
     test_file.parent.mkdir(parents=True)
     test_file.write_text(
-        '"""Covers test_feature."""\n\n\ndef test_other() -> None:\n    test_feature()\n'
+        '#[test]\nfn feature_works() {\n    let value = "committed";\n'
+        '    assert_eq!(value, "committed");\n}\n',
+        encoding="utf-8",
     )
-
-    def run_command(command: list[str], _repo_path: str) -> str:
-        if command[1] == "search-symbol":
-            raise RuntimeError("gcode command failed: search timed out after 30 seconds")
-        assert command[1] != "index", "a symbol absent from disk must not trigger a reindex"
-        return '{"results":[]}'
-
-    monkeypatch.setattr(artifacts_module, "_run_command", run_command)
+    linked_sha = _commit(repo, "committed Rust acceptance test")
+    test_file.write_text(
+        '#[test]\nfn feature_works() {\n    let value = "working-tree";\n'
+        '    assert_eq!(value, "working-tree");\n}\n',
+        encoding="utf-8",
+    )
 
     result = evaluate_acceptance_artifacts(
-        criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
-        repo_path=str(tmp_path),
-        commit_shas=[],
+        criteria="Feature works.\ntest: crates/example/tests/feature.rs::feature_works",
+        repo_path=str(repo),
+        commit_shas=[linked_sha],
     )
 
-    assert result.passed is False
-    assert result.findings == (
-        "tests/test_feature.py::test_feature: gcode could not resolve the exact "
-        "test body: expected one matching symbol, found 0",
-    )
+    assert result.passed is True
+    assert len(result.tests) == 1
+    assert '"committed"' in result.tests[0].body
+    assert '"working-tree"' not in result.tests[0].body
 
 
 def test_python_placebo_acceptance_test_is_named(
@@ -531,7 +365,7 @@ def test_feature() -> None:
     result = evaluate_acceptance_artifacts(
         criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
         repo_path=str(tmp_path),
-        commit_shas=[],
+        commit_shas=["linked"],
     )
 
     assert result.passed is False
@@ -557,7 +391,7 @@ fn protocol_frame_roundtrip() {
             "test: crates/gterminal/tests/frame_protocol.rs::protocol_frame_roundtrip"
         ),
         repo_path=str(tmp_path),
-        commit_shas=[],
+        commit_shas=["linked"],
     )
 
     assert result.passed is False
@@ -607,7 +441,7 @@ def test_test_named_helper_call_is_not_delegation(
     result = evaluate_acceptance_artifacts(
         criteria=f"Contract is executable.\ntest: {path}::{symbol}",
         repo_path=str(tmp_path),
-        commit_shas=[],
+        commit_shas=["linked"],
     )
 
     assert result.passed is True
@@ -652,7 +486,7 @@ def test_delegation_only_body_still_requires_an_executable_assertion(
     result = evaluate_acceptance_artifacts(
         criteria=f"Contract is executable.\ntest: {path}::{symbol}",
         repo_path=str(tmp_path),
-        commit_shas=[],
+        commit_shas=["linked"],
     )
 
     assert result.passed is False

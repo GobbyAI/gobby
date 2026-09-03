@@ -76,6 +76,9 @@ async def test_matching_submitted_verdict_uses_shared_accounting(
             },
             review_fingerprint="close",
             evidence_fingerprint="evidence",
+            diff_sha="diff",
+            test_bodies_sha="tests",
+            stable_facts={},
         )
     )
 
@@ -111,6 +114,9 @@ async def test_submitted_invalid_verdict_preserves_required_evidence(
             },
             review_fingerprint="close",
             evidence_fingerprint="evidence",
+            diff_sha="diff",
+            test_bodies_sha="tests",
+            stable_facts={},
         )
     )
 
@@ -151,6 +157,9 @@ async def test_malformed_submitted_verdict_can_be_corrected(
             verdict={"status": "unknown", "criteria": [], "feedback": "invalid status"},
             review_fingerprint="close",
             evidence_fingerprint="evidence",
+            diff_sha="diff",
+            test_bodies_sha="tests",
+            stable_facts={},
         )
     )
 
@@ -244,6 +253,9 @@ def _prepared() -> PreparedCloseReview:
         prompt_limit=256_000,
         review_fingerprint="close",
         evidence_fingerprint="evidence",
+        diff_sha="diff",
+        test_bodies_sha="tests",
+        stable_facts={},
         manifest_count=1,
         excerpt_chars=10,
     )
