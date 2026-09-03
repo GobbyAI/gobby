@@ -12,6 +12,7 @@ ACTIVE_STAGE_STATES: tuple[str, ...] = (
     "needs_review",
     "review_approved",
 )
+AWAITING_HUMAN_REVIEW_LABEL = "awaiting-human-review"
 
 
 def _read_field(value: Any, *names: str) -> Any:
@@ -70,6 +71,16 @@ def projected_task_state(task: Any) -> str:
     if _task_is_escalated(task):
         return "escalated"
     return current_stage_state(task) or "ready"
+
+
+def is_awaiting_human_review(task: Any) -> bool:
+    """Return whether a task is parked for explicit human review."""
+    labels = _read_field(task, "labels")
+    return (
+        isinstance(labels, Sequence)
+        and not isinstance(labels, str)
+        and (AWAITING_HUMAN_REVIEW_LABEL in labels)
+    )
 
 
 def is_task_closed(task: Any) -> bool:
@@ -182,7 +193,7 @@ def serialize_task_state(task: Any, *, is_blocked: bool | None = None) -> dict[s
     is_escalated = _task_is_escalated(task)
     if is_blocked is None:
         active_blocked_by = _read_field(task, "active_blocked_by")
-        is_blocked = bool(active_blocked_by) or is_escalated
+        is_blocked = bool(active_blocked_by) or is_escalated or is_awaiting_human_review(task)
 
     return {
         "owner_session_id": owner_session_id,

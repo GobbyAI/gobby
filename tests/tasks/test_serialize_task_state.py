@@ -32,6 +32,16 @@ def test_new_shape() -> None:
     assert state["is_escalated"] is False
 
 
+def test_awaiting_human_review_label_is_reported_blocked() -> None:
+    awaiting = serialize_task_state(
+        SimpleNamespace(labels=["llm-reviewed", "awaiting-human-review"])
+    )
+    reviewed = serialize_task_state(SimpleNamespace(labels=["llm-reviewed", "human-reviewed"]))
+
+    assert awaiting["is_blocked"] is True
+    assert reviewed["is_blocked"] is False
+
+
 def test_current_stage_prefers_live_stage_rows_over_serialized_projection() -> None:
     live_stage = SimpleNamespace(name="epic_qa", position=1, state="in_progress")
     task = SimpleNamespace(
