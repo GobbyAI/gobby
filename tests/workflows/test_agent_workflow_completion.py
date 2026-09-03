@@ -31,6 +31,7 @@ pytestmark = pytest.mark.unit
 # Session/project/instance id columns are native uuid in PostgreSQL; synthetic
 # ids like AGENT_SESSION_ID would fail with `invalid input syntax for type uuid`.
 AGENT_SESSION_ID = "11111111-1111-4111-8111-111111111111"
+ASSIGNED_TASK_UUID = "22222222-2222-4222-8222-222222222222"
 PARENT_SESSION_UUID = "parent-session-uuid"
 PARENT_SESSION_REF = "#4242"
 PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -296,8 +297,17 @@ class TestAgentWorkflowCompletion:
                 "run_id": "ff807256-1906-55de-b7b3-94163bb18352",
                 "via": "workflow_terminate",
                 "workflow": "plan-adversary-steps",
+                "task_ref": None,
+                "claimed_by": None,
+                "is_escalated": False,
+                "escalation_reason": None,
+                "linked_commits": [],
             },
-            message="Agent ff807256-1906-55de-b7b3-94163bb18352 completed via workflow terminate",
+            message=(
+                "Agent ff807256-1906-55de-b7b3-94163bb18352 completed via workflow "
+                "terminate; task_ref=none; claimed_by=none; is_escalated=false; "
+                "escalation_reason=none; linked_commits=[]"
+            ),
         )
         completion_registry.notify.assert_not_awaited()
 
@@ -572,8 +582,17 @@ class TestAgentWorkflowCompletion:
                 "run_id": "ff807256-1906-55de-b7b3-94163bb18352",
                 "via": "workflow_terminate",
                 "workflow": "expansion-qa",
+                "task_ref": None,
+                "claimed_by": None,
+                "is_escalated": False,
+                "escalation_reason": None,
+                "linked_commits": [],
             },
-            message="Agent ff807256-1906-55de-b7b3-94163bb18352 completed via workflow terminate",
+            message=(
+                "Agent ff807256-1906-55de-b7b3-94163bb18352 completed via workflow "
+                "terminate; task_ref=none; claimed_by=none; is_escalated=false; "
+                "escalation_reason=none; linked_commits=[]"
+            ),
         )
         completion_registry.notify.assert_not_awaited()
 
@@ -928,6 +947,76 @@ class TestAgentWorkflowCompletion:
         assert instance.current_step == "terminate"
         assert instance.variables["implementation_complete"] is True
         assert variables["step_workflow_complete"] is True
+
+    @pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+    @pytest.mark.parametrize("task_id", ("#21617", ASSIGNED_TASK_UUID))
+    @pytest.mark.asyncio
+    async def test_escalate_assigned_task_exits_implement(
+        self,
+        db: HubDatabase,
+        agent_name: str,
+        task_id: str,
+    ) -> None:
+        instance_manager = _register_bundled_agent_workflow(
+            db,
+            agent_name=agent_name,
+            current_step="implement",
+        )
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {
+            "assigned_task_id": "#21617",
+            "assigned_task_uuid": ASSIGNED_TASK_UUID,
+        }
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-tasks",
+                mcp_tool="escalate_task",
+                tool_arguments={"task_id": task_id, "reason": "Coordinator action required."},
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+        assert instance is not None
+        assert instance.current_step == "terminate"
+        assert instance.variables["implementation_complete"] is True
+        assert variables["step_workflow_complete"] is True
+
+    @pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+    @pytest.mark.asyncio
+    async def test_escalate_other_task_stays_in_implement(
+        self,
+        db: HubDatabase,
+        agent_name: str,
+    ) -> None:
+        instance_manager = _register_bundled_agent_workflow(
+            db,
+            agent_name=agent_name,
+            current_step="implement",
+        )
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {
+            "assigned_task_id": "#21617",
+            "assigned_task_uuid": ASSIGNED_TASK_UUID,
+        }
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-tasks",
+                mcp_tool="escalate_task",
+                tool_arguments={"task_id": "#21618", "reason": "Wrong task."},
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+        assert instance is not None
+        assert instance.current_step == "implement"
+        assert instance.variables["implementation_complete"] is False
+        assert "step_workflow_complete" not in variables
 
     @pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
     @pytest.mark.parametrize("target_id", (PARENT_SESSION_UUID, PARENT_SESSION_REF))

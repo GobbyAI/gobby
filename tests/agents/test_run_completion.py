@@ -5,13 +5,51 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import gobby.agents.run_completion as run_completion
 
 pytestmark = pytest.mark.unit
+
+
+def test_workflow_completion_notification_includes_terminal_task_state() -> None:
+    task_manager = MagicMock()
+    task_manager.get_task.return_value = SimpleNamespace(
+        id="22222222-2222-4222-8222-222222222222",
+        seq_num=21617,
+        claimed_by_session_id=None,
+        is_escalated=True,
+        escalation_reason="Coordinator restart required.",
+        commits=["abc123", "def456"],
+    )
+
+    with patch.object(run_completion, "LocalTaskManager", return_value=task_manager):
+        result, message = run_completion.build_workflow_completion_notification(
+            MagicMock(),
+            "run-123",
+            "backend-developer-steps",
+            "22222222-2222-4222-8222-222222222222",
+        )
+
+    assert result == {
+        "status": "success",
+        "run_id": "run-123",
+        "via": "workflow_terminate",
+        "workflow": "backend-developer-steps",
+        "task_ref": "#21617",
+        "claimed_by": None,
+        "is_escalated": True,
+        "escalation_reason": "Coordinator restart required.",
+        "linked_commits": ["abc123", "def456"],
+    }
+    assert message == (
+        "Agent run-123 completed via workflow terminate; task_ref=#21617; "
+        "claimed_by=none; is_escalated=true; "
+        'escalation_reason="Coordinator restart required."; '
+        'linked_commits=["abc123","def456"]'
+    )
 
 
 @pytest.mark.asyncio

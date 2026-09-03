@@ -476,6 +476,7 @@ async def spawn_agent_impl(
         effective_initial_variables["assigned_task_id"] = (
             f"#{task_seq_num}" if task_seq_num else resolved_task_id
         )
+        effective_initial_variables["assigned_task_uuid"] = resolved_task_id
     if "assigned_task_id" in effective_initial_variables:
         effective_initial_variables["parent_session_id"] = parent_session_id
         effective_initial_variables["parent_session_ref"] = _parent_session_ref(

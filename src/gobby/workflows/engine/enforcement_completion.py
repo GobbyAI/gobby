@@ -159,14 +159,6 @@ class EnforcementCompletionMixin:
             run_row = await offload(self._runner.get_run, run_id)
         terminal_reason: str | None = getattr(run_row, "terminal_reason", None)
 
-        notify_result: dict[str, Any] = {
-            "status": "success",
-            "run_id": run_id,
-            "via": "workflow_terminate",
-            "workflow": workflow_name,
-        }
-        message = f"Agent {run_id} completed via workflow terminate"
-
         lifecycle_monitor = getattr(self._runner, "agent_lifecycle_monitor", None)
         terminalize_successful_run: Any = getattr(
             lifecycle_monitor,
@@ -199,6 +191,19 @@ class EnforcementCompletionMixin:
                 terminal_reason=terminal_reason,
             )
             return
+        task_id = getattr(run_row, "task_id", None)
+        if not isinstance(task_id, str):
+            task_id = None
+        build_workflow_completion_notification = _facade_attr(
+            "build_workflow_completion_notification"
+        )
+        notify_result, message = await offload(
+            build_workflow_completion_notification,
+            self.db,
+            run_id,
+            workflow_name,
+            task_id,
+        )
         # Lifecycle monitor terminalizers are async by contract. A sync callable
         # is treated as unavailable so workflow completion uses the runner path.
         if inspect.iscoroutinefunction(terminalize_successful_run):
