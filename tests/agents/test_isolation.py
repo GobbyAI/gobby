@@ -1399,8 +1399,8 @@ class TestWorktreeIsolationHandler:
         mock_worktree_storage.delete.assert_called_once_with("wt-123")
 
     @pytest.mark.asyncio
-    async def test_cleanup_noop_on_success(self) -> None:
-        """Test cleanup does nothing after successful prepare."""
+    async def test_cleanup_noop_after_environment_commit(self) -> None:
+        """Test cleanup does nothing after the run-start commit point."""
         mock_git_manager = MagicMock()
         mock_git_manager.repo_path = "/path/to/main/repo"
         mock_git_manager.create_worktree.return_value = MagicMock(success=True)
@@ -1439,6 +1439,7 @@ class TestWorktreeIsolationHandler:
         assert context.isolation_type == "worktree"
         assert context.worktree_id == "wt-123"
 
+        handler.commit_environment(config)
         await handler.cleanup_environment(config)
 
         # Should NOT call delete since nothing to clean up

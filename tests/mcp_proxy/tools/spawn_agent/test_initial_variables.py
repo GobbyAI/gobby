@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Iterator
 from pathlib import Path
@@ -37,6 +38,14 @@ def _stub_prelaunch_prepare(monkeypatch: pytest.MonkeyPatch) -> None:
         "gobby.mcp_proxy.tools.spawn_agent._implementation.prepare_terminal_spawn",
         lambda *args, **kwargs: prepared_spawn(),
     )
+
+
+async def _drain_spawn_background_tasks() -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
+
+    tasks = tuple(_spawn_background_tasks.values())
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
 @pytest.fixture(autouse=True)
@@ -320,6 +329,7 @@ class TestSpawnAgentStepVariables:
                     "parent_session_id": "parent-789",
                 },
             )
+            await _drain_spawn_background_tasks()
 
             spawn_request = mock_execute.call_args[0][0]
             assert spawn_request.initial_variables["_agent_type"] == "qa-agent"
@@ -450,6 +460,7 @@ class TestSpawnAgentStepVariables:
                     "parent_session_id": parent.id,
                 },
             )
+            await _drain_spawn_background_tasks()
 
         assert result["success"] is True, result
         assert task_manager.get_task(task.id).claimed_by_session_id == child.id
@@ -543,6 +554,7 @@ class TestSpawnAgentStepVariables:
                     "parent_session_id": parent.id,
                 },
             )
+            await _drain_spawn_background_tasks()
         return result, task_manager, task, child.id
 
     async def test_auto_claim_records_claimed_session_task_link(
@@ -714,6 +726,7 @@ class TestSpawnAgentStepVariables:
             if task_assignment == "request":
                 arguments["task_id"] = f"#{task.seq_num}"
             result = await registry.call("spawn_agent", arguments)
+            await _drain_spawn_background_tasks()
 
         spawn_request = mock_execute.call_args.args[0]
         instance = AgentStepInstanceManager(db).get_for_session(child.id)

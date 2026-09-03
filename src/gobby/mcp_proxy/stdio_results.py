@@ -37,9 +37,17 @@ def _daemon_unavailable_result(port: int, detail: str) -> dict[str, Any]:
 
 
 def _request_timeout_result(path: str, timeout: float) -> dict[str, Any]:
+    retry_hint = ""
+    if path.rstrip("/").endswith("/tools/spawn_agent"):
+        retry_hint = (
+            " Retry spawn_agent with the same task_id to recover the accepted run, "
+            "or call list_running_agents with that task_id."
+        )
     return {
         "success": False,
-        "error": f"Gobby daemon request timed out after {timeout:g}s while calling {path}.",
+        "error": (
+            f"Gobby daemon request timed out after {timeout:g}s while calling {path}.{retry_hint}"
+        ),
         "error_code": "REQUEST_TIMEOUT",
     }
 

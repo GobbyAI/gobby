@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +24,14 @@ from gobby.workflows.definitions import (
 from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
+
+
+async def _drain_spawn_background_tasks() -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
+
+    tasks = tuple(_spawn_background_tasks.values())
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
 @pytest.fixture(autouse=True)
@@ -57,9 +66,7 @@ class TestCreateSpawnAgentRegistry:
 
         assert registry.get_schema("spawn_agent") is not None
 
-    def test_spawn_agent_schema_includes_notify_parent_on_completion_default_true(
-        self, mock_runner
-    ) -> None:
+    def test_spawn_agent_schema_includes_lifecycle_defaults(self, mock_runner) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
@@ -71,7 +78,12 @@ class TestCreateSpawnAgentRegistry:
             "type": "boolean",
             "default": True,
         }
+        assert properties["cleanup_isolation_on_failure"] == {
+            "type": "boolean",
+            "default": False,
+        }
         assert "notify_parent_on_completion" not in schema["inputSchema"]["required"]
+        assert "cleanup_isolation_on_failure" not in schema["inputSchema"]["required"]
 
 
 class TestSpawnAgentDefaults:
@@ -119,6 +131,7 @@ class TestSpawnAgentDefaults:
                     "parent_session_id": "parent-789",
                 },
             )
+            await _drain_spawn_background_tasks()
 
             # Verify "default" agent was loaded
             assert mock_load.call_args[0][0] == "default"
@@ -179,7 +192,7 @@ class TestSpawnAgentDefaults:
         )
 
     @pytest.mark.asyncio
-    async def test_spawn_agent_notify_parent_on_completion_false_skips_subscription(
+    async def test_spawn_agent_forwards_disabled_parent_completion_notification(
         self, mock_runner
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
@@ -214,9 +227,6 @@ class TestSpawnAgentDefaults:
                 new_callable=AsyncMock,
                 return_value={"success": True, "run_id": "run-123"},
             ) as mock_spawn_impl,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._factory.subscribe_agent_completion"
-            ) as mock_subscribe,
         ):
             result = await registry.call(
                 "spawn_agent",
@@ -229,10 +239,11 @@ class TestSpawnAgentDefaults:
 
         assert result["success"] is True
         assert mock_spawn_impl.call_args.kwargs["parent_session_id"] == "parent-789"
-        mock_subscribe.assert_not_called()
+        assert mock_spawn_impl.call_args.kwargs["completion_registry"] is completion_registry
+        assert mock_spawn_impl.call_args.kwargs["notify_parent_on_completion"] is False
 
     @pytest.mark.asyncio
-    async def test_spawn_agent_notify_parent_on_completion_defaults_to_subscribe(
+    async def test_spawn_agent_forwards_default_parent_completion_notification(
         self, mock_runner
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
@@ -267,9 +278,6 @@ class TestSpawnAgentDefaults:
                 new_callable=AsyncMock,
                 return_value={"success": True, "run_id": "run-123"},
             ) as mock_spawn_impl,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._factory.subscribe_agent_completion"
-            ) as mock_subscribe,
         ):
             result = await registry.call(
                 "spawn_agent",
@@ -283,12 +291,8 @@ class TestSpawnAgentDefaults:
         assert result["run_id"] == "run-123"
         assert mock_spawn_impl.call_args.kwargs["prompt"] == "Test prompt"
         assert mock_spawn_impl.call_args.kwargs["parent_session_id"] == "parent-789"
-        mock_subscribe.assert_called_once_with(
-            completion_registry=completion_registry,
-            run_id="run-123",
-            subscriber_session_id="parent-789",
-            db=db,
-        )
+        assert mock_spawn_impl.call_args.kwargs["completion_registry"] is completion_registry
+        assert mock_spawn_impl.call_args.kwargs["notify_parent_on_completion"] is True
 
     @pytest.mark.asyncio
     async def test_spawn_agent_derives_project_path_from_parent_session(
@@ -591,6 +595,7 @@ class TestSpawnAgentParamOverrides:
             }
             params.update(call_params)
             result = await registry.call("spawn_agent", params)
+            await _drain_spawn_background_tasks()
 
             assert result["success"] is True
             return mock_execute.call_args[0][0]
@@ -647,6 +652,7 @@ class TestSpawnAgentParamOverrides:
                     "parent_session_id": "parent-789",
                 },
             )
+            await _drain_spawn_background_tasks()
 
             assert result["success"] is True
             assert mock_execute.call_args[0][0].provider == "claude"
@@ -907,6 +913,7 @@ class TestSpawnAgentTaskResolution:
                     "task_id": "#6100",
                 },
             )
+            await _drain_spawn_background_tasks()
 
             mock_resolve.assert_called_once()
             assert mock_resolve.call_count == 1
@@ -977,6 +984,7 @@ class TestSpawnAgentSandbox:
                     "parent_session_id": "parent-789",
                 },
             )
+            await _drain_spawn_background_tasks()
 
             assert result["success"] is True
             spawn_request = mock_execute.call_args[0][0]
@@ -1077,6 +1085,7 @@ class TestSpawnAgentPromptPreamble:
                     "parent_session_id": "parent-789",
                 },
             )
+            await _drain_spawn_background_tasks()
 
             # Prompt is passed through as-is; preamble injected via hooks
             spawn_request = mock_execute.call_args[0][0]

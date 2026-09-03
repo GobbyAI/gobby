@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,6 +12,14 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
+
+
+async def _drain_spawn_background_tasks() -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
+
+    tasks = tuple(_spawn_background_tasks.values())
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
 class TestSpawnAgentDedup:
@@ -253,6 +262,7 @@ class TestSpawnAgentDedup:
                     "allow_closed_task": True,
                 },
             )
+            await _drain_spawn_background_tasks()
 
         if expect_spawn:
             mock_execute.assert_awaited_once()
@@ -364,6 +374,7 @@ class TestSpawnAgentDedup:
                     "isolation": "none",
                 },
             )
+            await _drain_spawn_background_tasks()
 
         assert result["success"] is True
         assert result.get("skipped") is not True

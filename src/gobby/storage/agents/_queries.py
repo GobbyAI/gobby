@@ -302,6 +302,8 @@ class _AgentRunQueryMixin:
         limit: int = 100,
         project_id: str | None = None,
         offset: int = 0,
+        *,
+        task_ids: Sequence[str] | None = None,
     ) -> list[AgentRun]:
         """
         List agent runs, optionally filtered by status and/or project.
@@ -325,6 +327,13 @@ class _AgentRunQueryMixin:
         if project_id:
             conditions.append("parent_s.project_id = %s")
             params.append(project_id)
+
+        if task_ids is not None:
+            if not task_ids:
+                return []
+            placeholders = ", ".join("%s" for _ in task_ids)
+            conditions.append(f"ar.task_id IN ({placeholders})")
+            params.extend(task_ids)
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -439,6 +448,8 @@ class _AgentRunQueryMixin:
         parent_session_id: str,
         limit: int = 100,
         status: AgentRunStatus | None = None,
+        *,
+        task_ids: Sequence[str] | None = None,
     ) -> list[AgentRun]:
         """List active agent runs spawned by a parent session."""
         conditions = ["ar.parent_session_id = %s"]
@@ -448,6 +459,12 @@ class _AgentRunQueryMixin:
             params.append(status)
         else:
             conditions.append("ar.status IN ('running', 'pending')")
+        if task_ids is not None:
+            if not task_ids:
+                return []
+            placeholders = ", ".join("%s" for _ in task_ids)
+            conditions.append(f"ar.task_id IN ({placeholders})")
+            params.extend(task_ids)
 
         return self._fetch_runs_with_live_stats(
             f"WHERE {' AND '.join(conditions)}",

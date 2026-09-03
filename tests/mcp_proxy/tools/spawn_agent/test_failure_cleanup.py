@@ -9,9 +9,212 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents.isolation import SpawnConfig, WorktreeIsolationHandler
 from gobby.mcp_proxy.tools.spawn_agent import _failure_cleanup
 
 pytestmark = pytest.mark.unit
+
+
+def _worktree_spawn_config(branch_name: str) -> SpawnConfig:
+    return SpawnConfig(
+        prompt="Test",
+        task_id="task-123",
+        task_title="Atomic spawn",
+        task_seq_num=123,
+        branch_name=branch_name,
+        branch_prefix=None,
+        base_branch="main",
+        project_id="project-123",
+        project_path="/repo",
+        provider="claude",
+        parent_session_id="session-123",
+    )
+
+
+@pytest.mark.asyncio
+async def test_fresh_worktree_deleted_on_post_prepare_failure() -> None:
+    git_manager = MagicMock(repo_path="/repo")
+    git_manager.get_current_branch.return_value = "main"
+    git_manager.has_unpushed_commits.return_value = (False, 0)
+    git_manager.create_worktree.return_value = SimpleNamespace(success=True)
+    worktree_storage = MagicMock(db=MagicMock())
+    worktree_storage.get_by_branch.return_value = None
+    worktree_storage.create.return_value = SimpleNamespace(
+        id="fresh-wt",
+        worktree_path="/tmp/fresh-wt",
+        branch_name="feature/fresh",
+    )
+    handler = WorktreeIsolationHandler(git_manager, worktree_storage)
+    config = _worktree_spawn_config("feature/fresh")
+    artifact_manager = MagicMock()
+
+    with (
+        patch.object(handler, "_generate_worktree_path", return_value="/tmp/fresh-wt"),
+        patch(
+            "gobby.agents.isolation_worktree.repair_isolation_environment",
+            new=AsyncMock(),
+        ) as repair_isolation,
+        patch(
+            "gobby.agents.isolation_worktree.worktree_reuse.capture_worktree_base_commit_sha",
+            return_value="base-sha",
+        ) as capture_base_commit,
+        patch(
+            "gobby.agents.isolation_worktree.TaskArtifactManager",
+            return_value=artifact_manager,
+        ),
+    ):
+        context = await handler.prepare_environment(config)
+        await handler.cleanup_environment(config)
+
+    assert context.worktree_id == "fresh-wt"
+    assert context.cwd == "/tmp/fresh-wt"
+    assert context.branch_name == "feature/fresh"
+    assert context.extra == {"base_commit_sha": "base-sha", "main_repo_path": "/repo"}
+    capture_base_commit.assert_called_once_with(
+        git_manager=git_manager,
+        worktree_path="/tmp/fresh-wt",
+        base_branch="main",
+        use_local=False,
+    )
+    repair_isolation.assert_awaited_once_with(
+        main_repo_path="/repo",
+        isolated_path="/tmp/fresh-wt",
+        provider="claude",
+    )
+    git_manager.delete_worktree.assert_called_once_with(
+        worktree_path="/tmp/fresh-wt",
+        force=True,
+        delete_branch=True,
+        force_delete_branch=True,
+        branch_name="feature/fresh",
+    )
+    artifact_manager.clear_worktree_references.assert_called_once_with("fresh-wt")
+    worktree_storage.delete.assert_called_once_with("fresh-wt")
+
+
+@pytest.mark.asyncio
+async def test_reused_worktree_survives_failure() -> None:
+    git_manager = MagicMock(repo_path="/repo")
+    git_manager.get_current_branch.return_value = "main"
+    worktree_storage = MagicMock(db=MagicMock())
+    worktree_storage.get_by_branch.return_value = SimpleNamespace(
+        id="reused-wt",
+        worktree_path="/tmp/reused-wt",
+        branch_name="feature/reused",
+    )
+    worktree_storage.is_claimed_by_live_session.return_value = False
+    handler = WorktreeIsolationHandler(git_manager, worktree_storage)
+    config = _worktree_spawn_config("feature/reused")
+
+    with (
+        patch("gobby.agents.isolation_worktree.Path.is_dir", return_value=True),
+        patch(
+            "gobby.agents.isolation_worktree.worktree_reuse.sync_reused_worktree_to_base",
+            new=AsyncMock(return_value=SimpleNamespace(base_commit_sha="base-sha")),
+        ) as sync_reused_worktree,
+        patch(
+            "gobby.agents.isolation_worktree.repair_isolation_environment",
+            new=AsyncMock(),
+        ) as repair_isolation,
+    ):
+        context = await handler.prepare_environment(config)
+        await handler.cleanup_environment(config)
+
+    assert context.worktree_id == "reused-wt"
+    assert context.cwd == "/tmp/reused-wt"
+    assert context.branch_name == "feature/reused"
+    assert context.extra == {"base_commit_sha": "base-sha", "main_repo_path": "/repo"}
+    sync_reused_worktree.assert_awaited_once()
+    repair_isolation.assert_awaited_once_with(
+        main_repo_path="/repo",
+        isolated_path="/tmp/reused-wt",
+        provider="claude",
+    )
+    git_manager.create_worktree.assert_not_called()
+    git_manager.delete_worktree.assert_not_called()
+    worktree_storage.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_finalize_failure_envelope_includes_isolation_identity() -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
+
+    run_storage = MagicMock()
+    runner = SimpleNamespace(run_storage=run_storage)
+    spawn_result = SimpleNamespace(
+        success=False,
+        error="provider boot failed",
+        child_session_id="child-123",
+        terminal_type="none",
+        pid=None,
+    )
+    isolation_context = SimpleNamespace(
+        worktree_id="worktree-123",
+        clone_id=None,
+        branch_name="feature/atomic-spawn",
+    )
+    handler = object()
+    spawn_config = object()
+    reasoning = SimpleNamespace(to_dict=lambda: {"status": "not_requested"})
+
+    with patch(
+        "gobby.mcp_proxy.tools.spawn_agent._execution.cleanup_failed_spawn",
+        new_callable=AsyncMock,
+    ) as cleanup:
+        result = await finalize_executed_spawn(
+            runner=runner,
+            run_id="run-123",
+            spawn_result=spawn_result,
+            spawn_request=None,
+            isolation_ctx=isolation_context,
+            effective_isolation="worktree",
+            base_commit_sha="base-sha",
+            handler=handler,
+            spawn_config=spawn_config,
+            completion_registry=None,
+            cleanup_isolation_on_failure=True,
+            task_manager=None,
+            parent_session_id="parent-123",
+            effective_provider="claude",
+            resolved_task_id=None,
+            task_seq_num=None,
+            db=None,
+            agent_body=None,
+            effective_initial_variables={},
+            reasoning=reasoning,
+        )
+
+    assert result == {
+        "success": False,
+        "error": "provider boot failed",
+        "run_id": "run-123",
+        "worktree_id": "worktree-123",
+        "branch_name": "feature/atomic-spawn",
+        "reasoning": {"status": "not_requested"},
+    }
+    run_storage.update_child_session.assert_called_once_with("run-123", "child-123")
+    run_storage.update_runtime.assert_called_once_with(
+        "run-123",
+        pid=None,
+        terminal_id=None,
+        worktree_id="worktree-123",
+        clone_id=None,
+    )
+    cleanup.assert_awaited_once_with(
+        runner,
+        "run-123",
+        "provider boot failed",
+        handler,
+        spawn_config,
+        completion_registry=None,
+        cleanup_isolation=True,
+        task_manager=None,
+        child_session_id="child-123",
+        pid=None,
+        tmux_session_name=None,
+        tmux_socket_name=None,
+        tmux_socket_path=None,
+    )
 
 
 @pytest.mark.asyncio

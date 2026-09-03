@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 from pathlib import Path
@@ -22,6 +23,14 @@ from gobby.worktrees.git import WorktreeGitManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, IsolatedCheckoutProject
 
 pytestmark = pytest.mark.integration
+
+
+async def _drain_spawn_background_tasks() -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
+
+    tasks = tuple(_spawn_background_tasks.values())
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -148,8 +157,10 @@ async def test_worktree_spawn_uses_target_repository(
         ),
     ):
         result = await registry.call("spawn_agent", arguments)
+        await _drain_spawn_background_tasks()
 
     assert result["success"] is True
+    assert result["status"] == "starting"
     git_manager_resolver.assert_called_once_with(target_project.project.id)
     startup_git_manager.get_current_branch.assert_not_called()
     assert _git(worktree_path, "rev-parse", "HEAD") == target_sha

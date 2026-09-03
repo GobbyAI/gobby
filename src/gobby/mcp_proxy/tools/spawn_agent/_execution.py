@@ -53,7 +53,6 @@ async def finalize_executed_spawn(
     completion_registry: Any,
     cleanup_isolation_on_failure: bool,
     task_manager: Any,
-    task_spawn_lease: Any,
     parent_session_id: str,
     effective_provider: str,
     resolved_task_id: str | None,
@@ -64,6 +63,11 @@ async def finalize_executed_spawn(
     reasoning: Any,
 ) -> dict[str, Any]:
     """Persist runtime, verify liveness, start the run, auto-claim, and build the response."""
+    failure_identity = {
+        "run_id": run_id,
+        "worktree_id": isolation_ctx.worktree_id,
+        "branch_name": isolation_ctx.branch_name,
+    }
     tmux_session_name, tmux_socket_name, tmux_socket_path = _tmux_runtime_metadata(spawn_result)
     _persist_spawn_runtime(
         runner,
@@ -74,32 +78,6 @@ async def finalize_executed_spawn(
         clone_id=isolation_ctx.clone_id,
         terminal_id=getattr(spawn_result, "terminal_id", None),
     )
-    if spawn_result.success:
-        attach_error = task_spawn_lease.attach(run_id)
-        if attach_error is not None:
-            task_spawn_lease.release_unattached()
-            error = f"task spawn mutex attach failed: {attach_error}"
-            await cleanup_failed_spawn(
-                runner,
-                run_id,
-                error,
-                handler,
-                spawn_config,
-                completion_registry=completion_registry,
-                cleanup_isolation=cleanup_isolation_on_failure,
-                task_manager=task_manager,
-                child_session_id=spawn_result.child_session_id,
-                pid=spawn_result.pid,
-                tmux_session_name=tmux_session_name,
-                tmux_socket_name=tmux_socket_name,
-                tmux_socket_path=tmux_socket_path,
-            )
-            return {
-                "success": False,
-                "error": error,
-                "run_id": run_id,
-            }
-
     tmux_spawn = bool(
         spawn_result.success and spawn_result.terminal_type == "tmux" and tmux_session_name
     )
@@ -133,7 +111,7 @@ async def finalize_executed_spawn(
             return {
                 "success": False,
                 "error": spawn_result.error,
-                "run_id": run_id,
+                **failure_identity,
             }
 
     if spawn_result.success and spawn_result.child_session_id is not None:
@@ -152,7 +130,11 @@ async def finalize_executed_spawn(
             tmux_socket_path=tmux_socket_path,
         )
         if start_error is not None:
-            return start_error
+            return {**start_error, **failure_identity}
+
+        commit_environment = getattr(handler, "commit_environment", None)
+        if callable(commit_environment):
+            commit_environment(spawn_config)
 
         try:
             from gobby.runner_broadcasting import fire_agent_event
@@ -241,7 +223,7 @@ async def finalize_executed_spawn(
                 return {
                     "success": False,
                     "error": error,
-                    "run_id": run_id,
+                    **failure_identity,
                 }
 
         if spawn_result.terminal_type == "tmux" and tmux_session_name:
@@ -254,7 +236,6 @@ async def finalize_executed_spawn(
                 completion_registry,
             )
     else:
-        task_spawn_lease.release_unattached()
         await cleanup_failed_spawn(
             runner,
             run_id,
@@ -275,6 +256,7 @@ async def finalize_executed_spawn(
         return {
             "success": False,
             "error": spawn_result.error or "Failed to spawn agent",
+            **failure_identity,
             "reasoning": reasoning.to_dict(),
         }
 
