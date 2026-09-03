@@ -33,6 +33,35 @@ NO_WORK_CLOSE_REASONS: frozenset[str] = frozenset(
     {"duplicate", "already_implemented", "wont_fix", "obsolete", "out_of_repo"}
 )
 
+# Checklist facts that identify the deliverable a verdict was rendered against.
+# Only these key the review and evidence fingerprints (#21675).
+#
+# The remaining facts — `validation_commands`, `transcript_operational_actions`,
+# `acceptance_artifacts` and `tdd_evidence` — are derived from the live session
+# transcript, so they change whenever the launching session runs another
+# command. Keying on them made a session void its own in-flight verdict simply
+# by continuing to work, and defeated the verdict memo at the same time, since
+# an otherwise unchanged retry never presented the same key twice. Transcript
+# evidence only ever grows, and evidence that grew cannot falsify a verdict that
+# has already been rendered; a new commit or a new attributed edit still moves
+# `commit_shas` and `attributed_paths` and correctly invalidates it.
+STABLE_CHECKLIST_FACT_KEYS: frozenset[str] = frozenset(
+    {
+        "commit_count",
+        "commit_shas",
+        "had_attributed_edits",
+        "attributed_paths",
+        "claim_started_at",
+    }
+)
+
+
+def stable_checklist_facts(checklist_facts: Mapping[str, object]) -> dict[str, object]:
+    """Narrow checklist facts to the deliverable-identifying subset."""
+    return {
+        key: value for key, value in checklist_facts.items() if key in STABLE_CHECKLIST_FACT_KEYS
+    }
+
 
 class ValidationPromptTooLarge(ValueError):
     """The full criteria and complete manifest cannot fit in the prompt contract."""
@@ -227,9 +256,15 @@ class TaskValidator:
             f"{index}. {criterion}" for index, criterion in enumerate(criteria, start=1)
         )
         facts_text = json.dumps(checklist_facts, sort_keys=True, separators=(",", ":"), default=str)
+        # The reviewer reads every fact; only the deliverable-identifying subset
+        # keys the fingerprints, so transcript growth cannot stale a verdict.
+        stable_facts = stable_checklist_facts(checklist_facts)
+        stable_facts_text = json.dumps(
+            stable_facts, sort_keys=True, separators=(",", ":"), default=str
+        )
         prior_requirements = render_prior_requirements(prior_verdict)
 
-        def render(evidence_text: str, requirements_text: str) -> str:
+        def render(evidence_text: str, requirements_text: str, facts: str = facts_text) -> str:
             return self._loader.render(
                 self.config.prompt_path or "validation/validate",
                 {
@@ -240,14 +275,16 @@ class TaskValidator:
                     "changes_summary": changes_summary.strip(),
                     "diff_evidence": evidence_text,
                     "test_bodies": test_bodies,
-                    "checklist_facts": facts_text,
+                    "checklist_facts": facts,
                     "prior_requirements": requirements_text,
                 },
             )
 
         diff_evidence = build_close_diff_evidence(diff_text, criteria=validation_criteria)
         complete_evidence_sha = diff_evidence.sha256
-        fingerprint_prompt = render(diff_evidence.text, _NO_PRIOR_REQUIREMENTS)
+        fingerprint_prompt = render(
+            diff_evidence.text, _NO_PRIOR_REQUIREMENTS, facts=stable_facts_text
+        )
         prompt = render(diff_evidence.text, prior_requirements)
         budget = min(
             self.config.close_review_prompt_budget_chars,
@@ -271,7 +308,7 @@ class TaskValidator:
                 {
                     "diff": complete_evidence_sha,
                     "tests": test_bodies,
-                    "facts": checklist_facts,
+                    "facts": stable_facts,
                 },
                 sort_keys=True,
                 separators=(",", ":"),

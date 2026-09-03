@@ -9,7 +9,7 @@ import psycopg
 import pytest
 
 from gobby.workflows.agent_models import AgentStepWorkflowBody
-from gobby.workflows.definitions import WorkflowStep
+from gobby.workflows.definitions import WorkflowStep, WorkflowTransition
 from gobby.workflows.step_context import (
     first_incomplete_step_workflow,
     get_active_step_workflow_context,
@@ -173,7 +173,7 @@ def test_first_incomplete_step_workflow_skips_missing_instance(
 def _mcp_handler_step(
     name: str,
     *,
-    transitions: list[object] | None = None,
+    transitions: list[WorkflowTransition] | None = None,
     exit_when: str | None = None,
 ) -> WorkflowStep:
     return WorkflowStep(
@@ -219,6 +219,37 @@ def test_step_gated_only_on_mcp_success_is_flagged_mcp_progress_only(
 def test_step_with_transitions_is_not_mcp_progress_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A declared transition is a non-MCP route forward, so the guard stays off.
+
+    This covers the `not step.transitions` conjunct on its own. The watchdog
+    tests construct `StepWorkflowContext` with `mcp_progress_only` preloaded,
+    so extraction is only exercised here.
+    """
+    step = _mcp_handler_step(
+        "review",
+        transitions=[WorkflowTransition(to="report", when="vars.findings")],
+    )
+    _patch_step_instance(
+        monkeypatch,
+        _instance(
+            "task-close-validator",
+            "review",
+            snapshot=_step_snapshot(step, "vars.review_complete"),
+        ),
+    )
+
+    context = get_active_step_workflow_context(MagicMock(), "session-1")
+
+    assert context is not None
+    assert step.transitions
+    assert step.exit_when is None
+    assert context.mcp_progress_only is False
+
+
+def test_step_with_exit_when_is_not_mcp_progress_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`exit_when` is the other non-MCP route, covered independently."""
     step = _mcp_handler_step("review", exit_when="vars.done")
     _patch_step_instance(
         monkeypatch,
@@ -232,6 +263,7 @@ def test_step_with_transitions_is_not_mcp_progress_only(
     context = get_active_step_workflow_context(MagicMock(), "session-1")
 
     assert context is not None
+    assert not step.transitions
     assert context.mcp_progress_only is False
 
 
