@@ -1,4 +1,4 @@
-"""Qwen capabilities collected from local ACP and settings discovery."""
+"""Qwen capabilities collected from local ACP model discovery."""
 
 from __future__ import annotations
 
@@ -10,10 +10,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from gobby.adapters.acp_client import ACPClient
 from gobby.adapters.qwen_acp_client import QwenACPClient
 from gobby.agents.trust import authorize_model_discovery_trust
-from gobby.config.app import deep_merge
 from gobby.paths import get_gobby_home
 from gobby.providers.capabilities.collectors.base import SourceSpec
 from gobby.providers.capabilities.models import (
@@ -24,14 +22,7 @@ from gobby.providers.capabilities.models import (
     SourceHealth,
     SourceState,
 )
-from gobby.servers.provider_model_discovery import (
-    discover_acp_models,
-    discover_qwen_configured_models,
-    discover_qwen_models,
-    load_qwen_settings,
-    normalize_qwen_model_labels,
-    qwen_local_model_values,
-)
+from gobby.servers.provider_model_discovery import discover_acp_models
 
 logger = logging.getLogger(__name__)
 
@@ -74,33 +65,15 @@ async def _model_discovery_cwd(provider: str) -> tuple[Path, bool]:
     return cwd.resolve(), created
 
 
-async def _discover_acp(client_cls: type[ACPClient]) -> list[dict[str, object]]:
-    models = await discover_acp_models(
-        client_cls=client_cls,
+async def _discover_qwen_models() -> Sequence[RawModel]:
+    return await discover_acp_models(
+        client_cls=QwenACPClient,
         which=shutil.which,
         model_discovery_cwd=_model_discovery_cwd,
         authorize_trust=authorize_model_discovery_trust,
         cleanup_tree=shutil.rmtree,
         logger=logger,
     )
-    return models
-
-
-async def _discover_qwen_models() -> Sequence[RawModel]:
-    settings = load_qwen_settings(deep_merge=deep_merge, logger=logger)
-
-    def configured_models() -> list[dict[str, object]]:
-        return discover_qwen_configured_models(settings)
-
-    models = await discover_qwen_models(
-        client_cls=QwenACPClient,
-        acp_discoverer=_discover_acp,
-        configured_model_discoverer=configured_models,
-        label_normalizer=normalize_qwen_model_labels,
-        which=shutil.which,
-    )
-    loopback_models = qwen_local_model_values(settings)
-    return tuple(model for model in models if model.get("value") not in loopback_models)
 
 
 @dataclass(frozen=True)

@@ -31,6 +31,8 @@ from gobby.servers.provider_model_discovery import (
     codex_uses_loopback_model_endpoint,
     load_claude_settings,
     load_codex_config,
+    load_qwen_settings,
+    qwen_uses_loopback_model_endpoint,
 )
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
@@ -58,6 +60,9 @@ def _local_provider_metadata_exclusions() -> frozenset[str]:
     claude_settings = load_claude_settings(deep_merge=deep_merge, logger=logger)
     if claude_uses_loopback_model_endpoint(claude_settings):
         providers.add("claude")
+    qwen_settings = load_qwen_settings(deep_merge=deep_merge, logger=logger)
+    if qwen_uses_loopback_model_endpoint(qwen_settings):
+        providers.add("qwen")
     return frozenset(providers)
 
 
