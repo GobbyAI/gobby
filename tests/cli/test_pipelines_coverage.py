@@ -9,6 +9,7 @@ Lines targeted: 23-99, 105, 195-221, 264-384, 422-498, 534-536, 628-691
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -100,6 +101,11 @@ class TestHelpers:
 
 
 class TestShowPipeline:
+    @pytest.fixture(autouse=True)
+    def _daemon_catalog_unavailable(self) -> Iterator[None]:
+        with patch("gobby.cli.pipelines._try_daemon_catalog", return_value=None):
+            yield
+
     @patch("gobby.cli.pipelines.get_project_path", return_value=None)
     @patch("gobby.cli.pipelines.get_workflow_loader")
     def test_show_not_found(

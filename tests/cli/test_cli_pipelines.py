@@ -3,6 +3,7 @@
 TDD tests for the pipelines CLI group.
 """
 
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,6 +14,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli import cli
+from gobby.cli.pipelines import _try_daemon_catalog
 from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.loader_cache import DiscoveredWorkflow
 from gobby.workflows.pipeline_state import (
@@ -98,6 +100,11 @@ class TestPipelinesCLIRegistration:
 class TestPipelinesList:
     """Tests for gobby pipelines list command."""
 
+    @pytest.fixture(autouse=True)
+    def _daemon_catalog_unavailable(self) -> Iterator[MagicMock]:
+        with patch("gobby.cli.pipelines._try_daemon_catalog", return_value=None) as daemon:
+            yield daemon
+
     def test_list_discovers_pipelines(
         self, runner: CliRunner, mock_discovered_pipelines: list[DiscoveredWorkflow]
     ) -> None:
@@ -113,6 +120,43 @@ class TestPipelinesList:
 
             assert result.exit_code == 0
             mock_loader.discover_pipelines_sync.assert_called_once_with("project-uuid")
+
+    def test_list_uses_daemon_api_without_db_loader(
+        self,
+        runner: CliRunner,
+        _daemon_catalog_unavailable: MagicMock,
+    ) -> None:
+        daemon_definition = {
+            "id": "pipeline-1",
+            "name": "deploy",
+            "project_id": "project-uuid",
+            "enabled": True,
+            "version": "1.0",
+            "definition_json": json.dumps(
+                {
+                    "name": "deploy",
+                    "description": "Deploy through daemon",
+                    "steps": [{"id": "deploy", "exec": "deploy"}],
+                }
+            ),
+        }
+        _daemon_catalog_unavailable.return_value = [daemon_definition]
+        mock_loader = MagicMock()
+
+        with (
+            patch(
+                "gobby.cli.pipelines.get_workflow_loader", return_value=mock_loader
+            ) as get_loader,
+            patch("gobby.cli.pipelines._get_project_id", return_value="project-uuid"),
+        ):
+            result = runner.invoke(cli, ["pipelines", "list"])
+
+        assert result.exit_code == 0
+        assert "deploy" in result.output
+        assert "Deploy through daemon" in result.output
+        _daemon_catalog_unavailable.assert_called_once_with("project-uuid")
+        get_loader.assert_not_called()
+        mock_loader.discover_pipelines_sync.assert_not_called()
 
     def test_list_outputs_pipeline_names(
         self, runner: CliRunner, mock_discovered_pipelines: list[DiscoveredWorkflow]
@@ -169,8 +213,6 @@ class TestPipelinesList:
         self, runner: CliRunner, mock_discovered_pipelines: list[DiscoveredWorkflow]
     ) -> None:
         """Verify list command supports --json output."""
-        import json
-
         mock_loader = MagicMock()
         mock_loader.discover_pipelines_sync.return_value = mock_discovered_pipelines
 
@@ -185,6 +227,11 @@ class TestPipelinesList:
 
 class TestPipelinesShow:
     """Tests for gobby pipelines show command."""
+
+    @pytest.fixture(autouse=True)
+    def _daemon_catalog_unavailable(self) -> Iterator[MagicMock]:
+        with patch("gobby.cli.pipelines._try_daemon_catalog", return_value=None) as daemon:
+            yield daemon
 
     def test_show_loads_pipeline(
         self, runner: CliRunner, mock_pipeline: PipelineDefinition
@@ -201,6 +248,56 @@ class TestPipelinesShow:
 
             assert result.exit_code == 0
             mock_loader.load_pipeline_sync.assert_called_once_with("deploy", "project-uuid")
+
+    def test_show_json_uses_daemon_api_without_db_loader(
+        self,
+        runner: CliRunner,
+        _daemon_catalog_unavailable: MagicMock,
+    ) -> None:
+        step_ids = [
+            "start_run",
+            "wait_run",
+            "get_run",
+            "fail_run",
+            "validate_run",
+            "fail_validation",
+            "coverage_check",
+        ]
+        steps = [{"id": step_id, "exec": f"echo {step_id}"} for step_id in step_ids]
+        steps[-1]["condition"] = "${{ inputs.run_coverage }}"
+        _daemon_catalog_unavailable.return_value = [
+            {
+                "id": "pipeline-expand-task",
+                "name": "expand-task",
+                "project_id": None,
+                "enabled": True,
+                "version": "1.0",
+                "definition_json": json.dumps(
+                    {
+                        "name": "expand-task",
+                        "description": "Expand a task",
+                        "steps": steps,
+                    }
+                ),
+            }
+        ]
+        mock_loader = MagicMock()
+
+        with (
+            patch(
+                "gobby.cli.pipelines.get_workflow_loader", return_value=mock_loader
+            ) as get_loader,
+            patch("gobby.cli.pipelines._get_project_id", return_value="project-uuid"),
+        ):
+            result = runner.invoke(cli, ["pipelines", "show", "expand-task", "--json"])
+
+        assert result.exit_code == 0
+        output = json.loads(result.output)
+        assert [step["id"] for step in output["steps"]] == step_ids
+        assert output["steps"][-1]["condition"] == "${{ inputs.run_coverage }}"
+        _daemon_catalog_unavailable.assert_called_once_with("project-uuid")
+        get_loader.assert_not_called()
+        mock_loader.load_pipeline_sync.assert_not_called()
 
     def test_show_outputs_pipeline_details(
         self, runner: CliRunner, mock_pipeline: PipelineDefinition
@@ -240,8 +337,6 @@ class TestPipelinesShow:
 
     def test_show_json_format(self, runner: CliRunner, mock_pipeline: PipelineDefinition) -> None:
         """Verify show command supports --json output."""
-        import json
-
         mock_loader = MagicMock()
         mock_loader.load_pipeline_sync.return_value = mock_pipeline
 
@@ -252,6 +347,59 @@ class TestPipelinesShow:
             data = json.loads(result.output)
             assert data["name"] == "deploy"
             assert "steps" in data
+
+    def test_show_json_has_same_shape_for_daemon_and_db_paths(
+        self,
+        runner: CliRunner,
+        mock_pipeline: PipelineDefinition,
+        _daemon_catalog_unavailable: MagicMock,
+    ) -> None:
+        _daemon_catalog_unavailable.return_value = [
+            {
+                "id": "pipeline-deploy",
+                "name": "deploy",
+                "project_id": None,
+                "enabled": True,
+                "version": "1.0",
+                "definition_json": json.dumps(mock_pipeline.model_dump(mode="json")),
+            }
+        ]
+        mock_loader = MagicMock()
+        mock_loader.load_pipeline_sync.return_value = mock_pipeline
+
+        with patch("gobby.cli.pipelines.get_workflow_loader", return_value=mock_loader):
+            daemon_result = runner.invoke(cli, ["pipelines", "show", "deploy", "--json"])
+            _daemon_catalog_unavailable.return_value = None
+            db_result = runner.invoke(cli, ["pipelines", "show", "deploy", "--json"])
+
+        assert daemon_result.exit_code == 0
+        assert db_result.exit_code == 0
+        assert json.loads(daemon_result.output) == json.loads(db_result.output)
+
+
+class TestPipelineCatalogDaemonClient:
+    """Tests for the pipeline catalog daemon transport."""
+
+    @patch("gobby.cli.utils_config.get_daemon_client")
+    def test_catalog_gets_project_definitions(self, get_client: MagicMock) -> None:
+        definitions = [{"id": "pipeline-1", "name": "deploy"}]
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"status": "success", "definitions": definitions}
+        get_client.return_value.call_http_api.return_value = response
+
+        result = _try_daemon_catalog("project-uuid")
+
+        assert result == definitions
+        get_client.return_value.call_http_api.assert_called_once_with(
+            "/api/pipelines/definitions?enabled=true&project_id=project-uuid",
+            method="GET",
+        )
+
+    @patch("gobby.cli.utils_config.get_daemon_client")
+    def test_catalog_returns_none_when_daemon_is_unreachable(self, get_client: MagicMock) -> None:
+        get_client.return_value.call_http_api.side_effect = httpx.ConnectError("daemon unavailable")
+
+        assert _try_daemon_catalog("project-uuid") is None
 
 
 class TestPipelinesRun:
