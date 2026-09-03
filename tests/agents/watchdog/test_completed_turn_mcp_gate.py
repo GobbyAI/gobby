@@ -143,6 +143,7 @@ async def _recover(host: _FakeHost) -> int:
         session_id="sess-1",
         transcript_path="/tmp/transcript.jsonl",
         snapshot=_snapshot(),
+        idle_timeout_seconds=300,
     )
 
 

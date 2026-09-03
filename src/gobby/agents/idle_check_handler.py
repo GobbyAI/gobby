@@ -331,6 +331,7 @@ class IdleCheckHandler:
                     session_id=session_id,
                     transcript_path=transcript_path,
                     snapshot=transcript_snapshot,
+                    idle_timeout_seconds=idle_timeout_seconds,
                 )
             logger.info(
                 "Agent %s has unsubmitted prompt input visible; skipping idle reprompt",
@@ -402,6 +403,7 @@ class IdleCheckHandler:
                 session_id=session_id,
                 transcript_path=transcript_path,
                 snapshot=transcript_snapshot,
+                idle_timeout_seconds=idle_timeout_seconds,
             )
 
         if idle_detector.should_reprompt(

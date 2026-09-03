@@ -133,6 +133,7 @@ async def recover_completed_turn(
     session_id: str | None,
     transcript_path: str,
     snapshot: WatchdogTranscriptSnapshot,
+    idle_timeout_seconds: int,
 ) -> int:
     event = snapshot.latest_turn_event
     if event is None or event.timestamp is None:
@@ -186,7 +187,13 @@ async def recover_completed_turn(
         max_attempts=max_attempts,
     )
     if decision == "duplicate":
-        return 0
+        return await _give_up_unanswered_reprompt(
+            host,
+            run,
+            state=state,
+            snapshot=snapshot,
+            idle_timeout_seconds=idle_timeout_seconds,
+        )
     if decision == "exhausted":
         # A run parked on a satisfied exit condition, or whose task was closed
         # or handed back, has no progress left to make, so failing it would
@@ -237,12 +244,62 @@ async def recover_completed_turn(
     ):
         return 0
     state.last_completion_identity = identity
+    state.last_reprompt_at = datetime.now(UTC)
     state.successful_reprompts += 1
     await host._record_watchdog_task_event(
         run,
         action="completed_turn_reprompt",
         session_id=session_id,
         detail="latest_turn_kind=completed",
+    )
+    return 1
+
+
+async def _give_up_unanswered_reprompt(
+    host: CompletedTurnRecoveryHost,
+    run: AgentRun,
+    *,
+    state: CompletedTurnRecoveryState,
+    snapshot: WatchdogTranscriptSnapshot,
+    idle_timeout_seconds: int,
+) -> int:
+    """Stop waiting on a delivered reprompt that never produced another turn.
+
+    The transcript identity still matches the turn the watchdog already
+    answered, so the provider session never started a new turn (a dead
+    app-server or a wedged TUI). Waiting on it forever holds the run, its
+    terminal, and its worktree; bound it by the idle timeout that declared
+    the turn idle in the first place.
+    """
+    if state.last_reprompt_at is None:
+        return 0
+    elapsed = (datetime.now(UTC) - state.last_reprompt_at).total_seconds()
+    if elapsed < idle_timeout_seconds:
+        return 0
+    if await host._complete_if_work_finished(run):
+        await host._log_transcript_snapshot(
+            run,
+            reason="completing idle agent whose work already finished",
+            snapshot=snapshot,
+            level=logging.INFO,
+        )
+        return 1
+    logger.error(
+        "Agent %s started no new turn in %.0fs after its completed-turn reprompt — failing",
+        run.id,
+        elapsed,
+    )
+    await host._log_transcript_snapshot(
+        run,
+        reason="failing after unanswered completed-turn reprompt",
+        snapshot=snapshot,
+        level=logging.ERROR,
+    )
+    await host._fail_idle_agent(
+        run,
+        reason=(
+            f"no new turn after completed-turn reprompt within {idle_timeout_seconds}s idle timeout"
+        ),
     )
     return 1
 
