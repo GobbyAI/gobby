@@ -210,6 +210,9 @@ step_workflow:
           value: true
         - server: gobby-tasks
           tool: escalate_task
+          when: >-
+            tool_input.get('task_id') is not None
+            and tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_uuid'))
           action: set_variable
           variable: implementation_complete
           value: true

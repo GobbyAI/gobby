@@ -131,7 +131,7 @@ class _RecordingSessionVariables:
         self.variables.update(merge)
 
 
-def test_escalation_releases_the_claim_but_keeps_edit_attribution(
+def test_escalation_by_claiming_session_releases_claim_and_records_reason(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
@@ -148,7 +148,10 @@ def test_escalation_releases_the_claim_but_keeps_edit_attribution(
         "Escalation keeps attribution",
         validation_criteria="Test task completion is observable.",
     )
-    escalated = manager.escalate_task(task.id, reason="blocked on a decision")
+    claimant = _session(SessionManager(temp_db), sample_project["id"])
+    manager.claim_task(task.id, claimant.id)
+    reason = "blocked on a decision"
+    escalated = manager.escalate_task(task.id, reason=reason)
     session_vars = _RecordingSessionVariables(
         {
             "active_task_id": task.id,
@@ -167,10 +170,14 @@ def test_escalation_releases_the_claim_but_keeps_edit_attribution(
     coordinate_task_escalation(
         ctx,
         escalated,
-        prior_owner_session_id="owner-session",
-        session_id=None,
+        prior_owner_session_id=claimant.id,
+        session_id=claimant.id,
     )
 
+    persisted = manager.get_task(task.id)
+    assert persisted.claimed_by_session_id is None
+    assert persisted.is_escalated is True
+    assert persisted.escalation_reason == reason
     assert session_vars.variables["claimed_tasks"] == {}
     assert session_vars.variables["task_claimed"] is False
     assert session_vars.variables["active_task_id"] is None

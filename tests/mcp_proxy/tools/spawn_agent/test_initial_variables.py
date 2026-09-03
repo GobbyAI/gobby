@@ -837,6 +837,7 @@ class TestSpawnAgentStepVariables:
         assert instance.variables["additional_skills"] == []
         assert instance.variables["additional_skills_loaded"] is True
         assert spawn_request.initial_variables is not None
+        assert spawn_request.initial_variables["assigned_task_uuid"] == task.id
         assert (
             spawn_request.initial_variables["parent_session_id"] == spawn_request.parent_session_id
         )
