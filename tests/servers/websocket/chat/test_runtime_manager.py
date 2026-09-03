@@ -432,10 +432,14 @@ class TestWebChatRuntimeManager:
         assert manager.sandbox_config.enabled is True
         assert manager.sandbox_policy_hash
 
-    def test_manager_handles_daemon_config_without_embeddings(self) -> None:
-        manager = WebChatRuntimeManager(codex_client=None, daemon_config=SimpleNamespace())
+    def test_manager_constructs_qwen_backend_without_generation_endpoints(self) -> None:
+        with patch(
+            "gobby.servers.websocket.chat.runtime_manager.QwenWebChatBackend"
+        ) as backend_cls:
+            manager = WebChatRuntimeManager(codex_client=None, daemon_config=SimpleNamespace())
 
-        assert manager._qwen_backend._local_generation_endpoints == {}
+        backend_cls.assert_called_once_with()
+        assert manager._qwen_backend is backend_cls.return_value
 
     @pytest.mark.asyncio
     async def test_background_start_skips_acp_backends(self) -> None:
@@ -847,50 +851,6 @@ class TestQwenBackend:
         assert tool_result.tool_call_id == "call-1"
         assert tool_result.success is True
         assert tool_result.result == "ok"
-
-    @pytest.mark.asyncio
-    async def test_attach_session_warms_local_openai_models(self) -> None:
-        client = MagicMock()
-        client.is_started = True
-        client.create_session = AsyncMock(return_value={"sessionId": "sess-qwen"})
-
-        endpoint = GenerationEndpointConfig(
-            api_base="http://localhost:1234/v1",
-            model="qwen3.6-35b-a3b-q8-local",
-            api_key="endpoint-token",
-        )
-        backend = QwenWebChatBackend(
-            client=client,
-            local_generation_endpoints={"lm-studio": endpoint},
-        )
-        backend._health.available = True
-        backend.start = AsyncMock()
-
-        session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=backend)
-        session.project_path = "/tmp/project"
-        session._model = "qwen3.6-35b-a3b-q8-local(openai)"
-
-        with patch(
-            "gobby.servers.websocket.chat.backends.qwen.ensure_qwen_local_openai_model_ready",
-            new=AsyncMock(),
-        ) as mock_warmup:
-            await backend.attach_session(session)
-
-        mock_warmup.assert_awaited_once_with(
-            "qwen3.6-35b-a3b-q8-local(openai)",
-            project_path="/tmp/project",
-            local_generation_endpoints={"lm-studio": endpoint},
-        )
-        assert mock_warmup.await_count == 1
-        assert mock_warmup.await_args is not None
-        resolved_project_path = str(Path(session.project_path).resolve())
-        client.create_session.assert_awaited_once_with(
-            model="qwen3.6-35b-a3b-q8-local(openai)",
-            cwd=resolved_project_path,
-            reasoning_effort=None,
-        )
-        assert client.create_session.await_count == 1
-        assert client.create_session.await_args is not None
 
 
 async def _collect_codex_backend_events(

@@ -16,7 +16,6 @@ from websockets.exceptions import ConnectionClosedError
 
 from gobby.llm.claude_models import ChatEvent
 from gobby.servers.websocket.chat._messaging import ChatMessagingMixin
-from gobby.servers.websocket.chat.local_openai_warmup import LocalOpenAIModelWarmupError
 
 pytestmark = pytest.mark.unit
 ChatContent = str | list[dict[str, Any]]
@@ -88,7 +87,6 @@ class ChatMixinHost(ChatMessagingMixin):
         self._pending_agents: dict[str, str] = {}
         self.message_manager: Any = None
         self.session_manager: Any = None
-        self.create_session_error: Exception | None = None
 
     async def _send_error(
         self, websocket: object, message: str, request_id: str | None = None, code: str = "ERROR"
@@ -118,8 +116,6 @@ class ChatMixinHost(ChatMessagingMixin):
         provider: str | None = None,
         reasoning_effort: str | None = None,
     ) -> Any:
-        if self.create_session_error is not None:
-            raise self.create_session_error
         session = _FakeSession()
         self._chat_sessions[conversation_id] = session
         return session
@@ -202,23 +198,6 @@ class TestSafeSend:
 
         await host._stream_chat_response(ws, "conv-3", "test", None)
         assert ws in host.clients
-
-    @pytest.mark.asyncio
-    async def test_startup_warmup_error_is_sent_to_client(self, host: ChatMixinHost) -> None:
-        ws = MockWebSocket()
-        host.clients[ws] = {"conversation_id": "conv-warmup"}
-        host.create_session_error = LocalOpenAIModelWarmupError(
-            "Load the local model in LM Studio or enable Just-In-Time loading."
-        )
-
-        await host._stream_chat_response(ws, "conv-warmup", "test", None)
-
-        assert len(ws.sent_messages) == 1
-        payload = json.loads(ws.sent_messages[0])
-        assert payload["type"] == "chat_error"
-        assert payload["error"] == (
-            "Load the local model in LM Studio or enable Just-In-Time loading."
-        )
 
 
 # ---------------------------------------------------------------------------

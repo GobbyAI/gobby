@@ -353,13 +353,6 @@ async def test_acp_family_clear_context_creates_session_instead_of_resume(
                 return_value=None,
             )
         )
-        if provider == "qwen":
-            stack.enter_context(
-                patch(
-                    "gobby.servers.websocket.chat.backends.qwen.ensure_qwen_local_openai_model_ready",
-                    new_callable=AsyncMock,
-                )
-            )
         result = await session.clear_context()
 
     assert result is True

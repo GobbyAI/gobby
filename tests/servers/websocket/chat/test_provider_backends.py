@@ -11,6 +11,7 @@ import pytest
 from gobby.adapters.acp_stream import StreamEvent
 from gobby.adapters.acp_tool_names import normalize_acp_tool_name
 from gobby.llm.claude_models import ToolCallEvent
+from gobby.servers.websocket.chat.backends.acp import ACPWebChatBackend
 from gobby.servers.websocket.chat.backends.base import ProviderBackendHealth
 from gobby.servers.websocket.chat.backends.codex import (
     CodexManagedChatSession,
@@ -45,6 +46,10 @@ def test_qwen_acp_web_chat_uses_shared_tool_name_normalizer_directly() -> None:
 
     assert isinstance(translated, ToolCallEvent)
     assert translated.tool_name == "Bash"
+
+
+def test_qwen_backend_uses_generic_acp_attach() -> None:
+    assert QwenWebChatBackend.attach_session is ACPWebChatBackend.attach_session
 
 
 @pytest.mark.asyncio

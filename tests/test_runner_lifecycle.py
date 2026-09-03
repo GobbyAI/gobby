@@ -475,6 +475,7 @@ class TestInitSubsystems:
         runner.tool_chat_service = None
         runner._dev_mode = False
         capability_service = MagicMock()
+        coverage_auditor = MagicMock()
         capacity_service = MagicMock()
 
         with (
@@ -487,6 +488,10 @@ class TestInitSubsystems:
             ),
             patch("gobby.runner_init.servers.HTTPServer", FakeHTTPServer),
             patch("gobby.runner_init.servers.WebChatRuntimeManager", FakeWebChatRuntimeManager),
+            patch(
+                "gobby.runner_init.servers.ModelMetadataCoverageAuditor",
+                return_value=coverage_auditor,
+            ) as coverage_factory,
             patch(
                 "gobby.runner_init.servers.CapabilityRefreshCoordinator",
                 return_value=capability_service,
@@ -509,6 +514,9 @@ class TestInitSubsystems:
         assert services.llm_service is None
         assert services.provider_capacity_service is capacity_service
         assert services.provider_capability_service is capability_service
+        assert coverage_factory.call_args is not None
+        assert "excluded_models" not in coverage_factory.call_args.kwargs
+        assert callable(coverage_factory.call_args.kwargs["excluded_providers"])
         capacity_factory.assert_called_once_with(
             runner.database,
             machine_id="machine-1",
