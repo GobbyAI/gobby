@@ -73,12 +73,8 @@ def _fingerprint_deltas(
             delta = _sequence_delta(label, previous_facts.get(key), current_facts.get(key))
             if delta is not None:
                 deltas.append(delta)
-        for key, label in (
-            ("had_attributed_edits", "attributed edit state"),
-            ("claim_started_at", "claim start"),
-        ):
-            if previous_facts.get(key) != current_facts.get(key):
-                deltas.append(f"{label} changed")
+        if previous_facts.get("had_attributed_edits") != current_facts.get("had_attributed_edits"):
+            deltas.append("attributed edit state changed")
         if previous_facts.get("commit_count") != current_facts.get(
             "commit_count"
         ) and previous_facts.get("commit_shas") == current_facts.get("commit_shas"):

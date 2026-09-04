@@ -319,6 +319,17 @@ def test_reviewer_prompt_marks_gate10_validation_runs_authoritative(
     assert "receipt or artifact that must result" not in prompt
 
 
+def test_claim_start_change_does_not_move_review_fingerprints(temp_db: HubDatabase) -> None:
+    at_launch = _prepare(temp_db, dict(_DELIVERABLE_FACTS))
+    after_claim_change = _prepare(
+        temp_db,
+        {**_DELIVERABLE_FACTS, "claim_started_at": "2026-09-03T06:00:00+00:00"},
+    )
+
+    assert after_claim_change.evidence_fingerprint == at_launch.evidence_fingerprint
+    assert after_claim_change.review_fingerprint == at_launch.review_fingerprint
+
+
 def test_new_commit_after_launch_still_stales_the_review(temp_db: HubDatabase) -> None:
     at_launch = _prepare(temp_db, dict(_DELIVERABLE_FACTS))
     with_new_commit = _prepare(
