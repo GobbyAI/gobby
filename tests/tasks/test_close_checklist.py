@@ -129,6 +129,43 @@ def test_latest_definitive_result_per_category_cures_failure() -> None:
     ]
 
 
+def test_latest_runs_lists_every_distinct_command_in_shared_category() -> None:
+    pytest_command = "uv run pytest tests/tasks/test_close_checklist.py -q"
+    quality_command = (
+        "uv run gobby test-quality audit tests/tasks/test_close_checklist.py "
+        "--baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low"
+    )
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _run(1, command=pytest_command),
+                _run(2, command=quality_command),
+            )
+        ),
+        has_attributed_edits=True,
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["latest_outcomes"] == {"test": "success"}
+    assert gate.details["latest_runs"] == [
+        {
+            "category": "test",
+            "command": pytest_command,
+            "completed_at": (BASE_TIME + timedelta(seconds=1)).isoformat(),
+            "outcome": "success",
+            "exit_code": 0,
+        },
+        {
+            "category": "test",
+            "command": quality_command,
+            "completed_at": (BASE_TIME + timedelta(seconds=2)).isoformat(),
+            "outcome": "success",
+            "exit_code": 0,
+        },
+    ]
+
+
 def test_unresolved_failure_blocks_even_when_required_category_passed() -> None:
     gate = evaluate_validation_commands(
         task_category="code",

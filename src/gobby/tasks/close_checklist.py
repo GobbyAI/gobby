@@ -83,9 +83,10 @@ def evaluate_validation_commands(
     Unknown outcomes are diagnostic only. A task-attributed edit makes every
     earlier run stale. Among fresh runs, the latest definitive outcome for each
     validation category wins, so a later clean run cures an earlier failure in
-    the same category. ``latest_runs`` records those winning runs (command,
-    timestamp, outcome, exit code) so the criteria reviewer can treat them as
-    the authoritative account of what ran.
+    the same category. ``latest_runs`` records the latest definitive run for
+    each distinct command (category, command, timestamp, outcome, exit code)
+    so the criteria reviewer can treat them as the authoritative account of
+    what ran.
     """
     category = (task_category or "").strip().casefold()
     details = _validation_details(evidence)
@@ -112,6 +113,10 @@ def evaluate_validation_commands(
     definitive = [run for run in fresh_runs if run.outcome != "unknown"]
     attributed = _attribute_compound_failures(definitive)
     latest_by_category = _latest_definitive_by_category(attributed)
+    latest_by_command: dict[str, TranscriptValidationRun] = {}
+    for run in sorted(attributed, key=lambda item: (item.order, item.completed_at)):
+        if run.categories:
+            latest_by_command[run.command] = run
     unresolved = {
         run_category: run
         for run_category, run in latest_by_category.items()
@@ -133,13 +138,16 @@ def evaluate_validation_commands(
         },
         "latest_runs": [
             {
-                "category": run_category,
+                "category": run.categories[0],
                 "command": run.command,
                 "completed_at": run.completed_at.isoformat(),
                 "outcome": run.outcome,
                 "exit_code": run.exit_code,
             }
-            for run_category, run in sorted(latest_by_category.items())
+            for run in sorted(
+                latest_by_command.values(),
+                key=lambda item: (item.completed_at, item.order, item.command),
+            )
         ],
         "unresolved_failure_categories": sorted(unresolved),
         "unresolved_failures": unresolved_failures,

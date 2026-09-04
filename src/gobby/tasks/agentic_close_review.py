@@ -70,6 +70,8 @@ def build_agentic_review_prompt(
             "validation_commands is gate 10's authoritative transcript record of the validation "
             "runs after the final task edit: a success run of a criterion's exact command "
             "satisfies that command without any committed log or receipt. "
+            "Its latest_runs entries include every distinct command whose latest definitive run "
+            "after the final task edit succeeded. "
         )
     prompt += (
         "Inspect the task, linked commits, exact acceptance tests, deterministic gate facts, "
