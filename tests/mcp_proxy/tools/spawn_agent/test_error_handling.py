@@ -1322,3 +1322,58 @@ class TestCleanupFailedSpawnWakesWaiter:
         else:
             assert removals == []
         assert harness.registry.is_registered("run-123") is False
+
+
+async def test_dirty_reused_worktree_refusal_surfaces_verbatim(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+
+    refusal = "Cannot reuse worktree with uncommitted changes; commit, stash, or inspect it first"
+    runner = MagicMock()
+    runner.can_spawn.return_value = (True, "ok", 0)
+    worktree_path = tmp_path_factory.mktemp("dirty-worktree")
+    worktree_storage = MagicMock()
+    worktree_storage.get.return_value = SimpleNamespace(
+        id="wt-dirty",
+        worktree_path=str(worktree_path),
+        branch_name="dirty-branch",
+    )
+    git_manager = MagicMock()
+    git_manager.get_current_branch.return_value = "main"
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
+            return_value={
+                "id": "11111111-1111-4111-8111-111111110001",
+                "project_path": str(worktree_path.parent),
+            },
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
+            new=AsyncMock(side_effect=RuntimeError(refusal)),
+        ) as sync,
+    ):
+        result = await spawn_agent_impl(
+            terminal_backend="tmux",
+            prompt="test",
+            runner=runner,
+            provider="codex",
+            parent_session_id="sess-1",
+            worktree_id="wt-dirty",
+            worktree_storage=worktree_storage,
+            git_manager=git_manager,
+        )
+
+    assert result["success"] is False
+    assert result["error"] == f"Failed to prepare reused worktree: {refusal}"
+    runner.can_spawn.assert_called_once()
+    worktree_storage.get.assert_called_once_with("wt-dirty")
+    worktree_storage.delete.assert_not_called()
+    git_manager.get_current_branch.assert_called_once()
+    sync.assert_awaited_once_with(
+        git_manager=git_manager,
+        worktree_path=str(worktree_path),
+        base_branch="main",
+    )
