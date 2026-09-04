@@ -113,6 +113,7 @@ async def test_attention_and_lease_writes_serialize() -> None:
     await asyncio.gather(task_a, task_b)
     payloads = [payload for _kind, payload in runtime.write_log]
     assert payloads[0] == "attention"
+    assert isinstance(payloads[1], str)
     assert payloads[1].startswith("lease")
 
 
@@ -399,7 +400,10 @@ async def test_lease_revalidated_immediately_before_effect() -> None:
             payload="attention-ok",
         )
     )
-    assert any(payload.startswith("attention-ok") for _kind, payload in runtime.write_log)
+    assert any(
+        isinstance(payload, str) and payload.startswith("attention-ok")
+        for _kind, payload in runtime.write_log
+    )
 
 
 @pytest.mark.asyncio

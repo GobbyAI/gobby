@@ -53,7 +53,7 @@ class WriteRequest:
     terminal_id: str
     action_key: str
     origin: Literal["operator", "automatic", "attention"]
-    kind: Literal["text", "key", "paste"]
+    kind: Literal["text", "key", "paste", "input"]
     payload: str
     submit: bool = False
     attachment_id: str | None = None
@@ -325,4 +325,6 @@ class WriteCoordinator:
             if not is_named_key(request.payload):
                 raise TerminalWriteError(stage="none")
             return await runtime.write_key(terminal, request.payload)
+        if request.kind == "input":
+            return await runtime.write_input(terminal, request.payload.encode("utf-8"))
         return await runtime.write_paste(terminal, request.payload)

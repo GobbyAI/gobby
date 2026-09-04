@@ -32,6 +32,7 @@ from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.servers.websocket.handlers import HandlerMixin
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.session_control import SessionControlMixin
+from gobby.servers.websocket.terminal_ws import TerminalWsMixin
 from gobby.servers.websocket.tmux import TmuxMixin
 from gobby.servers.websocket.voice import VoiceMixin
 from gobby.utils.json_helpers import json_dumps
@@ -358,7 +359,7 @@ class WebSocketServer(
                 "subscribe": self._handle_subscribe,
                 "unsubscribe": self._handle_unsubscribe,
                 "stop_request": self._handle_stop_request,
-                "terminal_input": self._handle_terminal_input,
+                "terminal_input": TerminalWsMixin._handle_terminal_input.__get__(self),
                 "chat_message": self._handle_chat_message,
                 "stop_chat": self._handle_stop_chat,
                 "ask_user_response": self._handle_ask_user_response,

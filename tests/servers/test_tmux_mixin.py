@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import uuid
-from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -30,13 +28,13 @@ class MockWebSocket:
     async def close(self, code: int = 1000, reason: str = "") -> None:
         self.closed = True
 
-    def last_message(self) -> dict:
-        return json.loads(self.sent_messages[-1])
+    def last_message(self) -> dict[str, Any]:
+        return cast(dict[str, Any], json.loads(self.sent_messages[-1]))
 
-    def all_messages(self) -> list[dict]:
+    def all_messages(self) -> list[dict[str, Any]]:
         return [json.loads(m) for m in self.sent_messages]
 
-    def messages_of_type(self, msg_type: str) -> list[dict]:
+    def messages_of_type(self, msg_type: str) -> list[dict[str, Any]]:
         return [m for m in self.all_messages() if m.get("type") == msg_type]
 
 
@@ -85,8 +83,7 @@ class TestTmuxClientCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_empty(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
-        result = await server._cleanup_tmux_client(ws)
-        assert result is None
+        await server._cleanup_tmux_client(ws)
         assert ws not in server._tmux_client_bridges
 
     @pytest.mark.asyncio
@@ -98,20 +95,7 @@ class TestTmuxClientCleanup:
 
 
 class TestTerminalInputRouting:
-    """Legacy PTY-bridge input routing is retired; a run id goes to the agent lookup."""
-
-    @pytest.mark.asyncio
-    async def test_input_reaches_the_run_lookup_for_a_run_id(self, server: WebSocketServer) -> None:
-        ws = MockWebSocket()
-        mock_session_mgr = MagicMock()
-        server.session_manager = mock_session_mgr
-        mock_arm = MagicMock()
-        mock_arm.get.return_value = None
-        run_id = str(uuid.uuid4())
-        with patch("gobby.storage.agents.LocalAgentRunManager", return_value=mock_arm):
-            await server._handle_terminal_input(ws, {"run_id": run_id, "data": "x"})
-        mock_arm.get.assert_called_once_with(run_id)
-        assert ws.sent_messages == []
+    """Only attachment-scoped terminal input reaches a backend."""
 
     @pytest.mark.asyncio
     async def test_input_for_a_detached_tmux_id_never_reaches_the_run_lookup(
@@ -124,9 +108,6 @@ class TestTerminalInputRouting:
         the uuid-keyed lookup cannot parse (#20803).
         """
         ws = MockWebSocket()
-        # A database has to be reachable, or the handler would stop short of
-        # the lookup for a reason that has nothing to do with the id.
-        server.session_manager = SimpleNamespace(db=object())
 
         def refuse_db(*_args: Any, **_kwargs: Any) -> Any:
             raise AssertionError("a tmux streaming id must never reach the agent-run lookup")

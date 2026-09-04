@@ -42,6 +42,7 @@ NamedKey = Literal[
 ]
 
 MAX_INPUT_PAYLOAD_BYTES = 1024 * 1024
+MAX_RAW_INPUT_PAYLOAD_BYTES = 64 * 1024
 
 
 def is_named_key(value: str) -> TypeIs[NamedKey]:
@@ -194,9 +195,15 @@ class InputPayloadTooLargeError(ValueError):
 class TerminalWriteError(RuntimeError):
     """Typed write failure that did not lose its injection stage."""
 
-    def __init__(self, *, stage: Literal["none", "partial"]) -> None:
+    def __init__(
+        self,
+        *,
+        stage: Literal["none", "partial"],
+        delivered_bytes: int | None = None,
+    ) -> None:
         super().__init__(f"terminal write failed at stage {stage}")
         self.stage = stage
+        self.delivered_bytes = delivered_bytes
 
 
 class TerminalRuntime(Protocol):
@@ -222,6 +229,8 @@ class TerminalRuntime(Protocol):
     async def write_text(self, terminal: Terminal, text: str, submit: bool) -> WriteOutcome: ...
 
     async def write_key(self, terminal: Terminal, key: NamedKey) -> WriteOutcome: ...
+
+    async def write_input(self, terminal: Terminal, data: bytes) -> WriteOutcome: ...
 
     async def write_paste(self, terminal: Terminal, text: str) -> WriteOutcome: ...
 
