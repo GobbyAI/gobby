@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from gobby.adapters.acp_stream import StreamEvent
-from gobby.adapters.agy_contract import AGY_TOOL_MAP
+from gobby.adapters.agy_contract import AGY_TOOL_MAP, apply_agy_payload_aliases
 
 pytestmark = pytest.mark.unit
 
@@ -274,6 +274,36 @@ def test_agy_tool_name_adapter_maps_table_and_mcp_form() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "tool_input",
+    [
+        {
+            "ServerName": "gobby",
+            "ToolName": "call_tool",
+            "Arguments": {"server_name": "gobby-skills", "tool_name": "get_skill"},
+        },
+        {
+            "ServerName": "gobby",
+            "ToolName": "call_tool",
+            "Arguments": '{"server_name":"gobby-tasks","tool_name":"create_task"}',
+        },
+        {"ServerName": "gobby", "ToolName": "get_tool_schema", "Arguments": {}},
+        {"ServerName": "gobby", "ToolName": "call_tool", "Arguments": "{invalid"},
+        {"ServerName": "gobby", "Arguments": {}},
+    ],
+)
+def test_agy_hook_and_stream_tool_name_normalization_match(
+    tool_input: dict[str, Any],
+) -> None:
+    hook_data = apply_agy_payload_aliases(
+        {"toolCall": {"name": "call_mcp_tool", "args": tool_input}}
+    )
+
+    assert (
+        _agy_stream().agy_tool_name_adapter("call_mcp_tool", tool_input) == hook_data["tool_name"]
+    )
+
+
 def test_mcp_stream_tool_uses_server_and_tool_identity() -> None:
     events = _parse(
         _step(
@@ -292,6 +322,35 @@ def test_mcp_stream_tool_uses_server_and_tool_identity() -> None:
         )
     )
     assert events[0].data["tool_name"] == "mcp__gobby__list_tools"
+    assert events[0].data["tool_input"] == {}
+
+
+def test_mcp_stream_tool_promotes_provider_arguments() -> None:
+    arguments = {
+        "server_name": "gobby-skills",
+        "tool_name": "get_skill",
+        "arguments": {"name": "memory"},
+    }
+
+    events = _parse(
+        _step(
+            step_index=8,
+            state="ACTIVE",
+            step_type="tool",
+            tool_name="call_mcp_tool",
+            tool_info={
+                "name": "call_mcp_tool",
+                "parameters": {
+                    "Arguments": arguments,
+                    "ServerName": "gobby",
+                    "ToolName": "call_tool",
+                },
+            },
+        )
+    )
+
+    assert events[0].data["tool_name"] == "mcp__gobby__call_tool"
+    assert events[0].data["tool_input"] == arguments
 
 
 def test_result_usage_is_verbatim_including_cache_read_tokens() -> None:

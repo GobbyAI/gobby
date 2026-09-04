@@ -139,6 +139,35 @@ def test_pre_tool_use_normalizes_agy_command_line_and_cwd() -> None:
     assert event.data["_raw_tool_input"] == expected_raw_input
 
 
+def test_pre_tool_use_unwraps_agy_mcp_envelope() -> None:
+    provider_input = {
+        "ServerName": "gobby",
+        "ToolName": "call_tool",
+        "Arguments": {
+            "server_name": "gobby-skills",
+            "tool_name": "get_skill",
+            "arguments": {"name": "memory"},
+        },
+    }
+
+    event = AgyAdapter().translate_to_hook_event(
+        {
+            "hook_type": "PreToolUse",
+            "input_data": {
+                "hookEventName": "PreToolUse",
+                "conversationId": "agy-mcp-123",
+                "toolCall": {"name": "call_mcp_tool", "args": provider_input},
+            },
+        }
+    )
+
+    assert event.data["tool_name"] == "mcp__gobby__call_tool"
+    assert event.data["tool_input"] == provider_input["Arguments"]
+    assert event.data["_raw_tool_input"] == provider_input
+    assert event.data["mcp_server"] == "gobby-skills"
+    assert event.data["mcp_tool"] == "get_skill"
+
+
 def test_pre_tool_use_allow_response_is_compact() -> None:
     result = AgyAdapter().translate_from_hook_response(
         HookResponse(decision="allow"),

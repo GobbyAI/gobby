@@ -61,6 +61,11 @@ class AgyAdapter(ACPHookAdapter):
     def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent:
         """Alias camelCase AGY payloads, then apply live PostToolUse outcomes."""
         event = super().translate_to_hook_event(self._alias_native_event(native_event))
+        input_data = native_event.get("input_data")
+        provider_data = input_data if isinstance(input_data, dict) else native_event
+        tool_call = provider_data.get("toolCall")
+        if isinstance(tool_call, dict) and isinstance(tool_call.get("name"), str):
+            event.metadata["original_tool_name"] = tool_call["name"]
         invocation_num = event.data.get("invocation_num", 0)
         if event.event_type is HookEventType.BEFORE_AGENT and invocation_num not in (
             0,

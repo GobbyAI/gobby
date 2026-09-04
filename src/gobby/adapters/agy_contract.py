@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -183,6 +185,32 @@ def normalize_agy_tool_name(name: str) -> str:
     return AGY_TOOL_MAP.get(name, name)
 
 
+def normalize_agy_tool_call(raw_tool_name: str, tool_input: Any = None) -> dict[str, Any]:
+    """Normalize an AGY tool name and unwrap a valid MCP call envelope."""
+
+    normalized: dict[str, Any] = {"tool_name": normalize_agy_tool_name(raw_tool_name)}
+    if tool_input is None:
+        return normalized
+
+    normalized["tool_input"] = tool_input
+    if isinstance(tool_input, Mapping):
+        normalized["_raw_tool_input"] = deepcopy(dict(tool_input))
+
+    if raw_tool_name != "call_mcp_tool" or not isinstance(tool_input, Mapping):
+        return normalized
+
+    server = tool_input.get("ServerName")
+    tool = tool_input.get("ToolName")
+    if not (isinstance(server, str) and server and isinstance(tool, str) and tool):
+        return normalized
+
+    normalized["tool_name"] = f"mcp__{server}__{tool}"
+    arguments = decode_agy_tool_args(tool_input.get("Arguments"))
+    if isinstance(arguments, Mapping):
+        normalized["tool_input"] = dict(arguments)
+    return normalized
+
+
 def apply_agy_payload_aliases(payload: dict[str, Any]) -> dict[str, Any]:
     """Copy an AGY payload with camelCase keys aliased to Gobby names."""
 
@@ -193,10 +221,16 @@ def apply_agy_payload_aliases(payload: dict[str, Any]) -> dict[str, Any]:
 
     tool_call = data.get("toolCall")
     if isinstance(tool_call, dict):
-        if "tool_name" not in data and "name" in tool_call:
-            data["tool_name"] = tool_call["name"]
-        if "tool_input" not in data and "args" in tool_call:
-            data["tool_input"] = tool_call["args"]
+        raw_tool_name = tool_call.get("name")
+        if isinstance(raw_tool_name, str):
+            tool_data = normalize_agy_tool_call(raw_tool_name, tool_call.get("args"))
+            for field, value in tool_data.items():
+                data.setdefault(field, value)
+        else:
+            if "tool_name" not in data and "name" in tool_call:
+                data["tool_name"] = raw_tool_name
+            if "tool_input" not in data and "args" in tool_call:
+                data["tool_input"] = tool_call["args"]
 
     if not data.get("cwd"):
         paths = data.get("workspace_paths")

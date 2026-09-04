@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from gobby.adapters.agy import AgyAdapter
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -402,6 +403,87 @@ class TestRuleEngineIntegration:
             )
         return RuleEngine(db)
 
+    @staticmethod
+    def _agy_mcp_event(
+        hook_type: str,
+        server_name: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> HookEvent:
+        return AgyAdapter().translate_to_hook_event(
+            {
+                "source": "agy",
+                "hook_type": hook_type,
+                "input_data": {
+                    "hookEventName": hook_type,
+                    "conversationId": EXTERNAL_SESSION_ID,
+                    "toolCall": {
+                        "name": "call_mcp_tool",
+                        "args": {
+                            "ServerName": server_name,
+                            "ToolName": tool_name,
+                            "Arguments": arguments,
+                        },
+                    },
+                },
+            }
+        )
+
+    @pytest.mark.asyncio
+    async def test_agy_mcp_envelopes_preserve_schema_gate_semantics(self, engine) -> None:
+        variables: dict[str, Any] = {
+            "enforce_tool_schema_check": True,
+            "unlocked_tools": [],
+        }
+        skill_call = self._agy_mcp_event(
+            "PreToolUse",
+            "gobby",
+            "call_tool",
+            {
+                "server_name": "gobby-skills",
+                "tool_name": "get_skill",
+                "arguments": {"name": "memory"},
+            },
+        )
+
+        assert skill_call.data["tool_name"] == "mcp__gobby__call_tool"
+        assert skill_call.data["mcp_server"] == "gobby-skills"
+        assert skill_call.data["mcp_tool"] == "get_skill"
+        skill_result = await engine.evaluate(skill_call, SESSION_ID, variables)
+        assert skill_result.decision == "allow"
+
+        ordinary_call = self._agy_mcp_event(
+            "PreToolUse",
+            "gobby",
+            "call_tool",
+            {
+                "server_name": "gobby-tasks",
+                "tool_name": "add_label",
+                "arguments": {"task_id": "#1", "label": "ready"},
+            },
+        )
+        assert ordinary_call.data["tool_name"] == "mcp__gobby__call_tool"
+        blocked = await engine.evaluate(ordinary_call, SESSION_ID, variables)
+        assert blocked.decision == "block"
+        assert "server_name='gobby-tasks'" in blocked.reason
+        assert "tool_name='add_label'" in blocked.reason
+
+        schema_lookup = self._agy_mcp_event(
+            "PostToolUse",
+            "gobby",
+            "get_tool_schema",
+            {"server_name": "gobby-tasks", "tool_name": "add_label"},
+        )
+        assert schema_lookup.data["tool_name"] == "mcp__gobby__get_tool_schema"
+        assert schema_lookup.data["mcp_server"] == "gobby"
+        assert schema_lookup.data["mcp_tool"] == "get_tool_schema"
+        schema_result = await engine.evaluate(schema_lookup, SESSION_ID, variables)
+        assert schema_result.decision == "allow"
+        assert "gobby-tasks:add_label" in variables["unlocked_tools"]
+
+        allowed = await engine.evaluate(ordinary_call, SESSION_ID, variables)
+        assert allowed.decision == "allow"
+
     @pytest.mark.asyncio
     async def test_hardcoded_auto_discover_on_before_agent(self, engine) -> None:
         """BEFORE_AGENT should emit auto-discover mcp_call when servers_listed is false."""
@@ -727,7 +809,10 @@ class TestRuleEngineIntegration:
         assert f"gobby-tasks:{mcp_tool}" in variables.get("unlocked_tools", [])
 
     @pytest.mark.asyncio
-    async def test_tracking_schema_lookup_uses_server_and_tool_aliases(self, engine) -> None:
+    async def test_tracking_schema_lookup_uses_server_and_tool_aliases(
+        self,
+        engine: RuleEngine,
+    ) -> None:
         """track-schema-lookup should accept the same aliases as is_tool_unlocked."""
         variables: dict = {
             "enforce_tool_schema_check": True,

@@ -13,6 +13,7 @@ from gobby.adapters.agy_contract import (
     AGY_HOOK_CONTRACTS,
     AGY_HOOK_NAMES,
     get_agy_contract,
+    normalize_agy_tool_call,
 )
 from gobby.hooks.events import HookEventType
 
@@ -115,6 +116,59 @@ class TestAgyPayloadAliases:
         assert tool_map["replace_file_content"] == "Edit"
         assert "grep_search" in tool_map
         assert tool_map["grep_search"] == "Grep"
+
+    @pytest.mark.parametrize(
+        ("arguments", "expected_input"),
+        [
+            (
+                {"server_name": "gobby-skills", "tool_name": "get_skill"},
+                {"server_name": "gobby-skills", "tool_name": "get_skill"},
+            ),
+            (
+                '{"server_name":"gobby-tasks","tool_name":"create_task"}',
+                {"server_name": "gobby-tasks", "tool_name": "create_task"},
+            ),
+            ({}, {}),
+            ('{"server_name":', None),
+        ],
+    )
+    def test_normalize_agy_mcp_arguments(
+        self,
+        arguments: dict[str, Any] | str,
+        expected_input: dict[str, Any] | None,
+    ) -> None:
+        provider_input = {
+            "ServerName": "gobby",
+            "ToolName": "call_tool",
+            "Arguments": arguments,
+        }
+
+        normalized = normalize_agy_tool_call("call_mcp_tool", provider_input)
+
+        assert normalized["tool_name"] == "mcp__gobby__call_tool"
+        if expected_input is None:
+            assert normalized["tool_input"] == provider_input
+        else:
+            assert normalized["tool_input"] == expected_input
+        assert normalized["_raw_tool_input"] == provider_input
+
+    @pytest.mark.parametrize(
+        "provider_input",
+        [
+            {"ServerName": "gobby", "Arguments": {}},
+            {"ToolName": "call_tool", "Arguments": {}},
+            {"ServerName": "gobby", "ToolName": "call_tool"},
+            "not-an-envelope",
+        ],
+    )
+    def test_normalize_agy_incomplete_mcp_envelope_uses_wrapper_fallback(
+        self,
+        provider_input: Any,
+    ) -> None:
+        normalized = normalize_agy_tool_call("call_mcp_tool", provider_input)
+
+        assert normalized["tool_name"] == "mcp__gobby__call_tool"
+        assert normalized["tool_input"] == provider_input
 
     def test_force_continue_limit_is_a_positive_int(self) -> None:
         limit = getattr(agy_contract, "AGY_FORCE_CONTINUE_LIMIT", None)
