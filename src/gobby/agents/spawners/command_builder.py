@@ -41,7 +41,6 @@ def build_cli_command(
 
     Codex CLI:
     - codex --ask-for-approval never --disable guardian_approval -C <dir>
-      -c features.code_mode=false -c features.code_mode_host=false
       -c check_for_update_on_startup=false [PROMPT]
 
     Droid CLI:
@@ -163,22 +162,14 @@ def build_cli_command(
             command.extend(["-C", working_directory])
         for override in config_overrides or []:
             command.extend(["-c", override])
-        # Managed runs execute tools through Codex's native exec and MCP client,
-        # never through the code-mode host: that host is the user's node_repl MCP
-        # server (the ChatGPT app's), which cannot start inside the sandbox, and
-        # with it on every Gobby MCP call dies at host negotiation (#21753).
-        # Spawned runs must also never stop at Codex's interactive upgrade menu.
-        # Keep these last so user- or endpoint-provided overrides cannot re-enable them.
-        command.extend(
-            [
-                "-c",
-                "features.code_mode=false",
-                "-c",
-                "features.code_mode_host=false",
-                "-c",
-                "check_for_update_on_startup=false",
-            ]
-        )
+        # Spawned runs must never stop at Codex's interactive upgrade menu.
+        # Keep this last so user- or endpoint-provided overrides cannot re-enable it.
+        # Never disable Codex's code-mode host here: gpt-5.6 models are
+        # `tool_mode=code_mode_only`, so the host (codex-code-mode-host, a sibling
+        # of the codex binary) is their only MCP executor and turning it off makes
+        # every Gobby MCP call fail closed as "code-mode host is disabled" (#21753).
+        # A host that cannot launch is a machine-level install/Gatekeeper problem.
+        command.extend(["-c", "check_for_update_on_startup=false"])
 
     elif cli == "droid":
         # Droid exec flags, verified against `droid exec --help` on v0.106.0.

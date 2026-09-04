@@ -7,14 +7,7 @@ from gobby.agents.spawners.command_builder import (
 pytestmark = pytest.mark.unit
 
 # Managed overrides every Codex spawn ends with, after caller overrides.
-_CODEX_MANAGED_TAIL = [
-    "-c",
-    "features.code_mode=false",
-    "-c",
-    "features.code_mode_host=false",
-    "-c",
-    "check_for_update_on_startup=false",
-]
+_CODEX_MANAGED_TAIL = ["-c", "check_for_update_on_startup=false"]
 
 
 @pytest.mark.parametrize(
@@ -80,21 +73,22 @@ class TestBuildCliCommand:
         cmd, _env = build_cli_command("codex", prompt="hello")
         assert cmd == ["codex", *_CODEX_MANAGED_TAIL, "hello"]
 
-    def test_codex_spawn_disables_code_mode_host(self) -> None:
-        # The code-mode host is the user's node_repl MCP server; it cannot start
-        # inside the managed sandbox, and with the feature on every Gobby MCP call
-        # fails at host negotiation. A caller override must not re-enable it.
+    def test_codex_spawn_keeps_code_mode_host_enabled(self) -> None:
+        # gpt-5.6 models are tool_mode=code_mode_only: Codex's code-mode host is
+        # their only MCP executor, so a managed `features.code_mode_host=false`
+        # makes every Gobby MCP call fail closed. The managed tail must leave the
+        # features namespace alone and still follow caller overrides.
         cmd, _env = build_cli_command(
             "codex",
             prompt="hello",
-            config_overrides=["features.code_mode_host=true", "features.code_mode=true"],
+            config_overrides=["features.code_mode_host=true"],
         )
 
         assert cmd[-len(_CODEX_MANAGED_TAIL) - 1 :] == [*_CODEX_MANAGED_TAIL, "hello"]
-        assert cmd.index("features.code_mode_host=false") > cmd.index(
+        assert not any(arg.startswith("features.") and arg.endswith("=false") for arg in cmd)
+        assert cmd.index("check_for_update_on_startup=false") > cmd.index(
             "features.code_mode_host=true"
         )
-        assert cmd.index("features.code_mode=false") > cmd.index("features.code_mode=true")
 
     def test_codex_auto_approve(self) -> None:
         cmd, _env = build_cli_command("codex", auto_approve=True, prompt="hello")
