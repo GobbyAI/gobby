@@ -1,5 +1,6 @@
 //! Canonical terminal-WS JSON codec matching 2.5 goldens.
 
+use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 use thiserror::Error;
 
@@ -80,6 +81,14 @@ fn check_safe_int(value: &Value) -> Result<u64, WsCodecError> {
     }
 }
 
+pub(crate) fn deserialize_safe_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    check_safe_int(&value).map_err(serde::de::Error::custom)
+}
+
 fn walk_safe_ints(payload: &Value) -> Result<(), WsCodecError> {
     match payload {
         Value::Object(map) => {
@@ -141,4 +150,36 @@ pub fn decode_message(raw: &[u8]) -> Result<Value, WsCodecError> {
     }
     walk_safe_ints(&parsed)?;
     Ok(parsed)
+}
+
+/// Exact key used by the single reader to resolve one pending operation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RouteKey {
+    Request(String),
+    Write(String, u64),
+    Control(String),
+}
+
+pub fn message_kind(message: &Value) -> Option<&str> {
+    message.get("type")?.as_str()
+}
+
+pub fn route_key(message: &Value) -> Option<RouteKey> {
+    if let Some(request_id) = message.get("request_id").and_then(Value::as_str) {
+        return Some(RouteKey::Request(request_id.to_string()));
+    }
+
+    let attachment_id = message.get("attachment_id")?.as_str()?.to_string();
+    match message_kind(message)? {
+        "terminal_input" | "terminal_paste" | "terminal_write_outcome" => Some(RouteKey::Write(
+            attachment_id,
+            message.get("client_write_seq")?.as_u64()?,
+        )),
+        "terminal_take_control"
+        | "terminal_release_control"
+        | "terminal_control_result"
+        | "terminal_error"
+        | "terminal_attachment_finalized" => Some(RouteKey::Control(attachment_id)),
+        _ => None,
+    }
 }
