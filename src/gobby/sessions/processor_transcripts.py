@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Sequence
 from copy import deepcopy
 from typing import cast
 
 import aiofiles
 import psycopg
 
-from gobby.sessions.message_stats import MessageStats
+from gobby.sessions.message_stats import MessageStats, StatsRecord
 from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.processor_types import ProcessorHost
 from gobby.sessions.transcript_normalization import normalize_transcript_records
@@ -64,9 +65,10 @@ class ProcessorTranscriptMixin:
     async def _process_parsed_batch(
         self: ProcessorHost,
         session_id: str,
-        messages: list[ParsedMessage],
+        records: Sequence[StatsRecord],
     ) -> MessageStats:
         """Run fallible batch work and roll back processor-local state on failure."""
+        messages = [record for record in records if isinstance(record, ParsedMessage)]
         had_stats = session_id in self._stats
         previous_stats = deepcopy(self._stats.get(session_id))
         hydration_was_skipped = session_id in self._stats_hydration_skipped
@@ -81,7 +83,7 @@ class ProcessorTranscriptMixin:
             )
             stats = cast(
                 MessageStats,
-                await self._run_db(self._accumulate_stats, session_id, messages),
+                await self._run_db(self._accumulate_stats, session_id, records),
             )
             if self.session_manager:
                 await self._run_db(self.session_manager.touch, session_id)
@@ -230,13 +232,22 @@ class ProcessorTranscriptMixin:
                 new_lines,
                 start_index=last_index + 1,
             )
-            parsed_records = normalize_transcript_records(raw_records, _parser_source(parser))
+            parser_source = _parser_source(parser)
+            parsed_records = normalize_transcript_records(raw_records, parser_source)
             parsed_messages: list[ParsedMessage] = [
                 r for r in parsed_records if isinstance(r, ParsedMessage)
             ]
 
             latest_parsed_index = parsed_messages[-1].index if parsed_messages else last_index
             parsed_messages = self._filter_session_title_messages(parsed_messages)
+            stats_records: list[StatsRecord] = [
+                *parsed_messages,
+                *(
+                    record
+                    for record in parsed_records
+                    if parser_source == "agy" and isinstance(record, ParsedToolEvent)
+                ),
+            ]
         except Exception:
             if parser_state is not None:
                 parser.hydrate_state(parser_state)
@@ -268,7 +279,7 @@ class ProcessorTranscriptMixin:
                     },
                 )
 
-        if not parsed_messages:
+        if not stats_records:
             if pending_appender is not None:
                 self._index_appenders[session_id] = pending_appender
             if latest_parsed_index > last_index:
@@ -288,7 +299,7 @@ class ProcessorTranscriptMixin:
             return
 
         try:
-            stats = await self._process_parsed_batch(session_id, parsed_messages)
+            stats = await self._process_parsed_batch(session_id, stats_records)
         except Exception:
             if parser_state is not None:
                 parser.hydrate_state(parser_state)

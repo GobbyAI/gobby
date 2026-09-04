@@ -32,6 +32,8 @@ from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
+AGY_STATS_FIXTURE = Path(__file__).parent / "fixtures" / "agy" / "print_tool_calls_terminal.jsonl"
+
 
 @pytest.fixture
 def mock_db() -> MagicMock:
@@ -314,6 +316,52 @@ class TestSessionRegistration:
         assert list(gemini.rglob("*.gobby-index.json")) == []
         cache = get_gobby_home() / "cache" / "transcript-indexes"
         assert any(cache.glob("*.gobby-index.json"))
+
+    @pytest.mark.asyncio
+    async def test_agy_stats_flush_counts_tool_events_and_completed_turn(
+        self, tmp_path: Path
+    ) -> None:
+        transcript = tmp_path / "transcript_full.jsonl"
+        transcript.write_text(AGY_STATS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+        session_manager = MagicMock()
+        processor = SessionMessageProcessor(MagicMock(), session_manager=session_manager)
+        processor.register_session("agy-session", str(transcript), source="agy")
+
+        with (
+            patch.object(
+                processor, "_persist_usage_events", new_callable=AsyncMock
+            ) as persist_usage,
+            patch.object(
+                processor, "_render_and_broadcast_messages", new_callable=AsyncMock
+            ) as render_messages,
+            patch.object(
+                processor, "_persist_appender_snapshot", new_callable=AsyncMock
+            ) as persist_snapshot,
+        ):
+            await processor._process_session("agy-session", str(transcript), at_eof=True)
+
+        expected = {
+            "message_count": 3,
+            "turn_count": 1,
+            "tool_call_count": 4,
+            "last_assistant_content": None,
+        }
+        assert processor._stats["agy-session"] == expected
+        session_manager.update_stats.assert_called_once_with("agy-session", **expected)
+        render_call = render_messages.await_args
+        assert render_call is not None
+        rendered = render_call.args[1]
+        assert all(isinstance(record, ParsedMessage) for record in rendered)
+        assert [record.content_type for record in rendered] == [
+            "text",
+            "thinking",
+            "thinking",
+            "turn_completed",
+        ]
+        usage_call = persist_usage.await_args
+        assert usage_call is not None
+        assert usage_call.args[1] == rendered
+        persist_snapshot.assert_awaited_once()
 
     def test_register_qwen_json_creates_incremental_index_appender(
         self, processor: SessionMessageProcessor, tmp_path: Path

@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from gobby.sessions.message_stats import TURN_BOUNDARY_CONTENT_TYPE
 from gobby.sessions.transcripts import PARSER_REGISTRY, get_parser
 from gobby.sessions.transcripts.agy import AgyTranscriptParser
 from gobby.sessions.transcripts.base import (
@@ -132,7 +133,12 @@ def _tool_events(records: list[Any]) -> list[ParsedToolEvent]:
 
 
 def _messages(records: list[Any]) -> list[ParsedMessage]:
-    return [record for record in records if isinstance(record, ParsedMessage)]
+    return [
+        record
+        for record in records
+        if isinstance(record, ParsedMessage)
+        and record.content_type != TURN_BOUNDARY_CONTENT_TYPE
+    ]
 
 
 def test_agy_parser_supports_incremental_state() -> None:
@@ -174,6 +180,21 @@ def test_thinking_is_distinct_from_content() -> None:
     text = [message for message in messages if message.content_type == "text"]
     assert [message.content for message in thinking] == ["internal plan"]
     assert [message.content for message in text] == ["visible answer"]
+
+
+def test_completed_planner_response_emits_turn_boundary() -> None:
+    records = _parse(
+        _agy_parser(),
+        [_user(1, "answer the prompt"), _planner(2, content="done")],
+    )
+
+    boundaries = [
+        record
+        for record in records
+        if isinstance(record, ParsedMessage)
+        and record.content_type == TURN_BOUNDARY_CONTENT_TYPE
+    ]
+    assert len(boundaries) == 1
 
 
 def test_generic_run_command_pairing_parses_exit_sentence() -> None:

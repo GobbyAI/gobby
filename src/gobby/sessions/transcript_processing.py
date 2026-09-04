@@ -10,7 +10,7 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 import psycopg
 
@@ -24,7 +24,7 @@ from gobby.sessions.context_usage import (
     snapshot_from_window_metadata,
 )
 from gobby.sessions.handoff_records import latest_delivered_clear_handoff
-from gobby.sessions.message_stats import MessageProtocol, compute_message_stats
+from gobby.sessions.message_stats import compute_message_stats
 from gobby.sessions.session_wiki_file import session_wiki_path_is_fresh
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
@@ -338,8 +338,10 @@ class TranscriptProcessingMixin:
         parsed_records = parser.parse_lines(raw.splitlines(keepends=True), start_index=0)
         normalized = normalize_transcript_records(parsed_records, session.source)
         messages = [r for r in normalized if isinstance(r, ParsedMessage)]
+        session_source = session.source if isinstance(session.source, str) else None
+        stats_records = normalized if session_source == "agy" else messages
 
-        if not messages:
+        if not stats_records:
             return
 
         # Persist session stats from the full transcript before any token-usage
@@ -347,7 +349,10 @@ class TranscriptProcessingMixin:
         # still record real message/turn/tool counts instead of phantom zeros.
         # Same predicate as the live path via compute_message_stats.
         try:
-            stats = compute_message_stats(cast("list[MessageProtocol]", messages))
+            stats = compute_message_stats(
+                stats_records,
+                source=session_source,
+            )
             self.session_manager.update_stats(
                 session_id,
                 message_count=stats["message_count"],
@@ -371,11 +376,10 @@ class TranscriptProcessingMixin:
         # Index sidecars are a seek optimization; transcript token processing must continue.
         try:
             st = os.stat(transcript_path)
-            index_source = session.source if isinstance(session.source, str) else None
             await asyncio.to_thread(
                 rebuild_and_persist_index,
                 transcript_path,
-                index_source or "claude",
+                session_source or "claude",
                 session_id,
                 mtime_ns=st.st_mtime_ns,
                 size=st.st_size,
@@ -388,6 +392,9 @@ class TranscriptProcessingMixin:
                 exc_info=True,
             )
 
+        if not messages:
+            return
+
         # Replace any synthetic migration rows with real transcript events as soon as
         # we have a parseable transcript for this session. The deletes and the
         # totals read are synchronous psycopg, and this coroutine runs on the
@@ -398,7 +405,7 @@ class TranscriptProcessingMixin:
             return self.token_event_store.get_session_totals(session_id)
 
         session_project_id = session.project_id if isinstance(session.project_id, str) else None
-        session_source = session.source if isinstance(session.source, str) else "unknown"
+        session_source = session_source or "unknown"
         session_context_window = _coerce_context_window(session.context_window)
         session_model = session.model if isinstance(session.model, str) and session.model else None
         last_model: str | None = session_model

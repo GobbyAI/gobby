@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 from weakref import WeakValueDictionary
 
-from gobby.sessions.message_stats import MessageStats
+from gobby.sessions.message_stats import MessageStats, StatsRecord
 from gobby.sessions.transcript_index import TranscriptIndexAppender
 from gobby.sessions.transcript_renderer import RenderState
 from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage, TranscriptParser
@@ -132,7 +132,9 @@ class ProcessorHost(Protocol):
         st: Any,
     ) -> None: ...
 
-    def _accumulate_stats(self, session_id: str, messages: list[Any]) -> MessageStats: ...
+    def _accumulate_stats(
+        self, session_id: str, records: Sequence[StatsRecord]
+    ) -> MessageStats: ...
 
     def _stats_from_session_manager(self, session_id: str) -> MessageStats: ...
 
@@ -142,7 +144,7 @@ class ProcessorHost(Protocol):
     ) -> list[ParsedMessage]: ...
 
     async def _process_parsed_batch(
-        self, session_id: str, messages: list[ParsedMessage]
+        self, session_id: str, records: Sequence[StatsRecord]
     ) -> MessageStats: ...
 
     async def _persist_usage_events(

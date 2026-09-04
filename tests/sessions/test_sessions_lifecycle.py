@@ -29,6 +29,7 @@ _SESSION_MANAGER_PATCH = "gobby.sessions.lifecycle.SessionManager"
 DROID_FIXTURE_DIR = Path(__file__).parent / "transcripts" / "fixtures" / "droid"
 DROID_FIXTURE_JSONL = DROID_FIXTURE_DIR / "dbf95187-5fa4-43a0-b207-8c24f412baf7.jsonl"
 DROID_FIXTURE_SETTINGS = DROID_FIXTURE_DIR / "dbf95187-5fa4-43a0-b207-8c24f412baf7.settings.json"
+AGY_STATS_FIXTURE = Path(__file__).parent / "fixtures" / "agy" / "print_tool_calls_terminal.jsonl"
 
 
 class EmptyTokenEventStore:
@@ -680,6 +681,40 @@ class TestSessionLifecycleManager:
             "tool_call_count": 1,
             "last_assistant_content": "Done",
         }
+
+    @pytest.mark.asyncio
+    async def test_process_agy_transcript_persists_shared_stats(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
+        transcript_path = tmp_path / "transcript_full.jsonl"
+        transcript_path.write_text(
+            AGY_STATS_FIXTURE.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        session = MagicMock()
+        session.source = "agy"
+        session.transcript_path = str(transcript_path)
+        manager.session_manager.get.return_value = session
+        persisted_stats: list[tuple[str, dict[str, object]]] = []
+
+        def capture_stats(persisted_session_id: str, **stats: object) -> None:
+            persisted_stats.append((persisted_session_id, stats))
+
+        manager.session_manager.update_stats.side_effect = capture_stats
+
+        await manager._process_session_transcript("s1", str(transcript_path))
+
+        assert persisted_stats == [
+            (
+                "s1",
+                {
+                    "message_count": 3,
+                    "turn_count": 1,
+                    "tool_call_count": 4,
+                    "last_assistant_content": None,
+                },
+            )
+        ]
 
     @pytest.mark.asyncio
     async def test_process_session_transcript_missing_file(
