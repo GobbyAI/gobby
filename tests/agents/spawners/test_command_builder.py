@@ -222,7 +222,7 @@ class TestBuildCliCommand:
         assert "--worktree" not in cmd
         assert "--session-id" not in cmd
 
-    def test_agy_agent_command_uses_recorded_flag_forms(self) -> None:
+    def test_agy_agent_command_uses_noninteractive_print(self) -> None:
         cmd, _env = build_cli_command(
             "agy",
             prompt="implement the task",
@@ -241,13 +241,14 @@ class TestBuildCliCommand:
             "gemini-2.5-flash",
             "--effort",
             "high",
-            "--prompt-interactive",
+            "--print",
             "implement the task",
             "--sandbox=false",
         ]
         assert "--mode" not in cmd
         assert "-p" not in cmd
-        assert "--print" not in cmd
+        # Run ff01920d stalled at the TUI banner with this interactive form.
+        assert "--prompt-interactive" not in cmd
         assert "--input-format" not in cmd
 
     def test_agy_resume_uses_conversation_and_add_dir(self) -> None:
@@ -458,7 +459,7 @@ class TestBuildCliCommand:
                     "model-x",
                     "--effort",
                     "high",
-                    "--prompt-interactive",
+                    "--print",
                     "continue",
                     "--sandbox",
                 ],
