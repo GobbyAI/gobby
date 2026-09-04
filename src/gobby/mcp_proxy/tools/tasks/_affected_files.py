@@ -204,7 +204,11 @@ def create_ops_affected_files_registry(ctx: "RegistryContext") -> InternalToolRe
             }
 
         annotation_source = cast(AnnotationSource, source)
-        results = af_manager.set_files(resolved_id, files, annotation_source)
+        results = (
+            af_manager.replace_declared_files(resolved_id, files)
+            if annotation_source == "manual"
+            else af_manager.set_files(resolved_id, files, annotation_source)
+        )
         return {
             "task_id": resolved_id,
             "files_set": len(results),

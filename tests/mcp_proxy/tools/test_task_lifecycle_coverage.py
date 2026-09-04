@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import inspect
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -21,6 +22,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import SubmittedCloseRev
 from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
 from gobby.storage.tasks import LocalTaskManager, Task, TaskAlreadyEscalatedError
 from gobby.storage.tasks._stage_states import StageState
+from gobby.storage.tasks._stage_types import StageState5
 from gobby.tasks.close_checklist import CloseGateResult
 from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
 from gobby.tasks.validation import PreparedCloseReview
@@ -62,6 +64,8 @@ def _make_task(
     seq_num: int | None = 42,
     description: str | None = "Test desc",
 ) -> Task:
+    created_at = datetime(2024, 1, 1, tzinfo=UTC)
+    terminal_at = datetime(2024, 1, 2, tzinfo=UTC)
     stage_state = {
         "open": "ready",
         "escalated": "ready",
@@ -73,16 +77,16 @@ def _make_task(
         title=title,
         priority=priority,
         task_type=task_type,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
-        closed_at="2024-01-02T00:00:00Z" if status == "closed" else None,
+        created_at=created_at,
+        updated_at=created_at,
+        closed_at=terminal_at if status == "closed" else None,
         claimed_by_session_id=claimed_by_session_id,
         labels=labels or [],
         validation_criteria=validation_criteria,
         commits=commits,
         seq_num=seq_num,
         description=description,
-        escalated_at="2024-01-02T00:00:00Z" if status == "escalated" else None,
+        escalated_at=terminal_at if status == "escalated" else None,
         is_escalated=status == "escalated",
         stages=(
             {
@@ -98,7 +102,7 @@ def _make_stage_state(
     *,
     task_id: str = "550e8400-e29b-41d4-a716-446655440000",
     stage_name: str = "planning",
-    state: str = "needs_review",
+    state: StageState5 = "needs_review",
 ) -> StageState:
     return StageState(
         task_id=task_id,
@@ -118,7 +122,7 @@ def _make_stage_state(
         max_review_rounds=None,
         artifact_refs=None,
         notes=None,
-        updated_at="2024-01-01T00:00:00Z",
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
 
 
@@ -259,6 +263,9 @@ async def _complete_close_review(
             },
             review_fingerprint=evaluation.extra["review_fingerprint"],
             evidence_fingerprint=evaluation.extra["deterministic_evidence_fingerprint"],
+            diff_sha=evaluation.extra["diff_sha"],
+            test_bodies_sha=evaluation.extra["test_bodies_sha"],
+            stable_facts=evaluation.extra["stable_facts"],
         ),
     )
     if not reviewed.ready:
@@ -1909,6 +1916,42 @@ class TestMarkTaskNeedsReview:
             task.id,
             "planning",
             review_notes=(f"Review implementation.\n\n[Task Scope Justification]\n{justification}"),
+            by_session_id=ANY,
+        )
+
+    async def test_mark_needs_review_allows_advisory_scope_drift(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        task = _make_task(status="in_progress")
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.submit_for_review.return_value = task
+        registry = _create_stage_ops_registry(mock_task_manager)
+        scope = TaskScopeEvaluation(
+            declared_paths=(),
+            actual_paths=("src/gobby/service.py",),
+            out_of_scope_paths=(),
+            advisory_paths=("src/gobby/expected.py",),
+            advisory_scope_drift=("src/gobby/service.py",),
+        )
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._stage_review.evaluate_task_scope",
+            return_value=scope,
+        ):
+            result = await registry.call(
+                "submit_for_review",
+                {
+                    "task_id": task.id,
+                    "stage_name": "planning",
+                    "review_notes": "Review advisory drift.",
+                },
+            )
+
+        assert "error" not in result
+        mock_task_manager.submit_for_review.assert_called_once_with(
+            task.id,
+            "planning",
+            review_notes="Review advisory drift.",
             by_session_id=ANY,
         )
 

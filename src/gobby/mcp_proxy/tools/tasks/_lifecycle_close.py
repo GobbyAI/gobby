@@ -494,6 +494,8 @@ async def _evaluate_close(
     if scope is not None:
         evaluation.scope_snapshot = scope.snapshot()
         evaluation.scope_justification = scope.scope_justification
+        if scope.advisory_scope_drift:
+            evaluation.extra["advisory_scope_drift"] = list(scope.advisory_scope_drift)
         if not scope.accepted:
             evaluation.collect_failure(
                 8,

@@ -225,7 +225,7 @@ def _ready_evaluation(
         children_state=children_state,
         attribution=attribution,
     )
-    evaluation.scope_snapshot = ((), (), ())
+    evaluation.scope_snapshot = ((), (), (), (), ())
     evaluation.pass_gate(11, "criteria_review", "Passed.")
     return evaluation
 
@@ -586,6 +586,8 @@ async def test_scope_dirty_and_acceptance_failures_report_together() -> None:
         declared_paths=("tests/",),
         actual_paths=("src/gobby/service.py",),
         out_of_scope_paths=("src/gobby/service.py",),
+        advisory_paths=("src/gobby/expected.py",),
+        advisory_scope_drift=("src/gobby/service.py",),
         justification_error="A scope_justification is required for out-of-scope paths.",
     )
     transcript = AsyncMock(
@@ -652,6 +654,7 @@ async def test_scope_dirty_and_acceptance_failures_report_together() -> None:
     assert evaluation.error == "task_scope_mismatch"
     assert [gate.item for gate in evaluation.gates] == list(range(1, 12))
     assert evaluation.extra["out_of_scope_paths"] == ["src/gobby/service.py"]
+    assert response["advisory_scope_drift"] == ["src/gobby/service.py"]
     assert response["blocking_reasons"] == [
         "A scope_justification is required for out-of-scope paths.",
         "Task-attributed files still have uncommitted changes: src/gobby/service.py. "
@@ -814,6 +817,9 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
         {
             "review_fingerprint": "review-fingerprint",
             "deterministic_evidence_fingerprint": "evidence-fingerprint",
+            "diff_sha": "diff-sha",
+            "test_bodies_sha": "test-bodies-sha",
+            "stable_facts": {},
             "criteria_review_duration_ms": 4.25,
         }
     )

@@ -226,7 +226,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         if affected_files:
             TaskAffectedFileManager(ctx.task_manager.db).set_files(
-                task.id, affected_files, "manual"
+                task.id, affected_files, "hypothesis"
             )
 
         # Set scheduling fields if provided (post-create update)

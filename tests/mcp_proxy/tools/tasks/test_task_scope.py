@@ -235,6 +235,44 @@ def test_observed_annotations_do_not_expand_declared_scope() -> None:
     assert evaluation.out_of_scope_paths == ("src/gobby/service.py",)
 
 
+def test_hypothesis_scope_reports_advisory_drift_without_blocking() -> None:
+    evaluation = _evaluate(
+        annotations=[_annotation("src/gobby/expected.py", "hypothesis")],
+        actual_paths={"src/gobby/expected.py", "src/gobby/service.py"},
+    )
+
+    assert evaluation.accepted is True
+    assert evaluation.declared_paths == ()
+    assert evaluation.out_of_scope_paths == ()
+    assert evaluation.advisory_paths == ("src/gobby/expected.py",)
+    assert evaluation.advisory_scope_drift == ("src/gobby/service.py",)
+    assert evaluation.justification_error is None
+    assert evaluation.details()["advisory_scope_drift"] == ["src/gobby/service.py"]
+
+
+def test_hypothesis_scope_inspects_linked_commits() -> None:
+    annotations = [_annotation("src/gobby/expected.py", "hypothesis")]
+    with (
+        patch.object(TaskAffectedFileManager, "get_files", return_value=annotations),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._task_scope.collect_commit_paths",
+            return_value={"src/gobby/service.py"},
+        ) as collect_paths,
+    ):
+        evaluation = evaluate_task_scope(
+            db=MagicMock(),
+            task=_task(),
+            commit_shas=("abc123",),
+            attributed_paths=(),
+            repo_path="/repo",
+            scope_justification=None,
+        )
+
+    assert evaluation.accepted is True
+    assert evaluation.advisory_scope_drift == ("src/gobby/service.py",)
+    collect_paths.assert_called_once_with(["abc123"], "/repo")
+
+
 def test_rescope_immediately_replaces_close_and_review_scope(
     temp_db: HubDatabase,
     sample_project: dict[str, object],

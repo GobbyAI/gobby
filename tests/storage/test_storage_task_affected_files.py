@@ -102,6 +102,7 @@ class TestReplaceDeclaredFiles:
     ) -> None:
         af_manager.set_files(TASK_1, ["src/old-manual.py"], source="manual")
         af_manager.set_files(TASK_1, ["src/old-expansion.py"], source="expansion")
+        af_manager.set_files(TASK_1, ["src/old-hypothesis.py"], source="hypothesis")
         af_manager.set_files(
             TASK_1,
             ["src/evidence.py", "src/promoted.py"],
@@ -128,6 +129,7 @@ class TestReplaceDeclaredFiles:
     ) -> None:
         af_manager.set_files(TASK_1, ["src/manual.py"], source="manual")
         af_manager.set_files(TASK_1, ["src/expansion.py"], source="expansion")
+        af_manager.set_files(TASK_1, ["src/hypothesis.py"], source="hypothesis")
         af_manager.set_files(TASK_1, ["src/evidence.py"], source="observed")
 
         assert af_manager.replace_declared_files(TASK_1, []) == []
@@ -160,9 +162,9 @@ class TestAddFile:
         assert result is None
 
     def test_add_file_custom_source(self, af_manager: TaskAffectedFileManager) -> None:
-        result = af_manager.add_file(TASK_1, "src/obs.py", source="observed")
+        result = af_manager.add_file(TASK_1, "src/guess.py", source="hypothesis")
         assert result is not None
-        assert result.annotation_source == "observed"
+        assert result.annotation_source == "hypothesis"
 
 
 class TestRemoveFile:

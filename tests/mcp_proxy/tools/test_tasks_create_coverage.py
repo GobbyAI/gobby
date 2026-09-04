@@ -290,7 +290,7 @@ class TestCreateTaskTool:
     async def test_create_task_accepts_additional_skills_and_affected_files(
         self, mock_task_manager: MagicMock
     ) -> None:
-        """create_task forwards skill metadata and stores explicit affected files."""
+        """create_task forwards skills and stores create-time files as hypotheses."""
         with patch(
             "gobby.mcp_proxy.tools.tasks._crud.TaskAffectedFileManager"
         ) as MockAffectedFiles:
@@ -326,7 +326,7 @@ class TestCreateTaskTool:
             mock_af_manager.set_files.assert_called_once_with(
                 mock_task.id,
                 ["src/gobby/tasks/demo.py"],
-                "manual",
+                "hypothesis",
             )
 
     @pytest.mark.asyncio
