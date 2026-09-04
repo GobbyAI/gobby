@@ -6,7 +6,7 @@ import json
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -40,6 +40,7 @@ from gobby.sessions.title_lifecycle import (
     recompute_automatic_title,
     update_title_for_claim,
 )
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
@@ -210,6 +211,75 @@ def _feedback_task(**overrides: object) -> Task:
     return cast(Task, SimpleNamespace(**values))
 
 
+def _register_spawn_chain(
+    manager: SessionManager,
+    reporter: Session,
+    *,
+    depth: int,
+) -> list[str]:
+    run_manager = LocalAgentRunManager(manager.db)
+    parent_session_id = reporter.id
+    descendant_session_ids: list[str] = []
+    for index in range(depth):
+        child_session_id = manager.register_session(
+            external_id=f"feedback-child-{index}",
+            machine_id=MACHINE_ID,
+            source="codex",
+            project_id=reporter.project_id,
+            parent_session_id=parent_session_id,
+            agent_depth=index + 1,
+        )
+        assert child_session_id
+        run_manager.create(
+            parent_session_id=parent_session_id,
+            provider="codex",
+            prompt="Test feedback ownership",
+            child_session_id=child_session_id,
+        )
+        descendant_session_ids.append(child_session_id)
+        parent_session_id = child_session_id
+    return descendant_session_ids
+
+
+async def _submit_fixed_feedback(
+    manager: SessionManager,
+    reporter: Session,
+    owner_session_id: str,
+) -> dict[str, Any]:
+    task_manager = LocalTaskManager(manager.db)
+    task = task_manager.create_task(
+        project_id=reporter.project_id,
+        title="Fix feedback ownership test defect",
+        claimed_by_session_id=owner_session_id,
+        validation_criteria="Task records the completing session.",
+    )
+    task = task_manager.close_task(
+        task.id,
+        force=True,
+        closed_in_session_id=owner_session_id,
+    )
+    assert task.seq_num is not None
+    registry = create_session_messages_registry(
+        session_manager=manager,
+        db=manager.db,
+        task_manager=task_manager,
+    )
+    with session_context_for_test(reporter.id):
+        result = await registry.call(
+            "feedback",
+            {
+                "observations": [
+                    _observation(
+                        disposition="fixed",
+                        evidence=f"Tracked in #{task.seq_num}",
+                    )
+                ]
+            },
+        )
+    assert isinstance(result, dict)
+    return cast(dict[str, Any], result)
+
+
 def test_feedback_enums_reject_unlisted_values() -> None:
     with pytest.raises(ValueError, match=r"kind must be one of"):
         normalize_feedback_observations([_observation(kind="tool-defect")])
@@ -259,15 +329,93 @@ def test_task_refs_accept_short_seq_numbers() -> None:
     assert seen == ["#42"]
 
 
-def test_fixed_requires_a_task_owned_by_current_session() -> None:
+@pytest.mark.parametrize("owner_field", ("claimed_by_session_id", "closed_in_session_id"))
+def test_fixed_accepts_task_owned_by_current_session(owner_field: str) -> None:
+    task = _feedback_task(**{owner_field: "session-current"})
+
+    [accepted] = normalize_feedback_observations(
+        [_observation(disposition="fixed", evidence="Tracked in #21484")],
+        resolve_task=lambda _ref: task,
+        session_id="session-current",
+    )
+
+    assert accepted.disposition == "fixed"
+
+
+def test_fixed_rejects_task_owned_by_unrelated_session() -> None:
     foreign = _feedback_task(claimed_by_session_id="session-other")
 
-    with pytest.raises(ValueError, match=r"claimed or closed by this session"):
+    with pytest.raises(
+        ValueError,
+        match=r"claimed or closed by this session or by a spawned descendant session",
+    ):
         normalize_feedback_observations(
             [_observation(disposition="fixed", evidence="Tracked in #21484")],
             resolve_task=lambda _ref: foreign,
             session_id="session-current",
         )
+
+
+@pytest.mark.asyncio
+async def test_fixed_accepts_task_closed_by_depth_one_descendant(
+    session_manager: SessionManager,
+) -> None:
+    reporter = _registered_session(session_manager)
+    [descendant_session_id] = _register_spawn_chain(session_manager, reporter, depth=1)
+
+    result = await _submit_fixed_feedback(session_manager, reporter, descendant_session_id)
+
+    assert result["success"] is True
+    assert result["created"] == 1
+
+
+@pytest.mark.asyncio
+async def test_fixed_accepts_task_closed_by_depth_three_descendant(
+    session_manager: SessionManager,
+) -> None:
+    reporter = _registered_session(session_manager)
+    descendant_session_id = _register_spawn_chain(session_manager, reporter, depth=3)[-1]
+
+    result = await _submit_fixed_feedback(session_manager, reporter, descendant_session_id)
+
+    assert result["success"] is True
+    assert result["created"] == 1
+
+
+@pytest.mark.asyncio
+async def test_fixed_rejects_task_closed_by_depth_six_descendant(
+    session_manager: SessionManager,
+) -> None:
+    reporter = _registered_session(session_manager)
+    descendant_session_id = _register_spawn_chain(session_manager, reporter, depth=6)[-1]
+
+    result = await _submit_fixed_feedback(session_manager, reporter, descendant_session_id)
+
+    assert result["success"] is False
+    assert result["error_code"] == "invalid_feedback"
+    assert (
+        "'fixed' requires a task claimed or closed by this session or by a spawned "
+        "descendant session" in result["error"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_fixed_rejects_task_closed_by_unrelated_session(
+    session_manager: SessionManager,
+) -> None:
+    reporter = _registered_session(session_manager)
+    unrelated_session_id = session_manager.register_session(
+        external_id="feedback-unrelated",
+        machine_id=MACHINE_ID,
+        source="codex",
+        project_id=reporter.project_id,
+    )
+    assert unrelated_session_id
+
+    result = await _submit_fixed_feedback(session_manager, reporter, unrelated_session_id)
+
+    assert result["success"] is False
+    assert "spawned descendant session" in result["error"]
 
 
 def test_escalated_requires_an_owner_session_ref() -> None:
@@ -681,6 +829,15 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
     assert properties["current_state"]["minLength"] == 1
     assert properties["next_steps"]["minItems"] == 1
     assert properties["next_steps"]["items"]["minLength"] == 1
+    feedback_schema = registry.get_tool_metadata("feedback")
+    assert feedback_schema is not None
+    disposition_description = feedback_schema.input_schema["properties"]["observations"]["items"][
+        "properties"
+    ]["disposition"]["description"]
+    assert (
+        "claimed or closed by this session or by a spawned descendant session"
+        in disposition_description
+    )
 
     with session_context_for_test(session.id):
         assert await registry.call("feedback", {"observations": []}) == {

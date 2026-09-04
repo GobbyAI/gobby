@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Never
 from uuid import uuid4
@@ -119,8 +119,12 @@ def normalize_feedback_observations(
     *,
     resolve_task: Callable[[str], Task | None] | None = None,
     session_id: str | None = None,
+    descendant_session_ids: Collection[str] = (),
 ) -> list[FeedbackObservation]:
     """Validate feedback input without mutating storage."""
+    fixed_owner_session_ids = set(descendant_session_ids)
+    if session_id is not None:
+        fixed_owner_session_ids.add(session_id)
     normalized: list[FeedbackObservation] = []
     for index, raw in enumerate(observations or ()):
         if not isinstance(raw, Mapping):
@@ -178,12 +182,13 @@ def normalize_feedback_observations(
                         "by this session and labeled needs-decision or clean-window",
                     )
             elif (
-                get_claimed_session_id(task) != session_id
-                and task.closed_in_session_id != session_id
+                get_claimed_session_id(task) not in fixed_owner_session_ids
+                and task.closed_in_session_id not in fixed_owner_session_ids
             ):
                 _raise_disposition_error(
                     index,
-                    "'fixed' requires a task claimed or closed by this session",
+                    "'fixed' requires a task claimed or closed by this session or by a "
+                    "spawned descendant session",
                 )
         normalized.append(
             FeedbackObservation(
