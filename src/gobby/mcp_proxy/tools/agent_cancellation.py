@@ -74,6 +74,7 @@ async def terminalize_cancelled_agent_run(
     completion_registry: Any | None,
     task_manager: Any | None,
     message: str | None = None,
+    reap_srt_runner_on_fallback: bool = True,
 ) -> bool:
     """Cancel an agent run and recover its task claim even without lifecycle monitor wiring."""
     from gobby.agents.terminal_delivery import (
@@ -99,7 +100,8 @@ async def terminalize_cancelled_agent_run(
         run_id=run_id,
         outcome="cancelled",
     )
-    await _reap_terminal_srt_runner(run_id)
+    if reap_srt_runner_on_fallback:
+        await _reap_terminal_srt_runner(run_id)
     await deliver_existing_terminal_run(
         db=runner.run_storage.db,
         agent_run_manager=runner.run_storage,
@@ -120,7 +122,7 @@ async def terminalize_killed_agent_run(
     completion_registry: Any | None,
     task_manager: Any | None,
     terminal_error: str | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], bool]:
     """Apply workflow terminal state after an explicit parent-side kill."""
     from gobby.agents.terminal_delivery import (
         deliver_existing_terminal_run,
@@ -148,7 +150,6 @@ async def terminalize_killed_agent_run(
                 run_id=run_id,
                 outcome="failed",
             )
-        await _reap_terminal_srt_runner(run_id)
         await deliver_existing_terminal_run(
             db=runner.run_storage.db,
             agent_run_manager=runner.run_storage,
@@ -157,7 +158,7 @@ async def terminalize_killed_agent_run(
             run_db=run_terminal_delivery_offload,
             message=f"Agent {run_id} failed",
         )
-        return {"status": "error", "workflow_stopped": True}
+        return {"status": "error", "workflow_stopped": True}, failed_run is not None
 
     log_prefix = "Cancelled" if effective_status == "cancelled" else "Fallback cancelled"
     transitioned = await terminalize_cancelled_agent_run(
@@ -167,6 +168,7 @@ async def terminalize_killed_agent_run(
         lifecycle_monitor=lifecycle_monitor,
         completion_registry=completion_registry,
         task_manager=task_manager,
+        reap_srt_runner_on_fallback=False,
     )
     if not transitioned:
         current = runner.get_run(run_id)
@@ -176,11 +178,14 @@ async def terminalize_killed_agent_run(
             run_id,
             current.status if current else "missing",
         )
-    return {
-        "status": "cancelled",
-        "terminal_reason": "user_cancelled",
-        "workflow_stopped": True,
-    }
+    return (
+        {
+            "status": "cancelled",
+            "terminal_reason": "user_cancelled",
+            "workflow_stopped": True,
+        },
+        transitioned,
+    )
 
 
 async def terminate_agent_run(
@@ -245,17 +250,16 @@ async def terminate_agent_run(
                 result["workflow_stopped"] = False
                 return result
 
-            result.update(
-                await terminalize_killed_agent_run(
-                    runner=runner,
-                    run_id=run_id,
-                    effective_status=effective_status,
-                    lifecycle_monitor=lifecycle_monitor,
-                    completion_registry=completion_registry,
-                    task_manager=task_manager,
-                    terminal_error=terminal_error,
-                )
+            terminal_result, transitioned = await terminalize_killed_agent_run(
+                runner=runner,
+                run_id=run_id,
+                effective_status=effective_status,
+                lifecycle_monitor=lifecycle_monitor,
+                completion_registry=completion_registry,
+                task_manager=task_manager,
+                terminal_error=terminal_error,
             )
+            result.update(terminal_result)
 
             await resolved_cleanup_terminal_artifacts(
                 run_id=run_id,
@@ -265,6 +269,8 @@ async def terminate_agent_run(
                 debug=debug,
                 session_manager=session_manager,
                 result=result,
+                terminal_transition_owned=transitioned
+                and (effective_status == "error" or lifecycle_monitor is None),
             )
             return result
         finally:
@@ -333,6 +339,7 @@ async def stop_agent_run(
                 completion_registry=completion_registry,
                 task_manager=task_manager,
                 message=f"Agent {run_id} cancelled",
+                reap_srt_runner_on_fallback=False,
             )
             if not transitioned:
                 current = runner.get_run(run_id)
@@ -351,6 +358,7 @@ async def stop_agent_run(
                 debug=False,
                 session_manager=session_manager,
                 result=result,
+                terminal_transition_owned=transitioned and lifecycle_monitor is None,
             )
             return {
                 "success": True,

@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
 from gobby.agents.run_completion import agent_run_task_dirty_paths
+from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run
 from gobby.mcp_proxy.tools.agents_runtime import facade
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.storage.agents import AgentRunTerminalReason
+
+logger = logging.getLogger(__name__)
 
 
 async def _cleanup_terminal_artifacts(
@@ -23,6 +27,7 @@ async def _cleanup_terminal_artifacts(
     debug: bool,
     session_manager: Any | None,
     result: dict[str, Any],
+    terminal_transition_owned: bool,
 ) -> None:
     """Clean up terminal/session state after an explicit agent termination."""
     agents = facade()
@@ -45,6 +50,16 @@ async def _cleanup_terminal_artifacts(
                 result["session_expired"] = True
             except Exception as e:
                 result["session_expire_error"] = str(e)
+
+    if not debug and terminal_transition_owned and run_id:
+        try:
+            await reap_terminal_sandbox_run(run_id)
+        except Exception:
+            logger.warning(
+                "Failed to reap SRT sandbox resources for terminal agent %s",
+                run_id,
+                exc_info=True,
+            )
 
 
 async def _complete_self_terminated_run(
@@ -88,6 +103,7 @@ async def _complete_self_terminated_run(
     completion_message = (
         f"Agent {run.id} completed; dirty_paths={json.dumps(dirty_paths, separators=(',', ':'))}"
     )
+    transitioned_here = False
 
     async def complete_with_acknowledged_delivery() -> bool:
         return bool(
@@ -123,7 +139,8 @@ async def _complete_self_terminated_run(
             _action: TerminalAction,
             _reason: str | None,
         ) -> Any | None:
-            await complete_with_acknowledged_delivery()
+            nonlocal transitioned_here
+            transitioned_here = await complete_with_acknowledged_delivery()
             return runner.get_run(run.id)
 
         termination_error: str | None
@@ -165,8 +182,8 @@ async def _complete_self_terminated_run(
         else:
             result["terminal_cleanup_error"] = kill_result.get("error") or "unknown cleanup"
 
-        completed = await complete_with_acknowledged_delivery()
-        if not completed:
+        transitioned_here = await complete_with_acknowledged_delivery()
+        if not transitioned_here:
             current = runner.get_run(run.id)
             result["status"] = current.status if current else "unknown"
             result["noop"] = True
@@ -183,6 +200,7 @@ async def _complete_self_terminated_run(
         debug=debug,
         session_manager=session_manager,
         result=result,
+        terminal_transition_owned=transitioned_here,
     )
     result["run_id"] = run.id
     result["success"] = True
