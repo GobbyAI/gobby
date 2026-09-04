@@ -598,21 +598,6 @@ def test_managed_refresh_envelope_token(tmp_path: Path) -> None:
     )
     assert refreshed.principal.kind == "agent_run"
 
-    with pytest.raises(HandshakeRejection) as missing:
-        handshake.authenticate_managed_refresh(None, grant.principal)
-    assert missing.value.code == "managed_source"
-    other = issue_agent_api_token(
-        OPERATOR_TOKEN,
-        agent_run_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
-        session_id=SESSION_ID,
-        project_id=PROJECT_ID,
-        machine_id=LOCAL_MACHINE_ID,
-        timeout_seconds=30,
-    )
-    with pytest.raises(HandshakeRejection) as mismatched:
-        handshake.authenticate_managed_refresh(other, grant.principal)
-    assert mismatched.value.code == "managed_source"
-
 
 def test_operator_and_agent_grants_are_v2() -> None:
     handshake = _handshake()

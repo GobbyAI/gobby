@@ -17,7 +17,6 @@ from gobby.utils.local_token import (
     AgentApiTokenClaims,
     _urlsafe_encode,
     managed_token_signing_payload,
-    verify_agent_api_token,
 )
 
 GRANT_TTL_SECONDS = 3600
@@ -192,28 +191,6 @@ class HandshakeService:
             code_overlay_project_id=code_overlay_project_id,
         )
         return self._issue(principal)
-
-    def authenticate_managed_refresh(
-        self,
-        token: str | None,
-        principal: GrantPrincipal,
-    ) -> AgentApiTokenClaims:
-        if token is None or not token:
-            raise HandshakeRejection(
-                "managed refresh requires the launch envelope token",
-                code="managed_source",
-            )
-        claims = verify_agent_api_token(token, self.operator_token)
-        if claims is None:
-            raise HandshakeRejection("envelope token is invalid", code="managed_source")
-        owner = claims.agent_run_id or claims.managed_execution_id
-        if (
-            claims.machine_id != principal.machine_id
-            or claims.project_id != principal.project_id
-            or owner != principal.execution_id
-        ):
-            raise HandshakeRejection("envelope token principal mismatch", code="managed_source")
-        return claims
 
     def _issue(self, principal: GrantPrincipal, *, token_exp: int | None = None) -> GrantBundle:
         key = (

@@ -279,6 +279,57 @@ def test_bootstrap_failure_rolls_back_the_partially_created_role(
         manager.close()
 
 
+def test_rotate_rolls_back_on_bootstrap_failure(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = authorization_fixture
+    execution_id = uuid4()
+    runtime_root = tmp_path / "managed"
+    manager = _manager(fixture, runtime_root)
+    try:
+        predecessor = manager.issue(
+            managed_execution_id=execution_id,
+            owner_kind="agent_run",
+            session_id=fixture.session_id,
+            agent_run_id=fixture.agent_run_id,
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+
+        def fail_materialization(*args: object, **kwargs: object) -> None:
+            del args, kwargs
+            raise OSError("synthetic bootstrap failure")
+
+        monkeypatch.setattr(manager, "_materialize_bootstrap", fail_materialization)
+        with pytest.raises(CredentialIssuanceError, match="managed credential rotation failed"):
+            manager.rotate(
+                managed_execution_id=execution_id,
+                expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            )
+
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            bindings = admin.execute(
+                f"SELECT credential_generation, role_name, revoked_at IS NOT NULL, "
+                "revocation_requested_at, predecessor_drain_deadline "
+                f"FROM {AUTH_SCHEMA}.principal_bindings "
+                "WHERE managed_execution_id = %s ORDER BY credential_generation",
+                (execution_id,),
+            ).fetchall()
+            successor_role = admin.execute("SELECT to_regrole(%s)", (bindings[1][1],)).fetchone()
+
+        assert bindings[0][0] == predecessor.credential_generation
+        assert bindings[0][2:] == (False, None, None)
+        assert bindings[1][0] > predecessor.credential_generation
+        assert bindings[1][2] is True
+        assert successor_role == (None,)
+        bootstrap = json.loads((runtime_root / str(execution_id) / "bootstrap.json").read_text())
+        assert bootstrap["credential_generation"] == predecessor.credential_generation
+    finally:
+        manager.revoke(execution_id, reason="test-cleanup")
+        manager.close()
+
+
 class _UnavailableDatabase:
     conninfo = "postgresql://redacted.invalid/example"
 
