@@ -31,6 +31,11 @@ from gobby.agents.spawn_executor_support import (
     schedule_codex_prompt_delivery,
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
+from gobby.agents.spawn_timing import (
+    complete_spawn_phase_timings,
+    finish_spawn_phase,
+    start_spawn_phase,
+)
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.terminals import Terminal, TerminalManager, mint_terminal_id
@@ -126,38 +131,51 @@ def _spawn_in_doubt_seconds(request: SpawnRequest) -> float:
 
 async def execute_spawn(request: SpawnRequest) -> SpawnResult:
     """Unified spawn dispatch — all agents spawn via TerminalRuntime."""
-    result = _unsupported_sandbox_request_error(request)
-    if result is None:
-        if request.provider == "claude" and request.agent_name in _NATIVE_SUBAGENT_RESEARCH_AGENTS:
-            logger.warning(
-                "Agent %s requests provider-native internal subagents, but the managed "
-                "Claude runtime strips the native Task facility; internal research lanes "
-                "will be unavailable",
-                request.agent_name,
-            )
+    try:
+        result = _unsupported_sandbox_request_error(request)
+        if result is None:
+            if (
+                request.provider == "claude"
+                and request.agent_name in _NATIVE_SUBAGENT_RESEARCH_AGENTS
+            ):
+                logger.warning(
+                    "Agent %s requests provider-native internal subagents, but the managed "
+                    "Claude runtime strips the native Task facility; internal research lanes "
+                    "will be unavailable",
+                    request.agent_name,
+                )
 
-        if request.provider == "grok":
-            result = await _spawn_grok_terminal(request)
-        elif request.provider == "qwen":
-            result = await _spawn_qwen_terminal(request)
-        elif request.provider == "codex":
-            result = await _spawn_codex_terminal(request)
-        elif request.provider == "droid":
-            result = await _spawn_droid_terminal(request)
-        elif request.provider == "agy":
-            result = await _spawn_agy_terminal(request)
-        elif request.provider == "claude":
-            result = await _spawn_claude_terminal(request)
-        else:
-            result = SpawnResult(
-                success=False,
-                run_id=request.run_id,
-                child_session_id=None,
-                status="failed",
-                error=f"Unsupported spawn provider: {request.provider}",
-            )
+            if request.provider == "grok":
+                result = await _spawn_grok_terminal(request)
+            elif request.provider == "qwen":
+                result = await _spawn_qwen_terminal(request)
+            elif request.provider == "codex":
+                result = await _spawn_codex_terminal(request)
+            elif request.provider == "droid":
+                result = await _spawn_droid_terminal(request)
+            elif request.provider == "agy":
+                result = await _spawn_agy_terminal(request)
+            elif request.provider == "claude":
+                result = await _spawn_claude_terminal(request)
+            else:
+                result = SpawnResult(
+                    success=False,
+                    run_id=request.run_id,
+                    child_session_id=None,
+                    status="failed",
+                    error=f"Unsupported spawn provider: {request.provider}",
+                )
 
-    return result
+        return result
+    finally:
+        logger.info(
+            "Spawn phase timings",
+            extra={
+                "run_id": request.run_id,
+                "provider": request.provider,
+                "phase_timings_ms": complete_spawn_phase_timings(request.phase_timings_ms),
+            },
+        )
 
 
 async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
@@ -395,6 +413,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
         spawn_request.reservation_id = reservation.get("reservation_id")
         spawn_request.reserve_key = reservation.get("reserve_key")
 
+    runtime_prepare_started = start_spawn_phase()
     prepare_task = asyncio.create_task(runtime.prepare_spawn(spawn_request))
     timeout = request.timeout_seconds
     try:
@@ -446,6 +465,12 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
             status="failed",
             error=str(exc),
             terminal_id=terminal_id,
+        )
+    finally:
+        finish_spawn_phase(
+            request.phase_timings_ms,
+            "runtime_prepare_spawn",
+            runtime_prepare_started,
         )
 
     return await _promote_prepared(

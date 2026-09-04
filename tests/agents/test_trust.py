@@ -412,6 +412,67 @@ class TestCodexTrust:
         assert parsed["model"] == "gpt-5"
         assert parsed["projects"][r"C:\Users\josh\.gobby"]["trust_level"] == "trusted"
 
+    def test_existing_codex_trust_skips_tomlkit_parse(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        codex_home = tmp_path / ".codex"
+        codex_home.mkdir()
+        config_file = codex_home / "config.toml"
+        config_file.write_text(
+            f'[projects.{json.dumps(str(workspace))}]\ntrust_level = "trusted"\n',
+            encoding="utf-8",
+        )
+
+        with (
+            patch("gobby.agents.trust.Path.home", return_value=tmp_path),
+            patch(
+                "gobby.agents.trust._load_toml_config",
+                side_effect=AssertionError("slow parser used"),
+            ),
+        ):
+            pre_approve_directory("codex", workspace)
+
+        assert (
+            tomllib.loads(config_file.read_text(encoding="utf-8"))["projects"][str(workspace)][
+                "trust_level"
+            ]
+            == "trusted"
+        )
+
+    def test_new_codex_trust_prunes_stale_generated_projects_without_tomlkit(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        workspace = tmp_path / ".gobby" / "worktrees" / "active"
+        workspace.mkdir(parents=True)
+        stale_workspace = tmp_path / ".gobby" / "worktrees" / "stale"
+        codex_home = tmp_path / ".codex"
+        codex_home.mkdir()
+        config_file = codex_home / "config.toml"
+        config_file.write_text(
+            'model = "gpt-5"\n\n'
+            f"[projects.{json.dumps(str(stale_workspace))}]\n"
+            'trust_level = "trusted"\n\n'
+            "[features]\n"
+            "codex_hooks = true\n",
+            encoding="utf-8",
+        )
+
+        with (
+            patch("gobby.agents.trust.Path.home", return_value=tmp_path),
+            patch(
+                "gobby.agents.trust._load_toml_config",
+                side_effect=AssertionError("slow parser used"),
+            ),
+        ):
+            pre_approve_directory("codex", workspace)
+
+        parsed = tomllib.loads(config_file.read_text(encoding="utf-8"))
+        assert parsed["model"] == "gpt-5"
+        assert parsed["features"]["codex_hooks"] is True
+        assert str(stale_workspace) not in parsed["projects"]
+        assert parsed["projects"][str(workspace)]["trust_level"] == "trusted"
+
 
 class TestDroidNoop:
     def test_droid_is_noop_with_debug_log(self, tmp_path: Path, caplog) -> None:

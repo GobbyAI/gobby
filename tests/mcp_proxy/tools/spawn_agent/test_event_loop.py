@@ -53,7 +53,8 @@ async def test_spawn_preparation_does_not_block_event_loop(
         },
     )
     monkeypatch.setattr(_implementation, "get_isolation_handler", lambda *_args, **_kwargs: handler)
-    monkeypatch.setattr(_implementation, "execute_spawn", AsyncMock(return_value=spawn_result))
+    execute_spawn = AsyncMock(return_value=spawn_result)
+    monkeypatch.setattr(_implementation, "execute_spawn", execute_spawn)
 
     loop = asyncio.get_running_loop()
     heartbeat_times = [loop.time()]
@@ -95,3 +96,6 @@ async def test_spawn_preparation_does_not_block_event_loop(
     ]
     assert result["success"] is True
     assert max(gaps) < 0.5
+    assert execute_spawn.await_args is not None
+    spawn_request = execute_spawn.await_args.args[0]
+    assert spawn_request.phase_timings_ms["prepare_terminal_spawn"] >= 2900

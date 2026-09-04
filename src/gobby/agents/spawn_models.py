@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.agents.sandbox import SandboxConfig
@@ -85,6 +85,7 @@ class SpawnRequest:
     code_index_api_token: str | None = None
     code_index_preflight_warning: dict[str, str] | None = None
     prepared_spawn: PreparedSpawn
+    phase_timings_ms: dict[str, float] = field(default_factory=dict)
     terminal_manager: TerminalManager | None = None
     terminal_runtime_registry: TerminalRuntimeRegistry | None = None
     write_coordinator: WriteCoordinator | None = None
