@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
 from gobby.adapters.acp_stream import StreamEvent
-from gobby.adapters.agy_contract import AGY_TOOL_MAP
+from gobby.adapters.agy_contract import normalize_agy_tool_call
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.workflows.enforcement.blocking import canonical_gobby_tool_name
 
@@ -36,16 +36,7 @@ def agy_tool_name_adapter(
     tool_input: Mapping[str, Any] | None = None,
 ) -> str:
     """Map AGY snake_case (and MCP) spellings to Gobby canonical tool names."""
-    mapped = raw_tool_name
-    if raw_tool_name == "call_mcp_tool" and isinstance(tool_input, Mapping):
-        server = tool_input.get("ServerName")
-        tool = tool_input.get("ToolName")
-        if isinstance(server, str) and server and isinstance(tool, str) and tool:
-            mapped = f"mcp__{server}__{tool}"
-        else:
-            mapped = AGY_TOOL_MAP.get(raw_tool_name, raw_tool_name)
-    else:
-        mapped = AGY_TOOL_MAP.get(raw_tool_name, raw_tool_name)
+    mapped = normalize_agy_tool_call(raw_tool_name, tool_input)["tool_name"]
     normalized = normalize_tool_fields({"tool_name": mapped})
     name = normalized.get("tool_name")
     if not isinstance(name, str) or not name:
@@ -87,6 +78,9 @@ def _events_from_tool_step(body: dict[str, Any]) -> list[StreamEvent]:
     tool_input = parameters if isinstance(parameters, dict) else {}
     raw_name = body.get("tool_name") or info.get("name") or "unknown"
     tool_name = agy_tool_name_adapter(str(raw_name), tool_input)
+    normalized_input = normalize_agy_tool_call(str(raw_name), tool_input).get("tool_input")
+    if isinstance(normalized_input, dict):
+        tool_input = normalized_input
     call_id = _tool_call_id(body)
     if state == "ACTIVE":
         return [
