@@ -43,6 +43,7 @@ from gobby.sessions.transcript_index import (
 )
 from gobby.sessions.transcript_index_resume import hydrate_appender_from_index
 from gobby.sessions.transcript_io import _count_nonempty_lines
+from gobby.sessions.transcript_reader import _activity_counts_from_index
 from gobby.sessions.transcript_renderer import RenderedMessage, RenderState, render_transcript
 from gobby.sessions.transcripts.base import ParsedMessage, RawLine
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
@@ -52,6 +53,7 @@ from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 pytestmark = pytest.mark.unit
 
 SESSION = "s1"
+AGY_STATS_FIXTURE = Path(__file__).parent / "fixtures" / "agy" / "print_tool_calls_terminal.jsonl"
 
 
 def _codex_lines() -> list[str]:
@@ -277,6 +279,29 @@ def test_tool_first_open_captures_tool_use(tmp_path: Path) -> None:
     tool_use = next(m for m in parsed if m.tool_use_id == "call_1" and m.content_type == "tool_use")
 
     assert index.tool_first_open == {"call_1": tool_use.index}
+
+
+def test_agy_index_counts_each_tool_begin_and_completed_turn() -> None:
+    st = os.stat(AGY_STATS_FIXTURE)
+    index = build_index_from_file(
+        str(AGY_STATS_FIXTURE),
+        "agy",
+        SESSION,
+        mtime_ns=st.st_mtime_ns,
+        size=st.st_size,
+    )
+
+    assert set(index.tool_first_open) == {
+        "s1:3:0",
+        "s1:7:0",
+        "s1:10:0",
+        "s1:13:0",
+    }
+    assert _activity_counts_from_index(index) == {
+        "message_count": 3,
+        "turn_count": 1,
+        "tool_call_count": 4,
+    }
 
 
 def test_multimessage_line_second_group_not_resume_safe(tmp_path: Path) -> None:

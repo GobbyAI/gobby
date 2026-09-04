@@ -38,8 +38,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 from gobby.sessions.message_stats import (
     TURN_BOUNDARY_CONTENT_TYPE,
-    MessageProtocol,
     MessageStats,
+    StatsRecord,
     accumulate_message_stats,
     empty_message_stats,
 )
@@ -74,6 +74,7 @@ from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import (
     NON_MESSAGE_CONTENT_TYPES,
     ParsedMessage,
+    ParsedToolEvent,
     RawLine,
     TokenUsage,
 )
@@ -420,7 +421,7 @@ class TranscriptIndexAppender:
         self._unshare_index_containers()
         raw_counter = [0]
         next_raw_line_no = [self._next_raw_line_no]
-        stats_messages: list[ParsedMessage] = []
+        stats_records: list[StatsRecord] = []
         events = self._parser.iter_parse_events(
             _counting_with_line_cursor(raw_lines, raw_counter, next_raw_line_no),
             start_index=self._next_start_index,
@@ -443,6 +444,15 @@ class TranscriptIndexAppender:
                 )
 
             for offset_in_event, record in enumerate(records):
+                if isinstance(record, ParsedToolEvent):
+                    if self.index.source == "agy":
+                        stats_records.append(record)
+                        if record.phase == "begin" and record.call_id:
+                            self.index.tool_first_open.setdefault(
+                                record.call_id,
+                                event.parsed_index + offset_in_event,
+                            )
+                    continue
                 if not isinstance(record, ParsedMessage):
                     continue
 
@@ -455,9 +465,9 @@ class TranscriptIndexAppender:
                 # stay out of parsed_message_count/role counts, but they must
                 # still reach accumulate_message_stats to increment turn_count.
                 if record.content_type == TURN_BOUNDARY_CONTENT_TYPE:
-                    stats_messages.append(record)
+                    stats_records.append(record)
                 elif record.content_type not in NON_MESSAGE_CONTENT_TYPES:
-                    stats_messages.append(record)
+                    stats_records.append(record)
                     self.index.parsed_message_count += 1
                     self._role_counts[record.role] = self._role_counts.get(record.role, 0) + 1
 
@@ -495,9 +505,11 @@ class TranscriptIndexAppender:
                 records, self._next_start_index, event.parsed_index
             )
 
-        if stats_messages:
+        if stats_records:
             self.index.session_stats = accumulate_message_stats(
-                self.index.session_stats, cast("list[MessageProtocol]", stats_messages)
+                self.index.session_stats,
+                stats_records,
+                source=self.index.source,
             )
         self.index.raw_record_count += raw_counter[0]
         self._next_raw_line_no = max(self._next_raw_line_no, next_raw_line_no[0])

@@ -6,11 +6,13 @@ import asyncio
 import inspect
 import logging
 import os
+from collections.abc import Sequence
 from typing import Any
 
 from gobby.sessions.context_usage import context_window_from_raw_message
 from gobby.sessions.message_stats import (
     MessageStats,
+    StatsRecord,
     accumulate_message_stats,
     empty_message_stats,
 )
@@ -67,9 +69,9 @@ class ProcessorStatsMixin:
         )
 
     def _accumulate_stats(
-        self: ProcessorHost, session_id: str, messages: list[Any]
+        self: ProcessorHost, session_id: str, records: Sequence[StatsRecord]
     ) -> MessageStats:
-        """Accumulate incremental stats from parsed messages.
+        """Accumulate incremental stats from parsed transcript records.
 
         Per-batch counts come from the shared message-stat helpers (also used
         by the lifecycle expiry path) and are folded into the running
@@ -82,7 +84,11 @@ class ProcessorStatsMixin:
                 self._stats_hydration_skipped.discard(session_id)
             else:
                 stats = empty_message_stats()
-        stats = accumulate_message_stats(stats, messages)
+        stats = accumulate_message_stats(
+            stats,
+            records,
+            source=self._session_sources.get(session_id),
+        )
         self._stats[session_id] = stats
         return stats
 

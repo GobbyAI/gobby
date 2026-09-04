@@ -13,6 +13,7 @@ from typing import Any
 
 from gobby.adapters.agy_contract import (
     decode_agy_tool_args,
+    normalize_agy_tool_call,
     normalize_agy_tool_name,
     parse_agy_command_exit,
 )
@@ -28,6 +29,7 @@ from gobby.sessions.transcripts.base import (
 
 _SYSTEM_SOURCES = frozenset({"SYSTEM", "SYSTEM_SDK"})
 _TOKEN_EFFICIENT_BASENAME = "transcript.jsonl"
+_TURN_COMPLETED_CONTENT_TYPE = "turn_completed"
 
 
 def _parse_timestamp(raw: Any) -> datetime:
@@ -75,6 +77,7 @@ class AgyTranscriptParser(BaseTranscriptParser):
         )
         self._pending: deque[_PendingCall] = deque()
         self._decode_jsonl_args = _basename(transcript_path) == _TOKEN_EFFICIENT_BASENAME
+        self._turn_open = False
 
     def snapshot_state(self) -> dict[str, Any]:
         return {
@@ -85,7 +88,8 @@ class AgyTranscriptParser(BaseTranscriptParser):
                     "arguments": dict(pending.arguments),
                 }
                 for pending in self._pending
-            ]
+            ],
+            "turn_open": self._turn_open,
         }
 
     def hydrate_state(self, state: Mapping[str, Any]) -> None:
@@ -108,6 +112,7 @@ class AgyTranscriptParser(BaseTranscriptParser):
                     )
                 )
         self._pending = pending
+        self._turn_open = state.get("turn_open") is True
 
     def parse_line(self, line: str, index: int) -> ParsedMessage | ParsedToolEvent | None:
         expanded = self._expand_line(line, index)
@@ -221,8 +226,11 @@ class AgyTranscriptParser(BaseTranscriptParser):
                 return [self._unmodeled(index, source, record_type, record, timestamp)]
             content = record.get("content")
             if not isinstance(content, str) or not content:
-                return []
-            return [self._message(index, "user", content, "text", timestamp, record)]
+                return self._complete_turn(index, timestamp, record)
+            out = self._complete_turn(index, timestamp, record)
+            self._turn_open = True
+            out.append(self._message(index, "user", content, "text", timestamp, record))
+            return out
         if source != "MODEL":
             return [self._unmodeled(index, source, record_type, record, timestamp)]
         if record_type == "PLANNER_RESPONSE":
@@ -264,15 +272,21 @@ class AgyTranscriptParser(BaseTranscriptParser):
             out.append(self._message(index, "assistant", content, "text", timestamp, record))
         tool_calls = record.get("tool_calls")
         if not isinstance(tool_calls, list):
+            out.extend(self._complete_turn(index, timestamp, record))
             return out
         step_index = record.get("step_index")
         step = step_index if isinstance(step_index, int) and not isinstance(step_index, bool) else 0
+        emitted_call = False
+        terminal_call = False
         for ordinal, raw_call in enumerate(tool_calls):
             if not isinstance(raw_call, dict):
                 continue
             name = raw_call.get("name")
-            tool = normalize_agy_tool_name(name if isinstance(name, str) else "tool")
+            raw_name = name if isinstance(name, str) else "tool"
+            tool = normalize_agy_tool_name(raw_name)
             arguments = self._tool_arguments(raw_call.get("args"))
+            emitted_call = True
+            terminal_call = terminal_call or self._is_terminal_call(raw_name, arguments)
             call_id = self._call_id(step, ordinal)
             self._pending.append(_PendingCall(call_id=call_id, tool=tool, arguments=arguments))
             out.append(
@@ -286,7 +300,44 @@ class AgyTranscriptParser(BaseTranscriptParser):
                     raw_json=record,
                 )
             )
+        if not emitted_call or terminal_call:
+            out.extend(self._complete_turn(index, timestamp, record))
         return out
+
+    def _complete_turn(
+        self,
+        index: int,
+        timestamp: datetime,
+        record: dict[str, Any],
+    ) -> list[ParsedMessage | ParsedToolEvent]:
+        if not self._turn_open:
+            return []
+        self._turn_open = False
+        return [
+            self._message(
+                index,
+                "assistant",
+                "",
+                _TURN_COMPLETED_CONTENT_TYPE,
+                timestamp,
+                record,
+            )
+        ]
+
+    @staticmethod
+    def _is_terminal_call(raw_name: str, arguments: Mapping[str, Any]) -> bool:
+        normalized = normalize_agy_tool_call(raw_name, arguments)
+        tool_name = normalized.get("tool_name")
+        if tool_name == "mcp__gobby-agents__end_agent_run":
+            return True
+        if tool_name != "mcp__gobby__call_tool":
+            return False
+        tool_input = normalized.get("tool_input")
+        return (
+            isinstance(tool_input, Mapping)
+            and tool_input.get("server_name") == "gobby-agents"
+            and tool_input.get("tool_name") == "end_agent_run"
+        )
 
     def _expand_tool_result(
         self,

@@ -12,11 +12,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol, TypedDict
 
-from gobby.sessions.transcripts.base import NON_MESSAGE_CONTENT_TYPES
+from gobby.sessions.transcripts.base import NON_MESSAGE_CONTENT_TYPES, ParsedToolEvent
 
 _LAST_ASSISTANT_CONTENT_LIMIT = 500
 TURN_BOUNDARY_CONTENT_TYPE = "turn_completed"
-TURN_BOUNDARY_SOURCES: frozenset[str] = frozenset({"grok"})
+TURN_BOUNDARY_SOURCES: frozenset[str] = frozenset({"agy", "grok"})
 
 
 class MessageStats(TypedDict):
@@ -29,14 +29,19 @@ class MessageStats(TypedDict):
 
 
 class MessageProtocol(Protocol):
-    role: str | None
-    content_type: str | None
-    content: object
+    role: str
+    content_type: str
+    content: str | dict[str, Any]
     tool_name: str | None
     source: str | None
 
 
-def compute_message_stats(messages: Sequence[MessageProtocol]) -> MessageStats:
+type StatsRecord = MessageProtocol | ParsedToolEvent
+
+
+def compute_message_stats(
+    messages: Sequence[StatsRecord], *, source: str | None = None
+) -> MessageStats:
     """Compute session stats from parsed transcript messages.
 
     The predicate, shared by the live and batch stat writers:
@@ -47,7 +52,8 @@ def compute_message_stats(messages: Sequence[MessageProtocol]) -> MessageStats:
     - ``turn_count`` counts one completed turn per ``turn_completed`` boundary,
       plus assistant ``text`` messages whose ``source`` is not in
       ``TURN_BOUNDARY_SOURCES`` (those sources emit explicit boundaries).
-    - ``tool_call_count`` counts messages carrying a truthy ``tool_name``.
+    - ``tool_call_count`` counts messages carrying a truthy ``tool_name`` plus
+      AGY tool-begin events, deduplicated by ``call_id``.
     - ``last_assistant_content`` is the last non-empty assistant text, stripped
       and clamped to the trailing ``500`` characters; ``None`` when the batch
       holds no such message.
@@ -55,9 +61,20 @@ def compute_message_stats(messages: Sequence[MessageProtocol]) -> MessageStats:
     message_count = 0
     turn_count = 0
     tool_call_count = 0
+    agy_call_ids: set[str] = set()
     last_assistant_content: str | None = None
 
     for msg in messages:
+        if isinstance(msg, ParsedToolEvent):
+            if (
+                source == "agy"
+                and msg.phase == "begin"
+                and msg.call_id
+                and msg.call_id not in agy_call_ids
+            ):
+                agy_call_ids.add(msg.call_id)
+                tool_call_count += 1
+            continue
         content_type = _message_attr(msg, "content_type")
         if content_type == TURN_BOUNDARY_CONTENT_TYPE:
             # Explicit turn boundary: counts one turn, is not a conversation message.
@@ -137,7 +154,9 @@ def merge_message_stats(
 
 def accumulate_message_stats(
     current: Mapping[str, Any] | None,
-    messages: Sequence[MessageProtocol],
+    messages: Sequence[StatsRecord],
+    *,
+    source: str | None = None,
 ) -> MessageStats:
-    """Compute and merge stats for a parsed-message batch."""
-    return merge_message_stats(current, compute_message_stats(messages))
+    """Compute and merge stats for a parsed-record batch."""
+    return merge_message_stats(current, compute_message_stats(messages, source=source))

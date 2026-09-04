@@ -7,6 +7,7 @@ counts used by both the live ``SessionMessageProcessor`` poll loop and the batch
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import get_type_hints
 
@@ -18,8 +19,11 @@ from gobby.sessions.message_stats import (
     compute_message_stats,
     merge_message_stats,
 )
+from gobby.sessions.transcripts.agy import AgyTranscriptParser
 
 pytestmark = pytest.mark.unit
+
+AGY_STATS_FIXTURE = Path(__file__).parent / "fixtures" / "agy" / "print_tool_calls_terminal.jsonl"
 
 
 def _msg(
@@ -153,6 +157,20 @@ def test_turn_boundary_source_gates_assistant_text_turns() -> None:
     assert grok_only["turn_count"] == 0
     assert grok_only["message_count"] == 1
     assert grok_only["last_assistant_content"] == "still drafting"
+
+
+def test_agy_tool_events_are_calls_not_messages_and_terminal_call_closes_turn() -> None:
+    parser = AgyTranscriptParser(session_id="agy-session", transcript_path=AGY_STATS_FIXTURE)
+    records = parser.parse_lines(AGY_STATS_FIXTURE.read_text(encoding="utf-8").splitlines())
+
+    stats = compute_message_stats(records, source="agy")
+
+    assert stats == {
+        "message_count": 3,
+        "turn_count": 1,
+        "tool_call_count": 4,
+        "last_assistant_content": None,
+    }
 
 
 def test_message_protocol_declares_source() -> None:

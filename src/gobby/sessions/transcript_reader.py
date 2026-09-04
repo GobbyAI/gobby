@@ -88,9 +88,14 @@ class _Windowable:
 
 
 def _activity_counts_from_index(index: TranscriptIndex) -> dict[str, int]:
+    turn_count = (
+        index.session_stats["turn_count"]
+        if index.source == "agy" and index.session_stats is not None
+        else sum(1 for boundary in index.boundaries if boundary.role == "assistant")
+    )
     return {
         "message_count": index.parsed_message_count,
-        "turn_count": sum(1 for boundary in index.boundaries if boundary.role == "assistant"),
+        "turn_count": turn_count,
         "tool_call_count": len(index.tool_first_open),
     }
 
