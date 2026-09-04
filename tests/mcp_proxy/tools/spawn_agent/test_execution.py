@@ -90,6 +90,84 @@ def _spawn_success(run_storage: LocalAgentRunManager, delay: float = 0.0) -> Asy
     return AsyncMock(side_effect=execute_spawn)
 
 
+@pytest.mark.asyncio
+async def test_parent_claim_transfer_failure_cleans_up_spawn(
+    isolation_context: IsolationContext,
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
+
+    parent_session_id = "21000000-0000-4000-8000-000000000001"
+    child_session_id = "21000000-0000-4000-8000-000000000002"
+    task_id = "21000000-0000-4000-8000-000000000003"
+    task_manager = MagicMock()
+    task_manager.get_task.return_value = SimpleNamespace(
+        claimed_by_session_id=parent_session_id,
+        closed_at=None,
+        escalated_at=None,
+    )
+    task_manager.release_task_claim.side_effect = RuntimeError("claim release failed")
+    spawn_result = SimpleNamespace(
+        success=True,
+        child_session_id=child_session_id,
+        terminal_type="none",
+        terminal_id=None,
+        pid=None,
+        error=None,
+    )
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution._persist_spawn_runtime"
+        ) as persist_runtime,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution.start_run_or_cleanup",
+            new_callable=AsyncMock,
+            return_value=None,
+        ) as start_run,
+        patch("gobby.runner_broadcasting.fire_agent_event"),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution.cleanup_failed_spawn",
+            new_callable=AsyncMock,
+        ) as cleanup,
+    ):
+        result = await finalize_executed_spawn(
+            runner=MagicMock(),
+            run_id="run-parent-transfer-failure",
+            spawn_result=spawn_result,
+            spawn_request=None,
+            isolation_ctx=isolation_context,
+            effective_isolation="none",
+            base_commit_sha=None,
+            handler=SimpleNamespace(commit_environment=None),
+            spawn_config=MagicMock(),
+            completion_registry=None,
+            cleanup_isolation_on_failure=False,
+            task_manager=task_manager,
+            parent_session_id=parent_session_id,
+            effective_provider="codex",
+            resolved_task_id=task_id,
+            task_seq_num=21745,
+            db=None,
+            agent_body=None,
+            effective_initial_variables={},
+            reasoning=MagicMock(),
+        )
+
+    assert result == {
+        "success": False,
+        "error": f"Failed to auto-claim task {task_id}: claim release failed",
+        "run_id": "run-parent-transfer-failure",
+        "worktree_id": isolation_context.worktree_id,
+        "branch_name": isolation_context.branch_name,
+    }
+    persist_runtime.assert_called_once()
+    start_run.assert_awaited_once()
+    assert task_manager.get_task.call_count == 2
+    task_manager.release_task_claim.assert_called_once_with(task_id)
+    task_manager.claim_task.assert_not_called()
+    cleanup.assert_awaited_once()
+
+
 class TestSpawnAgentIsolation:
     """Tests for spawn_agent isolation parameter."""
 
