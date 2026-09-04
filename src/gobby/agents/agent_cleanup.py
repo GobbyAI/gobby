@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents import terminal_delivery
 from gobby.agents.completion_stats import resolve_completion_stats
+from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run
 from gobby.agents.terminal_cleanup import TerminalResourceCleaner
 from gobby.sessions.transcript_reader import TranscriptReader
 
@@ -466,6 +467,15 @@ class AgentCleanupHandler:
                     logger.warning(
                         "Stale sweep returned non-terminal agent run %s; retaining subscribers",
                         run_id,
+                    )
+                    continue
+                try:
+                    await reap_terminal_sandbox_run(run_id)
+                except Exception:
+                    logger.warning(
+                        "Failed to reap SRT sandbox resources for stale agent %s",
+                        run_id,
+                        exc_info=True,
                     )
             return run_ids
 

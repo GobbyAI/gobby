@@ -131,6 +131,7 @@ async def test_terminal_transition_reaps_surviving_srt_runner_tree(
     sandbox_root = gobby_home / "run" / "sandbox"
     assert _run_id_from_cmdline(runner_process.info["cmdline"], sandbox_root) == "run-1"
     wait_calls = 0
+    cleanup_order: list[str] = []
 
     def wait_for_exit(
         processes: list[FakeProcess],
@@ -143,14 +144,21 @@ async def test_terminal_transition_reaps_surviving_srt_runner_tree(
         return ([], processes) if wait_calls == 1 else (processes, [])
 
     async def reap(run_id: str) -> int:
-        return await reap_srt_runner_process_tree(
+        reaped = await reap_srt_runner_process_tree(
             run_id,
             process_iter=_process_iter([runner_process, child]),
             wait_procs=cast(WaitProcs, wait_for_exit),
             sandbox_root=sandbox_root,
         )
+        cleanup_order.append("processes")
+        return reaped
+
+    async def reap_roots(run_id: str) -> None:
+        assert run_id == "run-1"
+        cleanup_order.append("roots")
 
     monkeypatch.setattr(terminal_cleanup, "reap_srt_runner_process_tree", reap)
+    monkeypatch.setattr(terminal_cleanup, "reap_sandbox_run_roots", reap_roots)
     _stub_runtime_cleanup(monkeypatch)
     caplog.set_level(logging.INFO, logger="gobby.agents.srt_process_cleanup")
 
@@ -163,6 +171,7 @@ async def test_terminal_transition_reaps_surviving_srt_runner_tree(
     assert child.terminated is True
     assert runner_process.killed is True
     assert child.killed is True
+    assert cleanup_order == ["processes", "roots"]
     assert "run_id=run-1 pid_count=2" in caplog.text
 
 
@@ -173,6 +182,7 @@ async def test_startup_sweep_reaps_orphan_and_spares_live_run(
     tmp_path: Path,
 ) -> None:
     gobby_home = tmp_path / "gobby-home"
+    cleanup_order: list[str] = []
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
     live_child = FakeProcess(202, ["claude"])
     live_runner = _runner_process("live-run", 201, children=[live_child])
@@ -194,16 +204,26 @@ async def test_startup_sweep_reaps_orphan_and_spares_live_run(
             return [SimpleNamespace(id="live-run")] if offset == 0 else []
 
     def reap(active_run_ids: set[str]) -> int:
-        return reap_orphaned_srt_runner_process_trees(
+        reaped = reap_orphaned_srt_runner_process_trees(
             active_run_ids,
             process_iter=_process_iter(processes),
             wait_procs=cast(WaitProcs, _wait_procs),
             sandbox_root=gobby_home / "run" / "sandbox",
         )
+        cleanup_order.append("processes")
+        return reaped
+
+    async def sweep_roots(active_run_ids: set[str]) -> None:
+        assert active_run_ids == {"live-run"}
+        cleanup_order.append("roots")
 
     monkeypatch.setattr(
         "gobby.runner_lifecycle_agents.reap_orphaned_srt_runner_process_trees",
         reap,
+    )
+    monkeypatch.setattr(
+        "gobby.runner_lifecycle_agents.sweep_sandbox_run_roots",
+        sweep_roots,
     )
     caplog.set_level(logging.INFO, logger="gobby.agents.srt_process_cleanup")
     runner = SimpleNamespace(
@@ -219,5 +239,6 @@ async def test_startup_sweep_reaps_orphan_and_spares_live_run(
     assert live_runner.terminated is False
     assert live_child.terminated is False
     assert unrelated.terminated is False
+    assert cleanup_order == ["processes", "roots"]
     assert "run_id=orphan-run pid_count=2" in caplog.text
     assert "run_id=live-run" not in caplog.text

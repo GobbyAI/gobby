@@ -11,6 +11,7 @@ from gobby.agents.recovery_state import (
     is_daemon_stop_parked,
     is_reconciliation_pending,
 )
+from gobby.agents.sandbox_reaper import sweep_sandbox_run_roots
 from gobby.agents.srt_process_cleanup import reap_orphaned_srt_runner_process_trees
 from gobby.events.completion_registry import wake_result_is_delivered
 from gobby.storage.agents import (
@@ -305,7 +306,7 @@ async def _recover_agent_runs_after_restart(
 
 
 async def _reap_orphaned_srt_runners_on_startup(runner: GobbyRunner) -> int:
-    """Reap managed SRT runners without an active agent-run row."""
+    """Reap managed SRT processes and old roots without an active run."""
     if runner.agent_runner is None:
         return 0
     active_runs = await _run_db(
@@ -315,10 +316,12 @@ async def _reap_orphaned_srt_runners_on_startup(runner: GobbyRunner) -> int:
         include_fenced=True,
     )
     active_run_ids = {str(run.id) for run in active_runs}
-    return await asyncio.to_thread(
+    reaped_processes = await asyncio.to_thread(
         reap_orphaned_srt_runner_process_trees,
         active_run_ids,
     )
+    await sweep_sandbox_run_roots(active_run_ids)
+    return reaped_processes
 
 
 def _refresh_active_run_dispatch_mutex(runner: GobbyRunner, run: Any) -> bool:

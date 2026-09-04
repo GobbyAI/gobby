@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents import terminal_delivery
+from gobby.agents.sandbox_reaper import reap_sandbox_run_roots
 from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
 from gobby.storage.attention import run_attention_entry_id
 
@@ -153,9 +154,10 @@ class TerminalResourceCleaner:
         if not parking:
             try:
                 await reap_srt_runner_process_tree(run.id)
+                await reap_sandbox_run_roots(run.id)
             except Exception:
                 logger.warning(
-                    "Failed to reap SRT sandbox runner for terminal agent %s",
+                    "Failed to reap SRT sandbox resources for terminal agent %s",
                     run.id,
                     exc_info=True,
                 )

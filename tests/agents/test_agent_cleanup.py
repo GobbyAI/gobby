@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -42,11 +42,17 @@ async def test_acknowledged_stale_sweeps_deliver_each_transitioned_run() -> None
         completion_registry=registry,
     )
 
-    with patch.object(
-        terminal_delivery,
-        "deliver_and_cleanup_terminal_run",
-        new_callable=AsyncMock,
-    ) as deliver:
+    with (
+        patch.object(
+            terminal_delivery,
+            "deliver_and_cleanup_terminal_run",
+            new_callable=AsyncMock,
+        ) as deliver,
+        patch(
+            "gobby.agents.agent_cleanup.reap_terminal_sandbox_run",
+            new_callable=AsyncMock,
+        ) as reap_sandbox,
+    ):
         run_ids = await handler.run_acknowledged_stale_sweeps(
             machine_id="machine-local",
             running_timeout_minutes=30,
@@ -67,6 +73,38 @@ async def test_acknowledged_stale_sweeps_deliver_each_transitioned_run() -> None
         {"status": "timeout", "run_id": "run-timeout", "error": "stale running"},
         {"status": "error", "run_id": "run-pending", "error": "stale pending"},
     ]
+    assert reap_sandbox.await_args_list == [call("run-timeout"), call("run-pending")]
+
+
+async def test_acknowledged_stale_sweep_keeps_nonterminal_run_resources(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    run_manager = MagicMock()
+    run_manager.cleanup_stale_runs.return_value = ["run-still-running"]
+    run_manager.get.return_value = SimpleNamespace(
+        id="run-still-running",
+        status="running",
+        error=None,
+    )
+    handler = _handler(MagicMock(), agent_run_manager=run_manager)
+
+    with patch(
+        "gobby.agents.agent_cleanup.reap_terminal_sandbox_run",
+        new_callable=AsyncMock,
+    ) as reap_sandbox:
+        run_ids = await handler.run_acknowledged_stale_sweeps(
+            machine_id="machine-local",
+            running_timeout_minutes=30,
+        )
+
+    assert run_ids == ["run-still-running"]
+    run_manager.cleanup_stale_runs.assert_called_once_with(
+        machine_id="machine-local",
+        default_timeout_minutes=30,
+    )
+    run_manager.get.assert_called_once_with("run-still-running")
+    reap_sandbox.assert_not_awaited()
+    assert "returned non-terminal agent run run-still-running" in caplog.text
 
 
 async def test_daemon_stop_terminalization_with_task_keeps_claim(

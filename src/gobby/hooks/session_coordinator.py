@@ -24,6 +24,7 @@ from weakref import WeakValueDictionary
 
 from gobby.agents.capture import TerminationErrorCode, capture_then_kill_sync
 from gobby.agents.completion_stats import merge_completion_stats, resolve_completion_stats
+from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run
 from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
 from gobby.sessions.transcript_reader import TranscriptReader
@@ -373,6 +374,25 @@ class SessionCoordinator:
             self.logger.error("Failed to start agent run %s: %s", agent_run_id, e)
             return False
 
+    def _reap_agent_sandbox_roots(self, run_id: str) -> None:
+        """Synchronously finish process and filesystem cleanup from a hook worker."""
+
+        async def cleanup() -> None:
+            await reap_terminal_sandbox_run(run_id)
+
+        try:
+            if self._event_loop and self._event_loop.is_running():
+                cleanup_future = asyncio.run_coroutine_threadsafe(cleanup(), self._event_loop)
+                cleanup_future.result()
+            else:
+                asyncio.run(cleanup())
+        except Exception:
+            self.logger.warning(
+                "Failed to reap SRT sandbox resources for terminal agent %s",
+                run_id,
+                exc_info=True,
+            )
+
     def _terminate_agent_run(
         self,
         *,
@@ -453,6 +473,7 @@ class SessionCoordinator:
             )
             self._notify_agent_completion(run_id, status)
             self.release_session_worktrees(session_id)
+            self._reap_agent_sandbox_roots(run_id)
             return updated_run
 
         def terminalize(_action: TerminalAction, payload: str | None) -> Any | None:
@@ -612,6 +633,7 @@ class SessionCoordinator:
                 )
                 self._notify_agent_completion(agent_run_id, agent_run.status)
                 self.release_session_worktrees(session.id)
+                self._reap_agent_sandbox_roots(agent_run_id)
                 return
 
             # Use summary as result if available
