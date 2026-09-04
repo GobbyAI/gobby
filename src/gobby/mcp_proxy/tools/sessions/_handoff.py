@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.handoff import (
@@ -20,6 +21,12 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager, Task
+
+
+@dataclass(frozen=True, slots=True)
+class _FeedbackTaskResolver:
+    resolve_task: Callable[[str], Task | None]
+    descendant_session_ids: frozenset[str]
 
 
 FEEDBACK_OBSERVATION_INPUT_SCHEMA: dict[str, Any] = {
@@ -51,8 +58,9 @@ FEEDBACK_OBSERVATION_INPUT_SCHEMA: dict[str, Any] = {
             "enum": list(FEEDBACK_DISPOSITIONS),
             "description": (
                 "How the observation was handled. An actionable Gobby defect is found work. "
-                "'fixed': include the #N task this session claimed and closed, or still has "
-                "claimed in progress. 'escalated': include the active owner session ref after "
+                "'fixed': include the #N task claimed or closed by this session or by a "
+                "spawned descendant session. 'escalated': include the active owner session "
+                "ref after "
                 "send_message. 'filed-task' is rung 3 only: include the #N task this session "
                 "created with needs-decision or clean-window and a description explaining why "
                 "rungs 1 and 2 do not apply. Unlabeled or unclaimed filings and every other "
@@ -70,7 +78,7 @@ def build_feedback_task_resolver(
     session_manager: SessionManager,
     task_manager: LocalTaskManager | None,
     session_id: str,
-) -> Callable[[str], Task | None] | None:
+) -> _FeedbackTaskResolver | None:
     """Build a project-scoped #N resolver for feedback disposition validation."""
     if task_manager is None:
         return None
@@ -82,6 +90,28 @@ def build_feedback_task_resolver(
     from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
     from gobby.storage.tasks import TaskNotFoundError
 
+    descendant_rows = session_manager.db.fetchall(
+        """
+        WITH RECURSIVE descendant_sessions(session_id, depth) AS (
+            SELECT child_session_id, 1
+            FROM agent_runs
+            WHERE parent_session_id = %s
+              AND child_session_id IS NOT NULL
+            UNION
+            SELECT runs.child_session_id, descendants.depth + 1
+            FROM agent_runs AS runs
+            JOIN descendant_sessions AS descendants
+              ON runs.parent_session_id = descendants.session_id
+            WHERE descendants.depth < 5
+              AND runs.child_session_id IS NOT NULL
+        )
+        SELECT DISTINCT session_id
+        FROM descendant_sessions
+        """,
+        (session_id,),
+    )
+    descendant_session_ids = frozenset(str(row["session_id"]) for row in descendant_rows)
+
     def resolve_task(task_ref: str) -> Task | None:
         try:
             task_id = resolve_task_id_for_mcp(task_manager, task_ref, project_id)
@@ -89,7 +119,7 @@ def build_feedback_task_resolver(
         except (TaskNotFoundError, ValueError):
             return None
 
-    return resolve_task
+    return _FeedbackTaskResolver(resolve_task, descendant_session_ids)
 
 
 def register_handoff_tools(
@@ -134,12 +164,16 @@ def register_handoff_tools(
         if session_id is None:
             return {"success": False, "error": "No session context available"}
         try:
+            task_resolver = build_feedback_task_resolver(
+                session_manager,
+                task_manager,
+                session_id,
+            )
             normalized = normalize_feedback_observations(
                 observations,
-                resolve_task=build_feedback_task_resolver(
-                    session_manager,
-                    task_manager,
-                    session_id,
+                resolve_task=(task_resolver.resolve_task if task_resolver is not None else None),
+                descendant_session_ids=(
+                    task_resolver.descendant_session_ids if task_resolver is not None else ()
                 ),
                 session_id=session_id,
             )
