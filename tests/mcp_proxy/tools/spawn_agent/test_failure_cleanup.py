@@ -394,11 +394,10 @@ async def test_terminate_does_not_sigkill_after_process_exits() -> None:
     cleanup_module = cast(Any, _failure_cleanup)
     with (
         patch.object(cleanup_module, "os") as mock_os,
-        patch.object(cleanup_module, "asyncio") as mock_asyncio,
+        patch.object(cleanup_module.asyncio, "sleep", new_callable=AsyncMock),
         patch.object(cleanup_module, "_pid_starttime", side_effect=["stamp", None]),
     ):
         mock_os.kill.side_effect = fake_kill
-        mock_asyncio.sleep = AsyncMock()
         await _failure_cleanup._terminate_spawn_process(
             pid=4242,
             expected_starttime="stamp",
@@ -422,11 +421,10 @@ async def test_terminate_sigkills_only_when_pid_still_alive() -> None:
     cleanup_module = cast(Any, _failure_cleanup)
     with (
         patch.object(cleanup_module, "os") as mock_os,
-        patch.object(cleanup_module, "asyncio") as mock_asyncio,
+        patch.object(cleanup_module.asyncio, "sleep", new_callable=AsyncMock),
         patch.object(cleanup_module, "_pid_starttime", return_value="Mon Jan  1 00:00:00 2026"),
     ):
         mock_os.kill.side_effect = fake_kill
-        mock_asyncio.sleep = AsyncMock()
         await _failure_cleanup._terminate_spawn_process(
             pid=4242,
             expected_starttime="Mon Jan  1 00:00:00 2026",

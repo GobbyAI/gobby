@@ -180,7 +180,8 @@ async def spawn_agent_impl(
     )
 
     explicit_provider = concrete_provider(provider)
-    default_provider = spawning_session_provider(
+    default_provider = await asyncio.to_thread(
+        spawning_session_provider,
         session_manager,
         caller_session_id=caller_session_id,
         parent_session_id=parent_session_id,
@@ -278,7 +279,7 @@ async def spawn_agent_impl(
     effective_workflow = workflow
 
     # 2. Resolve project-scoped isolation services before deriving Git defaults.
-    ctx = get_project_context(Path(project_path) if project_path else None)
+    ctx = await asyncio.to_thread(get_project_context, Path(project_path) if project_path else None)
     if ctx is None and target_project_id is None:
         return {"success": False, "error": "Could not resolve project context"}
 
@@ -332,7 +333,7 @@ async def spawn_agent_impl(
     # Auto-detect current branch if no base_branch specified
     if effective_base_branch is None and target_git_manager:
         try:
-            effective_base_branch = target_git_manager.get_current_branch()
+            effective_base_branch = await asyncio.to_thread(target_git_manager.get_current_branch)
         except Exception as e:
             logger.debug("Failed to auto-detect current branch: %s", e, exc_info=True)
             effective_base_branch = None
@@ -346,7 +347,7 @@ async def spawn_agent_impl(
     if not parent_session_id:
         return {"success": False, "error": "parent_session_id is required"}
 
-    can_spawn, reason, _depth = runner.can_spawn(parent_session_id)
+    can_spawn, reason, _depth = await asyncio.to_thread(runner.can_spawn, parent_session_id)
     if not can_spawn:
         return {"success": False, "error": reason}
 
@@ -361,8 +362,10 @@ async def spawn_agent_impl(
 
     if task_id and task_manager:
         try:
-            resolved_task_id = resolve_task_id_for_mcp(task_manager, task_id, project_id)
-            resolved_task = task_manager.get_task(resolved_task_id)
+            resolved_task_id = await asyncio.to_thread(
+                resolve_task_id_for_mcp, task_manager, task_id, project_id
+            )
+            resolved_task = await asyncio.to_thread(task_manager.get_task, resolved_task_id)
             if resolved_task:
                 task_title = resolved_task.title
                 task_seq_num = resolved_task.seq_num
@@ -520,6 +523,7 @@ async def spawn_agent_impl(
     run_id = str(uuid.uuid4())
     prepared_spawn = None
     spawn_request = None
+    machine_id = await asyncio.to_thread(get_machine_id)
 
     # 10. Build initial_variables (merge factory's with impl's own)
     effective_initial_variables: dict[str, Any] = {}
@@ -541,8 +545,8 @@ async def spawn_agent_impl(
         effective_initial_variables["assigned_task_uuid"] = resolved_task_id
     if "assigned_task_id" in effective_initial_variables:
         effective_initial_variables["parent_session_id"] = parent_session_id
-        effective_initial_variables["parent_session_ref"] = _parent_session_ref(
-            session_manager, parent_session_id
+        effective_initial_variables["parent_session_ref"] = await asyncio.to_thread(
+            _parent_session_ref, session_manager, parent_session_id
         )
     if enhanced_prompt:
         effective_initial_variables["prompt"] = enhanced_prompt
@@ -603,7 +607,8 @@ async def spawn_agent_impl(
         held_mutex=held_task_mutex,
     )
     if resolved_task_id and runner.run_storage:
-        active_response = active_task_response_if_blocked(
+        active_response = await asyncio.to_thread(
+            active_task_response_if_blocked,
             run_storage=runner.run_storage,
             task_id=resolved_task_id,
             task_ref=task_id,
@@ -615,12 +620,13 @@ async def spawn_agent_impl(
                 handler, spawn_config, cleanup=cleanup_isolation_on_failure
             )
             return active_response
-    lease_response = task_spawn_lease.acquire()
+    lease_response = await asyncio.to_thread(task_spawn_lease.acquire)
     if lease_response is not None:
         await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation_on_failure)
         return lease_response
     if resolved_task_id and runner.run_storage:
-        active_response = active_task_response_if_blocked(
+        active_response = await asyncio.to_thread(
+            active_task_response_if_blocked,
             run_storage=runner.run_storage,
             task_id=resolved_task_id,
             task_ref=task_id,
@@ -628,7 +634,7 @@ async def spawn_agent_impl(
             parent_session_id=parent_session_id,
         )
         if active_response is not None:
-            task_spawn_lease.release_unattached()
+            await asyncio.to_thread(task_spawn_lease.release_unattached)
             await cleanup_created_isolation(
                 handler, spawn_config, cleanup=cleanup_isolation_on_failure
             )
@@ -640,25 +646,30 @@ async def spawn_agent_impl(
         project_path=resolved_project_path,
     ) as slot_response:
         if slot_response is not None:
-            task_spawn_lease.release_unattached()
+            await asyncio.to_thread(task_spawn_lease.release_unattached)
             await cleanup_created_isolation(
                 handler, spawn_config, cleanup=cleanup_isolation_on_failure
             )
             return slot_response
         child_session_manager = runner.child_session_manager
         if child_session_manager is None:
-            task_spawn_lease.release_unattached()
+            await asyncio.to_thread(task_spawn_lease.release_unattached)
             await cleanup_created_isolation(
                 handler, spawn_config, cleanup=cleanup_isolation_on_failure
             )
             return {"success": False, "error": "Session manager is required to spawn an agent"}
         try:
-            prepared_spawn = prepare_terminal_spawn(
+            # Child-session creation, run persistence, credential-role issuance, and
+            # grant materialization are synchronous. PostgreSQL pool acquisition alone
+            # can wait for its full timeout, so keep the complete transactional
+            # preparation chain off the daemon event loop.
+            prepared_spawn = await asyncio.to_thread(
+                prepare_terminal_spawn,
                 session_manager=child_session_manager,
                 credential_manager=runner.run_storage.credential_manager,
                 parent_session_id=parent_session_id,
                 project_id=project_id,
-                machine_id=get_machine_id(),
+                machine_id=machine_id,
                 source=effective_provider,
                 workflow_name=effective_workflow,
                 initial_variables=effective_initial_variables,
@@ -684,7 +695,7 @@ async def spawn_agent_impl(
                 workspace_path=str(isolation_ctx.cwd),
             )
         except Exception as exc:
-            task_spawn_lease.release_unattached()
+            await asyncio.to_thread(task_spawn_lease.release_unattached)
             await cleanup_created_isolation(
                 handler, spawn_config, cleanup=cleanup_isolation_on_failure
             )
@@ -698,9 +709,9 @@ async def spawn_agent_impl(
             "worktree_id": isolation_ctx.worktree_id,
             "branch_name": isolation_ctx.branch_name,
         }
-        attach_error = task_spawn_lease.attach(run_id)
+        attach_error = await asyncio.to_thread(task_spawn_lease.attach, run_id)
         if attach_error is not None:
-            task_spawn_lease.release_unattached()
+            await asyncio.to_thread(task_spawn_lease.release_unattached)
             error = f"task spawn mutex attach failed: {attach_error}"
             await cleanup_failed_spawn(
                 runner,
@@ -721,7 +732,8 @@ async def spawn_agent_impl(
             }
         if db is not None and agent_body is not None and agent_body.step_workflow is not None:
             try:
-                persist_initial_step_instance_if_resolved(
+                await asyncio.to_thread(
+                    persist_initial_step_instance_if_resolved,
                     db,
                     agent_body,
                     session_id=prepared_spawn.session_id,
@@ -766,7 +778,7 @@ async def spawn_agent_impl(
             agent_name=agent_display_name,
             session_manager=child_session_manager,
             run_manager=runner.run_storage,
-            machine_id=get_machine_id(),
+            machine_id=machine_id,
             model=effective_model,
             is_local=is_local_run,
             codex_oss_provider=endpoint_resolution.codex_oss_provider,
@@ -787,7 +799,7 @@ async def spawn_agent_impl(
             daemon_config=daemon_config,
             resume_metadata_json=resume_metadata,
             code_index_preflight_mode=code_index_mode,
-            code_index_api_token=read_local_api_token(),
+            code_index_api_token=await asyncio.to_thread(read_local_api_token),
             prepared_spawn=prepared_spawn,
             terminal_manager=getattr(runner, "terminal_manager", None),
             terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
@@ -817,7 +829,7 @@ async def spawn_agent_impl(
         async def _execute_spawn_phase() -> dict[str, Any]:
             try:
                 spawn_result = await execute_spawn(spawn_request)
-                remember_spawn_pid(spawn_result.pid, run_id=run_id)
+                await asyncio.to_thread(remember_spawn_pid, spawn_result.pid, run_id=run_id)
                 return await finalize_executed_spawn(
                     runner=runner,
                     run_id=run_id,
@@ -857,7 +869,8 @@ async def spawn_agent_impl(
 
         if notify_parent_on_completion and completion_registry and parent_session_id:
             try:
-                subscribe_agent_completion(
+                await asyncio.to_thread(
+                    subscribe_agent_completion,
                     completion_registry=completion_registry,
                     run_id=run_id,
                     subscriber_session_id=parent_session_id,

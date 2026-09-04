@@ -299,7 +299,8 @@ async def ensure_isolation_code_index(
         raise RuntimeError("gcode_not_installed")
 
     identity = dict(identity_env or {})
-    result = _prepare_gcode_runtime(
+    result = await asyncio.to_thread(
+        _prepare_gcode_runtime,
         workspace=workspace,
         gcode_bin=Path(gcode_bin),
         credential=credential,

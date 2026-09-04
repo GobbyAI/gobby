@@ -80,7 +80,7 @@ async def cleanup_failed_spawn(
     tmux_socket_path: str | None = None,
 ) -> None:
     run_storage = getattr(runner, "run_storage", None)
-    run = run_storage.get(run_id) if run_storage is not None else None
+    run = await asyncio.to_thread(run_storage.get, run_id) if run_storage is not None else None
     if child_session_id is None:
         child_session_id = _string_attr(run, "child_session_id")
     if pid is None:
@@ -116,14 +116,15 @@ async def cleanup_failed_spawn(
         if db is not None:
             from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 
-            cleanup_agent_runtime_state(
+            await asyncio.to_thread(
+                cleanup_agent_runtime_state,
                 db,
                 run_id=run_id,
                 child_session_id=child_session_id,
                 terminal_reason="spawn_rollback",
             )
     await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation)
-    _delete_child_session(runner, run_storage, run_id, child_session_id)
+    await asyncio.to_thread(_delete_child_session, runner, run_storage, run_id, child_session_id)
 
 
 async def start_run_or_cleanup(
@@ -142,7 +143,7 @@ async def start_run_or_cleanup(
     tmux_socket_path: str | None,
 ) -> dict[str, Any] | None:
     try:
-        start_skipped = runner.run_storage.start(run_id) is None
+        start_skipped = await asyncio.to_thread(runner.run_storage.start, run_id) is None
     except Exception as exc:
         error = f"Failed to mark agent run {run_id} as running: {exc}"
         logging.getLogger(__name__).warning(error)
@@ -171,7 +172,7 @@ async def start_run_or_cleanup(
     if not start_skipped:
         return None
     try:
-        current = runner.run_storage.get(run_id)
+        current = await asyncio.to_thread(runner.run_storage.get, run_id)
     except Exception as exc:
         error = f"Failed to read agent run {run_id} after start conflict: {exc}"
         logging.getLogger(__name__).warning(error)
@@ -281,7 +282,9 @@ async def _terminate_spawn_process(
                 exc,
             )
     if pid is not None:
-        if expected_starttime is None or not _pid_matches_remembered(pid, expected_starttime):
+        if expected_starttime is None or not await asyncio.to_thread(
+            _pid_matches_remembered, pid, expected_starttime
+        ):
             return
         try:
             os.kill(pid, signal.SIGTERM)
@@ -295,7 +298,7 @@ async def _terminate_spawn_process(
                 extra={"pid": pid},
             )
         await asyncio.sleep(_SPAWN_TERM_GRACE_SECONDS)
-        if _pid_matches_remembered(pid, expected_starttime):
+        if await asyncio.to_thread(_pid_matches_remembered, pid, expected_starttime):
             try:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
@@ -325,7 +328,7 @@ async def _capture_then_kill_spawn_session(
         from gobby.agents.capture import capture_then_kill_async
 
         async def keep_run(_action: Any, _reason: str | None) -> Any:
-            return run_storage.get(run_id)
+            return await asyncio.to_thread(run_storage.get, run_id)
 
         try:
             termination = await capture_then_kill_async(

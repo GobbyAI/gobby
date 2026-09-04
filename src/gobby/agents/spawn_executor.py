@@ -190,14 +190,15 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         if plan.inject_persona and request.session_manager is not None:
             from gobby.workflows.state_manager import SessionVariableManager
 
-            SessionVariableManager(request.session_manager._storage.db).merge_variables(
+            await asyncio.to_thread(
+                SessionVariableManager(request.session_manager._storage.db).merge_variables,
                 plan.child_session_id,
                 {"_agent_context_injected": True},
             )
         coordinator = request.write_coordinator
         manager = request.terminal_manager
         if result.terminal_id and coordinator is not None and manager is not None:
-            terminal = manager.get(result.terminal_id)
+            terminal = await asyncio.to_thread(manager.get, result.terminal_id)
             if terminal is not None:
                 schedule_codex_prompt_delivery(
                     coordinator,
@@ -279,7 +280,7 @@ def _persist_spawn_workspace(request: SpawnRequest, session_id: str) -> None:
 
 async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> SpawnResult:
     """Sole pending-row owner: wrap, create/retry, prepare_spawn, promote_to_live."""
-    _persist_spawn_workspace(request, plan.child_session_id)
+    await asyncio.to_thread(_persist_spawn_workspace, request, plan.child_session_id)
     command = wrap_provider_command(plan.launch, plan.command)
     try:
         manager, _registry, runtime, backend = resolve_terminal_services(request)
@@ -302,7 +303,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
         )
 
     if request.retry_terminal_id:
-        existing = manager.get(request.retry_terminal_id)
+        existing = await asyncio.to_thread(manager.get, request.retry_terminal_id)
         if existing is None:
             return SpawnResult(
                 success=False,
@@ -320,7 +321,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
                 error="retry_terminal_not_pending",
                 terminal_id=existing.id,
             )
-        bumped = manager.bump_attempt_generation(existing.id)
+        bumped = await asyncio.to_thread(manager.bump_attempt_generation, existing.id)
         if bumped is None:
             return SpawnResult(
                 success=False,
@@ -335,7 +336,8 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
     else:
         terminal_id = mint_terminal_id()
         spawn_key = derive_spawn_key(backend, terminal_id)
-        manager.create_pending(
+        await asyncio.to_thread(
+            manager.create_pending,
             terminal_id,
             request.project_id,
             backend,
@@ -348,7 +350,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
         )
 
     if request.cancel_event is not None and request.cancel_event.is_set():
-        manager.fail_pending(terminal_id)
+        await asyncio.to_thread(manager.fail_pending, terminal_id)
         return SpawnResult(
             success=False,
             run_id=plan.agent_run_id,
@@ -369,7 +371,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
     )
     if backend == "native":
         if not can_reserve_observer(runtime):
-            manager.fail_pending(terminal_id)
+            await asyncio.to_thread(manager.fail_pending, terminal_id)
             return SpawnResult(
                 success=False,
                 run_id=plan.agent_run_id,
@@ -381,7 +383,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
         try:
             reservation = await runtime.reserve_observer(UUID(terminal_id))
         except HostCommandError as exc:
-            manager.fail_pending(terminal_id)
+            await asyncio.to_thread(manager.fail_pending, terminal_id)
             return SpawnResult(
                 success=False,
                 run_id=plan.agent_run_id,
@@ -401,7 +403,8 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
         else:
             prepared = await asyncio.shield(prepare_task)
     except TimeoutError:
-        await kill_spawn_key(runtime, spawn_key, pending=manager.get(terminal_id))
+        pending = await asyncio.to_thread(manager.get, terminal_id)
+        await kill_spawn_key(runtime, spawn_key, pending=pending)
         return SpawnResult(
             success=False,
             run_id=plan.agent_run_id,
@@ -425,7 +428,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
             terminal_id=terminal_id,
         )
     except TerminalSpawnFailed as exc:
-        manager.fail_pending(terminal_id)
+        await asyncio.to_thread(manager.fail_pending, terminal_id)
         return SpawnResult(
             success=False,
             run_id=plan.agent_run_id,
@@ -471,7 +474,8 @@ async def _promote_prepared(
     reservation_id: str | None = None,
 ) -> SpawnResult:
     if prepared.process is not None:
-        manager.record_process(
+        await asyncio.to_thread(
+            manager.record_process,
             terminal_id,
             {"pgid": prepared.process.pgid, "start_time": prepared.process.start_time},
         )
@@ -486,13 +490,14 @@ async def _promote_prepared(
             else:
                 prepared.acknowledge_observer()
         except Exception as exc:
+            pending = await asyncio.to_thread(manager.get, terminal_id)
             await kill_spawn_key(
                 runtime,
                 spawn_key,
-                pending=manager.get(terminal_id),
+                pending=pending,
                 host_terminal_id=prepared.host_terminal_id,
             )
-            manager.fail_pending(terminal_id)
+            await asyncio.to_thread(manager.fail_pending, terminal_id)
             return SpawnResult(
                 success=False,
                 run_id=plan.agent_run_id,
@@ -513,7 +518,8 @@ async def _promote_prepared(
             terminal_id=terminal_id,
         )
 
-    promoted = manager.promote_to_live(
+    promoted = await asyncio.to_thread(
+        manager.promote_to_live,
         terminal_id,
         locator=stored,
         locator_key=locator_key,
@@ -522,7 +528,7 @@ async def _promote_prepared(
         host_epoch=None if backend == "tmux" else getattr(handle.locator, "frame_host_epoch", None),
     )
     if promoted is None:
-        current = manager.get(terminal_id)
+        current = await asyncio.to_thread(manager.get, terminal_id)
         if _same_live_identity(current, backend, locator_key):
             promoted = current
         else:
@@ -542,7 +548,8 @@ async def _promote_prepared(
         pid = process.pgid
     if request.run_manager is not None:
         try:
-            request.run_manager.update_runtime(
+            await asyncio.to_thread(
+                request.run_manager.update_runtime,
                 plan.agent_run_id,
                 pid=pid,
                 terminal_id=terminal_id,

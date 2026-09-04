@@ -187,7 +187,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
         # Resolve task
         try:
-            task = task_manager.get_task(req.task_id)
+            task = await asyncio.to_thread(task_manager.get_task, req.task_id)
         except Exception as e:
             logger.debug("Failed to get task %s: %s", req.task_id, e)
             task = None
@@ -205,13 +205,15 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             deps = None
             try:
                 dep_manager = TaskDependencyManager(task_manager.db)
-                dep_records = dep_manager.get_all_dependencies(req.task_id)
+                dep_records = await asyncio.to_thread(dep_manager.get_all_dependencies, req.task_id)
                 if dep_records:
-                    deps = [
-                        task_manager.get_task(d.depends_on)
-                        for d in dep_records
-                        if task_manager.get_task(d.depends_on)
-                    ]
+                    deps = []
+                    for dependency in dep_records:
+                        dependency_task = await asyncio.to_thread(
+                            task_manager.get_task, dependency.depends_on
+                        )
+                        if dependency_task is not None:
+                            deps.append(dependency_task)
             except Exception:
                 pass
             prompt = _build_task_prompt(task, deps)
@@ -233,8 +235,10 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             from gobby.llm.local_detection import is_local_agent_definition
 
             source = req.provider or "claude"
-            conversation = session_manager.create_web_chat_session(
-                machine_id=require_machine_id(),
+            machine_id = await asyncio.to_thread(require_machine_id)
+            conversation = await asyncio.to_thread(
+                session_manager.create_web_chat_session,
+                machine_id=machine_id,
                 project_id=effective_project_id,
                 source=source,
                 model=req.model,
@@ -256,7 +260,9 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                             current_owner,
                         )
                     else:
-                        task_manager.claim_task(req.task_id, conversation_id)
+                        await asyncio.to_thread(
+                            task_manager.claim_task, req.task_id, conversation_id
+                        )
                         task_updated = True
                 else:
                     logger.info(
@@ -296,8 +302,11 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
         agent_body = None
         try:
-            agent_body = resolve_agent(
-                req.agent_name, server.services.database, project_id=effective_project_id
+            agent_body = await asyncio.to_thread(
+                resolve_agent,
+                req.agent_name,
+                server.services.database,
+                project_id=effective_project_id,
             )
         except AgentResolutionError:
             if req.agent_name != "default":
@@ -335,7 +344,10 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         from gobby.utils.machine_id import require_machine_id
 
         try:
-            project_path = require_root(task_manager.db, effective_project_id, require_machine_id())
+            machine_id = await asyncio.to_thread(require_machine_id)
+            project_path = await asyncio.to_thread(
+                require_root, task_manager.db, effective_project_id, machine_id
+            )
         except _CHECKOUT_RESOLUTION_ERRORS as exc:
             logger.info(
                 "Agent spawn refused for task %s: checkout unresolved: %s", req.task_id, exc
@@ -377,7 +389,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             # Update task status
             try:
                 child_sid = result.get("child_session_id", "")
-                task_manager.claim_task(req.task_id, session_id=child_sid)
+                await asyncio.to_thread(task_manager.claim_task, req.task_id, session_id=child_sid)
             except Exception as e:
                 logger.warning("Failed to update task after spawn: %s", e)
 

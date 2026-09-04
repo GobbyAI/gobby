@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -69,7 +70,8 @@ async def finalize_executed_spawn(
         "branch_name": isolation_ctx.branch_name,
     }
     tmux_session_name, tmux_socket_name, tmux_socket_path = _tmux_runtime_metadata(spawn_result)
-    _persist_spawn_runtime(
+    await asyncio.to_thread(
+        _persist_spawn_runtime,
         runner,
         run_id,
         spawn_result,
@@ -134,7 +136,7 @@ async def finalize_executed_spawn(
 
         commit_environment = getattr(handler, "commit_environment", None)
         if callable(commit_environment):
-            commit_environment(spawn_config)
+            await asyncio.to_thread(commit_environment, spawn_config)
 
         try:
             from gobby.runner_broadcasting import fire_agent_event
@@ -158,7 +160,7 @@ async def finalize_executed_spawn(
 
         if resolved_task_id and task_manager:
             try:
-                task_obj = task_manager.get_task(resolved_task_id)
+                task_obj = await asyncio.to_thread(task_manager.get_task, resolved_task_id)
                 if not task_obj or not is_task_actionable(task_obj):
                     logger.info(
                         "Skipping auto-claim for task %s; task is not actionable",
@@ -173,7 +175,8 @@ async def finalize_executed_spawn(
                         current_owner,
                     )
                 else:
-                    claimed_task = task_manager.claim_task(
+                    claimed_task = await asyncio.to_thread(
+                        task_manager.claim_task,
                         resolved_task_id,
                         session_id=spawn_result.child_session_id,
                     )
@@ -187,8 +190,11 @@ async def finalize_executed_spawn(
                         spawn_result.child_session_id,
                     )
                     if task_owned_by_child:
-                        _link_auto_claimed_session(
-                            task_manager, spawn_result.child_session_id, resolved_task_id
+                        await asyncio.to_thread(
+                            _link_auto_claimed_session,
+                            task_manager,
+                            spawn_result.child_session_id,
+                            resolved_task_id,
                         )
                     if (
                         task_owned_by_child
@@ -196,7 +202,8 @@ async def finalize_executed_spawn(
                         and agent_body is not None
                         and agent_body.step_workflow is not None
                     ):
-                        apply_claimed_step_update(
+                        await asyncio.to_thread(
+                            apply_claimed_step_update,
                             db,
                             agent_body,
                             session_id=spawn_result.child_session_id,
