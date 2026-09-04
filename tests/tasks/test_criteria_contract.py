@@ -12,6 +12,25 @@ from gobby.tasks.criteria_contract import (
 pytestmark = pytest.mark.unit
 
 
+def test_inline_numbered_criteria_split_only_when_sequential() -> None:
+    assert split_validation_criteria(
+        "1. First criterion. 2) Second criterion. 3. Third criterion."
+    ) == (
+        "First criterion.",
+        "Second criterion.",
+        "Third criterion.",
+    )
+
+    decimal_and_version = "Version 0.5.0 stays compatible with 1.2 clients."
+    assert split_validation_criteria(decimal_and_version) == (decimal_and_version,)
+
+    non_sequential = "1. First criterion. 3) Third criterion."
+    assert split_validation_criteria(non_sequential) == ("First criterion. 3) Third criterion.",)
+
+    embedded_number = "Version v1. stays compatible with 2. clients."
+    assert split_validation_criteria(embedded_number) == (embedded_number,)
+
+
 def test_list_criteria_discard_introductory_prose() -> None:
     criteria = split_validation_criteria(
         """

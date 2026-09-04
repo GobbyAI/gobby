@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 _LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(?P<text>.+?)\s*$")
+_INLINE_NUMBERED_ITEM_RE = re.compile(r"\b(?P<number>\d+)[.)]\s+")
 
 _OPERATIONAL_REQUIREMENTS = {
     "install": re.compile(
@@ -184,6 +185,22 @@ def normalized_validation_criteria(value: str | None) -> str | None:
     return normalized or None
 
 
+def _split_inline_numbered_criteria(value: str) -> tuple[str, ...] | None:
+    matches = list(_INLINE_NUMBERED_ITEM_RE.finditer(value))
+    if len(matches) < 2 or matches[0].start() != 0:
+        return None
+    if [int(match.group("number")) for match in matches] != list(range(1, len(matches) + 1)):
+        return None
+
+    items = tuple(
+        value[
+            match.end() : matches[index + 1].start() if index + 1 < len(matches) else None
+        ].strip()
+        for index, match in enumerate(matches)
+    )
+    return items if all(items) else None
+
+
 def require_validation_criteria(task_type: str, value: str | None) -> str | None:
     """Enforce the criteria invariant and return the normalized value."""
     normalized = normalized_validation_criteria(value)
@@ -202,6 +219,11 @@ def split_validation_criteria(value: str | None) -> tuple[str, ...]:
         return ()
 
     lines = normalized.splitlines()
+    if len(lines) == 1:
+        inline_items = _split_inline_numbered_criteria(normalized)
+        if inline_items is not None:
+            return inline_items
+
     items: list[str] = []
     current: list[str] = []
     saw_list_marker = False
