@@ -3,11 +3,39 @@ from __future__ import annotations
 import pytest
 
 from gobby.tasks.close_verdict import CloseVerdictParseError, parse_close_verdict
+from gobby.tasks.criteria_contract import split_validation_criteria
 
 CRITERIA = (
     "Tests pass for supported providers.",
     "The close prompt stays bounded.",
 )
+
+
+def test_inline_criteria_preserve_third_gap_as_distinct_verdict() -> None:
+    criteria = split_validation_criteria(
+        "1. Focused tests pass. 2. Static checks pass. 3. The third gap is fixed."
+    )
+    verdict = parse_close_verdict(
+        {
+            "status": "invalid",
+            "criteria": [
+                {"index": 1, "satisfied": True},
+                {"index": 2, "satisfied": True},
+                {
+                    "index": 3,
+                    "satisfied": False,
+                    "gap": "The third gap remains.",
+                },
+            ],
+            "feedback": "One criterion remains unsatisfied.",
+        },
+        criteria,
+    )
+
+    assert len(verdict.criteria) == 3
+    assert [entry.satisfied for entry in verdict.criteria] == [True, True, False]
+    assert verdict.criteria[2].criterion == "The third gap is fixed."
+    assert verdict.criteria[2].gap == "The third gap remains."
 
 
 def test_status_is_case_insensitive_and_entries_match_by_index() -> None:
