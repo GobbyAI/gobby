@@ -33,7 +33,12 @@ from gobby.agents.spawn_models import SpawnRequest, resolve_terminal_backend
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
-from gobby.providers.version_gate import peek_agy_support
+from gobby.providers.version_gate import (
+    AGY_REVALIDATING_REASON,
+    AGY_UNPUBLISHED_REASON,
+    ensure_agy_support,
+    peek_agy_support,
+)
 from gobby.tasks.state_semantics import (
     get_claimed_session_id,
     is_task_actionable,
@@ -200,6 +205,11 @@ async def spawn_agent_impl(
         # Gate on the published support record before any isolation, slot,
         # session, or agent-run side effect exists to clean up.
         agy_record = peek_agy_support()
+        if not agy_record.supported and agy_record.reason in {
+            AGY_REVALIDATING_REASON,
+            AGY_UNPUBLISHED_REASON,
+        }:
+            agy_record = await ensure_agy_support()
         if not agy_record.supported:
             return {"success": False, "error": agy_support_refusal(agy_record)}
     provider_was_overridden = explicit_provider is not None

@@ -58,8 +58,10 @@ _SUPPORTED = _record(
     supported=True,
     reason=f"AGY {AGY_REQUIRED_VERSION} meets required version {AGY_REQUIRED_VERSION}.",
 )
-_REFUSED_RECORDS = [_MISSING_BINARY, _SUB_FLOOR, _UNPARSEABLE, _UNPUBLISHED, _REVALIDATING]
-_REFUSED_IDS = ["missing-binary", "sub-floor", "unparseable", "unpublished", "revalidating"]
+_REFUSED_RECORDS = [_MISSING_BINARY, _SUB_FLOOR, _UNPARSEABLE]
+_REFUSED_IDS = ["missing-binary", "sub-floor", "unparseable"]
+_PROVISIONAL_RECORDS = [_REVALIDATING, _UNPUBLISHED]
+_PROVISIONAL_IDS = ["revalidating", "unpublished"]
 
 
 def _agent_body(provider: str) -> AgentDefinitionBody:
@@ -162,12 +164,70 @@ async def test_agy_gate_refuses_before_any_side_effect(path: str, record: AgySup
     with (
         _SideEffects() as effects,
         patch.object(_implementation, "peek_agy_support", return_value=record) as peek,
+        patch.object(_implementation, "ensure_agy_support") as ensure,
     ):
         result = await _spawn(effects, _SELECTION_PATHS[path])
 
     assert result == {"success": False, "error": agy_support_refusal(record)}
     assert result["error"] == record.reason
     peek.assert_called_once_with()
+    ensure.assert_not_awaited()
+    effects.assert_none_happened()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("record", _PROVISIONAL_RECORDS, ids=_PROVISIONAL_IDS)
+@pytest.mark.parametrize("path", sorted(_SELECTION_PATHS))
+async def test_revalidating_peek_reprobes_and_spawns(
+    path: str,
+    record: AgySupportRecord,
+) -> None:
+    with _SideEffects() as effects:
+
+        async def ensure_supported() -> AgySupportRecord:
+            effects.assert_none_happened()
+            return _SUPPORTED
+
+        with (
+            patch.object(_implementation, "peek_agy_support", return_value=record) as peek,
+            patch.object(
+                _implementation,
+                "ensure_agy_support",
+                side_effect=ensure_supported,
+            ) as ensure,
+        ):
+            effects.mocks["get_project_context"].return_value = None
+            result = await _spawn(effects, _SELECTION_PATHS[path])
+
+    peek.assert_called_once_with()
+    ensure.assert_awaited_once_with()
+    effects.mocks["get_project_context"].assert_called_once()
+    assert result == {"success": False, "error": "Could not resolve project context"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("record", _PROVISIONAL_RECORDS, ids=_PROVISIONAL_IDS)
+@pytest.mark.parametrize("path", sorted(_SELECTION_PATHS))
+async def test_revalidating_peek_refuses_when_reprobe_unsupported(
+    path: str,
+    record: AgySupportRecord,
+) -> None:
+    with (
+        _SideEffects() as effects,
+        patch.object(_implementation, "peek_agy_support", return_value=record) as peek,
+        patch.object(
+            _implementation,
+            "ensure_agy_support",
+            new_callable=AsyncMock,
+            return_value=_SUB_FLOOR,
+        ) as ensure,
+    ):
+        result = await _spawn(effects, _SELECTION_PATHS[path])
+
+    assert result == {"success": False, "error": agy_support_refusal(_SUB_FLOOR)}
+    assert result["error"] == _SUB_FLOOR.reason
+    peek.assert_called_once_with()
+    ensure.assert_awaited_once_with()
     effects.assert_none_happened()
 
 
