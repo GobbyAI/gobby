@@ -91,6 +91,17 @@ class TerminalWsMixin:
         request_id = data.get("request_id")
         terminal_id = data.get("terminal_id")
         delivery = data.get("frame_delivery") or "proxy"
+        encoding = data.get("encoding", "terminal_ansi")
+        if encoding not in {"terminal_ansi", "semantic_frame"}:
+            await self._send_json(
+                websocket,
+                {
+                    "type": "terminal_error",
+                    "request_id": request_id,
+                    "code": "invalid_encoding",
+                },
+            )
+            return
         if not isinstance(terminal_id, str) or not terminal_id:
             await self._send_json(
                 websocket,
@@ -119,23 +130,32 @@ class TerminalWsMixin:
             return
         registry = self._leases()
         record = registry.attach(terminal_id, str(delivery), websocket=websocket)
-        if str(delivery) != "direct":
-            failure = await self._start_proxy_attach(websocket, row, record)
-            if failure is not None:
-                registry.finalize(record.attachment_id, failure)
-                await self._send_json(
-                    websocket,
-                    {
-                        "type": "terminal_attach_result",
-                        "request_id": request_id,
-                        "terminal_id": terminal_id,
-                        "attachment_id": record.attachment_id,
-                        "success": False,
-                        "code": failure,
-                        "reason": PROXY_ATTACH_FAILURE_REASONS[failure],
-                    },
-                )
-                return
+        locator: AttachLocator | None = None
+        if str(delivery) == "direct":
+            locator, failure = await self._resolve_attach_locator(row)
+            if (
+                failure is None
+                and locator is not None
+                and not locator.is_valid_for_direct(row.backend)
+            ):
+                failure = _log_proxy_attach_failure(row.id, "locator_invalid")
+        else:
+            failure = await self._start_proxy_attach(websocket, row, record, encoding)
+        if failure is not None:
+            registry.finalize(record.attachment_id, failure)
+            await self._send_json(
+                websocket,
+                {
+                    "type": "terminal_attach_result",
+                    "request_id": request_id,
+                    "terminal_id": terminal_id,
+                    "attachment_id": record.attachment_id,
+                    "success": False,
+                    "code": failure,
+                    "reason": PROXY_ATTACH_FAILURE_REASONS[failure],
+                },
+            )
+            return
         await self._send_json(
             websocket,
             {
@@ -147,6 +167,7 @@ class TerminalWsMixin:
                 "cols": row.cols or 80,
                 "backend": row.backend,
                 "frame_delivery": record.frame_delivery,
+                "direct": None if locator is None else locator.direct_block(),
                 "lease_generation": registry.generation(terminal_id),
                 "success": True,
             },
@@ -733,19 +754,27 @@ class TerminalWsMixin:
             return None
         return runtime
 
-    async def _start_proxy_attach(self, websocket: Any, row: Any, record: Any) -> str | None:
+    async def _resolve_attach_locator(self, row: Any) -> tuple[AttachLocator | None, str | None]:
         runtime = self._runtime_for(row.backend)
         if runtime is None:
-            return _log_proxy_attach_failure(row.id, "runtime_unavailable")
-        opener = getattr(self, "open_proxy_frame", None)
-        if not callable(opener):
-            return _log_proxy_attach_failure(row.id, "proxy_unavailable")
+            return None, _log_proxy_attach_failure(row.id, "runtime_unavailable")
         try:
             locator = await runtime.attach_locator(row)
         except Exception:
-            return _log_proxy_attach_failure(row.id, "locator_failed", exc_info=True)
+            return None, _log_proxy_attach_failure(row.id, "locator_failed", exc_info=True)
         if not isinstance(locator, AttachLocator):
-            return _log_proxy_attach_failure(row.id, "locator_invalid")
+            return None, _log_proxy_attach_failure(row.id, "locator_invalid")
+        return locator, None
+
+    async def _start_proxy_attach(
+        self, websocket: Any, row: Any, record: Any, encoding: str
+    ) -> str | None:
+        locator, failure = await self._resolve_attach_locator(row)
+        if failure is not None or locator is None:
+            return failure
+        opener = getattr(self, "open_proxy_frame", None)
+        if not callable(opener):
+            return _log_proxy_attach_failure(row.id, "proxy_unavailable")
         try:
             frame = await opener(locator)
         except Exception:
@@ -763,6 +792,7 @@ class TerminalWsMixin:
                 attachment_id=record.attachment_id,
                 locator=locator,
                 frame=frame,
+                encoding=encoding,
             )
         except Exception:
             await _close_frame_quietly(frame)

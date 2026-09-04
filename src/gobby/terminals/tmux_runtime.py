@@ -62,6 +62,7 @@ class TmuxTerminalRuntime:
     ) -> None:
         self._sessions = sessions
         self._frame_host_epoch = frame_host_epoch
+        self._frame_host_socket: str | None = None
 
     def _cmd(self) -> list[str]:
         return self._sessions.base_args()
@@ -372,6 +373,10 @@ class TmuxTerminalRuntime:
         return AttachLocator(
             backend="tmux",
             frame_host_epoch=self._frame_host_epoch or str(terminal.host_epoch or ""),
+            host_socket=self._frame_host_socket,
+            host_terminal_id=(
+                None if locator.get("pane_id") is None else str(locator.get("pane_id"))
+            ),
             socket_path=None
             if locator.get("socket_path") is None
             else str(locator.get("socket_path")),

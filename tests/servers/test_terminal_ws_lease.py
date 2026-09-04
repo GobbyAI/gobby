@@ -11,7 +11,7 @@ import pytest
 
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.terminals import TerminalManager, native_locator_key
+from gobby.storage.terminals import AttachLocator, TerminalManager, native_locator_key
 from gobby.terminals.leases import TerminalLeaseRegistry
 from tests.servers.test_tmux_mixin import MockWebSocket
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending, _manager
@@ -20,6 +20,24 @@ pytestmark = pytest.mark.unit
 
 _HOST_EPOCH = "epoch-1"
 _HOST_TERMINAL_ID = "host-web"
+_HOST_SOCKET = "/private/tmp/gobby-test/gterm-frames.sock"
+
+
+class _NativeRuntime:
+    async def attach_locator(self, _terminal: Any) -> AttachLocator:
+        return AttachLocator(
+            backend="native",
+            frame_host_epoch=_HOST_EPOCH,
+            host_socket=_HOST_SOCKET,
+            host_terminal_id=_HOST_TERMINAL_ID,
+        )
+
+
+class _RuntimeRegistry:
+    def resolve(self, backend: str) -> _NativeRuntime:
+        if backend != "native":
+            raise KeyError(backend)
+        return _NativeRuntime()
 
 
 @pytest.fixture(autouse=True)
@@ -64,7 +82,7 @@ async def test_lease_request_result_and_lost_events(
 ) -> None:
     terminal_id = _live_row(temp_db, sample_project)
     server = _ws_server()
-    server.configure_terminals(TerminalManager(temp_db), MagicMock(), MagicMock())
+    server.configure_terminals(TerminalManager(temp_db), _RuntimeRegistry(), MagicMock())
     observer = MockWebSocket()
     holder = MockWebSocket()
     server.clients[observer] = {"subscriptions": {"*"}}
@@ -151,7 +169,7 @@ async def test_attach_result_supplies_attachment_identity(
 ) -> None:
     terminal_id = _live_row(temp_db, sample_project)
     server = _ws_server()
-    server.configure_terminals(TerminalManager(temp_db), MagicMock(), MagicMock())
+    server.configure_terminals(TerminalManager(temp_db), _RuntimeRegistry(), MagicMock())
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
     await _send(
@@ -193,7 +211,7 @@ async def test_direct_delivery_registers_without_frame_relay(
 ) -> None:
     terminal_id = _live_row(temp_db, sample_project)
     server = _ws_server()
-    server.configure_terminals(TerminalManager(temp_db), MagicMock(), MagicMock())
+    server.configure_terminals(TerminalManager(temp_db), _RuntimeRegistry(), MagicMock())
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
     await _send(
@@ -243,7 +261,7 @@ async def test_paste_is_lease_gated_and_size_capped(
 ) -> None:
     terminal_id = _live_row(temp_db, sample_project)
     server = _ws_server()
-    server.configure_terminals(TerminalManager(temp_db), MagicMock(), MagicMock())
+    server.configure_terminals(TerminalManager(temp_db), _RuntimeRegistry(), MagicMock())
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
     await _send(
@@ -303,7 +321,7 @@ async def test_disconnect_releases_direct_and_proxy_leases(
 ) -> None:
     terminal_id = _live_row(temp_db, sample_project)
     server = _ws_server()
-    server.configure_terminals(TerminalManager(temp_db), MagicMock(), MagicMock())
+    server.configure_terminals(TerminalManager(temp_db), _RuntimeRegistry(), MagicMock())
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
     await _send(
@@ -360,7 +378,7 @@ async def test_release_control_is_idempotent_and_races_takeover(
 ) -> None:
     terminal_id = _live_row(temp_db, sample_project)
     server = _ws_server()
-    server.configure_terminals(TerminalManager(temp_db), MagicMock(), MagicMock())
+    server.configure_terminals(TerminalManager(temp_db), _RuntimeRegistry(), MagicMock())
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
     await _send(
