@@ -7,17 +7,23 @@ pub const TERMINAL_WS_SAFE_INTEGER_MAX: u64 = (1_u64 << 53) - 1;
 
 pub const GOLDEN_NAMES: &[&str] = &[
     "attach.json",
+    "attach_semantic.json",
     "attach_result.json",
+    "attach_result_direct.json",
     "attach_result_error.json",
     "detach.json",
+    "detach_result.json",
     "resize.json",
     "set_viewport.json",
     "set_scroll_offset.json",
     "scroll_offset_applied.json",
     "list.json",
+    "list_snapshot.json",
     "create.json",
     "create_result.json",
+    "create_result_refused.json",
     "kill.json",
+    "kill_result.json",
     "input.json",
     "write_outcome.json",
     "write_outcome_indeterminate.json",
@@ -26,6 +32,7 @@ pub const GOLDEN_NAMES: &[&str] = &[
     "write_outcome_expired.json",
     "write_outcome_capacity.json",
     "output.json",
+    "terminal_frame.json",
     "attach_history.json",
     "fragment.json",
     "fragment_last.json",
@@ -44,6 +51,7 @@ const SAFE_INTEGER_FIELDS: &[&str] = &[
     "lease_generation",
     "client_write_seq",
     "fragment_index",
+    "seq",
 ];
 
 #[derive(Debug, Error)]

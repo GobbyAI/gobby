@@ -1,4 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
+import { readdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { StrictMode, createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -16,6 +18,38 @@ import {
 } from "../useTmuxSessions";
 
 type WireMessage = Record<string, unknown>;
+
+const GOLDEN_DIR = resolve(
+  process.cwd(),
+  "../tests/fixtures/terminal_ws_golden",
+);
+
+function readGoldenJson(name: string): unknown {
+  return JSON.parse(readFileSync(resolve(GOLDEN_DIR, name), "utf8"));
+}
+
+function readGoldenMessage(name: string): WireMessage {
+  const parsed = readGoldenJson(name);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new TypeError(`${name} must contain a WebSocket message object`);
+  }
+  return parsed as WireMessage;
+}
+
+function readGoldenManifest(): { fixtures: string[] } {
+  const parsed = readGoldenJson("manifest.json");
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed) ||
+    !("fixtures" in parsed) ||
+    !Array.isArray(parsed.fixtures) ||
+    !parsed.fixtures.every((name) => typeof name === "string")
+  ) {
+    throw new TypeError("terminal WS manifest must contain fixture names");
+  }
+  return { fixtures: parsed.fixtures };
+}
 
 function lastOf<T>(items: readonly T[]): T | undefined {
   return items[items.length - 1];
@@ -73,6 +107,36 @@ afterEach(() => {
 });
 
 describe("useTmuxSessions", () => {
+  it("replays every canonical terminal WS fixture from the manifest", () => {
+    const manifest = readGoldenManifest();
+    expect(Object.keys(manifest)).toEqual(["fixtures"]);
+    expect(manifest.fixtures).toHaveLength(38);
+    expect(manifest.fixtures).not.toContain("manifest.json");
+    expect(
+      readdirSync(GOLDEN_DIR)
+        .filter((name) => name !== "manifest.json")
+        .sort(),
+    ).toEqual([...manifest.fixtures].sort());
+
+    const mount = renderHook(() => useTmuxSessions());
+    const ws = mockWs.instances[0];
+    open(ws);
+    const replayed = manifest.fixtures.map(readGoldenMessage);
+    act(() => {
+      for (const message of replayed) {
+        ws.simulateMessage(message);
+      }
+    });
+    expect(replayed.map((message) => message.type)).toEqual(
+      expect.arrayContaining([
+        "terminal_frame",
+        "terminal_kill_result",
+        "terminal_detach_result",
+      ]),
+    );
+    mount.unmount();
+  });
+
   it("scopes every listing to the project picker and relists when it changes", () => {
     const mount = renderHook(
       ({ projectId }: { projectId: string | null }) =>

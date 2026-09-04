@@ -106,11 +106,13 @@ class _LifecyclePublication:
 class TerminalLeaseRegistry:
     """Single grant point for writer authority, keyed by terminal_id."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, daemon_epoch: str | None = None) -> None:
         self._attachments: dict[str, _Attachment] = {}
         self._leases: dict[str, _Lease] = {}
         self._by_websocket: dict[object, set[str]] = {}
         self.daemon_epoch = str(uuid4())
+        if daemon_epoch is not None:
+            self.daemon_epoch = daemon_epoch
         self._lifecycle_seq = 0
         self._lifecycle_committed_epoch = self.daemon_epoch
         self._lifecycle_committed_seq = 0

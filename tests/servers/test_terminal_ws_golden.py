@@ -1,128 +1,485 @@
-"""Acceptance 2.5.17 / 2.5.24–27 / 2.5.36: terminal WS golden corpus."""
+"""Canonical terminal WebSocket corpus and real-emitter parity tests."""
 
 from __future__ import annotations
 
+import base64
 import json
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.servers.websocket import broadcast as broadcast_module
+from gobby.servers.websocket.proxy_relay import _map_host_frame
+from gobby.servers.websocket.server import WebSocketServer
+from gobby.servers.websocket.terminal_ws import TerminalWsMixin
+from gobby.storage.terminals import AttachLocator
+from gobby.terminals import web_spawn
+from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.runtime import (
+    Delivered,
+    IndeterminateWrite,
+    PreparedSpawn,
+    Suppressed,
+    TerminalHandle,
+    TerminalSpawnRequest,
+)
 from gobby.terminals.ws_protocol import (
-    GOLDEN_NAMES,
     TERMINAL_WS_SAFE_INTEGER_MAX,
     decode_message,
     encode_message,
     fragment_event,
 )
+from tests.servers.test_tmux_mixin import MockWebSocket
 
-GOLDEN_DIR = Path(__file__).resolve().parent / "fixtures" / "terminal_ws_golden"
+GOLDEN_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "terminal_ws_golden"
+OLD_GOLDEN_DIR = Path(__file__).resolve().parent / "fixtures" / "terminal_ws_golden"
+DAEMON_EPOCH = "00000000-0000-4000-8000-000000000000"
+TERMINAL_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+ATTACHMENT_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+HOLDER_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+FIXTURE_TIME = datetime(2026, 1, 1, tzinfo=UTC)
 
 pytestmark = pytest.mark.unit
+
+
+@dataclass
+class _GoldenRow:
+    id: str = TERMINAL_ID
+    backend: str = "tmux"
+    ownership: str = "gobby"
+    state: str = "live"
+    title: str | None = "sess"
+    session_id: str | None = None
+    agent_run_id: str | None = None
+    rows: int | None = 24
+    cols: int | None = 80
+    locator_key: str | None = None
+    created_at: datetime = FIXTURE_TIME
+
+
+class _GoldenManager:
+    def __init__(self, row: _GoldenRow | None = None) -> None:
+        self.row = row or _GoldenRow()
+
+    def get(self, terminal_id: str) -> _GoldenRow | None:
+        return self.row if terminal_id == self.row.id else None
+
+    def list_page(
+        self,
+        _project_ids: object,
+        *,
+        limit: int,
+        **_kwargs: object,
+    ) -> tuple[list[_GoldenRow], bool]:
+        return [self.row][:limit], False
+
+    def create_pending(
+        self,
+        terminal_id: str,
+        _project_id: str,
+        backend: str,
+        _ownership: str,
+        _spawn_key: str,
+        **_kwargs: object,
+    ) -> _GoldenRow:
+        self.row.id = terminal_id
+        self.row.backend = backend
+        self.row.state = "pending"
+        return self.row
+
+    def promote_to_live(self, terminal_id: str, **_kwargs: object) -> _GoldenRow | None:
+        row = self.get(terminal_id)
+        if row is not None:
+            row.state = "live"
+        return row
+
+    def fail_pending(self, terminal_id: str) -> _GoldenRow | None:
+        row = self.get(terminal_id)
+        if row is not None:
+            row.state = "exited"
+        return row
+
+    def mark_exited(self, terminal_id: str) -> _GoldenRow | None:
+        row = self.get(terminal_id)
+        if row is None or row.state not in {"live", "orphaned"}:
+            return None
+        row.state = "exited"
+        return row
+
+    def set_dims(self, terminal_id: str, rows: int, cols: int) -> _GoldenRow | None:
+        row = self.get(terminal_id)
+        if row is not None:
+            row.rows = rows
+            row.cols = cols
+        return row
+
+
+class _GoldenRuntime:
+    def __init__(
+        self,
+        backend: str = "tmux",
+        *,
+        refuse_spawn: bool = False,
+        write_result: object | None = None,
+    ) -> None:
+        self.backend = backend
+        self.refuse_spawn = refuse_spawn
+        self.write_result = Delivered() if write_result is None else write_result
+        self.locator = AttachLocator(
+            backend=cast(Any, backend),
+            frame_host_epoch="host-epoch-1",
+            host_socket="/tmp/gobby-terminal.sock",
+            host_terminal_id=TERMINAL_ID,
+            socket_path="/tmp/tmux.sock" if backend == "tmux" else None,
+            pane_id="%1" if backend == "tmux" else None,
+            server_pid=100 if backend == "tmux" else None,
+            server_start_time=200 if backend == "tmux" else None,
+        )
+
+    async def attach_locator(self, _row: object) -> AttachLocator:
+        return self.locator
+
+    async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn:
+        if self.refuse_spawn:
+            raise RuntimeError("backend refused")
+        return PreparedSpawn(
+            terminal_id=request.terminal_id,
+            spawn_key=request.spawn_key,
+            locator=self.locator,
+            process=None,
+            host_terminal_id=None,
+            stored_locator={},
+            locator_key="",
+        )
+
+    async def commit_spawn(self, prepared: PreparedSpawn) -> TerminalHandle:
+        assert prepared.locator is not None
+        return TerminalHandle(prepared.terminal_id, prepared.locator)
+
+    async def terminate(self, _row: object, _grace_seconds: float) -> None:
+        return None
+
+    async def resize(self, _row: object, _rows: int, _cols: int) -> None:
+        return None
+
+    async def write_input(self, _row: object, _data: bytes) -> object:
+        return self.write_result
+
+    async def write_paste(self, _row: object, _text: str) -> Delivered:
+        return Delivered()
+
+    async def write_text(self, _row: object, _text: str, _submit: bool) -> Delivered:
+        return Delivered()
+
+
+def _server(
+    *,
+    backend: str = "tmux",
+    refuse_spawn: bool = False,
+    write_result: object | None = None,
+) -> tuple[WebSocketServer, _GoldenManager, _GoldenRuntime]:
+    config = MagicMock()
+    config.host = "localhost"
+    config.port = 60888
+    config.ping_interval = 30
+    config.ping_timeout = 10
+    config.max_message_size = 1024
+    server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="test-user"))
+    server.lease_registry = TerminalLeaseRegistry(daemon_epoch=DAEMON_EPOCH)
+    manager = _GoldenManager(_GoldenRow(backend=backend))
+    runtime = _GoldenRuntime(
+        backend,
+        refuse_spawn=refuse_spawn,
+        write_result=write_result,
+    )
+    server.terminal_manager = manager
+    server.terminal_runtime_registry = SimpleNamespace(resolve=lambda _backend: runtime)
+    server.terminal_config = SimpleNamespace(default_backend=backend)
+    cast(Any, server)._sweep_tmux_panes = AsyncMock(return_value={})
+    return server, manager, runtime
 
 
 def _load(name: str) -> bytes:
     return (GOLDEN_DIR / name).read_bytes()
 
 
+def _message(name: str) -> dict[str, Any]:
+    return cast(dict[str, Any], json.loads(_load(name)))
+
+
+def _sent(websocket: MockWebSocket, index: int = -1) -> dict[str, Any]:
+    return cast(dict[str, Any], json.loads(websocket.sent_messages[index]))
+
+
+def _assert_golden(name: str, payload: dict[str, Any]) -> None:
+    assert encode_message(payload) == _load(name), name
+
+
+def _manifest_names() -> list[str]:
+    manifest = cast(dict[str, object], json.loads(_load("manifest.json")))
+    assert set(manifest) == {"fixtures"}
+    fixtures = manifest["fixtures"]
+    assert isinstance(fixtures, list)
+    assert all(isinstance(name, str) for name in fixtures)
+    return cast(list[str], fixtures)
+
+
+async def _assert_write_outcome(
+    name: str,
+    *,
+    write_result: object | None = None,
+    primed_writes: dict[int, bytes] | None = None,
+) -> None:
+    server, _, _ = _server(write_result=write_result)
+    registry = server.lease_registry
+    registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
+    registry.take_control(TERMINAL_ID, ATTACHMENT_ID)
+    generation = registry.generation(TERMINAL_ID)
+    for seq, payload in (primed_writes or {}).items():
+        admitted = registry.admit_write(
+            TERMINAL_ID,
+            attachment_id=ATTACHMENT_ID,
+            expected_lease_generation=generation,
+            seq=seq,
+            kind="input",
+            payload=payload,
+        )
+        assert admitted.ok
+
+    expected = _message(name)
+    seq = expected["client_write_seq"]
+    assert isinstance(seq, int)
+    request = {**_message("input.json"), "client_write_seq": seq}
+    websocket = MockWebSocket()
+    await TerminalWsMixin._handle_terminal_input(server, websocket, request)
+    _assert_golden(name, _sent(websocket))
+
+
 def test_python_matches_terminal_ws_golden_corpus() -> None:
-    missing = [name for name in GOLDEN_NAMES if not (GOLDEN_DIR / name).is_file()]
-    assert missing == [], f"golden corpus missing {missing}"
-    for name in GOLDEN_NAMES:
+    names = _manifest_names()
+    assert len(names) == len(set(names)) == 38
+    assert "manifest.json" not in names
+    on_disk = {path.name for path in GOLDEN_DIR.iterdir() if path.name != "manifest.json"}
+    assert on_disk == set(names)
+    assert len(list(GOLDEN_DIR.iterdir())) == 39
+    assert not OLD_GOLDEN_DIR.exists() or not any(OLD_GOLDEN_DIR.iterdir())
+
+    for name in names:
         raw = _load(name)
         message = decode_message(raw)
         assert encode_message(message) == raw, name
-        parsed = json.loads(raw)
-        assert "mode" not in parsed
-        if parsed.get("type") in {"terminal_attach", "terminal_attach_result"}:
-            assert "mode" not in parsed
+        assert "mode" not in message
 
 
-def test_write_outcome_is_correlated() -> None:
-    delivered = json.loads(_load("write_outcome.json"))
-    indeterminate = json.loads(_load("write_outcome_indeterminate.json"))
-    refused = json.loads(_load("write_outcome_refused.json"))
-    conflict = json.loads(_load("write_outcome_conflict.json"))
-    expired = json.loads(_load("write_outcome_expired.json"))
-    capacity = json.loads(_load("write_outcome_capacity.json"))
-    inbound = json.loads(_load("input.json"))
-    paste = json.loads(_load("paste.json"))
-    assert inbound["client_write_seq"] == delivered["client_write_seq"]
-    assert inbound["attachment_id"] == delivered["attachment_id"]
-    assert delivered["outcome"] == "delivered"
-    assert delivered["reason"] is None
-    assert indeterminate["outcome"] == "indeterminate"
-    assert refused["outcome"] == "refused"
-    assert conflict["reason"] == "write_seq_conflict"
-    assert expired["reason"] == "write_seq_expired"
-    assert capacity["reason"] == "write_seq_capacity"
-    assert isinstance(paste["client_write_seq"], int)
-
-
-def test_attach_history_precedes_first_output() -> None:
-    history = json.loads(_load("attach_history.json"))
-    output = json.loads(_load("output.json"))
-    assert history["type"] == "terminal_attach_history"
-    assert output["type"] == "terminal_output"
-    assert history["attachment_id"] == output["attachment_id"]
-    assert set(history) >= {
-        "terminal_id",
-        "attachment_id",
-        "text",
-        "truncated",
-        "dropped_bytes",
-        "total_bytes",
-    }
-
-
-def test_fragment_envelope_is_pinned() -> None:
-    first = json.loads(_load("fragment.json"))
-    last = json.loads(_load("fragment_last.json"))
-    assert first["type"] == last["type"] == "terminal_ws_fragment"
-    assert first["event"] == last["event"]
-    assert first["message_seq"] == last["message_seq"]
-    assert first["attachment_id"] == last["attachment_id"]
-    assert first["fragment_index"] == 0
-    assert last["fragment_index"] == 1
-    assert first["more"] is True
-    assert last["more"] is False
-    assert first["encoding"] == last["encoding"] == "utf8-b64"
-    assert len(_load("fragment.json")) < 2 * 1024 * 1024
-    assert len(_load("fragment_last.json")) < 2 * 1024 * 1024
-    reconstructed = fragment_event(
-        event=first["event"],
-        terminal_id=first["terminal_id"],
-        attachment_id=first["attachment_id"],
-        message_seq=first["message_seq"],
-        complete_json=_reassemble(first, last),
+@pytest.mark.asyncio
+async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = MagicMock()
+    clock.now.return_value = FIXTURE_TIME
+    monkeypatch.setattr(broadcast_module, "datetime", clock)
+    monkeypatch.setattr("gobby.terminals.leases.secrets.token_hex", lambda _size: ATTACHMENT_ID)
+    monkeypatch.setattr(web_spawn, "mint_terminal_id", lambda: TERMINAL_ID)
+    monkeypatch.setattr(
+        "gobby.servers.websocket.terminal_ws.require_machine_id", lambda: "machine-1"
     )
-    assert reconstructed[0]["fragment_index"] == 0
 
+    server, _, _ = _server()
+    websocket = MockWebSocket()
+    cast(Any, server)._start_proxy_attach = AsyncMock(return_value=None)
+    await TerminalWsMixin._handle_terminal_attach(server, websocket, _message("attach.json"))
+    _assert_golden("attach_result.json", _sent(websocket))
 
-def _reassemble(first: dict[str, object], last: dict[str, object]) -> bytes:
-    import base64
+    server, _, _ = _server()
+    websocket = MockWebSocket()
+    cast(Any, server)._start_proxy_attach = AsyncMock(return_value=None)
+    await TerminalWsMixin._handle_terminal_attach(
+        server, websocket, _message("attach_semantic.json")
+    )
+    _assert_golden("attach_result.json", _sent(websocket))
 
-    return base64.b64decode(str(first["payload"])) + base64.b64decode(str(last["payload"]))
+    server, _, _ = _server()
+    websocket = MockWebSocket()
+    cast(Any, server)._start_proxy_attach = AsyncMock(return_value="runtime_unavailable")
+    await TerminalWsMixin._handle_terminal_attach(server, websocket, _message("attach.json"))
+    _assert_golden("attach_result_error.json", _sent(websocket))
+
+    server, _, _ = _server(backend="native")
+    websocket = MockWebSocket()
+    direct_request = {
+        **_message("attach.json"),
+        "request_id": "req-attach-direct",
+        "frame_delivery": "direct",
+    }
+    await TerminalWsMixin._handle_terminal_attach(server, websocket, direct_request)
+    _assert_golden("attach_result_direct.json", _sent(websocket))
+
+    server, _, _ = _server()
+    websocket = MockWebSocket()
+    await TerminalWsMixin._handle_terminal_list(server, websocket, _message("list.json"))
+    _assert_golden("list_snapshot.json", _sent(websocket))
+
+    server, _, _ = _server()
+    websocket = MockWebSocket()
+    await TerminalWsMixin._handle_terminal_create(server, websocket, _message("create.json"))
+    _assert_golden("create_result.json", _sent(websocket, 0))
+    await server.lease_registry.shutdown_lifecycle_publication()
+
+    server, _, _ = _server(refuse_spawn=True)
+    websocket = MockWebSocket()
+    await TerminalWsMixin._handle_terminal_create(server, websocket, _message("create.json"))
+    _assert_golden("create_result_refused.json", _sent(websocket))
+
+    server, _, _ = _server()
+    websocket = MockWebSocket()
+    await TerminalWsMixin._handle_terminal_kill(server, websocket, _message("kill.json"))
+    _assert_golden("kill_result.json", _sent(websocket))
+    await server.lease_registry.shutdown_lifecycle_publication()
+
+    server, _, _ = _server()
+    server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
+    server.lease_registry.take_control(TERMINAL_ID, ATTACHMENT_ID)
+    websocket = MockWebSocket()
+    await TerminalWsMixin._handle_terminal_detach(server, websocket, _message("detach.json"))
+    _assert_golden("attachment_finalized.json", _sent(websocket, 0))
+    _assert_golden("detach_result.json", _sent(websocket, 1))
+    await server.lease_registry.shutdown_lifecycle_publication()
+
+    server, _, _ = _server()
+    server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
+    websocket = MockWebSocket()
+    await TerminalWsMixin._handle_terminal_set_scroll_offset(
+        server, websocket, _message("set_scroll_offset.json")
+    )
+    _assert_golden("scroll_offset_applied.json", _sent(websocket))
+
+    server, _, _ = _server()
+    server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
+    websocket = MockWebSocket()
+    await TerminalWsMixin._handle_terminal_take_control(
+        server, websocket, _message("take_control.json")
+    )
+    _assert_golden("control_result.json", _sent(websocket))
+
+    await _assert_write_outcome("write_outcome.json")
+    await _assert_write_outcome(
+        "write_outcome_indeterminate.json",
+        write_result=IndeterminateWrite(),
+    )
+    await _assert_write_outcome(
+        "write_outcome_refused.json",
+        write_result=Suppressed(action_key="golden"),
+    )
+    await _assert_write_outcome(
+        "write_outcome_conflict.json",
+        primed_writes={4: b"different"},
+    )
+    await _assert_write_outcome(
+        "write_outcome_expired.json",
+        primed_writes={6: b"future"},
+    )
+    await _assert_write_outcome(
+        "write_outcome_capacity.json",
+        primed_writes=dict.fromkeys(range(64), b"pending"),
+    )
+
+    server, _, _ = _server()
+    server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
+    websocket = MockWebSocket()
+    await TerminalWsMixin._handle_terminal_resize(server, websocket, _message("resize.json"))
+    _assert_golden("typed_error.json", _sent(websocket))
+
+    server, _, _ = _server()
+    websocket = MockWebSocket()
+    server.clients[websocket] = {}
+    await server.broadcast_terminal_output(TERMINAL_ID, "ready.\n", ATTACHMENT_ID)
+    _assert_golden("output.json", _sent(websocket))
+
+    server, _, _ = _server()
+    websocket = MockWebSocket()
+    server.clients[websocket] = {}
+    await server.broadcast_tmux_session_event("created", terminal_id=TERMINAL_ID)
+    _assert_golden("event.json", _sent(websocket))
+    await server.lease_registry.shutdown_lifecycle_publication()
+
+    server, _, _ = _server()
+    websocket = MockWebSocket()
+    server.clients[websocket] = {}
+    await server._fanout_lease_lost(ATTACHMENT_ID, HOLDER_ID, 2)
+    _assert_golden("lease_lost.json", _sent(websocket))
+    await server.lease_registry.shutdown_lifecycle_publication()
+
+    server, _, _ = _server()
+    websocket = MockWebSocket()
+    await server._proxy().emit_lifecycle(
+        websocket,
+        {
+            "type": "terminal_attachment_finalized",
+            "terminal_id": TERMINAL_ID,
+            "attachment_id": ATTACHMENT_ID,
+            "reason": "detach",
+            "lease_generation": 2,
+        },
+    )
+    _assert_golden("attachment_finalized.json", _sent(websocket))
+    await server._proxy().drop_socket(websocket, "test_done")
+    await server.lease_registry.shutdown_lifecycle_publication()
+
+    history = _map_host_frame(
+        {
+            "type": "attach_history",
+            "text": "ready.\n",
+            "truncated": False,
+            "dropped_bytes": 0,
+            "total_bytes": 7,
+        },
+        TERMINAL_ID,
+        ATTACHMENT_ID,
+        "terminal_ansi",
+    )
+    assert history is not None
+    _assert_golden("attach_history.json", history)
+
+    terminal_frame = _map_host_frame(
+        {"type": "frame", "raw": b"frame"},
+        TERMINAL_ID,
+        ATTACHMENT_ID,
+        "semantic_frame",
+    )
+    assert terminal_frame is not None
+    assert base64.b64decode(cast(str, terminal_frame["payload"])) == b"frame"
+    _assert_golden("terminal_frame.json", terminal_frame)
+
+    fragments = fragment_event(
+        event="terminal_attach_history",
+        terminal_id=TERMINAL_ID,
+        attachment_id=ATTACHMENT_ID,
+        message_seq=1,
+        complete_json=encode_message(history),
+    )
+    _assert_golden("fragment.json", fragments[0])
+    _assert_golden("fragment_last.json", fragments[1])
 
 
 def test_seq_and_lease_generation_are_safe_integers() -> None:
     overflow = TERMINAL_WS_SAFE_INTEGER_MAX + 1
     with pytest.raises(ValueError, match="safe_integer_overflow"):
-        encode_message(
-            {
-                "type": "terminal_control_result",
-                "attachment_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-                "granted": False,
-                "reason": "held",
-                "lease_generation": overflow,
-            }
-        )
-    high = json.loads(_load("control_result.json"))
-    assert isinstance(high["lease_generation"], int)
-    assert high["lease_generation"] <= TERMINAL_WS_SAFE_INTEGER_MAX
+        encode_message({"type": "terminal_event", "seq": overflow})
+    for name in ("fragment.json", "control_result.json", "input.json", "event.json"):
+        message = _message(name)
+        counters = [
+            value
+            for field, value in message.items()
+            if field in {"message_seq", "lease_generation", "client_write_seq", "seq"}
+        ]
+        assert counters and all(isinstance(value, int) for value in counters)
 
 
 def test_attachment_finalized_is_pinned() -> None:
-    payload = json.loads(_load("attachment_finalized.json"))
+    payload = _message("attachment_finalized.json")
     assert payload["type"] == "terminal_attachment_finalized"
     assert payload["reason"] in {
         "detach",
