@@ -152,6 +152,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner._tool_results_cleanup_task = None
     runner._workflow_audit_cleanup_task = None
     runner._vector_rebuild_task = None
+    runner._sandbox_run_root_sweep_task = None
     runner._zombie_messages_task = None
     runner._span_cleanup_task = None
     runner._unmodeled_observations_cleanup_task = None

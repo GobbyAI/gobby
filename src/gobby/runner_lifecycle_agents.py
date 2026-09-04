@@ -306,7 +306,7 @@ async def _recover_agent_runs_after_restart(
 
 
 async def _reap_orphaned_srt_runners_on_startup(runner: GobbyRunner) -> int:
-    """Reap managed SRT processes and old roots without an active run."""
+    """Reap managed SRT processes and schedule old run-root cleanup."""
     if runner.agent_runner is None:
         return 0
     active_runs = await _run_db(
@@ -320,8 +320,29 @@ async def _reap_orphaned_srt_runners_on_startup(runner: GobbyRunner) -> int:
         reap_orphaned_srt_runner_process_trees,
         active_run_ids,
     )
-    await sweep_sandbox_run_roots(active_run_ids)
+    runner._sandbox_run_root_sweep_task = asyncio.create_task(
+        _sweep_sandbox_run_roots_on_startup(runner),
+        name="sandbox-run-root-sweep",
+    )
     return reaped_processes
+
+
+async def _sweep_sandbox_run_roots_on_startup(runner: GobbyRunner) -> None:
+    """Sweep old run roots against active state read when the task starts."""
+    if runner.agent_runner is None:
+        return
+    try:
+        active_runs = await _run_db(
+            runner,
+            _list_active_agent_runs_once,
+            runner,
+            include_fenced=True,
+        )
+        await sweep_sandbox_run_roots({str(run.id) for run in active_runs})
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Sandbox run-root sweep failed during startup")
 
 
 def _refresh_active_run_dispatch_mutex(runner: GobbyRunner, run: Any) -> bool:

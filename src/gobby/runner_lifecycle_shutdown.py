@@ -207,6 +207,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_chat_attachments_cleanup_task",
         "_expired_isolation_task",
         "_vector_rebuild_task",
+        "_sandbox_run_root_sweep_task",
         "_memory_reconcile_task",
         "_recall_drift_task",
         "_tmux_window_repair_task",

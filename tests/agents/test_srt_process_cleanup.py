@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Iterable
 from pathlib import Path
@@ -176,13 +177,16 @@ async def test_terminal_transition_reaps_surviving_srt_runner_tree(
 
 
 @pytest.mark.asyncio
-async def test_startup_sweep_reaps_orphan_and_spares_live_run(
+async def test_startup_reaper_schedules_run_root_sweep_without_awaiting(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     tmp_path: Path,
 ) -> None:
     gobby_home = tmp_path / "gobby-home"
     cleanup_order: list[str] = []
+    sweep_started = asyncio.Event()
+    finish_sweep = asyncio.Event()
+    active_run_reads = 0
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
     live_child = FakeProcess(202, ["claude"])
     live_runner = _runner_process("live-run", 201, children=[live_child])
@@ -199,9 +203,16 @@ async def test_startup_sweep_reaps_orphan_and_spares_live_run(
             limit: int,
             offset: int,
         ) -> list[SimpleNamespace]:
+            nonlocal active_run_reads
             del machine_id
             assert limit > 0
-            return [SimpleNamespace(id="live-run")] if offset == 0 else []
+            if offset != 0:
+                return []
+            active_run_reads += 1
+            run_ids = ["live-run"]
+            if active_run_reads > 1:
+                run_ids.append("new-pending-run")
+            return [SimpleNamespace(id=run_id) for run_id in run_ids]
 
     def reap(active_run_ids: set[str]) -> int:
         reaped = reap_orphaned_srt_runner_process_trees(
@@ -214,8 +225,11 @@ async def test_startup_sweep_reaps_orphan_and_spares_live_run(
         return reaped
 
     async def sweep_roots(active_run_ids: set[str]) -> None:
-        assert active_run_ids == {"live-run"}
-        cleanup_order.append("roots")
+        assert active_run_ids == {"live-run", "new-pending-run"}
+        cleanup_order.append("roots-started")
+        sweep_started.set()
+        await finish_sweep.wait()
+        cleanup_order.append("roots-finished")
 
     monkeypatch.setattr(
         "gobby.runner_lifecycle_agents.reap_orphaned_srt_runner_process_trees",
@@ -229,16 +243,28 @@ async def test_startup_sweep_reaps_orphan_and_spares_live_run(
     runner = SimpleNamespace(
         agent_runner=SimpleNamespace(run_storage=RunStorage()),
         db_executor=None,
+        _sandbox_run_root_sweep_task=None,
     )
 
-    reaped = await _reap_orphaned_srt_runners_on_startup(cast("GobbyRunner", runner))
+    reaper_task = asyncio.create_task(
+        _reap_orphaned_srt_runners_on_startup(cast("GobbyRunner", runner))
+    )
+    await asyncio.wait_for(sweep_started.wait(), timeout=1)
+    returned_before_sweep_finished = reaper_task.done()
+    background_task = runner._sandbox_run_root_sweep_task
+    finish_sweep.set()
+    reaped = await reaper_task
+    assert background_task is not None
+    await background_task
 
     assert reaped == 2
+    assert returned_before_sweep_finished is True
+    assert active_run_reads == 2
     assert orphan_runner.terminated is True
     assert orphan_child.terminated is True
     assert live_runner.terminated is False
     assert live_child.terminated is False
     assert unrelated.terminated is False
-    assert cleanup_order == ["processes", "roots"]
+    assert cleanup_order == ["processes", "roots-started", "roots-finished"]
     assert "run_id=orphan-run pid_count=2" in caplog.text
     assert "run_id=live-run" not in caplog.text

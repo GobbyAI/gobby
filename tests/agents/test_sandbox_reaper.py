@@ -111,6 +111,67 @@ async def test_startup_sweep_removes_terminal_roots_and_keeps_active_runs(
 
 
 @pytest.mark.asyncio
+async def test_startup_sweep_removes_read_only_entries(tmp_path: Path) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    root = _create_root(_sandbox_root(gobby_home, "read-only-run"))
+    read_only_directory = root / "read-only-directory"
+    read_only_directory.mkdir()
+    read_only_file = read_only_directory / "read-only-file"
+    read_only_file.write_text("protected", encoding="utf-8")
+    read_only_file.chmod(0o400)
+    read_only_directory.chmod(0o500)
+    _set_age(root, 7_200)
+
+    try:
+        result = await sweep_sandbox_run_roots(set(), gobby_home=gobby_home, now=_NOW)
+    finally:
+        if read_only_directory.exists():
+            read_only_directory.chmod(0o700)
+        if read_only_file.exists():
+            read_only_file.chmod(0o600)
+
+    assert result.removed_roots == 1
+    assert result.skipped_roots == 0
+    assert not root.exists()
+
+
+@pytest.mark.asyncio
+async def test_startup_sweep_skips_unremovable_root_and_continues(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    blocked_root = _create_root(_sandbox_root(gobby_home, "blocked-run"))
+    removable_root = _create_root(_sandbox_root(gobby_home, "removable-run"))
+    _set_age(blocked_root, 7_200)
+    _set_age(removable_root, 7_200)
+    remove_root = sandbox_reaper._remove_root
+
+    def fail_one_root(path: Path) -> bool:
+        if path == blocked_root:
+            return False
+        return remove_root(path)
+
+    monkeypatch.setattr(sandbox_reaper, "_remove_root", fail_one_root)
+    caplog.set_level(logging.INFO, logger="gobby.agents.sandbox_reaper")
+
+    result = await sweep_sandbox_run_roots(set(), gobby_home=gobby_home, now=_NOW)
+
+    records = [record for record in caplog.records if record.name == "gobby.agents.sandbox_reaper"]
+    info_records = [record for record in records if record.levelno == logging.INFO]
+    warning_records = [record for record in records if record.levelno == logging.WARNING]
+    assert result.removed_roots == 1
+    assert result.skipped_roots == 1
+    assert blocked_root.exists()
+    assert not removable_root.exists()
+    assert len(info_records) == 1
+    assert "skipped=1" in info_records[0].getMessage()
+    assert len(warning_records) == 1
+    assert str(blocked_root) in warning_records[0].getMessage()
+
+
+@pytest.mark.asyncio
 async def test_startup_sweep_removes_old_orphan_and_keeps_young_orphan(
     tmp_path: Path,
 ) -> None:
@@ -145,6 +206,7 @@ async def test_startup_sweep_logs_one_info_summary(
     assert result.removed_roots == 2
     assert len(records) == 1
     assert records[0].getMessage().startswith("Reaped 2 sandbox run root(s) (")
+    assert "skipped=0" in records[0].getMessage()
 
 
 @pytest.mark.asyncio

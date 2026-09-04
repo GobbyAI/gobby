@@ -9,7 +9,7 @@ import shutil
 import stat
 import tempfile
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +28,8 @@ class SandboxReapResult:
 
     removed_roots: int = 0
     removed_bytes: int = 0
+    skipped_roots: int = 0
+    first_skipped_path: Path | None = None
 
 
 def _run_root_parents(gobby_home: Path) -> tuple[Path, Path]:
@@ -112,27 +114,122 @@ def _remove_root(path: Path) -> bool:
     if root_stat is None:
         return False
     if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
-        path.unlink()
-    else:
-        shutil.rmtree(path)
-    return True
+        try:
+            path.unlink()
+        except OSError:
+            return False
+        return True
+
+    root = Path(os.path.abspath(path))
+    failed_paths: list[Path] = []
+
+    def onexc(
+        function: Callable[..., object],
+        failing_path: str,
+        error: BaseException,
+    ) -> None:
+        failed_path = Path(os.path.abspath(failing_path))
+        if not isinstance(error, OSError):
+            failed_paths.append(failed_path)
+            return
+
+        for candidate in (failed_path, failed_path.parent):
+            if candidate != root and root not in candidate.parents:
+                continue
+            try:
+                candidate_stat = candidate.lstat()
+                if stat.S_ISLNK(candidate_stat.st_mode):
+                    continue
+                mode = stat.S_IMODE(candidate_stat.st_mode) | stat.S_IRUSR | stat.S_IWUSR
+                if stat.S_ISDIR(candidate_stat.st_mode) or candidate_stat.st_mode & 0o111:
+                    mode |= stat.S_IXUSR
+                if os.chmod in os.supports_follow_symlinks:
+                    os.chmod(candidate, mode, follow_symlinks=False)
+                else:
+                    os.chmod(candidate, mode)
+            except OSError:
+                continue
+
+        try:
+            if function is os.open:
+                descriptor = os.open(failing_path, os.O_RDONLY | os.O_NONBLOCK)
+                os.close(descriptor)
+            elif function is os.scandir:
+                with os.scandir(failing_path):
+                    pass
+            elif function is os.close:
+                failed_paths.append(failed_path)
+                return
+            else:
+                function(failing_path)
+        except Exception:
+            failed_paths.append(failed_path)
+
+    shutil.rmtree(path, onexc=onexc)
+    return not failed_paths and _lstat(path) is None
 
 
 def _reap_roots(run_id: str, roots: Iterable[Path], gobby_home: Path) -> SandboxReapResult:
-    roots_to_remove = [root for root in roots if _lstat(root) is not None]
-    violation_logs = [candidate for root in roots_to_remove if (candidate := _violation_log(root))]
+    roots_to_remove: list[Path] = []
+    violation_logs: list[tuple[tuple[Path, os.stat_result], Path]] = []
+    skipped_roots = 0
+    first_skipped_path: Path | None = None
+    for root in roots:
+        try:
+            if _lstat(root) is None:
+                continue
+            violation_log = _violation_log(root)
+        except OSError:
+            skipped_roots += 1
+            if first_skipped_path is None:
+                first_skipped_path = root
+            continue
+        roots_to_remove.append(root)
+        if violation_log is not None:
+            violation_logs.append((violation_log, root))
+
+    retained_log_failure_root: Path | None = None
     if violation_logs:
-        source, _source_stat = max(violation_logs, key=lambda candidate: candidate[1].st_mtime_ns)
-        _retain_violation_log(source, run_id, gobby_home)
+        (source, _source_stat), source_root = max(
+            violation_logs,
+            key=lambda candidate: candidate[0][1].st_mtime_ns,
+        )
+        try:
+            _retain_violation_log(source, run_id, gobby_home)
+        except OSError:
+            retained_log_failure_root = source_root
+            skipped_roots = 1
+            first_skipped_path = source_root
 
     removed_roots = 0
     removed_bytes = 0
     for root in roots_to_remove:
-        root_bytes = _root_size(root)
-        if _remove_root(root):
+        if root == retained_log_failure_root:
+            continue
+        try:
+            root_bytes = _root_size(root)
+            removed = _remove_root(root)
+        except OSError:
+            removed = False
+            root_bytes = 0
+        if removed:
             removed_roots += 1
             removed_bytes += root_bytes
-    return SandboxReapResult(removed_roots=removed_roots, removed_bytes=removed_bytes)
+            continue
+        try:
+            root_exists = _lstat(root) is not None
+        except OSError:
+            root_exists = True
+        if root_exists:
+            skipped_roots += 1
+            if first_skipped_path is None:
+                first_skipped_path = root
+    return SandboxReapResult(
+        removed_roots=removed_roots,
+        removed_bytes=removed_bytes,
+        skipped_roots=skipped_roots,
+        first_skipped_path=first_skipped_path,
+    )
 
 
 def _reap_run_roots(run_id: str, gobby_home: Path) -> SandboxReapResult:
@@ -167,28 +264,61 @@ def _startup_sweep(
 ) -> SandboxReapResult:
     cutoff = now - _MINIMUM_ORPHAN_AGE_SECONDS
     roots_by_run_id: dict[str, list[Path]] = {}
+    skipped_roots = 0
+    first_skipped_path: Path | None = None
     for parent in _run_root_parents(gobby_home):
-        parent_stat = _lstat(parent)
+        try:
+            parent_stat = _lstat(parent)
+        except OSError:
+            skipped_roots += 1
+            if first_skipped_path is None:
+                first_skipped_path = parent
+            continue
         if (
             parent_stat is None
             or stat.S_ISLNK(parent_stat.st_mode)
             or not stat.S_ISDIR(parent_stat.st_mode)
         ):
             continue
-        for root in parent.iterdir():
-            if root.name in active_run_ids:
-                continue
-            root_stat = _lstat(root)
-            if root_stat is not None and root_stat.st_mtime < cutoff:
-                roots_by_run_id.setdefault(root.name, []).append(root)
+        try:
+            for root in parent.iterdir():
+                if root.name in active_run_ids:
+                    continue
+                try:
+                    root_stat = _lstat(root)
+                except OSError:
+                    skipped_roots += 1
+                    if first_skipped_path is None:
+                        first_skipped_path = root
+                    continue
+                if root_stat is not None and root_stat.st_mtime < cutoff:
+                    roots_by_run_id.setdefault(root.name, []).append(root)
+        except OSError:
+            skipped_roots += 1
+            if first_skipped_path is None:
+                first_skipped_path = parent
 
     removed_roots = 0
     removed_bytes = 0
     for run_id, roots in roots_by_run_id.items():
-        result = _reap_roots(run_id, roots, gobby_home)
+        try:
+            result = _reap_roots(run_id, roots, gobby_home)
+        except OSError:
+            result = SandboxReapResult(
+                skipped_roots=len(roots),
+                first_skipped_path=roots[0],
+            )
         removed_roots += result.removed_roots
         removed_bytes += result.removed_bytes
-    return SandboxReapResult(removed_roots=removed_roots, removed_bytes=removed_bytes)
+        skipped_roots += result.skipped_roots
+        if first_skipped_path is None:
+            first_skipped_path = result.first_skipped_path
+    return SandboxReapResult(
+        removed_roots=removed_roots,
+        removed_bytes=removed_bytes,
+        skipped_roots=skipped_roots,
+        first_skipped_path=first_skipped_path,
+    )
 
 
 async def sweep_sandbox_run_roots(
@@ -205,10 +335,15 @@ async def sweep_sandbox_run_roots(
         home,
         time.time() if now is None else now,
     )
-    if result.removed_roots:
+    if result.removed_roots or result.skipped_roots:
         logger.info(
-            "Reaped %d sandbox run root(s) (%d bytes)",
+            "Reaped %d sandbox run root(s) (%d bytes); skipped=%d",
             result.removed_roots,
             result.removed_bytes,
+            result.skipped_roots,
         )
+        if result.skipped_roots:
+            logger.warning(
+                "Skipped sandbox run root after removal failure: %s", result.first_skipped_path
+            )
     return result
