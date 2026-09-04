@@ -235,11 +235,16 @@ async function installTerminalSocket(page: Page): Promise<TerminalHarness> {
 
       if (message.type === "terminal_resize") {
         const streamingId = String(message.attachment_id);
+        const terminalId = MOCK_SESSIONS.find(
+          (candidate) => STREAM_IDS[candidate.name] === streamingId,
+        )?.terminal_id;
+        if (!terminalId) return;
         if (!outputSent.has(streamingId)) {
           outputSent.add(streamingId);
           ws.send(
             JSON.stringify({
               type: "terminal_output",
+              terminal_id: terminalId,
               attachment_id: streamingId,
               data:
                 OUTPUT_BY_STREAM[streamingId] ?? "Unknown terminal output\r\n",
