@@ -457,15 +457,31 @@ class TestProgressTrackerToolCall:
                 {"server_name": "collaboration", "tool_name": "wait_for_output"},
                 "wait_for_output",
             ),
+            ("Bash", {"command": "sleep 45"}, "Bash"),
+            (
+                "exec_command",
+                {"cmd": "sleep 45", "workdir": "/repo", "yield_time_ms": 30000},
+                "Bash",
+            ),
+            ("write_stdin", {"chars": ""}, "write_stdin"),
         ],
-        ids=["direct", "namespaced", "compact-codex", "functions", "proxied-mcp"],
+        ids=[
+            "direct",
+            "namespaced",
+            "compact-codex",
+            "functions",
+            "proxied-mcp",
+            "claude-bash-sleep",
+            "codex-exec-command-sleep",
+            "codex-empty-write-stdin",
+        ],
     )
     def test_passive_wait_details_cover_client_representations(
         self,
         progress_tracker: ProgressTracker,
         session_id: str,
         tool_name: str,
-        tool_args: dict[str, str],
+        tool_args: dict[str, object],
         effective_tool_name: str,
     ) -> None:
         completed = progress_tracker.record_tool_call(
@@ -1617,12 +1633,7 @@ class TestStuckDetectorToolLoop:
         tool_args: dict[str, str],
     ) -> None:
         tracker = ProgressTracker(test_db)
-        detector = StuckDetector(
-            test_db,
-            progress_tracker=tracker,
-            tool_loop_threshold=4,
-            tool_window_size=10,
-        )
+        detector = StuckDetector(test_db, progress_tracker=tracker)
 
         for _ in range(5):
             tracker.record_tool_call(session_id, tool_name, tool_args=tool_args)
@@ -1633,6 +1644,7 @@ class TestStuckDetectorToolLoop:
         assert result.details is not None
         assert result.details["passive_wait"] is True
         assert result.details["call_count"] == 5
+        assert result.details["threshold"] == 5
         assert len(tracker.get_recent_events(session_id, limit=10)) == 5
 
     def test_non_passive_progress_resets_passive_wait_streak(
@@ -1682,23 +1694,23 @@ class TestStuckDetectorToolLoop:
         assert "Read" in result.reason
         assert result.suggested_action == "change_approach"
 
-    def test_tool_loop_detected_with_identical_bash_commands(
+    def test_identical_non_sleep_shell_calls_trip_default_tool_loop_threshold(
         self, test_db: HubDatabase, session_id: str
     ) -> None:
-        """Test repeated Bash commands still count as a tool loop."""
+        """Repeated active shell commands still count as a tool loop."""
         tracker = ProgressTracker(test_db)
-        detector = StuckDetector(
-            test_db,
-            progress_tracker=tracker,
-            tool_loop_threshold=4,
-            tool_window_size=10,
-        )
+        detector = StuckDetector(test_db, progress_tracker=tracker)
 
         for _ in range(5):
+            tracker.record_tool_start(
+                session_id,
+                "Bash",
+                tool_args={"command": "uv run pytest tests/x.py -q"},
+            )
             tracker.record_tool_call(
                 session_id,
                 "Bash",
-                tool_args={"command": "echo same"},
+                tool_args={"command": "uv run pytest tests/x.py -q"},
             )
 
         result = detector.detect_tool_loop(session_id)
@@ -1706,6 +1718,39 @@ class TestStuckDetectorToolLoop:
         assert result.is_stuck is True
         assert result.layer == "tool_loop"
         assert "Bash" in result.reason
+
+    def test_close_review_polling_sequence_is_not_tool_loop(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        tracker = ProgressTracker(test_db)
+        detector = StuckDetector(test_db, progress_tracker=tracker)
+        calls: list[tuple[str, dict[str, object]]] = [
+            (
+                "exec_command",
+                {"cmd": "sleep 45", "workdir": "/repo", "yield_time_ms": 30000},
+            ),
+            (
+                "write_stdin",
+                {"session_id": 123, "chars": "", "yield_time_ms": 20000},
+            ),
+            (
+                "mcp__gobby__call_tool",
+                {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "get_task",
+                    "arguments": {"task_id": "#21731", "brief": False},
+                },
+            ),
+        ]
+
+        for _ in range(5):
+            for tool_name, tool_args in calls:
+                tracker.record_tool_start(session_id, tool_name, tool_args=tool_args)
+                tracker.record_tool_call(session_id, tool_name, tool_args=tool_args)
+
+        result = detector.detect_tool_loop(session_id)
+
+        assert result.is_stuck is False
 
 
 class TestStuckDetectorToolLoopInvocationCounting:

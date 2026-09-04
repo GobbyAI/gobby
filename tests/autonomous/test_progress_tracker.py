@@ -7,7 +7,11 @@ from uuid import uuid4
 
 import pytest
 
-from gobby.autonomous.progress_tracker import ProgressTracker, ProgressType
+from gobby.autonomous.progress_tracker import (
+    ProgressTracker,
+    ProgressType,
+    _tool_activity_details,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewStore
@@ -92,3 +96,42 @@ def test_close_review_delivery_records_progress(temp_db: HubDatabase) -> None:
     assert events[0].progress_type is ProgressType.TASK_CLOSE_REVIEW_COMPLETED
     assert events[0].tool_name == "task_close_review_completed"
     assert events[0].details == {"review_id": review.id, "status": "invalid"}
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "tool_args"),
+    [
+        ("Bash", {"command": "sleep 45"}),
+        (
+            "exec_command",
+            {"cmd": "sleep 45", "workdir": "/repo", "yield_time_ms": 30000},
+        ),
+        ("write_stdin", {"chars": ""}),
+    ],
+    ids=["claude-bash-sleep", "codex-exec-command-sleep", "codex-empty-write-stdin"],
+)
+def test_tool_activity_details_classifies_argument_passive_waits(
+    tool_name: str,
+    tool_args: dict[str, object],
+) -> None:
+    _, is_passive_wait = _tool_activity_details(tool_name, tool_args)
+
+    assert is_passive_wait is True
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "tool_args"),
+    [
+        ("Bash", {"command": "sleep 45 && uv run pytest tests/x.py"}),
+        ("Bash", {"command": "uv run pytest tests/x.py"}),
+        ("write_stdin", {"chars": "continue\n"}),
+    ],
+    ids=["sleep-command-chain", "non-sleep-command", "non-empty-write-stdin"],
+)
+def test_tool_activity_details_keeps_active_calls_non_passive(
+    tool_name: str,
+    tool_args: dict[str, object],
+) -> None:
+    _, is_passive_wait = _tool_activity_details(tool_name, tool_args)
+
+    assert is_passive_wait is False
