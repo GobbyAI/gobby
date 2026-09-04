@@ -307,6 +307,19 @@ def _run_tracked_start(
             tracker.error(subsystem, str(e))
 
 
+async def _run_tracked_start_async(
+    operation: Callable[[], Awaitable[None]],
+    subsystem: str,
+    tracker: StartupTracker | None,
+) -> None:
+    try:
+        await operation()
+    except Exception as e:
+        logger.exception("%s start failed: %s", subsystem, e)
+        if tracker:
+            tracker.error(subsystem, str(e))
+
+
 async def _start_core_services(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
     await _start_tracked_service(
         runner.communications_manager,
@@ -895,8 +908,8 @@ async def init_subsystems(
         "WebSocket server",
         tracker,
     )
-    _run_tracked_start(
-        lambda: _maybe_start_ui_dev_server(runner),
+    await _run_tracked_start_async(
+        lambda: asyncio.to_thread(_maybe_start_ui_dev_server, runner),
         "UI development server",
         tracker,
     )
