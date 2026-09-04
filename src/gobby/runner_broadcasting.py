@@ -216,7 +216,13 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
         # Handle tmux output reader start for tmux terminal agents
         if event_type == "agent_started":
             terminal_id = data.get("terminal_id")
-            raw_attach_name = data.get("tmux_session_name")
+            terminal_manager = websocket_server.terminal_manager
+            terminal = (
+                terminal_manager.get(str(terminal_id))
+                if terminal_id and terminal_manager is not None
+                else None
+            )
+            raw_attach_name = None if terminal is None else terminal.session_name
             attach_name = raw_attach_name if isinstance(raw_attach_name, str) else None
             if attach_name:
                 _attach_name = attach_name

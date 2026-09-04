@@ -142,7 +142,7 @@ class RecordingRuntime:
     """Records writes and resizes; never writes on a frame attachment."""
 
     backend: Literal["tmux", "native"]
-    write_log: list[tuple[str, str]] = field(default_factory=list)
+    write_log: list[tuple[str, str | bytes]] = field(default_factory=list)
     resize_calls: list[tuple[int, int]] = field(default_factory=list)
     tmux_commands: list[list[str]] = field(default_factory=list)
     outcome: WriteOutcome = field(default_factory=Delivered)
@@ -170,6 +170,9 @@ class RecordingRuntime:
         del submit
         return await self._record("text", text, terminal)
 
+    async def write_input(self, terminal: Terminal, data: bytes) -> WriteOutcome:
+        return await self._record("input", data, terminal)
+
     async def write_paste(self, terminal: Terminal, text: str) -> WriteOutcome:
         return await self._record("paste", text, terminal)
 
@@ -181,12 +184,13 @@ class RecordingRuntime:
         if terminal.backend == "tmux":
             self.tmux_commands.append(["resize-pane", str(rows), str(cols)])
 
-    async def _record(self, kind: str, payload: str, terminal: Terminal) -> WriteOutcome:
+    async def _record(self, kind: str, payload: str | bytes, terminal: Terminal) -> WriteOutcome:
         self.write_log.append((kind, payload))
         if self.backend == "native":
             self.host_writes.append({"kind": kind, "payload": payload, "terminal_id": terminal.id})
         else:
-            self.tmux_commands.append(["send-keys", "-H", kind, payload])
+            wire_payload = payload.hex() if isinstance(payload, bytes) else payload
+            self.tmux_commands.append(["send-keys", "-H", kind, wire_payload])
         if self.hold is not None:
             await self.hold.wait()
         if self.drop_next:
@@ -418,7 +422,7 @@ async def test_web_attach_native_terminal(
         },
     )
     await _until(lambda: harness.native_rt.write_log)
-    assert harness.native_rt.write_log[0] == ("text", "ls\n")
+    assert harness.native_rt.write_log[0] == ("input", b"ls\n")
     assert harness.native_rt.host_writes
     assert not frame.writes
     await _send(

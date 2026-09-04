@@ -81,7 +81,7 @@ async def test_unresolved_write_latch_suppresses_only_the_same_action() -> None:
     payloads = [payload for _kind, payload in runtime.write_log]
     assert "retry" not in payloads
     assert "third" in payloads
-    assert any(item.startswith("human") for item in payloads)
+    assert any(isinstance(item, str) and item.startswith("human") for item in payloads)
 
     coordinator.observe_resolved(terminal.id, "idle-reprompt")
     row = store.get(terminal.id)

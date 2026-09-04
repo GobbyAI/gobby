@@ -395,6 +395,10 @@ async def test_contract_matrix(contract_backend: str, monkeypatch: pytest.Monkey
         assert isinstance(delivered, Delivered)
         text = await _wait_snapshot(runtime, terminal, MARKER, description="literal echo")
         assert MARKER in text
+        raw_marker = f"RAW-{uuid.uuid4().hex}"
+        raw = await runtime.write_input(terminal, f"ECHO {raw_marker}\r".encode())
+        assert isinstance(raw, Delivered)
+        await _wait_snapshot(runtime, terminal, raw_marker, description="raw input")
         if contract_backend == "tmux":
             await _assert_tmux_events(harness)
         else:

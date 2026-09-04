@@ -26,6 +26,7 @@ from gobby.terminals.dimensions import validate_dimensions
 from gobby.terminals.key_bytes import TMUX_KEY_NAMES, encode_named_key
 from gobby.terminals.runtime import (
     MAX_INPUT_PAYLOAD_BYTES,
+    MAX_RAW_INPUT_PAYLOAD_BYTES,
     CommitSpawnRefusedError,
     Delivered,
     IndeterminateWrite,
@@ -295,6 +296,34 @@ class TmuxTerminalRuntime:
             raise
         except TmuxTextInjectionError as exc:
             raise TerminalWriteError(stage="none") from exc
+
+    async def write_input(self, terminal: Terminal, data: bytes) -> WriteOutcome:
+        if len(data) > MAX_RAW_INPUT_PAYLOAD_BYTES:
+            raise InputPayloadTooLargeError("input exceeds 64 KiB")
+        target = self._target(terminal)
+        delivered_bytes = 0
+        for offset in range(0, len(data), 512):
+            chunk = data[offset : offset + 512]
+            try:
+                rc, _stdout, _stderr = await self._sessions_for(terminal)._run(
+                    "send-keys",
+                    "-t",
+                    target,
+                    "-H",
+                    *(f"{byte:02x}" for byte in chunk),
+                )
+            except asyncio.CancelledError:
+                raise
+            except (TmuxTextInjectionTimeout, TimeoutError) as exc:
+                raise TerminalWriteError(stage="partial") from exc
+            if rc != 0:
+                stage: Literal["none", "partial"] = "partial" if delivered_bytes else "none"
+                raise TerminalWriteError(
+                    stage=stage,
+                    delivered_bytes=delivered_bytes,
+                )
+            delivered_bytes += len(chunk)
+        return Delivered()
 
     async def write_paste(self, terminal: Terminal, text: str) -> WriteOutcome:
         if len(text.encode("utf-8")) > MAX_INPUT_PAYLOAD_BYTES:

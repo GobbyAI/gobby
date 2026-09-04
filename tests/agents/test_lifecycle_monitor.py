@@ -115,7 +115,7 @@ class LifecycleRuntime(FakeRuntime):
         self.write_targets.append(terminal.id)
         return await super().write_key(terminal, key)
 
-    async def _record(self, kind: str, payload: str) -> WriteOutcome:
+    async def _record(self, kind: str, payload: str | bytes) -> WriteOutcome:
         failed = self.write_failures.pop(0) if self.write_failures else False
         outcome = await super()._record(kind, payload)
         if failed:
@@ -220,11 +220,17 @@ def _terminal_liveness(
 
 
 def _written_keys(runtime: LifecycleRuntime) -> list[str]:
-    return [payload for kind, payload in runtime.write_log if kind == "key"]
+    return [
+        payload for kind, payload in runtime.write_log if kind == "key" and isinstance(payload, str)
+    ]
 
 
 def _written_text(runtime: LifecycleRuntime) -> list[str]:
-    return [payload for kind, payload in runtime.write_log if kind == "text"]
+    return [
+        payload
+        for kind, payload in runtime.write_log
+        if kind == "text" and isinstance(payload, str)
+    ]
 
 
 def test_monitor_ignores_other_machines_runs(

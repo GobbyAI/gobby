@@ -320,7 +320,7 @@ class FakeRuntime:
     """Recording TerminalRuntime used by coordinator, registry, and spawn tests."""
 
     backend: Literal["tmux", "native"] = "tmux"
-    write_log: list[tuple[str, str]] = field(default_factory=list)
+    write_log: list[tuple[str, str | bytes]] = field(default_factory=list)
     hold: asyncio.Event | None = None
     release: asyncio.Event | None = None
     outcome: WriteOutcome = field(default_factory=Delivered)
@@ -454,6 +454,9 @@ class FakeRuntime:
     async def write_key(self, terminal: Terminal, key: NamedKey) -> WriteOutcome:
         return await self._record("key", key)
 
+    async def write_input(self, terminal: Terminal, data: bytes) -> WriteOutcome:
+        return await self._record("input", data)
+
     async def write_paste(self, terminal: Terminal, text: str) -> WriteOutcome:
         return await self._record("paste", text)
 
@@ -471,7 +474,7 @@ class FakeRuntime:
     async def attach_locator(self, terminal: Terminal) -> AttachLocator:
         return AttachLocator(backend=self.backend, frame_host_epoch="epoch")
 
-    async def _record(self, kind: str, payload: str) -> WriteOutcome:
+    async def _record(self, kind: str, payload: str | bytes) -> WriteOutcome:
         if self.gate is not None:
             self.gate()
         self.started.set()

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
@@ -257,35 +255,3 @@ class TmuxMixin(TerminalWsMixin):
         if isinstance(terminal_id, str):
             await teardown_terminal_bridges(self, terminal_id)
         await super()._handle_terminal_kill(websocket, data)
-
-    async def _deliver_operator_write(
-        self,
-        terminal_id: str,
-        attachment_id: str,
-        *,
-        kind: str,
-        payload: str,
-        generation: int | None,
-        seq: object = None,
-    ) -> tuple[str, str | None]:
-        """Raw bytes into the tmux client's PTY; everything else goes to the runtime.
-
-        The PTY gives full terminal fidelity (Ctrl+C, arrows, Tab, mouse), which
-        ``send-keys -l`` cannot carry.
-        """
-        bridge_fd = await self._tmux_bridge.get_master_fd(attachment_id)
-        if bridge_fd is None:
-            return await super()._deliver_operator_write(
-                terminal_id,
-                attachment_id,
-                kind=kind,
-                payload=payload,
-                generation=generation,
-                seq=seq,
-            )
-        try:
-            await asyncio.to_thread(os.write, bridge_fd, payload.encode("utf-8"))
-        except OSError as exc:
-            logger.warning("Failed to write to tmux bridge %s: %s", attachment_id, exc)
-            return "indeterminate", "indeterminate_backend"
-        return "delivered", None

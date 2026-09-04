@@ -7,7 +7,6 @@ Extracted from server.py as part of the Strangler Fig decomposition.
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Any
 
 from gobby.mcp_proxy.manager import MCPClientManager
@@ -298,91 +297,3 @@ class HandlerMixin:
         except Exception as e:
             logger.error("Error handling stop request: %s", e)
             await self._send_error(websocket, f"Failed to signal stop: {str(e)}")
-
-    async def _handle_terminal_input(self, websocket: Any, data: dict[str, Any]) -> None:
-        """
-        Handle terminal input for a running agent.
-
-        Message format:
-        {
-            "type": "terminal_input",
-            "run_id": "uuid",
-            "data": "raw input string"
-        }
-
-        Args:
-            websocket: Client WebSocket connection
-            data: Parsed terminal input message
-        """
-        run_id = data.get("terminal_id") or data.get("run_id")
-        input_data = data.get("data")
-
-        if not run_id or input_data is None:
-            # Don't send error for every keystroke if malformed, just log debug
-            logger.debug(
-                "Invalid terminal_input: run_id=%s, data_len=%s",
-                run_id,
-                len(str(input_data)) if input_data else 0,
-            )
-            return
-
-        if not isinstance(input_data, str):
-            # input_data must be a string to encode; log and skip non-strings
-            logger.debug(
-                "Invalid terminal_input type: run_id=%s, data_type=%s",
-                run_id,
-                type(input_data).__name__,
-            )
-            return
-
-        # The runs table keys on a uuid column -- an id that cannot be one
-        # raises instead of missing. The web terminal answers tmux's DA and DSR
-        # queries as terminal_input, so a reply that lands after its attachment
-        # detached arrives here carrying a tmux streaming id, which is exactly
-        # such an id (#20803).
-        try:
-            uuid.UUID(run_id)
-        except ValueError:
-            logger.debug("Ignoring terminal_input for non-agent id %s", run_id)
-            return
-
-        from gobby.storage.agents import LocalAgentRunManager
-        from gobby.storage.terminals import TerminalManager
-        from gobby.terminals.write_coordinator import WriteRequest
-
-        db = getattr(self, "_db", None) or getattr(
-            getattr(self, "session_manager", None), "db", None
-        )
-        if not db:
-            logger.warning("No database available to look up agent %s", run_id)
-            return
-
-        run = LocalAgentRunManager(db).get(run_id)
-        if not run:
-            return
-
-        coordinator = getattr(self, "write_coordinator", None) or getattr(
-            getattr(self, "terminal_services", None), "coordinator", None
-        )
-        manager = getattr(self, "terminal_manager", None)
-        if manager is None:
-            manager = TerminalManager(db)
-        if not run.terminal_id:
-            logger.warning("Agent %s has no terminal - cannot route input", run_id)
-            return
-        terminal = manager.get(run.terminal_id)
-        if terminal is None or coordinator is None:
-            logger.warning("Agent %s has no writable terminal - cannot route input", run_id)
-            return
-        try:
-            await coordinator.write(
-                WriteRequest(
-                    terminal_id=terminal.id,
-                    action_key=f"ws-input:{run_id}",
-                    origin="automatic",
-                    kind="text",
-                    payload=input_data,
-                )
-            )
-        except (OSError, RuntimeError) as e:
-            logger.warning("Failed to send keys to agent %s: %s", run_id, e)

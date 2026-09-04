@@ -25,7 +25,12 @@ from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.terminals import Terminal
-from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
+from tests.terminals.fakes import (
+    FakeRuntime,
+    MemoryTerminalStore,
+    make_memory_terminal,
+    runtime_registry,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -487,31 +492,27 @@ class TestTmuxActivation:
 
 
 class TestTmuxBridgeInput:
-    async def test_input_writes_raw_bytes_to_the_client_pty(
+    async def test_input_uses_the_terminal_runtime(
         self, server: WebSocketServer, row: Terminal
     ) -> None:
         ws = MockWebSocket()
+        runtime = FakeRuntime()
+        server.terminal_runtime_registry = runtime_registry(runtime)
 
         with activation_harness(server, bridge=make_bridge(terminal_id=row.id)):
             attachment_id = await reserve(server, ws, row)
             await resize(server, ws, attachment_id)
-            with (
-                patch.object(
-                    server._tmux_bridge, "get_master_fd", new_callable=AsyncMock, return_value=42
-                ),
-                patch("gobby.servers.websocket.tmux.os.write") as write,
-            ):
-                await server._handle_terminal_input(
-                    ws,
-                    {
-                        "terminal_id": row.id,
-                        "attachment_id": attachment_id,
-                        "data": "\x03",
-                        "client_write_seq": 1,
-                    },
-                )
+            await server._handle_terminal_input(
+                ws,
+                {
+                    "terminal_id": row.id,
+                    "attachment_id": attachment_id,
+                    "data": "\x03",
+                    "client_write_seq": 1,
+                },
+            )
 
-        write.assert_called_once_with(42, b"\x03")
+        assert runtime.write_log == [("input", b"\x03")]
         outcome = ws.messages_of_type("terminal_write_outcome")[0]
         assert outcome["outcome"] == "delivered"
         assert outcome["client_write_seq"] == 1

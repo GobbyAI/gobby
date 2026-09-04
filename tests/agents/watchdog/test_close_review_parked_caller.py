@@ -167,7 +167,13 @@ class _Harness:
         evaluation.repo_path = "/repo"
         evaluation.commit_shas = ["abc"]
         evaluation.extra.update(
-            {"review_fingerprint": "close", "deterministic_evidence_fingerprint": "evidence"}
+            {
+                "review_fingerprint": "close",
+                "deterministic_evidence_fingerprint": "evidence",
+                "diff_sha": "a" * 64,
+                "test_bodies_sha": "b" * 64,
+                "stable_facts": {"commit_shas": ["abc"]},
+            }
         )
         if ready:
             evaluation.pass_gate(14, "criteria_review", "valid")
@@ -273,7 +279,7 @@ class _Harness:
         return (
             idle,
             stuck,
-            [payload for _kind, payload in runtime.write_log],
+            [payload for _kind, payload in runtime.write_log if isinstance(payload, str)],
             cleanup_agent.await_count,
         )
 

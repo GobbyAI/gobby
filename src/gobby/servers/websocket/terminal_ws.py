@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal
 from unittest.mock import Mock
 
 from gobby.config.terminals import TerminalConfig
@@ -14,7 +14,7 @@ from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
 from gobby.terminals.leases import TerminalLeaseRegistry, paste_oversize
-from gobby.terminals.runtime import Delivered, IndeterminateWrite
+from gobby.terminals.runtime import Delivered, IndeterminateWrite, TerminalWriteError
 from gobby.terminals.tmux_discovery import pane_owners, sweep_tmux_terminals
 from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_DEFAULT_PAGE_SIZE,
@@ -530,12 +530,9 @@ class TerminalWsMixin:
         )
 
     async def _handle_terminal_input(self, websocket: Any, data: dict[str, Any]) -> None:
-        if data.get("attachment_id"):
-            await self._handle_operator_write(websocket, data, kind="input")
+        if not data.get("attachment_id"):
             return
-        from gobby.servers.websocket.handlers.core import HandlerMixin
-
-        await HandlerMixin._handle_terminal_input(cast(HandlerMixin, self), websocket, data)
+        await self._handle_operator_write(websocket, data, kind="input")
 
     async def _handle_terminal_paste(self, websocket: Any, data: dict[str, Any]) -> None:
         text = data.get("text")
@@ -550,7 +547,11 @@ class TerminalWsMixin:
         await self._handle_operator_write(websocket, data, kind="paste")
 
     async def _handle_operator_write(
-        self, websocket: Any, data: dict[str, Any], *, kind: str
+        self,
+        websocket: Any,
+        data: dict[str, Any],
+        *,
+        kind: Literal["input", "paste", "text"],
     ) -> None:
         terminal_id = data.get("terminal_id")
         attachment_id = data.get("attachment_id")
@@ -591,16 +592,20 @@ class TerminalWsMixin:
                 websocket, data, outcome="refused", reason="write_handler_fault"
             )
             return
-        outcome, reason = await self._deliver_operator_write(
-            terminal_id,
-            attachment_id,
-            kind=kind,
-            payload=payload,
-            generation=generation,
-            seq=seq,
-        )
-        if isinstance(seq, int):
-            self._leases().complete_write(attachment_id, seq, outcome, reason)
+        outcome = "indeterminate"
+        reason: str | None = "indeterminate_backend"
+        try:
+            outcome, reason = await self._deliver_operator_write(
+                terminal_id,
+                attachment_id,
+                kind=kind,
+                payload=payload,
+                generation=generation,
+                seq=seq,
+            )
+        finally:
+            if isinstance(seq, int):
+                self._leases().complete_write(attachment_id, seq, outcome, reason)
         await self._write_outcome(websocket, data, outcome=outcome, reason=reason)
 
     async def _deliver_operator_write(
@@ -608,7 +613,7 @@ class TerminalWsMixin:
         terminal_id: str,
         attachment_id: str,
         *,
-        kind: str,
+        kind: Literal["input", "paste", "text"],
         payload: str,
         generation: int | None,
         seq: object = None,
@@ -619,41 +624,48 @@ class TerminalWsMixin:
         manager = getattr(self, "terminal_manager", None)
         row = None if manager is None else manager.get(terminal_id)
         runtime = None if row is None else self._runtime_for(row.backend)
-        if runtime is not None:
-            try:
+        try:
+            if runtime is not None:
                 if kind == "paste":
                     result = await runtime.write_paste(row, payload)
+                elif kind == "input":
+                    result = await runtime.write_input(row, payload.encode("utf-8"))
                 else:
                     result = await runtime.write_text(row, payload, False)
-            except (ConnectionError, OSError) as exc:
-                result = IndeterminateWrite(detail=str(exc))
-            if isinstance(result, IndeterminateWrite):
-                outcome = "indeterminate"
-                reason = "indeterminate_backend"
-            elif not isinstance(result, Delivered):
-                outcome = "refused"
-                reason = "held"
-        elif getattr(self, "write_coordinator", None) is not None:
-            from gobby.terminals.write_coordinator import WriteRequest
+            elif getattr(self, "write_coordinator", None) is not None:
+                from gobby.terminals.write_coordinator import WriteRequest
 
-            coordinator = self.write_coordinator
-            result = await coordinator.write(
-                WriteRequest(
-                    terminal_id=terminal_id,
-                    action_key=f"ws:{attachment_id}:{seq}",
-                    origin="operator",
-                    kind="paste" if kind == "paste" else "text",
-                    payload=payload,
-                    attachment_id=attachment_id,
-                    expected_lease_generation=generation,
+                coordinator = self.write_coordinator
+                result = await coordinator.write(
+                    WriteRequest(
+                        terminal_id=terminal_id,
+                        action_key=f"ws:{attachment_id}:{seq}",
+                        origin="operator",
+                        kind=kind,
+                        payload=payload,
+                        attachment_id=attachment_id,
+                        expected_lease_generation=generation,
+                    )
                 )
-            )
-            if isinstance(result, IndeterminateWrite):
-                outcome = "indeterminate"
-                reason = "indeterminate_backend"
-            elif not isinstance(result, Delivered):
-                outcome = "refused"
-                reason = "held"
+            else:
+                return outcome, reason
+        except TerminalWriteError as exc:
+            if exc.stage == "partial":
+                reason = (
+                    f"indeterminate_partial_delivered:{exc.delivered_bytes}"
+                    if exc.delivered_bytes is not None
+                    else "indeterminate_backend"
+                )
+                return "indeterminate", reason
+            return "refused", "held"
+        except (ConnectionError, OSError):
+            return "indeterminate", "indeterminate_backend"
+        if isinstance(result, IndeterminateWrite):
+            outcome = "indeterminate"
+            reason = "indeterminate_backend"
+        elif not isinstance(result, Delivered):
+            outcome = "refused"
+            reason = "held"
         return outcome, reason
 
     async def _write_outcome(
