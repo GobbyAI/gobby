@@ -50,7 +50,6 @@ from gobby.tasks.transcript_outcomes import (
 logger = logging.getLogger(__name__)
 
 # How much transcript before the claim window still reaches the parser.
-#
 # Lines older than the claim window only cost parsing. On an 83 MB / 53k-line
 # session, filtering cut derivation from 420 ms to 219 ms (#20866).
 #
@@ -261,6 +260,7 @@ class _EvidenceSnapshot:
     runs: tuple[TranscriptValidationRun, ...]
     edits: tuple[TranscriptEdit, ...]
     degraded: tuple[str, ...]
+    parsed_from_offset: int = 0
 
 
 @dataclass(frozen=True)
@@ -613,6 +613,7 @@ def _derive_transcript_path_evidence(
             runs=tuple(state.runs),
             edits=tuple(state.edits),
             degraded=tuple(state.degraded),
+            parsed_from_offset=resume.watermark if resume is not None else 0,
         )
     logger.debug(
         "Derived close transcript evidence",
