@@ -40,6 +40,42 @@ def _link_auto_claimed_session(task_manager: Any, session_id: str, task_id: str)
         logger.debug("Best-effort auto-claim session linking failed: %s", exc)
 
 
+def _clear_parent_claim_session_variables(
+    task_manager: Any,
+    parent_session_id: str,
+    task_id: str,
+) -> None:
+    """Remove a transferred task from the parent's claim variables."""
+    from gobby.workflows.state_manager import SessionVariableManager
+    from gobby.workflows.task_claim_state import remove_claimed_task
+
+    try:
+        session_var_manager = SessionVariableManager(task_manager.db)
+        session_vars = session_var_manager.get_variables(parent_session_id)
+        merge_dict = remove_claimed_task(session_vars, task_id)
+        session_var_manager.merge_existing_variables(parent_session_id, merge_dict)
+    except Exception as exc:
+        logger.debug("Best-effort parent claim variable cleanup failed: %s", exc)
+
+
+def _transfer_parent_owned_task_claim(
+    task_manager: Any,
+    task_id: str,
+    *,
+    parent_session_id: str,
+    child_session_id: str,
+) -> Any:
+    """Transfer a task claim while the spawn path holds its task mutex."""
+    current_owner = get_claimed_session_id(task_manager.get_task(task_id))
+    if current_owner != parent_session_id:
+        raise RuntimeError(
+            f"Task {task_id} claim owner changed from parent session "
+            f"{parent_session_id} to {current_owner}"
+        )
+    task_manager.release_task_claim(task_id)
+    return task_manager.claim_task(task_id, session_id=child_session_id)
+
+
 async def finalize_executed_spawn(
     *,
     runner: Any,
@@ -167,28 +203,53 @@ async def finalize_executed_spawn(
                         f"#{task_seq_num}" if task_seq_num else resolved_task_id,
                     )
                 elif (
-                    current_owner := get_claimed_session_id(task_obj)
-                ) and current_owner != spawn_result.child_session_id:
+                    (current_owner := get_claimed_session_id(task_obj))
+                    and current_owner != spawn_result.child_session_id
+                    and current_owner != parent_session_id
+                ):
                     logger.info(
                         "Skipping auto-claim for task %s; already assigned to %s",
                         f"#{task_seq_num}" if task_seq_num else resolved_task_id,
                         current_owner,
                     )
                 else:
-                    claimed_task = await asyncio.to_thread(
-                        task_manager.claim_task,
-                        resolved_task_id,
-                        session_id=spawn_result.child_session_id,
+                    transferred_parent_claim = (
+                        current_owner == parent_session_id
+                        and current_owner != spawn_result.child_session_id
                     )
+                    if transferred_parent_claim:
+                        claimed_task = await asyncio.to_thread(
+                            _transfer_parent_owned_task_claim,
+                            task_manager,
+                            resolved_task_id,
+                            parent_session_id=parent_session_id,
+                            child_session_id=spawn_result.child_session_id,
+                        )
+                    else:
+                        claimed_task = await asyncio.to_thread(
+                            task_manager.claim_task,
+                            resolved_task_id,
+                            session_id=spawn_result.child_session_id,
+                        )
                     task_owned_by_child = (
                         get_claimed_session_id(claimed_task) == spawn_result.child_session_id
                     )
-                    logger.info(
-                        "Auto-claimed task %s for agent %s (session %s)",
-                        (f"#{task_seq_num}" if task_seq_num else resolved_task_id),
-                        run_id,
-                        spawn_result.child_session_id,
-                    )
+                    if transferred_parent_claim:
+                        logger.info(
+                            "Transferred task %s claim from parent session %s to agent %s "
+                            "(session %s)",
+                            (f"#{task_seq_num}" if task_seq_num else resolved_task_id),
+                            parent_session_id,
+                            run_id,
+                            spawn_result.child_session_id,
+                        )
+                    else:
+                        logger.info(
+                            "Auto-claimed task %s for agent %s (session %s)",
+                            (f"#{task_seq_num}" if task_seq_num else resolved_task_id),
+                            run_id,
+                            spawn_result.child_session_id,
+                        )
                     if task_owned_by_child:
                         await asyncio.to_thread(
                             _link_auto_claimed_session,
@@ -196,6 +257,13 @@ async def finalize_executed_spawn(
                             spawn_result.child_session_id,
                             resolved_task_id,
                         )
+                        if transferred_parent_claim:
+                            await asyncio.to_thread(
+                                _clear_parent_claim_session_variables,
+                                task_manager,
+                                parent_session_id,
+                                resolved_task_id,
+                            )
                     if (
                         task_owned_by_child
                         and db is not None

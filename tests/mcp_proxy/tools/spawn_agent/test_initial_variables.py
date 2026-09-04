@@ -336,16 +336,19 @@ class TestSpawnAgentStepVariables:
             assert spawn_request.initial_variables["_agent_rules"] == ["no-code-writing"]
 
     @pytest.mark.asyncio
-    async def test_auto_claimed_task_starts_step_workflow_after_claim(
+    async def test_parent_owned_claim_transfers_to_child_and_updates_spawn_state(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+        from gobby.storage.session_tasks import SessionTaskManager
         from gobby.storage.sessions import SessionManager
         from gobby.storage.tasks import LocalTaskManager
+        from gobby.workflows.state_manager import SessionVariableManager
         from gobby.workflows.step_instances import AgentStepInstanceManager
+        from gobby.workflows.task_claim_state import add_claimed_task
 
         project = isolated_checkout_factory(db, "spawn-step-project").project
         task_manager = LocalTaskManager(db)
@@ -366,6 +369,12 @@ class TestSpawnAgentStepVariables:
             source="codex",
             project_id=project.id,
             parent_session_id=parent.id,
+        )
+        task_manager.claim_task(task.id, parent.id)
+        parent_variables = SessionVariableManager(db)
+        parent_variables.merge_variables(
+            parent.id,
+            add_claimed_task({}, task.id, f"#{task.seq_num}"),
         )
 
         agent_body = AgentDefinitionBody(
@@ -464,6 +473,12 @@ class TestSpawnAgentStepVariables:
 
         assert result["success"] is True, result
         assert task_manager.get_task(task.id).claimed_by_session_id == child.id
+        links = SessionTaskManager(db).get_task_sessions(task.id)
+        assert [(row["session_id"], row["action"]) for row in links] == [(child.id, "claimed")]
+        transferred_parent_variables = parent_variables.get_variables(parent.id)
+        assert transferred_parent_variables["claimed_tasks"] == {}
+        assert transferred_parent_variables["task_claimed"] is False
+        assert transferred_parent_variables["active_task_id"] is None
         instance = AgentStepInstanceManager(db).get_for_session(child.id)
         assert instance is not None
         assert instance.current_step == "load_skill"
@@ -477,7 +492,8 @@ class TestSpawnAgentStepVariables:
         *,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         project_name: str,
-    ) -> tuple[dict[str, Any], LocalTaskManager, Task, str]:
+        preclaimed_owner: Literal["parent", "third_party"] | None = None,
+    ) -> tuple[dict[str, Any], LocalTaskManager, Task, str, str | None]:
         """Spawn a workflow-less agent against a fresh task and return the claim facts."""
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
         from gobby.storage.sessions import SessionManager
@@ -502,6 +518,19 @@ class TestSpawnAgentStepVariables:
             project_id=project.id,
             parent_session_id=parent.id,
         )
+        owner_id: str | None = None
+        if preclaimed_owner == "parent":
+            owner_id = parent.id
+        elif preclaimed_owner == "third_party":
+            third_party = session_manager.register(
+                external_id=f"{project_name}-third-party",
+                machine_id="21000000-0000-4000-8000-000000000003",
+                source="codex",
+                project_id=project.id,
+            )
+            owner_id = third_party.id
+        if owner_id is not None:
+            task_manager.claim_task(task.id, owner_id)
         agent_body = AgentDefinitionBody(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="plan-adversary",
@@ -555,7 +584,7 @@ class TestSpawnAgentStepVariables:
                 },
             )
             await _drain_spawn_background_tasks()
-        return result, task_manager, task, child.id
+        return result, task_manager, task, child.id, owner_id
 
     async def test_auto_claim_records_claimed_session_task_link(
         self,
@@ -566,7 +595,7 @@ class TestSpawnAgentStepVariables:
         """The spawn-time claim leaves the same link the claim_task tool writes (#21102)."""
         from gobby.storage.session_tasks import SessionTaskManager
 
-        result, task_manager, task, child_id = await self._spawn_with_auto_claim(
+        result, task_manager, task, child_id, _ = await self._spawn_with_auto_claim(
             db,
             mock_runner,
             isolated_checkout_factory=isolated_checkout_factory,
@@ -594,7 +623,7 @@ class TestSpawnAgentStepVariables:
             ),
             caplog.at_level(logging.DEBUG, logger="gobby.mcp_proxy.tools.spawn_agent"),
         ):
-            result, task_manager, task, child_id = await self._spawn_with_auto_claim(
+            result, task_manager, task, child_id, _ = await self._spawn_with_auto_claim(
                 db,
                 mock_runner,
                 isolated_checkout_factory=isolated_checkout_factory,
@@ -608,6 +637,32 @@ class TestSpawnAgentStepVariables:
             "Best-effort auto-claim session linking failed" in record.getMessage()
             and "session_tasks down" in record.getMessage()
             for record in caplog.records
+        )
+
+    async def test_third_party_claim_skips_auto_claim_and_spawn_succeeds(
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        db: Any,
+        mock_runner: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from gobby.storage.session_tasks import SessionTaskManager
+
+        with caplog.at_level(logging.INFO, logger="gobby.mcp_proxy.tools.spawn_agent"):
+            result, task_manager, task, _, owner_id = await self._spawn_with_auto_claim(
+                db,
+                mock_runner,
+                isolated_checkout_factory=isolated_checkout_factory,
+                project_name="spawn-third-party-claim",
+                preclaimed_owner="third_party",
+            )
+
+        assert owner_id is not None
+        assert result["success"] is True, result
+        assert task_manager.get_task(task.id).claimed_by_session_id == owner_id
+        assert SessionTaskManager(db).get_task_sessions(task.id) == []
+        assert any(
+            f"already assigned to {owner_id}" in record.getMessage() for record in caplog.records
         )
 
     async def _spawn_bundled_developer_agent(
