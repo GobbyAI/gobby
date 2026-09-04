@@ -133,7 +133,13 @@ async def _prepare_provider_sandbox(
             env=env,
         )
     except (OSError, ValueError, SrtRuntimeError) as exc:
-        error = f"Sandbox startup failed closed for {provider}: {exc}"
+        exception_name = type(exc).__name__
+        exception_message = str(exc)
+        exception_detail = (
+            f"{exception_name}: {exception_message}" if exception_message else exception_name
+        )
+        error = f"Sandbox startup failed closed for {provider}: {exception_detail}"
+        logger.warning("%s", error, exc_info=exc)
         if request.run_manager is not None:
             request.run_manager.fail(spawn_context.agent_run_id, error)
         return SpawnResult(
