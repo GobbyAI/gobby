@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import secrets
-from collections import OrderedDict
+import threading
+from collections import OrderedDict, deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from hashlib import sha256
+from typing import Any
+from uuid import uuid4
 
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
 from gobby.terminals.ws_protocol import (
@@ -14,6 +19,15 @@ from gobby.terminals.ws_protocol import (
     WRITE_SEQ_CAPACITY,
     SafeIntegerOverflowError,
 )
+
+LIFECYCLE_PUBLICATION_QUEUE_MAXSIZE = 256
+
+
+class LifecyclePublicationError(RuntimeError):
+    """The ordered lifecycle publisher stopped before an event settled."""
+
+
+LifecyclePublisher = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -82,6 +96,13 @@ class _Lease:
     generation: int = 0
 
 
+@dataclass
+class _LifecyclePublication:
+    event: dict[str, Any]
+    publisher: LifecyclePublisher
+    completion: asyncio.Future[dict[str, Any]]
+
+
 class TerminalLeaseRegistry:
     """Single grant point for writer authority, keyed by terminal_id."""
 
@@ -89,6 +110,161 @@ class TerminalLeaseRegistry:
         self._attachments: dict[str, _Attachment] = {}
         self._leases: dict[str, _Lease] = {}
         self._by_websocket: dict[object, set[str]] = {}
+        self.daemon_epoch = str(uuid4())
+        self._lifecycle_seq = 0
+        self._lifecycle_committed_epoch = self.daemon_epoch
+        self._lifecycle_committed_seq = 0
+        self._lifecycle_counter_lock = threading.Lock()
+        self._lifecycle_queue: deque[_LifecyclePublication] = deque()
+        self._lifecycle_condition = asyncio.Condition()
+        self._lifecycle_worker: asyncio.Task[None] | None = None
+        self._lifecycle_current: _LifecyclePublication | None = None
+        self._lifecycle_closed = False
+        self._lifecycle_error: LifecyclePublicationError | None = None
+
+    @property
+    def lifecycle_worker(self) -> asyncio.Task[None] | None:
+        worker = self._lifecycle_worker
+        return worker if worker is not None and not worker.done() else None
+
+    @property
+    def lifecycle_queue_size(self) -> int:
+        return len(self._lifecycle_queue)
+
+    def lifecycle_snapshot(self) -> dict[str, str | int]:
+        with self._lifecycle_counter_lock:
+            return {
+                "daemon_epoch": self._lifecycle_committed_epoch,
+                "seq": self._lifecycle_committed_seq,
+            }
+
+    def next_lifecycle_seq(self) -> int:
+        """Allocate a JavaScript-safe lifecycle sequence, rotating its epoch if needed."""
+        _, sequence = self._next_lifecycle_stamp()
+        return sequence
+
+    def start_lifecycle_publication(self) -> None:
+        """Start or restart the registry's sole lifecycle publication worker."""
+        worker = self._lifecycle_worker
+        if worker is not None and not worker.done():
+            return
+        self._lifecycle_closed = False
+        self._lifecycle_error = None
+        self._lifecycle_worker = asyncio.create_task(self._run_lifecycle_publication())
+
+    async def publish_lifecycle(
+        self,
+        event: dict[str, Any],
+        publisher: LifecyclePublisher,
+    ) -> dict[str, Any]:
+        """Admit one raw event and wait for its ordered publication to complete."""
+        if self._lifecycle_worker is None and not self._lifecycle_closed:
+            self.start_lifecycle_publication()
+        completion: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        completion.add_done_callback(_consume_future_exception)
+        item = _LifecyclePublication(dict(event), publisher, completion)
+        async with self._lifecycle_condition:
+            while (
+                len(self._lifecycle_queue) >= LIFECYCLE_PUBLICATION_QUEUE_MAXSIZE
+                and not self._lifecycle_closed
+            ):
+                await self._lifecycle_condition.wait()
+            if self._lifecycle_closed:
+                raise self._new_lifecycle_error()
+            self._lifecycle_queue.append(item)
+            self._lifecycle_condition.notify_all()
+        return await asyncio.shield(completion)
+
+    async def shutdown_lifecycle_publication(self) -> None:
+        """Fence submissions, fail outstanding entries, and await worker termination."""
+        error = LifecyclePublicationError("lifecycle publication stopped")
+        async with self._lifecycle_condition:
+            self._lifecycle_closed = True
+            self._lifecycle_error = error
+            queued = list(self._lifecycle_queue)
+            self._lifecycle_queue.clear()
+            for item in queued:
+                _fail_publication(item, error)
+            worker = self._lifecycle_worker
+            self._lifecycle_condition.notify_all()
+        if worker is not None:
+            worker.cancel()
+            try:
+                await worker
+            except asyncio.CancelledError:
+                pass
+        if self._lifecycle_worker is worker:
+            self._lifecycle_worker = None
+
+    def _next_lifecycle_stamp(self) -> tuple[str, int]:
+        with self._lifecycle_counter_lock:
+            if self._lifecycle_seq >= TERMINAL_WS_SAFE_INTEGER_MAX:
+                self.daemon_epoch = str(uuid4())
+                self._lifecycle_seq = 0
+            self._lifecycle_seq += 1
+            return self.daemon_epoch, self._lifecycle_seq
+
+    def _commit_lifecycle(self, epoch: str, sequence: int) -> None:
+        with self._lifecycle_counter_lock:
+            self._lifecycle_committed_epoch = epoch
+            self._lifecycle_committed_seq = sequence
+
+    def _new_lifecycle_error(self) -> LifecyclePublicationError:
+        error = self._lifecycle_error
+        return LifecyclePublicationError(str(error or "lifecycle publication unavailable"))
+
+    async def _run_lifecycle_publication(self) -> None:
+        try:
+            while True:
+                async with self._lifecycle_condition:
+                    while not self._lifecycle_queue:
+                        if self._lifecycle_closed:
+                            return
+                        await self._lifecycle_condition.wait()
+                    item = self._lifecycle_queue.popleft()
+                    self._lifecycle_current = item
+                    self._lifecycle_condition.notify_all()
+                try:
+                    epoch, sequence = self._next_lifecycle_stamp()
+                    stamped = {
+                        **item.event,
+                        "daemon_epoch": epoch,
+                        "seq": sequence,
+                    }
+                    await item.publisher(stamped)
+                except asyncio.CancelledError:
+                    _fail_publication(
+                        item, LifecyclePublicationError("lifecycle publication stopped")
+                    )
+                    raise
+                except Exception as exc:
+                    await self._fault_lifecycle_publication(item, exc)
+                    return
+                else:
+                    self._commit_lifecycle(epoch, sequence)
+                    if not item.completion.done():
+                        item.completion.set_result(stamped)
+                finally:
+                    if self._lifecycle_current is item:
+                        self._lifecycle_current = None
+        except asyncio.CancelledError:
+            raise
+
+    async def _fault_lifecycle_publication(
+        self,
+        current: _LifecyclePublication,
+        cause: Exception,
+    ) -> None:
+        error = LifecyclePublicationError(f"lifecycle publication failed: {cause}")
+        async with self._lifecycle_condition:
+            self._lifecycle_closed = True
+            self._lifecycle_error = error
+            _fail_publication(current, error)
+            queued = list(self._lifecycle_queue)
+            self._lifecycle_queue.clear()
+            for item in queued:
+                _fail_publication(item, error)
+            self._lifecycle_condition.notify_all()
 
     def attach(
         self,
@@ -322,3 +498,16 @@ def _as_seq(value: object) -> int:
 
 def paste_oversize(text: str) -> bool:
     return len(text.encode("utf-8")) > PASTE_MAX_BYTES
+
+
+def _fail_publication(
+    item: _LifecyclePublication,
+    error: LifecyclePublicationError,
+) -> None:
+    if not item.completion.done():
+        item.completion.set_exception(LifecyclePublicationError(str(error)))
+
+
+def _consume_future_exception(future: asyncio.Future[dict[str, Any]]) -> None:
+    if not future.cancelled():
+        future.exception()

@@ -422,17 +422,22 @@ class WebSocketServer(
             logger.warning("WebSocket server already started")
             return
 
-        self._server = await serve(
-            self.handle_connection,
-            host=self.config.host,
-            port=self.config.port,
-            process_request=self._authenticate,
-            ping_interval=self.config.ping_interval,
-            ping_timeout=self.config.ping_timeout,
-            max_size=self.config.max_message_size,
-            compression="deflate",
-            logger=websockets_logger,
-        )
+        self.lease_registry.start_lifecycle_publication()
+        try:
+            self._server = await serve(
+                self.handle_connection,
+                host=self.config.host,
+                port=self.config.port,
+                process_request=self._authenticate,
+                ping_interval=self.config.ping_interval,
+                ping_timeout=self.config.ping_timeout,
+                max_size=self.config.max_message_size,
+                compression="deflate",
+                logger=websockets_logger,
+            )
+        except BaseException:
+            await self.lease_registry.shutdown_lifecycle_publication()
+            raise
 
         # Start idle session cleanup background task
         self._cleanup_task = asyncio.create_task(self._cleanup_idle_sessions())
@@ -447,50 +452,53 @@ class WebSocketServer(
         """
         if self._server is None:
             logger.warning("WebSocket server not started")
+            await self.lease_registry.shutdown_lifecycle_publication()
             return
 
         logger.debug("Stopping WebSocket server...")
+        server = self._server
+        try:
+            # Cancel idle cleanup task
+            if self._cleanup_task and not self._cleanup_task.done():
+                self._cleanup_task.cancel()
+                try:
+                    await self._cleanup_task
+                except asyncio.CancelledError:
+                    pass
 
-        # Cancel idle cleanup task
-        if self._cleanup_task and not self._cleanup_task.done():
-            self._cleanup_task.cancel()
-            try:
-                await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
+            # Stop all tmux bridges
+            await self._cleanup_tmux()
 
-        # Stop all tmux bridges
-        await self._cleanup_tmux()
+            # Stop voice subsystem
+            await self.cleanup_voice()
 
-        # Stop voice subsystem
-        await self.cleanup_voice()
+            # Stop all chat sessions (fire SESSION_END before each)
+            for conv_id, session in list(self._chat_sessions.items()):
+                await self._fire_session_end(conv_id)
+                await self._cancel_active_chat(conv_id)
+                await session.stop()
+            self._chat_sessions.clear()
+            self.web_chat_session_registry.clear()
+            if hasattr(self, "_session_create_locks"):
+                self._session_create_locks.clear()
 
-        # Stop all chat sessions (fire SESSION_END before each)
-        for conv_id, session in list(self._chat_sessions.items()):
-            await self._fire_session_end(conv_id)
-            await self._cancel_active_chat(conv_id)
-            await session.stop()
-        self._chat_sessions.clear()
-        self.web_chat_session_registry.clear()
-        if hasattr(self, "_session_create_locks"):
-            self._session_create_locks.clear()
+            # Close server (stops accepting new connections)
+            server.close()
+            await server.wait_closed()
 
-        # Close server (stops accepting new connections)
-        self._server.close()
-        await self._server.wait_closed()
-
-        # Close remaining client connections with timeout
-        for websocket in list(self.clients.keys()):
-            try:
-                await asyncio.wait_for(
-                    websocket.close(code=1001, reason="Server shutting down"), timeout=2.0
-                )
-            except TimeoutError:
-                logger.warning("Client connection close timed out")
-            except Exception as e:
-                logger.warning("Error closing client connection: %s", e)
-
-        self._server = None
+            # Close remaining client connections with timeout
+            for websocket in list(self.clients.keys()):
+                try:
+                    await asyncio.wait_for(
+                        websocket.close(code=1001, reason="Server shutting down"), timeout=2.0
+                    )
+                except TimeoutError:
+                    logger.warning("Client connection close timed out")
+                except Exception as e:
+                    logger.warning("Error closing client connection: %s", e)
+        finally:
+            self._server = None
+            await self.lease_registry.shutdown_lifecycle_publication()
         logger.debug("WebSocket server stopped")
 
     async def serve_forever(self) -> None:

@@ -10,10 +10,11 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 
 from gobby.storage.terminals import AttachLocator, Terminal, TerminalManager
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_DEFAULT_PAGE_SIZE,
-    TERMINAL_LIST_MAX_ENCODED_BYTES,
     TERMINAL_LIST_MAX_PAGE_SIZE,
+    TerminalPageTooLargeError,
     encode_page,
     inventory_item,
     parse_list_cursor,
@@ -29,12 +30,25 @@ DEFAULT_STATES = ("pending", "live")
 def create_terminals_router(server: HTTPServer) -> APIRouter:
     """Register GET /api/terminals and GET /api/terminals/{id}."""
     router = APIRouter(tags=["terminals"])
+    fallback_registry: TerminalLeaseRegistry | None = None
 
     def _manager() -> TerminalManager:
         manager = getattr(server.services, "terminal_manager", None)
         if not isinstance(manager, TerminalManager):
             raise HTTPException(status_code=503, detail="terminal_manager unavailable")
         return manager
+
+    def _lease_registry() -> TerminalLeaseRegistry:
+        nonlocal fallback_registry
+        websocket_server = getattr(server.services, "websocket_server", None) or getattr(
+            server, "websocket_server", None
+        )
+        registry = getattr(websocket_server, "lease_registry", None)
+        if isinstance(registry, TerminalLeaseRegistry):
+            return registry
+        if fallback_registry is None:
+            fallback_registry = TerminalLeaseRegistry()
+        return fallback_registry
 
     @router.get("/api/terminals")
     def list_terminals(
@@ -52,6 +66,11 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
             created_at, cursor_id = parse_list_cursor(cursor)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="invalid cursor") from exc
+        snapshot = (
+            _lease_registry().lifecycle_snapshot()
+            if created_at is None and cursor_id is None
+            else None
+        )
         items, has_more = manager.list_page(
             [project_id],
             machine_id=machine_id,
@@ -63,16 +82,18 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
         )
         serialized = [_row_json(row, _attach(server, manager, row)) for row in items]
         next_cursor = None
+        item_cursors = [f"{row.created_at.isoformat()}|{row.id}" for row in items]
         if has_more and items:
-            last = items[-1]
-            next_cursor = f"{last.created_at.isoformat()}|{last.id}"
-        page = encode_page(serialized, next_cursor)
-        encoded = __import__("json").dumps(page, separators=(",", ":")).encode("utf-8")
-        if len(encoded) > TERMINAL_LIST_MAX_ENCODED_BYTES:
-            page = encode_page(
-                serialized[:-1], serialized[-2]["id"] if len(serialized) > 1 else None
+            next_cursor = item_cursors[-1]
+        try:
+            return encode_page(
+                serialized,
+                next_cursor,
+                snapshot=snapshot,
+                item_cursors=item_cursors,
             )
-        return page
+        except TerminalPageTooLargeError as exc:
+            raise HTTPException(status_code=413, detail="terminal_page_too_large") from exc
 
     @router.get("/api/terminals/{terminal_id}")
     def get_terminal(terminal_id: str) -> dict[str, Any]:

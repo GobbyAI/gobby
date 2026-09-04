@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from websockets.exceptions import ConnectionClosed
 
 from gobby.storage.attention import AttentionOrderingCoordinator
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
@@ -31,6 +32,7 @@ class BroadcastMixin:
     """
 
     clients: dict[Any, dict[str, Any]]
+    lease_registry: TerminalLeaseRegistry
     _attention_ordering: AttentionOrderingCoordinator | None = None
     _attention_metadata_store: AttentionMetadataStore | None = None
 
@@ -435,16 +437,22 @@ class BroadcastMixin:
         terminal_id: str = "",
         session_name: str | None = None,
         socket: str | None = None,
+        terminal: dict[str, Any] | None = None,
     ) -> None:
         """Broadcast terminal lifecycle events to subscribed clients."""
-        del session_name, socket
-        message = {
+        message: dict[str, Any] = {
             "type": "terminal_event",
             "event": event,
             "terminal_id": terminal_id,
             "timestamp": datetime.now(UTC).isoformat(),
         }
-        await self.broadcast(message)
+        if session_name is not None:
+            message["session_name"] = session_name
+        if socket is not None:
+            message["socket"] = socket
+        if terminal is not None:
+            message["terminal"] = terminal
+        await self.lease_registry.publish_lifecycle(message, self.broadcast)
 
     async def broadcast_agent_message(
         self,

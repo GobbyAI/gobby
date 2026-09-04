@@ -16,6 +16,7 @@ from websockets.exceptions import ConnectionClosed
 
 from gobby.servers.websocket import broadcast as broadcast_module
 from gobby.servers.websocket.broadcast import BroadcastMixin
+from gobby.terminals.leases import TerminalLeaseRegistry
 
 pytestmark = pytest.mark.unit
 
@@ -25,6 +26,7 @@ class FakeBroadcaster(BroadcastMixin):
 
     def __init__(self) -> None:
         self.clients: dict[Any, dict[str, Any]] = {}
+        self.lease_registry = TerminalLeaseRegistry()
 
 
 class FakeWebSocket:
@@ -440,6 +442,9 @@ class TestBroadcastEventMethods:
         assert msg["type"] == "terminal_event"
         assert msg["event"] == "created"
         assert msg["terminal_id"] == "term-1"
+        assert msg["seq"] == 1
+        assert msg["daemon_epoch"] == b.lease_registry.daemon_epoch
+        await b.lease_registry.shutdown_lifecycle_publication()
 
     @pytest.mark.asyncio
     async def test_broadcast_agent_message(self) -> None:

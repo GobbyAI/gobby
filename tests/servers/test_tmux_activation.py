@@ -24,7 +24,7 @@ from gobby.agents.tmux.pty_bridge import BridgeInfo, TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.servers.websocket.server import WebSocketServer
-from gobby.storage.terminals import Terminal
+from gobby.storage.terminals import AttachLocator, Terminal
 from tests.terminals.fakes import (
     FakeRuntime,
     MemoryTerminalStore,
@@ -37,6 +37,16 @@ pytestmark = pytest.mark.unit
 # The tty the registration poll reports, and therefore the one the capture's
 # command list is expected to repaint.
 CLIENT_TTY = "/dev/ttys009"
+
+
+class _NativeAttachRuntime(FakeRuntime):
+    async def attach_locator(self, terminal: Terminal) -> AttachLocator:
+        return AttachLocator(
+            backend="native",
+            frame_host_epoch="epoch",
+            host_socket="frame.sock",
+            host_terminal_id=terminal.id,
+        )
 
 
 class MockWebSocket:
@@ -288,6 +298,7 @@ class TestTmuxAttachReservation:
     async def test_native_rows_never_reserve_a_tmux_client(self, server: WebSocketServer) -> None:
         native = make_memory_terminal(backend="native", session_name="native-demo")
         server.terminal_manager = MemoryTerminalStore(native)
+        server.terminal_runtime_registry = runtime_registry(_NativeAttachRuntime(backend="native"))
         ws = MockWebSocket()
 
         with activation_harness(server, bridge=make_bridge(terminal_id=native.id)) as harness:
@@ -425,6 +436,8 @@ class TestTmuxActivation:
         assert finalized[0]["reason"] == "session_missing"
         assert finalized[0]["terminal_id"] == row.id
         assert finalized[0]["attachment_id"] == attachment_id
+        assert finalized[0]["seq"] == 1
+        assert finalized[0]["daemon_epoch"] == server.lease_registry.daemon_epoch
         harness.detach.assert_awaited_with(attachment_id)
         harness.reader.start_reader.assert_not_awaited()
         assert ws.messages_of_type("terminal_attach_history") == []

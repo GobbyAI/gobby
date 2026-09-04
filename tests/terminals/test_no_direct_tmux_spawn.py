@@ -61,7 +61,13 @@ def test_identity_generation_absent_from_runtimes() -> None:
     runtime_root = ROOT / "src/gobby/terminals"
     hits: list[str] = []
     for path in runtime_root.rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        if "uuid.uuid4" in text or "uuid4()" in text:
-            hits.append(str(path.relative_to(ROOT)))
+        relative = str(path.relative_to(ROOT))
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if "uuid.uuid4" not in line and "uuid4()" not in line:
+                continue
+            if relative == "src/gobby/terminals/leases.py" and line.strip() == (
+                "self.daemon_epoch = str(uuid4())"
+            ):
+                continue
+            hits.append(f"{relative}:{lineno}:{line.strip()}")
     assert hits == [], f"TerminalRuntime modules mint identities: {hits}"

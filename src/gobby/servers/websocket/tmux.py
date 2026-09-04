@@ -57,9 +57,33 @@ class TmuxMixin(TerminalWsMixin):
         async def broadcast_terminal_output(
             self, terminal_id: str, data: str, attachment_id: str | None = None
         ) -> None: ...
+
+        async def broadcast_tmux_session_event(
+            self,
+            event: str,
+            terminal_id: str = "",
+            session_name: str | None = None,
+            socket: str | None = None,
+            terminal: dict[str, Any] | None = None,
+        ) -> None: ...
+
         async def _send_error(
             self, websocket: Any, message: str, request_id: str | None = None, code: str = "ERROR"
         ) -> None: ...
+
+    async def _broadcast_tmux_event(
+        self,
+        event: str,
+        session_name: str,
+        socket: str,
+    ) -> None:
+        """Route the legacy tmux lifecycle seam through ordered terminal events."""
+        await self.broadcast_tmux_session_event(
+            event,
+            terminal_id=session_name,
+            session_name=session_name,
+            socket=socket,
+        )
 
     def _init_tmux(self) -> None:
         """Initialize tmux subsystem. Call from WebSocketServer.__init__."""

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.ws_protocol import TERMINAL_WS_SAFE_INTEGER_MAX
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -27,6 +28,15 @@ def test_single_grant_point_across_all_paths() -> None:
     assert takeover.lease_generation > granted.lease_generation
     assert registry.holder("term-1") == second.attachment_id
     assert _lease_replicas() == [], f"lease replicas exist: {_lease_replicas()}"
+
+
+def test_lifecycle_sequence_rotates_epoch_before_overflow() -> None:
+    registry = TerminalLeaseRegistry()
+    previous_epoch = registry.daemon_epoch
+    registry._lifecycle_seq = TERMINAL_WS_SAFE_INTEGER_MAX
+
+    assert registry.next_lifecycle_seq() == 1
+    assert registry.daemon_epoch != previous_epoch
 
 
 # Lease bookkeeping a replica of the terminal grant point would carry.
