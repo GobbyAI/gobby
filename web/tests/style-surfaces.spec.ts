@@ -1814,7 +1814,7 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
             "gobby-terminal-dock-open": "true",
             "gobby-activity-panel-layout": "chat",
             "gobby:terminal:selected-target":
-              '{"socket":"default","sessionName":"capture-session"}',
+              '{"terminal_id":"terminal-capture-session"}',
           }),
           ws: (ws, message) => {
             if (message.type === "terminal_list") {
@@ -1822,8 +1822,10 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
                 JSON.stringify({
                   type: "terminal_list",
                   request_id: message.request_id ?? "init",
-                  sessions: [
+                  next_cursor: null,
+                  items: [
                     {
+                      terminal_id: "terminal-capture-session",
                       name: "capture-session",
                       socket: "default",
                       pane_pid: 12345,
@@ -1848,7 +1850,8 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
                   type: "terminal_attach_result",
                   request_id: message.request_id,
                   success: true,
-                  streaming_id: "stream-capture-session",
+                  terminal_id: "terminal-capture-session",
+                  attachment_id: "stream-capture-session",
                 }),
               );
             }
@@ -1862,7 +1865,8 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
               ws.send(
                 JSON.stringify({
                   type: "terminal_output",
-                  run_id: "stream-capture-session",
+                  terminal_id: "terminal-capture-session",
+                  attachment_id: "stream-capture-session",
                   data: "[1;37m=== gobby capture ===[0m\r\nplain line\r\n$ ",
                 }),
               );

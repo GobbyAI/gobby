@@ -25,6 +25,7 @@ _Kind = Literal[
     "frame_none",
     "frame_unusable",
     "start_proxy_raises",
+    "attach_raises",
 ]
 
 
@@ -87,6 +88,19 @@ class _ExplodingFrame:
         self.closed = True
 
 
+class _AttachExplodingFrame(_ExplodingFrame):
+    """Frame whose handshake succeeds before attach_terminal blows up."""
+
+    async def handshake(self, locator: AttachLocator, *, encoding: str) -> None:
+        del locator, encoding
+
+    async def attach_terminal(
+        self, locator: AttachLocator, *, reservation_id: str | None = None
+    ) -> None:
+        del locator, reservation_id
+        raise OSError("attach refused")
+
+
 def _configure(
     server: Any, temp_db: HubDatabase, kind: _Kind
 ) -> _ExplodingFrame | _UnusableFrame | None:
@@ -104,10 +118,13 @@ def _configure(
         server.open_proxy_frame = _raising_opener
     elif kind == "frame_none":
         server.open_proxy_frame = _none_opener
-    elif kind in {"frame_unusable", "start_proxy_raises"}:
-        frame: _ExplodingFrame | _UnusableFrame = (
-            _UnusableFrame() if kind == "frame_unusable" else _ExplodingFrame()
-        )
+    elif kind in {"frame_unusable", "start_proxy_raises", "attach_raises"}:
+        if kind == "frame_unusable":
+            frame: _ExplodingFrame | _UnusableFrame = _UnusableFrame()
+        elif kind == "start_proxy_raises":
+            frame = _ExplodingFrame()
+        else:
+            frame = _AttachExplodingFrame()
 
         async def _frame_opener(_locator: AttachLocator) -> _ExplodingFrame | _UnusableFrame:
             return frame
@@ -136,6 +153,11 @@ def _configure(
         ("frame_unusable", "frame_invalid", "proxy frame opener returned an unusable frame"),
         (
             "start_proxy_raises",
+            "proxy_start_failed",
+            "proxy frame handshake or relay start failed",
+        ),
+        (
+            "attach_raises",
             "proxy_start_failed",
             "proxy frame handshake or relay start failed",
         ),
@@ -175,7 +197,8 @@ async def test_proxy_attach_failures_are_typed_and_finalized(
     assert server.lease_registry.get(attachment) is None
     if frame is not None:
         assert frame.closed is True
-        assert attachment not in server._proxy().attachments
+    assert attachment not in server._proxy().attachments
+    assert ws not in server._proxy().by_socket
     assert any(
         record.levelno == logging.WARNING
         and code in record.getMessage()
