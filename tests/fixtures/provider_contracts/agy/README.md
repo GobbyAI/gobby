@@ -506,12 +506,12 @@ the CLI log):
 ```
 $ bash probe/net.sh
 --- remote-hosts ---
-13.107.246.38 
-142.250.100.132 yumciex-in-f132.1e100.net. 
-150.171.109.183 
-172.217.113.4 
-172.217.114.4 
-34.54.84.110 110.84.54.34.bc.googleusercontent.com. 
+13.107.246.38
+142.250.100.132 yumciex-in-f132.1e100.net.
+150.171.109.183
+172.217.113.4
+172.217.114.4
+34.54.84.110 110.84.54.34.bc.googleusercontent.com.
 --- log-hosts ---
    8 daily-cloudcode-pa.googleapis.com
 --- written-files ---
@@ -552,6 +552,12 @@ same evidence file) add `~/.gemini/config/projects/*.json`, `<AGY_APP_DATA>/know
 knowledge.lock`, `conversation_summaries.db`, and the login Keychain
 (`security list-keychains` → `~/Library/Keychains/login.keychain-db`).
 
+Antigravity CLI 1.1.25 adds two required hosts during its eligibility check: it first
+calls `https://www.googleapis.com/oauth2/v2/userinfo`, then fetches the profile picture
+from `lh3.googleusercontent.com`. SRT domain patterns are exact or `*.`-prefixed, so the
+bare `googleusercontent.com` entry from the 1.1.9 capture never matched that subdomain;
+the policy therefore allows `www.googleapis.com` and `*.googleusercontent.com`.
+
 Interactive (`evidence/1.1.9-interactive-net.txt`,
 `pane-captures/1.1.9-interactive-netprobe.txt`; `probe/net-interactive.sh 150` sampled the
 `agy-gate0` session's process tree for 150 s around the prompt `run: echo netprobe`):
@@ -559,11 +565,11 @@ Interactive (`evidence/1.1.9-interactive-net.txt`,
 ```
 $ bash probe/net-interactive.sh 150
 --- remote-hosts ---
-172.217.113.4 
-172.217.115.4 
-172.217.116.4 
-173.194.47.132 yumciaj-in-f132.1e100.net. 
-34.54.84.110 110.84.54.34.bc.googleusercontent.com. 
+172.217.113.4
+172.217.115.4
+172.217.116.4
+173.194.47.132 yumciaj-in-f132.1e100.net.
+34.54.84.110 110.84.54.34.bc.googleusercontent.com.
 --- log-hosts ---
   14 daily-cloudcode-pa.googleapis.com
 --- process-tree ---
@@ -915,7 +921,7 @@ $ python3 probe/inputfmt.py shapes          # launch with -p
 process exited rc=2
 flag needs an argument: -p
 $ python3 probe/inputfmt.py shapes2         # raw text line on stdin
-[   2.8] result {"conversation_id": "<CONVERSATION_ID>", "status": "ERROR", "error": "failed to decode stream input: invalid character 'r' looking for beginning of value", "duration_seconds": 0, "num_turns": 0, "usage": {"input_tokens": 0, "output_tokens": 
+[   2.8] result {"conversation_id": "<CONVERSATION_ID>", "status": "ERROR", "error": "failed to decode stream input: invalid character 'r' looking for beginning of value", "duration_seconds": 0, "num_turns": 0, "usage": {"input_tokens": 0, "output_tokens":
 process exited rc=1
 $ python3 probe/inputfmt.py shapes3         # {"prompt": ...} without "event"
 [   2.3] result {"conversation_id": "<CONVERSATION_ID>", "status": "ERROR", "error": "stream input message is missing the \"event\" field", "duration_seconds": 0, "num_turns": 0, "usage": {"input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "cache_

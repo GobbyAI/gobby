@@ -1573,13 +1573,14 @@ _AGY_PATHS = ResolvedSandboxPaths(
 
 _AGY_PROBE_DOMAINS = (
     "daily-cloudcode-pa.googleapis.com",
+    "www.googleapis.com",
     "oauth2.googleapis.com",
     "accounts.google.com",
     "play.googleapis.com",
     "playwright.azureedge.net",
     "playwright-akamai.azureedge.net",
     "playwright-verizon.azureedge.net",
-    "googleusercontent.com",
+    "*.googleusercontent.com",
 )
 
 
