@@ -20,7 +20,14 @@ from gobby.servers.websocket.terminal_ws import TerminalWsMixin
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals import web_spawn
 from gobby.terminals.leases import TerminalLeaseRegistry
-from gobby.terminals.runtime import Delivered, PreparedSpawn, TerminalHandle, TerminalSpawnRequest
+from gobby.terminals.runtime import (
+    Delivered,
+    IndeterminateWrite,
+    PreparedSpawn,
+    Suppressed,
+    TerminalHandle,
+    TerminalSpawnRequest,
+)
 from gobby.terminals.ws_protocol import (
     TERMINAL_WS_SAFE_INTEGER_MAX,
     decode_message,
@@ -113,9 +120,16 @@ class _GoldenManager:
 
 
 class _GoldenRuntime:
-    def __init__(self, backend: str = "tmux", *, refuse_spawn: bool = False) -> None:
+    def __init__(
+        self,
+        backend: str = "tmux",
+        *,
+        refuse_spawn: bool = False,
+        write_result: object | None = None,
+    ) -> None:
         self.backend = backend
         self.refuse_spawn = refuse_spawn
+        self.write_result = Delivered() if write_result is None else write_result
         self.locator = AttachLocator(
             backend=cast(Any, backend),
             frame_host_epoch="host-epoch-1",
@@ -153,8 +167,8 @@ class _GoldenRuntime:
     async def resize(self, _row: object, _rows: int, _cols: int) -> None:
         return None
 
-    async def write_input(self, _row: object, _data: bytes) -> Delivered:
-        return Delivered()
+    async def write_input(self, _row: object, _data: bytes) -> object:
+        return self.write_result
 
     async def write_paste(self, _row: object, _text: str) -> Delivered:
         return Delivered()
@@ -167,6 +181,7 @@ def _server(
     *,
     backend: str = "tmux",
     refuse_spawn: bool = False,
+    write_result: object | None = None,
 ) -> tuple[WebSocketServer, _GoldenManager, _GoldenRuntime]:
     config = MagicMock()
     config.host = "localhost"
@@ -177,7 +192,11 @@ def _server(
     server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="test-user"))
     server.lease_registry = TerminalLeaseRegistry(daemon_epoch=DAEMON_EPOCH)
     manager = _GoldenManager(_GoldenRow(backend=backend))
-    runtime = _GoldenRuntime(backend, refuse_spawn=refuse_spawn)
+    runtime = _GoldenRuntime(
+        backend,
+        refuse_spawn=refuse_spawn,
+        write_result=write_result,
+    )
     server.terminal_manager = manager
     server.terminal_runtime_registry = SimpleNamespace(resolve=lambda _backend: runtime)
     server.terminal_config = SimpleNamespace(default_backend=backend)
@@ -208,6 +227,37 @@ def _manifest_names() -> list[str]:
     assert isinstance(fixtures, list)
     assert all(isinstance(name, str) for name in fixtures)
     return cast(list[str], fixtures)
+
+
+async def _assert_write_outcome(
+    name: str,
+    *,
+    write_result: object | None = None,
+    primed_writes: dict[int, bytes] | None = None,
+) -> None:
+    server, _, _ = _server(write_result=write_result)
+    registry = server.lease_registry
+    registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
+    registry.take_control(TERMINAL_ID, ATTACHMENT_ID)
+    generation = registry.generation(TERMINAL_ID)
+    for seq, payload in (primed_writes or {}).items():
+        admitted = registry.admit_write(
+            TERMINAL_ID,
+            attachment_id=ATTACHMENT_ID,
+            expected_lease_generation=generation,
+            seq=seq,
+            kind="input",
+            payload=payload,
+        )
+        assert admitted.ok
+
+    expected = _message(name)
+    seq = expected["client_write_seq"]
+    assert isinstance(seq, int)
+    request = {**_message("input.json"), "client_write_seq": seq}
+    websocket = MockWebSocket()
+    await TerminalWsMixin._handle_terminal_input(server, websocket, request)
+    _assert_golden(name, _sent(websocket))
 
 
 def test_python_matches_terminal_ws_golden_corpus() -> None:
@@ -313,9 +363,34 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
         server, websocket, _message("take_control.json")
     )
     _assert_golden("control_result.json", _sent(websocket))
-    websocket.sent_messages.clear()
-    await TerminalWsMixin._handle_terminal_input(server, websocket, _message("input.json"))
-    _assert_golden("write_outcome.json", _sent(websocket))
+
+    await _assert_write_outcome("write_outcome.json")
+    await _assert_write_outcome(
+        "write_outcome_indeterminate.json",
+        write_result=IndeterminateWrite(),
+    )
+    await _assert_write_outcome(
+        "write_outcome_refused.json",
+        write_result=Suppressed(action_key="golden"),
+    )
+    await _assert_write_outcome(
+        "write_outcome_conflict.json",
+        primed_writes={4: b"different"},
+    )
+    await _assert_write_outcome(
+        "write_outcome_expired.json",
+        primed_writes={6: b"future"},
+    )
+    await _assert_write_outcome(
+        "write_outcome_capacity.json",
+        primed_writes=dict.fromkeys(range(64), b"pending"),
+    )
+
+    server, _, _ = _server()
+    server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
+    websocket = MockWebSocket()
+    await TerminalWsMixin._handle_terminal_resize(server, websocket, _message("resize.json"))
+    _assert_golden("typed_error.json", _sent(websocket))
 
     server, _, _ = _server()
     websocket = MockWebSocket()
