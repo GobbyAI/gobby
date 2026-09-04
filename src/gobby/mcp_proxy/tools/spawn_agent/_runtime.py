@@ -123,6 +123,22 @@ def _build_spawn_success_response(
         "tmux_socket_path": tmux_socket_path,
         "message": spawn_result.message,
     }
+    isolation_extra = isolation_ctx.extra
+    if "reused_worktree_rebase_conflict" in isolation_extra:
+        response.update(
+            {
+                "reuse_outcome": "fresh_after_conflict",
+                "reused_worktree_rebase_conflict": isolation_extra[
+                    "reused_worktree_rebase_conflict"
+                ],
+                "reused_worktree_id": isolation_extra.get("reused_worktree_id"),
+                "reused_worktree_path": isolation_extra.get("reused_worktree_path"),
+            }
+        )
+    elif isolation_extra.get("reused_worktree") is True:
+        response.update({"reuse_outcome": "reused", "reused_worktree": True})
+    else:
+        response["reuse_outcome"] = "fresh"
     if reasoning is not None:
         if not isinstance(reasoning, ReasoningPayload):
             raise TypeError(
