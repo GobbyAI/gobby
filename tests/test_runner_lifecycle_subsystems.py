@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
+import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, Mock
@@ -13,6 +16,7 @@ from gobby.wiki import prune_job, scheduled_jobs
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
+    from gobby.runner_lifecycle_startup import StartupTracker
 
 pytestmark = pytest.mark.unit
 
@@ -31,6 +35,99 @@ def _runner(wiki_enabled: bool = True) -> SimpleNamespace:
         database=object(),
         config_runtime=_config_runtime(wiki_enabled),
     )
+
+
+def _patch_init_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
+    async_steps = (
+        "_run_agent_hook_replay_barrier",
+        "_connect_mcp_servers",
+        "_check_embedding_service",
+        "_cleanup_metrics_on_startup",
+        "_cleanup_stale_expansion_runs_on_startup",
+        "_initialize_vector_store",
+        "_start_core_services",
+        "_check_tmux_health",
+        "_start_terminal_host",
+        "_start_agent_lifecycle_monitor",
+        "_start_cron_scheduler",
+        "_recover_pipelines",
+        "_start_system_automation_loop",
+    )
+    for name in async_steps:
+        monkeypatch.setattr(lifecycle_subsystems, name, AsyncMock())
+    monkeypatch.setattr(
+        lifecycle_subsystems,
+        "_repair_code_index_bm25",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(lifecycle_subsystems, "_start_websocket_server", Mock())
+    monkeypatch.setattr(lifecycle_subsystems, "_schedule_workflow_skill_prewarm", Mock())
+
+
+def _minimal_init_runner() -> SimpleNamespace:
+    services = SimpleNamespace(shutdown_in_progress=False, startup_ready=False)
+    return SimpleNamespace(
+        agent_lifecycle_monitor=None,
+        agent_runner=None,
+        http_server=SimpleNamespace(services=services),
+    )
+
+
+@pytest.mark.asyncio
+async def test_ui_dev_server_start_does_not_block_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_init_dependencies(monkeypatch)
+    launcher_returned = threading.Event()
+    callback_observations: list[bool] = []
+
+    def launch(_runner: object) -> None:
+        # test-quality: allow SLEEP_IN_TEST -- criterion requires a 0.3 s blocking launcher
+        time.sleep(0.3)
+        launcher_returned.set()
+
+    monkeypatch.setattr(lifecycle_subsystems, "_maybe_start_ui_dev_server", launch)
+    asyncio.get_running_loop().call_soon(
+        lambda: callback_observations.append(launcher_returned.is_set()),
+    )
+
+    await lifecycle_subsystems.init_subsystems(
+        cast("GobbyRunner", _minimal_init_runner()),
+        AsyncMock(),
+        None,
+        reap_orphaned_srt_runners=AsyncMock(),
+        recover_agent_completion_subscribers=AsyncMock(return_value=0),
+    )
+
+    assert launcher_returned.is_set()
+    assert callback_observations == [False]
+
+
+@pytest.mark.asyncio
+async def test_ui_dev_server_start_reports_tracker_status(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _patch_init_dependencies(monkeypatch)
+
+    def fail_launch(_runner: object) -> None:
+        raise RuntimeError("launch failed")
+
+    monkeypatch.setattr(lifecycle_subsystems, "_maybe_start_ui_dev_server", fail_launch)
+    tracker = SimpleNamespace(error=Mock(), finish=Mock())
+
+    with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
+        await lifecycle_subsystems.init_subsystems(
+            cast("GobbyRunner", _minimal_init_runner()),
+            AsyncMock(),
+            cast("StartupTracker", tracker),
+            reap_orphaned_srt_runners=AsyncMock(),
+            recover_agent_completion_subscribers=AsyncMock(return_value=0),
+        )
+
+    tracker.error.assert_called_once_with("UI development server", "launch failed")
+    assert tracker.finish.call_count == 1
+    assert "UI development server start failed: launch failed" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -57,7 +154,7 @@ async def test_wiki_cron_registration_uses_canonical_default_scope(
     monkeypatch.setattr(prune_job, "register_wiki_prune_cron", lambda **_kwargs: None)
     monkeypatch.setattr(scheduled_jobs, "register_wiki_cron_jobs_for_projects", register)
 
-    await _register_wiki_cron_handlers(_runner(), tracker=None)
+    await _register_wiki_cron_handlers(cast("GobbyRunner", _runner()), tracker=None)
 
     assert received["project_scopes"] == [("project-id", None)]
 
@@ -91,7 +188,9 @@ async def test_wiki_cron_registration_failure_logs_traceback(
     tracker = SimpleNamespace(error=tracker_error)
 
     with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
-        await _register_wiki_cron_handlers(_runner(), tracker)
+        await _register_wiki_cron_handlers(
+            cast("GobbyRunner", _runner()), cast("StartupTracker", tracker)
+        )
 
     record = next(
         record
@@ -141,7 +240,7 @@ async def test_wiki_cron_registration_skipped_when_wiki_disabled(
     tracker_complete = Mock()
     tracker = SimpleNamespace(complete=tracker_complete, error=Mock())
 
-    await _register_wiki_cron_handlers(cast("GobbyRunner", runner), tracker)
+    await _register_wiki_cron_handlers(cast("GobbyRunner", runner), cast("StartupTracker", tracker))
 
     assert registrations == []
     assert parked == ["job-scheduled"]
@@ -173,7 +272,7 @@ async def test_global_wiki_prune_registers_before_empty_project_return(
     )
 
     runner = _runner()
-    await _register_wiki_cron_handlers(runner, tracker=None)
+    await _register_wiki_cron_handlers(cast("GobbyRunner", runner), tracker=None)
 
     assert len(registrations) == 1
     assert registrations[0]["cron_storage"] is runner.cron_storage
