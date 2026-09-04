@@ -14,6 +14,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
+import gobby.ai._text_generation_adapters as text_generation_adapters
 import gobby.runner_lifecycle as runner_lifecycle
 import gobby.runner_lifecycle_agents as runner_lifecycle_agents
 import gobby.runner_lifecycle_processes as runner_lifecycle_processes
@@ -2221,6 +2222,192 @@ class TestShutdownDaemonServices:
         assert pane.terminated is recycled_preserved_pid
         assert unrelated_tmux.terminated is True
         assert worker.terminated is True
+
+    async def test_reaper_names_children_it_force_kills(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        class FakeNoSuchProcess(Exception):
+            pass
+
+        class FakeAccessDenied(Exception):
+            pass
+
+        class FakeProcess:
+            def __init__(
+                self,
+                pid: int,
+                name: str,
+                cmdline: list[str],
+                children: list["FakeProcess"] | None = None,
+            ) -> None:
+                self.pid = pid
+                self._name = name
+                self._cmdline = cmdline
+                self._children = children or []
+                self._parent: FakeProcess | None = None
+                self.killed = False
+                for child in self._children:
+                    child._parent = self
+
+            def children(self, recursive: bool = False) -> list["FakeProcess"]:
+                if not recursive:
+                    return list(self._children)
+                descendants = list(self._children)
+                for child in self._children:
+                    descendants.extend(child.children(recursive=True))
+                return descendants
+
+            def parent(self) -> "FakeProcess | None":
+                return self._parent
+
+            def name(self) -> str:
+                return self._name
+
+            def cmdline(self) -> list[str]:
+                return self._cmdline
+
+            def terminate(self) -> None:
+                return None
+
+            def kill(self) -> None:
+                self.killed = True
+
+        survivor = FakeProcess(
+            303,
+            "codex",
+            ["/opt/homebrew/bin/codex", "exec", "--ephemeral", "long prompt ignored"],
+        )
+        parent = FakeProcess(202, "python", ["python", "worker.py"], [survivor])
+        current = FakeProcess(os.getpid(), "python", ["python", "-m", "gobby"], [parent])
+        wait_count = 0
+
+        class FakePsutil:
+            NoSuchProcess = FakeNoSuchProcess
+            AccessDenied = FakeAccessDenied
+
+            @staticmethod
+            def Process(pid: int) -> FakeProcess:
+                assert pid == os.getpid()
+                return current
+
+            @staticmethod
+            def wait_procs(
+                children: list[FakeProcess], timeout: float
+            ) -> tuple[list[FakeProcess], list[FakeProcess]]:
+                nonlocal wait_count
+                wait_count += 1
+                assert timeout == 0.01
+                if wait_count == 1:
+                    return [parent], [survivor]
+                return [], [survivor]
+
+        monkeypatch.setitem(sys.modules, "psutil", FakePsutil)
+        caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
+
+        await runner_lifecycle_processes._reap_remaining_child_processes(timeout=0.01)
+
+        warning_records = [record for record in caplog.records if record.levelno == logging.WARNING]
+        assert len(warning_records) == 1
+        warning = warning_records[0].getMessage()
+        assert "Force-killing 1 child process(es) still alive after graceful shutdown" in warning
+        assert "pid=303" in warning
+        assert "name=codex" in warning
+        assert "/opt/homebrew/bin/codex exec --ephemeral" in warning
+        assert "parent_pid=202" in warning
+        error_records = [record for record in caplog.records if record.levelno == logging.ERROR]
+        assert len(error_records) == 1
+        assert "pid=303" in error_records[0].getMessage()
+        assert survivor.killed is True
+
+    async def test_shutdown_cleans_internal_codex_before_reaper_and_preserves_agents(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        started = asyncio.Event()
+        events: list[str] = []
+
+        class HangingCodexProcess:
+            pid = 404
+            returncode: int | None = None
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                started.set()
+                await asyncio.get_running_loop().create_future()
+                raise AssertionError("unreachable")
+
+            def terminate(self) -> None:
+                events.append("provider-cleanup")
+                self.returncode = -signal.SIGTERM
+
+            def kill(self) -> None:
+                raise AssertionError("graceful provider cleanup should terminate the process")
+
+            async def wait(self) -> int | None:
+                return self.returncode
+
+        process = HangingCodexProcess()
+
+        async def fake_create_subprocess_exec(
+            *command: str,
+            stdin: int,
+            stdout: int,
+            stderr: int,
+            cwd: str | None,
+            env: dict[str, str],
+            start_new_session: bool,
+        ) -> HangingCodexProcess:
+            assert command[:3] == ("codex", "exec", "--ephemeral")
+            assert start_new_session is True
+            return process
+
+        async def reap_children(**kwargs: object) -> None:
+            assert kwargs == {
+                "preserve_agents": True,
+                "preserved_agent_pids": {505},
+            }
+            assert provider_task.done()
+            assert process.returncode == -signal.SIGTERM
+            events.append("reap")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+        monkeypatch.setattr(text_generation_adapters, "_signal_cli_process_group", lambda *_: False)
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_settle_terminal_delivery_barrier",
+            AsyncMock(),
+        )
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_shutdown_database_concurrency",
+            AsyncMock(),
+        )
+        monkeypatch.setattr(
+            runner_lifecycle_processes,
+            "_preserved_agent_terminal_pids",
+            AsyncMock(return_value={505}),
+        )
+        provider_task = asyncio.create_task(
+            text_generation_adapters._run_cli_text_generation_command(
+                "Codex",
+                ("codex", "exec", "--ephemeral"),
+                neutral_cwd=Path("/tmp"),
+                timeout_seconds=30,
+                env_overrides={},
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        await runner_lifecycle_shutdown._run_async_shutdown_cleanup(
+            cast(GobbyRunner, SimpleNamespace()),
+            shutdown_intent=ShutdownIntent.RESTART,
+            reap_remaining_child_processes=reap_children,
+            shutdown_telemetry=MagicMock(),
+        )
+
+        assert provider_task.cancelled()
+        assert events == ["provider-cleanup", "reap"]
 
     async def test_restart_preserve_set_paginates_every_active_tmux_run(self) -> None:
         run_count = 1_005

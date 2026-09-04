@@ -3982,6 +3982,52 @@ async def test_run_cli_text_generation_command_signals_process_group_when_cancel
     assert process.killed is False
 
 
+async def test_shutdown_cli_text_generation_calls_cancels_in_flight_codex_exec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = asyncio.Event()
+
+    class ObservableHangingProcess(HangingProcess):
+        async def communicate(self) -> tuple[bytes, bytes]:
+            started.set()
+            await asyncio.get_running_loop().create_future()
+            raise AssertionError("unreachable")
+
+    process = ObservableHangingProcess()
+
+    async def fake_create_subprocess_exec(
+        *command: str,
+        stdin: int,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+        start_new_session: bool,
+    ) -> FakeProcess:
+        assert command[:3] == ("codex", "exec", "--ephemeral")
+        assert start_new_session is True
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(text_generation_adapters, "_signal_cli_process_group", lambda *_: False)
+    task = asyncio.create_task(
+        text_generation_adapters._run_cli_text_generation_command(
+            "Codex",
+            ("codex", "exec", "--ephemeral"),
+            neutral_cwd=Path("/tmp"),
+            timeout_seconds=30,
+            env_overrides={},
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    await text_generation_adapters.shutdown_cli_text_generation_calls(timeout=1)
+
+    assert task.cancelled()
+    assert process.terminated is True
+    assert process.killed is False
+
+
 @pytest.mark.asyncio
 async def test_text_generation_service_cleans_up_timed_out_cli_candidate_and_falls_back(
     monkeypatch: pytest.MonkeyPatch,
