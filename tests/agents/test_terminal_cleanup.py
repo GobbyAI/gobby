@@ -26,7 +26,11 @@ def _stub_srt_runner_reap(monkeypatch: pytest.MonkeyPatch) -> None:
     async def reap(_run_id: str) -> int:
         return 0
 
+    async def reap_roots(_run_id: str) -> None:
+        return None
+
     monkeypatch.setattr(terminal_cleanup, "reap_srt_runner_process_tree", reap)
+    monkeypatch.setattr(terminal_cleanup, "reap_sandbox_run_roots", reap_roots)
 
 
 def test_cleanup_merged_task_artifacts_skips_when_merge_stage_not_done() -> None:

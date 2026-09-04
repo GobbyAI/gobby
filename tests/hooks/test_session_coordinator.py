@@ -38,6 +38,20 @@ from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.fixture(autouse=True)
+def _stub_agent_sandbox_reaping(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep coordinator unit tests isolated from process and home-directory state."""
+
+    async def reap_sandbox(_run_id: str) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "gobby.hooks.session_coordinator.reap_terminal_sandbox_run",
+        reap_sandbox,
+    )
+
+
 # projects.id, sessions.id, and workflow instance ids are native uuid columns.
 PROJECT_ID = "eeeeeeee-0000-4000-8000-000000000001"
 PARENT_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000002"
@@ -919,6 +933,42 @@ class TestAgentRunCompletion:
         mock_agent_run_manager.complete.assert_not_called()
         assert mock_agent_run_manager.complete.call_count == 0
         assert not mock_agent_run_manager.complete.called
+
+    def test_complete_agent_run_reaps_terminal_sandbox(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reaped_run_ids: list[str] = []
+
+        async def reap_sandbox(run_id: str) -> None:
+            reaped_run_ids.append(run_id)
+
+        monkeypatch.setattr(
+            "gobby.hooks.session_coordinator.reap_terminal_sandbox_run",
+            reap_sandbox,
+        )
+        manager = MagicMock()
+        manager.get.return_value = MagicMock(status="running", terminal_id=None)
+        manager.complete.return_value = MagicMock(status="success", terminal_id=None)
+        coordinator = SessionCoordinator(agent_run_manager=manager)
+        session = SimpleNamespace(
+            id="session-123",
+            agent_run_id="run-123",
+            summary_markdown="Done",
+            tool_call_count=1,
+            turn_count=1,
+        )
+
+        coordinator.complete_agent_run(session)
+
+        manager.get.assert_called_once_with("run-123")
+        manager.complete.assert_called_once()
+        complete_kwargs = manager.complete.call_args.kwargs
+        assert complete_kwargs["run_id"] == "run-123"
+        assert complete_kwargs["result"] == "Done"
+        assert complete_kwargs["tool_calls_count"] == 1
+        assert complete_kwargs["turns_used"] == 1
+        assert reaped_run_ids == ["run-123"]
 
     def test_complete_agent_run_counts_tool_calls_from_messages(self) -> None:
         """Test completing an agent run counts tool calls and turns from session_messages."""
