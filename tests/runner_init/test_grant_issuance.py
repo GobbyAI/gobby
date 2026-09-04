@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -370,6 +371,39 @@ def test_issuance_errors_are_generic() -> None:
     assert rejected.value.message == "credential issuance failed"
     assert "secret" not in rejected.value.message
     assert "postgres://" not in rejected.value.message
+
+
+@pytest.mark.unit
+def test_issuance_failure_log_attributes_principal(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    execution_id = str(uuid4())
+    session_id = str(uuid4())
+    principal = GrantPrincipal(
+        kind="agent_run",
+        machine_id="machine-1",
+        project_id=str(uuid4()),
+        execution_id=execution_id,
+        session_id=session_id,
+    )
+    credentials = MagicMock()
+    credentials.get_live_binding_generation.return_value = None
+    credentials.issue.side_effect = RuntimeError("issuance unavailable")
+
+    with (
+        caplog.at_level(logging.ERROR, logger="gobby.runner_init.servers"),
+        pytest.raises(HandshakeRejection, match="credential issuance failed"),
+    ):
+        _issue(principal, credentials)
+
+    record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "grant credential issuance failed"
+    )
+    assert record.__dict__["kind"] == "agent_run"
+    assert record.__dict__["execution_id"] == execution_id
+    assert record.__dict__["session_id"] == session_id
 
 
 @pytest.mark.unit

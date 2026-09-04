@@ -152,9 +152,17 @@ def create_runtime_handshake_router(server: Any) -> APIRouter:
         service = factory() if callable(factory) else getattr(server, "handshake_service", None)
         if service is None:
             raise HTTPException(status_code=503, detail="handshake service unavailable")
+        principal_kind = "interactive"
+        execution_id = None
+        session_id = body.session_id
         try:
             claims = server.auth_service.verified_agent_claims(request)
             if claims is not None:
+                principal_kind = claims.kind or (
+                    "agent_run" if claims.agent_run_id is not None else "tool_chat"
+                )
+                execution_id = claims.agent_run_id or claims.managed_execution_id
+                session_id = None if principal_kind == "maintenance" else claims.session_id
                 grant = service.issue_for_agent(
                     claims,
                     machine_id=body.machine_id,
@@ -172,6 +180,9 @@ def create_runtime_handshake_router(server: Any) -> APIRouter:
                 "handshake rejected",
                 extra={
                     "code": error.code,
+                    "kind": principal_kind,
+                    "execution_id": execution_id,
+                    "session_id": session_id,
                     "machine_id": body.machine_id,
                     "project_id": body.project_id,
                 },

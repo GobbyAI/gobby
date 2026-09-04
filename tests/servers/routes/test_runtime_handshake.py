@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import threading
 from collections.abc import Callable, Iterator
@@ -518,6 +519,47 @@ def test_handshake_endpoint_accepts_overlay(tmp_path: Path) -> None:
     )
     assert response.status_code == 200
     assert response.json()["grant"]["principal"]["code_overlay_project_id"] == OVERLAY_PROJECT_ID
+
+
+def test_rejection_log_attributes_principal(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    server = _config_server(_grant_service(), tmp_path / "token")
+    claims = verify_agent_api_token(
+        issue_agent_api_token(
+            OPERATOR_TOKEN,
+            agent_run_id=AGENT_RUN_ID,
+            session_id=SESSION_ID,
+            project_id=PROJECT_ID,
+            machine_id=LOCAL_MACHINE_ID,
+            timeout_seconds=30,
+        ),
+        OPERATOR_TOKEN,
+    )
+    assert claims is not None
+    with (
+        patch.object(server.auth_service, "verified_agent_claims", return_value=claims),
+        patch.object(
+            server.handshake_service,
+            "issue_for_agent",
+            side_effect=HandshakeRejection("rejected", code="claims_mismatch"),
+        ),
+        caplog.at_level(logging.WARNING, logger="gobby.servers.routes.runtime_handshake"),
+    ):
+        response = TestClient(server.app).post(
+            "/api/runtime/handshake",
+            json={"machine_id": LOCAL_MACHINE_ID, "project_id": PROJECT_ID},
+        )
+
+    assert response.status_code == 403
+    record = next(record for record in caplog.records if record.getMessage() == "handshake rejected")
+    assert record.__dict__["kind"] == "agent_run"
+    assert record.__dict__["execution_id"] == AGENT_RUN_ID
+    assert record.__dict__["session_id"] == SESSION_ID
+    assert record.__dict__["code"] == "claims_mismatch"
+    assert record.__dict__["machine_id"] == LOCAL_MACHINE_ID
+    assert record.__dict__["project_id"] == PROJECT_ID
 
 
 def test_epoch_bump_rejects_prior_grants(tmp_path: Path) -> None:
