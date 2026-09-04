@@ -51,7 +51,6 @@ STABLE_CHECKLIST_FACT_KEYS: frozenset[str] = frozenset(
         "commit_shas",
         "had_attributed_edits",
         "attributed_paths",
-        "claim_started_at",
     }
 )
 
