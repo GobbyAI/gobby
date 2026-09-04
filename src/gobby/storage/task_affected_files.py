@@ -18,7 +18,7 @@ from gobby.utils.datetime import normalize_datetime_model
 
 logger = logging.getLogger(__name__)
 
-AnnotationSource = Literal["expansion", "manual", "observed"]
+AnnotationSource = Literal["expansion", "hypothesis", "manual", "observed"]
 
 
 @normalize_datetime_model(required=("created_at",))
@@ -92,14 +92,14 @@ class TaskAffectedFileManager:
         task_id: str,
         files: list[str],
     ) -> list[TaskAffectedFile]:
-        """Replace manual and expansion scope while preserving observed evidence."""
+        """Replace prospective scope with manual declarations, preserving observed evidence."""
         with self.db.transaction() as conn:
             conn.execute(
                 """
                 DELETE FROM task_affected_files
-                WHERE task_id = %s AND annotation_source IN (%s, %s)
+                WHERE task_id = %s AND annotation_source IN (%s, %s, %s)
                 """,
-                (task_id, "manual", "expansion"),
+                (task_id, "manual", "expansion", "hypothesis"),
             )
             results = []
             for file_path in dict.fromkeys(files):

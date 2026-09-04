@@ -172,6 +172,7 @@ def test_update_task_commits_metadata_and_declared_scope_before_listener(
     )
     files = TaskAffectedFileManager(temp_db)
     files.set_files(task.id, ["src/old.py"], source="expansion")
+    files.set_files(task.id, ["src/guess.py"], source="hypothesis")
     listener_state: list[tuple[str, Mapping[str, str]]] = []
 
     def listener() -> None:

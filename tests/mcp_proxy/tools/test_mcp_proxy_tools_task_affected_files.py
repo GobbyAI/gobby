@@ -49,7 +49,7 @@ class TestSetAffectedFiles:
             "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
         ) as MockMgr:
             mock_mgr = MockMgr.return_value
-            mock_mgr.set_files.return_value = [
+            mock_mgr.replace_declared_files.return_value = [
                 _make_af("task-1", "src/a.py"),
                 _make_af("task-1", "src/b.py"),
             ]
@@ -61,7 +61,10 @@ class TestSetAffectedFiles:
 
             assert result["files_set"] == 2
             assert result["files"] == ["src/a.py", "src/b.py"]
-            mock_mgr.set_files.assert_called_once_with("task-1", ["src/a.py", "src/b.py"], "manual")
+            mock_mgr.replace_declared_files.assert_called_once_with(
+                "task-1", ["src/a.py", "src/b.py"]
+            )
+            mock_mgr.set_files.assert_not_called()
 
     def test_set_files_invalid_source(self, ctx: MagicMock, mock_resolve: None) -> None:
         from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry

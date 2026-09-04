@@ -25,6 +25,7 @@ _TARGET_LINE_RE = re.compile(r"^\s*Targets?\s*:\s*(?P<rest>.*)$", re.IGNORECASE)
 _ACCEPTANCE_RE = re.compile(r"^\s*Acceptance\s*:", re.IGNORECASE)
 _BULLET_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
 _DECLARED_ANNOTATION_SOURCES = frozenset({"manual", "expansion"})
+_ADVISORY_ANNOTATION_SOURCES = frozenset({"hypothesis"})
 _TESTS_ROOT = "tests/"
 _SHARED_INSTALL_ROOT = "src/gobby/install/shared/"
 _BUNDLED_CONTENT_MANIFEST = "src/gobby/install/bundled_content_manifest.json"
@@ -37,6 +38,8 @@ class TaskScopeEvaluation:
     declared_paths: tuple[str, ...]
     actual_paths: tuple[str, ...]
     out_of_scope_paths: tuple[str, ...]
+    advisory_paths: tuple[str, ...] = ()
+    advisory_scope_drift: tuple[str, ...] = ()
     scope_justification: str | None = None
     justification_error: str | None = None
 
@@ -49,14 +52,25 @@ class TaskScopeEvaluation:
         return not self.has_mismatch or self.justification_error is None
 
     def details(self) -> dict[str, object]:
-        return {
+        details: dict[str, object] = {
             "declared_scope": list(self.declared_paths),
             "actual_paths": list(self.actual_paths),
             "out_of_scope_paths": list(self.out_of_scope_paths),
         }
+        if self.advisory_paths:
+            details["advisory_scope"] = list(self.advisory_paths)
+        if self.advisory_scope_drift:
+            details["advisory_scope_drift"] = list(self.advisory_scope_drift)
+        return details
 
-    def snapshot(self) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-        return self.declared_paths, self.actual_paths, self.out_of_scope_paths
+    def snapshot(self) -> tuple[tuple[str, ...], ...]:
+        return (
+            self.declared_paths,
+            self.advisory_paths,
+            self.actual_paths,
+            self.out_of_scope_paths,
+            self.advisory_scope_drift,
+        )
 
 
 def evaluate_task_scope(
@@ -69,32 +83,41 @@ def evaluate_task_scope(
     scope_justification: str | None,
 ) -> TaskScopeEvaluation:
     """Compare linked and attributed paths with the task's declared mandate."""
-    declared_paths = collect_declared_task_scope(db, task)
+    declared_paths, advisory_paths = _collect_task_scopes(db, task)
     actual_paths = {
         normalized
         for path in attributed_paths
         if (normalized := _normalize_repo_path(path)) is not None
     }
     commit_list = list(commit_shas)
-    if declared_paths and commit_list:
+    if (declared_paths or advisory_paths) and commit_list:
         if not repo_path:
             raise RuntimeError("No repository path is available for linked commit inspection.")
         actual_paths.update(collect_commit_paths(commit_list, repo_path))
 
-    if any(not _path_is_under(entry, _TESTS_ROOT) for entry in declared_paths):
-        actual_paths = {path for path in actual_paths if not _path_is_under(path, _TESTS_ROOT)}
     if _BUNDLED_CONTENT_MANIFEST in actual_paths and any(
         _path_is_under(path, _SHARED_INSTALL_ROOT) for path in actual_paths
     ):
         actual_paths.remove(_BUNDLED_CONTENT_MANIFEST)
 
+    declared_actual_paths = _paths_relevant_to_scope(actual_paths, declared_paths)
+    advisory_actual_paths = _paths_relevant_to_scope(actual_paths, advisory_paths)
     out_of_scope = (
         sorted(
             path
-            for path in actual_paths
+            for path in declared_actual_paths
             if not any(_scope_entry_covers(entry, path, repo_path) for entry in declared_paths)
         )
         if declared_paths
+        else []
+    )
+    advisory_scope_drift = (
+        sorted(
+            path
+            for path in advisory_actual_paths
+            if not any(_scope_entry_covers(entry, path, repo_path) for entry in advisory_paths)
+        )
+        if advisory_paths
         else []
     )
     justification, justification_error = _validate_scope_justification(
@@ -103,8 +126,10 @@ def evaluate_task_scope(
     )
     return TaskScopeEvaluation(
         declared_paths=tuple(sorted(declared_paths)),
-        actual_paths=tuple(sorted(actual_paths)),
+        actual_paths=tuple(sorted(declared_actual_paths)),
         out_of_scope_paths=tuple(out_of_scope),
+        advisory_paths=tuple(sorted(advisory_paths)),
+        advisory_scope_drift=tuple(advisory_scope_drift),
         scope_justification=justification,
         justification_error=justification_error,
     )
@@ -112,23 +137,39 @@ def evaluate_task_scope(
 
 def collect_declared_task_scope(db: HubDatabase, task: Task) -> set[str]:
     """Collect prospective scope; observed commit annotations are excluded."""
+    declared, _advisory = _collect_task_scopes(db, task)
+    return declared
+
+
+def _collect_task_scopes(db: HubDatabase, task: Task) -> tuple[set[str], set[str]]:
+    """Collect binding declarations and advisory create-time hypotheses."""
     declared: set[str] = set()
+    advisory: set[str] = set()
     for annotation in TaskAffectedFileManager(db).get_files(task.id):
-        if annotation.annotation_source not in _DECLARED_ANNOTATION_SOURCES:
-            continue
         normalized = _normalize_scope_entry(annotation.file_path)
-        if normalized is not None:
+        if normalized is None:
+            continue
+        if annotation.annotation_source in _DECLARED_ANNOTATION_SOURCES:
             declared.add(normalized)
+        elif annotation.annotation_source in _ADVISORY_ANNOTATION_SOURCES:
+            advisory.add(normalized)
 
     declared.update(collect_declared_task_targets(task.description))
     if not declared:
-        return declared
+        return declared, advisory
     for kind in ("test", "file"):
         for reference in extract_artifact_references(task.validation_criteria or "", kind):
             normalized = _normalize_scope_entry(reference)
             if normalized is not None:
                 declared.add(normalized)
-    return declared
+    return declared, advisory
+
+
+def _paths_relevant_to_scope(actual_paths: set[str], scope_paths: set[str]) -> set[str]:
+    """Exclude test mirrors when a scope contains production paths."""
+    if any(not _path_is_under(entry, _TESTS_ROOT) for entry in scope_paths):
+        return {path for path in actual_paths if not _path_is_under(path, _TESTS_ROOT)}
+    return set(actual_paths)
 
 
 def collect_declared_task_targets(
