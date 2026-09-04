@@ -1390,6 +1390,42 @@ class TestKillAgent:
         runner.complete_run.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_parent_kill_expires_resolved_session_for_unlinked_run(self) -> None:
+        runner = _make_runner_with_run_storage()
+        mock_run = _make_mock_agent_run(
+            run_id="run-123",
+            session_id=None,
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
+        )
+        runner.run_storage.get_by_session.return_value = mock_run
+        runner.get_run.return_value = mock_run
+        runner.cancel_run.return_value = True
+        session_manager = MagicMock()
+        session_manager.resolve_session_reference.return_value = "sess-456"
+
+        registry = create_agents_registry(runner, session_manager=session_manager)
+        kill_agent = registry._tools["kill_agent"].func
+
+        from gobby.utils.session_context import session_context_for_test
+
+        with (
+            session_context_for_test("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001"),
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                return_value={
+                    "success": False,
+                    "error": "No target PID found",
+                    "error_code": "no_target_pid",
+                },
+            ),
+        ):
+            result = await kill_agent(session_id="sess-456")
+
+        assert result["status"] == "cancelled"
+        session_manager.update_status.assert_called_once_with("sess-456", "expired")
+
+    @pytest.mark.asyncio
     async def test_session_id_not_found_returns_error(self) -> None:
         """Test error when session_id doesn't match any agent."""
         runner = _make_runner_with_run_storage()
@@ -2220,7 +2256,7 @@ class TestKillAgentCapturePreemptedDelivery:
                 return_value={"success": True},
             ),
             patch(
-                "gobby.mcp_proxy.tools.agents_lifecycle_tools.terminalize_killed_agent_run",
+                "gobby.mcp_proxy.tools.agent_cancellation.terminalize_killed_agent_run",
                 new_callable=AsyncMock,
             ) as terminalize,
         ):

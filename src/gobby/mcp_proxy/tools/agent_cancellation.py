@@ -119,6 +119,7 @@ async def terminalize_killed_agent_run(
     lifecycle_monitor: Any | None,
     completion_registry: Any | None,
     task_manager: Any | None,
+    terminal_error: str | None = None,
 ) -> dict[str, Any]:
     """Apply workflow terminal state after an explicit parent-side kill."""
     from gobby.agents.terminal_delivery import (
@@ -127,7 +128,7 @@ async def terminalize_killed_agent_run(
     )
 
     if effective_status == "error":
-        error = "Agent self-reported error"
+        error = terminal_error or "Agent self-reported error"
         failed_run = await run_terminal_delivery_offload(
             runner.run_storage.fail,
             run_id,
@@ -180,6 +181,105 @@ async def terminalize_killed_agent_run(
         "terminal_reason": "user_cancelled",
         "workflow_stopped": True,
     }
+
+
+async def terminate_agent_run(
+    *,
+    run: Any,
+    runner: Any,
+    agent_run_manager: Any,
+    db: Any | None,
+    lifecycle_monitor: Any | None,
+    completion_registry: Any | None,
+    task_manager: Any | None,
+    session_manager: Any | None,
+    agent_session_id: str | None = None,
+    effective_status: Literal["cancelled", "error"],
+    signal: str = "TERM",
+    debug: bool = False,
+    stop: bool = True,
+    terminal_error: str | None = None,
+    kill_agent_process: Any | None = None,
+    cleanup_terminal_artifacts: Any | None = None,
+) -> dict[str, Any]:
+    """Terminate a run through the process, workflow, and runtime cleanup lifecycle."""
+    from gobby.agents.terminal_delivery import (
+        deliver_existing_terminal_run_in_scope,
+        run_terminal_delivery_offload,
+        shielded_terminal_delivery,
+    )
+
+    resolved_kill_agent_process = kill_agent_process
+    if resolved_kill_agent_process is None:
+        from gobby.agents.kill import kill_agent
+
+        resolved_kill_agent_process = kill_agent
+    resolved_cleanup_terminal_artifacts = cleanup_terminal_artifacts
+    if resolved_cleanup_terminal_artifacts is None:
+        from gobby.mcp_proxy.tools.agents_termination import (
+            _cleanup_terminal_artifacts,
+        )
+
+        resolved_cleanup_terminal_artifacts = _cleanup_terminal_artifacts
+
+    run_id = str(run.id)
+    kill_db = db or agent_run_manager.db
+    resolved_agent_session_id = agent_session_id or run.child_session_id
+
+    async def kill_and_deliver() -> dict[str, Any]:
+        try:
+            result = cast(
+                dict[str, Any],
+                await resolved_kill_agent_process(
+                    run,
+                    kill_db,
+                    signal_name=signal,
+                    close_terminal=not debug,
+                    terminal_services=getattr(runner, "terminal_services", None),
+                ),
+            )
+            if not result.get("success") and result.get("error_code") != KILL_ERROR_NO_TARGET_PID:
+                return result
+
+            if not stop:
+                result["workflow_stopped"] = False
+                return result
+
+            result.update(
+                await terminalize_killed_agent_run(
+                    runner=runner,
+                    run_id=run_id,
+                    effective_status=effective_status,
+                    lifecycle_monitor=lifecycle_monitor,
+                    completion_registry=completion_registry,
+                    task_manager=task_manager,
+                    terminal_error=terminal_error,
+                )
+            )
+
+            await resolved_cleanup_terminal_artifacts(
+                run_id=run_id,
+                db=kill_db,
+                terminal_id=run.terminal_id,
+                agent_session_id=resolved_agent_session_id,
+                debug=debug,
+                session_manager=session_manager,
+                result=result,
+            )
+            return result
+        finally:
+            await deliver_existing_terminal_run_in_scope(
+                db=kill_db,
+                agent_run_manager=agent_run_manager,
+                completion_registry=completion_registry,
+                run_id=run_id,
+                run_db=run_terminal_delivery_offload,
+            )
+
+    response = await shielded_terminal_delivery(run_id, kill_and_deliver)
+    if response is None:
+        return {"success": False, "error": "Daemon shutdown is in progress"}
+    return response
 
 
 async def stop_agent_run(
