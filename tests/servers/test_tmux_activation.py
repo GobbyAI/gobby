@@ -436,6 +436,8 @@ class TestTmuxActivation:
         assert finalized[0]["reason"] == "session_missing"
         assert finalized[0]["terminal_id"] == row.id
         assert finalized[0]["attachment_id"] == attachment_id
+        assert finalized[0]["seq"] == 1
+        assert finalized[0]["daemon_epoch"] == server.lease_registry.daemon_epoch
         harness.detach.assert_awaited_with(attachment_id)
         harness.reader.start_reader.assert_not_awaited()
         assert ws.messages_of_type("terminal_attach_history") == []

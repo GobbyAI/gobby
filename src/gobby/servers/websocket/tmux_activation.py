@@ -36,6 +36,7 @@ from gobby.agents.tmux.session_activation import exact_session_target
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.ws_protocol import TERMINAL_WS_LIFECYCLE_SEND_TIMEOUT_S
 from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
@@ -590,26 +591,29 @@ async def _fail(
     and the UI would stay attached to a dead stream.
     """
     await teardown_bridge(host, attachment_id)
-    event = host._leases().finalize(attachment_id, reason)
+    registry = host._leases()
+    event = registry.finalize(attachment_id, reason)
     generation = (
-        event.lease_generation
-        if event is not None
-        else host._leases().generation(pending.terminal_id)
+        event.lease_generation if event is not None else registry.generation(pending.terminal_id)
     )
-    try:
-        await websocket.send(
-            json_dumps(
-                {
-                    "type": "terminal_attachment_finalized",
-                    "terminal_id": pending.terminal_id,
-                    "attachment_id": attachment_id,
-                    "reason": reason,
-                    "lease_generation": generation,
-                }
+    payload = {
+        "type": "terminal_attachment_finalized",
+        "terminal_id": pending.terminal_id,
+        "attachment_id": attachment_id,
+        "reason": reason,
+        "lease_generation": generation,
+    }
+
+    async def publish(stamped: dict[str, Any]) -> None:
+        try:
+            await asyncio.wait_for(
+                websocket.send(json_dumps(stamped)),
+                timeout=TERMINAL_WS_LIFECYCLE_SEND_TIMEOUT_S,
             )
-        )
-    except Exception as exc:
-        logger.debug("Failed to deliver activation failure for %s: %s", attachment_id, exc)
+        except Exception as exc:
+            logger.debug("Failed to deliver activation failure for %s: %s", attachment_id, exc)
+
+    await registry.publish_lifecycle(payload, publish)
 
 
 async def _wait_for_client(
