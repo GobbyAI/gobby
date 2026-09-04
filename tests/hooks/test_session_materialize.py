@@ -570,7 +570,6 @@ def test_next_clear_takes_over_a_bound_but_unpulled_successor(
             HANDOFF_PULL_PENDING_VARIABLE: True,
             "task_claimed": True,
             "claimed_tasks": {"task-1": "#1"},
-            "session_had_task": True,
         },
     )
     newcomer_id = staged.register("newcomer-ext")

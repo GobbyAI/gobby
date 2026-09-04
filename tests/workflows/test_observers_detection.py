@@ -14,6 +14,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.workflows import observers as observers_module
+from gobby.workflows.found_work_gate import FOUND_WORK_GATE_ARMED_AT_VARIABLE
 from gobby.workflows.observers import (
     _extract_shell_output_text,
     _is_git_commit_command,
@@ -403,6 +404,7 @@ class TestDetectTaskClaimCloseTaskBehavior:
 
         assert variables.get("task_claimed") is False
         assert variables.get("claimed_tasks") == {}
+        assert variables[FOUND_WORK_GATE_ARMED_AT_VARIABLE] == event.timestamp.isoformat()
 
     def test_top_level_successful_close_ignores_unrelated_result_envelope(
         self, variables, make_after_tool_event, mock_task_manager
@@ -518,6 +520,7 @@ class TestDetectTaskClaimCloseTaskBehavior:
 
         assert variables.get("task_claimed") is True
         assert variables.get("claimed_tasks") == {"task-123": "#1"}
+        assert FOUND_WORK_GATE_ARMED_AT_VARIABLE not in variables
 
     def test_close_task_with_empty_output(self, variables, make_after_tool_event) -> None:
         variables["task_claimed"] = True
@@ -618,6 +621,7 @@ class TestDetectTaskClaimClaimOperations:
 
         assert variables.get("task_claimed") is True
         assert "task-uuid-123" in variables.get("claimed_tasks", {})
+        assert variables[FOUND_WORK_GATE_ARMED_AT_VARIABLE] == event.timestamp.isoformat()
         session_task_manager.link_task.assert_called_once_with(
             SESSION_ID, "task-uuid-123", "worked_on"
         )
@@ -630,6 +634,25 @@ class TestDetectTaskClaimClaimOperations:
         assert len(bookkeeping_records) == 2
         assert all(record.levelno == logging.DEBUG for record in bookkeeping_records)
         assert not any(record.levelno == logging.INFO for record in bookkeeping_records)
+
+    def test_reconcile_rehydrates_found_work_arm_from_claim_link(self, variables) -> None:
+        claimed_at = datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
+        session_task_manager = MagicMock()
+        session_task_manager.get_session_tasks.return_value = [
+            {
+                "action": "created",
+                "link_created_at": claimed_at.replace(hour=11),
+            },
+            {"action": "claimed", "link_created_at": claimed_at},
+        ]
+
+        reconcile_claimed_tasks(
+            variables,
+            SESSION_ID,
+            session_task_manager=session_task_manager,
+        )
+
+        assert variables[FOUND_WORK_GATE_ARMED_AT_VARIABLE] == claimed_at.isoformat()
 
     def test_sets_task_claimed_on_create_task_with_claim(
         self, variables, make_after_tool_event, mock_task_manager

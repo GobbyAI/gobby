@@ -21,6 +21,7 @@ from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._update_sentinel import UNSET
 
 from .agents import _seed_parent_turn_seq, _seed_wiki_overview_var
+from .claims import rehydrate_found_work_gate_arm
 from .context import (
     classify_session_start_context,
     commit_startup_context_claim,
@@ -606,6 +607,7 @@ def handle_pre_created_session(
         )
 
     handler._setup_code_index(session_id, session_obj.project_id)
+    rehydrate_found_work_gate_arm(handler, session_id)
 
     if handler._session_manager is not None:
         try:

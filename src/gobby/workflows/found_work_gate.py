@@ -35,6 +35,64 @@ logger = logging.getLogger(__name__)
 
 # In-process only. Persisted analysis cache must not outlive this daemon.
 _PROCESS_BOOT_AT = datetime.now(UTC)
+FOUND_WORK_GATE_ARMED_AT_VARIABLE = "_found_work_gate_armed_at"
+_FOUND_WORK_TASK_ACTIONS = frozenset({"claimed", "closed"})
+
+
+def found_work_gate_armed_at(value: object) -> datetime | None:
+    """Return a normalized found-work arm timestamp, if one is valid."""
+    if isinstance(value, datetime):
+        armed_at = value
+    elif isinstance(value, str):
+        try:
+            armed_at = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if armed_at.tzinfo is None:
+        armed_at = armed_at.replace(tzinfo=UTC)
+    return armed_at.astimezone(UTC)
+
+
+def arm_found_work_gate(
+    variables: dict[str, Any],
+    *,
+    occurred_at: object = None,
+) -> bool:
+    """Latch found-work detection at the first successful task claim or close."""
+    if found_work_gate_armed_at(variables.get(FOUND_WORK_GATE_ARMED_AT_VARIABLE)):
+        return False
+    armed_at = found_work_gate_armed_at(occurred_at) or datetime.now(UTC)
+    variables[FOUND_WORK_GATE_ARMED_AT_VARIABLE] = armed_at.isoformat()
+    return True
+
+
+def arm_found_work_gate_from_task_links(
+    variables: dict[str, Any],
+    links: Sequence[Mapping[str, Any]],
+) -> bool:
+    """Rehydrate the arm from persisted claim/close links after context loss."""
+    task_work_at = found_work_gate_task_link_armed_at(links)
+    if task_work_at is None:
+        return False
+    return arm_found_work_gate(variables, occurred_at=task_work_at)
+
+
+def found_work_gate_task_link_armed_at(
+    links: Sequence[Mapping[str, Any]],
+) -> datetime | None:
+    """Return the earliest persisted claim/close link timestamp."""
+    task_work_at = [
+        armed_at
+        for link in links
+        if link.get("action") in _FOUND_WORK_TASK_ACTIONS
+        and (armed_at := found_work_gate_armed_at(link.get("link_created_at"))) is not None
+    ]
+    if not task_work_at:
+        return None
+    return min(task_work_at)
+
 
 _DEFECT_RE = re.compile(
     r"\b(?:bugs?|broken|defects?|errors?|fail(?:ed|ing|ures?)?|incorrect|regressions?|"
@@ -331,19 +389,24 @@ class FoundWorkStopAnalyzer:
         self,
         session_id: str,
         *,
+        armed_at: object = None,
         user_prompt: str = "",
         deferred: AbstractSet[str] = frozenset(),
     ) -> tuple[str, ...]:
-        """Return this session's open, unclaimed found-work task refs.
+        """Return open, unclaimed task refs created after task duty began.
 
-        A task graph the session authored is excluded: an epic it created and
-        also gave children, plus every descendant of that epic. Those are the
-        output of planning, and they are meant to sit unclaimed until someone
-        schedules them. A defect noticed mid-session and filed loose still
-        counts, which is the shape this gate exists to catch. Refs in
-        ``deferred`` were already deferred by the user and stay excluded.
+        A taskless session is disarmed. Once it claims or closes a task, later
+        loose tasks count as found work. A task graph the session authored is
+        still excluded: an epic it created and also gave children, plus every
+        descendant of that epic. Refs in ``deferred`` were already deferred by
+        the user and stay excluded.
         """
-        if self._db is None or _USER_DEFERRAL_RE.search(user_prompt):
+        task_duty_started_at = found_work_gate_armed_at(armed_at)
+        if (
+            self._db is None
+            or task_duty_started_at is None
+            or _USER_DEFERRAL_RE.search(user_prompt)
+        ):
             return ()
         try:
             rows = self._db.fetchall(
@@ -352,6 +415,7 @@ class FoundWorkStopAnalyzer:
                     SELECT id, seq_num, labels
                     FROM tasks
                     WHERE created_in_session_id = %s
+                      AND created_at > %s
                       AND closed_at IS NULL
                       AND claimed_by_session_id IS NULL
                 ),
@@ -386,7 +450,7 @@ class FoundWorkStopAnalyzer:
                 )
                 ORDER BY c.seq_num
                 """,
-                (session_id, session_id, session_id),
+                (session_id, task_duty_started_at, session_id, session_id),
             )
         except Exception:
             logger.debug("Could not inspect unclaimed found-work tasks", exc_info=True)

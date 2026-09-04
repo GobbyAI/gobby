@@ -33,6 +33,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.workflows.found_work_gate import FOUND_WORK_GATE_ARMED_AT_VARIABLE
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
@@ -625,7 +626,6 @@ class TestCommitWebChatClearSuccessorTransaction:
                     kept.id: f"#{kept.seq_num}",
                     stolen.id: f"#{stolen.seq_num}",
                 },
-                "session_had_task": True,
             },
         )
 
@@ -665,6 +665,7 @@ class TestCommitWebChatClearSuccessorTransaction:
         successor_vars = sv_mgr.get_variables(successor_id)
         assert successor_vars.get("task_claimed") is True
         assert successor_vars.get("claimed_tasks") == {kept.id: f"#{kept.seq_num}"}
+        assert successor_vars.get(FOUND_WORK_GATE_ARMED_AT_VARIABLE) is not None
         linked = {
             str(row["task"].id)
             for row in session_task_manager.get_session_tasks(successor_id)

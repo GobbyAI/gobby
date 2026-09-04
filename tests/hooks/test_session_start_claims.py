@@ -6,6 +6,7 @@ import logging
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 from unittest.mock import patch
@@ -16,6 +17,7 @@ import pytest
 from gobby.hooks.event_handlers._session_start.claims import (
     filter_and_reassign_claimed_tasks,
     preserve_task_claim_state,
+    rehydrate_found_work_gate_arm,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_tasks import SessionTaskManager
@@ -23,6 +25,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._transitions import close_task
+from gobby.workflows.found_work_gate import FOUND_WORK_GATE_ARMED_AT_VARIABLE
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
@@ -46,9 +49,11 @@ class _ClaimHandler:
         self,
         task_manager: LocalTaskManager | None,
         session_task_manager: _SessionTaskLinker | None,
+        session_manager: SessionManager | None,
     ) -> None:
         self._task_manager = task_manager
         self._session_task_manager = session_task_manager
+        self._session_manager = session_manager
         self.logger = logging.getLogger("test.session-start-claims")
 
 
@@ -86,7 +91,7 @@ class _ClaimHarness:
         session_task_manager: _SessionTaskLinker | None = None,
     ) -> _ClaimHandler:
         links = self.session_task_manager if session_task_manager is None else session_task_manager
-        return _ClaimHandler(self.task_manager, links)
+        return _ClaimHandler(self.task_manager, links, self.sessions)
 
     def register_session(self, label: str) -> str:
         row = self.sessions.register(
@@ -153,7 +158,7 @@ def _predecessor_vars(*tasks: Task) -> dict[str, Any]:
     return {
         "task_claimed": True,
         "claimed_tasks": claimed,
-        "session_had_task": True,
+        FOUND_WORK_GATE_ARMED_AT_VARIABLE: datetime(2026, 9, 3, 12, 0, tzinfo=UTC).isoformat(),
     }
 
 
@@ -184,8 +189,62 @@ def test_preserve_transfers_predecessor_claims_and_claimed_link(
     assert task.id in _claimed_task_ids(harness.session_task_manager, harness.successor_id)
     successor_vars = harness.sv_mgr.get_variables(harness.successor_id)
     assert successor_vars.get("task_claimed") is True
-    assert successor_vars.get("session_had_task") is True
     assert successor_vars.get("claimed_tasks") == {task.id: f"#{task.seq_num}"}
+    assert (
+        successor_vars.get(FOUND_WORK_GATE_ARMED_AT_VARIABLE)
+        == _predecessor_vars(task)[FOUND_WORK_GATE_ARMED_AT_VARIABLE]
+    )
+
+
+def test_rehydrate_arms_session_from_claim_link(tmp_path: Path, hub_db: HubDatabase) -> None:
+    harness = _make_harness(hub_db, tmp_path)
+    harness.create_claimed_task("Claim survives context loss")
+    claim_link = next(
+        link
+        for link in harness.session_task_manager.get_session_tasks(harness.predecessor_id)
+        if link["action"] == "claimed"
+    )
+
+    rehydrate_found_work_gate_arm(harness.handler(), harness.predecessor_id)
+
+    variables = harness.sv_mgr.get_variables(harness.predecessor_id)
+    assert variables[FOUND_WORK_GATE_ARMED_AT_VARIABLE] == claim_link["link_created_at"].isoformat()
+
+
+def test_rehydrate_clears_stale_arm_from_taskless_session(
+    tmp_path: Path,
+    hub_db: HubDatabase,
+) -> None:
+    harness = _make_harness(hub_db, tmp_path)
+    harness.sv_mgr.set_variable(
+        harness.successor_id,
+        FOUND_WORK_GATE_ARMED_AT_VARIABLE,
+        datetime(2026, 9, 3, 12, 0, tzinfo=UTC).isoformat(),
+    )
+
+    rehydrate_found_work_gate_arm(harness.handler(), harness.successor_id)
+
+    variables = harness.sv_mgr.get_variables(harness.successor_id)
+    assert variables.get(FOUND_WORK_GATE_ARMED_AT_VARIABLE) is None
+
+
+def test_rehydrate_preserves_compact_session_arm(
+    tmp_path: Path,
+    hub_db: HubDatabase,
+) -> None:
+    harness = _make_harness(hub_db, tmp_path)
+    harness.create_claimed_task("Claim survives compact")
+    original_arm = datetime(2026, 9, 3, 11, 0, tzinfo=UTC).isoformat()
+    harness.sv_mgr.set_variable(
+        harness.predecessor_id,
+        FOUND_WORK_GATE_ARMED_AT_VARIABLE,
+        original_arm,
+    )
+
+    rehydrate_found_work_gate_arm(harness.handler(), harness.predecessor_id)
+
+    variables = harness.sv_mgr.get_variables(harness.predecessor_id)
+    assert variables[FOUND_WORK_GATE_ARMED_AT_VARIABLE] == original_arm
 
 
 def test_expected_owner_skips_claim_moved_to_third_session(

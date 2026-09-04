@@ -23,7 +23,7 @@ from gobby.sessions.handoff import (
 )
 
 from .agents import _seed_parent_turn_seq, _seed_wiki_overview_var
-from .claims import preserve_task_claim_state
+from .claims import preserve_task_claim_state, rehydrate_found_work_gate_arm
 from .context import (
     classify_session_start_context,
     stash_startup_claim,
@@ -350,6 +350,7 @@ def activate_materialized_session(
             rebound = handler._session_manager.get(session_id)
             if rebound is not None:
                 session_obj = rebound
+    rehydrate_found_work_gate_arm(handler, session_id)
     # Context-reuse expiry runs only after the newcomer is bound and holds the
     # claims, so a superseded successor is expired after its handoff moved on.
     expire_stale_terminal_sessions_for_context(

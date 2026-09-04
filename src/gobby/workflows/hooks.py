@@ -20,6 +20,7 @@ from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSO
 from gobby.workflows.block_audit import audit_source_block, audit_source_block_sync
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 from gobby.workflows.found_work_gate import (
+    FOUND_WORK_GATE_ARMED_AT_VARIABLE,
     FoundWorkStopAnalyzer,
     capture_found_work_handoff,
     capture_turn_prompt,
@@ -826,6 +827,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     unclaimed_tasks = await asyncio.to_thread(
                         self._found_work_analyzer.unclaimed_found_work,
                         session_id,
+                        armed_at=variables.get(FOUND_WORK_GATE_ARMED_AT_VARIABLE),
                         deferred=frozenset(deferred),
                     )
                     prompt = str(variables.get("_current_user_prompt") or "")

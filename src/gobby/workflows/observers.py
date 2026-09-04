@@ -20,6 +20,10 @@ from gobby.tasks.state_semantics import (
     is_task_actively_claimed,
 )
 from gobby.workflows.claimed_task_extra_skills import refresh_claimed_task_extra_skills
+from gobby.workflows.found_work_gate import (
+    arm_found_work_gate,
+    arm_found_work_gate_from_task_links,
+)
 from gobby.workflows.observer_commits import (
     _is_git_commit_command,
     _looks_like_commit_success,
@@ -139,6 +143,8 @@ def detect_task_claim(
         if _successful_close_result(tool_output) is None:
             return
 
+        arm_found_work_gate(variables, occurred_at=event.timestamp)
+
         closed_task_id: str | None = None
         raw_close_id = arguments.get("task_id")
         if raw_close_id:
@@ -242,6 +248,8 @@ def detect_task_claim(
         logger.debug("Skipping task claim state update - no valid UUID for %s", inner_tool_name)
         return
 
+    arm_found_work_gate(variables, occurred_at=event.timestamp)
+
     from gobby.workflows.task_claim_state import add_claimed_task
 
     ref = task_id
@@ -260,7 +268,6 @@ def detect_task_claim(
     merge = add_claimed_task(variables, task_id, ref)
     variables.update(merge)
     refresh_claimed_task_extra_skills(variables, task_manager)
-    variables["session_had_task"] = True
     logger.debug(
         "Session %s: added %s to claimed_tasks (via %s)", session_id, task_id, inner_tool_name
     )
@@ -281,6 +288,19 @@ def reconcile_claimed_tasks(
     session_task_manager: SessionTaskManager | None = None,
 ) -> None:
     """Reconcile claimed_tasks against DB, then derive task_claimed from it."""
+    if session_task_manager:
+        try:
+            arm_found_work_gate_from_task_links(
+                variables,
+                session_task_manager.get_session_tasks(session_id),
+            )
+        except Exception:
+            logger.debug(
+                "Session %s: could not rehydrate found-work gate arm",
+                session_id,
+                exc_info=True,
+            )
+
     claimed_tasks: dict[str, str] = dict(variables.get("claimed_tasks") or {})
 
     if not task_manager:

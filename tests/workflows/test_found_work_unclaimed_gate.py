@@ -16,13 +16,18 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.found_work_gate import FoundWorkStopAnalyzer, FoundWorkStopFacts
+from gobby.workflows.found_work_gate import (
+    FOUND_WORK_GATE_ARMED_AT_VARIABLE,
+    FoundWorkStopAnalyzer,
+    FoundWorkStopFacts,
+)
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
 MACHINE_ID = "20000000-0000-4000-8000-000000000012"
+TEST_ARMED_AT = datetime(2001, 1, 1, tzinfo=UTC).isoformat()
 
 
 @pytest.fixture(autouse=True)
@@ -79,6 +84,17 @@ async def test_query_returns_only_unclaimed_unlabeled_tasks_created_by_session(
     task_context: tuple[LocalTaskManager, str, str, str],
 ) -> None:
     tasks, project_id, owner_id, other_id = task_context
+    planned = tasks.create_task(
+        project_id=project_id,
+        title="Planned before task duty",
+        created_in_session_id=owner_id,
+        category="code",
+        validation_criteria="Planned work is completed.",
+    )
+    temp_db.execute(
+        "UPDATE tasks SET created_at = %s WHERE id = %s",
+        (datetime(2000, 1, 1, tzinfo=UTC), planned.id),
+    )
     candidate = tasks.create_task(
         project_id=project_id,
         title="Candidate",
@@ -126,9 +142,26 @@ async def test_query_returns_only_unclaimed_unlabeled_tasks_created_by_session(
         validation_criteria="Foreign work is completed.",
     )
 
-    refs = _analyzer(temp_db).unclaimed_found_work(owner_id)
+    refs = _analyzer(temp_db).unclaimed_found_work(owner_id, armed_at=TEST_ARMED_AT)
 
     assert refs == (f"#{candidate.seq_num}",)
+
+
+@pytest.mark.asyncio
+async def test_taskless_session_does_not_report_created_tasks(
+    temp_db: HubDatabase,
+    task_context: tuple[LocalTaskManager, str, str, str],
+) -> None:
+    tasks, project_id, owner_id, _other_id = task_context
+    tasks.create_task(
+        project_id=project_id,
+        title="Requested planning work",
+        created_in_session_id=owner_id,
+        category="planning",
+        validation_criteria="Planning work is completed.",
+    )
+
+    assert _analyzer(temp_db).unclaimed_found_work(owner_id) == ()
 
 
 @pytest.mark.asyncio
@@ -154,7 +187,14 @@ async def test_explicit_user_filing_instruction_exempts_unclaimed_tasks(
         validation_criteria="Deferred work is completed.",
     )
 
-    assert _analyzer(temp_db).unclaimed_found_work(owner_id, user_prompt=prompt) == ()
+    assert (
+        _analyzer(temp_db).unclaimed_found_work(
+            owner_id,
+            armed_at=TEST_ARMED_AT,
+            user_prompt=prompt,
+        )
+        == ()
+    )
 
 
 @pytest.mark.asyncio
@@ -196,6 +236,7 @@ async def test_workflow_handler_feeds_unclaimed_fact_for_spawned_claimed_session
         "_memory_initial_stop_checked": True,
         "is_spawned_agent": True,
         "task_claimed": True,
+        FOUND_WORK_GATE_ARMED_AT_VARIABLE: TEST_ARMED_AT,
         "stop_attempts": 0,
     }
     session_vars = MagicMock()
@@ -214,7 +255,11 @@ async def test_workflow_handler_feeds_unclaimed_fact_for_spawned_claimed_session
     assert response.decision == "block"
     assert "#21484" in (response.reason or "")
     analyze.assert_not_awaited()
-    unclaimed.assert_called_once_with(session_id, deferred=frozenset())
+    unclaimed.assert_called_once_with(
+        session_id,
+        armed_at=TEST_ARMED_AT,
+        deferred=frozenset(),
+    )
 
 
 @pytest.mark.asyncio
@@ -255,7 +300,7 @@ async def test_authored_epic_subtree_is_not_found_work(
         validation_criteria="Defect is fixed.",
     )
 
-    refs = _analyzer(temp_db).unclaimed_found_work(owner_id)
+    refs = _analyzer(temp_db).unclaimed_found_work(owner_id, armed_at=TEST_ARMED_AT)
 
     assert refs == (f"#{loose.seq_num}",)
 
@@ -275,7 +320,10 @@ async def test_childless_epic_is_still_found_work(
         category="code",
     )
 
-    assert _analyzer(temp_db).unclaimed_found_work(owner_id) == (f"#{lone.seq_num}",)
+    assert _analyzer(temp_db).unclaimed_found_work(
+        owner_id,
+        armed_at=TEST_ARMED_AT,
+    ) == (f"#{lone.seq_num}",)
 
 
 @pytest.mark.asyncio
@@ -301,7 +349,10 @@ async def test_foreign_epic_parent_does_not_exempt_its_children(
         validation_criteria="Defect is fixed.",
     )
 
-    assert _analyzer(temp_db).unclaimed_found_work(owner_id) == (f"#{filed.seq_num}",)
+    assert _analyzer(temp_db).unclaimed_found_work(
+        owner_id,
+        armed_at=TEST_ARMED_AT,
+    ) == (f"#{filed.seq_num}",)
 
 
 @pytest.mark.asyncio
@@ -326,7 +377,9 @@ async def test_deferred_refs_are_excluded(
     )
 
     refs = _analyzer(temp_db).unclaimed_found_work(
-        owner_id, deferred=frozenset({f"#{first.seq_num}"})
+        owner_id,
+        armed_at=TEST_ARMED_AT,
+        deferred=frozenset({f"#{first.seq_num}"}),
     )
 
     assert refs == (f"#{later.seq_num}",)
@@ -343,6 +396,7 @@ async def test_user_deferral_latches_past_the_turn_that_carried_it(
     variables: dict[str, Any] = {
         "_memory_initial_stop_checked": True,
         "task_claimed": False,
+        FOUND_WORK_GATE_ARMED_AT_VARIABLE: TEST_ARMED_AT,
         "stop_attempts": 0,
         "_current_user_prompt": "File them for later.",
     }
@@ -357,7 +411,7 @@ async def test_user_deferral_latches_past_the_turn_that_carried_it(
         handler._found_work_analyzer,
         "unclaimed_found_work",
         MagicMock(
-            side_effect=lambda _sid, deferred=frozenset(): tuple(
+            side_effect=lambda _sid, armed_at=None, deferred=frozenset(): tuple(
                 ref for ref in ("#21484", "#21485") if ref not in deferred
             )
         ),

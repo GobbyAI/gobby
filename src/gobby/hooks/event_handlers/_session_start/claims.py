@@ -8,6 +8,44 @@ from typing import Any
 from gobby.storage.tasks import TaskAlreadyClaimedError, TaskClosedError
 from gobby.storage.tasks._transitions import release_task_claim_if_owned
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
+from gobby.workflows.found_work_gate import (
+    FOUND_WORK_GATE_ARMED_AT_VARIABLE,
+    arm_found_work_gate,
+    arm_found_work_gate_from_task_links,
+    found_work_gate_task_link_armed_at,
+)
+
+
+def rehydrate_found_work_gate_arm(handler: Any, session_id: str) -> None:
+    """Restore found-work duty from persisted claim/close session-task links."""
+    session_manager = getattr(handler, "_session_manager", None)
+    session_task_manager = getattr(handler, "_session_task_manager", None)
+    if session_manager is None or session_task_manager is None:
+        return
+    try:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        variable_manager = SessionVariableManager(session_manager.db)
+        variables = dict(variable_manager.get_variables(session_id) or {})
+        links = session_task_manager.get_session_tasks(session_id)
+        if arm_found_work_gate_from_task_links(variables, links):
+            variable_manager.merge_variables(
+                session_id,
+                {FOUND_WORK_GATE_ARMED_AT_VARIABLE: variables[FOUND_WORK_GATE_ARMED_AT_VARIABLE]},
+            )
+        elif (
+            FOUND_WORK_GATE_ARMED_AT_VARIABLE in variables
+            and found_work_gate_task_link_armed_at(links) is None
+        ):
+            variable_manager.merge_variables(session_id, {FOUND_WORK_GATE_ARMED_AT_VARIABLE: None})
+    except Exception as exc:
+        _log(handler).debug(
+            "Could not rehydrate found-work gate arm for session=%s: %s",
+            session_id,
+            exc,
+            exc_info=True,
+        )
+
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +58,7 @@ def preserve_task_claim_state(
     predecessor_vars: dict[str, Any],
 ) -> None:
     """Reassign predecessor claims onto the successor after a winning take."""
-    task_claim_keys = ("task_claimed", "claimed_tasks", "session_had_task")
+    task_claim_keys = ("task_claimed", "claimed_tasks")
     task_handoff = {
         key: predecessor_vars[key] for key in task_claim_keys if predecessor_vars.get(key)
     }
@@ -29,8 +67,6 @@ def preserve_task_claim_state(
 
     claimed_tasks = _as_claimed_tasks(task_handoff.get("claimed_tasks"))
     merged_claims: dict[str, Any] = {}
-    if task_handoff.get("session_had_task"):
-        merged_claims["session_had_task"] = True
 
     filtered_claims: dict[str, str] = {}
     if task_handoff.get("task_claimed") and claimed_tasks:
@@ -43,6 +79,10 @@ def preserve_task_claim_state(
     if filtered_claims:
         merged_claims["task_claimed"] = True
         merged_claims["claimed_tasks"] = filtered_claims
+        arm_found_work_gate(
+            merged_claims,
+            occurred_at=predecessor_vars.get(FOUND_WORK_GATE_ARMED_AT_VARIABLE),
+        )
     if merged_claims and sv_mgr is not None:
         try:
             sv_mgr.merge_variables(successor_id, merged_claims)
