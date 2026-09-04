@@ -429,6 +429,8 @@ class TestAgySrtWrap:
         assert any("antigravity-cli" in path for path in writes)
         assert any("keychain" in path.lower() or "Keychains" in path for path in reads)
         assert "daily-cloudcode-pa.googleapis.com" in domains
+        assert "www.googleapis.com" in domains
+        assert "*.googleusercontent.com" in domains
 
 
 # --- Plan row 3.1.7: ACP subprocesses are session-owned at the post-hydration seam ---
