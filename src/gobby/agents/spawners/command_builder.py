@@ -40,8 +40,9 @@ def build_cli_command(
     - claude --session-id <uuid> --dangerously-skip-permissions -p [prompt]
 
     Codex CLI:
-    - codex --ask-for-approval never --disable guardian_approval
-      -c check_for_update_on_startup=false -C <dir> [PROMPT]
+    - codex --ask-for-approval never --disable guardian_approval -C <dir>
+      -c features.code_mode=false -c features.code_mode_host=false
+      -c check_for_update_on_startup=false [PROMPT]
 
     Droid CLI:
     - droid exec --input-format stream-json --cwd <dir> [--model <id>]
@@ -162,9 +163,22 @@ def build_cli_command(
             command.extend(["-C", working_directory])
         for override in config_overrides or []:
             command.extend(["-c", override])
-        # Spawned runs must never stop at Codex's interactive upgrade menu.
-        # Keep this last so user- or endpoint-provided overrides cannot re-enable it.
-        command.extend(["-c", "check_for_update_on_startup=false"])
+        # Managed runs execute tools through Codex's native exec and MCP client,
+        # never through the code-mode host: that host is the user's node_repl MCP
+        # server (the ChatGPT app's), which cannot start inside the sandbox, and
+        # with it on every Gobby MCP call dies at host negotiation (#21753).
+        # Spawned runs must also never stop at Codex's interactive upgrade menu.
+        # Keep these last so user- or endpoint-provided overrides cannot re-enable them.
+        command.extend(
+            [
+                "-c",
+                "features.code_mode=false",
+                "-c",
+                "features.code_mode_host=false",
+                "-c",
+                "check_for_update_on_startup=false",
+            ]
+        )
 
     elif cli == "droid":
         # Droid exec flags, verified against `droid exec --help` on v0.106.0.
