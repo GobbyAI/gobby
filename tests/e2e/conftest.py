@@ -1590,6 +1590,7 @@ def _production_daemon_running() -> bool:
 _DAEMON_ARTIFACTS = {"gobby.pid", "ui.pid", "shutdown_intent_active.json"}
 _PRODUCTION_DAEMON_ARTIFACT_PREFIXES = (
     "cache/transcript-indexes/",
+    "gcode-runtime/",
     "grants/",
     "logs/",
     "run/sandbox/",

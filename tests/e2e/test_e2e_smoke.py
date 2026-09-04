@@ -31,6 +31,20 @@ def test_production_daemon_transcript_index_cache_is_external_write_exempt() -> 
     assert _is_production_daemon_artifact("config.yaml") is False
 
 
+def test_production_daemon_gcode_runtime_grant_is_external_write_exempt() -> None:
+    # The live daemon writes one gcode-runtime/<run>/ per spawned agent run
+    # (src/gobby/agents/code_index.py); a concurrent spawn during an e2e test
+    # is that daemon's artifact, not a sandbox escape by the test daemon.
+    run_root = "gcode-runtime/8957a1c90e8cb088"
+
+    assert _is_production_daemon_artifact(f"{run_root}/grant.json") is True
+    assert _is_production_daemon_artifact(f"{run_root}/machine_id") is True
+    assert _is_production_daemon_artifact(f"{run_root}/models") is True
+    assert _is_production_daemon_artifact(f"{run_root}/services") is True
+    assert _is_production_daemon_artifact("gcode-runtime") is False
+    assert _is_production_daemon_artifact("config.yaml") is False
+
+
 class TestE2EInfrastructure:
     """Tests verifying E2E fixtures work correctly."""
 
