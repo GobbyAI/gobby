@@ -34,6 +34,7 @@ class _Queued:
     payload: dict[str, Any]
     raw: str
     size: int
+    completion: asyncio.Future[None] | None = None
 
 
 @dataclass
@@ -49,14 +50,24 @@ class SocketRelay:
     closed: bool = False
     _work: asyncio.Event = field(default_factory=asyncio.Event)
     _sender: asyncio.Task[None] | None = None
+    _current: _Queued | None = None
 
     def start(self) -> None:
         if self._sender is None:
             self._sender = asyncio.create_task(self._run())
 
-    def _pack(self, payload: dict[str, Any]) -> _Queued:
+    def _pack(
+        self,
+        payload: dict[str, Any],
+        completion: asyncio.Future[None] | None = None,
+    ) -> _Queued:
         raw_bytes = canonical_json(payload)
-        return _Queued(payload=payload, raw=raw_bytes.decode("utf-8"), size=len(raw_bytes))
+        return _Queued(
+            payload=payload,
+            raw=raw_bytes.decode("utf-8"),
+            size=len(raw_bytes),
+            completion=completion,
+        )
 
     def enqueue_frame(self, payload: dict[str, Any]) -> str | None:
         if self.closed:
@@ -72,10 +83,14 @@ class SocketRelay:
         self._work.set()
         return None
 
-    def enqueue_lifecycle(self, payload: dict[str, Any]) -> str | None:
+    def enqueue_lifecycle(
+        self,
+        payload: dict[str, Any],
+        completion: asyncio.Future[None] | None = None,
+    ) -> str | None:
         if self.closed:
             return "reserve_overflow"
-        item = self._pack(payload)
+        item = self._pack(payload, completion)
         if (
             len(self.life_q) >= TERMINAL_WS_LIFECYCLE_RESERVE_MAX_ENTRIES
             or self.life_bytes + item.size > TERMINAL_WS_LIFECYCLE_RESERVE_MAX_BYTES
@@ -103,13 +118,23 @@ class SocketRelay:
                     self.frame_bytes -= item.size
                     timeout = TERMINAL_WS_FRAME_SEND_TIMEOUT_S
                     fail = "proxy_lag"
+                self._current = item
                 try:
                     await asyncio.wait_for(self.websocket.send(item.raw), timeout=timeout)
                 except (TimeoutError, OSError, ConnectionError):
                     await self.shutdown(fail)
                     return
+                except Exception:
+                    logger.exception("terminal proxy relay send failed")
+                    await self.shutdown(fail)
+                    return
+                else:
+                    _settle_lifecycle(item)
+                finally:
+                    if self._current is item:
+                        self._current = None
         except asyncio.CancelledError:
-            return
+            raise
 
     async def shutdown(self, reason: str) -> None:
         if self.closed:
@@ -118,8 +143,18 @@ class SocketRelay:
         self._work.set()
         sender = self._sender
         self._sender = None
+        pending_lifecycle = [item for item in [self._current, *self.life_q] if item is not None]
         if sender is not None and sender is not asyncio.current_task():
             sender.cancel()
+            try:
+                await sender
+            except asyncio.CancelledError:
+                pass
+        self._current = None
+        self.life_q.clear()
+        self.life_bytes = 0
+        self.frame_q.clear()
+        self.frame_bytes = 0
         closer = getattr(self.websocket, "close", None)
         if callable(closer):
             result = closer()
@@ -128,8 +163,15 @@ class SocketRelay:
                     await result
                 except Exception:
                     logger.debug("websocket close failed", exc_info=True)
-        if callable(self.close):
-            await self.close(reason)
+        try:
+            if callable(self.close):
+                await self.close(reason)
+        except Exception:
+            logger.exception("terminal proxy relay cleanup failed")
+        finally:
+            error = ConnectionError(f"terminal proxy relay closed: {reason}")
+            for item in pending_lifecycle:
+                _settle_lifecycle(item, error)
 
 
 @dataclass
@@ -212,10 +254,17 @@ class ProxyHub:
         return None
 
     async def emit_lifecycle(self, websocket: Any, event: dict[str, Any]) -> None:
-        relay = self.relay_for(websocket)
-        overflow = relay.enqueue_lifecycle(event)
-        if overflow is not None:
-            await relay.shutdown(overflow)
+        async def publish(stamped: dict[str, Any]) -> None:
+            relay = self.relay_for(websocket)
+            completion = asyncio.get_running_loop().create_future()
+            overflow = relay.enqueue_lifecycle(stamped, completion)
+            if overflow is not None:
+                await relay.shutdown(overflow)
+                completion.cancel()
+                raise ConnectionError(f"terminal proxy relay closed: {overflow}")
+            await asyncio.shield(completion)
+
+        await self._owner._leases().publish_lifecycle(event, publish)
 
     async def finalize_attachment(self, attachment_id: str, reason: str) -> None:
         record = self.attachments.pop(attachment_id, None)
@@ -256,10 +305,7 @@ class ProxyHub:
             await self.finalize_attachment(attachment_id, reason)
         relay = self.relays.pop(websocket, None)
         if relay is not None and not relay.closed:
-            relay.closed = True
-            relay._work.set()
-            if relay._sender is not None:
-                relay._sender.cancel()
+            await relay.shutdown(reason)
 
     async def _on_socket_fail(self, websocket: Any, reason: str) -> None:
         ids = list(self.by_socket.get(websocket, set()))
@@ -367,3 +413,12 @@ def _map_host_frame(
             "max_rows": int(message.get("max_rows") or 0),
         }
     return None
+
+
+def _settle_lifecycle(item: _Queued, error: Exception | None = None) -> None:
+    completion = item.completion
+    if completion is not None and not completion.done():
+        if error is None:
+            completion.set_result(None)
+        else:
+            completion.set_exception(error)

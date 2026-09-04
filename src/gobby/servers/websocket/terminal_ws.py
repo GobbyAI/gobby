@@ -6,19 +6,21 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import Mock
 
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
-from gobby.terminals.leases import TerminalLeaseRegistry, paste_oversize
+from gobby.terminals.leases import LifecyclePublicationError, TerminalLeaseRegistry, paste_oversize
 from gobby.terminals.runtime import Delivered, IndeterminateWrite, TerminalWriteError
 from gobby.terminals.tmux_discovery import pane_owners, sweep_tmux_terminals
 from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_DEFAULT_PAGE_SIZE,
     TERMINAL_LIST_MAX_PAGE_SIZE,
+    TERMINAL_WS_LIFECYCLE_SEND_TIMEOUT_S,
+    TerminalPageTooLargeError,
     encode_page,
     inventory_item,
     parse_list_cursor,
@@ -83,6 +85,17 @@ class TerminalWsMixin:
     terminal_config: Any
     terminal_services: Any | None = None
     open_proxy_frame: Any | None = None
+
+    if TYPE_CHECKING:
+
+        async def broadcast_tmux_session_event(
+            self,
+            event: str,
+            terminal_id: str = "",
+            session_name: str | None = None,
+            socket: str | None = None,
+            terminal: dict[str, Any] | None = None,
+        ) -> None: ...
 
     async def _send_json(self, websocket: Any, payload: dict[str, Any]) -> None:
         await websocket.send(json_dumps(payload))
@@ -182,16 +195,18 @@ class TerminalWsMixin:
             else:
                 event = self._leases().finalize(attachment_id, "detach")
                 if event is not None:
-                    await self._send_json(
-                        websocket,
-                        {
-                            "type": "terminal_attachment_finalized",
-                            "terminal_id": event.terminal_id,
-                            "attachment_id": event.attachment_id,
-                            "reason": event.reason,
-                            "lease_generation": event.lease_generation,
-                        },
-                    )
+                    payload = {
+                        "type": "terminal_attachment_finalized",
+                        "terminal_id": event.terminal_id,
+                        "attachment_id": event.attachment_id,
+                        "reason": event.reason,
+                        "lease_generation": event.lease_generation,
+                    }
+
+                    async def publish(stamped: dict[str, Any]) -> None:
+                        await self._send_json(websocket, stamped)
+
+                    await self._leases().publish_lifecycle(payload, publish)
         await self._send_json(
             websocket,
             {
@@ -211,21 +226,6 @@ class TerminalWsMixin:
         under the global project. Without one the whole machine is listed.
         """
         request_id = data.get("request_id")
-        manager = getattr(self, "terminal_manager", None)
-        if manager is None:
-            await self._send_json(
-                websocket,
-                {
-                    "type": "terminal_list",
-                    "request_id": request_id,
-                    "items": [],
-                    "next_cursor": None,
-                },
-            )
-            return
-        project_id = data.get("project_id") or self._project_id(websocket)
-        if not isinstance(project_id, str):
-            project_id = None
         try:
             cursor_created_at, cursor_id = parse_list_cursor(data.get("cursor"))
         except ValueError:
@@ -234,6 +234,22 @@ class TerminalWsMixin:
                 {"type": "terminal_error", "code": "invalid_cursor", "request_id": request_id},
             )
             return
+        snapshot = (
+            self._leases().lifecycle_snapshot()
+            if cursor_created_at is None and cursor_id is None
+            else None
+        )
+        envelope = {"type": "terminal_list", "request_id": request_id}
+        manager = getattr(self, "terminal_manager", None)
+        if manager is None:
+            await self._send_json(
+                websocket,
+                encode_page([], None, snapshot=snapshot, envelope=envelope),
+            )
+            return
+        project_id = data.get("project_id") or self._project_id(websocket)
+        if not isinstance(project_id, str):
+            project_id = None
         limit = data.get("limit", TERMINAL_LIST_DEFAULT_PAGE_SIZE)
         if not isinstance(limit, int) or isinstance(limit, bool):
             limit = TERMINAL_LIST_DEFAULT_PAGE_SIZE
@@ -265,12 +281,26 @@ class TerminalWsMixin:
                     }
                 )
             serialized.append(item)
-        payload = encode_page(
-            serialized,
-            None if not has_more else f"{items[-1].created_at.isoformat()}|{items[-1].id}",
-        )
-        payload["type"] = "terminal_list"
-        payload["request_id"] = request_id
+        item_cursors = [f"{row.created_at.isoformat()}|{row.id}" for row in items]
+        next_cursor = None if not has_more else item_cursors[-1]
+        try:
+            payload = encode_page(
+                serialized,
+                next_cursor,
+                snapshot=snapshot,
+                item_cursors=item_cursors,
+                envelope=envelope,
+            )
+        except TerminalPageTooLargeError:
+            await self._send_json(
+                websocket,
+                {
+                    "type": "terminal_error",
+                    "code": "terminal_page_too_large",
+                    "request_id": request_id,
+                },
+            )
+            return
         await self._send_json(websocket, payload)
 
     async def _sweep_tmux_panes(self, manager: Any, machine_id: str) -> dict[str, Any]:
@@ -383,6 +413,14 @@ class TerminalWsMixin:
                 "reason": result.error,
             },
         )
+        if result.success:
+            row = manager.get(result.terminal_id)
+            if row is not None:
+                await self.broadcast_tmux_session_event(
+                    "created",
+                    terminal_id=result.terminal_id,
+                    terminal=inventory_item(row),
+                )
 
     async def _handle_terminal_kill(self, websocket: Any, data: dict[str, Any]) -> None:
         terminal_id = data.get("terminal_id")
@@ -392,19 +430,23 @@ class TerminalWsMixin:
             if manager is None or not isinstance(terminal_id, str)
             else manager.get(terminal_id)
         )
+        transitioned = None
         if (
             row is not None
             and manager is not None
             and getattr(self, "terminal_runtime_registry", None) is not None
+            and row.state in {"live", "orphaned"}
         ):
             runtime = self.terminal_runtime_registry.resolve(row.backend)
             await runtime.terminate(row, 1.0)
-            manager.mark_exited(row.id)
+            transitioned = manager.mark_exited(row.id)
+            if transitioned is not None:
+                await self.broadcast_tmux_session_event("killed", terminal_id=row.id)
         await self._send_json(
             websocket,
             {
                 "type": "terminal_kill_result",
-                "success": True,
+                "success": transitioned is not None,
                 "terminal_id": terminal_id,
                 "request_id": data.get("request_id"),
             },
@@ -517,16 +559,13 @@ class TerminalWsMixin:
         registry = self._leases()
         previous = registry.holder(terminal_id)
         result = registry.take_control(terminal_id, attachment_id, takeover=takeover)
-        lost = {
-            "type": "terminal_lease_lost",
-            "attachment_id": previous,
-            "holder": attachment_id,
-            "lease_generation": result.lease_generation,
-        }
         if result.granted and previous and previous != attachment_id:
-            await self._fanout_lease_lost(previous, attachment_id, result.lease_generation)
-            if websocket not in self.clients:
-                await self._send_control(websocket, lost)
+            await self._fanout_lease_lost(
+                previous,
+                attachment_id,
+                result.lease_generation,
+                requester=websocket,
+            )
         control = {
             "type": "terminal_control_result",
             "attachment_id": attachment_id,
@@ -709,23 +748,46 @@ class TerminalWsMixin:
             },
         )
 
-    async def _fanout_lease_lost(self, previous: str, holder: str, generation: int) -> None:
+    async def _fanout_lease_lost(
+        self,
+        previous: str,
+        holder: str,
+        generation: int,
+        *,
+        requester: Any | None = None,
+    ) -> None:
         message = {
             "type": "terminal_lease_lost",
             "attachment_id": previous,
             "holder": holder,
             "lease_generation": generation,
         }
-        for ws in list(self.clients.keys()):
-            try:
-                await ws.send(json_dumps(message))
-            except Exception:
-                logger.debug("lease_lost fanout failed", exc_info=True)
+
+        async def publish(stamped: dict[str, Any]) -> None:
+            recipients = list(self.clients)
+            if requester is not None and requester not in self.clients:
+                recipients.append(requester)
+            raw = json_dumps(stamped)
+
+            async def send_one(recipient: Any) -> None:
+                try:
+                    await asyncio.wait_for(
+                        recipient.send(raw), timeout=TERMINAL_WS_LIFECYCLE_SEND_TIMEOUT_S
+                    )
+                except Exception:
+                    logger.debug("lease_lost fanout failed", exc_info=True)
+
+            await asyncio.gather(*(send_one(recipient) for recipient in recipients))
+
+        await self._leases().publish_lifecycle(message, publish)
 
     async def _send_control(self, websocket: Any, payload: dict[str, Any]) -> None:
         hub = self._proxy()
         if websocket in hub.relays or websocket in hub.by_socket:
-            await hub.emit_lifecycle(websocket, payload)
+            try:
+                await hub.emit_lifecycle(websocket, payload)
+            except LifecyclePublicationError:
+                logger.debug("terminal control lifecycle send failed", exc_info=True)
             await asyncio.sleep(0)
             return
         await self._send_json(websocket, payload)

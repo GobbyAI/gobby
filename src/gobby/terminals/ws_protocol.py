@@ -75,6 +75,13 @@ class SafeIntegerOverflowError(ValueError):
         super().__init__("safe_integer_overflow")
 
 
+class TerminalPageTooLargeError(ValueError):
+    """No terminal inventory row fits in the encoded page budget."""
+
+    def __init__(self) -> None:
+        super().__init__("terminal_page_too_large")
+
+
 def _check_safe_int(value: object, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise SafeIntegerOverflowError()
@@ -521,19 +528,49 @@ def inventory_item(row: Any) -> dict[str, Any]:
     }
 
 
-def encode_page(items: Sequence[Mapping[str, Any]], next_cursor: str | None) -> dict[str, Any]:
-    """Build a paginated inventory payload, cutting to the encoded-byte budget."""
-    selected: list[Mapping[str, Any]] = []
-    cursor = next_cursor
-    for item in items:
-        candidate = [*selected, item]
-        payload = {"items": candidate, "next_cursor": None}
-        if len(json.dumps(payload, separators=(",", ":")).encode("utf-8")) > (
+def encode_page(
+    items: Sequence[Mapping[str, Any]],
+    next_cursor: str | None,
+    *,
+    snapshot: Mapping[str, Any] | None = None,
+    item_cursors: Sequence[str] | None = None,
+    envelope: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a byte-bounded inventory page with canonical truncation cursors."""
+
+    def payload(count: int, cursor: str | None) -> dict[str, Any]:
+        return {
+            **dict(envelope or {}),
+            "items": list(items[:count]),
+            "next_cursor": cursor,
+            "snapshot": None if snapshot is None else dict(snapshot),
+        }
+
+    if not items:
+        empty = payload(0, next_cursor)
+        if len(json.dumps(empty, separators=(",", ":")).encode("utf-8")) > (
             TERMINAL_LIST_MAX_ENCODED_BYTES
         ):
-            cursor = str(selected[-1]["id"]) if selected else None
-            break
-        selected.append(item)
-    else:
-        cursor = next_cursor
-    return {"items": list(selected), "next_cursor": cursor}
+            raise TerminalPageTooLargeError()
+        return empty
+
+    selected: dict[str, Any] | None = None
+    cursor: str | None
+    for count in range(1, len(items) + 1):
+        more_input = count < len(items)
+        if more_input:
+            if item_cursors is None or len(item_cursors) < count:
+                raise ValueError("canonical item cursor required for page truncation")
+            cursor = item_cursors[count - 1]
+        else:
+            cursor = next_cursor
+        candidate = payload(count, cursor)
+        encoded_size = len(json.dumps(candidate, separators=(",", ":")).encode("utf-8"))
+        if encoded_size > TERMINAL_LIST_MAX_ENCODED_BYTES:
+            if selected is None:
+                raise TerminalPageTooLargeError()
+            return selected
+        selected = candidate
+    if selected is None:
+        raise TerminalPageTooLargeError()
+    return selected
