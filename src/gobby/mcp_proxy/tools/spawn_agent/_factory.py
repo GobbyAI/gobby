@@ -6,6 +6,7 @@ and delegates to spawn_agent_impl for execution.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -360,12 +361,15 @@ def create_spawn_agent_registry(
         resolved_parent_session_id = parent_session_id
         if parent_session_id:
             try:
-                resolved_parent_session_id = _resolve_session_id(parent_session_id)
+                resolved_parent_session_id = await asyncio.to_thread(
+                    _resolve_session_id, parent_session_id
+                )
             except ValueError as e:
                 return {"success": False, "error": str(e)}
 
         # Load agent definition body from DB
-        spawn_project_ctx, effective_project_path = _resolve_spawn_project_context(
+        spawn_project_ctx, effective_project_path = await asyncio.to_thread(
+            _resolve_spawn_project_context,
             project_path=project_path,
             parent_session_id=resolved_parent_session_id,
             session_manager=session_manager,
@@ -376,13 +380,15 @@ def create_spawn_agent_registry(
         # agent points parent_session_id at the coordinator it reports to.
         caller_session_id = get_current_session_id()
         default_provider = concrete_provider(
-            spawning_session_provider(
+            await asyncio.to_thread(
+                spawning_session_provider,
                 session_manager,
                 caller_session_id=caller_session_id,
                 parent_session_id=resolved_parent_session_id,
             )
         )
-        agent_body = _load_agent_body(
+        agent_body = await asyncio.to_thread(
+            _load_agent_body,
             agent,
             db,
             project_id=project_id,
@@ -443,7 +449,8 @@ def create_spawn_agent_registry(
                 from gobby.storage.agents import LocalAgentRunManager
 
                 arm = LocalAgentRunManager(db)
-                failed_providers = get_failed_providers_for_task(
+                failed_providers = await asyncio.to_thread(
+                    get_failed_providers_for_task,
                     task_id,
                     arm,
                     classifier=StallClassifier(detection_registry),
@@ -473,7 +480,8 @@ def create_spawn_agent_registry(
                             break
                         skipped_candidate = candidate_name
                         visited.add(candidate_name)
-                        candidate = _load_agent_body(
+                        candidate = await asyncio.to_thread(
+                            _load_agent_body,
                             candidate_name,
                             db,
                             project_id=project_id,
@@ -603,11 +611,10 @@ def create_spawn_agent_registry(
         Returns:
             Dict with dispatched count and per-task results
         """
-        import asyncio
-
         if not suggestions:
             return {"dispatched": 0, "results": []}
-        _, batch_project_path = _resolve_spawn_project_context(
+        _, batch_project_path = await asyncio.to_thread(
+            _resolve_spawn_project_context,
             project_path=None,
             parent_session_id=parent_session_id,
             session_manager=session_manager,
@@ -657,7 +664,9 @@ def create_spawn_agent_registry(
                             f"refusing to spawn {task_ref}"
                         ),
                     }
-                task_desc = _suggestion_task_description(task_manager, task_id)
+                task_desc = await asyncio.to_thread(
+                    _suggestion_task_description, task_manager, task_id
+                )
                 desc_block = f"\n\nDescription:\n{task_desc}" if task_desc else ""
                 prompt = f"Implement task {task_ref}: {task_title}{desc_block}"
 

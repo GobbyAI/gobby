@@ -174,7 +174,7 @@ async def activate_session(
     Raises:
         TmuxSessionError: If the session exists already or creation fails.
     """
-    manager.require_available()
+    await asyncio.to_thread(manager.require_available)
     config = manager.config
 
     if needs_wsl() and cwd:
@@ -218,7 +218,7 @@ async def activate_session(
         for key, val in public_env.items():
             args.extend(["-e", f"{key}={val}"])
         if credential_env:
-            secret_env_file = _write_secret_env_file(credential_env)
+            secret_env_file = await asyncio.to_thread(_write_secret_env_file, credential_env)
             secret_env_file_arg = str(secret_env_file)
             if needs_wsl():
                 secret_env_file_arg = convert_windows_path_to_wsl(secret_env_file_arg)

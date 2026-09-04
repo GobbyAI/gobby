@@ -7,6 +7,7 @@ spawn_executor._runtime_spawn.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -112,7 +113,7 @@ async def _prepare_provider_sandbox(
     config = _sandbox_config_for_spawn(request.sandbox_config, env)
     if config is None:
         launch = SandboxLaunch(backend="provider-native", enforced=False)
-        _record_actual_sandbox_enforcement(request, spawn_context, launch)
+        await asyncio.to_thread(_record_actual_sandbox_enforcement, request, spawn_context, launch)
         return launch
     resolver = None
     if config.enabled and config.backend == "provider-native":
@@ -135,7 +136,7 @@ async def _prepare_provider_sandbox(
     except (OSError, ValueError, SrtRuntimeError) as exc:
         error = f"Sandbox startup failed closed for {provider}: {exc}"
         if request.run_manager is not None:
-            request.run_manager.fail(spawn_context.agent_run_id, error)
+            await asyncio.to_thread(request.run_manager.fail, spawn_context.agent_run_id, error)
         return SpawnResult(
             success=False,
             run_id=spawn_context.agent_run_id,
@@ -144,7 +145,7 @@ async def _prepare_provider_sandbox(
             error=error,
         )
     env.update(launch.provider_env)
-    _record_actual_sandbox_enforcement(request, spawn_context, launch)
+    await asyncio.to_thread(_record_actual_sandbox_enforcement, request, spawn_context, launch)
     return launch
 
 
@@ -208,7 +209,8 @@ async def _prepare_managed_code_index(
             if request.session_manager is not None:
                 from gobby.workflows.state_manager import SessionVariableManager
 
-                SessionVariableManager(request.session_manager._storage.db).merge_variables(
+                await asyncio.to_thread(
+                    SessionVariableManager(request.session_manager._storage.db).merge_variables,
                     spawn_context.session_id,
                     request.initial_variables,
                 )
@@ -261,7 +263,8 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
     cmd.extend(launch.provider_args)
     if request.prompt:
         cmd.append(request.prompt)
-    _record_resume_launch_details(
+    await asyncio.to_thread(
+        _record_resume_launch_details,
         request,
         agent_run_id=spawn_context.agent_run_id,
         sandbox_args=launch.provider_args,
@@ -271,7 +274,7 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
         strict_mcp=strict_mcp,
         sandbox_launch=launch,
     )
-    pre_approve_directory("claude", request.cwd)
+    await asyncio.to_thread(pre_approve_directory, "claude", request.cwd)
     return ProviderSpawnPlan(
         command=cmd,
         env=env,
@@ -310,7 +313,8 @@ async def prepare_qwen_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spawn
         reasoning_effort=request.effective_reasoning_effort,
         sandbox_args=launch.provider_args or None,
     )
-    _record_resume_launch_details(
+    await asyncio.to_thread(
+        _record_resume_launch_details,
         request,
         agent_run_id=spawn_context.agent_run_id,
         sandbox_args=launch.provider_args,
@@ -318,7 +322,7 @@ async def prepare_qwen_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spawn
         env=env,
         sandbox_launch=launch,
     )
-    pre_approve_directory("qwen", request.cwd)
+    await asyncio.to_thread(pre_approve_directory, "qwen", request.cwd)
     return ProviderSpawnPlan(
         command=cmd,
         env=env,
@@ -358,7 +362,8 @@ async def prepare_grok_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spawn
         reasoning_effort=request.effective_reasoning_effort,
         sandbox_args=launch.provider_args or None,
     )
-    _record_resume_launch_details(
+    await asyncio.to_thread(
+        _record_resume_launch_details,
         request,
         agent_run_id=spawn_context.agent_run_id,
         sandbox_args=launch.provider_args,
@@ -366,7 +371,7 @@ async def prepare_grok_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spawn
         env=env,
         sandbox_launch=launch,
     )
-    pre_approve_directory("grok", request.cwd)
+    await asyncio.to_thread(pre_approve_directory, "grok", request.cwd)
     return ProviderSpawnPlan(
         command=cmd,
         env=env,
@@ -418,7 +423,8 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         sandbox_args=launch.provider_args or None,
         config_overrides=config_overrides,
     )
-    _record_resume_launch_details(
+    await asyncio.to_thread(
+        _record_resume_launch_details,
         request,
         agent_run_id=spawn_context.agent_run_id,
         sandbox_args=launch.provider_args,
@@ -427,7 +433,7 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         config_overrides=config_overrides,
         sandbox_launch=launch,
     )
-    pre_approve_directory("codex", request.cwd)
+    await asyncio.to_thread(pre_approve_directory, "codex", request.cwd)
     prompt_text = request.prompt or ""
     agent_prompt = _agent_prompt_prefix(request)
     inject_persona = bool(agent_prompt and request.session_manager is not None)
@@ -474,7 +480,8 @@ async def prepare_droid_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         reasoning_effort=request.effective_reasoning_effort,
         sandbox_args=launch.provider_args or None,
     )
-    _record_resume_launch_details(
+    await asyncio.to_thread(
+        _record_resume_launch_details,
         request,
         agent_run_id=spawn_context.agent_run_id,
         sandbox_args=launch.provider_args,
@@ -482,7 +489,7 @@ async def prepare_droid_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         env=env,
         sandbox_launch=launch,
     )
-    pre_approve_directory("droid", request.cwd)
+    await asyncio.to_thread(pre_approve_directory, "droid", request.cwd)
     return ProviderSpawnPlan(
         command=cmd,
         env=env,
@@ -531,7 +538,8 @@ async def prepare_agy_spawn(request: SpawnRequest) -> ProviderSpawnPlan | SpawnR
         reasoning_effort=request.effective_reasoning_effort,
         sandbox_args=sandbox_args or None,
     )
-    _record_resume_launch_details(
+    await asyncio.to_thread(
+        _record_resume_launch_details,
         request,
         agent_run_id=spawn_context.agent_run_id,
         sandbox_args=sandbox_args,
@@ -539,14 +547,15 @@ async def prepare_agy_spawn(request: SpawnRequest) -> ProviderSpawnPlan | SpawnR
         env=env,
         sandbox_launch=launch,
     )
-    pre_approve_directory("agy", request.cwd)
+    await asyncio.to_thread(pre_approve_directory, "agy", request.cwd)
     if request.initial_variables and request.session_manager is not None:
         storage = getattr(request.session_manager, "_storage", None)
         db = getattr(storage, "db", None)
         if db is not None:
             from gobby.workflows.state_manager import SessionVariableManager
 
-            SessionVariableManager(db).merge_variables(
+            await asyncio.to_thread(
+                SessionVariableManager(db).merge_variables,
                 gobby_session_id,
                 dict(request.initial_variables),
             )

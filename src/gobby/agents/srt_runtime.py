@@ -500,8 +500,8 @@ async def prepare_sandbox_launch(
     prompt_file = env.get("GOBBY_PROMPT_FILE")
     if prompt_file and Path(prompt_file).is_file():
         run_prompt = run_paths.assets / "prompt.md"
-        shutil.copyfile(prompt_file, run_prompt)
-        run_prompt.chmod(0o600)
+        await asyncio.to_thread(shutil.copyfile, prompt_file, run_prompt)
+        await asyncio.to_thread(run_prompt.chmod, 0o600)
         run_environment["GOBBY_PROMPT_FILE"] = str(run_prompt)
     superseded_writes = previous_run_write_paths(env)
     retained_writes = [
@@ -515,7 +515,8 @@ async def prepare_sandbox_launch(
         }
     )
     effective_env = {**env, **run_environment}
-    paths = compute_sandbox_paths(
+    paths = await asyncio.to_thread(
+        compute_sandbox_paths,
         effective_config,
         workspace_path,
         daemon_port,
