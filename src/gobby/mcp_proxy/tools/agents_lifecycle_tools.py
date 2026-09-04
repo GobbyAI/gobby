@@ -266,6 +266,7 @@ def register_agent_lifecycle_tools(
             completion_registry=ctx.completion_registry,
             task_manager=ctx.task_manager,
             session_manager=ctx.session_manager,
+            agent_session_id=agent_session_id,
             effective_status=termination_status,
             signal=signal,
             debug=debug,

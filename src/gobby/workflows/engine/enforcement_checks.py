@@ -61,7 +61,7 @@ class EnforcementCheckMixin:
     """Tool restriction checks for agent and step workflow enforcement."""
 
     instance_manager: AgentStepInstanceManager
-    _pending_terminal_denial: tuple[Any, Any, str] | None = None
+    _pending_terminal_denials: dict[str, tuple[Any, Any, str]]
 
     if TYPE_CHECKING:
         workflow_audit: WorkflowAuditManager
@@ -244,15 +244,14 @@ class EnforcementCheckMixin:
             f"workflow={instance.agent_name}, step={step.name}, "
             f"rule={rule}, target={target}"
         )
-        self._pending_terminal_denial = (run, storage, terminal_error)
+        self._pending_terminal_denials[session_id] = (run, storage, terminal_error)
         return (
             f"{reason}\nThe third identical denial transitioned agent run {run.id} "
             "to a terminal blocked state. The guarded step was not advanced."
         )
 
-    async def _flush_pending_terminal_denial(self) -> None:
-        pending = self._pending_terminal_denial
-        self._pending_terminal_denial = None
+    async def _flush_pending_terminal_denial(self, session_id: str) -> None:
+        pending = self._pending_terminal_denials.pop(session_id, None)
         if pending is None:
             return
         run, storage, terminal_error = pending

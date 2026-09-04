@@ -142,6 +142,7 @@ class RuleEngine(
         self._runner = runner
         self._completion_registry = completion_registry
         self._task_manager = task_manager
+        self._pending_terminal_denials: dict[str, tuple[Any, Any, str]] = {}
         self._config_runtime = config_runtime
         self.skill_script_materializer = skill_script_materializer or get_skill_script_materializer(
             db
@@ -447,7 +448,7 @@ class RuleEngine(
                         session_id,
                         variables,
                     )
-                    await self._flush_pending_terminal_denial()
+                    await self._flush_pending_terminal_denial(session_id)
                     if agent_block is not None:
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         if _is_write_like_event_data(event.data):
@@ -474,7 +475,7 @@ class RuleEngine(
                         session_id,
                         variables,
                     )
-                    await self._flush_pending_terminal_denial()
+                    await self._flush_pending_terminal_denial(session_id)
                     if step_block is not None:
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         # Blocked edit/write never executed — nothing to recover
@@ -610,7 +611,7 @@ class RuleEngine(
                             session_id,
                             variables,
                         )
-                        await self._flush_pending_terminal_denial()
+                        await self._flush_pending_terminal_denial(session_id)
                         if agent_block is not None:
                             variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                             if _is_write_like_event_data(event.data):
@@ -629,7 +630,7 @@ class RuleEngine(
                             session_id,
                             variables,
                         )
-                        await self._flush_pending_terminal_denial()
+                        await self._flush_pending_terminal_denial(session_id)
                         if step_block is not None:
                             variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                             if _is_write_like_event_data(event.data):

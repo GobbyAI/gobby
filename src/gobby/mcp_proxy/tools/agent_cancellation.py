@@ -193,6 +193,7 @@ async def terminate_agent_run(
     completion_registry: Any | None,
     task_manager: Any | None,
     session_manager: Any | None,
+    agent_session_id: str | None = None,
     effective_status: Literal["cancelled", "error"],
     signal: str = "TERM",
     debug: bool = False,
@@ -223,6 +224,7 @@ async def terminate_agent_run(
 
     run_id = str(run.id)
     kill_db = db or agent_run_manager.db
+    resolved_agent_session_id = agent_session_id or run.child_session_id
 
     async def kill_and_deliver() -> dict[str, Any]:
         try:
@@ -259,7 +261,7 @@ async def terminate_agent_run(
                 run_id=run_id,
                 db=kill_db,
                 terminal_id=run.terminal_id,
-                agent_session_id=run.child_session_id,
+                agent_session_id=resolved_agent_session_id,
                 debug=debug,
                 session_manager=session_manager,
                 result=result,

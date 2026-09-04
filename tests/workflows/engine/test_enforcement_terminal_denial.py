@@ -65,7 +65,7 @@ def _terminal_denial_setup(
 
     runner = MagicMock()
     runner.run_storage = run_manager
-    runner.terminal_services = None
+    runner.terminal_services = object()
     runner.agent_lifecycle_monitor = None
     engine = RuleEngine(db, runner=runner)
     engine.instance_manager = MagicMock()
@@ -125,13 +125,14 @@ async def test_third_identical_denial_requests_termination_and_releases_mutex(
             new_callable=AsyncMock,
         ),
     ):
-        await engine._flush_pending_terminal_denial()
+        await engine._flush_pending_terminal_denial(SESSION_ID)
 
     terminate_process.assert_awaited_once()
     termination_call = terminate_process.await_args
     assert termination_call is not None
     assert termination_call.kwargs["close_terminal"] is True
-    assert termination_call.kwargs["terminal_services"] is None
+    assert engine._runner is not None
+    assert termination_call.kwargs["terminal_services"] is engine._runner.terminal_services
     terminal_run = run_manager.get(run_id)
     assert terminal_run is not None
     assert terminal_run.status == "error"
@@ -168,9 +169,28 @@ async def test_immediate_spawn_after_third_denial_acquires_dispatch_mutex(
             new_callable=AsyncMock,
         ),
     ):
-        await engine._flush_pending_terminal_denial()
+        await engine._flush_pending_terminal_denial(SESSION_ID)
 
     immediate_spawn = TaskSpawnLease(db=hub_db, task_id=task_id)
     assert immediate_spawn.acquire() is None
     assert mutex_manager.get_mutex(task_id) is not None
     immediate_spawn.release_unattached()
+
+
+@pytest.mark.asyncio
+async def test_pending_terminal_denials_are_isolated_by_session(
+    hub_db: Any,
+) -> None:
+    engine = RuleEngine(hub_db)
+    first_storage = MagicMock()
+    second_storage = MagicMock()
+    engine._pending_terminal_denials = {
+        "session-one": (MagicMock(id="run-one"), first_storage, "error-one"),
+        "session-two": (MagicMock(id="run-two"), second_storage, "error-two"),
+    }
+
+    await engine._flush_pending_terminal_denial("session-one")
+
+    first_storage.fail.assert_called_once_with("run-one", "error-one")
+    second_storage.fail.assert_not_called()
+    assert "session-two" in engine._pending_terminal_denials
