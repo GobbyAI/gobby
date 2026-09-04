@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import shutil
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -147,6 +149,51 @@ def test_prepare_sandbox_run_paths_copies_writable_isolated_pre_commit_store(
         path.relative_to(source): stat.S_IMODE(path.stat().st_mode)
         for path in (source, *source.rglob("*"))
     }
+
+
+def test_prepare_sandbox_run_paths_uses_apfs_clone_on_macos(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    source = _operator_store(tmp_path / "operator-pre-commit", "cloned")
+    monkeypatch.setenv("PRE_COMMIT_HOME", str(source))
+    monkeypatch.setattr("gobby.agents.sandbox_policy.sys.platform", "darwin")
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> None:
+        commands.append(command)
+        if command[0] == "/bin/cp":
+            shutil.copytree(command[-2], command[-1])
+
+    monkeypatch.setattr("gobby.agents.sandbox_policy.subprocess.run", run)
+
+    _paths, destination = _run_cache(monkeypatch, tmp_path, workspace=workspace)
+
+    assert commands[0] == ["/bin/cp", "-c", "-R", str(source), str(destination)]
+    assert commands[1] == ["/bin/chmod", "-R", "u+rwX", str(destination)]
+    assert (destination / "repoabc" / "hook.py").read_text(encoding="utf-8") == ("hook:cloned\n")
+
+
+def test_prepare_sandbox_run_paths_falls_back_when_apfs_clone_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    source = _operator_store(tmp_path / "operator-pre-commit", "fallback")
+    monkeypatch.setenv("PRE_COMMIT_HOME", str(source))
+    monkeypatch.setattr("gobby.agents.sandbox_policy.sys.platform", "darwin")
+
+    def run(command: list[str], **_kwargs: object) -> None:
+        if command[0] == "/bin/cp":
+            raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr("gobby.agents.sandbox_policy.subprocess.run", run)
+
+    _paths, destination = _run_cache(monkeypatch, tmp_path, workspace=workspace)
+
+    assert (destination / "db.db").read_text(encoding="utf-8") == "database:fallback\n"
+    assert (destination / "repoabc" / "hook.py").read_text(encoding="utf-8") == ("hook:fallback\n")
 
 
 def test_prepare_sandbox_run_paths_uses_xdg_pre_commit_store(

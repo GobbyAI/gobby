@@ -30,6 +30,7 @@ from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
 from gobby.agents.spawn_models import SpawnRequest, resolve_terminal_backend
+from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.providers.version_gate import peek_agy_support
@@ -658,6 +659,8 @@ async def spawn_agent_impl(
                 handler, spawn_config, cleanup=cleanup_isolation_on_failure
             )
             return {"success": False, "error": "Session manager is required to spawn an agent"}
+        phase_timings_ms: dict[str, float] = {}
+        prepare_terminal_started = start_spawn_phase()
         try:
             # Child-session creation, run persistence, credential-role issuance, and
             # grant materialization are synchronous. PostgreSQL pool acquisition alone
@@ -704,6 +707,12 @@ async def spawn_agent_impl(
                 "error": str(exc),
                 "reasoning": reasoning.to_dict(),
             }
+        finally:
+            finish_spawn_phase(
+                phase_timings_ms,
+                "prepare_terminal_spawn",
+                prepare_terminal_started,
+            )
         spawn_identity = {
             "run_id": run_id,
             "worktree_id": isolation_ctx.worktree_id,
@@ -801,6 +810,7 @@ async def spawn_agent_impl(
             code_index_preflight_mode=code_index_mode,
             code_index_api_token=await asyncio.to_thread(read_local_api_token),
             prepared_spawn=prepared_spawn,
+            phase_timings_ms=phase_timings_ms,
             terminal_manager=getattr(runner, "terminal_manager", None),
             terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
             write_coordinator=getattr(runner, "write_coordinator", None),

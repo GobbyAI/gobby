@@ -33,10 +33,11 @@ from gobby.utils.dependency_requirements import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping, Sequence
+    from collections.abc import Iterator, Mapping, MutableMapping, Sequence
 
 from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig
 from gobby.agents.sandbox_resolvers import SandboxResolver, preflight_provider_native_settings
+from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 
 logger = logging.getLogger(__name__)
 
@@ -456,6 +457,7 @@ async def prepare_sandbox_launch(
     websocket_port: int,
     api_base: str | None,
     env: Mapping[str, str],
+    phase_timings_ms: MutableMapping[str, float] | None = None,
 ) -> SandboxLaunch:
     """Resolve and preflight the explicit backend without any fallback."""
     from gobby.agents.sandbox import compute_sandbox_paths
@@ -490,12 +492,20 @@ async def prepare_sandbox_launch(
         _resolve_provider_executable(provider, env) if config.backend == "srt" else None
     )
 
-    run_paths = await asyncio.to_thread(
-        prepare_sandbox_run_paths,
-        run_id,
-        env,
-        workspace=Path(workspace_path),
-    )
+    run_paths_started = start_spawn_phase()
+    try:
+        run_paths = await asyncio.to_thread(
+            prepare_sandbox_run_paths,
+            run_id,
+            env,
+            workspace=Path(workspace_path),
+        )
+    finally:
+        finish_spawn_phase(
+            phase_timings_ms,
+            "prepare_sandbox_run_paths",
+            run_paths_started,
+        )
     run_environment = run_paths.environment(provider)
     prompt_file = env.get("GOBBY_PROMPT_FILE")
     if prompt_file and Path(prompt_file).is_file():
@@ -515,17 +525,21 @@ async def prepare_sandbox_launch(
         }
     )
     effective_env = {**env, **run_environment}
-    paths = await asyncio.to_thread(
-        compute_sandbox_paths,
-        effective_config,
-        workspace_path,
-        daemon_port,
-        gobby_websocket_port=websocket_port,
-        provider=provider,
-        provider_executable=provider_executable,
-        api_base=api_base,
-        env=effective_env,
-    )
+    compute_paths_started = start_spawn_phase()
+    try:
+        paths = await asyncio.to_thread(
+            compute_sandbox_paths,
+            effective_config,
+            workspace_path,
+            daemon_port,
+            gobby_websocket_port=websocket_port,
+            provider=provider,
+            provider_executable=provider_executable,
+            api_base=api_base,
+            env=effective_env,
+        )
+    finally:
+        finish_spawn_phase(phase_timings_ms, "compute_sandbox_paths", compute_paths_started)
     paths.read_paths.append(str(run_paths.assets.resolve()))
     assert_sensitive_path_contract(paths.read_paths, paths.write_paths)
     if config.backend == "provider-native":
@@ -549,12 +563,16 @@ async def prepare_sandbox_launch(
     # and 44ms here warm and at rest -- and takes a blocking file lock first. Inline
     # it made every spawn a multi-hundred-millisecond stall, which is what the
     # loop-lag watchdog caught as _verify_srt_content -> Path.stat (#20841).
-    installation = await asyncio.to_thread(
-        verify_srt_installation,
-        run_id=run_id,
-        provider=provider,
-        policy_hash=policy_hash,
-    )
+    verify_started = start_spawn_phase()
+    try:
+        installation = await asyncio.to_thread(
+            verify_srt_installation,
+            run_id=run_id,
+            provider=provider,
+            policy_hash=policy_hash,
+        )
+    finally:
+        finish_spawn_phase(phase_timings_ms, "verify_srt_installation", verify_started)
     policy_path = run_paths.root / SRT_SETTINGS_RELATIVE_PATH
     violation_path = run_paths.root / SRT_VIOLATIONS_RELATIVE_PATH
     _write_private_file(policy_path, policy_bytes)
@@ -571,6 +589,7 @@ async def prepare_sandbox_launch(
         node_path=str(installation.node),
         runner_path=str(installation.runner),
     )
+    preflight_started = start_spawn_phase()
     try:
         await _preflight_srt(launch, workspace_path, {**env, **launch.provider_env})
     except SrtRuntimeError as exc:
@@ -584,6 +603,8 @@ async def prepare_sandbox_launch(
             },
         )
         raise
+    finally:
+        finish_spawn_phase(phase_timings_ms, "_preflight_srt", preflight_started)
     return launch
 
 

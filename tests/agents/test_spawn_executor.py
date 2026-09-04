@@ -41,6 +41,7 @@ from gobby.agents.spawn_executor_support import (
     _deliver_codex_prompt,
     schedule_codex_prompt_delivery,
 )
+from gobby.agents.spawn_timing import SPAWN_PHASES
 from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals.runtime import Delivered
@@ -153,6 +154,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
         credential: object,
         api_token: str | None,
         identity_env: dict[str, str] | None = None,
+        phase_timings_ms: dict[str, float] | None = None,
     ) -> SimpleNamespace:
         assert cwd == "/isolated"
         assert credential is context.managed_credential
@@ -165,6 +167,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
             "GOBBY_SESSION_ID": "session-id-env",
             "GOBBY_MACHINE_ID": "21000000-0000-4000-8000-000000000001",
         }
+        assert phase_timings_ms is request.phase_timings_ms
         return SimpleNamespace(env={"PATH": "/scoped/bin"})
 
     monkeypatch.setattr(
@@ -552,8 +555,12 @@ class TestExecuteSpawn:
     """Tests for execute_spawn function."""
 
     @pytest.mark.asyncio
-    async def test_terminal_mode_calls_terminal_spawner(self):
+    async def test_terminal_mode_calls_terminal_spawner(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """Test that terminal mode dispatches to TmuxSpawner."""
+        caplog.set_level(logging.INFO, logger="gobby.agents.spawn_executor")
         mock_session_manager = MagicMock()
         request = SpawnRequest(
             prompt="Test",
@@ -599,6 +606,18 @@ class TestExecuteSpawn:
             assert result.success is True
             assert result.pid == 12345
             assert result.child_session_id == "child-session-id"
+
+        timing_records = [
+            record for record in caplog.records if record.getMessage() == "Spawn phase timings"
+        ]
+        assert len(timing_records) == 1
+        timing_record = timing_records[0]
+        assert timing_record.__dict__["run_id"] == "run"
+        assert timing_record.__dict__["provider"] == "claude"
+        timings = cast(dict[str, float], timing_record.__dict__["phase_timings_ms"])
+        assert set(timings) == set(SPAWN_PHASES)
+        assert timings["provider_post_sandbox"] >= 0
+        assert timings["runtime_prepare_spawn"] > 0
 
     @pytest.mark.asyncio
     async def test_execute_spawn_persists_workspace_identity(self) -> None:

@@ -7,6 +7,8 @@ import json
 import os
 import shutil
 import stat
+import subprocess  # nosec B404 # fixed local cp/chmod commands.
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -621,19 +623,41 @@ def _operator_pre_commit_store() -> Path:
 
 
 def _prewarm_pre_commit_store(*, workspace: Path, destination: Path) -> None:
-    """Copy the operator's pre-commit store into one writable run cache."""
+    """Clone the operator's pre-commit store into one writable run cache."""
     if not (workspace / ".pre-commit-config.yaml").is_file():
         return
     source = _operator_pre_commit_store()
     if not source.is_dir():
         return
 
-    shutil.copytree(source, destination, dirs_exist_ok=True)
-    for copied_path in (destination, *destination.rglob("*")):
-        required_mode = stat.S_IRUSR | stat.S_IWUSR
-        if copied_path.is_dir():
-            required_mode |= stat.S_IXUSR
-        copied_path.chmod(stat.S_IMODE(copied_path.stat().st_mode) | required_mode)
+    cloned = False
+    if sys.platform == "darwin":
+        try:
+            subprocess.run(  # nosec B603 # fixed system cp and local paths.
+                ["/bin/cp", "-c", "-R", str(source), str(destination)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            cloned = True
+        except (OSError, subprocess.CalledProcessError):
+            pass
+    if not cloned:
+        shutil.copytree(source, destination, dirs_exist_ok=True)
+
+    try:
+        subprocess.run(  # nosec B603 # fixed system chmod and local path.
+            ["/bin/chmod", "-R", "u+rwX", str(destination)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        for copied_path in (destination, *destination.rglob("*")):
+            required_mode = stat.S_IRUSR | stat.S_IWUSR
+            if copied_path.is_dir():
+                required_mode |= stat.S_IXUSR
+            copied_path.chmod(stat.S_IMODE(copied_path.stat().st_mode) | required_mode)
 
 
 def prepare_sandbox_run_paths(

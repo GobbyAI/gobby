@@ -33,6 +33,7 @@ from gobby.agents.spawn_executor_support import (
     _session_manager_validation_error,
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
+from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.agents.srt_runtime import (
     SandboxLaunch,
     SrtRuntimeError,
@@ -132,6 +133,7 @@ async def _prepare_provider_sandbox(
             websocket_port=websocket_port,
             api_base=request.api_base,
             env=env,
+            phase_timings_ms=request.phase_timings_ms,
         )
     except (OSError, ValueError, SrtRuntimeError) as exc:
         exception_name = type(exc).__name__
@@ -185,6 +187,7 @@ async def _prepare_managed_code_index(
             credential=credential,
             api_token=run_api_token or request.code_index_api_token,
             identity_env=identity_env,
+            phase_timings_ms=request.phase_timings_ms,
         )
         spawn_context.env_vars.update(preflight.env)
         return None
@@ -264,6 +267,7 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
     if isinstance(sandbox_result, SpawnResult):
         return sandbox_result
     launch = sandbox_result
+    post_sandbox_started = start_spawn_phase()
     if launch.enforced and launch.backend == "srt":
         cmd.extend(["--settings", '{"sandbox": {"enabled": false}}'])
     cmd.extend(launch.provider_args)
@@ -281,6 +285,7 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
         sandbox_launch=launch,
     )
     await asyncio.to_thread(pre_approve_directory, "claude", request.cwd)
+    finish_spawn_phase(request.phase_timings_ms, "provider_post_sandbox", post_sandbox_started)
     return ProviderSpawnPlan(
         command=cmd,
         env=env,
@@ -311,6 +316,7 @@ async def prepare_qwen_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spawn
     if isinstance(sandbox_result, SpawnResult):
         return sandbox_result
     launch = sandbox_result
+    post_sandbox_started = start_spawn_phase()
     cmd, _cmd_env = build_cli_command(
         cli="qwen",
         prompt=request.prompt,
@@ -329,6 +335,7 @@ async def prepare_qwen_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spawn
         sandbox_launch=launch,
     )
     await asyncio.to_thread(pre_approve_directory, "qwen", request.cwd)
+    finish_spawn_phase(request.phase_timings_ms, "provider_post_sandbox", post_sandbox_started)
     return ProviderSpawnPlan(
         command=cmd,
         env=env,
@@ -359,6 +366,7 @@ async def prepare_grok_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spawn
     if isinstance(sandbox_result, SpawnResult):
         return sandbox_result
     launch = sandbox_result
+    post_sandbox_started = start_spawn_phase()
     cmd, _cmd_env = build_cli_command(
         cli="grok",
         prompt=request.prompt,
@@ -378,6 +386,7 @@ async def prepare_grok_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spawn
         sandbox_launch=launch,
     )
     await asyncio.to_thread(pre_approve_directory, "grok", request.cwd)
+    finish_spawn_phase(request.phase_timings_ms, "provider_post_sandbox", post_sandbox_started)
     return ProviderSpawnPlan(
         command=cmd,
         env=env,
@@ -408,6 +417,7 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
     if isinstance(sandbox_result, SpawnResult):
         return sandbox_result
     launch = sandbox_result
+    post_sandbox_started = start_spawn_phase()
     config_overrides = [
         *_codex_mcp_config_overrides(
             request.project_path,
@@ -445,6 +455,7 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
     inject_persona = bool(agent_prompt and request.session_manager is not None)
     if inject_persona:
         prompt_text = f"{agent_prompt}\n\n{prompt_text}" if prompt_text else agent_prompt
+    finish_spawn_phase(request.phase_timings_ms, "provider_post_sandbox", post_sandbox_started)
     return ProviderSpawnPlan(
         command=cmd,
         env=env,
@@ -477,6 +488,7 @@ async def prepare_droid_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
     if isinstance(sandbox_result, SpawnResult):
         return sandbox_result
     launch = sandbox_result
+    post_sandbox_started = start_spawn_phase()
     cmd, _cmd_env = build_cli_command(
         cli="droid",
         prompt=request.prompt,
@@ -496,6 +508,7 @@ async def prepare_droid_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         sandbox_launch=launch,
     )
     await asyncio.to_thread(pre_approve_directory, "droid", request.cwd)
+    finish_spawn_phase(request.phase_timings_ms, "provider_post_sandbox", post_sandbox_started)
     return ProviderSpawnPlan(
         command=cmd,
         env=env,
@@ -532,6 +545,7 @@ async def prepare_agy_spawn(request: SpawnRequest) -> ProviderSpawnPlan | SpawnR
     if isinstance(sandbox_result, SpawnResult):
         return sandbox_result
     launch = sandbox_result
+    post_sandbox_started = start_spawn_phase()
     sandbox_args = list(launch.provider_args)
     if launch.enforced and launch.backend == "srt" and "--sandbox=false" not in sandbox_args:
         sandbox_args.append("--sandbox=false")
@@ -565,6 +579,7 @@ async def prepare_agy_spawn(request: SpawnRequest) -> ProviderSpawnPlan | SpawnR
                 gobby_session_id,
                 dict(request.initial_variables),
             )
+    finish_spawn_phase(request.phase_timings_ms, "provider_post_sandbox", post_sandbox_started)
     return ProviderSpawnPlan(
         command=cmd,
         env=env,

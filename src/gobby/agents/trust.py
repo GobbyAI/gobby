@@ -22,6 +22,8 @@ import os
 import re
 import tempfile
 import threading
+import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -430,38 +432,99 @@ def _seed_codex_trust(paths: list[str], result: TrustSeedResult) -> None:
     codex_home = Path.home() / ".codex"
     codex_home.mkdir(parents=True, exist_ok=True)
     config_path = codex_home / "config.toml"
-
-    if config_path.exists():
-        config = _load_toml_config(config_path.read_text(encoding="utf-8"))
-    else:
-        config = tomlkit.document()
-
-    projects = config.get("projects")
-    if not isinstance(projects, Table):
-        projects = tomlkit.table()
-        config["projects"] = projects
-
-    changed = False
+    content = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    parsed = tomllib.loads(content) if content.strip() else {}
+    raw_projects = parsed.get("projects")
+    projects: Mapping[str, Any] = raw_projects if isinstance(raw_projects, Mapping) else {}
+    pending: list[tuple[str, TrustEntryStatus]] = []
     for path in paths:
         entry = projects.get(path)
-        if isinstance(entry, Table):
-            project_config = entry
-        else:
-            project_config = tomlkit.table()
-
-        if project_config.get("trust_level") == "trusted":
+        if isinstance(entry, Mapping) and entry.get("trust_level") == "trusted":
             result.add_entry(store="codex_projects", target=path, status="existing")
             continue
+        pending.append((path, "created" if entry is None else "updated"))
 
-        status: TrustEntryStatus = "created" if entry is None else "updated"
-        project_config["trust_level"] = "trusted"
-        projects[path] = project_config
-        result.add_entry(store="codex_projects", target=path, status=status)
-        changed = True
+    if not pending:
+        return
 
-    if changed:
-        _atomic_write_text(config_path, tomlkit.dumps(config))
+    content = _prune_stale_codex_projects(content, projects, keep_paths=set(paths))
+    direct_append = all(status == "created" for _, status in pending) and not re.search(
+        r"(?m)^\s*projects\s*=", content
+    )
+    if direct_append:
+        for path, status in pending:
+            content = _append_codex_trust_entry(content, path)
+            result.add_entry(store="codex_projects", target=path, status=status)
+        tomllib.loads(content)
+        _atomic_write_text(config_path, content)
         result.add_file_written(config_path)
+        return
+
+    config = _load_toml_config(content)
+    mutable_projects = config.get("projects")
+    if not isinstance(mutable_projects, Table):
+        mutable_projects = tomlkit.table()
+        config["projects"] = mutable_projects
+
+    for path, status in pending:
+        entry = mutable_projects.get(path)
+        project_config = entry if isinstance(entry, Table) else tomlkit.table()
+        project_config["trust_level"] = "trusted"
+        mutable_projects[path] = project_config
+        result.add_entry(store="codex_projects", target=path, status=status)
+
+    _atomic_write_text(config_path, tomlkit.dumps(config))
+    result.add_file_written(config_path)
+
+
+def _append_codex_trust_entry(content: str, path: str) -> str:
+    prefix = f"{content.rstrip()}\n\n" if content.strip() else ""
+    quoted_path = json.dumps(path, ensure_ascii=False)
+    return f'{prefix}[projects.{quoted_path}]\ntrust_level = "trusted"\n'
+
+
+def _prune_stale_codex_projects(
+    content: str,
+    projects: Mapping[str, Any],
+    *,
+    keep_paths: set[str],
+) -> str:
+    generated_roots = (
+        _realpath(str(Path.home() / ".gobby" / "worktrees")),
+        _realpath(tempfile.gettempdir()),
+        _realpath("/private/tmp/gobby-clones"),
+    )
+    stale_paths = {
+        path
+        for path in projects
+        if path not in keep_paths
+        and not _is_windows_absolute_path(path)
+        and not Path(path).exists()
+        and any(_path_is_within(_realpath(path), root) for root in generated_roots)
+    }
+    if not stale_paths:
+        return content
+
+    stale_headers = {f"[projects.{json.dumps(path, ensure_ascii=False)}]" for path in stale_paths}
+    retained: list[str] = []
+    skipping = False
+    for line in content.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped in stale_headers:
+            skipping = True
+            continue
+        if skipping and stripped.startswith("["):
+            skipping = False
+        if not skipping:
+            retained.append(line)
+    return "".join(retained)
+
+
+def _path_is_within(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath((path, root)) == root
+    except ValueError:
+        return False
 
 
 def _load_toml_config(content: str) -> TOMLDocument:

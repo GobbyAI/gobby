@@ -14,7 +14,7 @@ import shutil
 import stat
 import subprocess  # nosec B404 # fixed git argv for local exclude updates.
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,6 +23,7 @@ from uuid import uuid4
 
 from psycopg.conninfo import conninfo_to_dict
 
+from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.config.bootstrap_io import read_bootstrap_yaml
 from gobby.paths import get_gobby_home
 from gobby.runtime_grants.launch import materialize_managed_launch
@@ -275,6 +276,7 @@ async def ensure_isolation_code_index(
     search_smoke_timeout: float = _SEARCH_SMOKE_TIMEOUT,
     api_token: str | None = None,
     identity_env: Mapping[str, str] | None = None,
+    phase_timings_ms: MutableMapping[str, float] | None = None,
 ) -> CodeIndexPreflightResult:
     """Prepare and verify `gcode` access inside an isolated workspace.
 
@@ -319,49 +321,63 @@ async def ensure_isolation_code_index(
     # acquisition, /api/runtime/config (an agent-capability route), and a
     # scoped-role read. `projects` lists every indexed project through an
     # operator-only route, which the run-scoped token cannot call.
-    await _run_gcode(
-        [
-            gcode_command,
-            "status",
-            "--quiet",
-            "--format",
-            "json",
-            "--allow-stale",
-            "--project",
-            str(workspace),
-        ],
-        cwd=workspace,
-        timeout=config_probe_timeout,
-        timeout_code="gcode_index_unavailable_timeout",
-        failure_code="gcode_index_unavailable",
-        env=probe_env,
-    )
-    await _run_gcode(
-        [gcode_command, "index", "--quiet", "--project", str(workspace)],
-        cwd=workspace,
-        timeout=timeout,
-        timeout_code="gcode_index_timeout",
-        failure_code="gcode_index_failed",
-        env=probe_env,
-    )
-    await _run_gcode(
-        [
-            gcode_command,
-            "search-content",
-            "__gobby_code_index_smoke__",
-            "--limit",
-            "1",
-            "--quiet",
-            "--allow-stale",
-            "--project",
-            str(workspace),
-        ],
-        cwd=workspace,
-        timeout=search_smoke_timeout,
-        timeout_code="gcode_search_content_timeout",
-        failure_code="gcode_search_content_failed",
-        env=probe_env,
-    )
+    status_started = start_spawn_phase()
+    try:
+        await _run_gcode(
+            [
+                gcode_command,
+                "status",
+                "--quiet",
+                "--format",
+                "json",
+                "--allow-stale",
+                "--project",
+                str(workspace),
+            ],
+            cwd=workspace,
+            timeout=config_probe_timeout,
+            timeout_code="gcode_index_unavailable_timeout",
+            failure_code="gcode_index_unavailable",
+            env=probe_env,
+        )
+    finally:
+        finish_spawn_phase(phase_timings_ms, "code_index_status", status_started)
+
+    index_started = start_spawn_phase()
+    try:
+        await _run_gcode(
+            [gcode_command, "index", "--quiet", "--project", str(workspace)],
+            cwd=workspace,
+            timeout=timeout,
+            timeout_code="gcode_index_timeout",
+            failure_code="gcode_index_failed",
+            env=probe_env,
+        )
+    finally:
+        finish_spawn_phase(phase_timings_ms, "code_index_index", index_started)
+
+    search_started = start_spawn_phase()
+    try:
+        await _run_gcode(
+            [
+                gcode_command,
+                "search-content",
+                "__gobby_code_index_smoke__",
+                "--limit",
+                "1",
+                "--quiet",
+                "--allow-stale",
+                "--project",
+                str(workspace),
+            ],
+            cwd=workspace,
+            timeout=search_smoke_timeout,
+            timeout_code="gcode_search_content_timeout",
+            failure_code="gcode_search_content_failed",
+            env=probe_env,
+        )
+    finally:
+        finish_spawn_phase(phase_timings_ms, "code_index_search_content", search_started)
     return result
 
 
