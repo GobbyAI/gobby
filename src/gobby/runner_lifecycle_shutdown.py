@@ -15,6 +15,7 @@ from gobby.agents.terminal_delivery import (
     drain_shielded_terminal_deliveries,
     reset_terminal_delivery_offload,
 )
+from gobby.ai._text_generation_adapters import shutdown_cli_text_generation_calls
 from gobby.mcp_proxy.tools.spawn_agent._health import cancel_and_await_health_checks
 from gobby.runner_http_shutdown import (
     begin_uvicorn_http_shutdown,
@@ -780,6 +781,10 @@ async def _run_async_shutdown_cleanup(
     _best_effort_sync(
         shutdown_transcript_evidence_pool,
         "Transcript evidence process pool shutdown",
+    )
+    await _best_effort(
+        shutdown_cli_text_generation_calls,
+        "Internal CLI text generation shutdown",
     )
     preserved_agent_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
     if preserved_agent_pids is None:

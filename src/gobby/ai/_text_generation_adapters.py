@@ -38,6 +38,34 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("gobby.ai.text_generation")
 _CLI_PROCESS_CLEANUP_TIMEOUT_SECONDS = 2.0
+_CLI_TEXT_GENERATION_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+_active_cli_text_generation_tasks: set[asyncio.Task[Any]] = set()
+
+
+async def shutdown_cli_text_generation_calls(
+    *, timeout: float = _CLI_TEXT_GENERATION_SHUTDOWN_TIMEOUT_SECONDS
+) -> None:
+    """Cancel active one-shot CLI calls and let their provider cleanup finish."""
+    current_task = asyncio.current_task()
+    tasks = {
+        task
+        for task in _active_cli_text_generation_tasks
+        if task is not current_task and not task.done()
+    }
+    if not tasks:
+        return
+
+    for task in tasks:
+        task.cancel()
+    _, pending = await asyncio.wait(tasks, timeout=timeout)
+    if pending:
+        logger.warning(
+            "Timed out waiting %.1fs for %d internal CLI text generation call(s) to stop",
+            timeout,
+            len(pending),
+        )
+
+
 _DROID_AUTH_ERROR_HINT = (
     "Droid ran in an isolated temporary home; set FACTORY_API_KEY for headless auth "
     "without reusing your real Droid session state."
@@ -194,33 +222,42 @@ async def _run_cli_text_generation_command(
     env = os.environ.copy()
     env.update(env_overrides)
     env["GOBBY_HOOKS_DISABLED"] = "1"
-    process = await asyncio.create_subprocess_exec(
-        *command,
-        stdin=(asyncio.subprocess.PIPE if stdin_input is not None else asyncio.subprocess.DEVNULL),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=str(neutral_cwd),
-        env=env,
-        start_new_session=True,
-    )
+    owner_task = asyncio.current_task()
+    if owner_task is not None:
+        _active_cli_text_generation_tasks.add(owner_task)
     try:
-        communicate_coro = (
-            process.communicate(input=stdin_input.encode("utf-8"))
-            if stdin_input is not None
-            else process.communicate()
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdin=(
+                asyncio.subprocess.PIPE if stdin_input is not None else asyncio.subprocess.DEVNULL
+            ),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(neutral_cwd),
+            env=env,
+            start_new_session=True,
         )
-        stdout, stderr = await asyncio.wait_for(
-            communicate_coro,
-            timeout=timeout_seconds,
-        )
-    except TimeoutError as exc:
-        await _cleanup_cli_process(provider_name, process, reason="timeout")
-        raise RuntimeError(
-            f"{provider_name} CLI timed out after {timeout_seconds:g}s: {shlex.join(command)}"
-        ) from exc
-    except asyncio.CancelledError:
-        await _cleanup_cli_process(provider_name, process, reason="cancellation")
-        raise
+        try:
+            communicate_coro = (
+                process.communicate(input=stdin_input.encode("utf-8"))
+                if stdin_input is not None
+                else process.communicate()
+            )
+            stdout, stderr = await asyncio.wait_for(
+                communicate_coro,
+                timeout=timeout_seconds,
+            )
+        except TimeoutError as exc:
+            await _cleanup_cli_process(provider_name, process, reason="timeout")
+            raise RuntimeError(
+                f"{provider_name} CLI timed out after {timeout_seconds:g}s: {shlex.join(command)}"
+            ) from exc
+        except asyncio.CancelledError:
+            await _cleanup_cli_process(provider_name, process, reason="cancellation")
+            raise
+    finally:
+        if owner_task is not None:
+            _active_cli_text_generation_tasks.discard(owner_task)
 
     returncode = process.returncode or 0
     stdout_text = _decode(stdout).strip()

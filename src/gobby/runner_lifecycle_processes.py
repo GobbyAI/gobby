@@ -142,6 +142,27 @@ def _live_terminal_session_names(runner: GobbyRunner) -> dict[str, str]:
     return names
 
 
+def _describe_child_process(process: Any, *, root_pid: int) -> str:
+    """Return stable best-effort identity for shutdown diagnostics."""
+    try:
+        name = process.name() or "<unknown>"
+    except Exception:
+        name = "<unavailable>"
+    try:
+        cmdline = " ".join(process.cmdline())[:80] or "<unknown>"
+    except Exception:
+        cmdline = "<unavailable>"
+
+    description = f"pid={process.pid} name={name} cmdline={cmdline!r}"
+    try:
+        parent = process.parent()
+        if parent is not None and parent.pid != root_pid:
+            description += f" parent_pid={parent.pid}"
+    except Exception:
+        pass
+    return description
+
+
 async def _reap_remaining_child_processes(
     timeout: float = 1.0,
     *,
@@ -194,14 +215,27 @@ async def _reap_remaining_child_processes(
 
         if alive:
             logger.warning(
-                "Force-killing %d child process(es) still alive after graceful shutdown",
+                "Force-killing %d child process(es) still alive after graceful shutdown: %s",
                 len(alive),
+                "; ".join(
+                    _describe_child_process(child, root_pid=current_process.pid) for child in alive
+                ),
             )
             for child in alive:
                 try:
                     child.kill()
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
+            _, still_alive = await asyncio.to_thread(psutil.wait_procs, alive, timeout=timeout)
+            if still_alive:
+                logger.error(
+                    "%d child process(es) still alive after force-kill: %s",
+                    len(still_alive),
+                    "; ".join(
+                        _describe_child_process(child, root_pid=current_process.pid)
+                        for child in still_alive
+                    ),
+                )
     except Exception as e:
         logger.warning("Child process reap failed: %s", e)
 
