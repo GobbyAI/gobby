@@ -192,11 +192,10 @@ def build_cli_command(
             command.extend(["--model", model])
         if reasoning_effort and reasoning_effort != "auto" and reasoning_flag == "claude-effort":
             command.extend(["--effort", reasoning_effort])
-        # AGY's TUI rejects positional prompts; only -p/--print,
-        # -i/--prompt-interactive, or stdin deliver one. Terminal spawns stay
-        # interactive after the initial prompt, so use --prompt-interactive.
+        # Autonomous spawns must start without a TUI input event. AGY 1.1.25
+        # documents --print as its non-interactive single-prompt mode.
         if prompt and mode != "interactive":
-            command.extend(["--prompt-interactive", prompt])
+            command.extend(["--print", prompt])
             prompt_consumed = True
 
     # Add sandbox args before prompt (prompt must be last)
