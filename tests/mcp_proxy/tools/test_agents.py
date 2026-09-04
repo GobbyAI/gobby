@@ -823,6 +823,7 @@ class TestStopAgent:
             completion_registry=None,
             task_manager=task_manager,
             message="Agent run-123 cancelled",
+            reap_srt_runner_on_fallback=False,
         )
 
     @pytest.mark.asyncio
@@ -1588,6 +1589,8 @@ class TestEndAgentRun:
             status="success",
         )
         runner.complete_run.return_value = True
+        db_connection = runner.run_storage.db.transaction.return_value.__enter__.return_value
+        db_connection.execute.return_value.fetchone.return_value = None
         completion_registry = MagicMock()
         completion_registry.get_result.return_value = None
         completion_registry.notify = AsyncMock()
@@ -1610,8 +1613,8 @@ class TestEndAgentRun:
         runner.complete_run.assert_called_once_with("run-123", result=None)
         completion_registry.notify.assert_awaited_once_with(
             "run-123",
-            result={"status": "success", "run_id": "run-123"},
-            message="Agent run-123 completed",
+            result={"status": "success", "run_id": "run-123", "dirty_paths": []},
+            message="Agent run-123 completed; dirty_paths=[]",
         )
 
     @pytest.mark.asyncio

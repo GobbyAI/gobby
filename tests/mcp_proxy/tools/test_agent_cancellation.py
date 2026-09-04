@@ -4,21 +4,36 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents.runtime_cleanup import AgentRuntimeCleanupResult
 from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.mcp_proxy.tools.agent_cancellation import (
     stop_agent_run,
     terminalize_cancelled_agent_run,
     terminalize_killed_agent_run,
+    terminate_agent_run,
 )
 from tests.completion_delivery_helpers import DeliveryRegistry, record_removals
 
 pytestmark = pytest.mark.unit
+
+
+def _create_sandbox_roots(gobby_home: Path, run_id: str) -> tuple[Path, Path]:
+    sandbox_root = gobby_home / "run" / "sandbox" / run_id
+    managed_root = gobby_home / "runtime" / "managed-executions" / run_id
+    for root in (sandbox_root, managed_root):
+        root.mkdir(parents=True)
+        (root / "payload").write_bytes(b"sandbox data")
+    violation_log = sandbox_root / "logs" / "violations.jsonl"
+    violation_log.parent.mkdir()
+    violation_log.write_text('{"operation":"write"}\n', encoding="utf-8")
+    return sandbox_root, managed_root
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +45,77 @@ def _stub_srt_runner_reap(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
         reaper,
     )
     return reaper
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("effective_status", ["cancelled", "error"])
+async def test_terminate_agent_run_reaps_sandbox_run_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    effective_status: Literal["cancelled", "error"],
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    run_id = "11111111-1111-4111-8111-111111111111"
+    sandbox_root, managed_root = _create_sandbox_roots(gobby_home, run_id)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+
+    run = SimpleNamespace(
+        id=run_id,
+        status="running",
+        terminal_id=None,
+        child_session_id=None,
+    )
+    runner = MagicMock()
+    runner.get_run.return_value = run
+    runner.cancel_run.return_value = True
+    agent_run_manager = MagicMock()
+    agent_run_manager.db.bounded_transaction.return_value = nullcontext()
+    agent_run_manager.fail.return_value = SimpleNamespace(status="error")
+    runner.run_storage = agent_run_manager
+    kill_agent_process = AsyncMock(return_value={"success": True})
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.agent_cancellation.recover_terminal_agent_task_claim",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "gobby.agents.terminal_delivery.deliver_existing_terminal_run",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "gobby.agents.terminal_delivery.deliver_existing_terminal_run_in_scope",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.agents.cleanup_agent_runtime_state",
+            return_value=AgentRuntimeCleanupResult(),
+        ),
+        patch(
+            "gobby.agents.sandbox_reaper.reap_srt_runner_process_tree",
+            new_callable=AsyncMock,
+            return_value=0,
+        ),
+    ):
+        result = await terminate_agent_run(
+            run=run,
+            runner=runner,
+            agent_run_manager=agent_run_manager,
+            db=None,
+            lifecycle_monitor=None,
+            completion_registry=None,
+            task_manager=None,
+            session_manager=None,
+            effective_status=effective_status,
+            kill_agent_process=kill_agent_process,
+        )
+
+    assert result["success"] is True
+    assert result["status"] == effective_status
+    assert not sandbox_root.exists()
+    assert not managed_root.exists()
+    retained = gobby_home / "logs" / "sandbox-violations" / f"{run_id}.jsonl"
+    assert retained.read_text(encoding="utf-8") == '{"operation":"write"}\n'
 
 
 @pytest.mark.asyncio
@@ -185,7 +271,7 @@ async def test_terminalize_killed_agent_run_error_recovers_claim_and_notifies() 
             task_manager=task_manager,
         )
 
-    assert result == {"status": "error", "workflow_stopped": True}
+    assert result == ({"status": "error", "workflow_stopped": True}, True)
     mock_offload.assert_any_await(
         runner.run_storage.fail,
         "run-123",
@@ -281,6 +367,7 @@ async def test_stop_agent_run_happy_path_call_order() -> None:
         completion_registry=None,
         task_manager=None,
         message="Agent run-123 cancelled",
+        reap_srt_runner_on_fallback=False,
     )
     cleanup_terminal_artifacts.assert_awaited_once_with(
         run_id="run-123",
@@ -290,6 +377,7 @@ async def test_stop_agent_run_happy_path_call_order() -> None:
         debug=False,
         session_manager=None,
         result={"success": True, "terminal_reason": "user_cancelled"},
+        terminal_transition_owned=True,
     )
 
 
@@ -459,6 +547,6 @@ async def test_terminalize_killed_error_shape_delivers_when_fail_reports_none() 
             task_manager=None,
         )
 
-    assert result == {"status": "error", "workflow_stopped": True}
+    assert result == ({"status": "error", "workflow_stopped": True}, False)
     deliver.assert_awaited_once()
     assert deliver.await_args.kwargs["run_id"] == "run-123"
