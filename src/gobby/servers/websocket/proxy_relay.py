@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 from collections import deque
 from dataclasses import dataclass, field
@@ -139,6 +140,7 @@ class ProxyAttachment:
     attachment_id: str
     websocket: Any
     frame: Any
+    encoding: str
     task: asyncio.Task[None] | None = None
 
 
@@ -169,13 +171,11 @@ class ProxyHub:
         attachment_id: str,
         locator: AttachLocator,
         frame: Any,
+        encoding: str,
     ) -> None:
         handshake = getattr(frame, "handshake", None)
         if callable(handshake):
-            # The browser feeds ANSI bytes to its ghostty-vt core; the host's
-            # default semantic frames carry cell grids and map to empty
-            # terminal_output.
-            await handshake(locator, encoding="terminal_ansi")
+            await handshake(locator, encoding=encoding)
         attach = getattr(frame, "attach_terminal", None)
         if callable(attach):
             await attach(locator, reservation_id=None)
@@ -184,6 +184,7 @@ class ProxyHub:
             attachment_id=attachment_id,
             websocket=websocket,
             frame=frame,
+            encoding=encoding,
         )
         self.attachments[attachment_id] = record
         self.by_socket.setdefault(websocket, set()).add(attachment_id)
@@ -286,7 +287,12 @@ class ProxyHub:
         try:
             while True:
                 message = await record.frame.read_message()
-                mapped = _map_host_frame(message, record.terminal_id, record.attachment_id)
+                mapped = _map_host_frame(
+                    message,
+                    record.terminal_id,
+                    record.attachment_id,
+                    record.encoding,
+                )
                 if mapped is None:
                     kind = message.get("type") if isinstance(message, dict) else None
                     if kind in {"error", "terminal_exited"}:
@@ -313,7 +319,7 @@ class ProxyHub:
 
 
 def _map_host_frame(
-    message: dict[str, Any], terminal_id: str, attachment_id: str
+    message: dict[str, Any], terminal_id: str, attachment_id: str, encoding: str
 ) -> dict[str, Any] | None:
     kind = message.get("type")
     if kind == "attach_history":
@@ -328,6 +334,17 @@ def _map_host_frame(
             "total_bytes": int(message.get("total_bytes") or 0),
         }
     if kind in {"terminal", "frame"}:
+        if encoding == "semantic_frame":
+            raw = message.get("raw")
+            if not isinstance(raw, bytes):
+                return None
+            return {
+                "type": "terminal_frame",
+                "terminal_id": terminal_id,
+                "attachment_id": attachment_id,
+                "encoding": "bincode-b64",
+                "payload": base64.b64encode(raw).decode("ascii"),
+            }
         raw = message.get("bytes")
         if isinstance(raw, bytes):
             data = raw.decode("utf-8", errors="replace")

@@ -423,9 +423,11 @@ class NativeTerminalRuntime:
     async def attach_locator(self, terminal: Terminal) -> AttachLocator:
         locator = terminal.locator or {}
         host_id = locator.get("host_terminal_id")
+        directory = self._socket_dir()
         return AttachLocator(
             backend="native",
             frame_host_epoch=str(terminal.host_epoch or self._frame_host_epoch),
+            host_socket=None if directory is None else str(frames_socket_path(directory)),
             host_terminal_id=None if host_id is None else str(host_id),
         )
 

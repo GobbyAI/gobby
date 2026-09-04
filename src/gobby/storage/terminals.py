@@ -143,6 +143,37 @@ class AttachLocator:
     server_pid: int | None = None
     server_start_time: int | None = None
 
+    def is_valid_for_direct(self, backend: str) -> bool:
+        if self.backend != backend or not all(
+            isinstance(value, str) and bool(value)
+            for value in (self.frame_host_epoch, self.host_socket, self.host_terminal_id)
+        ):
+            return False
+        pane = (self.socket_path, self.pane_id, self.server_pid, self.server_start_time)
+        if backend == "native":
+            return all(value is None for value in pane)
+        return (
+            backend == "tmux"
+            and all(isinstance(value, str) and bool(value) for value in pane[:2])
+            and all(isinstance(value, int) and not isinstance(value, bool) for value in pane[2:])
+        )
+
+    def direct_block(self) -> dict[str, object]:
+        pane: dict[str, object] | None = None
+        if self.backend == "tmux":
+            pane = {
+                "socket_path": self.socket_path,
+                "pane_id": self.pane_id,
+                "server_pid": self.server_pid,
+                "server_start_time": self.server_start_time,
+            }
+        return {
+            "host_epoch": self.frame_host_epoch,
+            "frame_socket_path": self.host_socket,
+            "host_terminal_id": self.host_terminal_id,
+            "pane": pane,
+        }
+
 
 @normalize_datetime_model(
     required=("created_at", "updated_at", "attempt_started_at"),

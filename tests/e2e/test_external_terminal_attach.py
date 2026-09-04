@@ -498,6 +498,7 @@ async def _read_until(
 async def _ws_write(
     daemon: DaemonInstance,
     terminal_id: str,
+    locator: AttachLocator,
     payload: str,
 ) -> None:
     token = daemon_token(daemon.gobby_home)
@@ -526,6 +527,17 @@ async def _ws_write(
             parsed = json.loads(raw)
             if parsed.get("type") == "terminal_attach_result" and parsed.get("success"):
                 attachment_id = parsed["attachment_id"]
+                assert parsed["direct"] == {
+                    "host_epoch": locator.frame_host_epoch,
+                    "frame_socket_path": locator.host_socket,
+                    "host_terminal_id": locator.pane_id,
+                    "pane": {
+                        "socket_path": locator.socket_path,
+                        "pane_id": locator.pane_id,
+                        "server_pid": locator.server_pid,
+                        "server_start_time": locator.server_start_time,
+                    },
+                }
                 break
         assert isinstance(attachment_id, str)
         await websocket.send(
@@ -694,7 +706,7 @@ async def test_external_owner_geometry_and_selection_preserved(
         description="discovered pane frames",
     )
     marker = f"IN-{uuid.uuid4().hex[:6]}"
-    await _ws_write(daemon_instance, str(item["id"]), marker + "\r")
+    await _ws_write(daemon_instance, str(item["id"]), locator, marker + "\r")
     wait_for_condition(
         lambda: marker in isolated_tmux.capture(),
         timeout=5.0,

@@ -151,7 +151,8 @@ class TmuxMixin(TerminalWsMixin):
             else None
         )
         target = None if row is None or row.backend != "tmux" else self._tmux_attach_target(row)
-        if target is None or data.get("frame_delivery") == "direct":
+        encoding = data.get("encoding", "terminal_ansi")
+        if target is None or data.get("frame_delivery") == "direct" or encoding != "terminal_ansi":
             await super()._handle_terminal_attach(websocket, data)
             return
         assert row is not None and isinstance(terminal_id, str)
@@ -183,6 +184,7 @@ class TmuxMixin(TerminalWsMixin):
                 "cols": row.cols or 80,
                 "backend": row.backend,
                 "frame_delivery": record.frame_delivery,
+                "direct": None,
                 "lease_generation": registry.generation(terminal_id),
                 "success": True,
             },

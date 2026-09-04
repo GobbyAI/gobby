@@ -221,12 +221,13 @@ def _decode_cursor(reader: _Reader) -> dict[str, Any] | None:
 
 
 def _decode_server(reader: _Reader) -> dict[str, Any]:
+    raw = reader.data
     tag = reader.uvarint()
     if tag == 0:
         return {"type": "welcome", "host_epoch": reader.string()}
     if tag == 1:
         frame = _decode_frame_data_correct(reader)
-        return {"type": "frame", **frame}
+        return {"type": "frame", **frame, "raw": raw}
     if tag == 2:
         return {
             "type": "terminal",
@@ -235,6 +236,7 @@ def _decode_server(reader: _Reader) -> dict[str, Any]:
             "height": reader.uvarint(),
             "full": reader.boolean(),
             "bytes": reader.blob(),
+            "raw": raw,
         }
     if tag == 3:
         return {"type": "graphics", "bytes": reader.blob()}
