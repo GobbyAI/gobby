@@ -122,6 +122,8 @@ def test_latest_definitive_result_per_category_cures_failure() -> None:
         {
             "category": "test",
             "command": "pytest",
+            "core_command": "pytest",
+            "wrapped": False,
             "completed_at": (BASE_TIME + timedelta(seconds=2)).isoformat(),
             "outcome": "success",
             "exit_code": 0,
@@ -152,6 +154,8 @@ def test_latest_runs_lists_every_distinct_command_in_shared_category() -> None:
         {
             "category": "test",
             "command": pytest_command,
+            "core_command": pytest_command,
+            "wrapped": False,
             "completed_at": (BASE_TIME + timedelta(seconds=1)).isoformat(),
             "outcome": "success",
             "exit_code": 0,
@@ -159,9 +163,94 @@ def test_latest_runs_lists_every_distinct_command_in_shared_category() -> None:
         {
             "category": "test",
             "command": quality_command,
+            "core_command": quality_command,
+            "wrapped": False,
             "completed_at": (BASE_TIME + timedelta(seconds=2)).isoformat(),
             "outcome": "success",
             "exit_code": 0,
+        },
+    ]
+
+
+def test_prefixed_success_is_credited_by_core_command() -> None:
+    core_command = "uv run pytest tests/tasks/test_close_checklist.py -q"
+    command = f"cd /repo && DATABASE_URL=postgres://test {core_command}"
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1, command=command),)),
+        has_attributed_edits=True,
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["latest_runs"] == [
+        {
+            "category": "test",
+            "command": command,
+            "core_command": core_command,
+            "wrapped": False,
+            "completed_at": (BASE_TIME + timedelta(seconds=1)).isoformat(),
+            "outcome": "success",
+            "exit_code": 0,
+        }
+    ]
+
+
+def test_wrapped_success_does_not_satisfy_validation_gate() -> None:
+    command = "uv run pytest tests/tasks/test_close_checklist.py -q | tail -1"
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1, command=command),)),
+        has_attributed_edits=True,
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["latest_outcomes"] == {}
+    assert gate.details["latest_runs"] == [
+        {
+            "category": "test",
+            "command": command,
+            "core_command": None,
+            "wrapped": True,
+            "completed_at": (BASE_TIME + timedelta(seconds=1)).isoformat(),
+            "outcome": "success",
+            "exit_code": 0,
+        }
+    ]
+    assert gate.details["uncredited_runs"] == [
+        {"command": command, "reason": "wrapped", "wrapper_reason": "pipeline"}
+    ]
+
+
+def test_uncredited_runs_explain_unknown_wrapped_and_stale_runs() -> None:
+    stale_command = "uv run pytest tests/tasks/test_old.py -q"
+    unknown_command = "uv run pytest tests/tasks/test_unknown.py -q"
+    wrapped_command = "uv run pytest tests/tasks/test_wrapped.py -q && echo done"
+    credited_command = "uv run pytest tests/tasks/test_current.py -q"
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _run(1, command=stale_command),
+                _run(3, outcome="unknown", command=unknown_command),
+                _run(4, command=wrapped_command),
+                _run(5, command=credited_command),
+            ),
+            edits=(_edit(2),),
+        ),
+        has_attributed_edits=True,
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["uncredited_runs"] == [
+        {"command": stale_command, "reason": "stale after a later task edit"},
+        {"command": unknown_command, "reason": "unknown outcome"},
+        {
+            "command": wrapped_command,
+            "reason": "wrapped",
+            "wrapper_reason": "trailing echo",
         },
     ]
 

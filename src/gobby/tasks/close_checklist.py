@@ -80,13 +80,12 @@ def evaluate_validation_commands(
 ) -> CloseGateResult:
     """Evaluate checklist item 9 from transcript-derived validation commands.
 
-    Unknown outcomes are diagnostic only. A task-attributed edit makes every
-    earlier run stale. Among fresh runs, the latest definitive outcome for each
-    validation category wins, so a later clean run cures an earlier failure in
-    the same category. ``latest_runs`` records the latest definitive run for
-    each distinct command (category, command, timestamp, outcome, exit code)
-    so the criteria reviewer can treat them as the authoritative account of
-    what ran.
+    Unknown and wrapped outcomes are diagnostic only. A task-attributed edit
+    makes every earlier run stale. Among credited fresh runs, the latest
+    definitive outcome for each validation category wins, so a later clean run
+    cures an earlier failure in the same category. ``latest_runs`` records the
+    latest definitive run for each distinct core command so the criteria
+    reviewer can treat them as the authoritative account of what ran.
     """
     category = (task_category or "").strip().casefold()
     details = _validation_details(evidence)
@@ -111,12 +110,14 @@ def evaluate_validation_commands(
 
     fresh_runs = _fresh_runs(evidence)
     definitive = [run for run in fresh_runs if run.outcome != "unknown"]
-    attributed = _attribute_compound_failures(definitive)
+    credited = [run for run in definitive if not run.wrapped and run.core_command is not None]
+    attributed = _attribute_compound_failures(credited)
     latest_by_category = _latest_definitive_by_category(attributed)
     latest_by_command: dict[str, TranscriptValidationRun] = {}
-    for run in sorted(attributed, key=lambda item: (item.order, item.completed_at)):
+    for run in sorted(definitive, key=lambda item: (item.order, item.completed_at)):
         if run.categories:
-            latest_by_command[run.command] = run
+            command_key = run.core_command if run.core_command is not None else run.command
+            latest_by_command[command_key] = run
     unresolved = {
         run_category: run
         for run_category, run in latest_by_category.items()
@@ -140,6 +141,8 @@ def evaluate_validation_commands(
             {
                 "category": run.categories[0],
                 "command": run.command,
+                "core_command": run.core_command,
+                "wrapped": run.wrapped,
                 "completed_at": run.completed_at.isoformat(),
                 "outcome": run.outcome,
                 "exit_code": run.exit_code,
@@ -290,9 +293,31 @@ def _validation_details(evidence: TranscriptEvidence) -> dict[str, Any]:
         "sessions": list(evidence.sessions),
         "validation_run_count": len(evidence.validation_runs),
         "unknown_outcome_count": unknown_count,
+        "uncredited_runs": _uncredited_runs(evidence, last_edit_order),
         "last_task_edit_order": last_edit_order,
         "degraded_capabilities": list(evidence.degraded_capabilities),
     }
+
+
+def _uncredited_runs(
+    evidence: TranscriptEvidence,
+    last_edit_order: int | None,
+) -> list[dict[str, object]]:
+    uncredited: list[dict[str, object]] = []
+    for run in sorted(evidence.validation_runs, key=lambda item: (item.order, item.completed_at)):
+        if last_edit_order is not None and run.order <= last_edit_order:
+            uncredited.append({"command": run.command, "reason": "stale after a later task edit"})
+        elif run.wrapped:
+            uncredited.append(
+                {
+                    "command": run.command,
+                    "reason": "wrapped",
+                    "wrapper_reason": run.wrapper_reason,
+                }
+            )
+        elif run.outcome == "unknown":
+            uncredited.append({"command": run.command, "reason": "unknown outcome"})
+    return uncredited
 
 
 def _degraded_message(evidence: TranscriptEvidence) -> str:

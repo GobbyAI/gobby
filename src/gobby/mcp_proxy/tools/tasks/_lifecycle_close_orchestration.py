@@ -187,6 +187,7 @@ async def launch_close_review(
         "manifest_count": evaluation.extra.get("manifest_count"),
         "excerpt_chars": evaluation.extra.get("excerpt_chars"),
         "criteria_review_duration_ms": evaluation.extra.get("criteria_review_duration_ms"),
+        "validation_commands": validation_commands,
     }
 
 

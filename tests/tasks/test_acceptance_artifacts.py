@@ -1188,6 +1188,44 @@ def test_green_run_names_symbol_covers_test() -> None:
     assert not validation_run_covers_test("uv run pytest -q", "4 passed", test)
 
 
+def test_validation_matchers_compare_credited_core_command() -> None:
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    prefixed = TranscriptValidationRun(
+        session_id="session",
+        source="codex",
+        command="cd /repo && GOBBY_TEST_PROTECT=1 pytest tests/test_feature.py::test_feature",
+        categories=("test",),
+        matcher_id="pytest",
+        label="pytest",
+        outcome="success",
+        started_at=datetime(2026, 9, 4, tzinfo=UTC),
+        completed_at=datetime(2026, 9, 4, tzinfo=UTC),
+        order=1,
+    )
+    wrapped = TranscriptValidationRun(
+        session_id="session",
+        source="codex",
+        command="pytest tests/test_feature.py::test_feature | tail -1",
+        categories=("test",),
+        matcher_id="pytest",
+        label="pytest",
+        outcome="success",
+        started_at=datetime(2026, 9, 4, tzinfo=UTC),
+        completed_at=datetime(2026, 9, 4, tzinfo=UTC),
+        order=2,
+    )
+
+    assert validation_run_names_test(prefixed.core_command, prefixed.output, test)
+    assert validation_run_covers_test(prefixed.core_command, prefixed.output, test)
+    assert not validation_run_names_test(wrapped.core_command, wrapped.command, test)
+    assert not validation_run_covers_test(wrapped.core_command, wrapped.command, test)
+
+
 def test_tdd_evidence_rejection_names_run_and_unattributed_symbol() -> None:
     started = datetime(2026, 8, 31, tzinfo=UTC)
     test = AcceptanceTest(

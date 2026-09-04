@@ -279,6 +279,42 @@ async def test_uncommitted_task_edits_passes_when_clean() -> None:
     assert gate.details == {}
 
 
+@pytest.mark.asyncio
+async def test_close_preview_surfaces_uncredited_validation_runs() -> None:
+    command = "uv run pytest tests/memory/test_recall.py -q | tail -1"
+    transcript = TranscriptEvidence(
+        validation_runs=(
+            TranscriptValidationRun(
+                session_id=SESSION_ID,
+                source="claude",
+                command=command,
+                categories=("test",),
+                matcher_id="pytest",
+                label="pytest",
+                outcome="success",
+                started_at=NOW,
+                completed_at=NOW,
+                order=1,
+                exit_code=0,
+            ),
+        ),
+        sessions=(SESSION_ID,),
+    )
+
+    evaluation = await _evaluate(
+        _task(escalated=False),
+        override_justification=None,
+        transcript=transcript,
+        response_detail="concise",
+    )
+
+    response = evaluation.response(preview=True)
+    assert response["error"] == "validation_command_required"
+    assert response["validation_commands"]["uncredited_runs"] == [
+        {"command": command, "reason": "wrapped", "wrapper_reason": "pipeline"}
+    ]
+
+
 def _unresolved_artifacts() -> AcceptanceArtifactResult:
     """Gate 11 output when gcode finds no such test in the evaluated root."""
     return AcceptanceArtifactResult(

@@ -89,19 +89,30 @@ async def test_launch_prompt_carries_gate10_validation_facts(
             {
                 "category": "test",
                 "command": "uv run pytest tests/tasks/ -q",
+                "core_command": "uv run pytest tests/tasks/ -q",
+                "wrapped": False,
                 "completed_at": "2026-09-03T05:10:00+00:00",
                 "outcome": "success",
                 "exit_code": 0,
             }
         ],
+        "uncredited_runs": [
+            {
+                "command": "uv run pytest tests/tasks/ -q | tail -1",
+                "reason": "wrapped",
+                "wrapper_reason": "pipeline",
+            }
+        ],
     }
 
-    await launch_close_review(ctx, evaluation=evaluation, close_arguments=_arguments())
+    result = await launch_close_review(ctx, evaluation=evaluation, close_arguments=_arguments())
 
     launch_prompt = registry.call.await_args.args[1]["prompt"]
     assert "validation_commands=" in launch_prompt
     assert "uv run pytest tests/tasks/ -q" in launch_prompt
     assert "gate 10's authoritative transcript record" in launch_prompt
+    assert result["validation_commands"] == evaluation.extra["validation_commands"]
+    assert result["validation_commands"]["uncredited_runs"][0]["reason"] == "wrapped"
 
 
 @pytest.mark.asyncio
