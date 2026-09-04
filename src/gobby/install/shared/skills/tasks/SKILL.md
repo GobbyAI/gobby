@@ -142,7 +142,10 @@ and closing sessions plus every earlier session that claimed or worked the task,
 each within its own link window — an implementer's red/green run still counts
 after it hands the task to a QA session. A later task-attributed file edit makes earlier validation stale;
 commits preserve it. Shell validation must produce a definitive exit code, so
-follow every yielded cell or PTY session until exit.
+follow every yielded cell or PTY session until exit. Leading `cd <dir> &&`
+chains and `VAR=value` prefixes are credited through their core command; pipes,
+trailing `; echo` or `&& echo`, `||` fallbacks, backgrounding, and subshell,
+`js_repl`, or node wrappers are uncredited.
 
 Use the verification commands from `.gobby/project.json`, scoped to touched
 files and behavior. Code, refactor, and test tasks need a clean test-category

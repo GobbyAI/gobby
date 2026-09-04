@@ -250,9 +250,10 @@ def _find_red_run(
             continue
         if first_non_test_edit is not None and run.order >= first_non_test_edit.order:
             continue
-        if not validation_run_names_test(run.command, run.output, test):
+        core_command = run.core_command
+        if core_command is None or not validation_run_names_test(core_command, run.output, test):
             continue
-        matched, reason = _has_named_red_failure(run.command, run.output, test)
+        matched, reason = _has_named_red_failure(core_command, run.output, test)
         if matched:
             if not require_not_implemented or "NotImplementedError" in (run.output or ""):
                 return run, None
@@ -465,7 +466,7 @@ def _find_green_run(
             or run.order <= max(red.order, after_order)
         ):
             continue
-        if validation_run_covers_test(run.command, run.output, test):
+        if validation_run_covers_test(run.core_command, run.output, test):
             return run
     return None
 

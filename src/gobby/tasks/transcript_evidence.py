@@ -39,12 +39,28 @@ from gobby.storage.session_models import Session
 from gobby.tasks.transcript_evidence_pool import run_in_transcript_evidence_pool
 from gobby.tasks.transcript_outcomes import (
     EvidenceOutcome,
+    classify_validation_command_equivalence,
 )
 from gobby.tasks.transcript_outcomes import (
     extract_outcome as _extract_outcome,
 )
 from gobby.tasks.transcript_outcomes import (
     extract_output as _extract_output,
+)
+from gobby.tasks.transcript_tool_arguments import (
+    extract_command as _extract_command,
+)
+from gobby.tasks.transcript_tool_arguments import (
+    extract_edit_paths as _extract_edit_paths,
+)
+from gobby.tasks.transcript_tool_arguments import (
+    match_task_file as _match_task_file,
+)
+from gobby.tasks.transcript_tool_arguments import (
+    normalize_known_path as _normalize_known_path,
+)
+from gobby.tasks.transcript_tool_arguments import (
+    normalize_tool_name as _tool_basename,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,8 +99,6 @@ _EDIT_TOOLS = {
     "exec",
     "search_replace",
 }
-_COMMAND_KEYS = ("cmd", "command", "script")
-_PATH_KEYS = ("file_path", "target_file", "path", "notebook_path", "TargetFile")
 
 
 @dataclass(frozen=True)
@@ -118,6 +132,15 @@ class TranscriptValidationRun:
     #: categories; ``categories`` above is their union. Empty only for runs
     #: built without classification.
     validation_segments: tuple[TranscriptValidationSegment, ...] = ()
+    core_command: str | None = field(init=False)
+    wrapped: bool = field(init=False)
+    wrapper_reason: str | None = field(init=False)
+
+    def __post_init__(self) -> None:
+        equivalence = classify_validation_command_equivalence(self.command)
+        object.__setattr__(self, "core_command", equivalence.core_command)
+        object.__setattr__(self, "wrapped", equivalence.wrapped)
+        object.__setattr__(self, "wrapper_reason", equivalence.wrapper_reason)
 
 
 @dataclass(frozen=True)
@@ -897,76 +920,6 @@ def _record_edit(
                 tool_name=tool_name,
             )
         )
-
-
-def _match_task_file(path: str, task_files: set[str]) -> str | None:
-    """Map an edit path to a task file, tolerating edits made in another checkout.
-
-    Sessions edit with absolute paths, and a worktree session's paths escape the
-    checkout the close resolves (``../../.gobby/worktrees/...``). A path outside
-    the close root matches the task file it ends with; the longest suffix wins.
-    """
-    if path in task_files:
-        return path
-    if not (os.path.isabs(path) or path.startswith("../")):
-        return None
-    return max(
-        (task_file for task_file in task_files if path.endswith(f"/{task_file}")),
-        key=len,
-        default=None,
-    )
-
-
-def _extract_edit_paths(
-    tool_name: str,
-    arguments: dict[str, Any],
-    repo_path: str,
-) -> set[str]:
-    values: set[str] = set()
-    for key in _PATH_KEYS:
-        value = arguments.get(key)
-        if isinstance(value, str) and value:
-            values.add(_normalize_known_path(value, repo_path))
-    if tool_name in {"apply_patch", "exec"}:
-        raw = arguments.get("raw") or arguments.get("patch") or arguments.get("input")
-        if isinstance(raw, str):
-            if tool_name == "exec":
-                if "tools.apply_patch" not in raw:
-                    return values
-                raw = raw.replace(r"\r", "\r").replace(r"\n", "\n")
-            for line in raw.splitlines():
-                for prefix in ("*** Add File: ", "*** Delete File: ", "*** Update File: "):
-                    if line.startswith(prefix):
-                        values.add(_normalize_known_path(line.removeprefix(prefix), repo_path))
-    return values
-
-
-def _extract_command(arguments: dict[str, Any]) -> str:
-    for key in _COMMAND_KEYS:
-        value = arguments.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return ""
-
-
-def _tool_basename(tool_name: str) -> str:
-    normalized = tool_name.casefold().replace("-", "_")
-    for separator in ("__", ".", "/"):
-        if separator in normalized:
-            normalized = normalized.rsplit(separator, 1)[-1]
-    return normalized
-
-
-def _normalize_known_path(path: str, repo_path: str) -> str:
-    normalized = os.path.normpath(path)
-    if os.path.isabs(normalized):
-        try:
-            normalized = os.path.relpath(normalized, repo_path)
-        except ValueError:
-            pass
-    while normalized.startswith(f".{os.sep}"):
-        normalized = normalized[2:]
-    return normalized.replace(os.sep, "/")
 
 
 def _inside_window(timestamp: datetime, window_start: datetime | None) -> bool:

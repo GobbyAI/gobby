@@ -601,6 +601,7 @@ async def _evaluate_close(
             item=10,
         )
     evaluation.gates.append(command_gate)
+    evaluation.extra["validation_commands"] = command_gate.details
     if not command_gate.passed:
         evaluation.error = "validation_command_required"
         evaluation.message = command_gate.message

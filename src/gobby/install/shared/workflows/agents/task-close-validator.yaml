@@ -2,7 +2,7 @@ name: task-close-validator
 description: |
   Taskless read-only validator for close reviews whose complete evidence exceeds
   the one-shot prompt limit.
-version: "1.6"
+version: "1.7"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -49,13 +49,15 @@ prompts:
     workflow, review, agent, or service state.
 
     The launch prompt's validation_commands facts are gate 10's transcript-derived
-    record of the validation commands the task sessions ran after the final task
-    edit; latest_runs names the winning run per category with its command,
-    completed_at timestamp, outcome, and exit code. That record is authoritative:
-    a criterion naming a validation command is satisfied on the command side by a
-    success run of that exact command there. Never require a log, receipt, or
-    other file committed to the repository as proof of a command run, never ask
-    for a run to be repeated, and never reject a criterion because your own
+    record of the validation commands the task sessions ran. A criterion naming a
+    validation command is satisfied on the command side by an unwrapped success
+    run whose core_command equals that command. latest_runs retains each verbatim
+    command and states core_command and wrapped; uncredited_runs names commands
+    excluded for an unknown outcome, a wrapper, or staleness after a later task
+    edit. Name a matching uncredited run when the verdict discusses a command the
+    transcript saw but could not credit. Never require a log, receipt, or
+    other file committed to the repository as proof of a command run, never
+    ask for a run to be repeated, and never reject a criterion because your own
     sandbox cannot reproduce it.
 
     Compare requested and delivered magnitude and shape. Reject stub-shaped

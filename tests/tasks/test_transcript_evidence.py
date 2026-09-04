@@ -1756,6 +1756,58 @@ def _session_run(
     )
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        'cd "/tmp/project root" && cd src && DATABASE_URL="postgres://test db" '
+        "GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -q",
+        "DATABASE_URL=postgres://test GOBBY_TEST_PROTECT=1 "
+        "uv run pytest tests/tasks/test_validation.py -q",
+    ],
+)
+def test_validation_run_core_command_strips_exit_preserving_prefixes(command: str) -> None:
+    run = _session_run("session-1", command, BASE_TIME, 1)
+
+    assert run.command == command
+    assert run.core_command == "uv run pytest tests/tasks/test_validation.py -q"
+    assert run.wrapped is False
+    assert run.wrapper_reason is None
+
+
+@pytest.mark.parametrize(
+    "command,wrapper_reason",
+    [
+        pytest.param("uv run pytest tests/x.py | tail -1", "pipeline", id="pipe"),
+        pytest.param("uv run pytest tests/x.py; echo done", "trailing echo", id="semicolon-echo"),
+        pytest.param("uv run pytest tests/x.py && echo done", "trailing echo", id="and-echo"),
+        pytest.param("uv run pytest tests/x.py || true", "fallback", id="fallback"),
+        pytest.param("uv run pytest tests/x.py &", "backgrounding", id="ampersand"),
+        pytest.param("nohup uv run pytest tests/x.py", "nohup wrapper", id="nohup"),
+        pytest.param("(uv run pytest tests/x.py)", "subshell wrapper", id="subshell"),
+        pytest.param(
+            'js_repl("uv run pytest tests/x.py")',
+            "js_repl wrapper",
+            id="js-repl",
+        ),
+        pytest.param(
+            "node -e \"execSync('uv run pytest tests/x.py')\"",
+            "node wrapper",
+            id="node",
+        ),
+    ],
+)
+def test_validation_run_flags_uncreditable_wrappers(
+    command: str,
+    wrapper_reason: str,
+) -> None:
+    run = _session_run("session-1", command, BASE_TIME, 1)
+
+    assert run.command == command
+    assert run.core_command is None
+    assert run.wrapped is True
+    assert run.wrapper_reason == wrapper_reason
+
+
 def _session_edit(session_id: str, path: str, timestamp: datetime, order: int) -> TranscriptEdit:
     return TranscriptEdit(
         session_id=session_id,

@@ -67,11 +67,13 @@ def build_agentic_review_prompt(
         facts = json.dumps(validation_commands, sort_keys=True, default=str)
         prompt += (
             f"validation_commands={facts}. "
-            "validation_commands is gate 10's authoritative transcript record of the validation "
-            "runs after the final task edit: a success run of a criterion's exact command "
-            "satisfies that command without any committed log or receipt. "
-            "Its latest_runs entries include every distinct command whose latest definitive run "
-            "after the final task edit succeeded. "
+            "validation_commands is gate 10's authoritative transcript record of commands task "
+            "sessions ran: an unwrapped success run satisfies a criterion's "
+            "command when its core_command equals that command, without any committed log or "
+            "receipt. Its latest_runs entries retain the verbatim command and state core_command "
+            "and wrapped. Its uncredited_runs entries name commands seen but excluded because "
+            "their outcome was unknown, they were wrapped, or they were stale after a later edit; "
+            "cite that entry when a verdict names a seen-but-uncredited run. "
         )
     prompt += (
         "Inspect the task, linked commits, exact acceptance tests, deterministic gate facts, "

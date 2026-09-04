@@ -53,10 +53,19 @@ def test_launch_prompt_carries_gate10_validation_runs() -> None:
         "latest_runs": [
             {
                 "category": "test",
-                "command": "uv run pytest tests/tasks/test_validation.py -q",
+                "command": "cd /repo && uv run pytest tests/tasks/test_validation.py -q",
+                "core_command": "uv run pytest tests/tasks/test_validation.py -q",
+                "wrapped": False,
                 "completed_at": "2026-09-03T05:10:00+00:00",
                 "outcome": "success",
                 "exit_code": 0,
+            }
+        ],
+        "uncredited_runs": [
+            {
+                "command": "uv run pytest tests/tasks/test_validation.py -q | tail -1",
+                "reason": "wrapped",
+                "wrapper_reason": "pipeline",
             }
         ],
     }
@@ -74,7 +83,8 @@ def test_launch_prompt_carries_gate10_validation_runs() -> None:
     facts = json.dumps(validation_commands, sort_keys=True, default=str)
     assert f"validation_commands={facts}. " in prompt
     assert "gate 10's authoritative transcript record" in prompt
-    assert "satisfies that command without any committed log or receipt" in prompt
+    assert "core_command equals that command" in prompt
+    assert "cite that entry when a verdict names a seen-but-uncredited run" in prompt
     assert prompt.index("validation_commands=") < prompt.index("Inspect the task")
 
 
@@ -134,14 +144,16 @@ def test_task_close_validator_definition_submits_then_terminates() -> None:
     assert "gobby-agents:end_agent_run" in step["allowed_mcp_tools"]
     assert "gobby-agents:send_message" not in step["allowed_mcp_tools"]
     assert "submit_close_review" in body["prompts"]["agent"]
-    assert body["version"] == "1.6"
+    assert body["version"] == "1.7"
     assert '"required_evidence": null|"complete evidence set"' in body["prompts"]["agent"]
     assert "complete evidence set the next close has to supply" in body["prompts"]["agent"]
     # Gate 10's run record is the authority on command runs; the validator must
     # never demand a committed receipt or its own reproduction instead.
     guidance = body["prompts"]["agent"]
     assert "validation_commands facts are gate 10's transcript-derived" in guidance
-    assert "That record is authoritative:" in guidance
+    assert "success\nrun whose core_command equals that command" in guidance
+    assert "uncredited_runs names commands" in guidance
+    assert "transcript saw but could not credit" in guidance
     assert "other file committed to the repository as proof of a command run" in guidance
     assert "never reject a criterion because your own\nsandbox cannot reproduce it" in guidance
     assert "receipt or artifact that must result" not in guidance

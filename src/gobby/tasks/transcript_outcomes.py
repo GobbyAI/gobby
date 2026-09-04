@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any, Literal
 
+from gobby.config.shell_lexing import ParsedShellCommand, parse_shell_command
 from gobby.sessions.transcript_tool_metadata import extract_result_metadata
 
 EvidenceOutcome = Literal["success", "failure", "unknown"]
@@ -15,6 +18,9 @@ _EXIT_CODE_KEYS = ("exit_code", "exitCode")
 _SUCCESS_STATUSES = {"completed", "ok", "passed", "success", "succeeded"}
 _FAILURE_STATUSES = {"error", "failed", "failure"}
 _OUTPUT_CHAR_LIMIT = 16_000
+_ENV_ASSIGNMENT_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+_SHELL_COMMAND_WRAPPERS = {"bash", "fish", "sh", "zsh"}
+_NODE_WRAPPERS = {"node", "nodejs"}
 
 _RUNNER_FAILURE_PATTERNS = (
     re.compile(r"\b[1-9]\d*[^\S\n]+(?:failed|failures?|errors?)\b", re.IGNORECASE),
@@ -36,6 +42,135 @@ _TEST_FAILURE_PATTERNS = (
     re.compile(r"(?m)^=+ [1-9]\d* errors? in \d"),
     re.compile(r"(?m)^Failing new issues >= \w+: [1-9]\d*\b"),
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationCommandEquivalence:
+    """Criteria-matching view of one verbatim validation command."""
+
+    core_command: str | None
+    wrapped: bool
+    wrapper_reason: str | None
+
+
+def classify_validation_command_equivalence(command: str) -> ValidationCommandEquivalence:
+    """Strip approved prefixes and reject wrappers that can obscure exit status."""
+    core_command = _strip_exit_preserving_prefixes(command)
+    reason = _wrapper_reason(core_command)
+    if reason is not None:
+        return ValidationCommandEquivalence(None, True, reason)
+    return ValidationCommandEquivalence(core_command, False, None)
+
+
+def _strip_exit_preserving_prefixes(command: str) -> str:
+    cursor = _skip_whitespace(command, 0)
+    while (next_cursor := _consume_cd_prefix(command, cursor)) is not None:
+        cursor = _skip_whitespace(command, next_cursor)
+    while _ENV_ASSIGNMENT_PREFIX.match(command, cursor):
+        word_end = _shell_word_end(command, cursor)
+        if word_end is None or word_end >= len(command) or not command[word_end].isspace():
+            break
+        cursor = _skip_whitespace(command, word_end)
+    return command[cursor:].strip()
+
+
+def _consume_cd_prefix(command: str, cursor: int) -> int | None:
+    if not command.startswith("cd", cursor):
+        return None
+    name_end = cursor + 2
+    if name_end >= len(command) or not command[name_end].isspace():
+        return None
+    path_start = _skip_whitespace(command, name_end)
+    path_end = _shell_word_end(command, path_start)
+    if path_end is None:
+        return None
+    operator_start = _skip_whitespace(command, path_end)
+    if not command.startswith("&&", operator_start):
+        return None
+    return operator_start + 2
+
+
+def _shell_word_end(command: str, start: int) -> int | None:
+    cursor = start
+    quote: str | None = None
+    while cursor < len(command):
+        char = command[cursor]
+        if quote is not None:
+            if char == quote:
+                quote = None
+            elif char == "\\" and quote == '"' and cursor + 1 < len(command):
+                cursor += 1
+        elif char in {"'", '"'}:
+            quote = char
+        elif char == "\\" and cursor + 1 < len(command):
+            cursor += 1
+        elif char.isspace() or char in ";&|()":
+            break
+        cursor += 1
+    if cursor == start or quote is not None:
+        return None
+    return cursor
+
+
+def _skip_whitespace(command: str, cursor: int) -> int:
+    while cursor < len(command) and command[cursor].isspace():
+        cursor += 1
+    return cursor
+
+
+def _wrapper_reason(command: str) -> str | None:
+    stripped = command.strip()
+    parsed = parse_shell_command(stripped)
+    if any(operator in {"|", "|&"} for operator in parsed.operators):
+        return "pipeline"
+    if _has_trailing_echo(parsed):
+        return "trailing echo"
+    if "||" in parsed.operators:
+        return "fallback"
+    if "&" in parsed.operators:
+        return "backgrounding"
+    if stripped.startswith("(") and stripped.endswith(")"):
+        return "subshell wrapper"
+    if stripped.startswith("js_repl("):
+        return "js_repl wrapper"
+
+    executable, arguments = _first_executable(parsed)
+    if executable == "nohup":
+        return "nohup wrapper"
+    if executable in _SHELL_COMMAND_WRAPPERS and any(
+        argument in {"-c", "-lc"} for argument in arguments
+    ):
+        return "subshell wrapper"
+    if executable == "js_repl":
+        return "js_repl wrapper"
+    if executable in _NODE_WRAPPERS:
+        return "node wrapper"
+    return None
+
+
+def _has_trailing_echo(parsed: ParsedShellCommand) -> bool:
+    if not parsed.operators or parsed.operators[-1] not in {";", "&&"}:
+        return False
+    if not parsed.segments or not parsed.segments[-1]:
+        return False
+    return os.path.basename(parsed.segments[-1][0]) == "echo"
+
+
+def _first_executable(parsed: ParsedShellCommand) -> tuple[str, tuple[str, ...]]:
+    if not parsed.segments or not parsed.segments[0]:
+        return "", ()
+    tokens = parsed.segments[0]
+    executable_index = 0
+    while executable_index < len(tokens) and _ENV_ASSIGNMENT_PREFIX.match(tokens[executable_index]):
+        executable_index += 1
+    if executable_index >= len(tokens):
+        return "", ()
+    executable = os.path.basename(tokens[executable_index])
+    arguments = tokens[executable_index + 1 :]
+    if executable == "uv" and len(arguments) >= 2 and arguments[0] == "run":
+        executable = os.path.basename(arguments[1])
+        arguments = arguments[2:]
+    return executable, arguments
 
 
 def extract_output(result: Any) -> tuple[str | None, bool]:
