@@ -451,13 +451,20 @@ def issue_grant_postgres(
                 "managed grant requires execution and session identity",
                 code="claims_mismatch",
             )
-        managed = credentials.issue(
-            managed_execution_id=UUID(principal.execution_id),
-            owner_kind="tool_chat" if principal.kind == "tool_chat" else "agent_run",
-            session_id=UUID(principal.session_id),
-            agent_run_id=(UUID(principal.execution_id) if principal.kind == "agent_run" else None),
-            expires_at=expires_at,
-        )
+        execution_id = UUID(principal.execution_id)
+        if credentials.get_live_binding_generation(execution_id) is None:
+            managed = credentials.issue(
+                managed_execution_id=execution_id,
+                owner_kind="tool_chat" if principal.kind == "tool_chat" else "agent_run",
+                session_id=UUID(principal.session_id),
+                agent_run_id=(execution_id if principal.kind == "agent_run" else None),
+                expires_at=expires_at,
+            )
+        else:
+            managed = credentials.rotate(
+                managed_execution_id=execution_id,
+                expires_at=expires_at,
+            )
         return PostgresDirect(
             dsn=managed_bootstrap_dsn(managed.bootstrap_path),
             role_name=managed.role_name,

@@ -13,6 +13,7 @@ from typing import cast
 from uuid import UUID, uuid4
 
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
+from psycopg.errors import UniqueViolation
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.interactive_credentials import (
@@ -184,6 +185,10 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                     generation=generation,
                     reason="issuance-rollback",
                 )
+            if isinstance(error, UniqueViolation):
+                raise CredentialAuthorizationError(
+                    "managed principal binding already exists"
+                ) from None
             if isinstance(error, CredentialIssuanceError):
                 raise
             raise CredentialIssuanceError("managed credential issuance failed") from error
@@ -370,6 +375,56 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
             project_path=_canonical_path(authorized_path),
         )
 
+    def get_live_binding_generation(self, managed_execution_id: UUID) -> int | None:
+        """Return the live generation, reject a dead binding, or report no binding."""
+        candidates = [
+            row
+            for row in self._database.fetchall(
+                f"SELECT * FROM {self.auth_schema}.list_active_principals()"
+            )
+            if str(_row_value(row, "managed_execution_id")) == str(managed_execution_id)
+        ]
+        if not candidates:
+            return None
+        now = datetime.now(UTC)
+        live = [
+            row
+            for row in candidates
+            if isinstance(expires_at := _row_value(row, "expires_at"), datetime)
+            and expires_at > now
+        ]
+        if not live:
+            raise CredentialAuthorizationError("managed principal binding is revoked or expired")
+        try:
+            return max(int(str(_row_value(row, "role_name")).rsplit("_", 1)[1]) for row in live)
+        except (IndexError, ValueError) as error:
+            raise CredentialIssuanceError(
+                "managed principal role has invalid generation"
+            ) from error
+
+    def rotate(
+        self,
+        *,
+        managed_execution_id: UUID,
+        expires_at: datetime,
+    ) -> ManagedCredential:
+        """Rotate one live managed principal for an authenticated refresh."""
+        issued_at = datetime.now(UTC)
+        normalized_expiry = self._validate_expiry(issued_at, expires_at)
+        self.heartbeat()
+        predecessor_generation = self.get_live_binding_generation(managed_execution_id)
+        if predecessor_generation is None:
+            raise CredentialAuthorizationError("managed principal binding does not exist")
+        credential = self._rotate_if_generation(
+            managed_execution_id=managed_execution_id,
+            predecessor_generation=predecessor_generation,
+            issued_at=issued_at,
+            expires_at=normalized_expiry,
+        )
+        if credential is None:
+            raise CredentialIssuanceError("managed credential rotation lost binding race")
+        return credential
+
     def rotate_due(self) -> list[ManagedCredential]:
         self.heartbeat()
         due = self._database.fetchall(
@@ -380,59 +435,80 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         for candidate in due:
             execution_id = cast(UUID, _row_value(candidate, "managed_execution_id"))
             predecessor_generation = int(_row_value(candidate, "credential_generation"))
-            password = secrets.token_urlsafe(32)
             issued_at = datetime.now(UTC)
             expires_at = issued_at + timedelta(minutes=59)
-            successor_generation: int | None = None
-            try:
-                row = self._database.fetchone(
-                    f"""SELECT * FROM {self.auth_schema}.rotate_principal_if_generation(
-                        %s, %s, %s, %s
-                    )""",
-                    (execution_id, predecessor_generation, expires_at, password),
-                )
-                if row is None:
-                    continue
-                role_name = str(_row_value(row, "role_name"))
-                successor_generation = int(_row_value(row, "credential_generation"))
-                scoped_dsn = self._scoped_dsn(role_name, password, execution_id)
-                bootstrap_path = self._materialize_bootstrap(
-                    managed_execution_id=execution_id,
-                    role_name=role_name,
-                    generation=successor_generation,
-                    expires_at=expires_at,
-                    scoped_dsn=scoped_dsn,
-                )
-                credential = ManagedCredential(
-                    managed_execution_id=execution_id,
-                    role_name=role_name,
-                    credential_generation=successor_generation,
-                    issued_at=issued_at,
-                    expires_at=expires_at,
-                    bootstrap_path=bootstrap_path,
-                )
-            except Exception as error:
-                if successor_generation is not None:
-                    self.revoke(
-                        execution_id,
-                        generation=successor_generation,
-                        reason="rotation-rollback",
-                    )
-                    self._database.fetchone(
-                        f"SELECT {self.auth_schema}.cancel_principal_rotation(%s, %s, %s)",
-                        (execution_id, predecessor_generation, successor_generation),
-                    )
-                raise CredentialIssuanceError("managed credential rotation failed") from error
-            finally:
-                password = ""
-
-            self.revoke(
-                execution_id,
-                generation=predecessor_generation,
-                reason="rotation-predecessor",
+            credential = self._rotate_if_generation(
+                managed_execution_id=execution_id,
+                predecessor_generation=predecessor_generation,
+                issued_at=issued_at,
+                expires_at=expires_at,
             )
-            rotated_credentials.append(credential)
+            if credential is not None:
+                rotated_credentials.append(credential)
         return rotated_credentials
+
+    def _rotate_if_generation(
+        self,
+        *,
+        managed_execution_id: UUID,
+        predecessor_generation: int,
+        issued_at: datetime,
+        expires_at: datetime,
+    ) -> ManagedCredential | None:
+        password = secrets.token_urlsafe(32)
+        successor_generation: int | None = None
+        try:
+            row = self._database.fetchone(
+                f"""SELECT * FROM {self.auth_schema}.rotate_principal_if_generation(
+                    %s, %s, %s, %s
+                )""",
+                (managed_execution_id, predecessor_generation, expires_at, password),
+            )
+            if row is None:
+                return None
+            role_name = str(_row_value(row, "role_name"))
+            successor_generation = int(_row_value(row, "credential_generation"))
+            scoped_dsn = self._scoped_dsn(role_name, password, managed_execution_id)
+            bootstrap_path = self._materialize_bootstrap(
+                managed_execution_id=managed_execution_id,
+                role_name=role_name,
+                generation=successor_generation,
+                expires_at=expires_at,
+                scoped_dsn=scoped_dsn,
+            )
+            credential = ManagedCredential(
+                managed_execution_id=managed_execution_id,
+                role_name=role_name,
+                credential_generation=successor_generation,
+                issued_at=issued_at,
+                expires_at=expires_at,
+                bootstrap_path=bootstrap_path,
+            )
+        except Exception as error:
+            if successor_generation is not None:
+                self.revoke(
+                    managed_execution_id,
+                    generation=successor_generation,
+                    reason="rotation-rollback",
+                )
+                self._database.fetchone(
+                    f"SELECT {self.auth_schema}.cancel_principal_rotation(%s, %s, %s)",
+                    (
+                        managed_execution_id,
+                        predecessor_generation,
+                        successor_generation,
+                    ),
+                )
+            raise CredentialIssuanceError("managed credential rotation failed") from error
+        finally:
+            password = ""
+
+        self.revoke(
+            managed_execution_id,
+            generation=predecessor_generation,
+            reason="rotation-predecessor",
+        )
+        return credential
 
     def list_active(self) -> list[dict[str, object]]:
         """Return active scoped-role metadata without credential material."""
