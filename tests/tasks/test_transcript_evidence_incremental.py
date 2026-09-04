@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import gzip
 import json
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from gobby.config.validation_detection import default_validation_detection_config
+from gobby.config.validation_detection import (
+    ValidationDetectionConfig,
+    default_validation_detection_config,
+)
 from gobby.sessions.transcripts.base import RawLine
+from gobby.storage.session_models import Session
 from gobby.tasks import transcript_evidence
 from gobby.tasks.transcript_evidence import (
     TranscriptEvidence,
@@ -29,6 +33,8 @@ from tests.tasks.test_transcript_evidence import (
 )
 
 DETECTION = default_validation_detection_config()
+_ORIGINAL_DERIVE_SYNC = transcript_evidence._derive_transcript_evidence_sync
+_POOLED_PARSE_COUNTS_FILE = "pooled-parse-counts.jsonl"
 
 
 @pytest.fixture(autouse=True)
@@ -51,7 +57,50 @@ def parse_counts(monkeypatch: pytest.MonkeyPatch) -> list[int]:
         return original(material, window_start)
 
     monkeypatch.setattr(transcript_evidence, "select_window_raw_lines", counting)
+
+    async def run_inline(function: Any, /, *args: Any) -> Any:
+        return function(*args)
+
+    monkeypatch.setattr(transcript_evidence, "run_in_transcript_evidence_pool", run_inline)
     return counts
+
+
+def _derive_and_record_parse_counts(
+    session: Session,
+    window_start: datetime | None,
+    detection_config: ValidationDetectionConfig,
+    task_edited_files: set[str],
+    repo_path: str,
+    archive_dir: str | None,
+    local_machine_id: str,
+    resume: transcript_evidence._EvidenceSnapshot | None,
+) -> tuple[TranscriptEvidence, transcript_evidence._EvidenceSnapshot | None]:
+    """Worker entrypoint that records how many lines reached the real parser."""
+    counts: list[int] = []
+    original = transcript_evidence.select_window_raw_lines
+
+    def counting(lines: Iterable[str], window_start: datetime | None) -> Iterator[RawLine]:
+        material = list(lines)
+        counts.append(len(material))
+        return original(material, window_start)
+
+    transcript_evidence.select_window_raw_lines = counting
+    try:
+        result = _ORIGINAL_DERIVE_SYNC(
+            session,
+            window_start,
+            detection_config,
+            task_edited_files,
+            repo_path,
+            archive_dir,
+            local_machine_id,
+            resume,
+        )
+    finally:
+        transcript_evidence.select_window_raw_lines = original
+    with (Path(repo_path) / _POOLED_PARSE_COUNTS_FILE).open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(counts) + "\n")
+    return result
 
 
 def _append_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
@@ -143,6 +192,55 @@ async def test_second_derivation_parses_only_appended_lines(
     ]
     assert second.validation_runs[: len(first.validation_runs)] == first.validation_runs
     assert second.edits == first.edits
+
+
+async def test_pooled_derivation_keeps_snapshot_resume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transcript = tmp_path / "claude-pooled.jsonl"
+    initial = _claude_tool_pair(
+        command="uv run pytest tests/tasks/test_a.py",
+        call_id="run-1",
+        start=BASE_TIME,
+        result={"exit_code": 0, "stdout": "passed"},
+    )
+    _write_jsonl(transcript, initial)
+    session = _session("claude", transcript)
+    monkeypatch.setattr(
+        transcript_evidence,
+        "_derive_transcript_evidence_sync",
+        _derive_and_record_parse_counts,
+    )
+
+    first = await _derive(session, BASE_TIME, set(), tmp_path)
+    stored = transcript_evidence._load_snapshot(session.id)
+    assert stored is not None
+
+    appended = _claude_tool_pair(
+        command="uv run ruff check src/",
+        call_id="run-2",
+        start=BASE_TIME + timedelta(seconds=30),
+        result={"exit_code": 0, "stdout": "All checks passed!"},
+    )
+    _append_jsonl(transcript, appended)
+    second = await _derive(session, BASE_TIME, set(), tmp_path)
+
+    parse_counts_path = tmp_path / _POOLED_PARSE_COUNTS_FILE
+    recorded = [
+        json.loads(line)
+        for line in parse_counts_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert recorded == [[len(initial)], [len(appended)]]
+    advanced = transcript_evidence._load_snapshot(session.id)
+    assert advanced is not None
+    assert advanced.watermark == transcript.stat().st_size
+    assert advanced.watermark > stored.watermark
+    assert second.validation_runs[: len(first.validation_runs)] == first.validation_runs
+    assert [run.command for run in second.validation_runs] == [
+        "uv run pytest tests/tasks/test_a.py",
+        "uv run ruff check src/",
+    ]
 
 
 async def test_repeat_derivation_of_an_unchanged_file_parses_nothing(

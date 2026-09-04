@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import gzip
 import json
+import logging
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.storage.session_models import Session
-from gobby.tasks import transcript_outcomes
+from gobby.tasks import transcript_evidence_pool, transcript_outcomes
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
@@ -33,6 +37,18 @@ from gobby.tasks.transcript_outcomes import extract_output as _extract_output
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
+_LARGE_TRANSCRIPT_MIN_BYTES = 20 * 1024 * 1024
+
+
+class _BrokenExecutor:
+    def __init__(self) -> None:
+        self.shutdown_args: tuple[bool, bool] | None = None
+
+    def submit(self, function: Any, /, *args: Any, **kwargs: Any) -> Any:
+        raise BrokenProcessPool("worker exited")
+
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        self.shutdown_args = (wait, cancel_futures)
 
 
 def test_validation_output_is_bounded_with_failure_edges_preserved() -> None:
@@ -45,6 +61,40 @@ def test_validation_output_is_bounded_with_failure_edges_preserved() -> None:
     assert output.startswith("AssertionError: first")
     assert output.endswith("ImportError: last")
     assert len(output) <= 16_000
+
+
+async def test_process_pool_oserror_falls_back_and_warns_once(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def fail_to_start() -> ProcessPoolExecutor:
+        raise OSError("spawn unavailable")
+
+    monkeypatch.setattr(transcript_evidence_pool, "_get_pool", fail_to_start)
+    monkeypatch.setattr(transcript_evidence_pool, "_fallback_warning_logged", False)
+    with caplog.at_level(logging.WARNING, logger=transcript_evidence_pool.__name__):
+        assert await transcript_evidence_pool.run_in_transcript_evidence_pool(pow, 2, 3) == 8
+        assert await transcript_evidence_pool.run_in_transcript_evidence_pool(pow, 3, 2) == 9
+
+    warnings = [record.message for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "OSError: spawn unavailable" in warnings[0]
+
+
+async def test_broken_process_pool_is_discarded_before_thread_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _BrokenExecutor()
+    executor = cast(ProcessPoolExecutor, fake)
+    monkeypatch.setattr(transcript_evidence_pool, "_pool", executor)
+    monkeypatch.setattr(transcript_evidence_pool, "_get_pool", lambda: executor)
+    monkeypatch.setattr(transcript_evidence_pool, "_fallback_warning_logged", False)
+
+    result = await transcript_evidence_pool.run_in_transcript_evidence_pool(pow, 2, 4)
+
+    assert result == 16
+    assert transcript_evidence_pool._pool is None
+    assert fake.shutdown_args == (False, True)
 
 
 @pytest.fixture(autouse=True)
@@ -2468,3 +2518,66 @@ async def test_edit_outside_every_checkout_without_task_suffix_is_ignored(tmp_pa
     )
 
     assert evidence.edits == ()
+
+
+async def test_large_transcript_derivation_does_not_stall_event_loop(tmp_path: Path) -> None:
+    transcript = tmp_path / "large-claude.jsonl"
+    padding = "validation output " + ("x" * 3_400)
+    records: list[dict[str, Any]] = []
+    for index in range(6_200):
+        records.extend(
+            _claude_tool_pair(
+                command=f"printf filler-{index}",
+                call_id=f"filler-{index}",
+                start=BASE_TIME + timedelta(microseconds=index * 2),
+                result={"exit_code": 0, "stdout": padding},
+            )
+        )
+    validation_command = "uv run pytest tests/tasks/test_large.py -q"
+    records.extend(
+        _claude_tool_pair(
+            command=validation_command,
+            call_id="validation-final",
+            start=BASE_TIME + timedelta(seconds=1),
+            result={"exit_code": 0, "stdout": "1 passed"},
+        )
+    )
+    _write_jsonl(transcript, records)
+    assert transcript.stat().st_size >= _LARGE_TRANSCRIPT_MIN_BYTES
+
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    stop = asyncio.Event()
+    heartbeat_gaps: list[float] = []
+
+    async def heartbeat() -> None:
+        previous = loop.time()
+        started.set()
+        while not stop.is_set():
+            tick = asyncio.Event()
+            timer = loop.call_later(0.05, tick.set)
+            try:
+                await tick.wait()
+            finally:
+                timer.cancel()
+            current = loop.time()
+            heartbeat_gaps.append(current - previous)
+            previous = current
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    await started.wait()
+    try:
+        evidence = await derive_transcript_evidence(
+            _session("claude", transcript),
+            BASE_TIME,
+            default_validation_detection_config(),
+            set(),
+            str(tmp_path),
+        )
+    finally:
+        stop.set()
+        await heartbeat_task
+
+    assert heartbeat_gaps
+    assert max(heartbeat_gaps) < 0.5
+    assert validation_command in [run.command for run in evidence.validation_runs]
