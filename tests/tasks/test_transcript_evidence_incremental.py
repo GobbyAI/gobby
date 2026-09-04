@@ -51,6 +51,11 @@ def parse_counts(monkeypatch: pytest.MonkeyPatch) -> list[int]:
         return original(material, window_start)
 
     monkeypatch.setattr(transcript_evidence, "select_window_raw_lines", counting)
+
+    async def run_inline(function: Any, /, *args: Any) -> Any:
+        return function(*args)
+
+    monkeypatch.setattr(transcript_evidence, "run_in_transcript_evidence_pool", run_inline)
     return counts
 
 
@@ -143,6 +148,45 @@ async def test_second_derivation_parses_only_appended_lines(
     ]
     assert second.validation_runs[: len(first.validation_runs)] == first.validation_runs
     assert second.edits == first.edits
+
+
+async def test_pooled_derivation_keeps_snapshot_resume(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "claude-pooled.jsonl"
+    initial = _claude_tool_pair(
+        command="uv run pytest tests/tasks/test_a.py",
+        call_id="run-1",
+        start=BASE_TIME,
+        result={"exit_code": 0, "stdout": "passed"},
+    )
+    _write_jsonl(transcript, initial)
+    session = _session("claude", transcript)
+
+    first = await _derive(session, BASE_TIME, set(), tmp_path)
+    stored = transcript_evidence._load_snapshot(session.id)
+    assert stored is not None
+    assert stored.parsed_from_offset == 0
+
+    appended = _claude_tool_pair(
+        command="uv run ruff check src/",
+        call_id="run-2",
+        start=BASE_TIME + timedelta(seconds=30),
+        result={"exit_code": 0, "stdout": "All checks passed!"},
+    )
+    _append_jsonl(transcript, appended)
+    second = await _derive(session, BASE_TIME, set(), tmp_path)
+
+    advanced = transcript_evidence._load_snapshot(session.id)
+    assert advanced is not None
+    assert advanced.parsed_from_offset == stored.watermark
+    assert advanced.watermark == transcript.stat().st_size
+    assert advanced.watermark > stored.watermark
+    assert second.validation_runs[: len(first.validation_runs)] == first.validation_runs
+    assert [run.command for run in second.validation_runs] == [
+        "uv run pytest tests/tasks/test_a.py",
+        "uv run ruff check src/",
+    ]
 
 
 async def test_repeat_derivation_of_an_unchanged_file_parses_nothing(

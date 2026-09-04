@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -37,6 +36,7 @@ from gobby.sessions.transcripts.base import (
     raw_lines_from_texts,
 )
 from gobby.storage.session_models import Session
+from gobby.tasks.transcript_evidence_pool import run_in_transcript_evidence_pool
 from gobby.tasks.transcript_outcomes import (
     EvidenceOutcome,
 )
@@ -50,21 +50,13 @@ from gobby.tasks.transcript_outcomes import (
 logger = logging.getLogger(__name__)
 
 # How much transcript before the claim window still reaches the parser.
-#
-# Every consumer drops a record that falls outside the claim window, so lines
-# older than the window can only cost parsing. Measured on this repository's
-# 83 MB / 53k-line session, deriving against a claim made 30 minutes earlier:
-# 420 ms handing the parser every line, 219 ms handing it only the window's.
-# The saving is the parser's own per-line work, and it grows with session
-# length while the window does not (#20866).
+# Lines older than the claim window only cost parsing. On an 83 MB / 53k-line
+# session, filtering cut derivation from 420 ms to 219 ms (#20866).
 #
 # Narrowing is exact for the records themselves — a differential run over that
-# transcript produced identical runs, edits, and degraded capabilities for a
-# 30-minute, a 7-hour, and a whole-session window. The lookback exists for the
-# parser's cross-line state: a tool call whose begin and end straddle the
-# boundary still needs its begin line. Two hours covers any realistic
-# validation command, and a line whose timestamp is absent or not
-# unambiguously UTC is always kept.
+# transcript produced identical evidence for 30-minute, 7-hour, and full-session
+# windows. The lookback preserves cross-line parser state for tool calls that
+# straddle the boundary; absent or non-UTC timestamps are always kept.
 WINDOW_LOOKBACK = timedelta(hours=2)
 
 _UTC_LINE_TIMESTAMP_RE = re.compile(
@@ -268,6 +260,7 @@ class _EvidenceSnapshot:
     runs: tuple[TranscriptValidationRun, ...]
     edits: tuple[TranscriptEdit, ...]
     degraded: tuple[str, ...]
+    parsed_from_offset: int = 0
 
 
 @dataclass(frozen=True)
@@ -397,7 +390,8 @@ async def derive_transcript_evidence(
     archive_dir: str | None = None,
 ) -> TranscriptEvidence:
     """Parse a complete provider transcript and derive close-checklist evidence."""
-    return await asyncio.to_thread(
+    local_machine_id = require_local_session_ownership(session)
+    evidence, snapshot = await run_in_transcript_evidence_pool(
         _derive_transcript_evidence_sync,
         session,
         _coerce_datetime(window_start),
@@ -405,7 +399,12 @@ async def derive_transcript_evidence(
         set(task_edited_files),
         repo_path,
         archive_dir,
+        local_machine_id,
+        _load_snapshot(session.id),
     )
+    if snapshot is not None:
+        _store_snapshot(session.id, snapshot)
+    return evidence
 
 
 def select_window_raw_lines(
@@ -498,29 +497,31 @@ def _derive_transcript_evidence_sync(
     task_edited_files: set[str],
     repo_path: str,
     archive_dir: str | None,
-) -> TranscriptEvidence:
-    paths, attempted_paths = _resolve_transcript_paths(session, archive_dir)
+    local_machine_id: str,
+    resume: _EvidenceSnapshot | None,
+) -> tuple[TranscriptEvidence, _EvidenceSnapshot | None]:
+    paths, attempted_paths = _resolve_transcript_paths(session, archive_dir, local_machine_id)
     if not paths:
         raise TranscriptEvidenceUnavailable(
             f"No transcript was found for {session.source} session {session.ref}.",
             source=session.source,
             attempted_paths=attempted_paths,
         )
-    return merge_transcript_evidence(
-        *(
-            _derive_transcript_path_evidence(
-                session,
-                path,
-                window_start,
-                detection_config,
-                task_edited_files,
-                repo_path,
-                attempted_paths,
-                resume_enabled=index == 0,
-            )
-            for index, path in enumerate(paths)
+    results = tuple(
+        _derive_transcript_path_evidence(
+            session,
+            path,
+            window_start,
+            detection_config,
+            task_edited_files,
+            repo_path,
+            attempted_paths,
+            resume_enabled=index == 0,
+            resume=resume if index == 0 else None,
         )
+        for index, path in enumerate(paths)
     )
+    return merge_transcript_evidence(*(result[0] for result in results)), results[0][1]
 
 
 def _derive_transcript_path_evidence(
@@ -533,12 +534,12 @@ def _derive_transcript_path_evidence(
     attempted_paths: list[str],
     *,
     resume_enabled: bool,
-) -> TranscriptEvidence:
+    resume: _EvidenceSnapshot | None,
+) -> tuple[TranscriptEvidence, _EvidenceSnapshot | None]:
     normalized_task_files = {_normalize_known_path(item, repo_path) for item in task_edited_files}
     fingerprint = _derivation_fingerprint(
         session, window_start, detection_config, normalized_task_files, repo_path
     )
-    resume = _load_snapshot(session.id) if resume_enabled else None
     if resume is not None and (
         resume.fingerprint != fingerprint or resume.transcript_path != path or path.endswith(".gz")
     ):
@@ -598,22 +599,21 @@ def _derive_transcript_path_evidence(
             elif isinstance(record, ParsedToolEvent):
                 _consume_tool_event(state, record)
 
+    snapshot = None
     if resume_enabled and read is not None and not read.has_partial_tail:
-        _store_snapshot(
-            session.id,
-            _EvidenceSnapshot(
-                fingerprint=fingerprint,
-                transcript_path=path,
-                watermark=read.watermark,
-                tail_len=len(read.tail),
-                tail_sha256=hashlib.sha256(read.tail).hexdigest(),
-                parser_state=parser.snapshot_state(),
-                pending=dict(state.pending),
-                order=state.order,
-                runs=tuple(state.runs),
-                edits=tuple(state.edits),
-                degraded=tuple(state.degraded),
-            ),
+        snapshot = _EvidenceSnapshot(
+            fingerprint=fingerprint,
+            transcript_path=path,
+            watermark=read.watermark,
+            tail_len=len(read.tail),
+            tail_sha256=hashlib.sha256(read.tail).hexdigest(),
+            parser_state=parser.snapshot_state(),
+            pending=dict(state.pending),
+            order=state.order,
+            runs=tuple(state.runs),
+            edits=tuple(state.edits),
+            degraded=tuple(state.degraded),
+            parsed_from_offset=resume.watermark if resume is not None else 0,
         )
     logger.debug(
         "Derived close transcript evidence",
@@ -626,20 +626,24 @@ def _derive_transcript_path_evidence(
         },
     )
 
-    return TranscriptEvidence(
-        validation_runs=tuple(state.runs),
-        edits=tuple(state.edits),
-        attempted_paths=tuple(attempted_paths),
-        sessions=(session.id,),
-        degraded_capabilities=tuple(dict.fromkeys(state.degraded)),
+    return (
+        TranscriptEvidence(
+            validation_runs=tuple(state.runs),
+            edits=tuple(state.edits),
+            attempted_paths=tuple(attempted_paths),
+            sessions=(session.id,),
+            degraded_capabilities=tuple(dict.fromkeys(state.degraded)),
+        ),
+        snapshot,
     )
 
 
 def _resolve_transcript_path(
     session: Session,
     archive_dir: str | None,
+    local_machine_id: str | None = None,
 ) -> tuple[str | None, list[str]]:
-    local_machine_id = require_local_session_ownership(session)
+    local_machine_id = local_machine_id or require_local_session_ownership(session)
     attempted: list[str] = []
     if session.transcript_path:
         attempted.append(session.transcript_path)
@@ -668,8 +672,9 @@ def _resolve_transcript_path(
 def _resolve_transcript_paths(
     session: Session,
     archive_dir: str | None,
+    local_machine_id: str,
 ) -> tuple[list[str], list[str]]:
-    primary, attempted = _resolve_transcript_path(session, archive_dir)
+    primary, attempted = _resolve_transcript_path(session, archive_dir, local_machine_id)
     if primary is None:
         return [], attempted
     supplemental = find_supplemental_transcripts_on_disk(session.source, primary)

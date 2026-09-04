@@ -747,6 +747,7 @@ async def _run_async_shutdown_cleanup(
     shutdown_telemetry: Callable[[], None],
 ) -> None:
     """Run bounded asynchronous cleanup before the synchronous finalizers."""
+    from gobby.tasks.transcript_evidence_pool import shutdown_transcript_evidence_pool
     from gobby.telemetry.rule_allow_audit import shutdown_rule_allow_audit
 
     if server is not None and server_task is not None:
@@ -776,6 +777,10 @@ async def _run_async_shutdown_cleanup(
                 lambda: stop(preserve_host=preserve_host),
                 "gterm host stop",
             )
+    _best_effort_sync(
+        shutdown_transcript_evidence_pool,
+        "Transcript evidence process pool shutdown",
+    )
     preserved_agent_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
     if preserved_agent_pids is None:
         logger.warning(
