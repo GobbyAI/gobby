@@ -476,7 +476,14 @@ def issue_grant_postgres(
     except CredentialAuthorizationError as error:
         raise HandshakeRejection(str(error), code="claims_mismatch") from None
     except Exception:
-        logger.exception("grant credential issuance failed", extra={"kind": principal.kind})
+        logger.exception(
+            "grant credential issuance failed",
+            extra={
+                "kind": principal.kind,
+                "execution_id": principal.execution_id,
+                "session_id": principal.session_id,
+            },
+        )
         raise HandshakeRejection(
             _CREDENTIAL_ISSUANCE_FAILED,
             code="credential_issuance_failed",
