@@ -160,6 +160,8 @@ _PASSIVE_WAIT_TOOL_LEAVES = (
     "wait",
 )
 _PASSIVE_WAIT_TOOL_NAMESPACES = ("collaboration", "functions")
+_PASSIVE_SLEEP_COMMAND_RE = re.compile(r"sleep\s+[0-9]+(?:\.[0-9]+)?[smh]?")
+_CODEX_WRITE_STDIN_TOOL_IDENTITIES = frozenset({"write_stdin", "functions_write_stdin"})
 
 
 def _normalize_tool_identity(tool_name: str) -> str:
@@ -178,13 +180,34 @@ def _is_passive_wait_tool(tool_name: str) -> bool:
     return False
 
 
+def _is_passive_wait_call(
+    canonical_tool_name: str,
+    tool_args: dict[str, Any] | None,
+) -> bool:
+    args = tool_args or {}
+    if is_shell_tool(canonical_tool_name):
+        command = args.get("command")
+        if not isinstance(command, str):
+            command = args.get("cmd")
+        if isinstance(command, str) and _PASSIVE_SLEEP_COMMAND_RE.fullmatch(command.strip()):
+            return True
+
+    return (
+        _normalize_tool_identity(canonical_tool_name) in _CODEX_WRITE_STDIN_TOOL_IDENTITIES
+        and args.get("chars") == ""
+    )
+
+
 def _tool_activity_details(
     canonical_tool_name: str,
     tool_args: dict[str, Any] | None,
 ) -> tuple[str, bool]:
     """Resolve the semantic tool beneath an MCP proxy wrapper."""
     effective_tool_name = canonical_tool_name
-    is_passive_wait = _is_passive_wait_tool(canonical_tool_name)
+    is_passive_wait = _is_passive_wait_tool(canonical_tool_name) or _is_passive_wait_call(
+        canonical_tool_name,
+        tool_args,
+    )
     if _is_mcp_proxy_call(canonical_tool_name):
         inner_tool_name = str((tool_args or {}).get("tool_name") or "")
         if inner_tool_name:
