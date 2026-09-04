@@ -238,7 +238,7 @@ async def test_srt_preflight_failure_prevents_tmux_spawn() -> None:
     assert "failed closed" in (result.error or "")
     run_manager.fail.assert_called_once_with(
         "actual-run",
-        "Sandbox startup failed closed for droid: invalid policy",
+        "Sandbox startup failed closed for droid: SrtRuntimeError: invalid policy",
     )
     from tests.agents.test_spawn_executor import _runtime_of
 
