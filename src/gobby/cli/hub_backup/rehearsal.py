@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from gobby.cli.hub_backup._integrity import refuse_symlink_traversal
 from gobby.cli.installers.docker_guard import ensure_docker_allowed
 from gobby.paths import get_gobby_home
+from gobby.runner_pid_file import held_singleton_claim
 from gobby.utils.env import is_test_protect_enabled
 
 PROFILE_ENV = "GOBBY_HUB_REHEARSAL_PROFILE"
@@ -72,7 +73,14 @@ class RehearsalProfile(BaseModel):
             except (OSError, ValueError) as exc:
                 raise click.ClickException("Malformed rehearsal PID file") from exc
             if psutil.pid_exists(pid):
-                raise click.ClickException("Rehearsal requires a daemonless private home")
+                claim = held_singleton_claim()
+                if (
+                    pid != os.getpid()
+                    or claim is None
+                    or claim.role != "maintenance"
+                    or claim.lock_path != pid_file.with_name("gobby.pid.lock")
+                ):
+                    raise click.ClickException("Rehearsal requires a daemonless private home")
 
     def require_private_path(self, path: Path | None, label: str) -> None:
         if path is None or not path.resolve().is_relative_to(Path(self.gobby_home).resolve()):

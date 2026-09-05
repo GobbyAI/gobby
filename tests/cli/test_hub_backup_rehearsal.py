@@ -18,6 +18,8 @@ from click.testing import CliRunner
 
 from gobby.cli import postgres_backup
 from gobby.cli.hub_backup import cli, rehearsal
+from gobby.cli.hub_backup.files_home import maintenance_claim
+from gobby.runner_pid_file import claim_pid_file
 
 hub_maintenance = import_module("gobby.cli.hub_maintenance")
 
@@ -42,6 +44,8 @@ class RehearsalHarness:
         self.path.chmod(0o600)
 
     def run(self, command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if command == ["sysctl", "-n", "kern.boottime"]:
+            return subprocess.CompletedProcess(command, 0, stdout="fixture-boot\n", stderr="")
         self.calls.append(command)
         args = command[1:]
         if args[:2] == ["container", "inspect"]:
@@ -325,6 +329,43 @@ def test_rehearsal_maintenance_never_controls_installed_daemon(
         hub_maintenance._stop_daemon_before_fence(stack.database_url)
     stop.assert_not_called()
     assert pid_file.read_text() == str(os.getpid())
+
+
+def test_profile_accepts_its_held_maintenance_claim_and_rejects_release(
+    stack: RehearsalHarness,
+) -> None:
+    home = stack.path.parent
+    with maintenance_claim(home) as claim:
+        profile = rehearsal.load_rehearsal_profile(stack.database_url)
+        assert profile is not None
+        assert profile.gobby_home == str(home)
+        assert claim.role == "maintenance"
+        assert (home / "gobby.pid").read_text() == str(os.getpid())
+    with pytest.raises(click.ClickException, match="daemonless"):
+        rehearsal.load_rehearsal_profile(stack.database_url)
+
+
+@pytest.mark.parametrize("failure", ["daemon", "foreign_home", "foreign_pid"])
+def test_profile_rejects_other_live_singleton_claims(stack: RehearsalHarness, failure: str) -> None:
+    home = stack.path.parent
+    claim_home = home
+    if failure == "foreign_home":
+        claim_home = home.parent / "another-home"
+        claim_home.mkdir(mode=0o700)
+        (home / "gobby.pid").write_text(str(os.getpid()))
+    claim = claim_pid_file(
+        claim_home / "gobby.pid", role="daemon" if failure == "daemon" else "maintenance"
+    )
+    assert claim is not None
+    try:
+        if failure == "foreign_pid":
+            (home / "gobby.pid").write_text(str(os.getppid()))
+        with pytest.raises(click.ClickException, match="daemonless"):
+            rehearsal.load_rehearsal_profile(stack.database_url)
+        assert stack.calls == []
+        stack.connect.assert_not_called()
+    finally:
+        claim.release()
 
 
 def test_absent_profile_keeps_existing_managed_targets(
