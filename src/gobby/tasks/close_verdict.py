@@ -94,7 +94,16 @@ def parse_close_verdict(
                 entry.get("state"),
                 "satisfied" if satisfied else "gap",
             )
-        if defer_external_criteria and is_external_criterion(criterion):
+        deferred = defer_external_criteria and is_external_criterion(criterion)
+        if state == "pending_external" and not deferred:
+            # Only a spawned-agent close defers Live: criteria; any other close is
+            # the one that judges them, so a deferral there leaves the criterion
+            # unjudged forever (#21760).
+            raise CloseVerdictParseError(
+                f"criterion {index}: pending_external is reserved for Live: criteria "
+                "when the close caller is a spawned agent; report satisfied or gap"
+            )
+        if deferred:
             state = "pending_external"
         if state == "pending_external":
             satisfied = False

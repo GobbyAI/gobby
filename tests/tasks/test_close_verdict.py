@@ -102,6 +102,7 @@ def test_pending_external_state_is_neither_satisfied_nor_a_gap() -> None:
             "feedback": "Implementation criteria passed.",
         },
         ("Live: restart the daemon.",),
+        defer_external_criteria=True,
     )
 
     criterion = verdict.criteria[0]
@@ -136,6 +137,37 @@ def test_spawned_agent_forces_live_criterion_to_pending_external() -> None:
         "satisfied",
     ]
     assert verdict.criteria[0].gap is None
+
+
+def test_pending_external_rejected_for_non_agent_caller() -> None:
+    with pytest.raises(CloseVerdictParseError, match="criterion 1: pending_external"):
+        parse_close_verdict(
+            {
+                "status": "valid",
+                "criteria": [
+                    {"index": 1, "state": "pending_external", "satisfied": False, "gap": None},
+                    {"index": 2, "state": "satisfied", "satisfied": True, "gap": None},
+                ],
+                "feedback": "Live criterion is coordinator-owned.",
+            },
+            ("Live: restart the daemon.", "Focused tests pass."),
+        )
+
+
+def test_pending_external_rejected_for_implementer_owned_criterion() -> None:
+    with pytest.raises(CloseVerdictParseError, match="criterion 2: pending_external"):
+        parse_close_verdict(
+            {
+                "status": "valid",
+                "criteria": [
+                    {"index": 1, "state": "pending_external", "satisfied": False, "gap": None},
+                    {"index": 2, "state": "pending_external", "satisfied": False, "gap": None},
+                ],
+                "feedback": "Deferred everything.",
+            },
+            ("Live: restart the daemon.", "Focused tests pass."),
+            defer_external_criteria=True,
+        )
 
 
 def test_fuzzy_text_matches_when_index_is_missing() -> None:
