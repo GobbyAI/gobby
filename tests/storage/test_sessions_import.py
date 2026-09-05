@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 
 import pytest
 
@@ -194,7 +195,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
 }
 
 
-def _normalized_signature(func: object) -> str:
+def _normalized_signature(func: Callable[..., object]) -> str:
     signature = inspect.signature(func)
     parameters = []
     for parameter in signature.parameters.values():

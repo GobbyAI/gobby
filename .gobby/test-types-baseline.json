@@ -9521,16 +9521,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/storage/test_sessions_import.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 198,
-      "message": "Argument 1 to \"signature\" has incompatible type \"object\"; expected \"Callable[..., Any]\"",
-      "occurrences": 1,
-      "path": "tests/storage/test_sessions_import.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/storage/test_spans.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 7,
