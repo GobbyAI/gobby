@@ -6391,36 +6391,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/servers/routes/test_admin.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 708,
-      "message": "Argument 1 to \"_request_runner_shutdown\" has incompatible type \"SimpleNamespace\"; expected \"HTTPServer\"",
-      "occurrences": 2,
-      "path": "tests/servers/routes/test_admin.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/routes/test_admin.py::::mypy:func-returns-value",
-      "issue_code": "mypy:func-returns-value",
-      "line": 939,
-      "message": "\"append\" of \"list\" does not return a value (it only ever returns None)",
-      "occurrences": 1,
-      "path": "tests/servers/routes/test_admin.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/routes/test_admin.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 59,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 47,
-      "path": "tests/servers/routes/test_admin.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/servers/routes/test_admin_extended.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 15,
