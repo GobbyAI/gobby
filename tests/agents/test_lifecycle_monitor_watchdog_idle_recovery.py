@@ -661,6 +661,55 @@ async def test_fresh_task_complete_usage_limit_promptly_fails_run(
 
 
 @pytest.mark.asyncio
+async def test_resumed_codex_run_ignores_predecessor_terminal_error(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "codex-resumed-after-usage-limit.jsonl"
+    _write_codex_lifecycle_transcript(
+        transcript_path,
+        age_seconds=3600,
+        task_complete_error={
+            "message": "You've hit your usage limit. Account-specific reset details.",
+            "codex_error_info": "usage_limit_exceeded",
+        },
+    )
+    with transcript_path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "type": "session_meta",
+                    "payload": {"id": "resumed-native-session"},
+                }
+            )
+            + "\n"
+        )
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd2184",
+        transcript_path=transcript_path,
+        session_age_seconds=1,
+    )
+
+    with _pane_text(monitor, "❯\n"):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 0
+    updated_run = agent_run_manager.get(run.id)
+    assert updated_run is not None
+    assert updated_run.status == "running"
+    assert updated_run.terminal_reason is None
+    assert updated_run.error is None
+
+
+@pytest.mark.asyncio
 async def test_terminal_provider_error_keeps_closed_task_success_precedence(
     temp_db: HubDatabase,
     session_manager: SessionManager,

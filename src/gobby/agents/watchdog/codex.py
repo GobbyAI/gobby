@@ -46,6 +46,18 @@ class _CodexScanState:
     latest_model_output_line_num: int | None = None
     last_malformed_line_num: int | None = None
 
+    def reset_for_session_boundary(self) -> None:
+        self.tail.clear()
+        self.turn_started_event = None
+        self.latest_turn_event = None
+        self.latest_turn_kind = None
+        self.provider_error_event = None
+        self.provider_error_kind = None
+        self.provider_error_reason = None
+        self.latest_activity_kind = None
+        self.latest_model_output_line_num = None
+        self.last_malformed_line_num = None
+
 
 def _parse_timestamp(value: object) -> datetime | None:
     if not isinstance(value, str):
@@ -99,6 +111,9 @@ def _read_codex_snapshot(
         event_type = data.get("type")
         if not isinstance(event_type, str):
             return ScanVerdict.MALFORMED
+        if event_type == "session_meta":
+            state.reset_for_session_boundary()
+            return ScanVerdict.IGNORED
         if event_type not in {"response_item", "event_msg"}:
             return ScanVerdict.IGNORED
         payload_value = data.get("payload")
