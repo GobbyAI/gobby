@@ -5180,6 +5180,51 @@ class TestStalePendingReaper:
         reap.assert_awaited_once_with()
 
     @pytest.mark.asyncio
+    async def test_check_loop_periodic_sweep_reaps_pending_runs_without_dispatch(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class LifecycleLoopHarness:
+            def __init__(self) -> None:
+                self._running = True
+                self._check_interval = 0.0
+                self._reconciliation_callback = None
+                self._non_task_resume_callback = None
+                self.sweep_arguments: list[tuple[int | None, int | None]] = []
+
+            async def run_acknowledged_stale_sweeps(
+                self,
+                *,
+                running_timeout_minutes: int | None = None,
+                pending_timeout_minutes: int | None = None,
+            ) -> list[str]:
+                self.sweep_arguments.append(
+                    (running_timeout_minutes, pending_timeout_minutes),
+                )
+                self._running = False
+                return ["run-pending"]
+
+            async def _noop(self, *_args: Any, **_kwargs: Any) -> int:
+                return 0
+
+            def __getattr__(self, _name: str) -> Any:
+                return self._noop
+
+        async def no_sleep(_seconds: float) -> None:
+            return None
+
+        monkeypatch.setattr("gobby.agents.lifecycle_monitor.asyncio.sleep", no_sleep)
+        harness = LifecycleLoopHarness()
+
+        await asyncio.wait_for(
+            AgentLifecycleMonitor._check_loop(cast(AgentLifecycleMonitor, harness)),
+            timeout=1.0,
+        )
+
+        assert harness.sweep_arguments == [(30, 60)]
+        assert harness._running is False
+
+    @pytest.mark.asyncio
     async def test_check_loop_iteration_awaits_the_reaper(
         self,
         monitor: AgentLifecycleMonitor,

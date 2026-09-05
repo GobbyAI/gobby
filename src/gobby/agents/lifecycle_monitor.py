@@ -410,6 +410,7 @@ class AgentLifecycleMonitor:
                     try:
                         cleaned = await self.run_acknowledged_stale_sweeps(
                             running_timeout_minutes=30,
+                            pending_timeout_minutes=60,
                         )
                         if cleaned:
                             logger.info("Cleaned up %s stale agent runs", len(cleaned))
