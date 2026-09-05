@@ -122,7 +122,6 @@ _GRANT_ROUTES: tuple[GrantRoute, ...] = (
         True,
         RequiredCapability(name="audio_transcribe", mode="daemon"),
     ),
-    GrantRoute("GET", "/api/wiki/code/status", False, None),
     GrantRoute(
         "POST",
         "/api/code-index/graph/clear",

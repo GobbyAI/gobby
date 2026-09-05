@@ -1023,7 +1023,6 @@ class TestSessionStartPreCreatedSession:
                 {
                     "_agent_context_injected": False,
                     "_agent_context_rehydrate_pending": True,
-                    "wiki_overview_injected": False,
                 },
             )
             in mock_svm.merge_variables.call_args_list
@@ -1098,7 +1097,6 @@ class TestSessionStartPreCreatedSession:
                 {
                     "_agent_context_injected": False,
                     "_agent_context_rehydrate_pending": True,
-                    "wiki_overview_injected": False,
                 },
             )
             in mock_svm.merge_variables.call_args_list

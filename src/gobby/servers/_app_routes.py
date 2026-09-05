@@ -59,8 +59,6 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_variable_definitions_router,
         create_voice_router,
         create_webhooks_router,
-        create_wiki_code_router,
-        create_wiki_router,
     )
     from gobby.servers.routes.auth import create_auth_router
 
@@ -107,7 +105,5 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_traces_router(server))
     app.include_router(create_metrics_router(server))
     app.include_router(create_observations_router(server))
-    app.include_router(create_wiki_code_router(server))
-    app.include_router(create_wiki_router(server))
 
     app.include_router(create_communications_router(server))

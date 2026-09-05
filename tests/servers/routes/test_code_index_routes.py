@@ -23,7 +23,6 @@ from gobby.code_index.gcode_gateway import (
 )
 from gobby.code_index.models import IndexedProject, Symbol
 from gobby.config.code_index import CodeIndexConfig
-from gobby.config.wiki import WikiConfig
 from gobby.servers.routes.code_index import create_code_index_router
 
 pytestmark = pytest.mark.unit
@@ -63,9 +62,7 @@ def _make_project_row(project_id: str = PROJECT_ID, name: str = "gobby") -> dict
 @pytest.fixture
 def mock_server() -> MagicMock:
     server = MagicMock()
-    server.config = SimpleNamespace(
-        wiki=WikiConfig(codewiki_project_scopes_by_name={"gobby": ["crates", "web", "src"]})
-    )
+    server.config = SimpleNamespace()
     server.services = MagicMock()
     server.services.database = MagicMock()
     server.services.database.fetchone.return_value = _make_project_row()

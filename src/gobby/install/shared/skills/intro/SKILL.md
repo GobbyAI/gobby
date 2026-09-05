@@ -37,8 +37,8 @@ first, then install, then migrate, then start.
    the hub's existing `local_cli_token`. The remote installer does not generate
    or rotate that token.
 4. Upgrade or stop every remote before migrate. Copy leftover node-local
-   `USER.md`, personal tree, wiki, and project attachments onto the hub's
-   legacy source locations (`$GOBBY_HOME/personal`, `~/wiki/topics`,
+   `USER.md`, personal tree, and project attachments onto the hub's
+   legacy source locations (`$GOBBY_HOME/personal`,
    `$GOBBY_HOME/projects/<id>/attachments`) first. This epic does not collect
    files from other machines.
 5. Run `gobby files migrate` on the hub while the daemon is stopped, then

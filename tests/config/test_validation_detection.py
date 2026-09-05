@@ -55,6 +55,7 @@ pytestmark = pytest.mark.unit
         ("git diff --check", "git-diff-check"),
         ("git diff HEAD~2..HEAD --check", "git-diff-check"),
         ("git diff --check origin/main...HEAD -- src tests", "git-diff-check"),
+        ("actionlint .github/workflows/rust-ci.yml", "actionlint"),
     ],
 )
 def test_builtin_validation_detection_accepts_common_commands(
@@ -152,10 +153,27 @@ def test_test_types_suppression_ratchet_requires_baseline() -> None:
         "ruff check --help",
         "mypy --install-types",
         "jq '.verification' .gobby/project.json",
+        "actionlint -help",
+        "actionlint --help",
+        "actionlint -version",
+        "actionlint --version",
+        "actionlint -init-config",
+        "actionlint --init-config",
     ],
 )
 def test_builtin_validation_detection_rejects_non_validation_commands(command: str) -> None:
     assert is_validation_command(command) is False
+
+
+@pytest.mark.parametrize("command", ["actionlint", "actionlint .github/workflows/ci.yml"])
+def test_actionlint_records_lint_category(command: str) -> None:
+    match = classify_validation_command(command)
+
+    assert match is not None
+    assert match.categories == ("lint",)
+    assert match.languages == ("yaml",)
+    assert match.normalized_command == command
+    assert not match.evidence_requires_confirmation
 
 
 @pytest.mark.parametrize(

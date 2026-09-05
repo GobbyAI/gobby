@@ -117,7 +117,7 @@ def _install_from_release(binary: Path, version: str) -> bool:
     target = _TARGETS.get((sys.platform, platform.machine().lower()))
     if target is None:
         return False
-    from gobby.cli.install_setup import _download_release_binary
+    from gobby.cli.install_release import _download_release_binary
 
     return bool(
         _download_release_binary(

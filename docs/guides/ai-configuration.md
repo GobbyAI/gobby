@@ -1,66 +1,40 @@
 # AI Configuration
 
-gcode and gwiki use **daemon-only AI routing**. A live Gobby daemon issues a
-runtime grant before any datastore or AI work. Capability truth is the grant:
-`capabilities.{embed,text_generate,tool_chat,vision_extract,audio_transcribe}`
-are each `daemon` or `unavailable`. There is no Auto or Direct route, no local
-provider fallback, and no probe of daemon status endpoints to decide
-availability.
+Gcode uses grant-backed daemon configuration for AI and datastore access.
+A live Gobby daemon issues the runtime grant; connection material comes
+from that grant. An unavailable daemon cannot issue a new grant, and the
+client does not fall back to a locally configured provider.
 
-With no grant and no daemon, both binaries fail with the typed **daemon
-required** error and never open PostgreSQL, FalkorDB, or Qdrant. Connection
-material comes only from the grant.
+Capability bindings describe whether a daemon AI capability is available.
+The shared Rust AI layer supports `daemon` and `off` routing; `auto` and
+`direct` are not supported transport choices. Consumer commands expose only
+the options in their own CLI contract. Gcode has no global `--no-ai` or
+`--ai-aggregate-*` options.
 
-`--no-ai` is the only user-facing routing switch. It maps to `AiRouting::Off`
-for that invocation. Per-capability transport overrides are gone.
+## Search and embedding behavior
 
-## Outage semantics
+Gcode obtains embedding configuration from the daemon and uses the shared
+embedding client. Hybrid search can preserve lexical results when an
+optional semantic or graph service is unavailable, reporting degradation.
+Commands requiring an unavailable service fail with the command's typed
+error rather than inventing results.
 
-An unexpired grant still authorizes direct datastore construction when the
-daemon is down. AI does not: explicit AI commands fail typed once the daemon is
-unreachable. Hybrid search is the single degrade path — lexical and graph
-results remain, and the semantic lane is omitted with a `warnings` entry
-(`lane=semantic`, `cause=daemon_unreachable`). After the grant expires,
-everything fails typed until a new handshake.
+An unexpired grant can still authorize its datastore access during a daemon
+outage. It does not create a replacement AI service. Once the grant expires,
+a new handshake is required.
 
-`gcode outline` is structural only. It does not call text generation.
+Structural commands such as `gcode outline` do not generate prose. For
+search, embedding configuration, and command options, see the
+[gcode user guide](gcode-user-guide.md) and
+[search guide](search.md).
 
-## Defaults
+## Daemon profiles
 
-Routing is daemon when `--no-ai` is absent. Per-capability models, profiles, and
-candidate pins (`--ai-aggregate-profile`, `--ai-aggregate-candidate`) still
-shape *which* daemon provider/model runs; they do not choose a transport.
+Daemon text-generation features use feature profiles to select providers
+and models. Profile selection does not choose a separate transport. The
+shared agentic request contract also carries the caller's tool policy and
+mutation permissions.
 
-```yaml
-ai:
-  routing: daemon
-  max_concurrency: 1
-```
-
-Valid routing values are `daemon` and `off`. `auto` and `direct` are rejected.
-
-## Privacy Path
-
-Use `--no-ai` when a command must not call the daemon for AI:
-
-```bash
-gwiki ingest-file media/private-recording.mp3 --no-ai
-gwiki code --no-ai
-```
-
-`--no-ai` forces embeddings, transcription, translation, vision, and text
-generation off for that command. gwiki still stores the source as a raw asset
-and records degraded derived output where applicable.
-
-## Profiles and candidates
-
-When text generation routes through the daemon without an explicit
-provider/model pair, requests carry a daemon feature profile (`feature_low`
-unless configured). Set `ai.text_generate.profile` to change that default.
-`--ai-aggregate-candidate` accepts `provider/model[@effort]` only — not a
-provider URL or `api_base`.
-
-Daemon-side agentic generation uses the same profile routing plus a tool policy
-from the caller. Production CodeWiki generation remains operationally paused.
-
-_Last verified: 2026-08-13_
+See [LLM features](llm-features.md) and
+[providers and models](providers-and-models.md) for the surviving daemon
+features and their model configuration.

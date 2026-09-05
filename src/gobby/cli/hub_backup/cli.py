@@ -76,6 +76,11 @@ from gobby.cli.hub_backup.files_home import (
     restore_hub_files,
     verify_files_home_archive,
 )
+from gobby.cli.hub_backup.rehearsal import (
+    RehearsalProfile,
+    control_rehearsal_services,
+    load_rehearsal_profile,
+)
 from gobby.cli.installers.compose_env import (
     MANAGED_SERVICE_PROFILES,
     ComposeEnvironmentError,
@@ -153,6 +158,7 @@ class HubBackupTarget:
     falkordb_container: str
     volumes: tuple[str, ...]
     qdrant_port: int | None = None
+    rehearsal: RehearsalProfile | None = None
 
 
 def _configured_files_home(gobby_home: Path) -> Path | None:
@@ -169,6 +175,15 @@ def _configured_files_home(gobby_home: Path) -> Path | None:
 
 
 def _hub_backup_target(database_url: str) -> HubBackupTarget:
+    rehearsal = load_rehearsal_profile(database_url)
+    if rehearsal is not None:
+        return HubBackupTarget(
+            containers=rehearsal.containers,
+            falkordb_container=rehearsal.services["falkordb"].container_id,
+            volumes=rehearsal.volumes,
+            qdrant_port=rehearsal.services["qdrant"].port,
+            rehearsal=rehearsal,
+        )
     postgres_container = _managed_postgres_container(database_url)
     if postgres_container == POSTGRES_CONTAINER:
         return HubBackupTarget(
@@ -239,16 +254,26 @@ def hub_backup(
     if epoch is not None:
         require_orchestrator_epoch(database_url, epoch)
     _require_managed_docker_postgres(database_url=database_url)
-    qdrant_url, qdrant_api_key = _qdrant_settings(ctx, apply_migrations=epoch is None)
+    qdrant_url, qdrant_api_key = (
+        (target.rehearsal.qdrant_url, None)
+        if target.rehearsal is not None
+        else _qdrant_settings(ctx, apply_migrations=epoch is None)
+    )
     _require_safe_qdrant_target(target, qdrant_url)
+    files_home = _configured_files_home(gobby_home)
+    rehearsal_logs = None
+    if target.rehearsal is not None:
+        target.rehearsal.require_private_path(files_home, "files_home")
+        rehearsal_logs = _backup_logs_dir(ctx, predecessor=epoch is not None)
+        target.rehearsal.require_private_path(rehearsal_logs, "logs_dir")
 
     # An open epoch owns the daemon lifecycle, so `--epoch` leaves it stopped.
     restart_daemon = _daemon_is_running() and epoch is None
     staging_root = create_staging_directory(backup_root)
     manifest_path = backup_root / MANIFEST_NAME
     try:
-        stop_daemon(quiet=json_output, shutdown_source="cli_hub_backup")
-        files_home = _configured_files_home(gobby_home)
+        if target.rehearsal is None:
+            stop_daemon(quiet=json_output, shutdown_source="cli_hub_backup")
         if files_home is not None:
             try:
                 check_output_outside_sources(backup_root, files_home)
@@ -258,7 +283,11 @@ def hub_backup(
             manifest = _run_backup(
                 backup_root=staging_root,
                 gobby_home=gobby_home,
-                logs_dir=_backup_logs_dir(ctx, predecessor=epoch is not None),
+                logs_dir=(
+                    rehearsal_logs
+                    if rehearsal_logs is not None
+                    else _backup_logs_dir(ctx, predecessor=epoch is not None)
+                ),
                 database_url=database_url,
                 qdrant_url=qdrant_url,
                 qdrant_api_key=qdrant_api_key,
@@ -465,6 +494,7 @@ def _run_backup(
         gobby_home,
         backup_root,
         volumes=target.volumes,
+        rehearsal=target.rehearsal,
     )
     artifacts.extend(volume_artifacts)
     files_artifacts, files_details = archive_files_home_store(backup_root, files_home)
@@ -522,8 +552,17 @@ def _archive_volumes(
     backup_root: Path,
     *,
     volumes: tuple[str, ...] = HUB_VOLUMES,
+    rehearsal: RehearsalProfile | None = None,
 ) -> tuple[list[ArtifactRecord], dict[str, object]]:
     """Archive the hub volumes cold, and bring the services back either way."""
+    if rehearsal is not None:
+        if volumes != rehearsal.volumes:
+            raise click.ClickException("Rehearsal volume inventory changed")
+        try:
+            control_rehearsal_services(rehearsal, "stop")
+            return tar_volumes(backup_root, volumes)
+        finally:
+            control_rehearsal_services(rehearsal, "start")
     if not _services_stop(gobby_home):
         raise click.ClickException(
             "Could not stop the managed Docker services; refusing to archive live volumes"
@@ -780,6 +819,8 @@ def _daemon_is_running() -> bool:
 
 def _start_daemon() -> None:
     """Start the daemon via the service manager, falling back to a direct spawn."""
+    if load_rehearsal_profile() is not None:
+        return
     from gobby.cli.installers.service import get_service_status, service_start
 
     if get_service_status().get("installed"):

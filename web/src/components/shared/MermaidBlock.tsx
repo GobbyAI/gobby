@@ -136,7 +136,7 @@ function MermaidDiagram({
 }
 
 /**
- * `code` component override for MarkdownBody (plan wiki-obsidian-panel §2.4):
+ * `code` component override for MarkdownBody:
  * renders `language-mermaid` fences as themed SVG diagrams and delegates
  * everything else to the default CodeBlockInner.
  */

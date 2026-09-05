@@ -6,7 +6,7 @@ Technical internals for developers and agents working in the `gobby-core` crate 
 
 `gobby-core` is the shared Rust foundation crate for Gobby CLI crates and future Rust daemon work. It holds the boring, reusable platform layer: project discovery, bootstrap and daemon addressing, shared context/config contracts, grant handshake, degradation vocabulary, feature-gated datastore adapters, and generic indexing/search primitives.
 
-Domain behavior stays out of this crate. Code graph facts, symbol IDs, language parsing policy, wiki vault layout, task behavior, memory behavior, and CLI output formatting belong to consumer crates.
+Domain behavior stays out of this crate. Code graph facts, symbol IDs, language parsing policy, task behavior, memory behavior, and CLI output formatting belong to consumer crates.
 
 The baseline crate remains dependency-light. Consumers that only need project discovery and daemon helpers do not inherit PostgreSQL, FalkorDB, Qdrant, reqwest, ignore, or sha2 unless they opt in through Cargo features.
 
@@ -20,18 +20,17 @@ The baseline crate remains dependency-light. Consumers that only need project di
 | `bootstrap` | always | Read `~/.gobby/bootstrap.yaml` to get the daemon's listen endpoint (`bind_host`, `daemon_port`). Falls back to `127.0.0.1:60887` when the file is missing or malformed. |
 | `daemon_url` | always | One daemon-URL resolver for all binaries: `GOBBY_DAEMON_URL` → `GOBBY_PORT` → bootstrap endpoint, normalizing wildcard listen addresses (`0.0.0.0`, `::`, `::0`) to `127.0.0.1` and bracketing bare IPv6 literals. |
 | `grant` | always | Signed grant handshake, cache, and typed grant errors for daemon-native clients. |
-| `codewiki_contract` | always | Frontmatter contract for codewiki-generated vault pages: shared key/value constants plus a golden page fixture pinned by gwiki's emitter and parser tests. |
 | `config` | always | Shared configuration-resolution contracts. Environment variables, `config_store`, and defaults are represented here as the foundation expands. |
 | `context` | always | Shared runtime context contracts for project identity, daemon URL, and service configuration. Consumer-specific CLI state stays outside. |
 | `degradation` | always | Shared vocabulary for configured-service unavailability, explicit degraded paths, partial search, stale indexes, skipped artifacts, and fatal core errors. |
 | `ai` | `ai` | Shared AI routing, daemon transports, profile tiers, embeddings, and agentic/tool-loop generation primitives. |
 | `schema` | `postgres` | Hub schema apply/verify authority. Runtime commands validate externally managed resources and do not implicitly migrate them. |
-| `token_budget` | always | Shared token-budget trimming helpers — bounds prompt/context payloads to a token ceiling so consumers (`gwiki search`, `gwiki code`) reuse one budgeting primitive. |
+| `token_budget` | always | Shared token-budget trimming helpers — bounds prompt/context payloads to a token ceiling so consumers reuse one budgeting primitive. |
 | `postgres` | `postgres` | PostgreSQL hub adapter boundary. Validates Gobby-owned schema and BM25 requirements without creating, altering, or dropping managed objects. |
 | `falkor` | `falkor` | FalkorDB adapter boundary. Graph connection helpers live here without making FalkorDB a baseline dependency. |
 | `qdrant` | `qdrant` | Qdrant adapter boundary for vector search/storage integration. |
 | `indexing` | `indexing` | Generic file walking, hashing, and indexing primitives that are not tied to one domain model. |
-| `search` | `search` | Generic search result and fusion primitives. Code-specific or wiki-specific search behavior stays in consumers. |
+| `search` | `search` | Generic search result and fusion primitives. Domain-specific search behavior stays in consumers. |
 | `graph_analytics` | `graph-analytics` | In-memory graph analytics — weighted Leiden community detection over a consumer-supplied graph. No optional dependency; gated so the public surface stays explicit. |
 
 Feature-gated modules are part of the public module map but compile only when their feature is selected.
@@ -127,7 +126,7 @@ impl GraphClient {
 }
 ```
 
-Consumers provide the graph name through constructor methods such as `GraphClient::from_config`; `gobby-core` must not hardcode code, wiki, or memory graph defaults. The `graph` field stays private so connection ownership cannot leak across domain crates. Use `query` for normal Cypher reads/writes. `with_sync_graph` is the narrow escape hatch for consumers that need a FalkorDB crate operation not yet represented by the shared adapter.
+Consumers provide the graph name through constructor methods such as `GraphClient::from_config`; `gobby-core` must not hardcode code or memory graph defaults. The `graph` field stays private so connection ownership cannot leak across domain crates. Use `query` for normal Cypher reads/writes. `with_sync_graph` is the narrow escape hatch for consumers that need a FalkorDB crate operation not yet represented by the shared adapter.
 The closure receives `&mut ReadOnlySyncGraph<'_>` because the FalkorDB crate
 requires mutable access even for `GRAPH.RO_QUERY`; the wrapper exposes only the
 read-only query builder and selected graph name.
@@ -146,8 +145,6 @@ pub enum DegradationKind;
 
 `DegradationKind` is for successful operations that returned less than the ideal result. A `gobby-code` search can return symbol or content results while marking a configured Qdrant or FalkorDB outage as a `ServiceUnavailable` degradation. It can also report `PartialSearch`, `StaleIndex`, or `SkippedArtifacts` without converting those states into fatal CLI errors.
 
-`gobby-wiki` should use the same contracts for wiki search and indexing. Missing vector search, stale vault index data, or skipped files should be reported as degradation metadata alongside partial results. A required store or write path failure should become `CoreError` only when the command cannot complete.
-
 `Guidance` and `SetupIssue` carry structured remediation. Consumer CLIs render the `problem`, `action`, and optional `command_hint` fields in their own output style; `gobby-core` only provides the serializable contract.
 
 ## Boundary Rules
@@ -157,9 +154,9 @@ Each module exists because multiple Rust consumers need the same infrastructure 
 | Boundary | Consumers | What stays out |
 |----------|-----------|----------------|
 | Project/bootstrap/daemon helpers | `gcode`, `ghook`, future Rust consumers | CLI rendering, command dispatch, daemon workflow semantics. |
-| Context/config/degradation contracts | `gcode`, `gobby-wiki`, future daemon work | Domain-specific flags, output formats, and task/memory behavior. |
+| Context/config/degradation contracts | `gcode`, daemon work | Domain-specific flags, output formats, and task/memory behavior. |
 | Datastore adapters | Consumers that opt in to `postgres`, `falkor`, or `qdrant` | Schema ownership, migrations, code graph facts, vector content policy. |
-| Indexing/search primitives | Consumers that opt in to `indexing` or `search` | Code symbol IDs, language parsing policy, wiki document models, ranking UX. |
+| Indexing/search primitives | Consumers that opt in to `indexing` or `search` | Code symbol IDs, language parsing policy, document models, ranking UX. |
 
 `gobby-core` can validate externally managed resources, but it must not create, alter, drop, or migrate Gobby-owned resources during normal runtime commands.
 
@@ -197,7 +194,7 @@ Feature rationale:
 | `indexing` | `ignore`, `sha2` | File walking and content hashing are useful for indexing consumers only. |
 | `search` | no extra dependency today | Search fusion contracts are lightweight, but still opt-in so the public surface remains explicit. |
 | `graph-analytics` | no extra dependency today | In-memory graph analytics remain opt-in so the public surface stays explicit. |
-| `ai` | `reqwest`, `ureq`, and AI payload helpers | AI transport, daemon routing helpers, profile tiers, agentic/tool-loop generation, and the shared blocking OpenAI-compatible embeddings client (`ai::embeddings`, consumed by gcode and gwiki for grant-backed embedding requests) need HTTP clients and multipart payload support. |
+| `ai` | `reqwest`, `ureq`, and AI payload helpers | AI transport, daemon routing helpers, profile tiers, agentic/tool-loop generation, and the shared blocking OpenAI-compatible embeddings client (`ai::embeddings`, consumed by gcode for grant-backed embedding requests) need HTTP clients and multipart payload support. |
 | `full` | all feature modules | Convenience feature for development and consumers that need the whole foundation layer. |
 
 Every individual feature must compile in isolation. Do not rely on `--all-features` to hide missing feature dependencies.
@@ -248,8 +245,7 @@ Consumers choose the tier and transport; `gobby-core` supplies shared profile
 resolution, request/response contracts, retry/timeout behavior, and
 provider-neutral loop accounting. `daemon_agentic_chat` sends the daemon a
 feature profile, project context, max-turn settings, reasoning effort, and a
-`ToolPolicy` that lists allowed tools and whether mutation is allowed. CodeWiki
-uses a read-only policy for aggregate page investigation.
+`ToolPolicy` that lists allowed tools and whether mutation is allowed.
 
 AI config values resolve from grant-backed and daemon-served sources. Unresolved
 secret markers that reach a client are grant-issuance bugs and fail typed.

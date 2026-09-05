@@ -63,8 +63,8 @@ continuation offset identifies the next semantic item with no gaps or
 duplicates.
 
 Page units follow the product domain: one search hit, grep match with context,
-outline root subtree, complete symbol, file row, directory group, graph
-relationship, or wiki hit. A page never slices one unit. When the first unit
+outline root subtree, complete symbol, file row, directory group, or graph
+relationship. A page never slices one unit. When the first unit
 alone exceeds the budget, return it complete and mark the page as over budget.
 The response must expose `next_offset`, or text must print an exact continuation
 command, whenever more items remain.

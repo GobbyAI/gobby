@@ -173,12 +173,12 @@ shipped Compose template uses named volumes:
 | `gobby_falkordb_data` | FalkorDB graph data |
 | `gobby_postgres_data` | PostgreSQL hub data |
 
-Hub-owned `USER.md`, `_personal`, and wiki files are not those volumes. They
+Hub-owned `USER.md`, `_personal`, and chat attachments are not those volumes. They
 live in a host bind directory. See [Hub-owned files home](#hub-owned-files-home).
 
 ## Hub-owned files home
 
-Wiki vaults, the `_personal` tree, and the working profile are hub semantics.
+The `_personal` tree, chat attachments, and the working profile are hub semantics.
 There is one copy, on the hub host. The hub-local profile path is
 `<files_home>/USER.md`. It is not `$GOBBY_HOME/personal/USER.md`.
 
@@ -190,8 +190,8 @@ absolute directory on the hub first, then install, then migrate, then start.
 1. Create the bind directory yourself. On a standalone or laptop hub use
    `$GOBBY_HOME/files` (typically `~/.gobby/files`). A dedicated server may
    use `/var/lib/gobby/files`. It must already exist, must not be a
-   filesystem root, and must be disjoint from `$GOBBY_HOME/personal`,
-   `$GOBBY_HOME/projects`, and `~/wiki/topics`.
+   filesystem root, and must be disjoint from `$GOBBY_HOME/personal`
+   and `$GOBBY_HOME/projects`.
 2. Install against that directory:
 
    ```bash
@@ -199,8 +199,8 @@ absolute directory on the hub first, then install, then migrate, then start.
    ```
 
 3. Upgrade or stop every remote before migrate. Copy leftover node-local
-   `USER.md`, personal tree, wiki, and project attachments onto the hub's
-   legacy source locations first (`$GOBBY_HOME/personal`, `~/wiki/topics`,
+   `USER.md`, personal tree, and project attachments onto the hub's
+   legacy source locations first (`$GOBBY_HOME/personal`,
    `$GOBBY_HOME/projects/<id>/attachments`). This campaign does not collect
    files from other machines.
 4. With the hub daemon stopped, migrate, then start:

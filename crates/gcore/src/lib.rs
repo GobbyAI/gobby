@@ -15,7 +15,6 @@ pub mod project;
 // Always available - lightweight foundation modules.
 pub mod ai_context;
 pub mod ai_types;
-pub mod codewiki_contract;
 pub mod config;
 pub mod degradation;
 pub mod grant;
@@ -23,9 +22,9 @@ mod libpq;
 pub mod local_token;
 pub mod machine;
 pub mod markdown;
+pub mod mermaid;
 pub mod progress;
 pub mod token_budget;
-pub mod vault;
 
 /// Return Gobby home, respecting `GOBBY_HOME` when set.
 pub fn gobby_home() -> anyhow::Result<std::path::PathBuf> {

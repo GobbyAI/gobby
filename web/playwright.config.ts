@@ -81,6 +81,7 @@ export default defineConfig({
       // the same override the capture projects document above.
       use: {
         browserName: "chromium",
+        hasTouch: false,
         ...(process.env.GOBBY_CAPTURE_BROWSER
           ? {
               launchOptions: {
@@ -90,6 +91,21 @@ export default defineConfig({
           : {}),
       },
       grepInvert: STYLE_CAPTURE_TAG,
+    },
+    {
+      name: "chromium-coarse",
+      testMatch: "activity-navigation.spec.ts",
+      use: {
+        browserName: "chromium",
+        hasTouch: true,
+        ...(process.env.GOBBY_CAPTURE_BROWSER
+          ? {
+              launchOptions: {
+                executablePath: process.env.GOBBY_CAPTURE_BROWSER,
+              },
+            }
+          : {}),
+      },
     },
     {
       name: "style-capture",

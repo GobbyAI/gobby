@@ -3,7 +3,7 @@ use crate::cli::{GraphViewArgs, GraphViewKind, GraphViewSeed};
 use crate::codewiki_facts::GraphAvailability;
 use crate::config::Context;
 use crate::graph::code_graph::GraphReadError;
-use gobby_core::vault::mermaid::is_valid_mermaid;
+use gobby_core::mermaid::is_valid_mermaid;
 use render::{NodeKey, ViewNodeInput, analytics_graph_from_payload, build_view_payload};
 use std::path::PathBuf;
 

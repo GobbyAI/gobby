@@ -1,7 +1,7 @@
 """Repo-investigation tool registry for the ``tool_chat`` feature.
 
 Provider-agnostic and caller-parameterized. A :class:`ToolPolicy` declares the
-executable family (``gcode``/``gwiki``), the exposed subcommands, and whether
+executable family (``gcode``), the exposed subcommands, and whether
 mutation is permitted. This module:
 
 * validates a policy against the per-CLI command allowlist and read whitelist —
@@ -74,21 +74,8 @@ GCODE_READONLY_TOOLS: frozenset[str] = frozenset(
         "blast-radius",
     }
 )
-GWIKI_READONLY_TOOLS: frozenset[str] = frozenset(
-    {
-        "search",
-        "read",
-        "backlinks",
-        "sources",
-        "status",
-        "trust",
-        "audit",
-        "lint",
-    }
-)
 _READONLY_BY_CLI: dict[str, frozenset[str]] = {
     "gcode": GCODE_READONLY_TOOLS,
-    "gwiki": GWIKI_READONLY_TOOLS,
 }
 # Nested argv under a mutating parent. `graph` stays off the read whitelist;
 # a no-mutation policy may still expose it and authorize exactly `graph view`.
@@ -107,10 +94,8 @@ GCODE_ALLOWED_TOOLS: frozenset[str] = GCODE_READONLY_TOOLS | frozenset(
         "prune",
     }
 )
-GWIKI_ALLOWED_TOOLS: frozenset[str] = GWIKI_READONLY_TOOLS | frozenset({"compile"})
 _ALLOWED_BY_CLI: dict[str, frozenset[str]] = {
     "gcode": GCODE_ALLOWED_TOOLS,
-    "gwiki": GWIKI_ALLOWED_TOOLS,
 }
 
 # Characters that must never reach an argument. Execution is ``argv``-based
@@ -158,10 +143,6 @@ _TOOL_DESCRIPTIONS: dict[tuple[str, str], str] = {
     ),
     ("gcode", "imports"): ('What a file imports. args: ["path/to/file"].'),
     ("gcode", "blast-radius"): ('Transitive call/import impact of a symbol. args: ["<name>"].'),
-    ("gwiki", "search"): ('Hybrid vault search over ingested knowledge. args: ["query"].'),
-    ("gwiki", "read"): ('Read one vault document. args: ["<doc-id-or-path>"].'),
-    ("gwiki", "backlinks"): ('Documents linking to a target. args: ["<doc-id-or-path>"].'),
-    ("gwiki", "sources"): ("List provenance sources for the vault. args: []."),
 }
 
 

@@ -9,13 +9,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from gobby.storage.cron import CronJobStorage, compute_next_run
+from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_children import (
     INTERRUPTED_RUN_ERROR,
     INTERRUPTED_RUN_RETRY_DELAY_SECONDS,
     _fetch_statuses,
 )
 from gobby.storage.cron_models import CronJob
+from gobby.storage.cron_schedule import compute_next_run
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase

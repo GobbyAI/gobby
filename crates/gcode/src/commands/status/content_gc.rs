@@ -266,24 +266,9 @@ fn prune_content_versions_with(
             graph_dirty_projects.insert(candidate.project_id.clone());
         }
 
-        let deleted = conn.execute(
-            "DELETE FROM code_indexed_files f
-             WHERE f.id = $1
-               AND NOT EXISTS (
-                   SELECT 1 FROM code_indexed_file_states fs
-                   WHERE fs.project_id = f.project_id
-                     AND fs.file_path = f.file_path
-                     AND fs.content_hash = f.content_hash
-               )",
-            &[&db::id_param(&candidate.id)?],
-        )?;
-        if deleted > 0 {
+        if delete_unreferenced_content_row(&mut conn, &candidate.id)? {
             totals.deleted_versions += 1;
             totals.deleted_symbols += candidate.symbol_ids.len();
-        } else {
-            // The row became referenced again after the unreferenced check, but
-            // its projections were just deleted; flag it for re-sync.
-            reset_candidate_sync_flags(&mut conn, &candidate.id)?;
         }
     }
     for project_id in &graph_dirty_projects {
@@ -300,7 +285,7 @@ fn prune_content_versions_with(
     Ok(totals)
 }
 
-fn delete_candidate_projections(
+pub(super) fn delete_candidate_projections(
     ctx: &Context,
     candidate: &ContentGcCandidate,
 ) -> anyhow::Result<()> {
@@ -335,7 +320,10 @@ fn reset_candidate_sync_flags(conn: &mut Client, indexed_file_id: &str) -> anyho
     Ok(())
 }
 
-fn content_is_unreferenced(conn: &mut Client, indexed_file_id: &str) -> anyhow::Result<bool> {
+pub(super) fn content_is_unreferenced(
+    conn: &mut Client,
+    indexed_file_id: &str,
+) -> anyhow::Result<bool> {
     conn.query_one(
         "SELECT NOT EXISTS (
              SELECT 1
@@ -350,6 +338,29 @@ fn content_is_unreferenced(conn: &mut Client, indexed_file_id: &str) -> anyhow::
     )?
     .try_get(0)
     .map_err(Into::into)
+}
+
+/// Called only while the caller owns the existing project index lock.
+pub(super) fn delete_unreferenced_content_row(
+    conn: &mut Client,
+    indexed_file_id: &str,
+) -> anyhow::Result<bool> {
+    let deleted = conn.execute(
+        "DELETE FROM code_indexed_files f
+         WHERE f.id = $1
+           AND NOT EXISTS (
+               SELECT 1 FROM code_indexed_file_states fs
+               WHERE fs.project_id = f.project_id
+                 AND fs.file_path = f.file_path
+                 AND fs.content_hash = f.content_hash
+           )",
+        &[&db::id_param(indexed_file_id)?],
+    )?;
+    if deleted == 0 {
+        // A new reference after projection deletion needs reconstruction.
+        reset_candidate_sync_flags(conn, indexed_file_id)?;
+    }
+    Ok(deleted > 0)
 }
 
 /// Content hashes of every blob reachable from a commit inside the retention

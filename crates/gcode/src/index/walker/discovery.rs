@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::index::MAX_FILE_SIZE;
 
-use super::classification::classify_file_with_context;
+use super::classification::classify_file;
 use super::hidden::HiddenPathContext;
 use super::types::{DiscoveryOptions, FileClassification};
 
@@ -44,7 +44,6 @@ pub fn discover_files_with_options<S: AsRef<str>>(
             root,
             path,
             exclude_patterns,
-            &hidden_context,
             &mut candidates,
             &mut content_only,
             &mut seen,
@@ -56,7 +55,6 @@ pub fn discover_files_with_options<S: AsRef<str>>(
             root,
             &path,
             exclude_patterns,
-            &hidden_context,
             &mut candidates,
             &mut content_only,
             &mut seen,
@@ -70,7 +68,6 @@ fn push_classified_file(
     root: &Path,
     path: &Path,
     exclude_patterns: &[impl AsRef<str>],
-    hidden_context: &HiddenPathContext,
     candidates: &mut Vec<PathBuf>,
     content_only: &mut Vec<PathBuf>,
     seen: &mut BTreeSet<PathBuf>,
@@ -80,7 +77,7 @@ fn push_classified_file(
         return;
     }
 
-    match classify_file_with_context(root, path, exclude_patterns, hidden_context) {
+    match classify_file(root, path, exclude_patterns) {
         Some(FileClassification::Ast) => candidates.push(path.to_path_buf()),
         Some(FileClassification::ContentOnly) => content_only.push(path.to_path_buf()),
         None => {}

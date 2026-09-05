@@ -86,6 +86,49 @@ pub fn delete_symbol_vectors(
     Ok(symbol_ids.len())
 }
 
+/// Count only the named symbol IDs, without retrieving payloads or vectors.
+pub(crate) fn count_symbol_vectors(
+    qdrant: &QdrantConfig,
+    project_id: &str,
+    symbol_ids: &[String],
+) -> Result<usize, VectorLifecycleError> {
+    if symbol_ids.is_empty() {
+        return Ok(0);
+    }
+    let client = qdrant_http_client()?;
+    let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id)?;
+    let mut total = 0;
+    for ids in symbol_ids.chunks(QDRANT_SCROLL_LIMIT) {
+        let resp = qdrant_request_for_config(
+            &client,
+            qdrant,
+            reqwest::Method::POST,
+            &format!("{}/points/count", collection_path(&collection)),
+        )?
+        .json(&json!({"exact": true, "filter": {"must": [{"has_id": ids}]}}))
+        .send()
+        .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+        let status = resp.status();
+        if status == StatusCode::NOT_FOUND {
+            continue;
+        }
+        if !status.is_success() {
+            return Err(qdrant_http_error("count symbol points", status, resp));
+        }
+        let data: Value = resp
+            .json()
+            .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+        let count = data["result"]["count"]
+            .as_u64()
+            .filter(|count| *count <= ids.len() as u64)
+            .ok_or_else(|| {
+                VectorLifecycleError::QdrantOperation("invalid symbol count".to_string())
+            })?;
+        total += count as usize;
+    }
+    Ok(total)
+}
+
 pub fn cleanup_orphan_file_vectors(
     qdrant: &QdrantConfig,
     project_id: &str,

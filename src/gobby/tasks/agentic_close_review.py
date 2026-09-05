@@ -9,6 +9,7 @@ from typing import Any
 from gobby.config.feature_base import candidate_runtime_entries, parse_feature_candidate
 from gobby.config.tasks import TaskValidationConfig
 from gobby.storage.task_close_reviews import TaskCloseReview, TerminalTaskCloseReviewStatus
+from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
 
 TASK_CLOSE_VALIDATOR_AGENT = "task-close-validator"
 
@@ -46,6 +47,7 @@ def build_agentic_review_prompt(
     changes_summary: str,
     review_fingerprint: str,
     evidence_fingerprint: str,
+    closure_reason: str = "completed",
     validation_commands: Mapping[str, object] | None = None,
     prior_requirements: str | None = None,
     coordinator_owned_pending: bool = False,
@@ -61,9 +63,21 @@ def build_agentic_review_prompt(
         f"review_id={review_id}; task_id={task_id}; "
         f"commit_shas={json.dumps(list(commit_shas))}; "
         f"changes_summary={json.dumps(changes_summary)}; "
+        f"closure_reason={json.dumps(closure_reason)}; "
         f"review_fingerprint={review_fingerprint}; "
         f"deterministic_evidence_fingerprint={evidence_fingerprint}. "
     )
+    if closure_reason in NO_WORK_CLOSE_REASONS:
+        prompt += (
+            "This is a no-work disposition review. The original implementation criteria are "
+            "not expected to be met. Judge changes_summary as the disposition justification: "
+            "mark each criterion satisfied when it coherently and specifically explains the "
+            "duplicate target, existing implementation, deliberate wont-fix decision, "
+            "obsolescence, or external ownership. Reject only a missing, vague, or contradicted "
+            "justification. Do not require implementation, tests, commits, or operational "
+            "actions for superseded deliverables. Deterministic gates still own attributed "
+            "edits, commits, dirty paths, and ownership. "
+        )
     if validation_commands is not None:
         facts = json.dumps(validation_commands, sort_keys=True, default=str)
         prompt += (
@@ -76,7 +90,7 @@ def build_agentic_review_prompt(
             "their outcome was unknown, they were wrapped, or they were stale after a later edit; "
             "cite that entry when a verdict names a seen-but-uncredited run. "
         )
-    if coordinator_owned_pending:
+    if coordinator_owned_pending and closure_reason not in NO_WORK_CLOSE_REASONS:
         prompt += (
             "The close caller is a spawned agent. For every criterion beginning `Live:` "
             "case-insensitively, report state `pending_external`, satisfied false, gap null, "
@@ -84,13 +98,21 @@ def build_agentic_review_prompt(
             "overall status valid when every remaining implementer-owned criterion is satisfied. "
         )
     prompt += (
-        "Inspect the task, linked commits, exact acceptance tests, deterministic gate facts, "
-        "and repository validations. Call submit_close_review with this exact review_id and "
+        "Inspect the task and evidence relevant to the stated closure reason. "
+        "For completed work, inspect linked commits, exact acceptance tests, deterministic "
+        "gate facts, and repository validations. Call submit_close_review with this exact "
+        "review_id and "
         "only the structured verdict object, correct any rejected malformed submission, then "
         "call end_agent_run. Do not mutate tasks, spawn agents, or stop other agent runs."
     )
     if not prior_requirements:
         return prompt
+    if closure_reason in NO_WORK_CLOSE_REASONS:
+        return (
+            f"{prompt} prior_requirements={json.dumps(prior_requirements)}. "
+            "Apply prior requirements to the disposition justification only. Requirements "
+            "demanding superseded implementation are inapplicable to this closure reason."
+        )
     return (
         f"{prompt} prior_requirements={json.dumps(prior_requirements)}. "
         "A previously rejected close named this required evidence; reject the same criterion "

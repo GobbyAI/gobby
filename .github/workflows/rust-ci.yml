@@ -10,7 +10,6 @@ on:
       - ".github/workflows/release-gcore.yml"
       - ".github/workflows/release-gdaemon.yml"
       - ".github/workflows/release-ghook.yml"
-      - ".github/workflows/release-gwiki.yml"
       - ".github/workflows/release-gterminal.yml"
       - ".github/workflows/release-gclient.yml"
       - "Cargo.lock"
@@ -27,7 +26,6 @@ on:
       - ".github/workflows/release-gcore.yml"
       - ".github/workflows/release-gdaemon.yml"
       - ".github/workflows/release-ghook.yml"
-      - ".github/workflows/release-gwiki.yml"
       - ".github/workflows/release-gterminal.yml"
       - ".github/workflows/release-gclient.yml"
       - "Cargo.lock"
@@ -92,19 +90,6 @@ jobs:
 
       - name: Test (ghook)
         run: cargo nextest run --profile ci -p gobby-hooks
-
-      # gwiki: default checks include documents/pdfium
-      - name: Clippy (gwiki)
-        run: cargo clippy -p gobby-wiki --all-targets -- -D warnings
-
-      - name: Test (gwiki)
-        run: cargo nextest run --profile ci -p gobby-wiki
-
-      - name: Test emitted Mermaid with the real parser
-        run: >-
-          cargo test -p gobby-wiki
-          emitted_mermaid_blocks_pass_real_mermaid_parser
-          -- --ignored --nocapture
 
       # gcode: full clippy + tests
       - name: Clippy (gcode)
@@ -172,8 +157,10 @@ jobs:
       GOBBY_SCHEMA_TEST_DATABASE_URL: postgresql://gobby:gobby_dev@127.0.0.1:15432/gobby
       # gcode DB tests refuse databases whose name does not end in `_test`.
       GCODE_POSTGRES_TEST_DATABASE_URL: postgresql://gobby:gobby_dev@127.0.0.1:15432/gobby_gcode_test
-      GOBBY_HOME: ${{ runner.temp }}/gobby-home
     steps:
+      - name: Set isolated Gobby home
+        run: echo "GOBBY_HOME=${RUNNER_TEMP}/gobby-home" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false

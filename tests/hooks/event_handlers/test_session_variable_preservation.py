@@ -182,7 +182,6 @@ def test_gobby_session_id_binding_merges_terminal_context(
             return_value=HookResponse(decision="allow"),
         ),
         patch("gobby.hooks.event_handlers._session_start.flow._seed_parent_turn_seq"),
-        patch("gobby.hooks.event_handlers._session_start.flow._seed_wiki_overview_var"),
         patch("gobby.hooks.event_handlers._session_start.flow.seed_user_profile_content"),
         patch(
             "gobby.hooks.event_handlers._session_start.flow."

@@ -1,6 +1,7 @@
 # Shared Code Graph Schema
 
-This contract defines the live FalkorDB code graph produced by `gcode` and consumed by `gwiki`.
+This contract defines the live FalkorDB code graph produced by `gcode` and
+consumed by code-index search and graph APIs.
 
 ## Graph
 
@@ -73,6 +74,7 @@ INHERITS, including external-symbol sources implementing a project trait.
 
 ## Consumer Contract
 
-`gwiki` reads this graph live from shared FalkorDB. When FalkorDB is missing or
-unreachable, code graph reads return empty code edges and attach a degradation
-note for `gcode_code_graph`.
+Consumers read this graph through the code-index graph boundary and retain
+project scoping. Graph-dependent HTTP routes return `503` with
+`Code graph not available` when the graph service is unavailable. Search paths
+that can retain lexical results report degradation for unavailable graph data.

@@ -107,7 +107,7 @@ def create_app(server: "HTTPServer") -> FastAPI:
     exact_origins = [o for o in cors_origins if "*" not in o]
     origin_regex = "|".join(origin_regex_parts) if origin_regex_parts else None
 
-    # Innermost middleware: large JSON payloads (wiki graph exports compress
+    # Innermost middleware: large JSON payloads (graph exports compress
     # ~10x) are gzipped right after the route; SSE responses are excluded by
     # starlette via DEFAULT_EXCLUDED_CONTENT_TYPES.
     app.add_middleware(EventLoopGZipMiddleware, minimum_size=1024)

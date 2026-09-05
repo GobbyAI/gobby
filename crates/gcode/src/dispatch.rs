@@ -192,7 +192,9 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
         | Command::Kinds { .. }
         | Command::Tree { .. }
         | Command::RepoOutline { .. } => ServiceConfigSelection::database_only(),
-        Command::Prune { .. } => ServiceConfigSelection::projection_cleanup(),
+        Command::Prune { .. } | Command::RetireFiles { .. } => {
+            ServiceConfigSelection::projection_cleanup()
+        }
     }
 }
 
@@ -377,6 +379,16 @@ fn run() -> anyhow::Result<()> {
         | Command::Init
         | Command::Projects
         | Command::Prune { .. } => Ok(()),
+        Command::RetireFiles {
+            manifest,
+            apply,
+            receipt,
+        } => commands::status::retire_files::run(
+            &ctx,
+            std::path::Path::new(&manifest),
+            apply,
+            receipt.as_deref().map(std::path::Path::new),
+        ),
         Command::Index {
             path,
             files,

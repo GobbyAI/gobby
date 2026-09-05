@@ -45,13 +45,10 @@ class ToolPolicy:
     """Caller-declared description of the tools an agent may use.
 
     The feature is generic over *what* the agent does; the caller declares the
-    investigation surface here. ``cli`` selects the executable family
-    (``"gcode"`` or ``"gwiki"``), ``tools`` lists the exposed subcommands, and
-    ``allow_mutation`` gates whether mutating subcommands are permitted. A
-    read-only caller (the ``gwiki code`` tool loop querying gcode) leaves
-    ``allow_mutation`` False; a write-capable caller (a future gwiki compile
-    policy) sets it True and lists the mutating subcommands it needs. The
-    policy is validated against the registry whitelist in
+    investigation surface here. ``cli`` selects the executable family (``"gcode"``),
+    ``tools`` lists the exposed subcommands, and ``allow_mutation`` gates whether
+    mutating subcommands are permitted. The policy is validated against the
+    registry whitelist in
     :mod:`gobby.ai._tool_chat_tools`.
     """
 

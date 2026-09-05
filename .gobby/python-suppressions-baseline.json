@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 224,
+  "site_count": 218,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -2081,66 +2081,6 @@
         "attr-defined"
       ],
       "statement": "fake_torch . mps = SimpleNamespace ( empty_cache = lambda : called . append ( True ) )"
-    },
-    {
-      "fingerprint": "029680316ecf770bb1679390a63eafc0b8df933747be245b4666ff59eb4adb50",
-      "path": "tests/wiki/test_prune_job.py",
-      "symbol": "test_register_wiki_prune_cron_creates_hourly_system_job",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "register_wiki_prune_cron ( cron_storage = storage , cron_executor = executor , gateway = gateway , project_id = \"personal\" , )"
-    },
-    {
-      "fingerprint": "58e2e2263c5ebce712c2f7f41b72abab2647aab6e432516446d5862da44eafb2",
-      "path": "tests/wiki/test_prune_job.py",
-      "symbol": "test_register_wiki_prune_cron_preserves_toggle_and_wakes_only_enabled_rows",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "register_wiki_prune_cron ( cron_storage = storage , cron_executor = RecordingExecutor ( ) , gateway = RecordingGateway ( _result ( ) ) , project_id = \"personal\" , )"
-    },
-    {
-      "fingerprint": "391876174d2715cf13df09b99f59fc991308cdf38fcba9f60b8fde1818b7203b",
-      "path": "tests/wiki/test_prune_job.py",
-      "symbol": "test_registered_wiki_prune_handler_is_callable",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "result = await handler ( SimpleNamespace ( ) )"
-    },
-    {
-      "fingerprint": "f7427cf171cd86b48517d986e510a0dec5bdea075ce859e76c25a3e710208f1e",
-      "path": "tests/wiki/test_prune_job.py",
-      "symbol": "test_wiki_prune_handler_reports_command_failure",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "result = await handler ( SimpleNamespace ( ) )"
-    },
-    {
-      "fingerprint": "f91b93bb63c85f9713dcf51986a61ee39ca7da3072dcd7d70b0a2c8e18f38142",
-      "path": "tests/wiki/test_prune_job.py",
-      "symbol": "test_wiki_prune_handler_reports_timeout_and_unavailable",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "timeout_result = await timed_out ( SimpleNamespace ( ) )"
-    },
-    {
-      "fingerprint": "09b25b74cbb30510ec89b15e5a3a0f92ddcdc25a78567c9e46054c12bdece6cc",
-      "path": "tests/wiki/test_prune_job.py",
-      "symbol": "test_wiki_prune_handler_reports_timeout_and_unavailable",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "unavailable = await create_wiki_prune_handler ( UnavailableGateway ( ) ) ( SimpleNamespace ( ) )"
     },
     {
       "fingerprint": "d166e7588db8538ca7b57e5b09498842810652c443e4f7408541178d64221d6d",

@@ -93,13 +93,15 @@ def _invoke_unpack(archive: Path, *args: str, input: str | None = None) -> Resul
     return CliRunner().invoke(unpack, [str(archive), *args], input=input)
 
 
-def test_6_2_3_unpack_restores_profile_attachment_and_wiki(env: RestoreEnv, tmp_path: Path) -> None:
+def test_6_2_3_unpack_restores_profile_attachment_and_notes(
+    env: RestoreEnv, tmp_path: Path
+) -> None:
     archive = _pack_archive(
         tmp_path,
         {
             "gobby/files/USER.md": b"profile",
             "gobby/files/_personal/attachments/p1/a.bin": b"att",
-            "gobby/files/wiki/alpha/note.md": b"wiki",
+            "gobby/files/_personal/notes/note.md": b"note",
         },
         extra={"gobby/bootstrap.yaml": b"datastore_mode: local\nfiles_home: /archived/files\n"},
     )
@@ -107,7 +109,7 @@ def test_6_2_3_unpack_restores_profile_attachment_and_wiki(env: RestoreEnv, tmp_
     assert result.exit_code == 0, result.output
     assert (env.files_home / "USER.md").read_text() == "profile"
     assert (env.files_home / "_personal" / "attachments" / "p1" / "a.bin").read_bytes() == b"att"
-    assert (env.files_home / "wiki" / "alpha" / "note.md").read_text() == "wiki"
+    assert (env.files_home / "_personal" / "notes" / "note.md").read_text() == "note"
     dest_boot = yaml.safe_load((env.home / "bootstrap.yaml").read_text())
     assert dest_boot["files_home"] == str(env.files_home)
 

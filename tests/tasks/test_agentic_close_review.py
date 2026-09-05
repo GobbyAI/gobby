@@ -37,6 +37,8 @@ def test_agentic_review_prompt_is_taskless_and_submission_driven() -> None:
     assert "review_id=review" in prompt
     assert "task_id=task" in prompt
     assert 'changes_summary="summary"' in prompt
+    assert 'closure_reason="completed"' in prompt
+    assert "This is a no-work disposition review" not in prompt
     assert "submit_close_review" in prompt
     assert "end_agent_run" in prompt
     assert "review_run_id" not in prompt
@@ -44,6 +46,31 @@ def test_agentic_review_prompt_is_taskless_and_submission_driven() -> None:
     assert "oversized" not in prompt.lower()
     assert "prior_requirements=" not in prompt
     assert "validation_commands=" not in prompt
+
+
+@pytest.mark.parametrize(
+    "reason", ["duplicate", "already_implemented", "wont_fix", "obsolete", "out_of_repo"]
+)
+def test_no_work_review_judges_disposition_instead_of_implementation(reason: str) -> None:
+    prompt = build_agentic_review_prompt(
+        review_id="review",
+        task_id="task",
+        commit_shas=[],
+        changes_summary="The user superseded the wiki with complete retirement in epic #21771.",
+        closure_reason=reason,
+        review_fingerprint="close",
+        evidence_fingerprint="evidence",
+        coordinator_owned_pending=True,
+        prior_requirements="Implement the retired wiki renderer and tests.",
+    )
+
+    assert f"closure_reason={json.dumps(reason)}" in prompt
+    assert "This is a no-work disposition review" in prompt
+    assert "Reject only a missing, vague, or contradicted justification" in prompt
+    assert "Deterministic gates still own attributed edits" in prompt
+    assert "Apply prior requirements to the disposition justification only" in prompt
+    assert "state `pending_external`" not in prompt
+    assert "again unless the submitted code and evidence satisfy it" not in prompt
 
 
 def test_agent_close_prompt_marks_live_criteria_pending_external() -> None:
@@ -161,7 +188,8 @@ def test_task_close_validator_definition_submits_then_terminates() -> None:
     assert "gobby-agents:end_agent_run" in step["allowed_mcp_tools"]
     assert "gobby-agents:send_message" not in step["allowed_mcp_tools"]
     assert "submit_close_review" in body["prompts"]["agent"]
-    assert body["version"] == "1.8"
+    assert body["version"] == "1.9"
+    assert "First apply the stated closure_reason" in body["prompts"]["agent"]
     assert '"state": "satisfied|gap|pending_external"' in body["prompts"]["agent"]
     assert "criterion beginning `Live:` case-insensitively" in body["prompts"]["agent"]
     assert "terminal closed, invalid, external_pending" in body["prompts"]["agent"]

@@ -1,30 +1,19 @@
-//! Typed, owned CodeWiki facts exported by gcode.
+//! Typed, owned code-index facts exported by gcode.
 //!
-//! This is the only datastore boundary consumed by the wiki-owned CodeWiki
-//! engine. It is also the seed surface for #17678; renderers built on
-//! `gobby_core::code_facts::FactsBundle` consume that shared contract instead.
+//! Structural graph views consume this datastore boundary for scoped files,
+//! symbols, search, grep, graph queries, and leading content chunks. Renderers
+//! built on `gobby_core::code_facts::FactsBundle` consume that shared contract.
 //!
-//! # Dependency inventory
+//! # Ownership
 //!
-//! The wiki-owned engine depends on these bounded capability families:
+//! This facade keeps its `config::Context` and read connection private; no
+//! service configuration crosses the public facts API. Callers own output
+//! formatting and diagnostics. Coupling graphs are derived from the typed
+//! call and import facts exposed here.
 //!
-//! - `db`, `visibility`, `models::Symbol`, `search::fts`, `commands::grep`,
-//!   `graph::{code_graph,typed_query}`, and `commands::scope` are datastore
-//!   consumers. They map to the scoped-file, symbol, search, grep, graph, and
-//!   leading-chunk families in this module.
-//! - `config::Context` splits at the boundary: this facade resolves and
-//!   keeps a private context for facts, while project identity, output format,
-//!   quiet/verbose behavior, and AI/daemon routing live in gwiki's runtime
-//!   carrier. No context or service configuration crosses this API.
-//! - `output`, `index::hasher`, storage-path normalization, language detection,
-//!   and `index::security` are output or filesystem concerns owned by gwiki.
-//! - Engine coupling remains a derived projection over typed call and import
-//!   facts exposed here.
-//!
-//! The command wrapper was inventoried separately. [`ensure_project_fresh`]
-//! is the sole non-query admission helper: it runs gcode's existing
+//! [`ensure_project_fresh`] is the sole non-query admission helper: it runs gcode's existing
 //! project-scope freshness path, returns an owned status, and emits no warning.
-//! The generation-path caller owns the quiet-dependent busy diagnostic.
+//! The caller owns the quiet-dependent busy diagnostic.
 
 use std::ops::{Deref, DerefMut};
 use std::path::Path;

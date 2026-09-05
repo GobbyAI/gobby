@@ -214,3 +214,10 @@ fn unclassified_anyhow_error_exits_one() {
     let error = anyhow::anyhow!("unexpected index panic");
     assert_eq!(classify_run_error(&error).exit, 1);
 }
+#[test]
+fn retirement_uses_existing_prune_services_without_embeddings() {
+    assert_eq!(
+        services_for(&["retire-files", "--manifest", "/private/manifest.json"]),
+        services_for(&["prune", "--force"]),
+    );
+}

@@ -46,8 +46,7 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
     // Column ordinals differ when an additive migration reaches an existing database versus when
     // that same final definition is emitted by a flattened baseline. Runtime schema authority is
     // name-based, so catalog identity deliberately covers column semantics rather than position.
-    // The independently managed gwiki_* projection can share this schema but is outside this
-    // manifest's authority boundary.
+    // Retired projection objects are included so verification detects accidental recreation.
     let columns = query_entries(
         client,
         r#"
@@ -57,7 +56,6 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
                    AS definition
         FROM information_schema.columns
         WHERE table_schema = $1
-          AND substring(table_name from 1 for 6) <> 'gwiki_'
         ORDER BY table_name, column_name
         "#,
         schema,
@@ -75,7 +73,6 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
         JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
         WHERE namespace.nspname = $1
           AND constraint_record.contype <> 'n'
-          AND substring(relation.relname from 1 for 6) <> 'gwiki_'
         ORDER BY relation.relname, constraint_record.conname
         "#,
         schema,
@@ -87,7 +84,6 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
         SELECT indexname AS name, indexdef AS definition
         FROM pg_indexes
         WHERE schemaname = $1
-          AND substring(tablename from 1 for 6) <> 'gwiki_'
         ORDER BY indexname
         "#,
         schema,
@@ -129,7 +125,6 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
         JOIN pg_class AS relation ON relation.oid = trigger_record.tgrelid
         JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
         WHERE namespace.nspname = $1 AND NOT trigger_record.tgisinternal
-          AND substring(relation.relname from 1 for 6) <> 'gwiki_'
         ORDER BY relation.relname, trigger_record.tgname
         "#,
         schema,

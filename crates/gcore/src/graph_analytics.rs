@@ -99,7 +99,7 @@ pub fn analyze(graph: &AnalyticsGraph) -> GraphAnalytics {
 /// These are starting values, tuned against modularity quality: structural
 /// containment and inheritance couple more tightly than loose references. The
 /// match is case-insensitive and accepts the singular/plural/UPPERCASE spellings
-/// produced across gcode payloads, codewiki, and gwiki provenance. Unknown kinds
+/// used by code graphs and provenance relationships. Unknown kinds
 /// fall back to `1.0`. The result is always finite and positive; sanitizing the
 /// public `AnalyticsEdge.weight` (NaN/∞/≤0) happens at the adapter boundary.
 pub fn weight_for_kind(kind: &str) -> f64 {
@@ -108,7 +108,7 @@ pub fn weight_for_kind(kind: &str) -> f64 {
         "extends" | "implements" | "inherits" => 2.5, // inheritance
         "import" | "imports" => 2.0,                  // module dependency
         "call" | "calls" => 1.5,                      // call coupling
-        "cites" | "supports" => 1.5,                  // gwiki provenance
+        "cites" | "supports" => 1.5,                  // provenance
         "references" | "refers" | "uses" | "callers" => 1.0,
         "links" | "link" | "neighbor" | "relates" => 1.0,
         _ => 1.0, // unknown DB rel-types, "changed", etc.

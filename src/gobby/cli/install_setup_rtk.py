@@ -29,7 +29,7 @@ from gobby.integrations.rtk import (
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 
-from .install_setup import _extract_binary_from_release_archive, _urlopen_https
+from .install_release import _extract_binary_from_release_archive, _urlopen_https
 
 logger = logging.getLogger(__name__)
 

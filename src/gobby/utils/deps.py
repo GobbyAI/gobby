@@ -95,11 +95,6 @@ def get_ghook_version() -> str | None:
     return _get_native_binary_version("ghook", ".ghook-version")
 
 
-def get_gwiki_version() -> str | None:
-    """Get gwiki version from stamp file or CLI."""
-    return _get_native_binary_version("gwiki", ".gwiki-version")
-
-
 def get_gterm_version() -> str | None:
     """Get gterm version from stamp file or CLI."""
     return _get_native_binary_version("gterm", ".gterm-version")
@@ -647,8 +642,6 @@ def collect_all_deps(db: HubDatabase, *, managed_services: bool) -> dict[str, An
             "gcode_path": _local_binary_path("gcode"),
             "ghook": get_ghook_version(),
             "ghook_path": _local_binary_path("ghook"),
-            "gwiki": get_gwiki_version(),
-            "gwiki_path": _local_binary_path("gwiki"),
             "gterm": get_gterm_version(),
             "gterm_path": _local_binary_path("gterm"),
             "gclient": get_gclient_version(),

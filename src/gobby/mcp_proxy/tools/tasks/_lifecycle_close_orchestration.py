@@ -125,6 +125,7 @@ async def launch_close_review(
         task_id=task.id,
         commit_shas=evaluation.commit_shas,
         changes_summary=str(close_arguments.get("changes_summary") or ""),
+        closure_reason=str(close_arguments.get("reason") or "completed"),
         review_fingerprint=review.review_fingerprint,
         evidence_fingerprint=review.evidence_fingerprint,
         validation_commands=(

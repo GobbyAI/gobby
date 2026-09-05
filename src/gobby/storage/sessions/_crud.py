@@ -64,28 +64,6 @@ class _SessionCRUDHost(Protocol):
 
     def move_to_project(self, session_id: str, project_id: str) -> Session | None: ...
 
-    def register(
-        self,
-        external_id: str,
-        machine_id: str | None,
-        source: str,
-        project_id: str | None,
-        title: str | None | UnsetType = UNSET,
-        transcript_path: str | None | UnsetType = UNSET,
-        git_branch: str | None | UnsetType = UNSET,
-        parent_session_id: str | None | UnsetType = UNSET,
-        agent_depth: int = 0,
-        spawned_by_agent_id: str | None = None,
-        terminal_context: dict[str, Any] | None = None,
-        workflow_name: str | None = None,
-        session_type: str = "terminal",
-        is_local: bool = False,
-        sandbox_enabled: bool | None = None,
-        sandbox_policy_hash: str | None = None,
-        title_source: str | None | UnsetType = UNSET,
-        workspace_path: str | None = None,
-    ) -> Session: ...
-
 
 class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
     def register(

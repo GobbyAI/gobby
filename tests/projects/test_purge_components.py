@@ -4,18 +4,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import pytest
 
 from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
-from gobby.projects.gwiki_lock import GwikiProjectDrainBarrier, gwiki_project_lock_key
 from gobby.projects.vector_cleanup import ProjectVectorCleaner
 from gobby.storage.cron import CronJobStorage
-from gobby.storage.cron_models import CronJob
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.wiki.prune_job import guard_project_cron_handler
 
 
 def test_project_storage_uses_inclusive_24_hour_boundary(temp_db: HubDatabase) -> None:
@@ -55,48 +51,6 @@ def test_cron_storage_can_park_and_remove_all_project_rows(temp_db: HubDatabase)
     assert storage.get_job(job.id).enabled is False  # type: ignore[union-attr]
     assert storage.delete_project_jobs([job.id]) == 1
     assert storage.get_job(job.id) is None
-
-
-class FakeCursor:
-    def __init__(self, row: dict[str, bool]) -> None:
-        self._row = row
-
-    def fetchone(self) -> dict[str, bool]:
-        return self._row
-
-
-class FakeLockConnection:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, tuple[int, ...]]] = []
-        self.attempts = iter((False, True))
-        self.closed = False
-
-    def execute(self, sql: str, params: tuple[int, ...]) -> FakeCursor:
-        self.calls.append((sql, params))
-        if "pg_try_advisory_lock" in sql:
-            return FakeCursor({"acquired": next(self.attempts)})
-        return FakeCursor({"acquired": True})
-
-    def close(self) -> None:
-        self.closed = True
-
-
-@pytest.mark.asyncio
-async def test_gwiki_barrier_uses_exact_session_lock_and_releases_it() -> None:
-    connection = FakeLockConnection()
-    barrier = GwikiProjectDrainBarrier(
-        object(),
-        connection_factory=lambda: connection,
-        poll_seconds=0,
-    )
-
-    async with barrier.drain("project-1", timeout=1):
-        assert connection.closed is False
-
-    key = gwiki_project_lock_key("project-1")
-    assert [params for _sql, params in connection.calls] == [(key,), (key,), (key,)]
-    assert "pg_advisory_unlock" in connection.calls[-1][0]
-    assert connection.closed is True
 
 
 @dataclass
@@ -164,37 +118,6 @@ async def test_vector_cleanup_covers_active_and_staged_physical_collections() ->
         "gobby_github_issues@staged",
     }
     assert all(filters == {"project_id": "project-1"} for filters, _ in vector_store.deletes)
-
-
-@pytest.mark.asyncio
-async def test_project_liveness_guard_skips_deleted_project() -> None:
-    calls: list[str] = []
-
-    @dataclass
-    class Project:
-        deleted_at: object | None
-
-    async def handler(job: CronJob) -> Any:
-        calls.append(job.project_id)
-        return "ran"
-
-    guarded = guard_project_cron_handler(handler, lambda _project_id: Project(deleted_at=object()))
-    job = CronJob(
-        id="job-1",
-        project_id="project-1",
-        name="job",
-        schedule_type="interval",
-        action_type="handler",
-        action_config={},
-        created_at=datetime.now(UTC),
-        updated_at=datetime.now(UTC),
-        interval_seconds=3600,
-    )
-
-    result = await guarded(job)
-    assert result["status"] == "skipped"
-    assert result["skipped"] is True
-    assert calls == []
 
 
 @pytest.mark.asyncio

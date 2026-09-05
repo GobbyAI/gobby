@@ -14,7 +14,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `plan-mode` | `plan-mode/` | 6 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
 | `memory-lifecycle` | `memory-lifecycle/` | 11 | Shadow relevance judging, initial-load recovery, reminders, claim-time search nudge, post-close review, plan-memory guards, turn sequencing, and tracking reset |
 | `session-feedback` | `session-feedback/` | 3 | Bounded Gobby-experience survey via feedback or set_handoff |
-| `context-handoff` | `context-handoff/` | 11 | Compact/resume handoffs, task context, user profile, wiki context, and pressure nudges |
+| `context-handoff` | `context-handoff/` | 7 | Compact/resume handoffs, task context, user profile, and pressure nudges |
 | `auto-task` | `auto-task/` | 3 | Autonomous task execution context, task continuation, notify tree complete |
 | `build-coordinator` | `build-coordinator/` | 1 | Require build-coordinator guidance for Gobby build work |
 | `code-index` | `code-index/` | 5 | Require code-index guidance and prefer `gcode` for search and source navigation |

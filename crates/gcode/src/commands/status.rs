@@ -4,6 +4,7 @@ mod invalidate;
 mod projects;
 mod prune;
 mod repo_outline;
+pub(crate) mod retire_files;
 mod shared;
 
 pub use current::run;

@@ -13,8 +13,9 @@ from gobby.code_index.eligibility import code_index_id_for_root
 from gobby.code_index.maintenance_launch import open_launch_async
 from gobby.code_index.maintenance_log import log_gcode_maintenance_event
 from gobby.scheduler.executor import CronHandler
-from gobby.storage.cron import CronJobStorage, compute_next_run
+from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
+from gobby.storage.cron_schedule import compute_next_run
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.datetime import resolve_local_timezone
 

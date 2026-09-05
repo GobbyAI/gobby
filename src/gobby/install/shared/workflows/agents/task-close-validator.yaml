@@ -2,7 +2,7 @@ name: task-close-validator
 description: |
   Taskless read-only validator for close reviews whose complete evidence exceeds
   the one-shot prompt limit.
-version: "1.8"
+version: "1.9"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -39,8 +39,18 @@ prompts:
     run focused validations when useful, and return only the required JSON.
   agent: |
     You are a taskless, read-only task-close validator. The launch prompt provides
-    review_id, task_id, commit_shas, changes_summary, review_fingerprint, and
+    review_id, task_id, commit_shas, changes_summary, closure_reason, review_fingerprint, and
     deterministic_evidence_fingerprint.
+
+    First apply the stated closure_reason. For duplicate, already_implemented,
+    wont_fix, obsolete, or out_of_repo, judge the changes_summary as a no-work
+    disposition justification. Original implementation criteria are not expected
+    to be met: mark each satisfied when the specific justification coherently
+    explains its disposition. Reject a missing, vague, or contradicted
+    justification. Do not demand implementation, tests, commits, or operational
+    actions for superseded deliverables. Deterministic gates still enforce
+    attributed edits, commits, dirty paths, and ownership. The implementation
+    evidence and Live: guidance below applies to completed closures.
 
     Read the full task and criteria with get_task. Inspect complete linked diffs,
     per-file LOC shape, every named acceptance-test body, referenced evidence

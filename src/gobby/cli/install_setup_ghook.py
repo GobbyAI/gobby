@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
+from urllib.request import Request
 
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_models import compare_versions
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.install.version_probe import probe_native_bin_version
+
+from . import install_release
 
 _NATIVE_GHOOK_BINARY_MAGICS = (
     b"\x7fELF",
@@ -25,13 +30,11 @@ _NATIVE_GHOOK_BINARY_MAGICS = (
 def get_latest_ghook_version(module: Any) -> str | None:
     """Query crates.io for latest ghook version."""
     try:
-        req = module.Request(
-            module._GHOOK_CRATES_API, headers={"User-Agent": "gobby-installer/1.0"}
-        )
-        with module._urlopen_https(req, timeout=10) as resp:
-            data = module.json.loads(resp.read())
+        req = Request(module._GHOOK_CRATES_API, headers={"User-Agent": "gobby-installer/1.0"})
+        with install_release._urlopen_https(req, timeout=10) as resp:
+            data = json.loads(resp.read())
         return str(data["crate"]["max_version"])
-    except (module.URLError, module.json.JSONDecodeError, KeyError, OSError) as e:
+    except (URLError, json.JSONDecodeError, KeyError, OSError) as e:
         module.logger.debug("ghook: could not check latest version: %s", e)
         return None
 
@@ -109,7 +112,7 @@ def ghook_install_source_url(
         if not version:
             return None
         return str(
-            module._build_release_download_url(
+            install_release._build_release_download_url(
                 "ghook",
                 target,
                 version=version,
@@ -141,7 +144,7 @@ def write_ghook_install_sidecar(
     )
     try:
         with module.os.fdopen(fd, "w", encoding="utf-8") as f:
-            module.json.dump(
+            json.dump(
                 {
                     "install_method": install_method,
                     "install_source_url": install_source_url,
@@ -169,7 +172,7 @@ def install_ghook_from_github(
 ) -> bool:
     """Download and extract ghook from GitHub Releases."""
     return bool(
-        module._download_release_binary(
+        install_release._download_release_binary(
             bin_dir,
             binary_name=module._GHOOK_BIN_NAME,
             artifact_name="ghook",

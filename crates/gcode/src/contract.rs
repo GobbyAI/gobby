@@ -541,6 +541,30 @@ pub fn contract() -> CliContract {
             },
             CommandContract {
                 positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--manifest", "FILE").required(),
+                    FlagContract::switch("--apply"),
+                    FlagContract::value("--receipt", "FILE"),
+                ],
+                json_output_keys: vec![
+                    "version",
+                    "manifest_digest",
+                    "backends",
+                    "source_inventory_digest",
+                    "project_id",
+                    "machine_id",
+                    "root_path",
+                    "mode",
+                    "complete",
+                    "files",
+                ],
+                ..CommandContract::new(
+                    "retire-files",
+                    "Validate or apply exact manifest-bound retirement of missing file content; apply requires a private receipt.",
+                )
+            },
+            CommandContract {
+                positionals: vec![],
                 flags: vec![FlagContract::switch("--force")],
                 json_output_keys: vec![],
                 ..CommandContract::new(

@@ -142,7 +142,7 @@ def _request(**overrides: Any) -> ToolChatRequest:
             prompt="Document the auth module.",
             tool_policy=_POLICY,
             project_path="/repo",
-            caller="gwiki.ask.deep",
+            caller="gcode.investigate",
             request_id="019fc08a-1d63-4b23-bbc8-659d56bc4168",
         ),
         **overrides,
@@ -257,7 +257,7 @@ async def test_limit_logs_include_safe_correlation_routing_limits_and_counts(
     record = caplog.records[-1]
     fields = record.__dict__
     assert record.levelno == logging.INFO
-    assert fields["caller"] == "gwiki.ask.deep"
+    assert fields["caller"] == "gcode.investigate"
     assert fields["request_id"] == "019fc08a-1d63-4b23-bbc8-659d56bc4168"
     assert fields["profile"] is None
     assert fields["requested_provider"] == "claude"
@@ -392,7 +392,7 @@ async def test_no_available_candidate_raises_without_fallback(
     )
     fields = record.__dict__
     assert record.levelno == logging.INFO
-    assert fields["caller"] == "gwiki.ask.deep"
+    assert fields["caller"] == "gcode.investigate"
     assert fields["request_id"] == "019fc08a-1d63-4b23-bbc8-659d56bc4168"
     assert fields["provider"] == "codex"
     assert fields["model"] == "gpt-5.6-terra"

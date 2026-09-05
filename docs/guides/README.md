@@ -50,8 +50,6 @@ links to the guide that owns that topic.
 | [search.md](search.md) | Unified search with text, vector, and hybrid modes |
 | [code-index.md](code-index.md) | `gcode` indexing, symbol search, and graph navigation |
 | [gcode-user-guide.md](gcode-user-guide.md) | `gcode` search, symbols, dependency graphs, and project management |
-| [codewiki.md](codewiki.md) | Generated codebase docs, degraded graph output, and `gwiki` ingest |
-| [gwiki-user-guide.md](gwiki-user-guide.md) | `gwiki` vault setup, multimodal ingest, hybrid search, research, and maintenance |
 | [ghook-user-guide.md](ghook-user-guide.md) | `ghook` hook dispatch, inbox replay, diagnostics, and troubleshooting |
 
 ## Interfaces & Reference
@@ -64,7 +62,6 @@ links to the guide that owns that topic.
 | [hook-schemas.md](hook-schemas.md) | Hook event schema and adapter payload reference |
 | [adapter-fidelity.md](adapter-fidelity.md) | Provider capability declarations and adapter response fidelity |
 | [variables.md](variables.md) | Session variables, conditions, and safe expression evaluation |
-| [gwiki-daemon-web.md](gwiki-daemon-web.md) | `gwiki --format json` gateway contracts for daemon, MCP, cron, and web integration |
 
 ## Integrations
 
@@ -108,7 +105,6 @@ links to the guide that owns that topic.
 | [hub-install-contract.md](hub-install-contract.md) | Standalone hub adoption and additive upgrade requirements |
 | [gcore-development-guide.md](gcore-development-guide.md) | `gobby-core` shared foundation crate internals |
 | [ghook-development-guide.md](ghook-development-guide.md) | `ghook` hook-dispatch implementation details |
-| [gwiki-development-guide.md](gwiki-development-guide.md) | `gwiki` research and knowledge-vault CLI internals |
 | [gterminal-development-guide.md](gterminal-development-guide.md) | `gterm` / `gclient` build, protocols, and rebuild-and-reinstall |
 
 ## Writing Specifications

@@ -49,22 +49,11 @@ def test_extended_timeout_tools_excludes_stale_apply_tdd() -> None:
         "sync_worktree",
         "create_worktree",
         "delete_worktree",
-        "wiki_compile",
         "spawn_agent",
         "run_expansion_qa_coverage",
         "reindex_embeddings",
         "rebuild_crossrefs",
     )
-
-
-def test_generation_gwiki_timeout_sits_below_extended_http_cap() -> None:
-    """The daemon-side gwiki generation guard must fire before the wrapper's
-    extended HTTP timeout so callers get gwiki's structured timeout envelope
-    instead of a transport-level REQUEST_TIMEOUT (#17593)."""
-    from gobby.gwiki_gateway import GENERATION_GWIKI_TIMEOUT_SECONDS
-    from gobby.mcp_proxy import wait_tools
-
-    assert GENERATION_GWIKI_TIMEOUT_SECONDS < wait_tools.MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS
 
 
 def test_wait_tool_protocol_mismatch_result_detects_missing_header() -> None:

@@ -493,12 +493,12 @@ class _HealthCaptureStorage:
 async def test_health_fail_persists_full_redacted_pane_for_get_agent_capture() -> None:
     from gobby.mcp_proxy.tools.agents import create_agents_registry
     from gobby.mcp_proxy.tools.spawn_agent._health import _deferred_tmux_health_check
-    from gobby.sessions.session_wiki_file import redact_session_markdown
+    from gobby.utils.terminal_output import redact_terminal_output
 
     unique_head = "HEALTH_PANE_HEAD_7f3a9c"
     unique_tail = "HEALTH_PANE_TAIL_7f3a9c"
     pane = f"{unique_head}\n{'x' * 2048}\nsk-ABCDEFGHIJKLMNOPQRSTUV\n{unique_tail}"
-    redacted = redact_session_markdown(pane.strip())
+    redacted = redact_terminal_output(pane.strip())
     assert unique_head in redacted
     assert unique_tail in redacted
     assert "sk-ABCDEFGHIJKLMNOPQRSTUV" not in redacted

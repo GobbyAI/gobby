@@ -246,7 +246,7 @@ pub fn escape_property(key: &str) -> String {
 ///
 /// The quoting is load-bearing: falkordb 0.2 interpolates params as raw
 /// `CYPHER k=v` text, so an unquoted value is a syntax error or an injection
-/// vector. Removing this once broke every gwiki graph query (#670) — keep the
+/// vector. A previous regression removed these quotes (#670) — keep the
 /// quotes even though typed param APIs elsewhere don't need them.
 pub fn escape_string(value: &str) -> String {
     let escaped = value.replace('\\', "\\\\").replace('\'', "\\'");

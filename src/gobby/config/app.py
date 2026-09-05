@@ -85,7 +85,6 @@ from gobby.config.validation_detection import (
     default_validation_detection_config,
 )
 from gobby.config.voice import VoiceConfig
-from gobby.config.wiki import WikiConfig
 from gobby.hooks.effect_deadline import BLOCKING_EFFECT_BUDGET_SECONDS
 from gobby.search.models import SearchConfig
 from gobby.telemetry.config import TelemetrySettings
@@ -443,15 +442,11 @@ class DaemonConfig(BaseModel):
     )
     indexing: IndexingConfig = Field(
         default_factory=IndexingConfig,
-        description="Shared indexing behavior for gcode and gwiki.",
+        description="Code indexing behavior.",
     )
     bin_freshness: BinFreshnessConfig = Field(
         default_factory=BinFreshnessConfig,
         description="Managed native binary freshness checks.",
-    )
-    wiki: WikiConfig = Field(
-        default_factory=WikiConfig,
-        description="Daemon wiki file watcher configuration.",
     )
     clones_dir: str = Field(
         default="~/.gobby/clones",

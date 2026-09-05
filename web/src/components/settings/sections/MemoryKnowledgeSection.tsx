@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { DetailActionButton, TextField } from "../../activity/fields";
-import { TypedListField } from "../fields";
+import { DetailActionButton } from "../../activity/fields";
 import { SettingsSection, type SettingsSectionFields } from "./SettingsSection";
 import { useSettingsSectionContext } from "./SettingsSectionContext";
 import {
@@ -12,17 +11,15 @@ import {
   SwitchConfigField,
   TextConfigField,
 } from "./configFields";
-import { asString, asTypedList } from "./configAccessors";
+import { asString } from "./configAccessors";
 
 /**
  * Memory & Knowledge settings section: the persistent memory store, its
  * knowledge-graph extraction and dreaming maintenance, the embedding model,
  * the Qdrant vector store and FalkorDB graph store, the background
- * knowledge-graph queue, memory backup, and the wiki watcher. These are the
- * `memory.*`, `embeddings.*`, `databases.*`,
- * `knowledge_graph_queue.*`, `memory_backup.*`, and `wiki.*` keep-rows from the
- * configuration audit, with the array "fix" rows (`candidates`,
- * `wiki.ignore_globs`, `wiki.roots`) given typed list editors.
+ * knowledge-graph queue, and memory backup. These are the `memory.*`,
+ * `embeddings.*`, `databases.*`, `knowledge_graph_queue.*`, and
+ * `memory_backup.*` settings from the configuration audit.
  *
  * Secret credentials (`embeddings.api_key`, `databases.qdrant.api_key`,
  * `databases.falkordb.password`) route to the Secrets & Auth section and are
@@ -95,21 +92,12 @@ const BACKUP_PATHS = [
   "memory_backup.backup_path",
 ] as const;
 
-const WIKI_PATHS = [
-  "wiki.enabled",
-  "wiki.roots",
-  "wiki.debounce_interval",
-  "wiki.poll_interval",
-  "wiki.ignore_globs",
-] as const;
-
 const OWNED_PATHS: readonly string[] = [
   ...MEMORY_PATHS,
   ...EMBEDDINGS_PATHS,
   ...DATABASE_PATHS,
   ...QUEUE_PATHS,
   ...BACKUP_PATHS,
-  ...WIKI_PATHS,
 ];
 
 /**
@@ -120,12 +108,6 @@ const BACKEND_OPTIONS = [
   { value: "local", label: "Local" },
   { value: "null", label: "Disabled (null)" },
 ];
-
-/** One watched wiki root: a stable scope name plus a filesystem path. */
-interface WikiRoot {
-  scope: string;
-  path: string;
-}
 
 function MemoryGroup({ fields }: { fields: SettingsSectionFields }) {
   return (
@@ -567,84 +549,6 @@ function BackupGroup({ fields }: { fields: SettingsSectionFields }) {
   );
 }
 
-/**
- * The `wiki.roots` editor: a `list[WikiRootConfig]` of watched roots. Each entry
- * is a `{scope, path}` object, so it uses the structured `TypedListField`
- * primitive with a two-field editor per row rather than a flat string list.
- */
-function WikiRootsField({ fields }: { fields: SettingsSectionFields }) {
-  return (
-    <TypedListField<WikiRoot>
-      label="Wiki roots"
-      ariaLabel="Wiki root"
-      value={asTypedList<WikiRoot>(fields.getValue("wiki.roots"))}
-      addLabel="Add wiki root"
-      createItem={() => ({ scope: "", path: "" })}
-      itemLabel={(root, index) =>
-        asString(root.scope) || `Wiki root ${index + 1}`
-      }
-      onChange={(value) => fields.setValue("wiki.roots", value)}
-      renderItem={(root, onItemChange, index) => (
-        <>
-          <TextField
-            label="Scope"
-            ariaLabel={`Wiki root ${index + 1} scope`}
-            value={asString(root.scope)}
-            placeholder="project"
-            onChange={(value) => onItemChange({ ...root, scope: value })}
-          />
-          <TextField
-            label="Path"
-            ariaLabel={`Wiki root ${index + 1} path`}
-            value={asString(root.path)}
-            placeholder="docs/wiki"
-            onChange={(value) => onItemChange({ ...root, path: value })}
-          />
-        </>
-      )}
-    />
-  );
-}
-
-function WikiGroup({ fields }: { fields: SettingsSectionFields }) {
-  return (
-    <Subsection
-      title="Wiki watcher"
-      hint="Filesystem watching that indexes configured wiki roots."
-    >
-      <SwitchConfigField
-        fields={fields}
-        path="wiki.enabled"
-        label="Enable wiki watcher"
-        ariaLabel="Enable wiki watcher"
-      />
-      <WikiRootsField fields={fields} />
-      <NumberConfigField
-        fields={fields}
-        path="wiki.debounce_interval"
-        label="Debounce interval (seconds)"
-        ariaLabel="Wiki debounce interval (seconds)"
-        step={0.25}
-      />
-      <NumberConfigField
-        fields={fields}
-        path="wiki.poll_interval"
-        label="Poll interval (seconds)"
-        ariaLabel="Wiki poll interval (seconds)"
-        step={0.25}
-      />
-      <StringListConfigField
-        fields={fields}
-        path="wiki.ignore_globs"
-        label="Ignore globs"
-        ariaLabel="Wiki ignore globs"
-        addLabel="Add glob"
-        placeholder="outputs/**"
-      />
-    </Subsection>
-  );
-}
-
 export function MemoryKnowledgeSection() {
   return (
     <SettingsSection sectionId="memory-knowledge" ownedPaths={OWNED_PATHS}>
@@ -658,7 +562,6 @@ export function MemoryKnowledgeSection() {
           <GraphStoreGroup fields={fields} />
           <QueueGroup fields={fields} />
           <BackupGroup fields={fields} />
-          <WikiGroup fields={fields} />
         </>
       )}
     </SettingsSection>

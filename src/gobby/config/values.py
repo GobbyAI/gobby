@@ -21,9 +21,8 @@ from gobby.config.registry import (
     config_key_secrecy,
     config_structured_identity_field,
     config_structured_reference_fields,
-    decode_dynamic_segment,
-    encode_dynamic_segment,
 )
+from gobby.config.registry_key_encoding import decode_dynamic_segment, encode_dynamic_segment
 from gobby.config.runtime import ConfigSnapshot
 from gobby.config.secret_mask import MASKED_SECRET
 from gobby.config.voice_secrets import (

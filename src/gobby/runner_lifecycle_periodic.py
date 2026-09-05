@@ -5,14 +5,9 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from gobby.config.wiki import WikiConfig, WikiRootConfig
-from gobby.gwiki_gateway import INTERACTIVE_GWIKI_TIMEOUT_SECONDS, GwikiGateway
 from gobby.runner_lifecycle_startup import StartupTracker
-from gobby.wiki.update_coordinator import WikiUpdateCoordinator
-from gobby.wiki.watcher import WikiWatcher, WikiWatchScope
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
@@ -93,83 +88,6 @@ def _default_loops() -> dict[str, Any]:
         "resource_monitor_loop": resource_monitor_loop,
         "model_metadata_refresh_loop": model_metadata_refresh_loop,
     }
-
-
-def _wiki_gateway_for_local_scope(
-    wiki_config: WikiConfig,
-    roots_by_scope: dict[str, WikiRootConfig],
-) -> Callable[[str], GwikiGateway]:
-    # Keep wiki_config in this factory API for future per-root gateway options.
-
-    def gateway(scope: str) -> GwikiGateway:
-        root = roots_by_scope.get(scope)
-        configured_scope = root.scope if root is not None else scope
-        project_root: str | None = None
-        if root is not None and _is_project_scope(configured_scope):
-            project_root = str(root.path)
-        return GwikiGateway(
-            binary=None,
-            project_root=project_root,
-            topic=_wiki_topic_name(configured_scope),
-            timeout_seconds=INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
-        )
-
-    return gateway
-
-
-def _is_project_scope(scope: str) -> bool:
-    return scope == "project" or scope.startswith("project:")
-
-
-def _wiki_topic_name(scope: str) -> str | None:
-    if _is_project_scope(scope):
-        return None
-    if scope.startswith("topic:"):
-        topic = scope.removeprefix("topic:").strip()
-        return topic or None
-    return scope
-
-
-def _watch_scope_name(root: WikiRootConfig) -> str:
-    """Unique watcher identity for one wiki root.
-
-    Configured scope names are kind labels, not identities: every project
-    vault ships as scope "project", so multiple projects legally share the
-    name. The watcher, coordinator, and gateway factory all key state by
-    scope name, so project scopes are disambiguated by resolved root path.
-    """
-    if root.scope == "project":
-        return f"project:{root.path.expanduser().resolve()}"
-    return root.scope
-
-
-def _roots_by_watch_scope(wiki_config: WikiConfig) -> dict[str, WikiRootConfig]:
-    from gobby.files_home_http import is_remote_files_mode
-    from gobby.wiki.owner_dispatch import is_owner_watch_scope
-
-    roots: dict[str, WikiRootConfig] = {}
-    for root in wiki_config.roots:
-        if is_remote_files_mode() and is_owner_watch_scope(root.scope):
-            continue
-        expanded_path = root.path.expanduser()
-        if not expanded_path.exists():
-            continue
-        if expanded_path != root.path:
-            root = root.model_copy(update={"path": expanded_path})
-        name = _watch_scope_name(root)
-        existing = roots.get(name)
-        if existing is not None:
-            logger.warning(
-                "Ignoring duplicate wiki root %s (scope %r): already watching %s "
-                "under watch scope %r",
-                root.path,
-                root.scope,
-                existing.path,
-                name,
-            )
-            continue
-        roots[name] = root
-    return roots
 
 
 def _has_enabled_external_issue_integration(mcp_manager: Any) -> bool:
@@ -448,33 +366,6 @@ def start_periodic_tasks(
             name="external-issue-sync",
         )
 
-    runner._wiki_watcher = None
-    runner._wiki_watcher_task = None
-    wiki_config = config.wiki
-    if isinstance(wiki_config, WikiConfig) and wiki_config.enabled and wiki_config.roots:
-        roots_by_scope = _roots_by_watch_scope(wiki_config)
-        scopes = [
-            WikiWatchScope(name=name, root=root.path) for name, root in roots_by_scope.items()
-        ]
-        if scopes:
-            runner._wiki_watcher = WikiWatcher(
-                scopes=scopes,
-                coordinator=WikiUpdateCoordinator(
-                    GwikiGateway(),
-                    local_gateway_factory=_wiki_gateway_for_local_scope(
-                        wiki_config,
-                        roots_by_scope,
-                    ),
-                ),
-                debounce_interval=wiki_config.debounce_interval,
-                poll_interval=wiki_config.poll_interval,
-                ignore_globs=wiki_config.ignore_globs,
-            )
-            runner._wiki_watcher_task = asyncio.create_task(
-                runner._wiki_watcher.run(),
-                name="wiki-watcher",
-            )
-
     periodic_tasks = tuple(
         task
         for task in (
@@ -505,7 +396,6 @@ def start_periodic_tasks(
             runner._approval_timeout_task,
             runner._tmux_window_repair_task,
             runner._external_issue_sync_task,
-            runner._wiki_watcher_task,
         )
         if task is not None
     )

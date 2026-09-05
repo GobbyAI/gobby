@@ -9,7 +9,7 @@ three HTTP-facing surfaces:
 
 The route source of truth is `src/gobby/servers/app_factory.py` plus the router
 modules under `src/gobby/servers/routes/`. This reference is not exhaustive:
-some surfaces (for example `/api/wiki/*`, `/api/profiles`, `/api/llm`,
+some surfaces (for example `/api/profiles`, `/api/llm`,
 `/api/embeddings`, chat attachments, and stage-registry mutation routes) are
 documented in their feature guides rather than here.
 

@@ -23,7 +23,7 @@ export interface TypedListFieldProps<T> {
 
 /**
  * Editable list of structured items — the primitive for the audit's
- * `array<object>` "fix" rows (tool_approval.policies, wiki.roots, webhook
+ * `array<object>` "fix" rows (tool_approval.policies, webhook
  * endpoints, …). Each item's shape and editor are supplied by the caller.
  */
 export function TypedListField<T>({

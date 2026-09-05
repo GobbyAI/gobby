@@ -283,16 +283,6 @@ def setup_internal_registries(
     manager.add_registry(workflows_registry)
     logger.debug("Workflows registry initialized")
 
-    # Initialize wiki registry (always available; gateway availability is checked per call)
-    from gobby.mcp_proxy.tools.wiki import create_wiki_registry
-
-    wiki_registry = create_wiki_registry(
-        db=db,
-        default_project_id=project_id,
-    )
-    manager.add_registry(wiki_registry)
-    logger.debug("Wiki registry initialized")
-
     # Initialize metrics registry if metrics_manager is available
     if metrics_manager is not None:
         from gobby.mcp_proxy.tools.metrics import create_metrics_registry

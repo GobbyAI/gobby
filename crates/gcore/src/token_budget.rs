@@ -3,8 +3,8 @@
 //! Pure, always-compiled logic shared by the Gobby CLIs: estimate the token
 //! cost of rendered output with a `ceil(chars / 4)` heuristic, page an ordered
 //! result list without splitting semantic items, and combine unrelated hints.
-//! `gcode` consumes the pager directly. The legacy trim adapter remains only
-//! while the disabled `gwiki` search is replaced by epic #19664.
+//! `gcode` consumes the pager directly. [`trim_results`] also supports callers
+//! that need a bounded prefix with a refinement hint instead of pagination.
 
 /// Characters-per-token divisor for the `ceil(chars / 4)` estimate heuristic.
 pub const TOKEN_ESTIMATE_CHARS_PER_TOKEN: usize = 4;
@@ -17,7 +17,7 @@ pub struct TokenBudgetPage<T> {
     pub budget_exceeded: bool,
 }
 
-/// Legacy gwiki-only trimming result retained during epic #19664.
+/// Outcome of [`trim_results`], including a refinement hint when rows are omitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenBudgetTrim<T> {
     pub results: Vec<T>,
@@ -90,7 +90,8 @@ where
     }
 }
 
-/// Legacy gwiki-only row trimmer retained during epic #19664.
+/// Keep the longest ordered prefix that fits the row-estimated token budget.
+/// Unlike pagination, omitted rows are represented by a refinement hint.
 pub fn trim_results<T, F>(
     results: Vec<T>,
     token_budget: Option<usize>,

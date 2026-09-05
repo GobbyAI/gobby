@@ -22,8 +22,8 @@ from gobby.install.bin_set_coherence import (
 from gobby.storage.schema_identity_pin import SchemaIdentityError, validate_identity
 from gobby.utils.native_bin import native_bin_dir, native_bin_name, resolve_native_bin
 
-_PACKAGES = ("gobby-code", "gobby-daemon", "gobby-hooks", "gobby-wiki")
-_BINARY_NAMES = ("gcode", "gdaemon", "ghook", "gwiki")
+_PACKAGES = ("gobby-code", "gobby-daemon", "gobby-hooks")
+_BINARY_NAMES = ("gcode", "gdaemon", "ghook")
 _PIN_PATH = Path("src/gobby/storage/schema_expected_identity.json")
 _INSTALL_METHOD = "workspace-cutover"
 
@@ -171,4 +171,4 @@ def cutover(ctx: click.Context, workspace: Path) -> None:
         run_cutover(root, bin_dir, restart_daemon=restart_daemon)
     except CutoverError as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo("Cutover complete: gcode, gdaemon, ghook, gwiki, schema pin, and daemon agree.")
+    click.echo("Cutover complete: gcode, gdaemon, ghook, schema pin, and daemon agree.")

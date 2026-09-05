@@ -16,7 +16,9 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
 import gobby.storage.chat_attachments as chat_attachments
+from gobby import files_home_proxy
 from gobby.files_home_http import is_remote_files_mode
+from gobby.files_home_proxy import as_json_object
 from gobby.paths import FilesHomeError, require_files_home
 from gobby.servers.chat_attachment_files import (
     open_attachment_descriptor,
@@ -36,8 +38,6 @@ from gobby.storage.chat_attachment_lease import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
-from gobby.wiki import owner_dispatch
-from gobby.wiki.owner_dispatch import as_json_object
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -272,7 +272,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
     async def upload_attachment(request: Request) -> dict[str, Any]:
         if is_remote_files_mode():
             return as_json_object(
-                await owner_dispatch.proxy_owner_request(request, stream_body=True)
+                await files_home_proxy.proxy_owner_request(request, stream_body=True)
             )
         form = await request.form()
         uploaded = form.get("file")
@@ -315,7 +315,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
     @router.get("/{attachment_id}/content")
     async def get_attachment_content(request: Request, attachment_id: str) -> Any:
         if is_remote_files_mode():
-            return await owner_dispatch.proxy_owner_request(
+            return await files_home_proxy.proxy_owner_request(
                 request, accept_statuses=(200, 206, 304)
             )
         _validate_uuid_param(attachment_id, "attachment_id")
@@ -359,7 +359,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
     @router.delete("/{attachment_id}")
     async def delete_attachment(request: Request, attachment_id: str) -> dict[str, bool]:
         if is_remote_files_mode():
-            return as_json_object(await owner_dispatch.proxy_owner_request(request))
+            return as_json_object(await files_home_proxy.proxy_owner_request(request))
         _validate_uuid_param(attachment_id, "attachment_id")
         try:
             claimed = await server.run_db(

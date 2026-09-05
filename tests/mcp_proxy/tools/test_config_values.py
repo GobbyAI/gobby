@@ -5,7 +5,7 @@ from collections.abc import Collection, Mapping
 import pytest
 
 from gobby.config.app import DaemonConfig
-from gobby.config.registry import DYNAMIC_SEGMENT_CODEC_VECTORS
+from gobby.config.registry_key_encoding import DYNAMIC_SEGMENT_CODEC_VECTORS
 from gobby.config.runtime import ApplyFailure, ConfigSnapshot
 from gobby.config.values import ConfigValuesService
 from gobby.mcp_proxy.tools.config import create_config_registry

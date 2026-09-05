@@ -188,15 +188,6 @@
   --isolation-none: oklch(60% 0.005 125);
   --isolation-inherit: oklch(70% 0.005 250);
 
-  /* Wiki graph node kinds — see wiki/WikiTabModel.ts WIKI_NODE_COLOR_VARS.
-     Canvas dots carry no label, so kinds must separate by LIGHTNESS alone
-     (grayscale/deutan §6.1): ladder steps of ≥12 L on the dark canvas. */
-  --wiki-node-page: oklch(88% 0.17 125);
-  --wiki-node-source: oklch(74% 0.14 75);
-  --wiki-node-code: oklch(62% 0.14 250);
-  --wiki-node-citation: oklch(50% 0.11 200);
-  --wiki-node-document: oklch(38% 0.08 125);
-
   /* Knowledge-graph entity types — one token per canonical extraction type
      (see memory/KnowledgeGraph.tsx + prompts/memory/extract_entities.md).
      Nodes carry text labels, so lightness stays readable (≥58 L on dark);
@@ -249,7 +240,7 @@
 
   /* Activity-panel list-row height — single source of truth for every activity
      top-list row (Sessions, Tasks, Rules, MCP, Agents, Memory, Stages,
-     Profiles, Skills, Pipelines, Wiki, Integrations). Mirrors the content-driven
+     Profiles, Skills, Pipelines, Integrations). Mirrors the content-driven
      Sessions row so every tab's list reads at one height. Rows are single-line;
      secondary detail belongs in the detail pane, not a stacked second line. */
   --activity-panel-row-height: 2.25rem;
@@ -453,14 +444,6 @@
   --isolation-worktree: oklch(58% 0.16 75);
   --isolation-none: oklch(45% 0.005 125);
   --isolation-inherit: oklch(45% 0.005 250);
-
-  /* Wiki graph node kinds — light theme ladder (inverted: darker = brighter
-     prominence on the light canvas), same ≥10 L separation. */
-  --wiki-node-page: oklch(35% 0.15 125);
-  --wiki-node-source: oklch(47% 0.14 75);
-  --wiki-node-code: oklch(57% 0.15 250);
-  --wiki-node-citation: oklch(67% 0.11 200);
-  --wiki-node-document: oklch(77% 0.08 125);
 
   /* Knowledge-graph entity types — light theme (inverted ladder, ≤64 L). */
   --kg-entity-project: oklch(38% 0.15 125);

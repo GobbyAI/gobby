@@ -12,7 +12,6 @@ export type ActivityTab =
   | "skills"
   | "memory"
   | "integrations"
-  | "wiki"
   | "rules"
   | "tasks"
   | "files"
@@ -137,18 +136,6 @@ export const ACTIVITY_PANEL_TABS: ActivityPanelTab[] = [
         <circle cx="5" cy="7" r="3" />
         <circle cx="19" cy="17" r="3" />
         <path d="M12 7v10" />
-      </svg>
-    ),
-  },
-  {
-    id: "wiki",
-    label: "Wiki",
-    icon: (
-      <svg {...iconProps}>
-        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-        <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z" />
-        <path d="M8 7h8" />
-        <path d="M8 11h6" />
       </svg>
     ),
   },

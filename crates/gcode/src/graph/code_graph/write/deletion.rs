@@ -294,6 +294,54 @@ pub(crate) fn delete_file_node_query(
     )
 }
 
+pub(crate) fn delete_empty_file_node_query(
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<TypedQuery> {
+    typed_query(
+        "MATCH (f:CodeFile {path: $file_path, project: $project})
+         WHERE NOT (f)--()
+         DELETE f",
+        [
+            ("project", TypedValue::String(project_id.to_string())),
+            ("file_path", TypedValue::String(file_path.to_string())),
+        ],
+    )
+}
+
+pub(super) fn retirement_scope_queries(
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<Vec<TypedQuery>> {
+    let params = || {
+        [
+            ("project", TypedValue::String(project_id.to_string())),
+            ("file_path", TypedValue::String(file_path.to_string())),
+        ]
+    };
+    [
+        "MATCH (s:CodeSymbol {project:$project, file_path:$file_path})
+         RETURN s.id AS symbol_id, s.file_content_hash AS content_hash",
+        "MATCH (s {project:$project})-[r]->(n {project:$project})
+         WHERE (s:CodeFile AND s.path=$file_path AND type(r) IN ['DEFINES','IMPORTS'])
+            OR (s:CodeSymbol AND s.file_path=$file_path AND type(r) IN ['CALLS','INHERITS','EXTENDS','IMPLEMENTS'])
+            OR (r.source_file_path=$file_path AND type(r) IN ['INHERITS','EXTENDS','IMPLEMENTS'])
+         RETURN r.content_hash AS content_hash",
+        "MATCH (s {project:$project})-[r]-(n)
+         WHERE (s:CodeFile AND s.path=$file_path)
+            OR (s:CodeSymbol AND s.file_path=$file_path)
+         RETURN DISTINCT type(r) AS relationship_type, n.project AS other_project",
+        "MATCH ()-[r]->()
+         WHERE r.source_file_path=$file_path
+         WITH r, startNode(r) AS s, endNode(r) AS n
+         WHERE (s.project=$project OR n.project=$project)
+           AND NOT ((s:CodeFile AND coalesce(s.path,'')=$file_path)
+                 OR (s:CodeSymbol AND coalesce(s.file_path,'')=$file_path))
+         RETURN type(r) AS detached_type, r.content_hash AS content_hash,
+                s.project AS source_project, n.project AS target_project",
+    ].into_iter().map(|cypher| typed_query(cypher, params())).collect()
+}
+
 pub(crate) fn project_file_path_queries(project_id: &str) -> anyhow::Result<Vec<TypedQuery>> {
     let project_param = || [("project", TypedValue::String(project_id.to_string()))];
     Ok(vec![

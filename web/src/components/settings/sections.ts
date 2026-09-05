@@ -70,7 +70,7 @@ export const SETTINGS_SECTIONS = [
   {
     id: "memory-knowledge",
     label: "Memory & Knowledge",
-    description: "Memory, embeddings, Qdrant/FalkorDB, and the wiki watcher.",
+    description: "Memory, embeddings, Qdrant/FalkorDB, and memory backups.",
   },
   {
     id: "observability",

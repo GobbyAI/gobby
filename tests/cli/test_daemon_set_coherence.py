@@ -31,7 +31,7 @@ def _mixed_install(
     mixed["latest_checksum"] = "f" * 64
 
     (bin_dir / ".gdaemon-schema-identity.json").write_text(json.dumps(pinned), encoding="utf-8")
-    for member in ("gcode", "gdaemon", "ghook", "gwiki"):
+    for member in ("gcode", "gdaemon", "ghook"):
         _write_member(bin_dir / member, mixed if member == "ghook" else pinned)
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(bin_dir))
     return pinned, mixed

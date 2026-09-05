@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
@@ -22,6 +21,7 @@ from gobby.runner_lifecycle_reconcile import (
     _reconcile_agent_runs_after_restart,
 )
 from gobby.runner_lifecycle_startup import StartupTracker
+from gobby.runner_startup_code_index import _repair_code_index_bm25, _start_code_index_tasks
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
@@ -46,43 +46,6 @@ async def _run_db(
     return await asyncio.to_thread(operation, *args, **kwargs)
 
 
-def _discover_wiki_cron_project_scopes(
-    database: Any,
-) -> tuple[list[tuple[str, list[str] | None]], list[str]]:
-    from gobby.storage.project_checkouts import LocalProjectCheckoutManager
-    from gobby.storage.projects import LocalProjectManager
-    from gobby.utils.machine_id import require_machine_id
-
-    project_manager = LocalProjectManager(database)
-    checkout_manager = LocalProjectCheckoutManager(database)
-    checkouts = {
-        checkout.project_id: checkout
-        for checkout in checkout_manager.list_for_machine(require_machine_id())
-    }
-    scopes: list[tuple[str, list[str] | None]] = []
-    stale_project_ids: list[str] = []
-    offset = 0
-    while True:
-        projects = project_manager.list_page(
-            limit=_PROJECT_ENUMERATION_PAGE_SIZE,
-            offset=offset,
-        )
-        if not projects:
-            break
-        for project in projects:
-            if project_manager.is_protected(project):
-                continue
-            checkout = checkouts.get(project.id)
-            if checkout is None or not Path(checkout.root_path).is_dir():
-                stale_project_ids.append(project.id)
-                continue
-            scopes.append((project.id, None))
-        offset += len(projects)
-        if len(projects) < _PROJECT_ENUMERATION_PAGE_SIZE:
-            break
-    return scopes, stale_project_ids
-
-
 async def _connect_mcp_servers(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
     try:
         await asyncio.wait_for(runner.mcp_proxy.connect_all(), timeout=10.0)
@@ -96,62 +59,6 @@ async def _connect_mcp_servers(runner: GobbyRunner, tracker: StartupTracker | No
         logger.error("MCP connection failed: %s", e)
         if tracker:
             tracker.error("MCP servers", str(e))
-
-
-async def _repair_code_index_bm25(
-    runner: GobbyRunner,
-    tracker: StartupTracker | None,
-) -> bool:
-    """Verify and repair required BM25 indexes before code-index workers start."""
-    config = runner.config_runtime.capture().snapshot.active
-    if not config.code_index.enabled:
-        return True
-
-    from gobby.code_index.bm25_health import (
-        repair_bm25_indexes,
-        unavailable_bm25_status,
-    )
-    from gobby.runner_init.services import mark_service_degraded
-
-    database_url = runner.startup_config.database_url
-    if database_url:
-        try:
-            status = await asyncio.to_thread(
-                repair_bm25_indexes,
-                database_url,
-                timeout_seconds=config.code_index.maintenance_index_timeout_seconds,
-            )
-        except Exception as exc:
-            logger.exception("Unexpected code-index BM25 recovery failure")
-            status = unavailable_bm25_status(str(exc))
-    else:
-        status = unavailable_bm25_status("PostgreSQL database_url is not configured")
-
-    if status["healthy"]:
-        repaired = [item["name"] for item in status["indexes"] if item["repaired"]]
-        if repaired:
-            logger.warning("Repaired damaged code-index BM25 indexes: %s", ", ".join(repaired))
-        else:
-            logger.info("Code-index BM25 indexes verified healthy")
-        if tracker:
-            tracker.complete("Code-index BM25 healthy")
-        return True
-
-    mark_service_degraded(runner, "code_index_bm25")
-    failures = [
-        f"{item['name']}: {item['error'] or item['state']}"
-        for item in status["indexes"]
-        if item["state"] != "healthy"
-    ]
-    detail = "; ".join(failures)
-    logger.error(
-        "Code-index BM25 recovery failed; maintenance and sync workers will not start: %s. "
-        "Run `gobby postgres repair-code-index`, then restart Gobby.",
-        detail,
-    )
-    if tracker:
-        tracker.error("Code-index BM25", detail)
-    return False
 
 
 async def _check_embedding_service(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
@@ -420,94 +327,7 @@ async def _start_agent_lifecycle_monitor(
 
 
 async def _start_cron_scheduler(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
-    await _register_wiki_cron_handlers(runner, tracker)
     await _start_tracked_service(runner.cron_scheduler, "Cron scheduler", tracker)
-
-
-async def _register_wiki_cron_handlers(
-    runner: GobbyRunner,
-    tracker: StartupTracker | None,
-) -> None:
-    cron_storage = getattr(runner, "cron_storage", None)
-    if cron_storage is None:
-        if tracker:
-            tracker.error("Wiki cron handlers", "skipped: cron storage unavailable")
-        return
-    executor = getattr(runner.cron_scheduler, "executor", None)
-    if executor is None:
-        if tracker:
-            tracker.error("Wiki cron handlers", "skipped: cron executor unavailable")
-        return
-    try:
-        from gobby.wiki.owner_dispatch import prune_gateway
-        from gobby.wiki.prune_job import register_wiki_prune_cron
-        from gobby.wiki.scheduled_jobs import (
-            WIKI_JOB_NAME_PREFIX,
-            park_wiki_cron_jobs,
-            register_wiki_cron_jobs_for_projects,
-        )
-
-        if not runner.config_runtime.capture().snapshot.active.wiki.enabled:
-            parked = await _run_db(runner, park_wiki_cron_jobs, cron_storage)
-            logger.info(
-                "Wiki cron registration skipped: wiki.enabled is false; parked %s row(s)",
-                parked,
-            )
-            if tracker:
-                tracker.complete("Wiki cron handlers")
-            return
-
-        await _run_db(
-            runner,
-            register_wiki_prune_cron,
-            cron_storage=cron_storage,
-            cron_executor=executor,
-            gateway=prune_gateway(),
-            project_id=getattr(runner, "project_id", None),
-        )
-
-        project_scopes, stale_project_ids = await _run_db(
-            runner,
-            _discover_wiki_cron_project_scopes,
-            runner.database,
-        )
-        if not project_scopes and not stale_project_ids:
-            if tracker:
-                tracker.error("Wiki cron handlers", "skipped: no registered projects")
-            return
-
-        for stale_project_id in stale_project_ids:
-            deleted = await _run_db(
-                runner,
-                cron_storage.delete_system_jobs_by_project_and_name_prefix,
-                stale_project_id,
-                WIKI_JOB_NAME_PREFIX,
-            )
-            logger.info(
-                "Deleted %s stale wiki cron job(s) for project %s",
-                deleted,
-                stale_project_id,
-            )
-
-        registered = await register_wiki_cron_jobs_for_projects(
-            cron_storage=cron_storage,
-            cron_executor=executor,
-            db=runner.database,
-            project_scopes=project_scopes,
-            run_sync=lambda operation, *args, **kwargs: _run_db(
-                runner,
-                operation,
-                *args,
-                **kwargs,
-            ),
-        )
-        logger.debug("Wiki cron handlers registered: %s", registered)
-        if tracker:
-            tracker.complete("Wiki cron handlers")
-    except Exception as e:
-        logger.exception("Failed to register wiki cron handlers: %s", e)
-        if tracker:
-            tracker.error("Wiki cron handlers", str(e))
 
 
 async def _start_system_automation_loop(
@@ -516,63 +336,6 @@ async def _start_system_automation_loop(
 ) -> None:
     automation_loop = getattr(runner, "system_automation_loop", None)
     await _start_tracked_service(automation_loop, "System automation loop", tracker)
-
-
-def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
-    config = runner.config_runtime.capture().snapshot.active
-    runner._code_index_task = None
-    if runner.code_indexer:
-        from gobby.code_index.maintenance import code_index_maintenance_loop
-
-        summarizer = None
-        if config.code_index.symbol_summary.enabled:
-            from gobby.code_index.summarizer import SymbolSummarizer
-
-            try:
-                if runner.text_generation_service is None:
-                    logger.warning("Skipping SymbolSummarizer: text generation service unavailable")
-                else:
-                    summarizer = SymbolSummarizer(
-                        runner.text_generation_service,
-                        config.code_index,
-                    )
-            except Exception as e:
-                logger.warning("Failed to create SymbolSummarizer: %s", e)
-
-        shutdown_event = asyncio.Event()
-        runner._code_index_shutdown = shutdown_event
-        runner._code_index_task = asyncio.create_task(
-            code_index_maintenance_loop(
-                context=runner.code_indexer,
-                shutdown_flag=shutdown_event,
-                interval=config.code_index.maintenance_interval_seconds,
-                summarizer=summarizer,
-                symbol_summary_batch_size=config.code_index.symbol_summary.batch_size,
-            ),
-            name="code-index-maintenance",
-        )
-        if tracker:
-            tracker.schedule("Code index maintenance")
-
-    runner._sync_worker_task = None
-    if runner.code_indexer:
-        from gobby.code_index.sync_worker import sync_worker_loop
-
-        sync_shutdown = asyncio.Event()
-        runner._sync_worker_shutdown = sync_shutdown
-        runner._sync_worker_task = asyncio.create_task(
-            sync_worker_loop(
-                storage=runner.code_indexer.storage,
-                context=runner.code_indexer,
-                config=config.code_index,
-                shutdown_flag=sync_shutdown,
-                run_db=runner.code_indexer.run_db,
-                startup_ready=lambda: runner.http_server.services.startup_ready,
-            ),
-            name="code-index-sync-worker",
-        )
-        if tracker:
-            tracker.schedule("Code index sync")
 
 
 async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None) -> None:

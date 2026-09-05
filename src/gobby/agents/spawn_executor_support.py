@@ -32,7 +32,7 @@ from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.spawners.base import SpawnResult as TerminalSpawnResult
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.tmux import TmuxConfig
-from gobby.sessions.session_wiki_file import redact_session_markdown
+from gobby.utils.terminal_output import redact_terminal_output
 
 if TYPE_CHECKING:
     from gobby.agents.tmux.spawner import TmuxSpawner
@@ -285,7 +285,7 @@ def _codex_prompt_failure_reason(
     code: str = "codex_composer_not_ready",
     detail: str = "Codex composer did not render before prompt-delivery timeout",
 ) -> str:
-    redacted = redact_session_markdown((pane or "").strip()) or "<unavailable>"
+    redacted = redact_terminal_output((pane or "").strip()) or "<unavailable>"
     if len(redacted) > _CODEX_PROMPT_FAILURE_PANE_MAX_CHARS:
         tail_chars = _CODEX_PROMPT_FAILURE_PANE_MAX_CHARS - len(
             _CODEX_PROMPT_FAILURE_TRUNCATION_MARKER

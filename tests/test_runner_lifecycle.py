@@ -21,6 +21,7 @@ import gobby.runner_lifecycle_processes as runner_lifecycle_processes
 import gobby.runner_lifecycle_reconcile as runner_lifecycle_reconcile
 import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
 import gobby.runner_lifecycle_subsystems as runner_lifecycle_subsystems
+from gobby import runner_shutdown_storage
 from gobby.agents.readiness import spawn_readiness_blocker
 from gobby.app_context import clear_app_context, get_app_context
 from gobby.config.app import DaemonConfig
@@ -830,7 +831,6 @@ class TestInitSubsystems:
                 "_start_agent_lifecycle_monitor",
                 async_noop,
             ),
-            patch.object(runner_lifecycle_subsystems, "_register_wiki_cron_handlers", async_noop),
             patch.object(
                 runner_lifecycle_subsystems,
                 "_start_code_index_tasks",
@@ -1505,7 +1505,7 @@ class TestShutdownDaemonServices:
             nonlocal join_calls
             join_calls += 1
 
-        await runner_lifecycle_shutdown._shutdown_database_executor(
+        await runner_shutdown_storage._shutdown_database_executor(
             SimpleNamespace(
                 shutdown=shutdown_executor,
                 join=join_executor,
@@ -1530,12 +1530,12 @@ class TestShutdownDaemonServices:
             shutdown_calls.append((executor, kwargs))
 
         monkeypatch.setattr(
-            runner_lifecycle_shutdown,
+            runner_shutdown_storage,
             "_shutdown_database_executor",
             record_shutdown,
         )
 
-        await runner_lifecycle_shutdown._shutdown_database_concurrency(
+        await runner_shutdown_storage._shutdown_database_concurrency(
             cast(
                 GobbyRunner,
                 SimpleNamespace(
@@ -1690,7 +1690,7 @@ class TestShutdownDaemonServices:
             import asyncio
             import threading
 
-            import gobby.runner_lifecycle_shutdown as shutdown
+            import gobby.runner_shutdown_storage as shutdown
 
             class BlockingExecutor:
                 def is_joined(self) -> bool:
@@ -1702,8 +1702,9 @@ class TestShutdownDaemonServices:
                 def join(self) -> None:
                     threading.Event().wait()
 
-            shutdown._DATABASE_EXECUTOR_JOIN_SECONDS = 0.01
-            asyncio.run(shutdown._shutdown_database_executor(BlockingExecutor()))
+            asyncio.run(
+                shutdown._shutdown_database_executor(BlockingExecutor(), join_timeout_seconds=0.01)
+            )
             """
         )
 
@@ -3743,7 +3744,7 @@ class TestMessageProcessorPreparedService:
 class TestProjectPurgeRuntimeResolvers:
     def test_vector_cleaner_is_noop_when_qdrant_url_is_unconfigured(self) -> None:
         from gobby.projects.purge import NoopProjectVectorCleaner
-        from gobby.runner_init.orchestration import _resolve_project_vector_cleaner
+        from gobby.runner_init.project_purge import _resolve_project_vector_cleaner
 
         active = DaemonConfig()
         assert active.databases.qdrant.url is None
@@ -3755,7 +3756,7 @@ class TestProjectPurgeRuntimeResolvers:
         assert isinstance(_resolve_project_vector_cleaner(runner), NoopProjectVectorCleaner)
 
     def test_graph_cleaner_resolves_current_memory_bundle_each_run(self) -> None:
-        from gobby.runner_init.orchestration import _resolve_project_graph_cleaner
+        from gobby.runner_init.project_purge import _resolve_project_graph_cleaner
 
         active = DaemonConfig()
         first = object()
@@ -5070,7 +5071,7 @@ class TestAgentRestartRecoveryHelpers:
             drain_deliveries,
         )
         monkeypatch.setattr(
-            runner_lifecycle_shutdown,
+            runner_shutdown_storage,
             "_shutdown_database_executor",
             shutdown_executor,
         )

@@ -101,7 +101,7 @@ class MemoryDreamMixin(MemoryStoreBase):
     def mark_project_memories_due(self, project_id: str) -> int:
         """Clear ``last_dreamed_at`` for a project's live memories.
 
-        The truth-change trigger calls this when a project's codewiki truth
+        The platform truth-change trigger calls this when a project's truth
         digest changes: clearing the cooldown cursor makes every live memory in
         the project "due" again, so the next sweep re-judges them against the
         new stack without waiting for the per-memory cooldown to elapse. Global

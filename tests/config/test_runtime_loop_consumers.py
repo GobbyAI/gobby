@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import pytest
 
-import gobby.runner_lifecycle_subsystems as lifecycle_subsystems
+import gobby.runner_startup_code_index as startup_code_index
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.runtime_models import ConfigSnapshot
@@ -149,12 +149,8 @@ async def test_lifecycle_consumer_observes_live_change(
         startup_config=SimpleNamespace(database_url="postgresql://bootstrap/hub"),
     )
 
-    assert (
-        await lifecycle_subsystems._repair_code_index_bm25(cast(GobbyRunner, runner), None) is True
-    )
-    assert (
-        await lifecycle_subsystems._repair_code_index_bm25(cast(GobbyRunner, runner), None) is True
-    )
+    assert await startup_code_index._repair_code_index_bm25(cast(GobbyRunner, runner), None) is True
+    assert await startup_code_index._repair_code_index_bm25(cast(GobbyRunner, runner), None) is True
 
     assert repairs == [("postgresql://bootstrap/hub", 41)]
     assert runtime.capture_count == 2

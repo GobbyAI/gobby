@@ -1,88 +1,55 @@
 # Hub Install Contract
 
-This contract defines CLI-visible hub adoption behavior for `gobby install` and related setup flows. The daemon owns schema creation and migration. The CLIs must preserve existing hub data and consume the resulting bootstrap configuration.
+Gobby installation provisions or connects to the configured hub and writes
+its bootstrap configuration. The Python installer owns Docker provisioning;
+`gdaemon` owns canonical PostgreSQL schema application and verification.
+Normal runtime commands validate the schema rather than silently migrating
+it.
 
-## Adoption Target
+## Existing data
 
-When install finds an existing reachable standalone hub recorded in `~/.gobby/gcore.yaml` at `databases.postgres.dsn`, and the matching `~/.gobby/services/` compose stack exists, it adopts that Postgres instance instead of creating a replacement hub.
+Reinstallation must preserve project identities, canonical sessions,
+memories, and `code_*` index data. An existing database is not an invitation
+to reset datastore volumes or replace project records. Connection or schema
+validation failures stop installation before destructive changes.
 
-Adoption means:
+Legacy standalone configuration is not a current runtime connection source.
+`$GOBBY_HOME/bootstrap.yaml` selects PostgreSQL through `database_url` and
+records the local or remote topology. Native clients obtain their runtime
+connection material through daemon grants.
 
-- Use the existing DSN as the daemon hub DSN.
-- Apply the full Gobby schema additively in place.
-- Preserve existing `code_*` and `gwiki_*` subset data.
-- Preserve project identity rows; daemon project registration uses `ON CONFLICT DO NOTHING`.
-- Write the adopted DSN into `~/.gobby/bootstrap.yaml`.
+Legacy wiki schema retirement is an explicit, inventory-bound maintenance
+operation. It is not a requirement to preserve or recreate `gwiki_*` tables
+during installation. The retirement migration preserves shared datastore
+objects and unrelated records.
 
-## Install Ordering
+## Native binaries and schema changes
 
-1. Read standalone config from `~/.gobby/gcore.yaml`.
-2. If `databases.postgres.dsn` exists, connect to it before provisioning a new Postgres.
-3. Confirm the hub is reachable and belongs to the local standalone service stack when `~/.gobby/services/` is present.
-4. Classify the existing schema.
-5. If the schema is adoptable, run additive daemon migrations in place.
-6. Run the one-time embedding namespace migration from `embeddings.*` to `ai.embeddings.*`.
-7. Provision `~/.gobby/local_cli_token` with mode `0600` and store its SHA-256
-   digest as `auth.api_token_hash` when the hub is reachable.
-8. Write `bootstrap.yaml` with the adopted Postgres DSN only after migrations succeed.
-9. Leave the original standalone data intact for gcode and gwiki consumers.
+The schema-aware native set contains `gcode`, `gdaemon`, and `ghook`.
+Workspace promotion verifies their common schema identity, installs signed
+staged files through new inodes, and writes the installed identity pin only
+after the complete set promotes. See
+[the cutover command](cli-commands.md#gobby-cutover).
 
-Failed adoption must stop before destructive changes. It must not drop, truncate, or recreate existing subset tables.
+A destructive schema change uses `gobby hub-maintenance run schema-apply`.
+The campaign stops the daemon, opens a maintenance epoch, obtains a verified
+epoch-bound hub backup, applies the guarded schema change, verifies its
+postcondition, and releases maintenance before starting the daemon.
+Failure leaves the epoch available for `gobby hub-maintenance resume`.
 
-## Additive Upgrade Rules
+## Files and client credentials
 
-The daemon may create missing tables, indexes, extensions, functions, and default rows required by the full Gobby hub. It may add missing columns or constraints only when that operation preserves existing rows.
+Hub-local installation requires an existing absolute `files_home` and
+preserves its content. Remote clients use the hub owner for those files;
+they do not provision a second files home. See
+[hub-owned files home](../architecture/hub-owned-files-home.md).
 
-The daemon must not:
+`gobby install` owns `$GOBBY_HOME/local_cli_token` (normally
+`~/.gobby/local_cli_token`) with mode `0600`. A database-unreachable install
+can still create the token file; daemon startup adopts its hash into the
+authentication configuration. Additional trusted client machines receive
+the same token with the same permissions.
 
-- Drop or truncate existing `code_*` tables.
-- Drop or truncate existing `gwiki_*` tables.
-- Rewrite `config_store` from the CLI side.
-- Replace project rows that already identify the standalone hub's projects.
-- Treat an otherwise valid `gwiki_*` subset as corrupt.
-
-## Classifier Gap
-
-The daemon baseline classifier currently recognizes standalone `code_*` tables but not standalone `gwiki_*` tables. A hub containing only or primarily `gwiki_*` subset data can be misclassified as `corrupt_partial`.
-
-The daemon adoption classifier and migration skip-list must recognize both subsets:
-
-- `code_*` tables are owned by gcode's code index projection.
-- `gwiki_*` tables are owned by gwiki's wiki index projection.
-
-Both subsets are adoptable inputs. Their data must survive the daemon full-schema upgrade.
-
-## Bootstrap Output
-
-After successful adoption, `~/.gobby/bootstrap.yaml` is the CLI source of truth
-for the hub connection. It must provide `database_url` for the adopted Postgres
-instance. `database_url` is the sole PostgreSQL selector. Stateful daemon HTTP
-and WebSocket surfaces always require authentication.
-
-The previous `~/.gobby/gcore.yaml` entry can remain for standalone installs, but new daemon-aware CLIs should resolve the hub through `bootstrap.yaml`.
-
-## Hub-Client Token Output
-
-`gobby install` owns `$GOBBY_HOME/local_cli_token` (default
-`~/.gobby/local_cli_token`) as part of the hub-client installation contract. A
-database-unreachable install still creates the `0600` token file; first daemon
-startup adopts its hash into `config_store`. Additional trusted client machines
-receive an exact copy of the file with the same permissions.
-
-`gobby auth token --rotate` replaces the hub token and stored hash. Operators
-must recopy the file to every additional client machine after rotation.
-
-## Embedding Namespace Migration
-
-The hub upgrade flow also owns the one-time `config_store` migration from `embeddings.*` to `ai.embeddings.*`. This migration is daemon-owned because `config_store` is daemon-owned.
-
-Embedding namespace invariants:
-
-- Preserve values exactly.
-- Preserve `is_secret`.
-- Write embedding settings under `ai.embeddings.*`.
-- Use `ai.embeddings.dim` for a configured embedding dimension.
-
-See `ai-daemon-contract.md` for the full D6 writer and reader inventory.
-
-_Last verified: 2026-07-10_
+`gobby auth token --rotate` replaces the token and its stored hash. Copy
+the new token to additional client machines after rotation. Stateful daemon
+HTTP and WebSocket surfaces require authentication.

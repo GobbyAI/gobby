@@ -12,8 +12,9 @@ import pytest
 
 from gobby.scheduler.executor import CronExecutor
 from gobby.scheduler.scheduler import CronScheduler
-from gobby.storage.cron import CronJobStorage, compute_next_run
+from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
+from gobby.storage.cron_schedule import compute_next_run
 from tests._timing import wait_for_async_condition
 from tests.config_runtime_helpers import static_cron_capture
 

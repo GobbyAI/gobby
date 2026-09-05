@@ -1011,7 +1011,10 @@ class TestHookTemplates:
         assert "git add" not in bundled_hook
         assert "git commit" not in bundled_hook
 
-    def test_prepush_backup_does_not_commit_or_touch_staging(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("branch", ["main", "wiki"])
+    def test_prepush_backup_does_not_commit_or_touch_staging(
+        self, tmp_path: Path, branch: str
+    ) -> None:
         """Local backup refresh leaves HEAD and the caller's staging area unchanged."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -1046,7 +1049,7 @@ class TestHookTemplates:
         head = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
         ).stdout.strip()
-        push_ref = f"refs/heads/main {head} refs/heads/main {'0' * 40}\n"
+        push_ref = f"refs/heads/{branch} {head} refs/heads/{branch} {'0' * 40}\n"
         env = {
             **{key: value for key, value in os.environ.items() if key != "GOBBY_AGENT_RUN_ID"},
             "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
@@ -1144,3 +1147,50 @@ class TestHookTemplates:
             assert "gobby tasks restore" not in content
             assert "gobby tasks sync --import" not in content
             assert "gobby memory restore" not in content
+
+
+@pytest.mark.parametrize(
+    ("delete_only", "verification_exit"),
+    [(True, 0), (False, 0), (False, 7)],
+)
+def test_prepush_verification_and_delete_only_behavior(
+    tmp_path: Path, delete_only: bool, verification_exit: int
+) -> None:
+    """Only ref deletions bypass backup and verification; failures propagate."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_gobby = bin_dir / "gobby"
+    fake_gobby.write_text(
+        "#!/bin/sh\n"
+        'echo "$*" >> "$CALL_LOG"\n'
+        'if [ "$1 $2" = "hooks run" ]; then exit "$VERIFY_EXIT"; fi\n'
+    )
+    fake_gobby.chmod(0o755)
+    hook = tmp_path / "pre-push"
+    hook.write_text(HOOK_TEMPLATES["pre-push"])
+    call_log = tmp_path / "calls.log"
+    sha = "0" * 40 if delete_only else "1" * 40
+    result = subprocess.run(
+        ["bash", str(hook)],
+        cwd=tmp_path,
+        input=f"refs/heads/wiki {sha} refs/heads/wiki {'2' * 40}\n",
+        text=True,
+        capture_output=True,
+        check=False,
+        env={
+            **{key: value for key, value in os.environ.items() if key != "GOBBY_AGENT_RUN_ID"},
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "CALL_LOG": str(call_log),
+            "VERIFY_EXIT": str(verification_exit),
+        },
+    )
+    assert result.returncode == verification_exit
+    if delete_only:
+        assert not call_log.exists()
+    else:
+        assert call_log.read_text().splitlines() == [
+            "tasks backup --quiet",
+            "memory backup --quiet",
+            "hooks run pre-push",
+        ]
+    assert ("Gobby pre-push verification failed" in result.stdout) == (verification_exit != 0)

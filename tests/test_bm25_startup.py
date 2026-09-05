@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from gobby import runner_lifecycle_subsystems as lifecycle
+from gobby import runner_startup_code_index as startup_code_index
 from gobby.code_index import bm25_health
 from gobby.runner import GobbyRunner
 
@@ -33,7 +34,7 @@ async def test_startup_bm25_failure_marks_service_degraded(monkeypatch: Any) -> 
     status = bm25_health.unavailable_bm25_status("invalid chunk style tag: 254")
     monkeypatch.setattr(bm25_health, "repair_bm25_indexes", lambda *_args, **_kwargs: status)
 
-    ready = await lifecycle._repair_code_index_bm25(cast(GobbyRunner, runner), None)
+    ready = await startup_code_index._repair_code_index_bm25(cast(GobbyRunner, runner), None)
 
     assert ready is False
     assert runner.degraded_services == {"code_index_bm25"}
@@ -57,7 +58,7 @@ async def test_startup_bm25_repair_allows_workers(monkeypatch: Any) -> None:
     }
     monkeypatch.setattr(bm25_health, "repair_bm25_indexes", lambda *_args, **_kwargs: status)
 
-    ready = await lifecycle._repair_code_index_bm25(cast(GobbyRunner, runner), None)
+    ready = await startup_code_index._repair_code_index_bm25(cast(GobbyRunner, runner), None)
 
     assert ready is True
     assert runner.degraded_services == set()

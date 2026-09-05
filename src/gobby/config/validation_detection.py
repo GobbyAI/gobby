@@ -484,6 +484,14 @@ def builtin_validation_matchers() -> list[ValidationCommandMatcher]:
             ["markdownlint", "yamllint", "jsonlint"],
         ),
         _matcher(
+            "actionlint",
+            "GitHub Actions workflow lint",
+            ["yaml"],
+            ["lint"],
+            ["actionlint"],
+            forbidden_args_any=["-help", "-version", "-init-config", "--init-config"],
+        ),
+        _matcher(
             "json-jq-validation",
             "JSON validation with jq",
             ["json"],

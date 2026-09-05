@@ -259,26 +259,10 @@ Useful for understanding project structure at a glance or scoping it to files,
 directory prefixes, and globs. Multiple paths use OR semantics. Content-only
 text files appear with a zero symbol count once indexed.
 
-## Code Documentation
-
-CodeWiki generation is owned by `gwiki code`. The command remains available for
-isolated/manual use, while production-vault execution is operationally paused
-pending the wiki redesign:
-
-```bash
-gwiki --project . code --out /tmp/codewiki-check
-gwiki --project . code --scope crates/gcode/src --out /tmp/codewiki-check
-```
-
-See the [CodeWiki guide](./codewiki.md) for the paused daemon contract, manual
-CLI modes, and output layout.
-
 ## Dependency Graph
 
-Read-side graph commands require FalkorDB. Gobby-managed projects provide this
-through the Docker-backed stack, and daemon-independent projects configure it
-with `GOBBY_FALKORDB_HOST`, `GOBBY_FALKORDB_PORT`, and
-`GOBBY_FALKORDB_PASSWORD`. Without FalkorDB, graph read commands report the
+Read-side graph commands require FalkorDB. The Gobby runtime grant supplies
+the datastore connection; the daemon owns its configuration. Without FalkorDB, graph read commands report the
 degraded state and callers that can preserve lexical results do so.
 
 All read-side graph commands resolve fuzzy input — you don't need the exact

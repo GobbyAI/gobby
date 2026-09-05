@@ -3,7 +3,7 @@
 use anyhow::{Context as _, bail};
 #[cfg(test)]
 use gobby_core::graph_analytics::{AnalyticsEdge, AnalyticsGraph, AnalyticsNode, weight_for_kind};
-use gobby_core::vault::mermaid::{escape_label, is_valid_mermaid};
+use gobby_core::mermaid::{escape_label, is_valid_mermaid};
 use serde::Serialize;
 
 use crate::cli::GraphViewKind;

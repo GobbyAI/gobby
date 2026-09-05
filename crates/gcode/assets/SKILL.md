@@ -24,7 +24,10 @@ This project is indexed. Use `gcode` via Bash for fast code search and navigatio
 
 Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Ranked search commands accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results. `gcode grep` accepts positional paths, `-w/--word`, `-g/--glob`, `-i`, `-F`, `-l/--files-with-matches`, `-C/-A/-B`, and `-m/--limit`; `--max-count` is an alias for `--limit`. `-E`, `-n`, `-r`, and `-R` are accepted no-ops (rg/grep muscle memory). Unknown flags return a one-line JSON usage error with a `recovery` hint; do not retry the failing gcode call. Add `--format json` to `gcode grep` for structured matches with spans. Hybrid JSON results include final display `score`, raw `rrf_score`, deterministic `sources`, and hints when literal-ish queries should use `grep` or `search-content`; path globs that require post-filter fallback surface a hint/warning.
 
-Bare `gcode grep "pattern"` is regex-backed. Use `-F` for literal text containing regex metacharacters like `(`, `)`, `[`, `]`, `.`, `*`, `+`, `?`, `|`, `^`, `$`, or `\`. For example, `gcode grep "TaskExpansionConfig(" tests/config/test_tasks.py --format text -m 120 --allow-stale` is an anti-pattern because `(` starts a regex group and fails with `error: unclosed group`. Use `gcode grep -F "TaskExpansionConfig(" tests/config/test_tasks.py --format text -m 120 --allow-stale` for a literal search, or `gcode grep "TaskExpansionConfig\\(" tests/config/test_tasks.py --format text -m 120 --allow-stale` when intentionally writing regex.
+Bare `gcode grep "pattern"` is regex-backed, and the dialect is Rust regex, not grep
+BRE. Write alternation as `a|b`: `a\|b` is a literal pipe, so it silently returns zero
+matches and exit 0 rather than erroring — indistinguishable from a genuine no-hit
+result. Use `-F` for literal text containing regex metacharacters like `(`, `)`, `[`, `]`, `.`, `*`, `+`, `?`, `|`, `^`, `$`, or `\`. For example, `gcode grep "TaskExpansionConfig(" tests/config/test_tasks.py --format text -m 120` is an anti-pattern because `(` starts a regex group and fails with `error: unclosed group`. Use `gcode grep -F "TaskExpansionConfig(" tests/config/test_tasks.py --format text -m 120` for a literal search, or `gcode grep "TaskExpansionConfig\\(" tests/config/test_tasks.py --format text -m 120` when intentionally writing regex.
 
 ## Retrieval
 
@@ -113,17 +116,6 @@ for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 - `gcode graph cleanup-orphans` — remove graph projection data for files missing from PostgreSQL and run project graph orphan cleanup
 - `gcode vector cleanup-orphans` — remove Qdrant code-symbol vectors for files missing from PostgreSQL, without resolving embeddings
 - `gcode prune` — remove stale project records globally and reconcile graph and vector projections for all remaining indexed projects; use `--project` to scope projection cleanup
-
-## CodeWiki Lifecycle
-
-- `gwiki code` owns CodeWiki generation and remains available for isolated/manual use.
-- Production-vault execution and daemon scheduling are operationally paused pending the wiki redesign.
-- `gwiki --project <root> code --out <vault>` generates into an explicit manual output directory.
-- Add `--scope <PATH...>` or `--since <git-ref>` for bounded regeneration.
-- Add `--repair-citations` to re-anchor `[file:line]` citations without generation or AI calls.
-- `--purge --out <vault> --force` removes generated Markdown and metadata only; it leaves PostgreSQL code facts, FalkorDB graph data, and Qdrant vectors intact.
-
-See `docs/guides/codewiki.md` for the dormant daemon status/error contract, canonical vault, and purge safety.
 
 ## When to use which
 

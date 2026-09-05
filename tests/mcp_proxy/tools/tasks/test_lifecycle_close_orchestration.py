@@ -104,6 +104,31 @@ async def test_close_persists_and_launches_one_taskless_validator(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reason", ["completed", "obsolete", "duplicate", "wont_fix", "out_of_repo"]
+)
+async def test_launch_preserves_closure_reason(
+    monkeypatch: pytest.MonkeyPatch, reason: str
+) -> None:
+    store = _Store(_review(status="launching", run_id=None))
+    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+    arguments = _arguments()
+    arguments["reason"] = reason
+
+    result = await launch_close_review(
+        _ctx(registry=registry), evaluation=_evaluation(), close_arguments=arguments
+    )
+
+    assert result["review_status"] == "running"
+    assert store.created_arguments is not None
+    assert store.created_arguments["reason"] == reason
+    prompt = registry.call.call_args.args[1]["prompt"]
+    assert f'closure_reason="{reason}"' in prompt
+    assert ("This is a no-work disposition review" in prompt) is (reason != "completed")
+
+
+@pytest.mark.asyncio
 async def test_launch_prompt_carries_gate10_validation_facts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

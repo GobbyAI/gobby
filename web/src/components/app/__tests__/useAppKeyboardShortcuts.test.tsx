@@ -40,7 +40,7 @@ describe("useAppKeyboardShortcuts", () => {
     window.addEventListener("gobby:open-command-palette", opened);
     renderHook(() => useAppKeyboardShortcuts({ setQuickCaptureOpen: vi.fn() }));
 
-    // A scoped palette (e.g. wiki quick-open) preventDefaults the event; the
+    // A scoped editor preventDefaults the event; the
     // app-level chord must not also fire and stack a second dialog on top.
     pressCmdK({ defaultPrevented: true });
     vi.advanceTimersByTime(300);

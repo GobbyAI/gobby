@@ -156,7 +156,7 @@ class TestGtermInstaller:
 
     def test_github_uses_gterm_tag_prefix(self, tmp_path: Path) -> None:
         with patch(
-            "gobby.cli.install_setup._download_release_binary",
+            "gobby.cli.install_release._download_release_binary",
             return_value=True,
         ) as mock_download:
             assert _install_gterm_from_github(tmp_path, "aarch64-apple-darwin", "0.1.0") is True
@@ -217,7 +217,7 @@ class TestGclientInstaller:
 
     def test_github_uses_gclient_tag_prefix(self, tmp_path: Path) -> None:
         with patch(
-            "gobby.cli.install_setup._download_release_binary",
+            "gobby.cli.install_release._download_release_binary",
             return_value=True,
         ) as mock_download:
             assert _install_gclient_from_github(tmp_path, "aarch64-apple-darwin", "0.1.0") is True
@@ -228,7 +228,7 @@ class TestGclientInstaller:
 
 
 def test_managed_native_binary_install_inventory() -> None:
-    assert MANAGED_NATIVE_BINARY_NAMES == ("gcode", "ghook", "gwiki", "gterm", "gclient")
+    assert MANAGED_NATIVE_BINARY_NAMES == ("gcode", "ghook", "gterm", "gclient")
 
 
 def test_release_workflows_gate_stage0_and_gclient_preflight() -> None:

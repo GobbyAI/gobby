@@ -5,7 +5,7 @@ fn count_run_step(workflow: &str, command: &str) -> usize {
         .count()
 }
 
-const RELEASE_WORKFLOWS: [(&str, &str); 3] = [
+const RELEASE_WORKFLOWS: [(&str, &str); 2] = [
     (
         "gcode",
         include_str!("../../../.github/workflows/release-gcode.yml"),
@@ -13,10 +13,6 @@ const RELEASE_WORKFLOWS: [(&str, &str); 3] = [
     (
         "ghook",
         include_str!("../../../.github/workflows/release-ghook.yml"),
-    ),
-    (
-        "gwiki",
-        include_str!("../../../.github/workflows/release-gwiki.yml"),
     ),
 ];
 
@@ -37,7 +33,7 @@ fn release_upload_marker(workflow: &str) -> Option<usize> {
 fn release_workflows_check_each_crate_with_its_default_features() {
     // Every shipped binary is built with its default feature set, and that is
     // the only configuration the workflows check: the set members (gcode,
-    // ghook, gwiki, gdaemon) all depend on a postgres-backed daemon, so a
+    // ghook, gdaemon) all depend on a postgres-backed daemon, so a
     // `--no-default-features` build proves nothing we ship (#21533). The
     // binary-only crate (gobby-hooks) has no lib target, so
     // `cargo test --doc -p <pkg>` errors with "no library targets found" and
@@ -269,20 +265,6 @@ fn ci_workflow_runs_postgres_backed_rust_tests_without_standalone_setup() {
     assert!(!workflow.contains("graph_standalone"));
     assert!(!workflow.contains("GCODE_GRAPH_STANDALONE"));
     assert!(!workflow.contains("falkordb/falkordb"));
-}
-
-#[test]
-fn release_gwiki_validates_dependencies_without_python_helper() {
-    let workflow = include_str!("../../../.github/workflows/release-gwiki.yml");
-
-    assert!(
-        !workflow.contains("python3"),
-        "release-gwiki.yml should validate dependencies inline without python3"
-    );
-    assert!(
-        !workflow.contains(".github/scripts/verify-gwiki-deps.py"),
-        "release-gwiki.yml should not reference the removed dependency helper"
-    );
 }
 
 #[test]

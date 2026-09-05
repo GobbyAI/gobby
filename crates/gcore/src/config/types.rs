@@ -29,7 +29,7 @@ pub struct EmbeddingConfig {
     pub timeout_seconds: u64,
 }
 
-/// Shared indexing behavior for gcode/gwiki consumers.
+/// Shared indexing behavior for gcode consumers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexingConfig {
     pub respect_gitignore: bool,

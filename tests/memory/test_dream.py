@@ -59,8 +59,6 @@ from gobby.memory.dream.storage_runs import (
 )
 from gobby.memory.dream.truth_digest import (
     build_current_truth_digest,
-    build_project_truth_digest,
-    build_project_truth_digest_async,
 )
 from gobby.memory.generation_schemas import DREAM_ACTIONS_SCHEMA
 from gobby.prompts.loader import PromptLoader
@@ -1137,7 +1135,7 @@ async def test_dream_execution_lock_covers_aggregate_cron_entrypoint() -> None:
 
     _set_method(
         aggregate_service,
-        "_apply_truth_change_triggers",
+        "_apply_platform_truth_change_trigger",
         AsyncMock(side_effect=blocked_truth_trigger),
     )
     _set_method(aggregate_service.memory_manager, "list_dream_scopes", MagicMock(return_value=[]))
@@ -2700,119 +2698,8 @@ def test_build_current_truth_digest_bounds_length() -> None:
     assert len(digest) <= 80
 
 
-def test_build_project_truth_digest_renders_authoritative_stack(tmp_path: Path) -> None:
-    repo_path = tmp_path / "repo"
-    _write_truth_digest(repo_path, _complete_digest_payload(service="React UI"))
-
-    digest = build_project_truth_digest(str(repo_path))
-
-    assert "Repository summary: A small web frontend with generated docs." in digest
-    assert "Current infrastructure stack (authoritative - complete current set):" in digest
-    assert "React UI (frontend)" in digest
-    assert "adapter: src/app.tsx:10" in digest
-    assert "Key paths: React UI: src/app.tsx:10" in digest
-    assert "Knowledge graph backend: FalkorDB" not in digest
-
-
-def test_build_project_truth_digest_renders_partial_and_empty_without_platform_facts(
-    tmp_path: Path,
-) -> None:
-    repo_path = tmp_path / "repo"
-    _write_truth_digest(
-        repo_path,
-        {
-            "schema_version": 1,
-            "repo_summary": "A non-Rust repo.",
-            "stack_authority": "partial",
-            "stack": [],
-        },
-    )
-
-    digest = build_project_truth_digest(str(repo_path))
-
-    assert "Known infrastructure (partial - do NOT infer staleness from absence):" in digest
-    assert "none listed" in digest
-    assert "Knowledge graph backend: FalkorDB" not in digest
-
-
-def test_build_project_truth_digest_missing_or_invalid_returns_empty(tmp_path: Path) -> None:
-    assert build_project_truth_digest(str(tmp_path / "missing")) == ""
-
-    repo_path = tmp_path / "repo"
-    marker = repo_path / "wiki" / "_gwiki" / "scope.json"
-    marker.parent.mkdir(parents=True)
-    marker.write_text("{}\n", encoding="utf-8")
-    digest_path = repo_path / "wiki" / "_meta" / "truth_digest.json"
-    digest_path.parent.mkdir(parents=True)
-    digest_path.write_text("{invalid", encoding="utf-8")
-
-    assert build_project_truth_digest(str(repo_path)) == ""
-
-
-def test_build_project_truth_digest_matches_real_gobby_cli_artifact_shape(
-    tmp_path: Path,
-) -> None:
-    """Pin the consumer to the REAL gobby-cli ``truth_digest.json`` field names.
-
-    The fixture is a trimmed copy of a real vault ``_meta/truth_digest.json``
-    emitted by the gobby-cli codewiki build (stack reduced to two entries and the
-    long ``summary``/``degradation`` strings shortened so every consumed field
-    renders inside the digest bound). It deliberately preserves the producer's
-    field names verbatim so the cross-repo handshake is CI-enforced: if gobby-cli
-    renames a field the fixture carries the new name and the consumer's
-    ``in digest`` assertions fail; if the consumer stops reading a field the same
-    assertions fail. This catches the field drift that synthetic, co-authored
-    fixtures cannot.
-    """
-    fixture_path = Path(__file__).parent / "fixtures" / "gobby_cli_truth_digest.json"
-    payload = json.loads(fixture_path.read_text(encoding="utf-8"))
-
-    # schema_version is the contract version the consumer is written against; a
-    # producer bump is a deliberate signal to re-review the consumer.
-    assert payload["schema_version"] == 1
-
-    repo_path = tmp_path / "repo"
-    _write_truth_digest(repo_path, payload)
-
-    digest = build_project_truth_digest(str(repo_path))
-
-    # stack_authority -> authoritative lead (not the partial/absence wording).
-    assert "Current infrastructure stack (authoritative - complete current set):" in digest
-    # repo_summary
-    assert f"Repository summary: {payload['repo_summary']}" in digest
-
-    # Every consumed stack[] field renders for every entry. Subscripting the
-    # payload means a renamed field in the fixture raises KeyError here, while
-    # the membership checks catch a consumer that stops reading the field.
-    assert payload["stack"], "fixture must carry at least one stack entry"
-    for entry in payload["stack"]:
-        assert f"{entry['service']} ({entry['kind']})" in digest  # service + kind
-        assert entry["summary"] in digest  # summary
-        assert f"adapter: {entry['adapter_module']}" in digest  # adapter_module
-        assert f"pulled in by: {', '.join(entry['pulled_in_by'])}" in digest  # pulled_in_by
-        assert f"degradation: {entry['degradation']}" in digest  # degradation
-
-    # key_paths
-    assert payload["key_paths"], "fixture must carry at least one key path"
-    for label, path in payload["key_paths"].items():
-        assert f"{label}: {path}" in digest
-
-    # No Gobby platform facts leak into a project sweep.
-    assert "Knowledge graph backend: FalkorDB" not in digest
-
-
 @pytest.mark.asyncio
-async def test_build_project_truth_digest_async_matches_sync_render(tmp_path: Path) -> None:
-    repo_path = tmp_path / "repo"
-    _write_truth_digest(repo_path, _complete_digest_payload(service="Async sidecar"))
-
-    assert await build_project_truth_digest_async(str(repo_path)) == build_project_truth_digest(
-        str(repo_path)
-    )
-
-
-@pytest.mark.asyncio
-async def test_daemon_project_digest_blend_live_path(
+async def test_daemon_project_uses_platform_digest_ignoring_legacy_sidecar(
     tmp_path: Path,
 ) -> None:
     current_project_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -2838,12 +2725,12 @@ async def test_daemon_project_digest_blend_live_path(
 
     assert "Knowledge graph backend: FalkorDB" in global_digest
     assert "Knowledge graph backend: FalkorDB" in current_digest
-    assert "Current repo sidecar (frontend)" in current_digest
+    assert "Current repo sidecar" not in current_digest
     assert "Current repo sidecar" not in global_digest
 
 
 @pytest.mark.asyncio
-async def test_service_uses_project_truth_only_for_non_daemon_project(tmp_path: Path) -> None:
+async def test_service_ignores_legacy_truth_for_non_daemon_project(tmp_path: Path) -> None:
     # Repo-path resolution goes through LocalProjectManager.get, which returns
     # None for non-uuid project ids, so these must be valid-format UUIDs.
     current_project_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -2865,7 +2752,7 @@ async def test_service_uses_project_truth_only_for_non_daemon_project(tmp_path: 
         current_project_id=current_project_id,
     )
 
-    assert "Other sidecar (frontend)" in digest
+    assert digest == ""
     assert "Current sidecar" not in digest
     assert "Knowledge graph backend: FalkorDB" not in digest
 
@@ -2891,7 +2778,7 @@ async def test_service_current_project_id_none_selects_no_daemon_project(tmp_pat
         current_project_id=None,
     )
 
-    assert "Repo sidecar (frontend)" in digest
+    assert digest == ""
     assert "Knowledge graph backend: FalkorDB" not in digest
 
 
@@ -3379,71 +3266,6 @@ async def test_run_all_due_projects_disabled_returns_empty_aggregate_without_enu
 
 
 @pytest.mark.asyncio
-async def test_truth_change_trigger_rejudges_cooled_memory_on_digest_change(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A codewiki digest change clears the cooldown for a cooled project.
-
-    The whole point of the truth-change trigger: when a project's codewiki
-    ``truth_digest.json`` changes, its memories must be re-judged on the next
-    sweep **even inside the cooldown window**. A memory dreamed moments ago is
-    firmly cooled (a normal cooldown-throttled sweep would skip it), yet a digest
-    change must make it due again; an unchanged digest must leave it cooled.
-    """
-    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
-
-    isolated = install_isolated_checkout_project(
-        temp_db,
-        tmp_path / "repo",
-        name="truth-trigger-proj",
-        monkeypatch=monkeypatch,
-    )
-    repo = Path(isolated.root_path)
-    project = isolated.project
-    manager = LocalMemoryManager(temp_db)
-    service = MemoryDreamService(
-        memory_manager=cast(MemoryDreamManagerProtocol, manager),
-        dream_config=_sweep_config(),
-    )
-
-    just_now = datetime.now(UTC).isoformat()
-    cooldown_cutoff = (datetime.now(UTC) - timedelta(hours=20)).isoformat()
-    memory = manager.create_memory(content="project stack fact", project_id=project.id)
-
-    def recool() -> None:
-        """Stamp the memory as dreamed now, so it sits inside the cooldown."""
-        manager.mark_dreamed(memory.id, when=just_now)
-
-    # First observation records the baseline hash (and clears the cooldown once
-    # on first sight). Re-cool afterwards so the project is genuinely not due.
-    _write_truth_digest(repo, _complete_digest_payload(service="PostgreSQL hub"))
-    await service._apply_truth_change_triggers()
-    recool()
-    assert manager.get_memory(memory.id).last_dreamed_at is not None
-    assert MemoryScope.project_only(project.id) not in manager.list_dream_scopes(
-        redream_cutoff=cooldown_cutoff
-    )
-
-    # Unchanged digest: the trigger is a no-op, the memory stays cooled.
-    await service._apply_truth_change_triggers()
-    assert manager.get_memory(memory.id).last_dreamed_at is not None
-    assert MemoryScope.project_only(project.id) not in manager.list_dream_scopes(
-        redream_cutoff=cooldown_cutoff
-    )
-
-    # Changed digest: the cooldown is cleared, so the cooled memory is due again
-    # and would be swept on the next run despite still being inside the window.
-    _write_truth_digest(repo, _complete_digest_payload(service="FalkorDB graph"))
-    await service._apply_truth_change_triggers()
-    assert manager.get_memory(memory.id).last_dreamed_at is None
-    assert MemoryScope.project_only(project.id) in manager.list_dream_scopes(
-        redream_cutoff=cooldown_cutoff
-    )
-
-
-@pytest.mark.asyncio
 async def test_platform_truth_change_rejudges_global_and_current_project_memories(
     temp_db: HubDatabase,
 ) -> None:
@@ -3470,7 +3292,7 @@ async def test_platform_truth_change_rejudges_global_and_current_project_memorie
     for memory in (global_memory, current_memory, other_memory):
         manager.mark_dreamed(memory.id, when=just_now)
 
-    await service._apply_truth_change_triggers()
+    await service._apply_platform_truth_change_trigger()
 
     assert manager.get_memory(global_memory.id).last_dreamed_at is None
     assert manager.get_memory(current_memory.id).last_dreamed_at is None
@@ -3480,7 +3302,7 @@ async def test_platform_truth_change_rejudges_global_and_current_project_memorie
     manager.mark_dreamed(global_memory.id, when=just_now)
     manager.mark_dreamed(current_memory.id, when=just_now)
 
-    await service._apply_truth_change_triggers()
+    await service._apply_platform_truth_change_trigger()
 
     assert manager.get_memory(global_memory.id).last_dreamed_at is not None
     assert manager.get_memory(current_memory.id).last_dreamed_at is not None

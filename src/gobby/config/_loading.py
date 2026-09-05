@@ -46,8 +46,8 @@ def _mask_reference_values(
         ConfigSecrecy,
         UnknownConfigKeyError,
         config_key_secrecy,
-        encode_dynamic_segment,
     )
+    from gobby.config.registry_key_encoding import encode_dynamic_segment
 
     if isinstance(value, list):
         return [_mask_reference_values(item, canonical_prefix) for item in value]

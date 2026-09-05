@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from typing import Any
-
-from gobby.utils.wiki_vault import existing_vault_dir
 
 from .types import AgentActivationResult
 
@@ -94,91 +91,6 @@ def _seed_parent_turn_seq(handler: Any, session_id: str) -> None:
     existing = sv_mgr.get_variables(session_id)
     if "parent_turn_seq" not in (existing or {}):
         sv_mgr.merge_variables(session_id, {"parent_turn_seq": 0})
-
-
-_WIKI_OVERVIEW_WORD_CAP = 500
-_INJECTED_CONTEXT_MARKERS = (
-    "<!-- gobby:injected-context:begin -->",
-    "<!-- gobby:injected-context:end -->",
-)
-
-
-def sanitize_wiki_overview(overview: str) -> str:
-    """Remove context-boundary controls before overview text is injected."""
-    sanitized = overview
-    for marker in _INJECTED_CONTEXT_MARKERS:
-        sanitized = sanitized.replace(marker, "")
-    sanitized = "".join(char for char in sanitized if char in "\n\t" or ord(char) >= 32)
-    lines = [line for line in sanitized.splitlines() if not line.strip().startswith("<!-- gobby:")]
-    return "\n".join(lines).strip()
-
-
-def load_wiki_overview(project_root: Path) -> str | None:
-    """Extract the vault ``_index.md`` ``## Overview`` block, word-capped.
-
-    Uses the shared ``gobby.utils.wiki_vault`` resolver and reads only an
-    initialized vault. Returns ``None`` when no vault, no index, or no
-    Overview content exists.
-    """
-    vault = existing_vault_dir(project_root)
-    if vault is None:
-        return None
-    index_path = vault / "_index.md"
-    try:
-        index_text = index_path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    overview_lines: list[str] = []
-    in_overview = False
-    for line in index_text.splitlines():
-        stripped = line.strip()
-        if stripped == "## Overview":
-            in_overview = True
-            continue
-        if in_overview and stripped.startswith("## "):
-            break
-        if in_overview:
-            overview_lines.append(line)
-    overview = "\n".join(overview_lines).strip()
-    if not overview:
-        return None
-    words = overview.split()
-    if len(words) > _WIKI_OVERVIEW_WORD_CAP:
-        overview = (
-            " ".join(words[:_WIKI_OVERVIEW_WORD_CAP])
-            + " ... (truncated; full overview in wiki _index.md)"
-        )
-    sanitized = sanitize_wiki_overview(overview)
-    return sanitized or None
-
-
-def _seed_wiki_overview_var(handler: Any, session_id: str, project_id: str | None) -> None:
-    """Seed ``wiki_overview`` from the vault index Overview block, best-effort."""
-    if not project_id or handler._session_manager is None:
-        return
-    try:
-        from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
-        from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS
-        from gobby.storage.workspace_machine_scope import require_local_machine_id
-        from gobby.workflows.state_manager import SessionVariableManager
-
-        if project_id in CHECKOUT_FREE_PROJECT_IDS:
-            return
-        try:
-            machine_id = require_local_machine_id(
-                None, resource_kind="project_checkout", resource_id=project_id
-            )
-            repo_path = require_root(handler._session_manager.db, project_id, machine_id)
-        except CheckoutNotFoundError:
-            return
-        overview = load_wiki_overview(Path(repo_path))
-        if not overview:
-            return
-        SessionVariableManager(handler._session_manager.db).merge_variables(
-            session_id, {"wiki_overview": overview}
-        )
-    except Exception as e:
-        handler.logger.debug("Could not seed wiki overview: %s", e)
 
 
 def activate_default_agent(

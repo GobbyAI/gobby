@@ -142,8 +142,7 @@ impl<'a> SchemaRunner<'a> {
             BaselineState::AlreadyBaselined => false,
             BaselineState::Fresh
             | BaselineState::FreshWithInstallInfra
-            | BaselineState::GcoreCodeIndex
-            | BaselineState::GwikiStandalone => {
+            | BaselineState::GcoreCodeIndex => {
                 require_pg_search(self.client)?;
                 verify_adopted_columns(self.client, &self.schema, state)?;
                 apply_baseline(self.client, &self.schema, state)?;
@@ -174,7 +173,6 @@ enum BaselineState {
     Fresh,
     FreshWithInstallInfra,
     GcoreCodeIndex,
-    GwikiStandalone,
     AlreadyBaselined,
     CorruptPartial,
 }
@@ -183,10 +181,7 @@ impl BaselineState {
     fn is_fresh_lineage(self) -> bool {
         matches!(
             self,
-            Self::Fresh
-                | Self::FreshWithInstallInfra
-                | Self::GcoreCodeIndex
-                | Self::GwikiStandalone
+            Self::Fresh | Self::FreshWithInstallInfra | Self::GcoreCodeIndex
         )
     }
 
@@ -194,8 +189,6 @@ impl BaselineState {
         self.is_fresh_lineage()
     }
 }
-
-const GWIKI_TABLES: [&str; 3] = ["gwiki_chunks", "gwiki_documents", "gwiki_sources"];
 
 const APPLY_LOCK_POLL: Duration = Duration::from_millis(100);
 const APPLY_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
@@ -327,15 +320,6 @@ fn classify_baseline_state(
         .all(|table| application_tables.contains(table))
     {
         return Ok(BaselineState::GcoreCodeIndex);
-    }
-    if GWIKI_TABLES
-        .iter()
-        .all(|table| application_tables.contains(table))
-        && application_tables
-            .iter()
-            .all(|table| table.starts_with("gwiki_"))
-    {
-        return Ok(BaselineState::GwikiStandalone);
     }
     Ok(BaselineState::CorruptPartial)
 }
@@ -500,10 +484,7 @@ pub(super) fn render_sql_for_schema<'a>(sql: &'a str, schema: &str) -> Cow<'a, s
 }
 
 fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option<String> {
-    if !matches!(
-        state,
-        BaselineState::GcoreCodeIndex | BaselineState::GwikiStandalone
-    ) {
+    if !matches!(state, BaselineState::GcoreCodeIndex) {
         return Some(statement.to_owned());
     }
     let body = statement_body(statement);
@@ -511,16 +492,12 @@ fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option
         return None;
     }
     if let Some(table) = create_table_name(body)
-        && (table.starts_with("gwiki_")
-            || (state == BaselineState::GcoreCodeIndex
-                && GCORE_CODE_INDEX_CORE_TABLES.contains(&table)))
+        && GCORE_CODE_INDEX_CORE_TABLES.contains(&table)
     {
         return None;
     }
     if let Some(table) = create_index_table(body)
-        && (table.starts_with("gwiki_")
-            || (state == BaselineState::GcoreCodeIndex
-                && GCORE_CODE_INDEX_CORE_TABLES.contains(&table)))
+        && GCORE_CODE_INDEX_CORE_TABLES.contains(&table)
     {
         return Some(add_index_if_not_exists(statement));
     }
@@ -679,7 +656,6 @@ fn verify_adopted_columns(
     let contracts = adopted_column_contracts();
     let required = match state {
         BaselineState::GcoreCodeIndex => GCORE_CODE_INDEX_TABLES.as_slice(),
-        BaselineState::GwikiStandalone => GWIKI_TABLES.as_slice(),
         _ => return Ok(()),
     };
     for table in required {

@@ -69,7 +69,7 @@ jobs:
                   esac
 
                   case "$file" in
-                    crates/*|Cargo.toml|Cargo.lock|rust-toolchain.toml|.config/nextest.toml|.github/workflows/rust-ci.yml|.github/workflows/release-gcode.yml|.github/workflows/release-ghook.yml|.github/workflows/release-gwiki.yml|.github/workflows/release-gcore.yml)
+              crates/*|Cargo.toml|Cargo.lock|rust-toolchain.toml|.config/nextest.toml|.github/workflows/rust-ci.yml|.github/workflows/release-gcode.yml|.github/workflows/release-ghook.yml|.github/workflows/release-gcore.yml)
                       ;;
                     *.md|docs/*|LICENSE*|.gobby/*|.github/ISSUE_TEMPLATE/*|.github/CODEOWNERS)
                       ;;

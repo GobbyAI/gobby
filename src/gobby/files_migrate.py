@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import errno
 import hashlib
-import json
 import os
 import shutil
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 from gobby.config.bootstrap import load_bootstrap
 from gobby.paths import (
@@ -25,18 +24,14 @@ from gobby.paths import (
     unlink_files_home_descendant,
 )
 from gobby.runner_pid_file import claim_pid_file
-from gobby.storage.projects import PERSONAL_PROJECT_ID, ensure_personal_project_identity
+from gobby.storage.projects import ensure_personal_project_identity
 
 _HANDLED_PERSONAL = frozenset({"USER.md", ".gobby", "wiki", "attachments"})
-_RESERVED_TOPICS = frozenset({"personal", "_personal", "wiki"})
 _CLASS_ORDER = (
     "profile",
     "personal_marker",
-    "personal_wiki",
     "leftover",
-    "topics",
     "attachments",
-    "registry",
 )
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
@@ -66,8 +61,6 @@ class FilesMigrateHooks:
     """Test injection points. Production CLI leaves this empty."""
 
     after_class: str | None = None
-    before_registry_publish: bool = False
-    before_scope_rewrite: bool = False
     before_locator_rewrite: bool = False
     force_exdev: bool = False
     fail_exdev_verify: bool = False
@@ -132,20 +125,6 @@ def special_file_reason(stat_result: os.stat_result) -> str | None:
     return None
 
 
-def validate_topic_name(name: str) -> str:
-    value = name.strip()
-    invalid = (
-        not value
-        or value in {".", ".."}
-        or any(char in value for char in {":", "/", "\\"})
-        or any(ord(char) < 32 for char in value)
-        or value in _RESERVED_TOPICS
-    )
-    if invalid:
-        raise FilesMigrateError("invalid_topic", f"invalid or reserved topic name `{value}`")
-    return value
-
-
 def run_files_migrate(*, hooks: FilesMigrateHooks | None = None) -> FilesMigrateReport:
     """Discover, preflight, publish, then seed still-missing baseline children."""
     hooks = hooks or FilesMigrateHooks()
@@ -171,7 +150,6 @@ def run_files_migrate(*, hooks: FilesMigrateHooks | None = None) -> FilesMigrate
         _refuse_filesystem_root(files_home)
         pairs = _discover(files_home)
         _refuse_overlap(files_home, [pair.source for pair in pairs])
-        _parse_registry_if_present(pairs, files_home)
         held = _prewalk([pair.source for pair in pairs if pair.source.exists()])
         _classify_destinations(files_home, pairs)
         _assert_dest_graph(pairs)
@@ -183,11 +161,6 @@ def run_files_migrate(*, hooks: FilesMigrateHooks | None = None) -> FilesMigrate
         for class_id in _CLASS_ORDER:
             _maybe_swap(hooks, class_id, published, held)
             class_pairs = [pair for pair in pairs if pair.class_id == class_id]
-            if class_id == "registry" and class_pairs and hooks.before_registry_publish:
-                raise FilesMigratePartialError(
-                    "injected crash before registry publication",
-                    published=tuple(published),
-                )
             for pair in class_pairs:
                 if pair.retire_only:
                     _retire_source(pair.source)
@@ -197,10 +170,6 @@ def run_files_migrate(*, hooks: FilesMigrateHooks | None = None) -> FilesMigrate
                     skipped.append(f"{class_id}:{pair.dest_rel}")
                     continue
                 dest = files_home / pair.dest_rel
-                if class_id == "registry":
-                    _publish_registry(pair, files_home)
-                    published.append(f"{class_id}:{pair.dest_rel}")
-                    continue
                 if dest.exists():
                     if _same_payload(pair.source, dest):
                         _retire_source(pair.source)
@@ -219,12 +188,6 @@ def run_files_migrate(*, hooks: FilesMigrateHooks | None = None) -> FilesMigrate
                     f"injected failure after {class_id}",
                     published=tuple(published),
                 )
-        if hooks.before_scope_rewrite:
-            raise FilesMigratePartialError(
-                "injected crash before scope rewrite",
-                published=tuple(published),
-            )
-        _rewrite_scopes(files_home)
         seeded.extend(_seed_baseline(files_home))
         return FilesMigrateReport(
             status="success",
@@ -249,24 +212,14 @@ def _discover(files_home: Path) -> list[_Pair]:
     pairs: list[_Pair] = []
     personal = get_gobby_home() / "personal"
     projects = get_gobby_home() / "projects"
-    topics = Path.home() / "wiki" / "topics"
-    registry = Path.home() / "wiki" / "wikis.json"
     _add_if_present(pairs, "profile", personal / "USER.md", Path("USER.md"))
     _add_if_present(pairs, "personal_marker", personal / ".gobby", Path("_personal/.gobby"))
-    _add_if_present(pairs, "personal_wiki", personal / "wiki", Path("wiki/personal"))
     if personal.is_dir():
         for child in sorted(personal.iterdir(), key=lambda path: path.name):
             if child.name in _HANDLED_PERSONAL:
                 continue
             pairs.append(_Pair("leftover", child, Path("_personal") / child.name))
-    if topics.is_dir():
-        for child in sorted(topics.iterdir(), key=lambda path: path.name):
-            if child.name.startswith("."):
-                continue
-            validate_topic_name(child.name)
-            pairs.append(_Pair("topics", child, Path("wiki") / child.name))
     pairs.extend(_discover_attachments(personal / "attachments", projects))
-    _add_if_present(pairs, "registry", registry, Path("wiki/wikis.json"))
     return pairs
 
 
@@ -339,64 +292,8 @@ def _refuse_overlap(files_home: Path, sources: list[Path]) -> None:
         if home == resolved or home in resolved.parents or resolved in home.parents:
             raise FilesMigrateError(
                 "overlap",
-                "files_home overlaps a legacy personal, project-attachment, or wiki-topic source",
+                "files_home overlaps a legacy personal or project-attachment source",
             )
-
-
-def _parse_registry_if_present(pairs: list[_Pair], files_home: Path) -> dict[str, Any] | None:
-    registry_pairs = [pair for pair in pairs if pair.class_id == "registry"]
-    if not registry_pairs:
-        return None
-    source = registry_pairs[0].source
-    try:
-        raw = json.loads(source.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise FilesMigrateError("malformed", "malformed wiki registry") from exc
-    return _transform_registry(raw, files_home=files_home)
-
-
-def _transform_registry(raw: object, *, files_home: Path) -> dict[str, Any]:
-    if not isinstance(raw, dict):
-        raise FilesMigrateError("malformed", "malformed wiki registry")
-    topics = raw.get("topics", {})
-    projects = raw.get("projects", {})
-    if not isinstance(topics, dict) or not isinstance(projects, dict):
-        raise FilesMigrateError("malformed", "malformed wiki registry")
-    topics_root = Path.home() / "wiki" / "topics"
-    out_topics: dict[str, Any] = {}
-    for name, entry in topics.items():
-        if not isinstance(entry, dict) or "path" not in entry:
-            raise FilesMigrateError("malformed", "malformed wiki registry")
-        validate_topic_name(str(name))
-        stored = Path(str(entry["path"]))
-        expected = topics_root / str(name)
-        dest = files_home / "wiki" / str(name)
-        if stored.is_absolute():
-            if not _same_path(stored, expected) and not _same_path(stored, dest):
-                raise FilesMigrateError("malformed", "unknown registry topic path")
-        elif stored.as_posix() not in {name, str(name)}:
-            raise FilesMigrateError("malformed", "unknown registry topic path")
-        out_topics[str(name)] = {"name": str(entry.get("name", name)), "path": str(name)}
-    out_projects: dict[str, Any] = {}
-    for project_id, entry in projects.items():
-        if not isinstance(entry, dict):
-            raise FilesMigrateError("malformed", "malformed wiki registry")
-        if str(project_id) == PERSONAL_PROJECT_ID:
-            out_projects[str(project_id)] = {
-                "project_id": PERSONAL_PROJECT_ID,
-                "project_root": str(files_home / "_personal"),
-                "path": "personal",
-            }
-            continue
-        out_projects[str(project_id)] = entry
-    return {"topics": out_topics, "projects": out_projects}
-
-
-def _same_path(left: Path, right: Path) -> bool:
-    try:
-        return left.resolve() == right.resolve()
-    except OSError:
-        return left == right
 
 
 def _prewalk(sources: list[Path]) -> list[_Held]:
@@ -431,14 +328,6 @@ def _classify_destinations(files_home: Path, pairs: list[_Pair]) -> None:
         dest = files_home / pair.dest_rel
         if not dest.exists() or pair.retire_only:
             continue
-        if pair.class_id == "registry":
-            if _registry_dest_matches(pair.source, dest, files_home):
-                pair.retire_only = True
-                continue
-            raise FilesMigrateError(
-                "divergent",
-                f"divergent both-present pair {pair.source} -> {pair.dest_rel}",
-            )
         if _same_payload(pair.source, dest):
             pair.retire_only = True
             continue
@@ -502,8 +391,6 @@ def _recognized_dest(rel: Path, planned: set[str]) -> bool:
         return len(parts) == 1
     if parts[0] == "_personal":
         return True
-    if parts[0] == "wiki":
-        return len(parts) == 1 or parts[1] != "_gwiki"
     return False
 
 
@@ -536,37 +423,6 @@ def _maybe_swap(
     if hooks.swap_fn is not None:
         hooks.swap_fn()
     _assert_identities(held, allow_partial=bool(published))
-
-
-def _registry_dest_matches(source: Path, dest: Path, files_home: Path) -> bool:
-    try:
-        raw = json.loads(source.read_text(encoding="utf-8"))
-        actual = json.loads(dest.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return False
-    return bool(actual == _transform_registry(raw, files_home=files_home))
-
-
-def _publish_registry(pair: _Pair, files_home: Path) -> None:
-    transformed = _parse_registry_if_present([pair], files_home)
-    if transformed is None:
-        return
-    dest = files_home / pair.dest_rel
-    if dest.exists():
-        if _registry_dest_matches(pair.source, dest, files_home):
-            _retire_source(pair.source)
-            return
-        raise FilesMigrateError(
-            "divergent",
-            f"divergent both-present pair {pair.source} -> {pair.dest_rel}",
-        )
-    if pair.dest_rel.parent.parts:
-        ensure_files_home_descendant_dir(pair.dest_rel.parent)
-    publish_files_home_descendant(
-        pair.dest_rel,
-        (json.dumps(transformed, indent=2) + "\n").encode("utf-8"),
-    )
-    _retire_source(pair.source)
 
 
 def _publish_pair(pair: _Pair, hooks: FilesMigrateHooks) -> None:
@@ -710,44 +566,6 @@ def _retire_source(path: Path) -> None:
         path.unlink()
 
 
-def _rewrite_scopes(files_home: Path) -> None:
-    personal = files_home / "wiki" / "personal"
-    if personal.is_dir():
-        _write_scope(
-            Path("wiki/personal"),
-            identity=f"project:{PERSONAL_PROJECT_ID}",
-            root=personal,
-        )
-    wiki = files_home / "wiki"
-    if not wiki.is_dir():
-        return
-    for child in wiki.iterdir():
-        if child.name in {"wikis.json", "personal", "_gwiki"} or not child.is_dir():
-            continue
-        _write_scope(Path("wiki") / child.name, identity=f"topic:{child.name}", root=child)
-
-
-def _write_scope(dest_rel: Path, *, identity: str, root: Path) -> None:
-    scope_rel = dest_rel / "_gwiki" / "scope.json"
-    dest = require_files_home() / dest_rel
-    scope_path = require_files_home() / scope_rel
-    if not dest.is_dir():
-        return
-    if not scope_path.is_file() and not any(dest.iterdir()):
-        return
-    data: dict[str, Any] = {"identity": identity, "root": str(root)}
-    if scope_path.is_file():
-        try:
-            loaded = json.loads(scope_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            loaded = {}
-        if isinstance(loaded, dict):
-            data = dict(loaded)
-            data["root"] = str(root)
-            data.setdefault("identity", identity)
-    publish_files_home_descendant(scope_rel, (json.dumps(data, indent=2) + "\n").encode("utf-8"))
-
-
 def _seed_baseline(files_home: Path) -> list[str]:
     seeded: list[str] = []
     if not (files_home / "USER.md").exists():
@@ -761,15 +579,6 @@ def _seed_baseline(files_home: Path) -> list[str]:
     ensure_personal_project_identity()
     if not (files_home / "_personal" / ".gobby" / "project.json").exists():
         seeded.append("_personal/.gobby")
-    if not (files_home / "wiki").exists():
-        ensure_files_home_descendant_dir("wiki")
-        seeded.append("wiki")
-    if not (files_home / "wiki" / "wikis.json").exists():
-        publish_files_home_descendant(
-            Path("wiki") / "wikis.json",
-            (json.dumps({"topics": {}, "projects": {}}, indent=2) + "\n").encode("utf-8"),
-        )
-        seeded.append("wiki/wikis.json")
     return seeded
 
 

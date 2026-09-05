@@ -44,7 +44,6 @@ src/gobby/
 ├── runner_lifecycle_periodic.py        # Periodic job wiring
 ├── app_context.py                      # Application context (shared state)
 ├── paths.py                            # Path resolution utilities
-├── gwiki_gateway.py                    # gwiki CLI gateway
 ├── shutdown_intent.py                  # Shutdown intent tracking
 └── system_automation.py                # System automation loops
 ```
@@ -111,7 +110,7 @@ src/gobby/
 │   ├── tools/                          # Internal tool modules: tasks/, sessions/,
 │   │                                   #   skills/, workflows/, worktrees/, plans/,
 │   │                                   #   spawn_agent/, build.py, memory.py, merge*.py,
-│   │                                   #   internal.py, wiki.py, communications.py, ...
+│   │                                   #   internal.py, communications.py, ...
 │   └── transports/                     # HTTP, stdio, WebSocket transports
 ├── memory/                             # Persistent memory system: manager.py
 │                                       #   (MemoryManager), vectorstore.py (Qdrant),
@@ -133,7 +132,7 @@ src/gobby/
 │   ├── routes/                         # HTTP API routes: tasks.py, sessions/, agents.py,
 │   │                                   #   build.py, chat.py, workflows.py, memory.py,
 │   │                                   #   skills.py, projects.py, source_control.py,
-│   │                                   #   github_triage.py, wiki.py, admin/, mcp/, ...
+│   │                                   #   github_triage.py, admin/, mcp/, ...
 │   └── websocket/                      # WebSocket server: server.py, broadcast.py,
 │                                       #   handlers/, chat/, voice/, tmux.py, auth.py
 ├── sessions/                           # Session lifecycle: lifecycle.py, processor.py
@@ -161,7 +160,6 @@ src/gobby/
 ├── utils/                              # Utilities: git.py, daemon_client.py, sql.py,
 │                                       #   session_refs.py, tool_summarizer.py, id.py
 ├── voice/                              # Voice chat support (stt.py)
-├── wiki/                               # gwiki integration
 ├── workflows/                          # Rule engine and workflow system
 │   ├── engine/                         # RuleEngine (engine/core.py)
 │   ├── enforcement/ pipeline/          # Enforcement and pipeline subpackages

@@ -414,3 +414,46 @@ fn explicit_format_and_automatic_budget_are_classified_centrally() {
         );
     }
 }
+#[test]
+fn retire_files_defaults_to_validation_and_requires_apply_receipt_pair() {
+    let cli = Cli::try_parse_from([
+        "gcode",
+        "retire-files",
+        "--manifest",
+        "/private/manifest.json",
+    ])
+    .expect("read-only retirement validation parses");
+    assert!(matches!(
+        cli.command,
+        Command::RetireFiles {
+            apply: false,
+            receipt: None,
+            ..
+        }
+    ));
+    for extra in ["--apply", "--receipt"] {
+        let mut args = vec![
+            "gcode",
+            "retire-files",
+            "--manifest",
+            "/private/manifest.json",
+            extra,
+        ];
+        if extra == "--receipt" {
+            args.push("/private/receipt.json");
+        }
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+    assert!(
+        Cli::try_parse_from([
+            "gcode",
+            "retire-files",
+            "--manifest",
+            "/private/manifest.json",
+            "--apply",
+            "--receipt",
+            "/private/receipt.json"
+        ])
+        .is_ok()
+    );
+}

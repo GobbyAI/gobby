@@ -221,11 +221,11 @@ def test_legacy_bare_end_marker_paginates_start_to_eof() -> None:
 @pytest.mark.asyncio
 async def test_get_agent_capture_returns_every_character_after_health_fail_persist() -> None:
     from gobby.agents.capture import _capture_slot
-    from gobby.sessions.session_wiki_file import redact_session_markdown
+    from gobby.utils.terminal_output import redact_terminal_output
 
     unique_head = "HEALTH_CAPTURE_HEAD_7f3a9c"
     pane = f"{unique_head}\n{'y' * 1800}\nsk-ABCDEFGHIJKLMNOPQRSTUV"
-    redacted = redact_session_markdown(pane.strip())
+    redacted = redact_terminal_output(pane.strip())
     assert unique_head in redacted
     assert len(redacted) > 1024
     run = _run(status="error", result=_capture_slot(_CAPTURE_ID, redacted))

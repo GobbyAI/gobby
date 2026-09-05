@@ -5,10 +5,7 @@ use crate::index::security;
 use crate::index::{MAX_DATA_LANGUAGE_AST_SIZE, MAX_FILE_SIZE};
 
 use super::generated::is_generated_js_bundle;
-use super::hidden::{
-    HiddenPathContext, is_generated_wiki_metadata_with_context,
-    is_hidden_metadata_content_only_with_context, is_hidden_path,
-};
+use super::hidden::{HiddenPathContext, is_hidden_metadata_content_only, is_hidden_path};
 use super::types::{DiscoveryOptions, FileClassification};
 
 /// Classify an individual file for indexing.
@@ -17,27 +14,14 @@ pub fn classify_file(
     path: &Path,
     exclude_patterns: &[impl AsRef<str>],
 ) -> Option<FileClassification> {
-    let context = HiddenPathContext::load(root);
-    classify_file_with_context(root, path, exclude_patterns, &context)
-}
-
-pub(super) fn classify_file_with_context(
-    root: &Path,
-    path: &Path,
-    exclude_patterns: &[impl AsRef<str>],
-    context: &HiddenPathContext,
-) -> Option<FileClassification> {
     if !is_safe_text_file(root, path, exclude_patterns) {
-        return None;
-    }
-    if is_generated_wiki_metadata_with_context(root, path, context) {
         return None;
     }
     if is_generated_js_bundle(path) {
         return None;
     }
 
-    if is_hidden_metadata_content_only_with_context(root, path, context) {
+    if is_hidden_metadata_content_only(root, path) {
         return Some(FileClassification::ContentOnly);
     }
 
@@ -73,7 +57,7 @@ pub fn classify_explicit_file_with_options(
     if options.respect_gitignore && !explicit_path_visible(root, path, options, &context) {
         return None;
     }
-    classify_file_with_context(root, path, exclude_patterns, &context)
+    classify_file(root, path, exclude_patterns)
 }
 
 /// Return true when `path` is an unsupported, safe text file suitable for chunks.
@@ -109,9 +93,8 @@ fn explicit_path_visible(
     options: DiscoveryOptions,
     context: &HiddenPathContext,
 ) -> bool {
-    // Allowlisted metadata (vault markdown, .gobby/plans, CI workflows) is
-    // rescued from both hidden filtering and gitignore, matching discovery —
-    // the vault is gitignored in real repos, so the walk below cannot see it.
+    // Explicitly allowlisted metadata bypasses hidden filtering and gitignore,
+    // matching discovery.
     if context.allowlist().matches(root, path) {
         return true;
     }
@@ -119,13 +102,17 @@ fn explicit_path_visible(
         return false;
     }
 
-    let walk_root = path.parent().unwrap_or(root);
-    let mut settings = gobby_core::indexing::WalkerSettings::new(walk_root);
+    let mut settings = gobby_core::indexing::WalkerSettings::new(root);
     settings.respect_gitignore = options.respect_gitignore;
     settings.max_filesize = Some(MAX_FILE_SIZE);
     let mut builder = settings.into_walker();
     builder.hidden(false);
-    builder.max_depth(Some(1));
+    // Start at the repository boundary so ignored ancestors are admitted by
+    // the same rules as discovery. Only descend along the requested path.
+    let target = path.to_path_buf();
+    builder.filter_entry(move |entry| {
+        target.starts_with(entry.path()) || same_existing_path(entry.path(), &target)
+    });
     builder
         .build()
         .flatten()

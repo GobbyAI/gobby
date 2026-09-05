@@ -34,14 +34,14 @@ def test_extracts_version_from_decorated_stdout(tmp_path: Path) -> None:
 
 
 def test_falls_back_to_stderr_when_stdout_empty(tmp_path: Path) -> None:
-    binary = _binary(tmp_path, "gwiki")
-    runner = _runner(stdout="", stderr="gwiki 0.2.0\n")
+    binary = _binary(tmp_path, "gcode")
+    runner = _runner(stdout="", stderr="gcode 0.2.0\n")
     assert probe_native_bin_version(binary, runner=runner) == "0.2.0"
 
 
 def test_falls_back_to_stderr_when_stdout_is_whitespace(tmp_path: Path) -> None:
-    binary = _binary(tmp_path, "gwiki")
-    runner = _runner(stdout=" \n", stderr="gwiki 0.2.0\n")
+    binary = _binary(tmp_path, "gcode")
+    runner = _runner(stdout=" \n", stderr="gcode 0.2.0\n")
     assert probe_native_bin_version(binary, runner=runner) == "0.2.0"
 
 
@@ -59,7 +59,7 @@ def test_empty_output_returns_none(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("error", [OSError("boom"), subprocess.SubprocessError("boom")])
 def test_runner_errors_return_none(tmp_path: Path, error: Exception) -> None:
-    binary = _binary(tmp_path, "gwiki")
+    binary = _binary(tmp_path, "gcode")
     runner = MagicMock(side_effect=error)
     assert probe_native_bin_version(binary, runner=runner) is None
 

@@ -23,7 +23,6 @@ from weakref import WeakKeyDictionary
 
 from gobby.config.persistence import MemoryDreamConfig
 from gobby.memory.dream.aggregate import (
-    ALL_MEMORIES_CUTOFF,
     _AggregateDreamRunner,
     _ScopeSweep,
 )
@@ -45,9 +44,8 @@ from gobby.memory.dream.storage_runs import (
 )
 from gobby.memory.dream.truth_digest import (
     build_current_truth_digest,
-    build_project_truth_digest_async,
 )
-from gobby.storage.memories_scope import MemoryScope, MemoryScopeKind
+from gobby.storage.memories_scope import MemoryScope
 
 logger = logging.getLogger(__name__)
 
@@ -189,83 +187,6 @@ class MemoryDreamService:
     ) -> dict[str, Any]:
         return await self._aggregate_runner.close_scope_sweep(sweep, status=status, error=error)
 
-    async def _truth_changed_project_ids(
-        self, scopes: list[MemoryScope] | None = None
-    ) -> list[str]:
-        if scopes is None:
-            scopes = await asyncio.to_thread(
-                self.memory_manager.list_dream_scopes,
-                redream_cutoff=ALL_MEMORIES_CUTOFF,
-            )
-        changed: list[str] = []
-        for scope in scopes:
-            project_id = scope.project_id
-            if (
-                scope.kind is not MemoryScopeKind.PROJECT_ONLY
-                or project_id is None
-                or self._is_current_daemon_project(project_id)
-            ):
-                continue
-            try:
-                repo_path = self._resolve_repo_path(project_id)
-                if not repo_path:
-                    continue
-                digest = await build_project_truth_digest_async(repo_path)
-                if not digest:
-                    continue
-                digest_hash = hashlib.sha256(digest.encode("utf-8")).hexdigest()
-                previous = await asyncio.to_thread(self.store.get_truth_digest_hash, project_id)
-                if previous != digest_hash:
-                    changed.append(project_id)
-            except Exception:
-                logger.exception(
-                    "memory dream: truth-change detection failed for project %s",
-                    project_id,
-                )
-        return changed
-
-    async def _apply_truth_change_triggers(self) -> None:
-        """Clear the cooldown for projects whose codewiki truth digest changed.
-
-        A project whose memories are all within the cooldown window is skipped by
-        the due enumeration, so a stack change captured by a codewiki refresh
-        would otherwise wait a full cooldown cycle before being re-judged. For
-        every memory-bearing project this compares the current rendered truth
-        digest against the last-seen hash; on a change it clears that project's
-        cooldown cursor so the upcoming sweep re-judges its memories against the
-        new stack, then records the new hash. Globally visible memories and the
-        daemon's own project use platform truth rather than a per-project
-        codewiki digest and are skipped. Per-project failures are isolated.
-        """
-        await self._apply_platform_truth_change_trigger()
-        for project_id in await self._truth_changed_project_ids():
-            try:
-                repo_path = self._resolve_repo_path(project_id)
-                if not repo_path:
-                    continue
-                digest = await build_project_truth_digest_async(repo_path)
-                if not digest:
-                    continue
-                digest_hash = hashlib.sha256(digest.encode("utf-8")).hexdigest()
-                previous = await asyncio.to_thread(self.store.get_truth_digest_hash, project_id)
-                if previous == digest_hash:
-                    continue
-                reset = await asyncio.to_thread(
-                    self.memory_manager.mark_project_memories_due, project_id
-                )
-                await asyncio.to_thread(self.store.set_truth_digest_hash, project_id, digest_hash)
-                logger.info(
-                    "memory dream: truth digest changed for project %s; "
-                    "cleared cooldown for %d memory(ies)",
-                    project_id,
-                    reset,
-                )
-            except Exception:
-                logger.exception(
-                    "memory dream: truth-change trigger failed for project %s",
-                    project_id,
-                )
-
     async def _apply_platform_truth_change_trigger(self) -> None:
         try:
             digest = build_current_truth_digest(self._daemon_config)
@@ -371,15 +292,9 @@ class MemoryDreamService:
         if options.global_only:
             return build_current_truth_digest(self._daemon_config)
         if options.project_id and self._is_current_daemon_project(options.project_id):
-            platform_digest = build_current_truth_digest(self._daemon_config)
-            project_digest = await build_project_truth_digest_async(
-                self._resolve_repo_path(options.project_id)
-            )
-            return "\n\n".join(part for part in (platform_digest, project_digest) if part)
+            return build_current_truth_digest(self._daemon_config)
         if options.project_id:
-            return await build_project_truth_digest_async(
-                self._resolve_repo_path(options.project_id)
-            )
+            return ""
         raise ValueError(
             "memory dream sweep requires global_only or a project_id; "
             "unscoped runs must fan out via run_all_due_projects"
