@@ -14,7 +14,7 @@ import pytest
 
 from gobby.runner_maintenance import setup_signal_handlers
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
 class TestSetupSignalHandlers:
@@ -82,3 +82,11 @@ class TestSetupSignalHandlers:
         handlers = [call.args[1] for call in mock_signal.call_args_list]
         assert len(handlers) == 2
         assert handlers[0] is not handlers[1]
+
+        # Both OS handlers must marshal distinct callables onto the loop.
+        handlers[0](signal.SIGTERM, None)
+        handlers[1](signal.SIGINT, None)
+
+        assert loop.call_soon_threadsafe.call_count == 2
+        queued = [call.args[0] for call in loop.call_soon_threadsafe.call_args_list]
+        assert queued[0] is not queued[1]

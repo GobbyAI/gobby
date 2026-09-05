@@ -7,14 +7,15 @@ Windows. The module must import everywhere and degrade at call time instead.
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.agents.tmux import pty_bridge
-from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
+from gobby.agents.tmux.pty_bridge import BridgeInfo, TmuxPTYBridge
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
 class TestPtyBridgePlatformGuards:
@@ -46,8 +47,20 @@ class TestPtyBridgePlatformGuards:
         mock_openpty.assert_not_called()
 
     async def test_resize_returns_none_when_unsupported(self) -> None:
-        """resize() already returns None on failure; keep that contract."""
+        """resize() returns None without ioctl when the platform lacks PTY support."""
         bridge = TmuxPTYBridge()
+        bridge._bridges["streaming-id"] = BridgeInfo(
+            master_fd=42,
+            proc=MagicMock(),
+            session_name="session",
+            socket_name="socket",
+            created_at=datetime.now(UTC),
+        )
 
-        with patch.object(pty_bridge, "PTY_SUPPORTED", False):
-            assert await bridge.resize("missing-id", 24, 80) is None
+        with (
+            patch.object(pty_bridge, "PTY_SUPPORTED", False),
+            patch.object(pty_bridge, "fcntl", MagicMock()) as mock_fcntl,
+        ):
+            assert await bridge.resize("streaming-id", 24, 80) is None
+
+        mock_fcntl.ioctl.assert_not_called()
