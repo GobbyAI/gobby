@@ -113,6 +113,14 @@ including for newly created files after indexing. A file may have multiple exact
 symbol targets. It may not mix exact targets with `::*`. Symbol UUIDs and line
 numbers are invalid target references.
 
+For complete file deletion, add a separate `operation: delete` annotation to
+the whole-file entry, for example
+`src/obsolete.py::*` — operation: delete — scope-reason: retire the entire file.
+This exempts that file from `production-size-growth`: deleting a file cannot
+increase its size. Every entry for the file must declare whole-file deletion.
+Symbol removal, bare paths, deletion prose in a scope reason, and conflicting
+operation annotations do not qualify. Other large files retain their safeguards.
+
 **Block format is load-bearing.** `iter_target_block_lines` reads the inventory
 as a contiguous block: the `Targets:` line itself, then every immediately
 following line. **A blank line ends the block**, as does the next heading, a
@@ -170,7 +178,8 @@ Plan validation applies five additional inventory lints:
 | `derived-carriers` | A Target matches one of the source rows below. | Target every required carrier in the same deliverable or in a deliverable that transitively depends on it. |
 | `consumer-coverage` | An exact symbol Target has owned call or import consumers in the code index. | Target every same-repository consumer, including tests. Vendor, `node_modules`, and generated files are excluded. Missing consumers warn in standard validation and error in expansion validation. |
 
-`production-size-growth` deliberately uses a simple decomposition heuristic. The
+Apart from explicit whole-file deletion, `production-size-growth` uses a simple
+decomposition heuristic. The
 exemption is per large file: one body paragraph (lines up to the next blank
 line) must contain `split` or `move`, name the large file by path or basename,
 and name a new same-extension bare-path Target that does not exist yet. When

@@ -470,7 +470,9 @@ def _lint_production_size_growth(
         line_count = _line_count(source_path)
         if line_count < PRODUCTION_SIZE_GROWTH_THRESHOLD:
             continue
-        if _has_new_split_target(plan_doc, section, project_root, file_path):
+        if _is_whole_file_deletion(plan_doc, section, file_path) or _has_new_split_target(
+            plan_doc, section, project_root, file_path
+        ):
             continue
         issues.append(
             SemanticLintIssue(
@@ -491,6 +493,22 @@ def _lint_production_size_growth(
             )
         )
     return issues
+
+
+def _is_whole_file_deletion(plan_doc: PlanDocument, section: PlanSection, file_path: str) -> bool:
+    """Require every entry for this file to explicitly delete its entire scope."""
+    entries = [
+        line
+        for line in iter_target_block_lines(plan_doc, section)
+        if _primary_target_path(line) == file_path
+    ]
+    for line in entries:
+        primary, *metadata = line.split(_PRIMARY_TOKEN_SEPARATOR)
+        target = _BULLET_RE.sub("", primary, count=1).strip().strip("`")
+        operations = [item.strip() for item in metadata if item.strip().startswith("operation:")]
+        if not target.endswith("::*") or operations != ["operation: delete"]:
+            return False
+    return bool(entries)
 
 
 def _lint_derived_carriers(plan_doc: PlanDocument) -> list[SemanticLintIssue]:

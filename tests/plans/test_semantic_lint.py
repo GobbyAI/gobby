@@ -509,6 +509,60 @@ def test_production_size_growth_reports_threshold_and_ceiling(tmp_path: Path) ->
     assert "1,000" in issues[0].message
 
 
+@pytest.mark.parametrize(
+    ("target", "exempt"),
+    [
+        ("`src/large.py::*` — operation: delete — scope-reason: retire the entire file", True),
+        ("`src/large.py::*` — scope-reason: retire the file — operation: delete", True),
+        ("`src/large.py::run` — operation: delete", False),
+        ("`src/large.py` — operation: delete", False),
+        ("`src/large.py::*` — scope-reason: delete obsolete methods", False),
+        ("`src/large.py::*` — operation: delete obsolete methods", False),
+        ("`src/large.py::*` — operation: delete — operation: edit", False),
+        ("`src/large.py::*` — scope-reason: operation: delete", False),
+    ],
+)
+def test_production_size_growth_whole_file_deletion(
+    tmp_path: Path, target: str, exempt: bool
+) -> None:
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    for name in ("large.py", "retained.py"):
+        (source_dir / name).write_text("value = 1\n" * 1000, encoding="utf-8")
+
+    result = _lint_plan_text(
+        tmp_path,
+        f"""
+        > **Plan ID:** production-size-delete
+
+        # Retire a module
+
+        ## P1: Work
+        `kind: framing`
+
+        ### 1.1 Remove obsolete behavior [category: code]
+        `kind: deliverable`
+
+        Targets:
+        - {target}
+        - `src/retained.py::run`
+
+        Delete obsolete behavior and update the retained module.
+
+        **Acceptance:**
+        - 1.1.1 - Obsolete behavior is gone. file: `src/large.py`.
+        """,
+        project_root=tmp_path,
+    )
+
+    flagged = {
+        issue.details["file_path"]
+        for issue in result.issues
+        if issue.code == "production-size-growth"
+    }
+    assert flagged == ({"src/retained.py"} if exempt else {"src/large.py", "src/retained.py"})
+
+
 def test_production_size_growth_accepts_explicit_new_split_target(tmp_path: Path) -> None:
     source_path = tmp_path / "src" / "large.py"
     source_path.parent.mkdir()
