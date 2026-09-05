@@ -89,6 +89,16 @@ async fn send_key(input: &mpsc::Sender<RawInputEvent>, code: KeyCode, modifiers:
         .expect("live loop input");
 }
 
+fn send_resize_burst(count: usize) {
+    let pid = std::process::id().to_string();
+    let mut command = std::process::Command::new("/bin/kill");
+    command.arg("-WINCH");
+    for _ in 0..count {
+        command.arg(&pid);
+    }
+    assert!(command.status().expect("send SIGWINCH").success());
+}
+
 async fn settle_live_event() {
     for _ in 0..16 {
         tokio::task::yield_now().await;
@@ -1005,6 +1015,219 @@ async fn proxy_fallback_uses_fresh_attachment() {
 
 #[tokio::test]
 async fn live_resize_propagates_geometry_by_policy() {
+    {
+        let mock = MockDaemon::start("local-token").await;
+        mock.use_unique_attachment_ids();
+        for _ in 0..2 {
+            mock.enqueue(
+                "GET",
+                "/api/terminals?",
+                200,
+                json!({
+                    "items": [
+                        {"terminal_id": "term-controlled", "backend": "native", "state": "live"},
+                        {"terminal_id": "term-observed", "backend": "native", "state": "live"},
+                        {"terminal_id": "term-tmux", "backend": "tmux", "state": "live"}
+                    ],
+                    "next_cursor": null,
+                    "snapshot": {"daemon_epoch": "epoch-resize", "seq": 1}
+                }),
+            );
+        }
+        let daemon = LiveDaemon::connect(mock.url(), "local-token")
+            .await
+            .expect("connect live daemon");
+        let mut workspace = Workspace::live(daemon);
+        workspace.select_project("project-1");
+        workspace
+            .reconcile_subscribe_first()
+            .await
+            .expect("initial resize panes");
+        let controlled = workspace
+            .pane_for_terminal("term-controlled")
+            .expect("controlled pane");
+
+        let (client, mut host) = UnixStream::pair().expect("direct resize socket pair");
+        let (direct_tx, mut direct_rx) = mpsc::unbounded_channel();
+        let host_task = tokio::spawn(async move {
+            let _: ClientMessage = read_message_async(&mut host, MAX_FRAME_SIZE)
+                .await
+                .expect("direct hello");
+            write_message_async(
+                &mut host,
+                &ServerMessage::Welcome {
+                    host_epoch: "direct-resize-epoch".into(),
+                },
+            )
+            .await
+            .expect("direct welcome");
+            let _: ClientMessage = read_message_async(&mut host, MAX_FRAME_SIZE)
+                .await
+                .expect("direct attach");
+            while let Ok(message) = read_message_async(&mut host, MAX_FRAME_SIZE).await {
+                if direct_tx.send(message).is_err() {
+                    break;
+                }
+            }
+        });
+        let direct = UnixSocketFrameSource::connect_stream(
+            client,
+            &AttachLocator {
+                backend: "native".into(),
+                frame_host_epoch: "direct-resize-epoch".into(),
+                host_terminal_id: "term-controlled".into(),
+                frame_socket_path: "socket-pair".into(),
+                pane: None,
+            },
+            "local-token",
+            80,
+            24,
+        )
+        .await
+        .expect("direct resize source");
+        workspace
+            .replace_frame_source(controlled, PaneFrameSource::Direct(direct))
+            .expect("install direct resize source");
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+        let mut chrome = Chrome::dark();
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let driver = async {
+            wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+            let mut take_count = 1;
+            while websocket_requests(&mock, "terminal_take_control")
+                .last()
+                .and_then(|request| request.get("terminal_id"))
+                != Some(&json!("term-controlled"))
+            {
+                send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+                send_key(&input_tx, KeyCode::Tab, KeyModifiers::NONE).await;
+                take_count += 1;
+                assert!(take_count <= 3, "controlled pane must be in the live grid");
+                wait_for_websocket_requests(&mock, "terminal_take_control", take_count).await;
+            }
+            assert_eq!(
+                websocket_requests(&mock, "terminal_take_control")
+                    .last()
+                    .and_then(|request| request.get("terminal_id")),
+                Some(&json!("term-controlled"))
+            );
+            send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+            wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+            assert_eq!(websocket_requests(&mock, "terminal_set_viewport").len(), 3);
+            send_resize_burst(5);
+            wait_for_websocket_requests(&mock, "terminal_set_viewport", 5).await;
+            wait_for_websocket_requests(&mock, "terminal_resize", 1).await;
+            let direct_viewport = timeout(Duration::from_secs(1), async {
+                loop {
+                    if let Some(ClientMessage::SetViewport { rows, cols }) = direct_rx.recv().await
+                    {
+                        break (rows, cols);
+                    }
+                }
+            })
+            .await
+            .expect("direct viewport after resize");
+            drop(input_tx);
+            direct_viewport
+        };
+
+        let (result, direct_viewport) = tokio::join!(
+            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            driver
+        );
+        result.expect("live resize loop");
+        host_task.abort();
+        assert!(host_task
+            .await
+            .expect_err("direct resize host remains attached")
+            .is_cancelled());
+        assert_eq!(
+            workspace.pane(controlled).viewport(),
+            direct_viewport,
+            "direct source receives the recomputed rectangle"
+        );
+        let viewports = websocket_requests(&mock, "terminal_set_viewport");
+        assert_eq!(viewports.len(), 5, "the signal burst is coalesced once");
+        for terminal_id in ["term-observed", "term-tmux"] {
+            let pane_id = workspace
+                .pane_for_terminal(terminal_id)
+                .expect("proxy resize pane");
+            let latest = viewports
+                .iter()
+                .rev()
+                .find(|request| request.get("terminal_id") == Some(&json!(terminal_id)))
+                .expect("latest proxy viewport");
+            assert_eq!(
+                latest.get("rows").and_then(Value::as_u64),
+                Some(u64::from(workspace.pane(pane_id).viewport().0))
+            );
+            assert_eq!(
+                latest.get("cols").and_then(Value::as_u64),
+                Some(u64::from(workspace.pane(pane_id).viewport().1))
+            );
+        }
+        let resizes = websocket_requests(&mock, "terminal_resize");
+        assert_eq!(resizes.len(), 1);
+        assert_eq!(
+            resizes[0].get("terminal_id"),
+            Some(&json!("term-controlled"))
+        );
+        assert_eq!(
+            resizes[0].get("rows").and_then(Value::as_u64),
+            Some(u64::from(direct_viewport.0))
+        );
+        assert_eq!(
+            resizes[0].get("cols").and_then(Value::as_u64),
+            Some(u64::from(direct_viewport.1))
+        );
+        mock.shutdown().await;
+    }
+
+    {
+        let mock = MockDaemon::start("local-token").await;
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "term-zero", "backend": "native", "state": "live"}
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-zero", "seq": 1}
+            }),
+        );
+        let daemon = LiveDaemon::connect(mock.url(), "local-token")
+            .await
+            .expect("connect zero-size daemon");
+        let mut workspace = Workspace::live(daemon);
+        workspace.select_project("project-1");
+        let mut terminal = Terminal::new(TestBackend::new(1, 1)).expect("test terminal");
+        terminal.backend_mut().resize(0, 0);
+        let mut chrome = Chrome::dark();
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let driver = async {
+            wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+            settle_live_event().await;
+            let before = websocket_requests(&mock, "terminal_set_viewport");
+            send_resize_burst(1);
+            settle_live_event().await;
+            assert_eq!(websocket_requests(&mock, "terminal_set_viewport"), before);
+            assert!(websocket_requests(&mock, "terminal_resize").is_empty());
+            drop(input_tx);
+        };
+        let (result, ()) = tokio::join!(
+            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            driver
+        );
+        result.expect("zero-size resize loop");
+        mock.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn resize_geometry_policy_reducer() {
     let mut ws = Workspace::scripted();
     let controlled_native = ws
         .open_terminal("term-controlled", "native", "epoch-resize")
