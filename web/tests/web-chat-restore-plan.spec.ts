@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import {
   CLAIMED_TASK_ID,
@@ -127,7 +127,7 @@ function bumpCounter(
   counters[key] = (counters[key] ?? 0) + 1;
 }
 
-async function seedLocalState(page: Parameters<typeof test>[0]["page"]) {
+async function seedLocalState(page: Page) {
   await page.addInitScript(
     ({ sessionId }: { sessionId: string }) => {
       localStorage.setItem("gobby-conversation-id", sessionId);
@@ -147,337 +147,444 @@ async function seedLocalState(page: Parameters<typeof test>[0]["page"]) {
   );
 }
 
-async function mockApi(
-  page: Parameters<typeof test>[0]["page"],
-  counters?: MockApiCounters,
-) {
-  await page.route("**/api/**", async (route) => {
-    const url = new URL(route.request().url());
-    const path = url.pathname;
-    const method = route.request().method();
+async function mockApi(page: Page, counters?: MockApiCounters) {
+  await page.route(
+    (url) => url.pathname.startsWith("/api/"),
+    async (route) => {
+      const url = new URL(route.request().url());
+      const path = url.pathname;
+      const method = route.request().method();
 
-    if (path === "/api/auth/status") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ authenticated: true }),
-      });
-      return;
-    }
+      if (path === "/api/auth/status") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ authenticated: true }),
+        });
+        return;
+      }
 
-    if (path === "/api/config/ui-settings") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body:
-          method === "PUT"
-            ? JSON.stringify({ ok: true })
-            : JSON.stringify({
-                selectedProjectId: "proj-1",
-                model: "gpt-5.4",
-                theme: "dark",
-                defaultChatMode: "plan",
-                planPendingVariant: "amber",
-                fontSize: 16,
-              }),
-      });
-      return;
-    }
+      if (path === "/api/config/ui-settings") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body:
+            method === "PUT"
+              ? JSON.stringify({ ok: true })
+              : JSON.stringify({
+                  selectedProjectId: "proj-1",
+                  model: "gpt-5.4",
+                  theme: "dark",
+                  defaultChatMode: "plan",
+                  planPendingVariant: "amber",
+                  fontSize: 16,
+                }),
+        });
+        return;
+      }
 
-    if (path === "/api/providers" || path === "/api/providers/models") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          providers:
-            path === "/api/providers"
-              ? [
-                  { name: "codex", available: true },
-                  { name: "claude", available: true },
-                ]
-              : [
-                  {
-                    provider: "codex",
-                    available: true,
-                    default_model: "gpt-5.4",
-                    models: [
-                      { value: "gpt-5.4", label: "GPT-5.4", is_default: true },
-                    ],
-                  },
+      if (path === "/api/providers" || path === "/api/providers/models") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            providers:
+              path === "/api/providers"
+                ? [
+                    { name: "codex", available: true },
+                    { name: "claude", available: true },
+                  ]
+                : [
+                    {
+                      provider: "codex",
+                      available: true,
+                      default_model: "gpt-5.4",
+                      models: [
+                        {
+                          value: "gpt-5.4",
+                          label: "GPT-5.4",
+                          is_default: true,
+                        },
+                      ],
+                    },
+                  ],
+          }),
+        });
+        return;
+      }
+
+      if (path === "/api/voice/status") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ enabled: false, stt_available: false }),
+        });
+        return;
+      }
+
+      if (path === "/api/files/projects") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              id: "proj-1",
+              name: "Project One",
+              checkout: {
+                machine_id: "machine-1",
+                root_path: "/tmp/project-one",
+              },
+            },
+          ]),
+        });
+        return;
+      }
+
+      if (path === "/api/projects") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              id: "proj-1",
+              name: "project-one",
+              display_name: "Project One",
+              checkout: {
+                machine_id: "machine-1",
+                root_path: "/tmp/project-one",
+              },
+              github_url: null,
+              github_repo: null,
+              linear_team_id: null,
+              approval_rules: [],
+              created_at: "2026-04-19T18:00:00Z",
+              updated_at: "2026-04-19T18:00:00Z",
+              session_count: 2,
+              open_task_count: 0,
+              last_activity_at: "2026-04-19T18:15:00Z",
+            },
+          ]),
+        });
+        return;
+      }
+
+      if (path === "/api/agents/running") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ agents: [] }),
+        });
+        return;
+      }
+
+      if (path === "/api/stages/registry") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            stages: [
+              {
+                name: "planning",
+                display_name: "Planning",
+                category: "development",
+                state: "ready",
+                review_policy: "none",
+                position: 0,
+                sequence_order: 0,
+              },
+              {
+                name: "development",
+                display_name: "Development",
+                category: "development",
+                state: "ready",
+                review_policy: "none",
+                position: 1,
+                sequence_order: 1,
+              },
+            ],
+          }),
+        });
+        return;
+      }
+
+      if (path === "/api/tasks") {
+        const parentTaskId = url.searchParams.get("parent_task_id");
+        const body =
+          parentTaskId === CLAIMED_TASK_ID
+            ? { tasks: [], total: 0, stats: {}, limit: 200, offset: 0 }
+            : {
+                tasks: [claimedTask],
+                total: 1,
+                stats: {},
+                limit: 500,
+                offset: 0,
+              };
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(body),
+        });
+        return;
+      }
+
+      if (path === `/api/tasks/${CLAIMED_TASK_ID}`) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ task: claimedTask }),
+        });
+        return;
+      }
+
+      if (path === `/api/tasks/${CLAIMED_TASK_ID}/dependencies`) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            id: CLAIMED_TASK_ID,
+            blockers: [],
+            blocking: [],
+          }),
+        });
+        return;
+      }
+
+      if (path === "/api/sessions") {
+        const hasClaimedTaskFilter =
+          url.searchParams.get("task_ref_min") === String(CLAIMED_TASK_REF) &&
+          url.searchParams.get("task_ref_max") === String(CLAIMED_TASK_REF) &&
+          url.searchParams.getAll("task_ref_role").includes("claimed");
+        const sessions = hasClaimedTaskFilter
+          ? webChatSessions.filter((session) =>
+              session.claimed_task_refs.some((ref) => ref === CLAIMED_TASK_REF),
+            )
+          : webChatSessions;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ sessions, total: sessions.length }),
+        });
+        return;
+      }
+
+      if (path === `/api/sessions/${CURRENT_DB_SESSION_ID}`) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            session: webChatSessions[0],
+          }),
+        });
+        return;
+      }
+
+      if (path === `/api/sessions/${TASK_LINKED_DB_SESSION_ID}`) {
+        bumpCounter(counters, "taskLinkedSessionDetailFetches");
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            session: webChatSessions.find(
+              (session) => session.id === TASK_LINKED_DB_SESSION_ID,
+            ),
+          }),
+        });
+        return;
+      }
+
+      if (path === `/api/sessions/${TASK_LINKED_DB_SESSION_ID}/messages`) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            messages: [
+              {
+                id: "task-linked-msg-1",
+                role: "assistant",
+                content: "Task-linked session transcript",
+                timestamp: "2026-04-19T18:31:00Z",
+                content_blocks: [
+                  { type: "text", content: "Task-linked session transcript" },
                 ],
-        }),
-      });
-      return;
-    }
+              },
+            ],
+            total_count: 1,
+          }),
+        });
+        return;
+      }
 
-    if (path === "/api/voice/status") {
+      if (path === `/api/sessions/${OTHER_DB_SESSION_ID}`) {
+        bumpCounter(counters, "otherSessionDetailFetches");
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            session: webChatSessions.find(
+              (session) => session.id === OTHER_DB_SESSION_ID,
+            ),
+          }),
+        });
+        return;
+      }
+
+      if (path.startsWith(`/api/chat/${CURRENT_DB_SESSION_ID}/messages`)) {
+        bumpCounter(counters, "currentMessageFetches");
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            messages: [
+              {
+                id: "msg-1",
+                role: "assistant",
+                content: "Persisted main chat message",
+                tool_calls: [],
+                seq: 1,
+                created_at: "2026-04-19T18:12:00Z",
+              },
+            ],
+            max_seq: 1,
+          }),
+        });
+        return;
+      }
+
+      if (path.startsWith(`/api/chat/${OTHER_DB_SESSION_ID}/messages`)) {
+        bumpCounter(counters, "otherMessageFetches");
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            messages: [
+              {
+                id: "other-msg-1",
+                role: "assistant",
+                content: "Other session message",
+                tool_calls: [],
+                seq: 1,
+                created_at: "2026-04-19T18:22:00Z",
+              },
+            ],
+            max_seq: 1,
+          }),
+        });
+        return;
+      }
+
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ enabled: false, stt_available: false }),
+        body: JSON.stringify({}),
       });
-      return;
-    }
-
-    if (path === "/api/files/projects") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([
-          {
-            id: "proj-1",
-            name: "Project One",
-            checkout: {
-              machine_id: "machine-1",
-              root_path: "/tmp/project-one",
-            },
-          },
-        ]),
-      });
-      return;
-    }
-
-    if (path === "/api/projects") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([
-          {
-            id: "proj-1",
-            name: "project-one",
-            display_name: "Project One",
-            checkout: {
-              machine_id: "machine-1",
-              root_path: "/tmp/project-one",
-            },
-            github_url: null,
-            github_repo: null,
-            linear_team_id: null,
-            approval_rules: [],
-            created_at: "2026-04-19T18:00:00Z",
-            updated_at: "2026-04-19T18:00:00Z",
-            session_count: 2,
-            open_task_count: 0,
-            last_activity_at: "2026-04-19T18:15:00Z",
-          },
-        ]),
-      });
-      return;
-    }
-
-    if (path === "/api/agents/running") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ agents: [] }),
-      });
-      return;
-    }
-
-    if (path === "/api/stages/registry") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          stages: [
-            {
-              name: "planning",
-              display_name: "Planning",
-              category: "development",
-              state: "ready",
-              review_policy: "none",
-              position: 0,
-              sequence_order: 0,
-            },
-            {
-              name: "development",
-              display_name: "Development",
-              category: "development",
-              state: "ready",
-              review_policy: "none",
-              position: 1,
-              sequence_order: 1,
-            },
-          ],
-        }),
-      });
-      return;
-    }
-
-    if (path === "/api/tasks") {
-      const parentTaskId = url.searchParams.get("parent_task_id");
-      const body =
-        parentTaskId === CLAIMED_TASK_ID
-          ? { tasks: [], total: 0, stats: {}, limit: 200, offset: 0 }
-          : {
-              tasks: [claimedTask],
-              total: 1,
-              stats: {},
-              limit: 500,
-              offset: 0,
-            };
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(body),
-      });
-      return;
-    }
-
-    if (path === `/api/tasks/${CLAIMED_TASK_ID}`) {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ task: claimedTask }),
-      });
-      return;
-    }
-
-    if (path === `/api/tasks/${CLAIMED_TASK_ID}/dependencies`) {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          id: CLAIMED_TASK_ID,
-          blockers: [],
-          blocking: [],
-        }),
-      });
-      return;
-    }
-
-    if (path === "/api/sessions") {
-      const hasClaimedTaskFilter =
-        url.searchParams.get("task_ref_min") === String(CLAIMED_TASK_REF) &&
-        url.searchParams.get("task_ref_max") === String(CLAIMED_TASK_REF) &&
-        url.searchParams.getAll("task_ref_role").includes("claimed");
-      const sessions = hasClaimedTaskFilter
-        ? webChatSessions.filter((session) =>
-            session.claimed_task_refs.includes(CLAIMED_TASK_REF),
-          )
-        : webChatSessions;
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ sessions, total: sessions.length }),
-      });
-      return;
-    }
-
-    if (path === `/api/sessions/${CURRENT_DB_SESSION_ID}`) {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          session: webChatSessions[0],
-        }),
-      });
-      return;
-    }
-
-    if (path === `/api/sessions/${TASK_LINKED_DB_SESSION_ID}`) {
-      bumpCounter(counters, "taskLinkedSessionDetailFetches");
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          session: webChatSessions.find(
-            (session) => session.id === TASK_LINKED_DB_SESSION_ID,
-          ),
-        }),
-      });
-      return;
-    }
-
-    if (path === `/api/sessions/${TASK_LINKED_DB_SESSION_ID}/messages`) {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          messages: [
-            {
-              id: "task-linked-msg-1",
-              role: "assistant",
-              content: "Task-linked session transcript",
-              timestamp: "2026-04-19T18:31:00Z",
-              content_blocks: [
-                { type: "text", content: "Task-linked session transcript" },
-              ],
-            },
-          ],
-          total_count: 1,
-        }),
-      });
-      return;
-    }
-
-    if (path === `/api/sessions/${OTHER_DB_SESSION_ID}`) {
-      bumpCounter(counters, "otherSessionDetailFetches");
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          session: webChatSessions.find(
-            (session) => session.id === OTHER_DB_SESSION_ID,
-          ),
-        }),
-      });
-      return;
-    }
-
-    if (path.startsWith(`/api/chat/${CURRENT_DB_SESSION_ID}/messages`)) {
-      bumpCounter(counters, "currentMessageFetches");
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          messages: [
-            {
-              id: "msg-1",
-              role: "assistant",
-              content: "Persisted main chat message",
-              tool_calls: [],
-              seq: 1,
-              created_at: "2026-04-19T18:12:00Z",
-            },
-          ],
-          max_seq: 1,
-        }),
-      });
-      return;
-    }
-
-    if (path.startsWith(`/api/chat/${OTHER_DB_SESSION_ID}/messages`)) {
-      bumpCounter(counters, "otherMessageFetches");
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          messages: [
-            {
-              id: "other-msg-1",
-              role: "assistant",
-              content: "Other session message",
-              tool_calls: [],
-              seq: 1,
-              created_at: "2026-04-19T18:22:00Z",
-            },
-          ],
-          max_seq: 1,
-        }),
-      });
-      return;
-    }
-
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({}),
-    });
-  });
+    },
+  );
 }
 
 test.describe("Web Chat Restore And Plan Mode", () => {
+  test("Plan selection reaches the session before prompt submission and re-entry", async ({
+    page,
+  }) => {
+    const browserErrors: string[] = [];
+    page.on("pageerror", (error) => browserErrors.push(error.message));
+    page.on("console", (message) => {
+      if (message.type() === "error") browserErrors.push(message.text());
+    });
+    await seedLocalState(page);
+    await mockApi(page);
+    const sent: Record<string, unknown>[] = [];
+    await page.routeWebSocket("**/ws", (ws) => {
+      ws.onMessage((raw) => {
+        const message = JSON.parse(String(raw)) as Record<string, unknown>;
+        if (message.type === "subscribe") {
+          ws.send(
+            JSON.stringify({
+              type: "connection_established",
+              conversation_ids: [CURRENT_DB_SESSION_ID],
+            }),
+          );
+          ws.send(
+            JSON.stringify({
+              type: "subscribe_success",
+              events: message.events ?? [],
+            }),
+          );
+        } else if (message.type === "set_mode") {
+          sent.push(message);
+          ws.send(
+            JSON.stringify({
+              type: "mode_changed",
+              conversation_id: message.conversation_id,
+              mode: message.mode,
+            }),
+          );
+        } else if (message.type === "chat_message") {
+          sent.push(message);
+          for (const done of [false, true]) {
+            ws.send(
+              JSON.stringify({
+                type: "chat_stream",
+                conversation_id: message.conversation_id,
+                request_id: message.request_id,
+                message_id: `reply-${sent.length}`,
+                content: done ? "" : "Received.",
+                done,
+              }),
+            );
+          }
+        }
+      });
+    });
+    await page.goto("/");
+    const plan = page.getByRole("radio", { name: "Plan", exact: true });
+    const normal = page.getByRole("radio", { name: "Act", exact: true });
+    await expect(plan).toHaveAttribute("aria-checked", "true");
+    sent.length = 0;
+    await normal.click();
+    await expect(normal).toHaveAttribute("aria-checked", "true");
+    await plan.click();
+    await expect(plan).toHaveAttribute("aria-checked", "true");
+    const input = page.locator("textarea").first();
+    for (const content of ["First Plan prompt", "Next Plan prompt"]) {
+      await input.fill(content);
+      await input.press("Enter");
+      await expect
+        .poll(() => sent.some((message) => message.content === content))
+        .toBe(true);
+      await expect(input).toBeEnabled();
+    }
+    await normal.click();
+    await expect(normal).toHaveAttribute("aria-checked", "true");
+    await plan.click();
+    await expect(plan).toHaveAttribute("aria-checked", "true");
+    await input.fill("Re-entered Plan prompt");
+    await input.press("Enter");
+    await expect
+      .poll(
+        () => sent.filter((message) => message.type === "chat_message").length,
+      )
+      .toBe(3);
+    expect(
+      sent.map((message) =>
+        message.type === "set_mode" ? message.mode : message.content,
+      ),
+    ).toEqual([
+      "normal",
+      "plan",
+      "First Plan prompt",
+      "Next Plan prompt",
+      "normal",
+      "plan",
+      "Re-entered Plan prompt",
+    ]);
+    expect(
+      sent.every(
+        (message) => message.conversation_id === CURRENT_DB_SESSION_ID,
+      ),
+    ).toBe(true);
+    expect(browserErrors).toEqual([]);
+  });
+
   test("mobile refresh restores the same main-chat session", async ({
     page,
   }) => {
