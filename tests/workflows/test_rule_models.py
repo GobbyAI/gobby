@@ -336,7 +336,7 @@ class TestRuleEffect:
 
         payload = {
             "type": "set_variable",
-            "variable": "gobby_plan_consider_shown",
+            "variable": "plan_skill_directive_delivered",
             "value": True,
             "delivery": "on_receipt",
         }

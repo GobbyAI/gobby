@@ -1,6 +1,6 @@
 """Tests for plan-mode rules.
 
-Verifies plan-mode detection, Consider guidance, mode_level tracking, and resets.
+Verifies plan-mode detection, skill directives, mode_level tracking, and resets.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from gobby.hooks.receipt_effects import (
     apply_acknowledged_receipt,
     worker_staging_scope,
 )
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -71,7 +72,7 @@ def _sync_bundled(db: HubDatabase) -> dict[str, Any]:
 PLAN_MODE_RULES = {
     "handle-plan-mode-entry",
     "handle-plan-mode-exit",
-    "reset-plan-consider-on-resolved-mode-exit",
+    "reset-plan-directive-on-resolved-mode-exit",
     "reset-plan-mode-on-session-start",
     "teach-qwen-gcode-plan-mode",
 }
@@ -125,7 +126,7 @@ class TestPlanModeSync:
 
 
 class TestHandlePlanModeEntry:
-    """Verify the interactive-only, one-shot Consider guidance."""
+    """Verify the interactive-only, one-shot skill directives."""
 
     def test_fires_on_turn_start_with_plan_mode_guard(self, db, manager) -> None:
         """Should fire on turn_start when plan_mode is set."""
@@ -139,46 +140,25 @@ class TestHandlePlanModeEntry:
         assert body.agent_scope == ["default"]
         assert body.when is not None
         assert "plan_mode" in body.when
-        assert "gobby_plan_consider_shown" in body.when
+        assert "plan_skill_directive_delivered" in body.when
         assert "skill_loaded('plan')" not in body.when
 
-    def test_effects_inject_consider_guidance_and_set_guard(self, db, manager) -> None:
-        """Should inject adaptive planning guidance without loading plan."""
+    def test_effects_load_plan_and_set_guard(self, db, manager) -> None:
         _sync_bundled(db)
-
         row = manager.get_by_name("handle-plan-mode-entry")
         body = RuleDefinitionBody.model_validate(row.definition_json)
-
         effects = body.resolved_effects
         assert len(effects) == 2
-        assert effects[0].type == "inject_context"
-        guidance = effects[0].template or ""
-        for phrase in (
-            "Investigate the user's request and repository",
-            "multiple dependent deliverables or subsystems",
-            "public API, schema, migration, security, or destructive-risk work",
-            "material unresolved product decisions",
-            "multi-agent coordination or durable handoff requirements",
-            "artifact, lifecycle automation, or adversarial review",
-            "localized, low-risk work",
-            "Strong signals determine whether Gobby planning is offered",
-            "Always recommend **Lightweight** for bug fixes and maintenance",
-            "regardless of breadth, risk, affected subsystems",
-            "Recommend **Full** only for complex new features and complex refactors",
-            "conversational, decision-complete plan",
-            "**Full:**",
-            "**Lightweight:**",
-        ):
-            assert phrase in guidance
-        assert all(effect.type != "load_skill" for effect in effects)
+        assert effects[0].type == "load_skill"
+        assert effects[0].skill == "plan"
+        assert effects[0].delivery == "on_receipt"
         assert effects[1].type == "set_variable"
-        assert effects[1].variable == "gobby_plan_consider_shown"
+        assert effects[1].variable == "plan_skill_directive_delivered"
         assert effects[1].value is True
-        assert getattr(effects[0], "delivery", None) == "on_receipt"
-        assert getattr(effects[1], "delivery", None) == "on_receipt"
+        assert effects[1].delivery == "on_receipt"
 
     @pytest.mark.asyncio
-    async def test_consider_guidance_fires_once_for_default_agent(self, db) -> None:
+    async def test_skill_directive_fires_once_for_default_agent(self, db) -> None:
         _sync_bundled(db)
         variables = {"_agent_type": "default", "plan_mode": True}
         event = HookEvent(
@@ -195,14 +175,14 @@ class TestHandlePlanModeEntry:
         second = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert first.context is not None
-        assert "Investigate the user's request and repository" in first.context
+        assert skill_fetch_directive("plan") in first.context
         assert second.context is None or (
-            "Investigate the user's request and repository" not in second.context
+            skill_fetch_directive("plan") not in second.context
         )
-        assert variables["gobby_plan_consider_shown"] is True
+        assert variables["plan_skill_directive_delivered"] is True
 
     @pytest.mark.asyncio
-    async def test_first_plan_prompt_resolves_mode_before_consider_rule(self, db) -> None:
+    async def test_first_plan_prompt_resolves_mode_before_directive_rule(self, db) -> None:
         _sync_bundled(db)
         _create_session(db)
         SessionVariableManager(db).merge_variables(
@@ -247,9 +227,9 @@ class TestHandlePlanModeEntry:
 
         variables = SessionVariableManager(db).get_variables(SESSION_ID)
         assert response.context is not None
-        assert "Investigate the user's request and repository" in response.context
+        assert skill_fetch_directive("plan") in response.context
         assert variables["plan_mode"] is True
-        assert variables["gobby_plan_consider_shown"] is True
+        assert variables["plan_skill_directive_delivered"] is True
         assert variables.get("plan_skill_loaded") is not True
 
         exit_event = HookEvent(
@@ -267,16 +247,16 @@ class TestHandlePlanModeEntry:
             await handler._evaluate_rules(exit_event)
         exited_variables = SessionVariableManager(db).get_variables(SESSION_ID)
         assert exited_variables["plan_mode"] is False
-        assert exited_variables["gobby_plan_consider_shown"] is False
+        assert exited_variables["plan_skill_directive_delivered"] is False
 
         with worker_staging_scope():
             reentry = await handler._evaluate_rules(event)
         assert reentry.context is not None
-        assert "Investigate the user's request and repository" in reentry.context
+        assert skill_fetch_directive("plan") in reentry.context
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("agent_type", ["developer", "planner", "qa-reviewer"])
-    async def test_spawned_agent_types_receive_no_consider_guidance(
+    async def test_spawned_agent_types_receive_no_skill_directive(
         self,
         db,
         agent_type: str,
@@ -299,9 +279,9 @@ class TestHandlePlanModeEntry:
         )
 
         assert response.context is None or (
-            "Investigate the user's request and repository" not in response.context
+            skill_fetch_directive("plan") not in response.context
         )
-        assert "gobby_plan_consider_shown" not in variables
+        assert "plan_skill_directive_delivered" not in variables
 
 
 class TestTeachQwenGcodePlanMode:
@@ -373,16 +353,16 @@ class TestHandlePlanModeExit:
         assert len(effects) == 3
         assert effects_by_variable["plan_mode"].value is False
         assert effects_by_variable["qwen_gcode_plan_hint_shown"].value is False
-        assert effects_by_variable["gobby_plan_consider_shown"].value is False
+        assert effects_by_variable["plan_skill_directive_delivered"].value is False
 
-    def test_resolved_mode_exit_resets_consider_epoch(
+    def test_resolved_mode_exit_resets_directive_period(
         self,
         db: HubDatabase,
         manager: RuleDefinitionManager,
     ) -> None:
         _sync_bundled(db)
 
-        row = manager.get_by_name("reset-plan-consider-on-resolved-mode-exit")
+        row = manager.get_by_name("reset-plan-directive-on-resolved-mode-exit")
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
@@ -390,9 +370,9 @@ class TestHandlePlanModeExit:
         assert body.agent_scope == ["default"]
         assert body.when is not None
         assert "not variables.get('plan_mode')" in body.when
-        assert "gobby_plan_consider_shown" in body.when
+        assert "plan_skill_directive_delivered" in body.when
         effect = body.resolved_effects[0]
-        assert effect.variable == "gobby_plan_consider_shown"
+        assert effect.variable == "plan_skill_directive_delivered"
         assert effect.value is False
 
 
@@ -415,7 +395,7 @@ class TestResetPlanModeOnSessionStart:
         effects_by_variable = {effect.variable: effect for effect in body.resolved_effects}
         assert effects_by_variable["plan_mode"].value is False
         assert effects_by_variable["qwen_gcode_plan_hint_shown"].value is False
-        assert effects_by_variable["gobby_plan_consider_shown"].value is False
+        assert effects_by_variable["plan_skill_directive_delivered"].value is False
 
     def test_when_condition_covers_clear_compact_startup(
         self,

@@ -263,6 +263,8 @@ def _set_plan_mode(
 ) -> None:
     if is_plan and not bool(variables.get("plan_mode")):
         variables["plan_memory_write_nudge_fired"] = False
+    if not is_plan:
+        variables["plan_skill_directive_delivered"] = False
     variables["plan_mode"] = is_plan
 
 
