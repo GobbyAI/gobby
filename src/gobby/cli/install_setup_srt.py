@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -66,6 +67,7 @@ def _install_srt_runtime() -> SrtInstallResult:
             except SrtRuntimeError:
                 pass
         if existing is not None:
+            _cleanup_install_tree(target.with_name(f".{target.name}.previous"))
             return SrtInstallResult(existing.root, SRT_RELEASE.version, installed=False)
 
         node = _require_node()
@@ -127,8 +129,7 @@ def _install_srt_runtime() -> SrtInstallResult:
             make_srt_installation_immutable(staging)
             _promote_install(staging, target)
         finally:
-            if staging.exists():
-                shutil.rmtree(staging)
+            _cleanup_install_tree(staging)
 
         verify_srt_installation_locked()
         return SrtInstallResult(target.resolve(), SRT_RELEASE.version, installed=True)
@@ -181,20 +182,32 @@ def _download_verified_tarball(destination: Path) -> None:
     raise SrtRuntimeError("SRT tarball checksum mismatch")
 
 
+def _cleanup_install_tree(path: Path) -> None:
+    """Remove an owned staging or backup tree without following its symlinks."""
+    if not os.path.lexists(path):
+        return
+    if path.is_symlink() or not path.is_dir():
+        path.unlink()
+        return
+    # Unlinking immutable files requires write access to their directories only.
+    for _root, _directories, _files, directory_fd in os.fwalk(path, follow_symlinks=False):
+        mode = stat.S_IMODE(os.fstat(directory_fd).st_mode)
+        os.fchmod(directory_fd, mode | stat.S_IRWXU)
+    shutil.rmtree(path)
+
+
 def _promote_install(staging: Path, target: Path) -> None:
     backup = target.with_name(f".{target.name}.previous")
-    if backup.exists():
-        shutil.rmtree(backup)
-    if target.exists():
+    _cleanup_install_tree(backup)
+    if os.path.lexists(target):
         target.rename(backup)
     try:
         staging.rename(target)
     except Exception:
-        if backup.exists() and not target.exists():
+        if os.path.lexists(backup) and not os.path.lexists(target):
             backup.rename(target)
         raise
-    if backup.exists():
-        shutil.rmtree(backup)
+    _cleanup_install_tree(backup)
 
 
 def _write_json(path: Path, value: object) -> None:
