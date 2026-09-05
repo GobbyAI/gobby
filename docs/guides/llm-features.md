@@ -173,10 +173,6 @@ provider adapter. It is not routed through low/mid/high feature profiles. For ge
 endpoints the binding exists only when probed or advertised `input_modalities` includes
 `image` — there is no endpoint `vision_extract` config field.
 
-File and image ingestion belongs to gwiki. MCP `wiki_attach` / `wiki_ingest`, HTTP
-`/api/wiki/attach`, and `GwikiGateway.ingest_file` route those files through the gwiki
-gateway/CLI path rather than memory storage or feature-profile helper calls.
-
 ## See Also
 
 - [providers-and-models.md](providers-and-models.md) — web-chat backends, including the

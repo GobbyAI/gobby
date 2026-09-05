@@ -42,7 +42,7 @@ shared codec preserves scalar, list, object, and patterned-key values across Pyt
 Rust, HTTP, MCP, browser, and YAML surfaces.
 
 Shared indexing behavior is configured under `indexing`. By default, `gcode`
-and `gwiki` respect `.gitignore`, `.git/info/exclude`, and global git excludes:
+respects `.gitignore`, `.git/info/exclude`, and global git excludes:
 
 ```yaml
 indexing:
@@ -55,15 +55,6 @@ indexing:
 For gcode code indexing, `extra_excludes` accepts component-name glob patterns.
 These patterns extend the built-in exclusions; they cannot re-enable built-in
 excluded paths.
-
-Project wiki markdown for the default project scope lives under
-`<project>/wiki/`. When `wiki/` is occupied by a non-vault path, resolution
-falls back to `gobby-wiki/`, then `gobby-wiki-001/`..`gobby-wiki-999/` — the
-same order every surface (daemon, `gwiki`, `gcode`) uses via the shared vault
-resolver. Git tracks authored and generated Markdown there, while vault runtime
-state stays local: `wiki/_meta/**`, `wiki/meta/health/**`, lock files, and
-local Obsidian workspace JSON are ignored. Legacy `<project>/gobby-wiki` roots
-in `wiki.roots` load as the sibling `<project>/wiki` vault.
 
 ### Bootstrap
 

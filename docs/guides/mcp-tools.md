@@ -199,7 +199,6 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 | `gobby-cron` | Scheduled triggers | 8 |
 | `gobby-hub` | Cross-project queries | 5 |
 | `gobby-voice` | Whisper STT vocabulary | 4 |
-| `gobby-wiki` | Wiki search, ingest, research | 12 |
 | `gobby-communications` | Channels, identities, messaging, event subscriptions | 16 |
 
 ---

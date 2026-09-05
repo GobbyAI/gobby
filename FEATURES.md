@@ -2,7 +2,7 @@
 
 This catalog describes capabilities implemented in the `0.5.0` codebase. It is organized by
 subsystem and covers behavior wired through daemon startup, CLI registration, HTTP and WebSocket
-routes, MCP registries, hooks, schedulers, and concrete managers. Documentation, wiki pages, and
+routes, MCP registries, hooks, schedulers, and concrete managers. Documentation and
 index metadata are discovery aids; executable source is authoritative.
 
 ## Daemon and platform runtime
@@ -14,7 +14,7 @@ index metadata are discovery aids; executable source is authoritative.
 - Active-daemon lease with heartbeat, standby promotion, stale-owner recovery, PID ownership, and
   graceful restart and shutdown.
 - Startup recovery for agents, MCP connections, cron jobs, pipelines, memory projections,
-  code-index projections, tmux sessions, hook inboxes, wiki watchers, and external issue sync.
+  code-index projections, tmux sessions, hook inboxes, and external issue sync.
 - Optional subsystem degradation is surfaced through health and status while core runtime remains
   operational.
 
@@ -294,7 +294,7 @@ Sources: [`src/gobby/workflows/definitions.py`](src/gobby/workflows/definitions.
 - CRUD, enable and disable, manual execution, run history, timeout handling, and child-run
   tracking.
 - Background pipeline execution with session creation and persisted failure state.
-- System jobs drive maintenance, wiki work, memory dreaming, indexing, cleanup, and recovery.
+- System jobs drive maintenance, memory dreaming, indexing, cleanup, and recovery.
 
 Sources: [`src/gobby/mcp_proxy/tools/cron.py`](src/gobby/mcp_proxy/tools/cron.py),
 [`src/gobby/scheduler/executor.py`](src/gobby/scheduler/executor.py), and
@@ -377,38 +377,12 @@ Sources: [`src/gobby/mcp_proxy/tools/skills/`](src/gobby/mcp_proxy/tools/skills/
 - Qdrant vector and FalkorDB graph projection sync, rebuild, clear, and orphan cleanup.
 - Freshness checks, stale-project pruning, embedding diagnostics, daemon-triggered post-edit
   indexing, nightly refresh, and optional symbol summaries.
-- Rust `gcode` owns indexing and the read-only `codewiki_facts` facade consumed by CodeWiki;
+- Rust `gcode` owns indexing, search, and code graph queries;
   Python [`src/gobby/code_index/`](src/gobby/code_index/) owns daemon-side indexing orchestration.
 
 Sources: [`crates/gcode/src/cli.rs`](crates/gcode/src/cli.rs),
 [`crates/gcode/src/commands/`](crates/gcode/src/commands/), and
 [`src/gobby/code_index/`](src/gobby/code_index/).
-
-## Wiki and research system
-
-- Project and named-topic Markdown vaults with raw assets, manifests, knowledge pages, generated
-  code docs, reports, provenance, citations, and health metadata.
-- Local-file and URL ingestion, inbox collection, session transcript sync, source refresh, list,
-  and remove, purge, and stale-project pruning.
-- Document, PDF, HTML, text, audio, image, and video processing through configured transcription,
-  translation, vision, and text-generation routes.
-- Hybrid BM25, vector, and graph search with bounded snippets, attribution, citations, token
-  budgets, and graph degradation handling.
-- Thin-RAG and deep-evidence `ask`, optional synthesis, citation validation, and evidence assembly.
-- Read, list, write, and delete pages; backlinks; unresolved-link suggestions; and compilation of
-  research notes into concepts and topics.
-- Audit, lint, normalization, trust, status, health, benchmarks, citation-quality reports,
-  librarian proposals, upkeep, daily recaps, and review reports.
-- Unified graph export, graph-context packs, and generated workflow and report bundles.
-- `gwiki code` generation with scoped and incremental builds, Git-ref changes, grounded
-  verification, citation repair, comparison, audience and prose controls, and purge.
-- MCP, HTTP, CLI, and Activity-panel UI surfaces.
-
-Sources: [`crates/gwiki/src/cli.rs`](crates/gwiki/src/cli.rs),
-[`crates/gwiki/src/commands/`](crates/gwiki/src/commands/),
-[`crates/gwiki/src/commands/code/`](crates/gwiki/src/commands/code/),
-[`src/gobby/mcp_proxy/tools/wiki.py`](src/gobby/mcp_proxy/tools/wiki.py), and
-[`src/gobby/wiki/`](src/gobby/wiki/).
 
 ## Communications
 
@@ -462,7 +436,7 @@ Sources: [`src/gobby/llm/`](src/gobby/llm/),
 - Separate bootstrap, runtime, project verification, build-profile, and MCP-server configuration
   surfaces.
 - Installers configure services, hooks, MCP clients, tmux, PostgreSQL, Qdrant, FalkorDB, gcode,
-  gwiki, ghook, and supported coding assistants.
+  gdaemon, ghook, and supported coding assistants.
 - Operator CLI covers daemon, service, auth, secrets, datastores, projects, sessions, tasks,
   builds, agents, workspaces, memory, workflows, rules, pipelines, integrations, testing, backup,
   and diagnostics.
@@ -477,11 +451,11 @@ Sources: [`src/gobby/cli/__init__.py`](src/gobby/cli/__init__.py),
 - FastAPI routers expose auth, admin, agents, builds, chat, attachments, sessions, memory, tasks,
   stages, code index, cron, MCP, hooks, webhooks, pipelines, files, GitHub triage, projects,
   profiles, providers, skills, LLM, embeddings, voice, configuration, workflows, rules, source
-  control, traces, metrics, observations, wiki, and communications.
+  control, traces, metrics, observations, and communications.
 - WebSocket server handles streaming chat, live events, traces, and connected-client state.
 - Current web app uses Chat as its sole page surface.
 - Operational UI lives in Activity tabs: sessions, terminal, tasks, MCP, agents, stages and
-  profiles, skills, memory, integrations, wiki, rules, plans, changes, files, pipelines, and cron.
+  profiles, skills, memory, integrations, rules, plans, changes, files, pipelines, and cron.
 - Project selection, authentication, provider and model selection, attachments, streaming
   responses, file operations, and activity-detail workflows.
 
@@ -502,7 +476,7 @@ Sources: [`src/gobby/servers/_app_routes.py`](src/gobby/servers/_app_routes.py),
 - Linear team and project linking, discovery, issue import and create, task synchronization, and
   project-wide bidirectional sync.
 - Installed Git hooks run named verification stages.
-- Pre-push refreshes task and memory snapshots and handles wiki publication.
+- Pre-push refreshes task and memory snapshots.
 
 Sources: [`src/gobby/servers/routes/source_control.py`](src/gobby/servers/routes/source_control.py),
 [`src/gobby/github_triage/`](src/gobby/github_triage/),
@@ -513,7 +487,7 @@ Sources: [`src/gobby/servers/routes/source_control.py`](src/gobby/servers/routes
 
 - PostgreSQL hub with pooled and bounded transactions, savepoints, advisory locks, safe updates,
   migrations, and after-commit callbacks.
-- Qdrant vector projections and FalkorDB code, wiki, and memory graphs.
+- Qdrant vector projections and FalkorDB code and memory graphs.
 - Deterministic atomic task and memory JSONL snapshots under
   `~/.gobby/backups/<project-uuid>/`.
 - Explicit validated backup and restore through CLI and MCP.
@@ -573,6 +547,4 @@ Sources: [`src/gobby/test_quality/`](src/gobby/test_quality/),
   `.codex-plugin/plugin.json` runtime was not found.
 - TDD enforcement exists through rules and required skills. A universal fixed
   red/green/refactor task-node generator was not found.
-- `gwiki code` owns manual CodeWiki generation; production-vault scheduling remains dormant while
-  the wiki redesign is pending. `gcode` supplies indexing and the `codewiki_facts` facade.
 - Multi-machine Pro, Rust-daemon replacement, and other roadmap-only capabilities are excluded.

@@ -671,13 +671,4 @@ Qdrant cleanup targets only `code_symbols_{project_id}`.
 Schema application belongs to `gdaemon apply`. `gcode invalidate` remains the
 project-scoped reset for indexed facts.
 
-### Code Documentation Generation
-
-`gwiki code` owns vault-ready hierarchical code documentation. It consumes the
-same indexed facts through gcode's query and graph boundaries, while generation,
-output locking, metadata, and page writes live in the gwiki crate. The direct
-command remains available for isolated/manual validation; production-vault
-execution is operationally paused pending the wiki redesign. See the
-[CodeWiki guide](./codewiki.md) for the active CLI and dormant daemon contracts.
-
 _Last verified: 2026-08-09_

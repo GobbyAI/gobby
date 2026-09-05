@@ -114,11 +114,7 @@ def test_retired_skill_is_absent_from_bundled_templates(name: str) -> None:
 
 
 def test_retired_wiki_research_dispatch_is_not_advertised() -> None:
-    contract = RESEARCH_CONTRACT.read_text(encoding="utf-8")
-
-    assert "does not bundle a\n`wiki-research` pipeline" in contract
-    assert "gobby pipelines run wiki-research" not in contract
-    assert "pipeline:wiki-research" not in contract
+    assert not RESEARCH_CONTRACT.exists()
     assert not RETIRED_RESEARCH_GUIDE.exists()
 
 
