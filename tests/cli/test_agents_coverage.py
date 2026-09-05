@@ -7,6 +7,7 @@ Lines targeted: 48, 142-143, 230-231, 293-294, 341-342, 375-376, 405-562, 574-57
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -61,6 +62,61 @@ def _mock_run(**overrides: Any) -> MagicMock:
 
 
 class TestSpawnAgentCmd:
+    @pytest.mark.parametrize("json_output", [False, True])
+    def test_spawn_uses_current_mcp_contract(self, runner: CliRunner, json_output: bool) -> None:
+        endpoint = "http://localhost:30333/api/mcp/gobby-agents/tools/spawn_agent"
+        payload = {
+            "success": True,
+            "result": {
+                "run_id": "run-new",
+                "child_session_id": "child-new",
+                "status": "starting",
+            },
+        }
+        response = httpx.Response(200, json=payload, request=httpx.Request("POST", endpoint))
+        with (
+            patch("gobby.cli.agents.get_daemon_url", return_value="http://localhost:30333"),
+            patch("gobby.cli.agents.resolve_session_id", return_value="parent-resolved"),
+            patch("gobby.cli.agents.daemon_auth_headers", return_value={"Authorization": "test"}),
+            patch("gobby.cli.agents.httpx.post", return_value=response) as post,
+        ):
+            args = [
+                "spawn",
+                "Run checks",
+                "--session",
+                "parent",
+                "--task",
+                "#42",
+                "--terminal-backend",
+                "tmux",
+                "--provider",
+                "codex",
+            ]
+            if json_output:
+                args.append("--json")
+            result = runner.invoke(agents, args)
+
+        assert result.exit_code == 0, result.output
+        post.assert_called_once_with(
+            endpoint,
+            json={
+                "prompt": "Run checks",
+                "parent_session_id": "parent-resolved",
+                "task_id": "#42",
+                "terminal_backend": "tmux",
+                "provider": "codex",
+                "timeout": 120.0,
+            },
+            headers={"Authorization": "test"},
+            timeout=30.0,
+        )
+        if json_output:
+            assert json.loads(result.output) == payload
+        else:
+            assert "Started agent run: run-new" in result.output
+            assert "Child session: child-new" in result.output
+            assert "Status: starting" in result.output
+
     def test_spawn_requires_reasoning_effort_when_reasoning_required(
         self, runner: CliRunner
     ) -> None:
@@ -96,7 +152,9 @@ class TestSpawnAgentCmd:
         mock_resolve_session: MagicMock,
         runner: CliRunner,
     ) -> None:
-        request = httpx.Request("POST", "http://localhost:60887/mcp/gobby-agents/tools/spawn_agent")
+        request = httpx.Request(
+            "POST", "http://localhost:60887/api/mcp/gobby-agents/tools/spawn_agent"
+        )
         response = httpx.Response(500, text="boom", request=request)
 
         with patch("gobby.cli.agents.httpx.post", return_value=response):
@@ -488,7 +546,7 @@ class TestShowStatusEdgeCases:
 
 class TestGetDaemonUrl:
     def test_get_daemon_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from gobby.cli.agents import get_daemon_url
+        from gobby.cli.utils_config import get_daemon_url
 
         monkeypatch.delenv("GOBBY_DAEMON_URL", raising=False)
         monkeypatch.setenv("GOBBY_PORT", "61999")

@@ -179,12 +179,11 @@ def agents() -> None:
 @click.argument("prompt")
 @click.option("--session", "-s", "parent_session_id", required=True, help="Parent session ID")
 @click.option("--workflow", "-w", help="Workflow name to execute")
-@click.option("--task", "-t", help="Task ID or 'next' for auto-select")
+@click.option("--task", "-t", help="Task ID or reference")
 @click.option(
-    "--terminal",
-    type=click.Choice(["auto", "ghostty", "iterm", "kitty", "wezterm", "terminal"]),
-    default="auto",
-    help="Terminal for terminal mode",
+    "--terminal-backend",
+    type=click.Choice(["tmux", "native"]),
+    help="Terminal backend override",
 )
 @click.option("--provider", "-p", default="claude", help="LLM provider (claude, qwen, etc.)")
 @click.option("--model", help="Model override")
@@ -197,26 +196,18 @@ def agents() -> None:
     help="Fail instead of warning when the requested reasoning is unsupported",
 )
 @click.option("--timeout", default=120.0, help="Execution timeout in seconds")
-@click.option(
-    "--context",
-    "-c",
-    "session_context",
-    default="summary_markdown",
-    help="Context source (summary_markdown, transcript:<n>, file:<path>)",
-)
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def spawn_agent_cmd(
     prompt: str,
     parent_session_id: str,
     workflow: str | None,
     task: str | None,
-    terminal: str,
+    terminal_backend: str | None,
     provider: str,
     model: str | None,
     reasoning_effort: str | None,
     reasoning_required: bool,
     timeout: float,
-    session_context: str,
     json_format: bool,
 ) -> None:
     """Spawn a new agent with the given prompt.
@@ -227,7 +218,7 @@ def spawn_agent_cmd(
 
         gobby agents spawn "Fix the bug" -s sess-abc123 -p qwen
 
-        gobby agents spawn "Run tests" -s sess-abc123 --task next
+        gobby agents spawn "Run tests" -s sess-abc123 --task '#123'
     """
     if reasoning_required and reasoning_effort is None:
         raise click.UsageError(
@@ -247,16 +238,16 @@ def spawn_agent_cmd(
     arguments = {
         "prompt": prompt,
         "parent_session_id": parent_session_id,
-        "terminal": terminal,
         "provider": provider,
         "timeout": timeout,
-        "session_context": session_context,
     }
 
     if workflow:
         arguments["workflow"] = workflow
     if task:
-        arguments["task"] = task
+        arguments["task_id"] = task
+    if terminal_backend:
+        arguments["terminal_backend"] = terminal_backend
     if model:
         arguments["model"] = model
     if reasoning_effort:
@@ -266,7 +257,7 @@ def spawn_agent_cmd(
     # Call the daemon's MCP tool endpoint
     try:
         response = httpx.post(
-            f"{daemon_url}/mcp/gobby-agents/tools/spawn_agent",
+            f"{daemon_url}/api/mcp/gobby-agents/tools/spawn_agent",
             json=arguments,
             headers=daemon_auth_headers(),
             timeout=30.0,
@@ -293,6 +284,7 @@ def spawn_agent_cmd(
 
     # Check result
     if result.get("success"):
+        result = result["result"]
         run_id = result.get("run_id", "unknown")
         child_session_id = result.get("child_session_id", "unknown")
         status = result.get("status", "unknown")

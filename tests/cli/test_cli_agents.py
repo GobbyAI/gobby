@@ -51,7 +51,7 @@ def _runtime_database() -> Iterator[None]:
 
 
 @pytest.fixture
-def mock_agent_run():
+def mock_agent_run() -> MagicMock:
     """Create a mock agent run with common attributes."""
     run = MagicMock()
     run.id = "ar-abc123def456"
@@ -92,7 +92,7 @@ def mock_agent_run():
 
 
 @pytest.fixture
-def mock_completed_run(mock_agent_run):
+def mock_completed_run(mock_agent_run: MagicMock) -> MagicMock:
     """Create a mock completed agent run."""
     run = MagicMock()
     run.id = "ar-completed123"
@@ -133,7 +133,7 @@ def mock_completed_run(mock_agent_run):
 
 
 @pytest.fixture
-def mock_failed_run():
+def mock_failed_run() -> MagicMock:
     """Create a mock failed agent run."""
     run = MagicMock()
     run.id = "ar-failed456"
@@ -213,8 +213,8 @@ class TestAgentsSpawnCommand:
         assert "Spawn a new agent" in result.output
         assert "--session" in result.output
         assert "--workflow" in result.output
-        assert "--mode" in result.output
-        assert "--terminal" in result.output
+        assert "--model" in result.output
+        assert "--terminal-backend" in result.output
         assert "--provider" in result.output
 
     def test_spawn_requires_session(self, runner: CliRunner) -> None:
@@ -257,9 +257,11 @@ class TestAgentsSpawnCommand:
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "success": True,
-            "run_id": "ar-newrun123",
-            "child_session_id": "sess-child001",
-            "status": "running",
+            "result": {
+                "run_id": "ar-newrun123",
+                "child_session_id": "sess-child001",
+                "status": "starting",
+            },
         }
         mock_response.raise_for_status = MagicMock()
         mock_post.return_value = mock_response
@@ -291,10 +293,12 @@ class TestAgentsSpawnCommand:
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "success": True,
-            "run_id": "ar-newrun456",
-            "child_session_id": "sess-child002",
-            "status": "running",
-            "message": "Agent started in terminal mode",
+            "result": {
+                "run_id": "ar-newrun456",
+                "child_session_id": "sess-child002",
+                "status": "starting",
+                "message": "Agent starting in terminal mode",
+            },
         }
         mock_response.raise_for_status = MagicMock()
         mock_post.return_value = mock_response
@@ -311,16 +315,17 @@ class TestAgentsSpawnCommand:
                 "plan-execute",
                 "--task",
                 "gt-task123",
-                "--terminal",
-                "iterm",
+                "--terminal-backend",
+                "native",
                 "--provider",
                 "claude",
                 "--model",
                 "claude-3-opus",
                 "--timeout",
                 "300",
-                "--context",
-                "summary_markdown",
+                "--reasoning-effort",
+                "high",
+                "--reasoning-required",
             ],
         )
 
@@ -330,16 +335,19 @@ class TestAgentsSpawnCommand:
 
         # Verify the POST call was made with correct arguments
         call_args = mock_post.call_args
-        assert call_args[1]["json"]["prompt"] == "Implement feature X"
-        assert call_args[1]["json"]["parent_session_id"] == "sess-parent123"
-        assert call_args[1]["json"]["workflow"] == "plan-execute"
-        assert call_args[1]["json"]["task"] == "gt-task123"
-        assert call_args[1]["json"]["terminal"] == "iterm"
-        assert call_args[1]["json"]["provider"] == "claude"
-        assert call_args[1]["json"]["model"] == "claude-3-opus"
-        assert call_args[1]["json"]["timeout"] == 300.0
-        assert "max_turns" not in call_args[1]["json"]
-        assert call_args[1]["json"]["session_context"] == "summary_markdown"
+        assert call_args.args == ("http://localhost:60887/api/mcp/gobby-agents/tools/spawn_agent",)
+        assert call_args.kwargs["json"] == {
+            "prompt": "Implement feature X",
+            "parent_session_id": "sess-parent123",
+            "workflow": "plan-execute",
+            "task_id": "gt-task123",
+            "terminal_backend": "native",
+            "provider": "claude",
+            "model": "claude-3-opus",
+            "timeout": 300.0,
+            "reasoning_effort": "high",
+            "reasoning_required": True,
+        }
 
     @patch("gobby.cli.agents.resolve_session_id")
     @patch("gobby.cli.agents.httpx.post")
@@ -357,9 +365,11 @@ class TestAgentsSpawnCommand:
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "success": True,
-            "run_id": "ar-json123",
-            "child_session_id": "sess-json",
-            "status": "running",
+            "result": {
+                "run_id": "ar-json123",
+                "child_session_id": "sess-json",
+                "status": "starting",
+            },
         }
         mock_response.raise_for_status = MagicMock()
         mock_post.return_value = mock_response
@@ -379,7 +389,7 @@ class TestAgentsSpawnCommand:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["success"] is True
-        assert data["run_id"] == "ar-json123"
+        assert data["result"]["run_id"] == "ar-json123"
 
     @patch("gobby.cli.agents.resolve_session_id")
     @patch("gobby.cli.agents.httpx.post")
@@ -491,8 +501,8 @@ class TestAgentsSpawnCommand:
         assert result.exit_code == 1
         assert "Error: Unexpected error" in result.output
 
-    def test_start_terminal_choices(self, runner: CliRunner) -> None:
-        """Test start terminal option validates choices."""
+    def test_spawn_terminal_backend_choices(self, runner: CliRunner) -> None:
+        """Test spawn terminal backend option validates choices."""
         result = runner.invoke(
             cli,
             [
@@ -501,7 +511,7 @@ class TestAgentsSpawnCommand:
                 "Test",
                 "--session",
                 "sess",
-                "--terminal",
+                "--terminal-backend",
                 "invalid_term",
             ],
         )
@@ -1606,7 +1616,7 @@ class TestHelperFunctions:
 
     def test_get_daemon_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test get_daemon_url returns the resolved daemon URL."""
-        from gobby.cli.agents import get_daemon_url
+        from gobby.cli.utils_config import get_daemon_url
 
         monkeypatch.setenv("GOBBY_DAEMON_URL", "http://daemon.example.test:9876/")
 
