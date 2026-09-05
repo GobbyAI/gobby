@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 import shutil
 import stat
 import subprocess
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -11,6 +14,12 @@ from gobby.agents import sandbox_policy
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_pre_commit_store_spare() -> Iterator[None]:
+    yield
+    sandbox_policy.shutdown_pre_commit_store_spare()
 
 
 def _workspace(tmp_path: Path, *, configured: bool = True) -> Path:
@@ -34,11 +43,12 @@ def _run_cache(
     tmp_path: Path,
     *,
     workspace: Path,
+    run_id: str = "run-1",
 ) -> tuple[sandbox_policy.SandboxRunPaths, Path]:
     gobby_home = tmp_path / "gobby-home"
     monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
     paths = sandbox_policy.prepare_sandbox_run_paths(
-        "run-1",
+        run_id,
         {},
         workspace=workspace,
     )
@@ -149,6 +159,166 @@ def test_prepare_sandbox_run_paths_copies_writable_isolated_pre_commit_store(
         path.relative_to(source): stat.S_IMODE(path.stat().st_mode)
         for path in (source, *source.rglob("*"))
     }
+
+
+def test_prepare_sandbox_run_paths_consumes_spare_once_and_replenishes_in_background(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    source = _operator_store(tmp_path / "operator-pre-commit", "operator")
+    monkeypatch.setenv("PRE_COMMIT_HOME", str(source))
+    gobby_home = tmp_path / "gobby-home"
+    managed_root = gobby_home / "runtime" / "managed-executions"
+    spare, temporary = sandbox_policy.pre_commit_store_spare_paths(managed_root)
+    _operator_store(spare, "spare")
+
+    clone_started = threading.Event()
+    release_clone = threading.Event()
+    original_clone = sandbox_policy._clone_pre_commit_store
+
+    def controlled_clone(clone_source: Path, destination: Path) -> None:
+        if destination == temporary:
+            original_clone(clone_source, destination)
+            clone_started.set()
+            assert release_clone.wait(timeout=5)
+            return
+        original_clone(clone_source, destination)
+
+    rename_calls: list[tuple[Path, Path]] = []
+    original_rename = os.rename
+
+    def tracked_rename(source_path: Path, destination: Path) -> None:
+        rename_calls.append((Path(source_path), Path(destination)))
+        original_rename(source_path, destination)
+
+    monkeypatch.setattr(sandbox_policy, "_clone_pre_commit_store", controlled_clone)
+    monkeypatch.setattr(os, "rename", tracked_rename)
+
+    try:
+        first_paths, first_destination = _run_cache(
+            monkeypatch,
+            tmp_path,
+            workspace=workspace,
+            run_id="run-1",
+        )
+        assert clone_started.wait(timeout=5)
+        worker = sandbox_policy._pre_commit_spare_thread
+        assert worker is not None
+        assert not spare.exists()
+        assert temporary.is_dir()
+        assert (first_destination / "db.db").read_text(encoding="utf-8") == ("database:spare\n")
+
+        second_paths, second_destination = _run_cache(
+            monkeypatch,
+            tmp_path,
+            workspace=workspace,
+            run_id="run-2",
+        )
+        assert (second_destination / "db.db").read_text(encoding="utf-8") == ("database:operator\n")
+        assert first_paths.root != second_paths.root
+        assert rename_calls[0] == (spare, first_destination)
+    finally:
+        release_clone.set()
+
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert (spare / "db.db").read_text(encoding="utf-8") == "database:operator\n"
+    assert not temporary.exists()
+
+
+def test_failed_partial_pre_commit_spare_replenish_retries_on_next_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    source = _operator_store(tmp_path / "operator-pre-commit", "operator")
+    monkeypatch.setenv("PRE_COMMIT_HOME", str(source))
+    managed_root = tmp_path / "gobby-home" / "runtime" / "managed-executions"
+    spare, temporary = sandbox_policy.pre_commit_store_spare_paths(managed_root)
+    original_clone = sandbox_policy._clone_pre_commit_store
+    temporary_attempts = 0
+
+    def flaky_clone(clone_source: Path, destination: Path) -> None:
+        nonlocal temporary_attempts
+        if destination == temporary:
+            temporary_attempts += 1
+            if temporary_attempts == 1:
+                destination.mkdir(parents=True)
+                (destination / "partial").write_text("incomplete", encoding="utf-8")
+                raise OSError("interrupted clone")
+        original_clone(clone_source, destination)
+
+    monkeypatch.setattr(sandbox_policy, "_clone_pre_commit_store", flaky_clone)
+
+    _first_paths, first_destination = _run_cache(
+        monkeypatch,
+        tmp_path,
+        workspace=workspace,
+        run_id="run-1",
+    )
+    worker = sandbox_policy._pre_commit_spare_thread
+    if worker is not None:
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+    assert (first_destination / "db.db").is_file()
+    assert not spare.exists()
+    assert not temporary.exists()
+
+    _second_paths, second_destination = _run_cache(
+        monkeypatch,
+        tmp_path,
+        workspace=workspace,
+        run_id="run-2",
+    )
+    worker = sandbox_policy._pre_commit_spare_thread
+    if worker is not None:
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+    assert (second_destination / "db.db").is_file()
+    assert (spare / "db.db").read_text(encoding="utf-8") == "database:operator\n"
+    assert temporary_attempts == 2
+
+
+def test_shutdown_pre_commit_store_spare_waits_for_replenish_and_removes_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = _operator_store(tmp_path / "operator-pre-commit", "operator")
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+    managed_root = sandbox_policy.managed_execution_root()
+    spare, temporary = sandbox_policy.pre_commit_store_spare_paths(managed_root)
+    clone_started = threading.Event()
+    release_clone = threading.Event()
+    shutdown_finished = threading.Event()
+    original_clone = sandbox_policy._clone_pre_commit_store
+
+    def controlled_clone(clone_source: Path, destination: Path) -> None:
+        destination.mkdir(parents=True)
+        clone_started.set()
+        assert release_clone.wait(timeout=5)
+        original_clone(clone_source, destination)
+
+    def shutdown() -> None:
+        sandbox_policy.shutdown_pre_commit_store_spare()
+        shutdown_finished.set()
+
+    monkeypatch.setattr(sandbox_policy, "_clone_pre_commit_store", controlled_clone)
+    sandbox_policy._schedule_pre_commit_store_spare(source)
+    assert clone_started.wait(timeout=5)
+    shutdown_thread = threading.Thread(target=shutdown)
+    shutdown_thread.start()
+
+    try:
+        assert not shutdown_finished.wait(timeout=0.05)
+    finally:
+        release_clone.set()
+    assert shutdown_finished.wait(timeout=5)
+    shutdown_thread.join(timeout=5)
+    assert not shutdown_thread.is_alive()
+    assert not spare.exists()
+    assert not temporary.exists()
 
 
 def test_prepare_sandbox_run_paths_uses_apfs_clone_on_macos(

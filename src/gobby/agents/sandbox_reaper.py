@@ -13,7 +13,11 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from gobby.agents.sandbox_policy import SRT_VIOLATIONS_RELATIVE_PATH
+from gobby.agents.sandbox_policy import (
+    PRE_COMMIT_STORE_SPARE_NAME,
+    PRE_COMMIT_STORE_SPARE_TEMP_NAME,
+    SRT_VIOLATIONS_RELATIVE_PATH,
+)
 from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
 from gobby.paths import get_gobby_home
 
@@ -282,6 +286,12 @@ def _startup_sweep(
             continue
         try:
             for root in parent.iterdir():
+                if root.name in {
+                    PRE_COMMIT_STORE_SPARE_NAME,
+                    PRE_COMMIT_STORE_SPARE_TEMP_NAME,
+                }:
+                    roots_by_run_id.setdefault(root.name, []).append(root)
+                    continue
                 if root.name in active_run_ids:
                     continue
                 try:

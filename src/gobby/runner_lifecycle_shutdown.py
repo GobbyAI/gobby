@@ -901,6 +901,13 @@ async def shutdown_daemon_services(
             deferred_cancellation,
         )
 
+        from gobby.agents.sandbox_policy import shutdown_pre_commit_store_spare
+
+        _best_effort_sync(
+            shutdown_pre_commit_store_spare,
+            "Pre-commit store spare cleanup",
+        )
+
         try:
             runner.database.close()
         except Exception as e:
