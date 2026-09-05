@@ -9,7 +9,7 @@ import pty
 import select
 import subprocess
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -60,6 +60,7 @@ _SECOND_REVIEW_RUN_ID = "00000000-0000-4000-8000-000000002611"
 _REQUIRED_EVIDENCE = "Run the real close adapter and capture its MCP response receipt."
 _OVERSIZED_TRANSCRIPT_BYTES = 10 * 1024 * 1024
 _SUBMIT_DEADLINE_SECONDS = 10.0
+_STDIO_DEFAULT_PREFLIGHT_PATH = "/api/health"
 
 
 @pytest.mark.asyncio
@@ -477,6 +478,7 @@ async def test_submit_close_review_claims_before_heavy_work(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Default stdio health preflight completes before the atomic finalizing claim."""
     session_manager = SessionManager(temp_db)
     caller_transcript = tmp_path / "caller.jsonl"
     await asyncio.to_thread(_write_oversized_codex_transcript, caller_transcript)
@@ -522,9 +524,21 @@ async def test_submit_close_review_claims_before_heavy_work(
     assert created is True
     assert store.bind_run(review.id, run.id) is not None
     transcript_reader = TranscriptReader(session_manager)
+    default_preflight_observations: list[tuple[str, TaskCloseReviewStatus]] = []
     observed_finalizing: list[str] = []
 
+    def observe_default_preflight() -> None:
+        persisted = store.get(review.id)
+        assert persisted is not None
+        default_preflight_observations.append(
+            (_STDIO_DEFAULT_PREFLIGHT_PATH, persisted.status)
+        )
+
     async def evaluate_close(_ctx: RegistryContext, **kwargs: Any) -> CloseEvaluation:
+        assert default_preflight_observations[-1] == (
+            _STDIO_DEFAULT_PREFLIGHT_PATH,
+            "running",
+        )
         persisted = await asyncio.to_thread(store.get, review.id)
         assert persisted is not None
         assert persisted.status == "finalizing"
@@ -560,7 +574,10 @@ async def test_submit_close_review_claims_before_heavy_work(
         config=SimpleNamespace(mcp_client_proxy=SimpleNamespace(tool_timeout=10.0)),
         run_db=run_db,
     )
-    async with _live_mcp_http_server(http_server) as port:
+    async with _live_mcp_http_server(
+        http_server,
+        health_observer=observe_default_preflight,
+    ) as port:
         gobby_home = tmp_path / "gobby-home"
         _write_test_bootstrap(gobby_home, temp_db.conninfo, port)
         environment = os.environ.copy()
@@ -599,9 +616,11 @@ async def test_submit_close_review_claims_before_heavy_work(
                 master_fd,
                 {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
             )
+            startup_health_count = len(default_preflight_observations)
             submit_request = _submit_review_request(review.id, sample_project["id"])
             encoded_submit = _encode_pty_json(submit_request)
             assert len(encoded_submit) < 1024
+            assert b'"preflight_enabled"' not in encoded_submit
             started = time.monotonic()
             await asyncio.to_thread(_write_pty_bytes, master_fd, encoded_submit)
             response = await asyncio.to_thread(
@@ -616,6 +635,11 @@ async def test_submit_close_review_claims_before_heavy_work(
 
     assert "result" in response
     assert elapsed < _SUBMIT_DEADLINE_SECONDS
+    assert len(default_preflight_observations) == startup_health_count + 1
+    assert default_preflight_observations[-1] == (
+        _STDIO_DEFAULT_PREFLIGHT_PATH,
+        "running",
+    )
     assert observed_finalizing == ["finalizing"]
     finished = store.get(review.id)
     assert finished is not None
@@ -1049,7 +1073,11 @@ def _write_test_bootstrap(gobby_home: Path, database_url: str, port: int) -> Non
 
 
 @asynccontextmanager
-async def _live_mcp_http_server(server: Any) -> AsyncIterator[int]:
+async def _live_mcp_http_server(
+    server: Any,
+    *,
+    health_observer: Callable[[], None] | None = None,
+) -> AsyncIterator[int]:
     app = FastAPI()
     app.include_router(create_mcp_router())
 
@@ -1057,6 +1085,8 @@ async def _live_mcp_http_server(server: Any) -> AsyncIterator[int]:
         return server
 
     async def health() -> dict[str, str]:
+        if health_observer is not None:
+            health_observer()
         return {"status": "ok"}
 
     app.dependency_overrides[get_server] = override_server
@@ -1112,7 +1142,6 @@ def _submit_review_request(review_id: str, project_id: str) -> dict[str, object]
                 "tool_name": "submit_close_review",
                 "arguments": {"review_id": review_id, "verdict": _verdict("invalid")},
                 "project_id": project_id,
-                "preflight_enabled": False,
             },
         },
     }
