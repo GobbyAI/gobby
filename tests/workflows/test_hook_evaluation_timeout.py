@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.servers.routes.mcp.hooks import _run_adapter_hook
+from gobby.storage.hub import postgres_pool
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowEvaluationTimeout, WorkflowHookHandler
 
@@ -165,6 +169,76 @@ async def test_internal_timeout_cancels_evaluation_and_releases_session_lock(
         handler.rule_engine.evaluate = fast_evaluate
         response = await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=0.5)
         assert response.decision == "allow"
+    finally:
+        handler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_database_acquisition_timeout_does_not_retry_inside_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class TimeoutOncePool:
+        def __init__(self) -> None:
+            self.connection_calls = 0
+            self.check_calls = 0
+            self.timeouts: list[float | None] = []
+
+        @contextmanager
+        def connection(self, timeout: float | None = None) -> Any:
+            self.connection_calls += 1
+            self.timeouts.append(timeout)
+            if self.connection_calls == 1:
+                raise PoolTimeout("pool busy")
+            yield object()
+
+        def check(self) -> None:
+            self.check_calls += 1
+
+    pool = TimeoutOncePool()
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+
+    def acquire_connection() -> None:
+        with postgres_pool.pool_connection(
+            cast(ConnectionPool[Any], pool),
+            lambda: {},
+        ):
+            pass
+
+    async def evaluate(
+        *,
+        event: HookEvent,
+        session_id: str,
+        variables: dict[str, Any],
+        eval_context: dict[str, Any] | None = None,
+        blocking_deadline: BlockingEffectDeadline | None = None,
+    ) -> HookResponse:
+        del event, session_id, variables, eval_context, blocking_deadline
+        await asyncio.to_thread(acquire_connection)
+        return HookResponse(decision="allow")
+
+    runtime = WorkflowEvaluationRuntime(max_workers=1)
+    handler = _handler(evaluate, timeout=0.25, runtime=runtime)
+    event = _event(tmp_path)
+    adapter = MagicMock()
+    adapter.handle_native.side_effect = lambda *_args: handler.evaluate(event)
+
+    try:
+        with pytest.raises(PoolTimeout, match="pool busy"):
+            await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=1.0)
+
+        assert pool.connection_calls == 1
+        assert pool.check_calls == 1
+        assert len(pool.timeouts) == 1
+        assert pool.timeouts[0] is not None
+        assert 0 < pool.timeouts[0] <= 0.25
+
+        response = cast(
+            HookResponse,
+            await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=1.0),
+        )
+        assert response.decision == "allow"
+        assert pool.connection_calls == 2
     finally:
         handler.shutdown()
 

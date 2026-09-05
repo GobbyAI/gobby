@@ -109,6 +109,7 @@ class PostgresHubDatabase:
         self._open_lock = threading.Lock()
         self._pool_opened = False
         self._pool_closed = False
+        self._pool_acquire_timeout_seconds = pool_config.acquire_timeout_seconds
         self._pool_open_timeout = pool_config.open_timeout_seconds
         _OPEN_DATABASES.add(self)
 
@@ -233,7 +234,11 @@ class PostgresHubDatabase:
 
     @contextmanager
     def _pool_connection(self) -> Iterator[psycopg.Connection[Any]]:
-        with _postgres_pool.pool_connection(self._pool, self.pool_stats) as conn:
+        with _postgres_pool.pool_connection(
+            self._pool,
+            self.pool_stats,
+            acquire_timeout_seconds=self._pool_acquire_timeout_seconds,
+        ) as conn:
             yield conn
 
     @contextmanager

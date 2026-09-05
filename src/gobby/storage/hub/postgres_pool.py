@@ -21,6 +21,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from gobby.storage.hub._ambient import TransactionOpener, enter_transaction
+from gobby.storage.hub.operation_deadline import current_database_operation_deadline
 from gobby.storage.hub.protocol import (
     AgentCapAdmission,
     BuildDryRunMutation,
@@ -106,20 +107,38 @@ class _TransactionContext(Protocol):
 def pool_connection(
     pool: ConnectionPool[Any],
     pool_stats: Callable[[], dict[str, Any]],
+    *,
+    acquire_timeout_seconds: float | None = None,
 ) -> Iterator[psycopg.Connection[Any]]:
-    """Acquire a pooled connection, retrying with backoff after a timeout.
+    """Acquire a pooled connection within its caller's ownership policy.
 
-    Dead connections linger after a hub restart, so each retry first asks the
-    pool to check (and recycle) its connections, then waits with exponential
-    backoff plus jitter before the next acquisition attempt.
+    Ordinary callers retry with backoff because dead connections can linger
+    after a hub restart. Deadline-owned callers make one bounded attempt so a
+    cancelled workflow cannot leave the retry chain occupying its worker.
     """
     started = time.monotonic()
     with ExitStack() as stack:
         try:
-            try:
-                conn = stack.enter_context(pool.connection())
-            except PoolTimeout:
-                conn = _acquire_with_backoff(stack, pool, pool_stats)
+            deadline = current_database_operation_deadline()
+            if deadline is None:
+                try:
+                    conn = stack.enter_context(pool.connection())
+                except PoolTimeout:
+                    conn = _acquire_with_backoff(stack, pool, pool_stats)
+            else:
+                timeout = deadline.remaining_seconds(
+                    maximum_seconds=acquire_timeout_seconds,
+                )
+                try:
+                    conn = stack.enter_context(pool.connection(timeout=timeout))
+                except PoolTimeout:
+                    logger.debug(
+                        "PostgreSQL hub pool acquisition reached its owning operation "
+                        "bound; skipping retries: pool_stats=%s",
+                        pool_stats(),
+                    )
+                    pool.check()
+                    raise
         except BaseException:
             observe_histogram(
                 "database_pool_acquire_wait_seconds",
@@ -245,6 +264,14 @@ def transaction_context(
     """Own a pooled connection and run callbacks after its transaction commits."""
     open_pool()
     with connection() as conn, conn.transaction():
+        deadline = current_database_operation_deadline()
+        if deadline is not None:
+            timeout = f"{deadline.remaining_milliseconds()}ms"
+            conn.execute(
+                "SELECT set_config('statement_timeout', %s, true), "
+                "set_config('lock_timeout', %s, true)",
+                (timeout, timeout),
+            )
         txn = _PostgresTransaction(
             conn,
             is_immediate=is_immediate,

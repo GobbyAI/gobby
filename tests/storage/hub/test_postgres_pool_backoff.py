@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 import logging
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from types import ModuleType
 from typing import Any, cast
 
@@ -11,6 +13,7 @@ from psycopg_pool import ConnectionPool, PoolTimeout
 
 from gobby.config.postgres_pool import PostgresPoolConfig, postgres_pool_config_from_mapping
 from gobby.storage.hub import postgres_pool
+from gobby.storage.hub.operation_deadline import database_operation_deadline
 
 pytestmark = pytest.mark.unit
 
@@ -39,9 +42,11 @@ class _FakePool:
         self.failures_remaining = failures
         self.connection_calls = 0
         self.check_calls = 0
+        self.connection_timeouts: list[float | None] = []
 
-    def connection(self) -> Any:
+    def connection(self, timeout: float | None = None) -> Any:
         self.connection_calls += 1
+        self.connection_timeouts.append(timeout)
         if self.failures_remaining > 0:
             self.failures_remaining -= 1
             return _TimeoutContext()
@@ -131,6 +136,67 @@ def test_pool_connection_checks_pool_before_each_retry(
         pass
 
     assert events == ["connection", "check", "connection"]
+
+
+def test_pool_connection_honors_operation_deadline_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = _FakePool(failures=1)
+    sleeps = _patch_sleep(monkeypatch)
+
+    with database_operation_deadline(timeout_seconds=0.25):
+        with pytest.raises(PoolTimeout):
+            with postgres_pool.pool_connection(
+                cast(ConnectionPool[Any], pool),
+                _pool_stats,
+            ):
+                pass
+
+    assert pool.connection_calls == 1
+    assert pool.check_calls == 1
+    assert sleeps == []
+    assert len(pool.connection_timeouts) == 1
+    timeout = pool.connection_timeouts[0]
+    assert timeout is not None
+    assert 0 < timeout <= 0.25
+
+
+class _TransactionConnection:
+    def __init__(self) -> None:
+        self.statements: list[tuple[str, tuple[str, ...]]] = []
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        yield
+
+    def execute(self, sql: str, params: tuple[str, ...] = ()) -> object:
+        self.statements.append((sql, params))
+        return object()
+
+
+def test_transaction_context_applies_operation_deadline_as_local_bounds() -> None:
+    conn = _TransactionConnection()
+
+    @contextmanager
+    def connection() -> Iterator[Any]:
+        yield conn
+
+    with database_operation_deadline(timeout_seconds=0.25):
+        with postgres_pool.transaction_context(
+            lambda: None,
+            connection,
+            is_immediate=False,
+        ):
+            pass
+
+    assert len(conn.statements) == 1
+    sql, params = conn.statements[0]
+    assert "set_config('statement_timeout'" in sql
+    assert "set_config('lock_timeout'" in sql
+    assert len(params) == 2
+    for value in params:
+        assert value.endswith("ms")
+        assert 0 < int(value.removesuffix("ms")) <= 250
 
 
 def _postgres_module() -> ModuleType:
