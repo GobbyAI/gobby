@@ -7,6 +7,7 @@ Tests the isolation abstraction layer for spawn_agent unified API.
 import asyncio
 import json
 import subprocess
+import threading
 from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ from uuid import uuid4
 import pytest
 
 from gobby.agents.code_index import (
+    GcodeCommandError,
     IndexInventoryError,
     _active_deployment_grant_context,
     _reap_stale_gcode_runtime_tokens,
@@ -38,6 +40,8 @@ from gobby.agents.isolation import (
 from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.storage.managed_credentials import ManagedCredential
 from gobby.worktrees.git import WorktreeGitManager
+
+_REAL_POPEN = subprocess.Popen
 
 pytestmark = pytest.mark.unit
 
@@ -91,12 +95,46 @@ class TestEnsureIsolationCodeIndex:
     _LEASE_EPOCH = 3
     _LEASE_SECRET = "lease-signing-secret"
 
+    class _FakeProcess:
+        def __init__(self, returncode: int | None = 0, stderr: bytes = b"") -> None:
+            self.returncode = returncode
+            self.stderr = stderr
+            self.killed = False
+            self.wait_count = 0
+            self.communicate_timeouts: list[float | None] = []
+            self.communicate_error: Exception | None = None
+
+        def communicate(self, timeout: float | None = None) -> tuple[bytes, bytes]:
+            self.communicate_timeouts.append(timeout)
+            if self.communicate_error is not None:
+                raise self.communicate_error
+            return b"", self.stderr
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+
+        def wait(self) -> int:
+            self.wait_count += 1
+            assert self.returncode is not None
+            return self.returncode
+
     @staticmethod
-    def _proc(returncode: int = 0, stderr: bytes = b"") -> AsyncMock:
-        proc = AsyncMock()
-        proc.returncode = returncode
-        proc.communicate.return_value = (b"", stderr)
-        return proc
+    def _proc(returncode: int = 0, stderr: bytes = b"") -> _FakeProcess:
+        return TestEnsureIsolationCodeIndex._FakeProcess(returncode, stderr)
+
+    @staticmethod
+    def _popen_side_effect(proc: _FakeProcess) -> Any:
+        def launch(args: list[str], *popen_args: Any, **kwargs: Any) -> Any:
+            if args[0] == "git":
+                return _REAL_POPEN(args, *popen_args, **kwargs)
+            return proc
+
+        return launch
+
+    @staticmethod
+    def _gcode_calls(popen: MagicMock) -> list[Any]:
+        return [call for call in popen.call_args_list if call.args[0][0] != "git"]
 
     @staticmethod
     def _credential(tmp_path: Path) -> ManagedCredential:
@@ -150,26 +188,31 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.asyncio.create_subprocess_exec",
-                new=AsyncMock(return_value=proc),
-            ) as create_proc,
+                "gobby.agents.code_index.subprocess.Popen",
+                side_effect=self._popen_side_effect(proc),
+            ) as popen,
         ):
             result = await ensure_isolation_code_index(str(tmp_path))
 
         assert result.env == {}
-        assert create_proc.await_count == 3
-        calls = create_proc.await_args_list
+        calls = self._gcode_calls(popen)
+        assert len(calls) == 3
         # The config probe must exercise the run-scoped grant path (status reads
         # through the scoped role and /api/runtime/config), never an
         # operator-only listing route the run token cannot call.
-        assert calls[0].args[:4] == ("/tmp/gcode", "status", "--quiet", "--format")
-        assert calls[0].args[4:8] == ("json", "--allow-stale", "--project", str(tmp_path))
-        assert calls[1].args[:4] == ("/tmp/gcode", "index", "--quiet", "--project")
-        assert calls[1].args[4] == str(tmp_path)
-        assert calls[2].args[:3] == ("/tmp/gcode", "search-content", "__gobby_code_index_smoke__")
-        assert "--allow-stale" in calls[2].args
-        assert "--no-freshness" not in calls[2].args
+        assert calls[0].args[0][:4] == ["/tmp/gcode", "status", "--quiet", "--format"]
+        assert calls[0].args[0][4:8] == ["json", "--allow-stale", "--project", str(tmp_path)]
+        assert calls[1].args[0][:4] == ["/tmp/gcode", "index", "--quiet", "--project"]
+        assert calls[1].args[0][4] == str(tmp_path)
+        assert calls[2].args[0][:3] == [
+            "/tmp/gcode",
+            "search-content",
+            "__gobby_code_index_smoke__",
+        ]
+        assert "--allow-stale" in calls[2].args[0]
+        assert "--no-freshness" not in calls[2].args[0]
         assert calls[0].kwargs["cwd"] == str(tmp_path)
+        assert proc.communicate_timeouts == [5.0, 120.0, 10.0]
 
     @pytest.mark.asyncio
     async def test_scoped_credential_creates_gcode_wrapper_runtime(
@@ -190,9 +233,9 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.asyncio.create_subprocess_exec",
-                new=AsyncMock(return_value=proc),
-            ) as create_proc,
+                "gobby.agents.code_index.subprocess.Popen",
+                side_effect=self._popen_side_effect(proc),
+            ) as popen,
         ):
             result = await ensure_isolation_code_index(
                 str(workspace),
@@ -218,7 +261,7 @@ class TestEnsureIsolationCodeIndex:
         runtime_token = Path(result.runtime_home) / "local_cli_token"
         assert not runtime_token.exists()
         assert not runtime_token.is_symlink()
-        assert create_proc.await_args_list[0].args[0] == str(wrapper)
+        assert self._gcode_calls(popen)[0].args[0][0] == str(wrapper)
         status = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=workspace,
@@ -247,8 +290,8 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.asyncio.create_subprocess_exec",
-                new=AsyncMock(return_value=proc),
+                "gobby.agents.code_index.subprocess.Popen",
+                side_effect=self._popen_side_effect(proc),
             ),
         ):
             result = await ensure_isolation_code_index(
@@ -429,8 +472,8 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.asyncio.create_subprocess_exec",
-                new=AsyncMock(return_value=proc),
+                "gobby.agents.code_index.subprocess.Popen",
+                side_effect=self._popen_side_effect(proc),
             ),
         ):
             result = await ensure_isolation_code_index(
@@ -551,9 +594,9 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.asyncio.create_subprocess_exec",
-                new=AsyncMock(return_value=proc),
-            ) as create_proc,
+                "gobby.agents.code_index.subprocess.Popen",
+                side_effect=self._popen_side_effect(proc),
+            ) as popen,
         ):
             result = await ensure_isolation_code_index(
                 str(workspace),
@@ -563,8 +606,9 @@ class TestEnsureIsolationCodeIndex:
                 identity_env=self._identity_env(),
             )
 
-        assert create_proc.await_count == 3
-        for call in create_proc.await_args_list:
+        calls = self._gcode_calls(popen)
+        assert len(calls) == 3
+        for call in calls:
             env = call.kwargs["env"]
             assert env["GOBBY_AGENT_API_TOKEN"] == "operator-token-value"
         # The credential is ephemeral: never in the runtime home, the wrapper,
@@ -582,66 +626,100 @@ class TestEnsureIsolationCodeIndex:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.asyncio.create_subprocess_exec",
-                new=AsyncMock(return_value=proc),
-            ) as create_proc,
+                "gobby.agents.code_index.subprocess.Popen",
+                side_effect=self._popen_side_effect(proc),
+            ) as popen,
         ):
             await ensure_isolation_code_index(str(tmp_path))
 
-        for call in create_proc.await_args_list:
+        for call in self._gcode_calls(popen):
             assert call.kwargs.get("env") is None
 
     @pytest.mark.asyncio
     async def test_raises_when_gcode_index_fails(self, tmp_path: Path) -> None:
         proc_ok = self._proc()
-        proc_fail = self._proc(returncode=2, stderr=b"parse failed")
+        proc_fail = self._proc(
+            returncode=2,
+            stderr=b"connect postgresql://gobby:operator-secret@localhost/gobby failed",
+        )
 
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.asyncio.create_subprocess_exec",
-                new=AsyncMock(side_effect=[proc_ok, proc_fail]),
+                "gobby.agents.code_index.subprocess.Popen",
+                side_effect=[proc_ok, proc_fail],
             ),
         ):
-            with pytest.raises(RuntimeError, match="gcode_index_failed:2:parse failed"):
+            with pytest.raises(GcodeCommandError) as exc_info:
                 await ensure_isolation_code_index(str(tmp_path))
+
+        detail = "connect postgresql://gobby:<redacted>@localhost/gobby failed"
+        assert str(exc_info.value) == f"gcode_index_failed:2:{detail}"
+        assert exc_info.value.output == detail
+
+    @pytest.mark.asyncio
+    async def test_gcode_timeout_kills_and_reaps_child_process(self, tmp_path: Path) -> None:
+        proc = self._proc()
+        proc.communicate_error = subprocess.TimeoutExpired(["/tmp/gcode"], 0.25)
+
+        with (
+            patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
+            patch(
+                "gobby.agents.code_index.subprocess.Popen",
+                side_effect=self._popen_side_effect(proc),
+            ),
+            pytest.raises(RuntimeError) as exc_info,
+        ):
+            await ensure_isolation_code_index(str(tmp_path), config_probe_timeout=0.25)
+
+        assert str(exc_info.value) == "gcode_index_unavailable_timeout:0.25s"
+        assert proc.killed is True
+        assert proc.wait_count == 1
+
+    @pytest.mark.asyncio
+    async def test_gcode_launch_oserror_uses_failure_code(self, tmp_path: Path) -> None:
+        with (
+            patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
+            patch("gobby.agents.code_index.subprocess.Popen", side_effect=OSError("spawn failed")),
+            pytest.raises(RuntimeError) as exc_info,
+        ):
+            await ensure_isolation_code_index(str(tmp_path))
+
+        assert str(exc_info.value) == "gcode_index_unavailable:spawn failed"
 
     @pytest.mark.asyncio
     async def test_cancelling_gcode_run_kills_child_process(self, tmp_path: Path) -> None:
-        communicate_started = asyncio.Event()
+        class HangingProcess(TestEnsureIsolationCodeIndex._FakeProcess):
+            def __init__(self) -> None:
+                super().__init__(returncode=None)
+                self.communicate_started = threading.Event()
+                self.release_communicate = threading.Event()
 
-        class HangingProcess:
-            returncode: int | None = None
-            killed = False
-
-            async def communicate(self) -> tuple[bytes, bytes]:
-                communicate_started.set()
-                await asyncio.Future()
-                return b"", b""
+            def communicate(self, timeout: float | None = None) -> tuple[bytes, bytes]:
+                self.communicate_started.set()
+                self.release_communicate.wait(timeout=1.0)
+                return super().communicate(timeout)
 
             def kill(self) -> None:
-                self.killed = True
-                self.returncode = -9
-
-            async def wait(self) -> int:
-                self.returncode = -9
-                return -9
+                super().kill()
+                self.release_communicate.set()
 
         proc = HangingProcess()
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.code_index.asyncio.create_subprocess_exec",
-                new=AsyncMock(return_value=proc),
+                "gobby.agents.code_index.subprocess.Popen",
+                side_effect=self._popen_side_effect(proc),
             ),
         ):
             task = asyncio.create_task(ensure_isolation_code_index(str(tmp_path)))
-            await communicate_started.wait()
+            assert await asyncio.to_thread(proc.communicate_started.wait, 1.0)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
 
         assert proc.killed is True
+        assert proc.wait_count == 1
 
 
 class TestRepairIsolationEnvironment:
