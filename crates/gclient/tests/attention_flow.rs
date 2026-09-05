@@ -4,7 +4,7 @@ use gobby_client::Workspace;
 use serde_json::json;
 
 #[test]
-fn respond_via_daemon_api() {
+fn respond_reaches_daemon() {
     let mut ws = Workspace::scripted();
     ws.daemon_mut().set_roster(json!({
         "epoch": "e1",

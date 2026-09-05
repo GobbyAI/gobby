@@ -377,7 +377,7 @@ impl ReconnectSupervisor {
         let Some(episode) = self.episode.as_mut() else {
             return ReconnectAttempt::Idle;
         };
-        if episode.attempts >= RECONNECT_DELAYS.len() + 1 {
+        if episode.attempts > RECONNECT_DELAYS.len() {
             self.settle(Err(error.clone()));
             return ReconnectAttempt::Exhausted(error);
         }

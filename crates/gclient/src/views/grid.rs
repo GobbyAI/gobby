@@ -17,10 +17,28 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, pane: &Pane) {
     let width = area.width.min(grid.width);
     let height = area.height.min(grid.height);
     let letterbox = pane.backend == "tmux";
-    let dst_x = area.x + letterbox.then_some((area.width - width) / 2).unwrap_or(0);
-    let dst_y = area.y + letterbox.then_some((area.height - height) / 2).unwrap_or(0);
-    let src_x = letterbox.then_some((grid.width - width) / 2).unwrap_or(0);
-    let src_y = letterbox.then_some((grid.height - height) / 2).unwrap_or(0);
+    let dst_x = area.x
+        + if letterbox {
+            (area.width - width) / 2
+        } else {
+            0
+        };
+    let dst_y = area.y
+        + if letterbox {
+            (area.height - height) / 2
+        } else {
+            0
+        };
+    let src_x = if letterbox {
+        (grid.width - width) / 2
+    } else {
+        0
+    };
+    let src_y = if letterbox {
+        (grid.height - height) / 2
+    } else {
+        0
+    };
 
     for row in 0..height {
         for col in 0..width {
