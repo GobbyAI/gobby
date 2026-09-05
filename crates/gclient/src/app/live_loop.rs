@@ -19,6 +19,7 @@ use crate::frame_source::{FrameError, FrameSource};
 use crate::key_input::{key_input, resolve_chord, text_bytes, Resolution};
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
+use super::attention::{open_response_dialog, route_response_input};
 use super::run_loop::{
     shutdown, ReconnectAttempt, ReconnectFuture, ReconnectSupervisor, RENDER_TICK,
 };
@@ -440,6 +441,13 @@ async fn route_live_input(
     prefix_armed: &mut bool,
 ) -> Result<bool, FrameError> {
     if let Some(input) = key_input(event, KeyboardProtocol::Legacy) {
+        if chrome.mode == Mode::Respond {
+            *prefix_armed = false;
+            route_response_input(workspace, chrome, &input.key)
+                .await
+                .map_err(FrameError::from)?;
+            return Ok(false);
+        }
         match resolve_chord(&chrome.keymap, &input.key, *prefix_armed) {
             Resolution::Prefix => {
                 *prefix_armed = true;
@@ -484,6 +492,7 @@ async fn handle_live_action(
                 take_live_control(workspace, pane_id).await?;
             }
         }
+        Action::Respond => open_response_dialog(workspace, chrome).await?,
         Action::ReleaseControl | Action::Detach => {
             if let Some(pane_id) = chrome.focused_pane() {
                 release_live_control(workspace, pane_id).await?;

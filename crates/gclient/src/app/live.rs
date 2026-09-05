@@ -22,6 +22,7 @@ impl Workspace<LiveDaemon> {
                 entries: Vec::new(),
                 applied_seqs: Vec::new(),
             },
+            pending_attention: None,
             gobby_home: None,
             lifecycle: None,
             daemon_ready: false,

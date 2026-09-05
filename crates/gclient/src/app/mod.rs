@@ -2,6 +2,7 @@
 
 mod apply;
 mod attach;
+mod attention;
 mod live;
 mod live_loop;
 mod pane;
@@ -45,6 +46,7 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     next_pane: u32,
     roster_ids: Vec<String>,
     attention: AttentionState,
+    pending_attention: Option<attention::PendingAttention>,
     gobby_home: Option<PathBuf>,
     lifecycle: Option<Snapshot>,
     daemon_ready: bool,
@@ -73,6 +75,7 @@ impl Workspace {
                 entries: Vec::new(),
                 applied_seqs: Vec::new(),
             },
+            pending_attention: None,
             gobby_home: None,
             lifecycle: None,
             daemon_ready: true,
