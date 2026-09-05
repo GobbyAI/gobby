@@ -635,6 +635,33 @@ async def test_large_repair_keeps_heartbeat_running_and_preserves_payload(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_large_structured_key_dispatches_repair_to_worker(tmp_path: Path) -> None:
+    spec_file = _write_spec(tmp_path)
+    service = _service_with(_openapi_config(spec_file, output_validation="repair"))
+    result = CallToolResult(
+        content=[TextContent(type="text", text="{}")],
+        structuredContent={"x" * output_repair._PROCESS_THRESHOLD_CHARS: 1},
+    )
+    large_repair = AsyncMock(return_value=(result, []))
+
+    with (
+        patch.object(output_repair, "_repair_large_result", new=large_repair),
+        patch.object(output_repair, "repair_call_result") as inline_repair,
+    ):
+        repaired = await maybe_repair_output(
+            service=service,
+            server_name="lightspeed",
+            tool_name="ListSales",
+            result=result,
+            project_id=_PROJECT_ID,
+        )
+
+    assert repaired is result
+    large_repair.assert_awaited_once()
+    inline_repair.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_cancelled_large_repair_holds_worker_slot_until_dispatch_finishes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

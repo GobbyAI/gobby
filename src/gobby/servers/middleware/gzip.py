@@ -61,13 +61,16 @@ class _EventLoopGZipResponder(GZipResponder):
     ) -> None:
         super().__init__(app, minimum_size, compresslevel=compresslevel)
         self._limiter = limiter
+        self._inline_compression_bytes = 0
 
     def _apply_compression(self, body: bytes, more_body: bool) -> bytes:
         return self.apply_compression(body, more_body=more_body)
 
     async def _compress(self, body: bytes, *, more_body: bool) -> bytes:
-        if len(body) < _OFFLOAD_THRESHOLD_BYTES:
+        self._inline_compression_bytes += len(body)
+        if self._inline_compression_bytes < _OFFLOAD_THRESHOLD_BYTES:
             return self.apply_compression(body, more_body=more_body)
+        self._inline_compression_bytes = 0
         pending = asyncio.create_task(
             to_thread.run_sync(
                 self._apply_compression,
@@ -80,8 +83,15 @@ class _EventLoopGZipResponder(GZipResponder):
         try:
             return await asyncio.shield(pending)
         except asyncio.CancelledError:
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
             with suppress(Exception):
-                await pending
+                pending.result()
             raise
 
     async def send_with_compression(self, message: Message) -> None:

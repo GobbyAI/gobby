@@ -23,6 +23,7 @@ import time
 from collections.abc import Iterator
 from concurrent.futures import BrokenExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, field
+from itertools import chain
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
@@ -596,7 +597,7 @@ def _large_repair_input(result: CallToolResult) -> bool:
             if text_chars >= _PROCESS_THRESHOLD_CHARS:
                 return True
         elif isinstance(value, dict):
-            stack.append(iter(value.values()))
+            stack.append(chain.from_iterable(value.items()))
         elif isinstance(value, list):
             stack.append(iter(value))
     return False

@@ -127,6 +127,48 @@ async def test_large_gzip_response_preserves_payload_and_keeps_heartbeat_running
     assert ticks_during_compression > 0
 
 
+@pytest.mark.parametrize("chunk_size", [4 * 1024, 32 * 1024])
+@pytest.mark.asyncio
+async def test_large_chunked_gzip_response_keeps_heartbeat_running(chunk_size: int) -> None:
+    payload = hashlib.shake_256(b"gobby-gzip-heartbeat").digest(8 * 1024 * 1024)
+    chunks = [
+        payload[offset : offset + chunk_size] for offset in range(0, len(payload), chunk_size)
+    ]
+    middleware = EventLoopGZipMiddleware(
+        _response_app(
+            chunks,
+            headers=[(b"content-length", str(len(payload)).encode())],
+        ),
+        minimum_size=1024,
+    )
+    heartbeat_ticks = 0
+    heartbeat_running = True
+
+    async def heartbeat() -> None:
+        nonlocal heartbeat_ticks
+        while heartbeat_running:
+            await asyncio.sleep(0)
+            heartbeat_ticks += 1
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    await asyncio.sleep(0)
+    ticks_before = heartbeat_ticks
+    try:
+        messages = await _invoke(middleware)
+        ticks_during_compression = heartbeat_ticks - ticks_before
+    finally:
+        heartbeat_running = False
+        await heartbeat_task
+
+    headers = _response_headers(messages)
+    bodies = [message for message in messages if message["type"] == "http.response.body"]
+    assert headers["content-encoding"] == "gzip"
+    assert "content-length" not in headers
+    assert len(bodies) == len(chunks)
+    assert gzip.decompress(_body(messages)) == payload
+    assert ticks_during_compression > 0
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("accept_encoding", "headers", "chunks"),
@@ -206,12 +248,14 @@ async def test_streaming_gzip_response_remains_streamed_and_decodable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_gzip_cancellation_waits_for_worker_before_closing_stream(
+async def test_gzip_repeated_cancellation_waits_for_worker_before_closing_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = b"x" * (128 * 1024)
     entered = threading.Event()
     release = threading.Event()
+    worker_finished = threading.Event()
+    resource_closed_while_running = threading.Event()
     original = GZipResponder.apply_compression
 
     def blocking_compression(
@@ -222,7 +266,13 @@ async def test_gzip_cancellation_waits_for_worker_before_closing_stream(
     ) -> bytes:
         entered.set()
         assert release.wait(timeout=5)
-        return original(responder, body, more_body=more_body)
+        try:
+            if responder.gzip_file.closed or responder.gzip_buffer.closed:
+                resource_closed_while_running.set()
+                return b""
+            return original(responder, body, more_body=more_body)
+        finally:
+            worker_finished.set()
 
     monkeypatch.setattr(GZipResponder, "apply_compression", blocking_compression)
     middleware = EventLoopGZipMiddleware(_response_app([payload]), minimum_size=1024)
@@ -231,8 +281,15 @@ async def test_gzip_cancellation_waits_for_worker_before_closing_stream(
 
     request.cancel()
     await asyncio.sleep(0)
-    assert not request.done()
+    pending_after_first_cancel = not request.done()
+    request.cancel()
+    await asyncio.sleep(0)
+    pending_after_second_cancel = not request.done()
     release.set()
 
     with pytest.raises(asyncio.CancelledError):
         await request
+    assert await asyncio.to_thread(worker_finished.wait, 2)
+    assert pending_after_first_cancel
+    assert pending_after_second_cancel
+    assert not resource_closed_while_running.is_set()
