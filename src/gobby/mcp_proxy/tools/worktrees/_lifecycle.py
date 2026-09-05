@@ -124,6 +124,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         force: bool | str = False,
         force_delete_branch: bool | str = False,
         project_path: str | None = None,
+        merged_into: str | None = None,
     ) -> dict[str, Any]:
         """Delete a worktree completely (handles all cleanup).
 
@@ -142,6 +143,8 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
             force: Force deletion even if there are uncommitted changes.
             force_delete_branch: Force-delete the branch even if it is unmerged.
             project_path: Optional path to project root to resolve git context.
+            merged_into: Local final landing branch to verify instead of the stored
+                base, for example after an intermediate base branch was deleted.
 
         Returns:
             Dict with success status.
@@ -237,6 +240,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
             surface=DeletionSurface.MCP,
             force=force,
             force_delete_branch=force_delete_branch,
+            merged_into=merged_into,
         )
         result = await run_worktree_delete(
             ctx.worktree_delete_executor,
@@ -257,6 +261,8 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
             }
             if result.uncommitted_changes:
                 response["uncommitted_changes"] = True
+            if result.error_code:
+                response["error_code"] = result.error_code
             return response
         return {
             "success": True,
@@ -278,6 +284,10 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "force": {"type": "boolean", "default": False},
                 "force_delete_branch": {"type": "boolean", "default": False},
                 "project_path": {"type": "string"},
+                "merged_into": {
+                    "type": "string",
+                    "description": "Local final landing branch for verified deletion; defaults to the stored base",
+                },
             },
             "oneOf": [
                 {"required": ["worktree_id"], "not": {"required": ["worktree_path"]}},

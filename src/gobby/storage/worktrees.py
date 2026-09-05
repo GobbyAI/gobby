@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
@@ -14,6 +15,10 @@ from typing import Any
 import psycopg
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.isolation_cleanup import (
+    CLOSED_TASK_CLEANUP_PREDICATE,
+    lock_isolation_for_cleanup,
+)
 from gobby.storage.workspace_machine_scope import (
     get_owned_workspace_row,
     raise_if_foreign_workspace,
@@ -689,8 +694,7 @@ class LocalWorktreeManager:
         """
         Find merged worktrees past their cleanup window.
 
-        These are worktrees where the merge succeeded and the grace period
-        (cleanup_after) has elapsed. Safe to delete — work is in target branch.
+        These are cleanup candidates; deletion must recheck ownership and Git state.
 
         Args:
             project_id: Optional project filter (None = all projects)
@@ -701,13 +705,14 @@ class LocalWorktreeManager:
         """
         now = utc_now()
         sql = """
-            SELECT * FROM worktrees
-            WHERE status = %s
-              AND machine_id = %s
-              AND agent_session_id IS NULL
-              AND cleanup_after IS NOT NULL
-              AND cleanup_after < %s
+            SELECT w.* FROM worktrees w
+            WHERE w.status = %s
+              AND w.machine_id = %s
+              AND w.agent_session_id IS NULL
+              AND w.cleanup_after IS NOT NULL
+              AND w.cleanup_after < %s
         """
+        sql += CLOSED_TASK_CLEANUP_PREDICATE
         params: list[Any] = [WorktreeStatus.MERGED.value, require_machine_id(), now]
         if project_id:
             sql += " AND project_id = %s"
@@ -716,6 +721,16 @@ class LocalWorktreeManager:
         params.append(limit)
         rows = self.db.fetchall(sql, tuple(params))
         return [Worktree.from_row(row) for row in rows]
+
+    @contextmanager
+    def lock_for_cleanup(
+        self, worktree_id: str, *, expired_only: bool = True
+    ) -> Iterator[Worktree | None]:
+        """Hold an eligible worktree and its closed task against concurrent claims."""
+        with lock_isolation_for_cleanup(
+            self.db, "worktrees", worktree_id, expired_only=expired_only
+        ) as row:
+            yield Worktree.from_row(row) if row is not None else None
 
     def cleanup_stale(
         self,

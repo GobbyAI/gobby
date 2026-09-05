@@ -197,15 +197,18 @@ def _refuse_unmerged_branch_deletion(
     runner: GitRunner,
     branch_name: str,
     base_branch: str | None,
+    merged_into: str | None = None,
 ) -> GitOperationResult | None:
     """Refuse ordinary branch deletion unless the branch is merged into its base.
 
     Ordinary deletion must prove refs/heads/<branch> is an ancestor of the
-    stored base. Fully qualified local refs only: a pushed-but-unmerged branch
-    or a stale remote ref must never authorize deleting local commits, and
+    stored base or an explicitly selected final landing branch. Fully qualified
+    local refs only: a pushed-but-unmerged branch or a stale remote ref must
+    never authorize deleting local commits, and
     git's own `-d` heuristic (merged into HEAD or upstream) checks the wrong
     target entirely.
     """
+    base_branch = merged_into if merged_into is not None else base_branch
     if base_branch is None:
         return GitOperationResult(
             success=False,
@@ -228,6 +231,33 @@ def _refuse_unmerged_branch_deletion(
         )
     source_ref = f"refs/heads/{branch_name}"
     target_ref = base_branch if base_branch.startswith("refs/") else f"refs/heads/{base_branch}"
+    if not target_ref.startswith("refs/heads/"):
+        return GitOperationResult(
+            success=False,
+            message=f"Merge target '{base_branch}' must be a local branch",
+            error="merge_target_requires_local_branch",
+        )
+    if target_ref == source_ref:
+        return GitOperationResult(
+            success=False,
+            message="The branch being deleted cannot prove its own merge state",
+            error="merge_target_is_source_branch",
+        )
+    if merged_into is not None:
+        valid_ref = runner._run_git(["check-ref-format", target_ref], timeout=5)
+        if valid_ref.returncode != 0:
+            return GitOperationResult(
+                success=False,
+                message=f"Invalid local merge target branch: '{merged_into}'",
+                error="invalid_merge_target_branch",
+            )
+        symbolic = runner._run_git(["symbolic-ref", "--quiet", target_ref], timeout=5)
+        if symbolic.returncode != 1:
+            return GitOperationResult(
+                success=False,
+                message=f"Merge target '{merged_into}' must be a direct local branch ref",
+                error="merge_target_requires_direct_branch",
+            )
     result = runner._run_git(
         ["merge-base", "--is-ancestor", source_ref, target_ref],
         timeout=10,
@@ -242,7 +272,11 @@ def _refuse_unmerged_branch_deletion(
                 f"into '{base_branch}'. Merge it first, or pass "
                 "force_delete_branch=True to deliberately abandon its commits."
             ),
-            error="branch_not_merged_into_base",
+            error=(
+                "branch_not_merged_into_target"
+                if merged_into is not None
+                else "branch_not_merged_into_base"
+            ),
         )
     detail = result.stderr.strip() or result.stdout.strip()
     return GitOperationResult(
@@ -250,8 +284,17 @@ def _refuse_unmerged_branch_deletion(
         message=(
             f"Refusing to delete branch '{branch_name}': merge state against "
             f"'{base_branch}' could not be verified: {detail}"
+            + (
+                ". Set merged_into to an existing local branch containing the source tip."
+                if merged_into is not None
+                else ""
+            )
         ),
-        error=detail or "merge_state_unresolvable",
+        error=(
+            "merge_target_unresolvable"
+            if merged_into is not None
+            else detail or "merge_state_unresolvable"
+        ),
     )
 
 
@@ -263,6 +306,7 @@ def delete_worktree(
     force_delete_branch: bool = False,
     branch_name: str | None = None,
     base_branch: str | None = None,
+    merged_into: str | None = None,
 ) -> GitOperationResult:
     """
     Delete a git worktree.
@@ -274,7 +318,9 @@ def delete_worktree(
         force_delete_branch: Force-delete the branch even if it is unmerged
         branch_name: Optional explicit branch name (if not provided, attempts to discover)
         base_branch: Stored base branch the task branch must be merged into;
-            required for ordinary (non-forced) branch deletion
+            required for ordinary branch deletion unless merged_into is provided
+        merged_into: Explicit local final landing branch for the ancestry check,
+            replacing the stored base when provided; never bypasses merge proof
 
     Returns:
         GitOperationResult with success status and message
@@ -282,6 +328,12 @@ def delete_worktree(
     worktree_path = Path(worktree_path)
 
     try:
+        if merged_into is not None and (force_delete_branch or not delete_branch):
+            return GitOperationResult(
+                success=False,
+                message="merged_into requires branch deletion without force_delete_branch",
+                error="merged_into_requires_verified_branch_deletion",
+            )
         # Get branch name before removal (for optional branch deletion)
         if delete_branch and not branch_name:
             status = get_worktree_status(runner, worktree_path)
@@ -294,10 +346,19 @@ def delete_worktree(
                     extra={"worktree_path": str(worktree_path), "delete_branch": True},
                 )
 
+        if merged_into is not None and not branch_name:
+            return GitOperationResult(
+                success=False,
+                message="Cannot verify merged_into without a source branch",
+                error="merged_into_requires_source_branch",
+            )
+
         # Preflight before anything is removed: refusing here keeps the
         # directory, the branch, and the caller's DB record fully intact.
         if delete_branch and branch_name and not force_delete_branch:
-            refusal = _refuse_unmerged_branch_deletion(runner, branch_name, base_branch)
+            refusal = _refuse_unmerged_branch_deletion(
+                runner, branch_name, base_branch, merged_into
+            )
             if refusal is not None:
                 return refusal
 
