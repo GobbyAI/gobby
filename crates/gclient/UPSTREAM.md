@@ -56,12 +56,15 @@ dropped. `tests/ui_carve_guard.rs` checks this table against the tree.
 
 ### gobby-terminal links
 
-`gclient` links `gobby_terminal::layout` (BSP tiles, `PaneId`,
-`ScrollMetrics`), `gobby_terminal::terminal_theme` (`Theme::terminal_theme`
-applies the `.impeccable.md` map), and `gobby_terminal::protocol` (frame
-wire). `raw_input`, `input`, and `selection` are linked by the run loop and
-copy mode, not by the chrome carve. No copied `layout.rs` or `raw_input.rs`
-exists in this crate.
+`gclient` links five `gobby_terminal` modules and copies none of them:
+`layout` (BSP tiles, `PaneId`, `ScrollMetrics`; `ui/chrome.rs`,
+`ui/pane_layout.rs`, `ui/scrollbar.rs`), `raw_input` and `input`
+(`src/key_input.rs` turns parsed host bytes into keymap events and pane
+bytes under the negotiated keyboard protocol), `selection`
+(`Chrome::selection`, painted per layout slot by `ui/panes.rs`), and
+`terminal_theme` (`Theme::terminal_theme` applies the `.impeccable.md` map).
+`gobby_terminal::protocol` carries the frame wire. No copied `layout.rs` or
+`raw_input.rs` exists in this crate; `tests/source_size.rs` checks both.
 
 ## Cherry-picks
 

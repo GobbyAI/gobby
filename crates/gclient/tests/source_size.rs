@@ -72,11 +72,18 @@ fn license_notice_workspace_and_frame_source() {
     let frame = fs::read_to_string(src_root().join("frame_source.rs")).unwrap();
     assert!(frame.contains("trait FrameSource"));
     let mut dials = Vec::new();
+    let mut copied = Vec::new();
+    let mut sources = String::new();
     for path in rust_sources(&src_root()) {
+        let text = fs::read_to_string(&path).unwrap();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name == "layout.rs" || name == "raw_input.rs" {
+            copied.push(path.display().to_string());
+        }
+        sources.push_str(&text);
         if path.ends_with("frame_source.rs") {
             continue;
         }
-        let text = fs::read_to_string(&path).unwrap();
         if text.contains("UnixStream::connect") || text.contains("UnixStream::connect_addr") {
             dials.push(path.display().to_string());
         }
@@ -85,4 +92,19 @@ fn license_notice_workspace_and_frame_source() {
         dials.is_empty(),
         "socket dials outside frame_source: {dials:?}"
     );
+
+    // 3.1.3: link gobby-terminal, never copy it.
+    assert!(
+        copied.is_empty(),
+        "copied gobby-terminal sources in gclient: {copied:?}"
+    );
+    for module in [
+        "gobby_terminal::layout",
+        "gobby_terminal::raw_input",
+        "gobby_terminal::input",
+        "gobby_terminal::selection",
+        "gobby_terminal::terminal_theme",
+    ] {
+        assert!(sources.contains(module), "gclient does not link {module}");
+    }
 }

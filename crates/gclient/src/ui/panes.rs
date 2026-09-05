@@ -9,6 +9,8 @@ use crate::ui::pane_layout::{self, PaneInfo, SplitBorder};
 use crate::ui::scrollbar::render_pane_scrollbar;
 use crate::ui::status::control_glyph_label;
 use crate::ui::text::truncate_end;
+use gobby_terminal::layout::ScrollMetrics;
+use gobby_terminal::selection::Selection;
 use ratatui::layout::{Alignment, Direction, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
@@ -73,6 +75,13 @@ pub fn render_panes<W: WorkspaceView>(
         );
 
         content(frame, info.inner_rect, pane_id);
+        if let Some(selection) = chrome
+            .selection
+            .as_ref()
+            .filter(|selection| selection.pane_id == info.id)
+        {
+            highlight_selection(frame, selection, info.inner_rect, metrics, &chrome.palette);
+        }
         render_pane_scrollbar(frame, &info, metrics, &chrome.palette);
 
         let should_dim = !info.is_focused && multi_pane && !terminal_active;
@@ -98,6 +107,29 @@ pub fn render_panes<W: WorkspaceView>(
         &titles,
         frame,
     );
+}
+
+/// Paint the selection background over the inner cells it covers. The
+/// selection stores screen-buffer rows, so `metrics` maps them onto the
+/// viewport the same way the scrollbar does.
+fn highlight_selection(
+    frame: &mut Frame,
+    selection: &Selection,
+    inner: Rect,
+    metrics: ScrollMetrics,
+    palette: &Palette,
+) {
+    if !selection.is_visible() {
+        return;
+    }
+    let buf = frame.buffer_mut();
+    for y in inner.y..inner.y + inner.height {
+        for x in inner.x..inner.x + inner.width {
+            if selection.contains(y - inner.y, x - inner.x, Some(metrics)) {
+                buf[(x, y)].set_bg(palette.surface1);
+            }
+        }
+    }
 }
 
 /// Placeholder body when no pane is open.

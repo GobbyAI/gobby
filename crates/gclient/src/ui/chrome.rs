@@ -12,6 +12,7 @@ use crate::ui::pane_layout;
 use crate::ui::settings::{ClientPrefs, SettingsState};
 use crate::ui::status::Toast;
 use gobby_terminal::layout::{self, PaneInfo, SplitBorder, TileLayout};
+use gobby_terminal::selection::Selection;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use std::collections::HashMap;
 
@@ -230,6 +231,8 @@ pub struct Chrome {
     pub status_message: Option<String>,
     pub view: ViewState,
     pub keymap: Keymap,
+    /// Mouse selection in progress or retained, keyed by layout slot.
+    pub selection: Option<Selection>,
 }
 
 impl Chrome {
@@ -254,6 +257,7 @@ impl Chrome {
             status_message: None,
             view: ViewState::default(),
             keymap: Keymap::defaults(),
+            selection: None,
         }
     }
 
