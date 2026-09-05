@@ -1,5 +1,7 @@
 //! App shell: project selection, roster, and pane views.
 
+pub mod grid;
+
 use crate::frame_source::AttachLocator;
 use crate::theme::{Theme, ThemeKind};
 use crate::Workspace;

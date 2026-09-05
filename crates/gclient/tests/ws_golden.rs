@@ -126,7 +126,7 @@ fn finalized_mid_fragment_drops_stale_slice() {
         "payload": "eyJ0eXBlIjoidGVybWluYWxfb3V0cHV0In0="
     }))
     .unwrap();
-    assert!(ws.pane(pane).has_fragment_accounting());
+    let before = ws.pane(pane).frames_rendered();
     ws.apply_ws(&json!({
         "type": "terminal_attachment_finalized",
         "terminal_id": "term-a",
@@ -136,8 +136,6 @@ fn finalized_mid_fragment_drops_stale_slice() {
     }))
     .unwrap();
     assert!(!ws.pane(pane).is_live());
-    assert!(!ws.pane(pane).has_fragment_accounting());
-    let before = ws.pane(pane).frames_rendered();
     ws.apply_ws(&json!({
         "type": "terminal_ws_fragment",
         "event": "terminal_output",

@@ -1,8 +1,11 @@
 //! Per-pane attach, lease, and copy-mode state.
 
-use std::collections::BTreeMap;
+use std::collections::HashSet;
 
+use super::attach::AttachState;
+use crate::daemon::Generation;
 use crate::frame_source::{FrameSource, PaneFrameSource, ScriptedFrameSource, Transport};
+use gobby_terminal::protocol::FrameData;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PaneId(pub u32);
@@ -20,12 +23,12 @@ pub struct Pane {
     pub id: PaneId,
     pub terminal_id: String,
     pub backend: String,
-    pub attachment_id: String,
     pub expected_host_epoch: String,
     pub control: ControlState,
-    pub lease_generation: u64,
-    pub take_back: bool,
+    // Chrome consumes this presentation mirror directly. AttachState remains
+    // the sole owner of attachment identity, transport, and generations.
     pub live: bool,
+    pub take_back: bool,
     pub frames_rendered: u32,
     pub scroll_offset: u32,
     pub max_scroll: u32,
@@ -34,19 +37,20 @@ pub struct Pane {
     pub copy_seeded_from_history: bool,
     pub required_created_flag: bool,
     pub in_flight_write: Option<u64>,
+    pub(super) pending_input: Option<Vec<u8>>,
     pub client_write_seq: u64,
     pub bracketed_paste: bool,
     pub search_buffer: String,
     pub copy_search: bool,
-    pub fragment: Option<FragmentAcc>,
     pub(super) frame_source: Option<PaneFrameSource>,
     pub(super) fallback_in_flight: bool,
     pub(super) direct_available: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct FragmentAcc {
-    pub parts: BTreeMap<u32, Vec<u8>>,
+    pub(super) attach: AttachState,
+    pub(super) tombstones: HashSet<String>,
+    pub(super) status_message: Option<String>,
+    pub(super) terminating: bool,
+    pub(super) viewport: (u16, u16),
+    pub(super) latest_frame: Option<FrameData>,
 }
 
 impl Pane {
@@ -59,16 +63,15 @@ impl Pane {
         let epoch = epoch.into();
         let mut frame_source = ScriptedFrameSource::new(Transport::Direct);
         frame_source.set_welcome_epoch(epoch.clone());
+        let attachment_id = uuid::Uuid::new_v4().to_string();
         Self {
             id,
             terminal_id: terminal_id.into(),
             backend: backend.into(),
-            attachment_id: uuid::Uuid::new_v4().to_string(),
             expected_host_epoch: epoch,
             control: ControlState::Observe,
-            lease_generation: 0,
-            take_back: false,
             live: true,
+            take_back: false,
             frames_rendered: 0,
             scroll_offset: 0,
             max_scroll: 0,
@@ -77,14 +80,25 @@ impl Pane {
             copy_seeded_from_history: false,
             required_created_flag: false,
             in_flight_write: None,
+            pending_input: None,
             client_write_seq: 0,
             bracketed_paste: false,
             search_buffer: String::new(),
             copy_search: false,
-            fragment: None,
             frame_source: Some(PaneFrameSource::Scripted(frame_source)),
             fallback_in_flight: false,
             direct_available: false,
+            attach: AttachState::Attached {
+                attachment_id,
+                transport: Transport::Direct,
+                generation: Generation(0),
+                lease_generation: 0,
+            },
+            tombstones: HashSet::new(),
+            status_message: None,
+            terminating: false,
+            viewport: (24, 80),
+            latest_frame: None,
         }
     }
 
@@ -96,6 +110,8 @@ impl Pane {
     ) -> Self {
         let mut pane = Self::new(id, terminal_id, backend, epoch);
         pane.frame_source = None;
+        pane.attach = AttachState::Detached;
+        pane.live = false;
         pane
     }
 
@@ -116,7 +132,11 @@ impl Pane {
     }
 
     pub fn is_live(&self) -> bool {
-        self.live
+        matches!(self.attach, AttachState::Attached { .. })
+    }
+
+    pub fn attach_state(&self) -> &AttachState {
+        &self.attach
     }
 
     pub fn has_take_back(&self) -> bool {
@@ -124,19 +144,26 @@ impl Pane {
     }
 
     pub fn attachment_id(&self) -> &str {
-        &self.attachment_id
+        match &self.attach {
+            AttachState::Attached { attachment_id, .. } => attachment_id,
+            AttachState::Detaching {
+                old_attachment_id, ..
+            } => old_attachment_id,
+            AttachState::Detached | AttachState::Attaching { .. } => "",
+        }
     }
 
     pub fn lease_generation(&self) -> u64 {
-        self.lease_generation
+        match self.attach {
+            AttachState::Attached {
+                lease_generation, ..
+            } => lease_generation,
+            _ => 0,
+        }
     }
 
     pub fn frames_rendered(&self) -> u32 {
         self.frames_rendered
-    }
-
-    pub fn has_fragment_accounting(&self) -> bool {
-        self.fragment.is_some()
     }
 
     pub fn in_flight_write(&self) -> Option<u64> {
@@ -168,15 +195,41 @@ impl Pane {
     }
 
     pub fn writable(&self) -> bool {
-        self.live && self.control == ControlState::Held
+        self.is_live() && !self.terminating && self.control == ControlState::Held
     }
 
     pub fn frame_source(&self) -> Option<&PaneFrameSource> {
         self.frame_source.as_ref()
     }
 
+    pub(super) fn frame_source_mut(&mut self) -> Option<&mut PaneFrameSource> {
+        self.frame_source.as_mut()
+    }
+
     pub fn transport(&self) -> Option<Transport> {
-        self.frame_source.as_ref().map(FrameSource::transport)
+        match self.attach {
+            AttachState::Attaching { transport, .. }
+            | AttachState::Attached { transport, .. } => Some(transport),
+            AttachState::Detached | AttachState::Detaching { .. } => {
+                self.frame_source.as_ref().map(FrameSource::transport)
+            }
+        }
+    }
+
+    pub fn status_message(&self) -> Option<&str> {
+        self.status_message.as_deref()
+    }
+
+    pub fn is_terminating(&self) -> bool {
+        self.terminating
+    }
+
+    pub fn latest_frame(&self) -> Option<&FrameData> {
+        self.latest_frame.as_ref()
+    }
+
+    pub fn viewport(&self) -> (u16, u16) {
+        self.viewport
     }
 
     pub fn scripted_source(&self) -> Option<&ScriptedFrameSource> {

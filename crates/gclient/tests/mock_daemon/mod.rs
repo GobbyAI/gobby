@@ -600,6 +600,13 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
             "terminal_id": request.get("terminal_id"),
             "success": true,
         })),
+        "terminal_detach" => Some(json!({
+            "type": "terminal_detach_result",
+            "request_id": request.get("request_id"),
+            "terminal_id": request.get("terminal_id"),
+            "attachment_id": request.get("attachment_id"),
+            "success": true,
+        })),
         "terminal_input" | "terminal_paste" => Some(json!({
             "type": "terminal_write_outcome",
             "attachment_id": request.get("attachment_id"),

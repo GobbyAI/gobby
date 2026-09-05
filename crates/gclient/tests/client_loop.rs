@@ -1,7 +1,494 @@
 //! 3.3.5 select → spawn → attach → terminate against scripted endpoints.
 
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use gobby_client::app::AttachState;
+use gobby_client::app::run_loop::{
+    RENDER_TICK, ReconnectAttempt, ReconnectSupervisor, run_scripted_loop,
+};
+use gobby_client::daemon::{
+    Answer, Daemon, DaemonError, EventReceiver, Generation, KillOutcome, Page, RosterEntry,
+    ScriptedDaemon, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow, WsMessage, WsReply,
+};
 use gobby_client::Workspace;
+use gobby_client::frame_source::{PaneFrameSource, ScriptedFrameSource, Transport};
 use serde_json::json;
+use gobby_client::teardown::TerminalGuard;
+use gobby_client::ui::Chrome;
+use gobby_terminal::input::TerminalKey;
+use gobby_terminal::protocol::{CellData, FrameData, PaneModes, ServerMessage};
+use gobby_terminal::raw_input::RawInputEvent;
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use tokio::sync::mpsc;
+use tokio::time::Instant;
+
+#[derive(Debug)]
+struct ReconnectDaemon {
+    inner: ScriptedDaemon,
+    outcomes: Arc<Mutex<VecDeque<Result<Generation, DaemonError>>>>,
+    calls: Arc<Mutex<Vec<Generation>>>,
+}
+
+impl ReconnectDaemon {
+    fn new(outcomes: impl IntoIterator<Item = Result<Generation, DaemonError>>) -> Self {
+        Self {
+            inner: ScriptedDaemon::new(),
+            outcomes: Arc::new(Mutex::new(outcomes.into_iter().collect())),
+            calls: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn calls(&self) -> Vec<Generation> {
+        self.calls.lock().expect("reconnect calls lock").clone()
+    }
+}
+
+impl Daemon for ReconnectDaemon {
+    async fn list_terminals(
+        &self,
+        project: &str,
+        cursor: Option<&str>,
+    ) -> Result<Page<TerminalRow>, DaemonError> {
+        self.inner.list_terminals(project, cursor).await
+    }
+
+    async fn roster(&self) -> Result<Vec<RosterEntry>, DaemonError> {
+        Daemon::roster(&self.inner).await
+    }
+
+    async fn respond(
+        &self,
+        entry: &str,
+        attention_id: &str,
+        answer: &Answer,
+    ) -> Result<(), DaemonError> {
+        Daemon::respond(&self.inner, entry, attention_id, answer).await
+    }
+
+    async fn mark_seen(&self, entry: &str, attention_id: &str) -> Result<(), DaemonError> {
+        self.inner.mark_seen(entry, attention_id).await
+    }
+
+    async fn spawn(&self, request: SpawnRequest) -> Result<SpawnOutcome, DaemonError> {
+        self.inner.spawn(request).await
+    }
+
+    async fn terminate(&self, terminal_id: &str) -> Result<KillOutcome, DaemonError> {
+        self.inner.terminate(terminal_id).await
+    }
+
+    fn subscribe(&self) -> (SubscribeSnapshot, EventReceiver) {
+        Daemon::subscribe(&self.inner)
+    }
+
+    async fn send(&self, message: WsMessage) -> Result<WsReply, DaemonError> {
+        self.inner.send(message).await
+    }
+
+    async fn notify(&self, message: WsMessage) -> Result<(), DaemonError> {
+        self.inner.notify(message).await
+    }
+
+    async fn reconnect(&self, observed: Generation) -> Result<Generation, DaemonError> {
+        self.calls
+            .lock()
+            .expect("reconnect calls lock")
+            .push(observed);
+        self.outcomes
+            .lock()
+            .expect("reconnect outcomes lock")
+            .pop_front()
+            .expect("scripted reconnect outcome")
+    }
+
+    async fn close(&self, deadline: Instant) -> Result<(), DaemonError> {
+        self.inner.close(deadline).await
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn loop_routes_input_and_frames() {
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-loop", "native", "epoch-loop")
+        .expect("open terminal");
+    ws.force_held(pane);
+    let mut source = ScriptedFrameSource::new(Transport::Direct);
+    source.queue(ServerMessage::Frame(FrameData {
+        cells: "HELLO"
+            .chars()
+            .map(|symbol| CellData {
+                symbol: symbol.to_string(),
+                fg: 0x10,
+                bg: 0,
+                modifier: 0,
+                skip: false,
+                hyperlink: None,
+            })
+            .collect(),
+        width: 5,
+        height: 1,
+        cursor: None,
+        hyperlinks: Vec::new(),
+        graphics: Vec::new(),
+        modes: PaneModes::default(),
+    }));
+    ws.replace_frame_source(pane, PaneFrameSource::Scripted(source))
+        .expect("scripted source");
+
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(pane, "loop");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(256);
+    let daemon = ws.daemon().clone();
+    let (guard, restore_hits) = TerminalGuard::recording();
+
+    let driver = async move {
+        tokio::task::yield_now().await;
+        input_tx
+            .send(RawInputEvent::Key(TerminalKey::new(
+                KeyCode::Char('x'),
+                KeyModifiers::NONE,
+            )))
+            .await
+            .expect("held input");
+        tokio::task::yield_now().await;
+        daemon.publish_event(gobby_client::daemon::DaemonEvent::Message(json!({
+            "type": "attention",
+            "epoch": "attention-loop",
+            "seq": 1,
+            "entry_id": "entry-loop"
+        })));
+        tokio::time::advance(RENDER_TICK * 2).await;
+        tokio::task::yield_now().await;
+        input_tx
+            .send(RawInputEvent::Key(TerminalKey::new(
+                KeyCode::Char('b'),
+                KeyModifiers::CONTROL,
+            )))
+            .await
+            .expect("prefix");
+        input_tx
+            .send(RawInputEvent::Key(TerminalKey::new(
+                KeyCode::Char('Q'),
+                KeyModifiers::SHIFT,
+            )))
+            .await
+            .expect("quit");
+    };
+
+    let (result, ()) = tokio::join!(
+        run_scripted_loop(&mut ws, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    result.expect("loop exits cleanly");
+    drop(guard);
+
+    assert_eq!(restore_hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(ws.daemon().ws_sent_types().iter().any(|kind| kind == "terminal_input"));
+    assert_eq!(ws.attention_entry_ids(), vec!["entry-loop".to_string()]);
+    assert!(ws.pane(pane).frames_rendered() >= 2);
+    let screen: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(screen.contains("HELLO"), "rendered grid: {screen:?}");
+}
+
+#[test]
+fn input_encoder_covers_named_keys() {
+    use gobby_terminal::input::KeyboardProtocol;
+
+    let cases = [
+        (KeyCode::Up, KeyModifiers::NONE, b"\x1b[A".as_slice()),
+        (KeyCode::F(5), KeyModifiers::NONE, b"\x1b[15~".as_slice()),
+        (KeyCode::Up, KeyModifiers::CONTROL, b"\x1b[1;5A".as_slice()),
+        (KeyCode::Char('x'), KeyModifiers::ALT, b"\x1bx".as_slice()),
+    ];
+    for (code, modifiers, expected) in cases {
+        let encoded = gobby_client::input::key_to_bytes(KeyEvent::new(code, modifiers));
+        assert_eq!(encoded.as_deref(), Some(expected));
+    }
+
+    let kitty = gobby_client::input::key_to_bytes_with_protocol(
+        KeyEvent::new(KeyCode::F(5), KeyModifiers::CONTROL),
+        KeyboardProtocol::Kitty { flags: 1 },
+    );
+    assert_eq!(kitty.as_deref(), Some(b"\x1b[15;5~".as_slice()));
+}
+
+#[test]
+fn focus_moves_control_and_settles_pending_input_once() {
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-control", "native", "epoch-control")
+        .expect("open terminal");
+    let attachment = ws.pane(pane).attachment_id().to_string();
+
+    let _ = ws.send_keys(pane, "x");
+    assert_eq!(
+        ws.daemon()
+            .ws_sent_types()
+            .iter()
+            .filter(|kind| kind.as_str() == "terminal_take_control")
+            .count(),
+        1,
+        "the first unheld key must trigger exactly one take-control request"
+    );
+    assert_eq!(
+        ws.daemon()
+            .ws_sent_types()
+            .iter()
+            .filter(|kind| kind.as_str() == "terminal_input")
+            .count(),
+        0,
+        "pending input cannot be written before the lease grant"
+    );
+
+    ws.apply_ws(&json!({
+        "type": "terminal_control_result",
+        "attachment_id": attachment,
+        "granted": true,
+        "reason": "held",
+        "lease_generation": 1
+    }))
+    .expect("apply control grant");
+    assert_eq!(
+        ws.daemon()
+            .ws_sent_types()
+            .iter()
+            .filter(|kind| kind.as_str() == "terminal_input")
+            .count(),
+        1,
+        "the triggering key must settle exactly once after the grant"
+    );
+}
+
+#[test]
+fn write_outcomes_drive_pane_state() {
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-write", "native", "epoch-write")
+        .expect("open terminal");
+    ws.force_held(pane);
+    ws.send_keys(pane, "one").expect("first write");
+    let attachment = ws.pane(pane).attachment_id().to_string();
+    ws.apply_ws(&json!({
+        "type": "terminal_write_outcome",
+        "attachment_id": attachment,
+        "outcome": "indeterminate",
+        "reason": "backend_unknown"
+    }))
+    .expect("apply outcome");
+    assert!(ws.pane(pane).is_uncertain_readonly());
+    assert!(ws.pane(pane).in_flight_write().is_none());
+
+    ws.apply_ws(&json!({
+        "type": "terminal_attachment_finalized",
+        "attachment_id": attachment,
+        "reason": "detach"
+    }))
+    .expect("finalize attachment");
+    ws.apply_ws(&json!({
+        "type": "terminal_write_outcome",
+        "attachment_id": attachment,
+        "outcome": "delivered"
+    }))
+    .expect("ignore tombstoned outcome");
+    assert!(
+        !ws.pane(pane).is_held(),
+        "late write outcomes for a finalized attachment must be ignored"
+    );
+}
+
+#[test]
+fn proxy_fallback_uses_fresh_attachment() {
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-fallback", "native", "epoch-fallback")
+        .expect("open terminal");
+    let old_attachment = ws.pane(pane).attachment_id().to_string();
+    let attach_count = ws
+        .daemon()
+        .ws_sent_types()
+        .iter()
+        .filter(|kind| kind.as_str() == "terminal_attach")
+        .count();
+
+    ws.kill_frame_stream(pane).expect("start detach");
+    assert!(matches!(
+        ws.pane(pane).attach_state(),
+        AttachState::Detaching {
+            old_attachment_id,
+            ..
+        } if old_attachment_id == &old_attachment
+    ));
+    assert!(!ws.pane(pane).writable());
+
+    ws.apply_ws(&json!({
+        "type": "terminal_detach_result",
+        "attachment_id": old_attachment,
+        "success": true
+    }))
+    .expect("settle detach result");
+
+    assert!(matches!(
+        ws.pane(pane).attach_state(),
+        AttachState::Attaching {
+            transport: Transport::Proxy,
+            ..
+        }
+    ));
+    assert_eq!(
+        ws.daemon()
+            .ws_sent_types()
+            .iter()
+            .filter(|kind| kind.as_str() == "terminal_attach")
+            .count(),
+        attach_count + 1,
+        "a matching detach result advances exactly one fresh proxy attach"
+    );
+    let attach = ws
+        .daemon()
+        .ws_sent()
+        .into_iter()
+        .rev()
+        .find(|message| message.get("type").and_then(serde_json::Value::as_str) == Some("terminal_attach"))
+        .expect("proxy attach request");
+    let request_id = attach
+        .get("request_id")
+        .and_then(serde_json::Value::as_str)
+        .expect("proxy request id")
+        .to_string();
+    assert_eq!(attach.get("frame_delivery"), Some(&json!("proxy")));
+    assert_eq!(attach.get("encoding"), Some(&json!("semantic_frame")));
+    assert_ne!(
+        attach.get("attachment_id").and_then(serde_json::Value::as_str),
+        Some(old_attachment.as_str()),
+        "the tombstoned attachment id must never be reused"
+    );
+
+    let fresh_attachment = "fresh-proxy-attachment";
+    ws.apply_ws(&json!({
+        "type": "terminal_attach_result",
+        "request_id": request_id,
+        "attachment_id": fresh_attachment,
+        "success": true,
+        "lease_generation": 0
+    }))
+    .expect("install fresh proxy attachment");
+    assert_eq!(ws.pane(pane).attachment_id(), fresh_attachment);
+    assert_eq!(ws.pane(pane).transport(), Some(Transport::Proxy));
+    assert!(ws.pane(pane).is_observe());
+    assert!(matches!(
+        ws.pane(pane)
+            .scripted_source()
+            .and_then(|source| source.last_client_message()),
+        Some(gobby_terminal::protocol::ClientMessage::SetViewport { rows: 24, cols: 80 })
+    ));
+
+    ws.apply_ws(&json!({
+        "type": "terminal_attachment_finalized",
+        "attachment_id": old_attachment,
+        "reason": "late old finalization"
+    }))
+    .expect("ignore late old finalization");
+    assert_eq!(ws.pane(pane).attachment_id(), fresh_attachment);
+
+    ws.kill_frame_stream(pane).expect("detach fresh proxy");
+    ws.apply_ws(&json!({
+        "type": "terminal_detach_result",
+        "attachment_id": fresh_attachment,
+        "success": true
+    }))
+    .expect("settle second detach");
+    let refused_request = ws
+        .daemon()
+        .ws_sent()
+        .into_iter()
+        .rev()
+        .find(|message| message.get("type").and_then(serde_json::Value::as_str) == Some("terminal_attach"))
+        .and_then(|message| message.get("request_id").and_then(serde_json::Value::as_str).map(str::to_owned))
+        .expect("refused attach request");
+    ws.apply_ws(&json!({
+        "type": "terminal_attach_result",
+        "request_id": refused_request,
+        "success": false,
+        "code": "observer_limit",
+        "reason": "too many observers"
+    }))
+    .expect("settle refused attach");
+    assert!(matches!(ws.pane(pane).attach_state(), AttachState::Detached));
+    assert!(!ws.pane(pane).writable());
+    assert!(ws.pane(pane).frame_source().is_none());
+    assert_eq!(
+        ws.pane(pane).status_message(),
+        Some("observer_limit: too many observers")
+    );
+}
+
+#[tokio::test]
+async fn live_resize_propagates_geometry_by_policy() {
+    let mut ws = Workspace::scripted();
+    let controlled_native = ws
+        .open_terminal("term-controlled", "native", "epoch-resize")
+        .expect("controlled native pane");
+    ws.force_held(controlled_native);
+    let observed_proxy = ws
+        .open_terminal("term-observed", "native", "epoch-resize")
+        .expect("observed native pane");
+    ws.reattach_frames(observed_proxy)
+        .expect("proxy frame source");
+    let controlled_tmux = ws
+        .open_terminal("term-tmux", "tmux", "epoch-resize")
+        .expect("tmux pane");
+    ws.force_held(controlled_tmux);
+
+    ws.propagate_geometry(&[
+        (controlled_native, 0, 0),
+        (controlled_native, 28, 96),
+        (controlled_native, 30, 100),
+        (observed_proxy, 20, 70),
+        (controlled_tmux, 15, 60),
+    ])
+    .await
+    .expect("propagate geometry");
+
+    assert_eq!(ws.pane(controlled_native).viewport(), (30, 100));
+    assert_eq!(ws.pane(observed_proxy).viewport(), (20, 70));
+    assert_eq!(ws.pane(controlled_tmux).viewport(), (15, 60));
+    for pane in [controlled_native, observed_proxy, controlled_tmux] {
+        let (rows, cols) = ws.pane(pane).viewport();
+        assert!(matches!(
+            ws.pane(pane)
+                .scripted_source()
+                .and_then(|source| source.last_client_message()),
+            Some(gobby_terminal::protocol::ClientMessage::SetViewport {
+                rows: sent_rows,
+                cols: sent_cols,
+            }) if sent_rows == rows && sent_cols == cols
+        ));
+    }
+    let resizes: Vec<_> = ws
+        .daemon()
+        .ws_sent()
+        .into_iter()
+        .filter(|message| {
+            message.get("type").and_then(serde_json::Value::as_str) == Some("terminal_resize")
+        })
+        .collect();
+    assert_eq!(resizes.len(), 1, "only a controlled native pane owns PTY geometry");
+    assert_eq!(resizes[0].get("terminal_id"), Some(&json!("term-controlled")));
+    assert_eq!(resizes[0].get("rows"), Some(&json!(30)));
+    assert_eq!(resizes[0].get("cols"), Some(&json!(100)));
+}
 
 #[test]
 fn select_spawn_attach_terminate_loop() {
@@ -9,6 +496,7 @@ fn select_spawn_attach_terminate_loop() {
     ws.select_project("proj-1");
     assert_eq!(ws.project_id(), Some("proj-1"));
 
+    // Reply before event: the reply records intent, but cannot invent a pane.
     ws.daemon_mut().set_spawn_response(json!({
         "success": true,
         "run_id": "run-1",
@@ -18,31 +506,373 @@ fn select_spawn_attach_terminate_loop() {
         "task_id": "task-1",
         "agent_name": "default"
     }))
-    .expect("spawn");
+    .expect("spawn accepted");
+    assert!(ws.pane_for_terminal("term-spawn").is_none());
     let spawn_body = ws.daemon().last_spawn_body();
     assert!(
         spawn_body.get("backend").is_none(),
         "backend selection is 4.2: {spawn_body}"
     );
-    let spawned = ws.pane_for_terminal("term-spawn").expect("reconciled pane");
-    ws.attach_frames(spawned).expect("scripted frame attach");
-    assert!(ws.pane(spawned).frames_rendered() >= 1);
 
-    let keep = ws
-        .open_terminal("term-keep", "native", "epoch-keep")
-        .unwrap();
-    ws.push_frame(keep, "keep-stream");
-    assert!(ws.pane(keep).frames_rendered() >= 1);
+    let created = json!({
+        "type": "terminal_event",
+        "event": "created",
+        "terminal_id": "term-spawn",
+        "terminal": {
+            "terminal_id": "term-spawn",
+            "backend": "native",
+            "state": "live"
+        }
+    });
+    ws.apply_ws(&created).expect("created lifecycle");
+    let spawned = ws.pane_for_terminal("term-spawn").expect("reconciled pane");
+    let pane_count = ws.pane_count();
+    ws.apply_ws(&created).expect("duplicate created lifecycle");
+    assert_eq!(ws.pane_count(), pane_count, "created is idempotent by id");
 
     ws.terminate_terminal("term-spawn").expect("terminate");
     ws.apply_ws(&json!({
+        "type": "terminal_kill_result",
+        "terminal_id": "term-spawn",
+        "success": true
+    }))
+    .expect("kill result");
+    assert!(ws.pane(spawned).is_terminating());
+    assert!(!ws.pane(spawned).writable());
+    ws.apply_ws(&json!({
         "type": "terminal_event",
-        "event": "exited",
+        "event": "killed",
         "terminal_id": "term-spawn"
     }))
-    .unwrap();
+    .expect("killed lifecycle");
     assert!(ws.pane_for_terminal("term-spawn").is_none());
-    assert!(ws.pane(keep).is_live());
-    ws.push_frame(keep, "still-streaming");
-    assert!(ws.pane(keep).frames_rendered() >= 2);
+
+    // Event before reply converges through the same idempotent path.
+    ws.apply_ws(&json!({
+        "type": "terminal_event",
+        "event": "created",
+        "terminal_id": "term-early",
+        "terminal": {
+            "terminal_id": "term-early",
+            "backend": "native",
+            "state": "live"
+        }
+    }))
+    .expect("early created lifecycle");
+    let early_count = ws.pane_count();
+    ws.daemon_mut().set_spawn_response(json!({
+        "success": true,
+        "terminal_id": "term-early"
+    }));
+    ws.spawn_agent(json!({
+        "task_id": "task-1",
+        "agent_name": "default"
+    }))
+    .expect("spawn reply after event");
+    assert_eq!(ws.pane_count(), early_count, "spawn reply is idempotent");
+
+    // A refusal is terminal and visible, with no pane side effect.
+    ws.daemon_mut().set_spawn_response(json!({
+        "success": false,
+        "reason": "capacity exhausted"
+    }));
+    let refused = ws.spawn_agent(json!({"task_id": "task-refused"}));
+    assert!(
+        refused.is_err(),
+        "spawn refusal must create no pane: {refused:?}"
+    );
+    assert!(ws
+        .status_message()
+        .is_some_and(|message| message.contains("capacity exhausted")));
+
+    // A lost create event is recovered by listing; a lost kill event is too.
+    ws.daemon_mut().set_spawn_response(json!({
+        "success": true,
+        "terminal_id": "term-listed"
+    }));
+    ws.spawn_agent(json!({"task_id": "task-listed"}))
+        .expect("spawn awaiting listing");
+    ws.daemon_mut().set_terminal_pages(vec![json!({
+        "items": [{
+            "terminal_id": "term-listed",
+            "backend": "native",
+            "state": "live"
+        }],
+        "next_cursor": null
+    })]);
+    ws.fetch_roster().expect("listing recovers create");
+    let listed = ws
+        .pane_for_terminal("term-listed")
+        .expect("listed pane reconciled");
+    ws.terminate_terminal("term-listed").expect("terminate listed");
+    ws.apply_ws(&json!({
+        "type": "terminal_kill_result",
+        "terminal_id": "term-listed",
+        "success": true
+    }))
+    .expect("kill reply before lost event");
+    assert!(ws.pane(listed).is_terminating());
+    ws.daemon_mut().set_terminal_pages(vec![json!({
+        "items": [],
+        "next_cursor": null
+    })]);
+    ws.fetch_roster().expect("listing recovers kill");
+    assert!(ws.pane_for_terminal("term-listed").is_none());
+}
+
+#[tokio::test]
+async fn reconnect_supervisor_counts_delays_resets_and_cancels() {
+    tokio::time::pause();
+    let unavailable = || DaemonError::Unavailable { retry_after: None };
+    let daemon = ReconnectDaemon::new((0..5).map(|_| Err(unavailable())));
+    let mut supervisor = ReconnectSupervisor::new();
+    let waiter = supervisor.request(Generation(7));
+    let mut elapsed = Vec::new();
+
+    for attempt in 0..5 {
+        let started = Instant::now();
+        let outcome = supervisor.attempt_when_due(&daemon).await;
+        elapsed.push(Instant::now() - started);
+        if attempt < 4 {
+            assert_eq!(
+                outcome,
+                ReconnectAttempt::RetryScheduled {
+                    delay: [250, 500, 1_000, 2_000]
+                        .map(Duration::from_millis)[attempt]
+                }
+            );
+        } else {
+            assert_eq!(outcome, ReconnectAttempt::Exhausted(unavailable()));
+        }
+    }
+
+    for (actual, expected) in elapsed
+        .into_iter()
+        .zip([0, 250, 500, 1_000, 2_000].map(Duration::from_millis))
+    {
+        assert!(actual >= expected && actual <= expected + Duration::from_millis(1));
+    }
+    assert_eq!(daemon.calls(), vec![Generation(7); 5]);
+    assert_eq!(waiter.await.expect("exhaustion waiter"), Err(unavailable()));
+
+    let clamped = ReconnectDaemon::new([
+        Err(DaemonError::Unavailable {
+            retry_after: Some(Duration::from_millis(1)),
+        }),
+        Err(DaemonError::Unavailable {
+            retry_after: Some(Duration::from_secs(30)),
+        }),
+    ]);
+    let cancelled = supervisor.request(Generation(8));
+    assert_eq!(
+        supervisor.attempt_when_due(&clamped).await,
+        ReconnectAttempt::RetryScheduled {
+            delay: Duration::from_millis(250)
+        }
+    );
+    let started = Instant::now();
+    assert_eq!(
+        supervisor.attempt_when_due(&clamped).await,
+        ReconnectAttempt::RetryScheduled {
+            delay: Duration::from_secs(4)
+        }
+    );
+    assert!(
+        (Duration::from_millis(250)..=Duration::from_millis(251))
+            .contains(&(Instant::now() - started))
+    );
+    supervisor.cancel(DaemonError::Protocol {
+        detail: "quit".to_string(),
+    });
+    assert!(matches!(
+        cancelled.await.expect("cancelled waiter"),
+        Err(DaemonError::Protocol { detail }) if detail == "quit"
+    ));
+
+    let reset = ReconnectDaemon::new([Ok(Generation(10)), Ok(Generation(11))]);
+    let first = supervisor.request(Generation(9));
+    assert_eq!(
+        supervisor.attempt_when_due(&reset).await,
+        ReconnectAttempt::Reconnected(Generation(10))
+    );
+    assert_eq!(supervisor.attempt_count(), 1);
+    assert_eq!(
+        supervisor.handshake_failed(unavailable()),
+        ReconnectAttempt::RetryScheduled {
+            delay: Duration::from_millis(250)
+        }
+    );
+    assert_eq!(
+        supervisor.attempt_when_due(&reset).await,
+        ReconnectAttempt::Reconnected(Generation(11))
+    );
+    supervisor.handshake_complete(Generation(11));
+    assert_eq!(first.await.expect("completed waiter"), Ok(Generation(11)));
+    assert_eq!(supervisor.attempt_count(), 0);
+}
+
+#[test]
+fn latched_exit_issues_no_further_requests() {
+    let mut ws = Workspace::scripted();
+    ws.select_project("proj-exit");
+    let pane = ws
+        .open_terminal("term-exit", "native", "epoch-exit")
+        .expect("open terminal");
+    ws.force_held(pane);
+    let sent_before = ws.daemon().ws_sent().len();
+
+    assert!(ws.latch_exit("quit"));
+    assert!(!ws.latch_exit("duplicate quit"));
+    assert_eq!(ws.exit_reason(), Some("quit"));
+    assert!(ws.send_input(pane, b"blocked").is_err());
+    assert!(ws.take_control(pane).is_err());
+    assert!(ws.release_control(pane).is_err());
+    assert!(ws.kill_frame_stream(pane).is_err());
+    assert!(ws.reconnect_daemon_ws().is_err());
+    assert!(ws
+        .spawn_agent(json!({"task_id": "task-after-exit"}))
+        .is_err());
+    assert!(ws.terminate_terminal("term-exit").is_err());
+
+    ws.apply_ws(&json!({
+        "type": "terminal_event",
+        "event": "exited",
+        "terminal_id": "term-exit"
+    }))
+    .expect("post-latch lifecycle is inert");
+    assert_eq!(ws.pane_for_terminal("term-exit"), Some(pane));
+    assert_eq!(ws.daemon().ws_sent().len(), sent_before);
+}
+
+#[tokio::test]
+async fn reconnect_episode_rolls_generation_forward() {
+    tokio::time::pause();
+    let unavailable = || DaemonError::Unavailable { retry_after: None };
+    let daemon = ReconnectDaemon::new([Err(unavailable()), Ok(Generation(3))]);
+    let mut supervisor = ReconnectSupervisor::new();
+    let first = supervisor.request(Generation(1));
+    assert_eq!(
+        supervisor.attempt_when_due(&daemon).await,
+        ReconnectAttempt::RetryScheduled {
+            delay: Duration::from_millis(250)
+        }
+    );
+
+    let rolled = supervisor.request(Generation(2));
+    assert_eq!(
+        supervisor.attempt_when_due(&daemon).await,
+        ReconnectAttempt::Reconnected(Generation(3))
+    );
+    assert_eq!(daemon.calls(), vec![Generation(1), Generation(2)]);
+    assert_eq!(supervisor.attempt_count(), 2);
+
+    supervisor.handshake_complete(Generation(3));
+    assert_eq!(first.await.expect("first waiter"), Ok(Generation(3)));
+    assert_eq!(rolled.await.expect("rolled waiter"), Ok(Generation(3)));
+    assert_eq!(supervisor.attempt_count(), 0);
+}
+
+#[tokio::test]
+async fn detach_deadlines_recover_through_the_supervisor() {
+    tokio::time::pause();
+    let mut ws = Workspace::scripted();
+    let first = ws
+        .open_terminal("term-detach-1", "native", "epoch-detach")
+        .expect("first pane");
+    let second = ws
+        .open_terminal("term-detach-2", "native", "epoch-detach")
+        .expect("second pane");
+    ws.kill_frame_stream(first).expect("detach first");
+    ws.kill_frame_stream(second).expect("detach second");
+    let daemon = ReconnectDaemon::new([Ok(Generation(2))]);
+    let mut supervisor = ReconnectSupervisor::new();
+
+    assert_eq!(
+        ws.submit_expired_detaches(&mut supervisor, Instant::now()),
+        0
+    );
+    tokio::time::advance(Duration::from_secs(2)).await;
+    assert_eq!(
+        ws.submit_expired_detaches(&mut supervisor, Instant::now()),
+        2
+    );
+    assert_eq!(
+        ws.submit_expired_detaches(&mut supervisor, Instant::now()),
+        0,
+        "a timed-out attachment submits at most one reconnect intent"
+    );
+    assert_eq!(
+        supervisor.attempt_when_due(&daemon).await,
+        ReconnectAttempt::Reconnected(Generation(2))
+    );
+    assert_eq!(daemon.calls().len(), 1, "one coalesced reconnect episode");
+    supervisor.handshake_complete(Generation(2));
+}
+
+#[test]
+fn daemon_loss_renders_read_only_until_recovery() {
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-loss", "native", "epoch-loss")
+        .expect("pane");
+    ws.force_held(pane);
+    let rendered_before = ws.pane(pane).frames_rendered();
+    let sent_before = ws.daemon().ws_sent().len();
+
+    ws.observe_daemon_disconnect(
+        Generation(1),
+        DaemonError::Unavailable { retry_after: None },
+    );
+    assert!(!ws.pane(pane).writable());
+    assert!(ws.pane(pane).is_live(), "direct attachment stays renderable");
+    ws.push_frame(pane, "direct frame after daemon loss");
+    assert_eq!(ws.pane(pane).frames_rendered(), rendered_before + 1);
+    assert!(ws.send_input(pane, b"blocked").is_err());
+    assert!(ws.take_control(pane).is_err());
+    assert_eq!(ws.daemon().ws_sent().len(), sent_before);
+    assert!(ws
+        .pane(pane)
+        .status_message()
+        .is_some_and(|message| message.contains("unavailable")));
+}
+
+#[test]
+fn control_tombstone_retires_the_attachment() {
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-tombstone", "native", "epoch-tombstone")
+        .expect("pane");
+    let old_attachment = ws.pane(pane).attachment_id().to_string();
+
+    let retired = ws
+        .retire_indeterminate_control(pane, Instant::now())
+        .expect("indeterminate control retires the attachment");
+    assert_eq!(retired.0, "term-tombstone");
+    assert_eq!(retired.1, old_attachment);
+    assert!(!ws.pane(pane).is_live());
+    assert!(!ws.pane(pane).writable());
+
+    ws.apply_ws(&json!({
+        "type": "terminal_attachment_finalized",
+        "attachment_id": old_attachment,
+        "reason": "control result indeterminate"
+    }))
+    .expect("finalize old attachment");
+    ws.reattach_frames(pane).expect("fresh attachment");
+    let fresh_attachment = ws.pane(pane).attachment_id().to_string();
+    assert_ne!(fresh_attachment, old_attachment);
+    ws.take_control(pane).expect("take fresh control");
+    let take_attachments: Vec<_> = ws
+        .daemon()
+        .ws_sent()
+        .into_iter()
+        .filter(|message| message.get("type") == Some(&json!("terminal_take_control")))
+        .filter_map(|message| {
+            message
+                .get("attachment_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .collect();
+    assert_eq!(take_attachments, vec![fresh_attachment]);
 }
