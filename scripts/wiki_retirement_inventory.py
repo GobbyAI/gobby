@@ -69,7 +69,7 @@ class Root(Record):
 
 
 class StoreTarget(Record):
-    kind: Literal["postgres", "qdrant", "falkor", "rule", "variable", "job"]
+    kind: Literal["postgres", "qdrant", "falkor", "rule", "variable", "job", "config", "discovery"]
     name: str
     digest: str
     count: int
@@ -503,6 +503,8 @@ def validate_inventory(inventory: Inventory) -> None:
             (target.kind == "postgres" and target.name == "wiki_schema")
             or (target.kind == "qdrant" and COLLECTION.fullmatch(target.name))
             or (target.kind == "falkor" and target.name == GRAPH)
+            or (target.kind == "config" and target.name == "wiki_configuration")
+            or (target.kind == "discovery" and target.name == "gobby-wiki")
             or (target.kind in {"rule", "variable", "job"} and bool(target.name))
         )
         if not valid:

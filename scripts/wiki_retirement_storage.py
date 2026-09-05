@@ -21,6 +21,7 @@ from qdrant_client import QdrantClient, models
 from redis import Redis
 
 from gobby.storage.hub.postgres import PostgresHubDatabase
+from scripts.wiki_retirement_config import WikiConfiguration, target_kind
 from scripts.wiki_retirement_inventory import (
     COLLECTION,
     GRAPH,
@@ -134,6 +135,7 @@ class Datastores:
         self.falkor_url = falkor_url
         self.isolated = isolated
         self._identities: dict[str, str] | None = None
+        self.configuration = WikiConfiguration(database_url, schema, self.pg)
 
     def close(self) -> None:
         self.pg.close()
@@ -268,6 +270,7 @@ class Datastores:
             )
         ]
         scopes = self._wiki_scopes()
+        targets.extend(self.configuration.inventory(identities["postgres"]))
         for kind, table in REGISTRY_TABLES.items():
             for row in self._table_rows(table):
                 if WIKI_NAME.search(str(row.get("name", ""))):
@@ -341,6 +344,8 @@ class Datastores:
         return canonical(snapshot)
 
     def capture(self, target: StoreTarget) -> bytes | None:
+        if target.kind in {"config", "discovery"}:
+            return self.configuration.capture(target_kind(target), target.name)
         if target.kind == "postgres":
             data = self._pg_snapshot()
             return None if data == b"{}" else data
@@ -460,6 +465,9 @@ class Datastores:
             raise RetirementError("Canonical schema 426 and exact five-table absence are required")
 
     def delete(self, target: StoreTarget) -> None:
+        if target.kind in {"config", "discovery"}:
+            self.configuration.delete(target)
+            return
         if target.kind == "postgres":
             from gobby.storage.schema_contract import apply_schema
 
@@ -528,6 +536,9 @@ class Datastores:
             raise RetirementError("Restoration requires explicit isolated connections")
         current = self.capture(target)
         if current is not None and sha(current) == target.digest:
+            return
+        if target.kind in {"config", "discovery"}:
+            self.configuration.restore(target, data)
             return
         if target.kind == "postgres":
             value = json.loads(data)
