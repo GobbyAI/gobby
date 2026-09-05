@@ -18,7 +18,7 @@ pytest_plugins = ["tests.fixtures.postgres", "tests.review_coverage_helpers"]
 
 
 def _ensure_isolated_bootstrap() -> None:
-    """Write files_home (+ optional database_url) when GOBBY_HOME is empty.
+    """Write files_home when GOBBY_HOME is empty.
 
     Pre-push points GOBBY_HOME at a fresh temp dir. Session-start and
     installer code call require_files_home() / load_bootstrap() and must
@@ -44,9 +44,9 @@ def _ensure_isolated_bootstrap() -> None:
         "datastore_mode: local\n",
         f"files_home: {files_home}\n",
     ]
-    database_url = os.environ.get("GOBBY_POSTGRES_TEST_DSN") or os.environ.get("DATABASE_URL")
-    if database_url:
-        lines.append(f"database_url: {database_url}\n")
+    # DATABASE_URL belongs to the PostgreSQL test fixtures. Publishing it as a
+    # daemon bootstrap makes the live-hub guard mistake this test DB for the
+    # operator's hub. Tests needing a configured daemon seed its bootstrap.
     bootstrap.write_text("".join(lines), encoding="utf-8")
     bootstrap.chmod(0o600)
 
