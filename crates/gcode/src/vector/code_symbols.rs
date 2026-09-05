@@ -7,6 +7,7 @@ mod types;
 
 pub use embedding::{EmbeddingSource, embedding_source_from_context, probe_embedding_dim};
 pub use lifecycle::CodeSymbolVectorLifecycle;
+pub(crate) use qdrant::count_symbol_vectors;
 pub use qdrant::{
     VectorOrphanCleanup, cleanup_orphan_file_vectors, collection_name, delete_symbol_vectors,
 };

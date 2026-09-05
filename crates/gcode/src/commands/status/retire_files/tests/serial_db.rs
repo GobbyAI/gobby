@@ -695,6 +695,53 @@ fn exact_retirement_roundtrip_retries_interrupted_sql_deletion() -> anyhow::Resu
     assert_eq!(points["result"][0]["id"], fixture.kept_symbol);
     let completed: Receipt = serde_json::from_slice(&fs::read(&fixture.receipt_path)?)?;
     assert!(completed.complete);
+    let completed_receipt = fs::read(&fixture.receipt_path)?;
+    // A completed SQL deletion cannot admit newly recreated projections, even
+    // when their exact identities were listed in the original manifest.
+    let project = &fixture.manifest.project_id;
+    let retired = &fixture.manifest.files[0].versions[0];
+    fixture.graph()?.query(&format!("MATCH (s:CodeSymbol {{project:'{project}',id:'{}'}}) CREATE (s)-[:INHERITS {{source_file_path:'wiki/page.md',content_hash:'{}'}}]->(s)", fixture.kept_symbol, retired.content_hash), None)?;
+    assert!(
+        run(
+            &fixture.ctx,
+            &fixture.manifest_path,
+            true,
+            Some(&fixture.receipt_path)
+        )
+        .is_err(),
+        "detached facts of an already deleted SQL version must refuse preflight"
+    );
+    assert_eq!(fs::read(&fixture.receipt_path)?, completed_receipt);
+    fixture.graph()?.query(&format!("MATCH (s:CodeSymbol {{project:'{project}',id:'{}'}})-[r:INHERITS]->(s) WHERE r.source_file_path='wiki/page.md' DELETE r", fixture.kept_symbol), None)?;
+    reqwest::blocking::Client::new()
+        .put(format!("{}/points?wait=true", fixture.vector_collection_url()?))
+        .json(&json!({"points":[{"id":retired.symbol_ids[0],"vector":[1.0,0.0],"payload":{"project_id":project,"file_path":"wiki/page.md"}}]}))
+        .send()?.error_for_status()?;
+    let error = run(
+        &fixture.ctx,
+        &fixture.manifest_path,
+        true,
+        Some(&fixture.receipt_path),
+    )
+    .expect_err("recreated exact vector must refuse completed-retry preflight");
+    assert!(error.to_string().contains("vector points"), "{error:#}");
+    assert_eq!(fs::read(&fixture.receipt_path)?, completed_receipt);
+    let qdrant = fixture.ctx.qdrant.as_ref().context("fixture qdrant")?;
+    crate::vector::code_symbols::delete_symbol_vectors(qdrant, project, &retired.symbol_ids)?;
+    assert_eq!(
+        crate::vector::code_symbols::count_symbol_vectors(
+            qdrant,
+            project,
+            &[fixture.kept_symbol.clone()]
+        )?,
+        1
+    );
+    run(
+        &fixture.ctx,
+        &fixture.manifest_path,
+        true,
+        Some(&fixture.receipt_path),
+    )?;
     // A completed receipt never admits a new content version on retry.
     seed_content(
         &mut fixture.conn,

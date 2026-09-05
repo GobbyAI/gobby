@@ -121,7 +121,13 @@ pub(crate) fn run(
     // Inventory every graph scope before the first mutation, including files
     // later in the manifest. Repeat this check under the same project lock.
     for file in &manifest.files {
-        validate_graph(ctx, file)?;
+        let current = receipt.files[&file.file_path]
+            .versions
+            .iter()
+            .filter(|(_, state)| state.as_str() == "ready")
+            .map(|(id, _)| id.as_str())
+            .collect();
+        validate_projections(ctx, file, &current)?;
     }
     let receipt_path = receipt_path.context("--apply requires --receipt")?;
     validate_receipt_path(receipt_path, &receipt)?;
@@ -335,7 +341,12 @@ fn retire_file(
     receipt_path: &Path,
 ) -> anyhow::Result<()> {
     validate_context(conn, ctx, manifest)?;
-    validate_graph(ctx, file)?;
+    let candidates = validate_file(conn, manifest, file)?;
+    let current = candidates
+        .iter()
+        .map(|candidate| candidate.id.as_str())
+        .collect();
+    validate_projections(ctx, file, &current)?;
     ensure!(
         ctx.falkordb.is_some(),
         "graph backend is required to verify exact retirement"
@@ -344,7 +355,6 @@ fn retire_file(
         ctx.qdrant.is_some(),
         "vector backend is required to verify exact retirement"
     );
-    let candidates = validate_file(conn, manifest, file)?;
     for candidate in candidates {
         // Re-read every remaining identity and symbol membership under the GC
         // lock; a partial retry never admits a newly indexed content version.
@@ -394,10 +404,15 @@ fn retire_file(
     write_receipt(receipt_path, receipt)
 }
 
-fn validate_graph(ctx: &Context, file: &RetiredFile) -> anyhow::Result<()> {
+fn validate_projections(
+    ctx: &Context,
+    file: &RetiredFile,
+    current: &BTreeSet<&str>,
+) -> anyhow::Result<()> {
     let symbols = file
         .versions
         .iter()
+        .filter(|version| current.contains(version.id.as_str()))
         .flat_map(|version| {
             version
                 .symbol_ids
@@ -408,12 +423,36 @@ fn validate_graph(ctx: &Context, file: &RetiredFile) -> anyhow::Result<()> {
     let hashes = file
         .versions
         .iter()
-        .filter(|version| !version.is_tombstone())
+        .filter(|version| current.contains(version.id.as_str()) && !version.is_tombstone())
         .map(|version| version.content_hash.clone())
         .collect();
     code_graph::with_code_graph(ctx, |graph| {
         graph.validate_file_retirement(&file.file_path, &symbols, &hashes)
-    })
+    })?;
+    // A completed receipt never authorizes projections recreated after their
+    // SQL content was deleted. Count exact IDs only; retrieve no vector data.
+    let absent_symbols = file
+        .versions
+        .iter()
+        .filter(|version| !current.contains(version.id.as_str()))
+        .flat_map(|version| version.symbol_ids.iter().cloned())
+        .collect::<Vec<_>>();
+    if !absent_symbols.is_empty() {
+        let qdrant = ctx
+            .qdrant
+            .as_ref()
+            .context("vector backend is required to verify retirement")?;
+        ensure!(
+            crate::vector::code_symbols::count_symbol_vectors(
+                qdrant,
+                &ctx.project_id,
+                &absent_symbols
+            )? == 0,
+            "retired content still has vector points: {}",
+            file.file_path
+        );
+    }
+    Ok(())
 }
 
 fn validate_receipt_path(path: &Path, receipt: &Receipt) -> anyhow::Result<()> {
