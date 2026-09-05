@@ -33,6 +33,7 @@ from gobby.storage.agents import TerminalAction
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.sessions import SessionManager
+    from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
 
 
@@ -98,6 +99,7 @@ class SessionCoordinator:
         session_storage: HookSessionManager | None = None,
         message_processor_resolver: Callable[[], Any | None] | None = None,
         agent_run_manager: LocalAgentRunManager | None = None,
+        task_manager: LocalTaskManager | None = None,
         worktree_manager: LocalWorktreeManager | None = None,
         logger: logging.Logger | None = None,
         completion_registry: Any | None = None,
@@ -114,6 +116,7 @@ class SessionCoordinator:
             session_storage: SessionManager for session queries
             message_processor_resolver: Resolves the current SessionMessageProcessor
             agent_run_manager: LocalAgentRunManager for agent run completion
+            task_manager: LocalTaskManager for bound task state
             worktree_manager: LocalWorktreeManager for worktree release
             logger: Optional logger instance
             completion_registry: CompletionEventRegistry for notifying on agent completion
@@ -121,6 +124,7 @@ class SessionCoordinator:
         self._session_manager = session_storage
         self._message_processor_resolver = message_processor_resolver or (lambda: None)
         self._agent_run_manager = agent_run_manager
+        self._task_manager = task_manager
         self._worktree_manager = worktree_manager
         self.logger = logger or logging.getLogger(__name__)
         self._completion_registry = completion_registry
@@ -727,49 +731,55 @@ class SessionCoordinator:
                         exc_info=True,
                     )
 
-            incomplete_workflow_error = self._incomplete_step_workflow_error(session_id)
-            if incomplete_workflow_error:
-                if tool_calls_count == 0 and turns_used == 0:
-                    incomplete_workflow_error = (
-                        f"{incomplete_workflow_error}\n\n{_format_no_activity_error(result)}"
+            task_close_result = self._closed_task_result(agent_run)
+            if task_close_result is not None:
+                result = (
+                    f"{result.rstrip()}\n\n{task_close_result}" if result else task_close_result
+                )
+            else:
+                incomplete_workflow_error = self._incomplete_step_workflow_error(session_id)
+                if incomplete_workflow_error:
+                    if tool_calls_count == 0 and turns_used == 0:
+                        incomplete_workflow_error = (
+                            f"{incomplete_workflow_error}\n\n{_format_no_activity_error(result)}"
+                        )
+                    updated_run = self._terminate_agent_run(
+                        run_id=agent_run_id,
+                        agent_run=agent_run,
+                        action="fail",
+                        reason=incomplete_workflow_error,
+                        result_prefix=result,
+                        tool_calls_count=tool_calls_count,
+                        turns_used=turns_used,
+                        session_id=session_id,
                     )
-                updated_run = self._terminate_agent_run(
-                    run_id=agent_run_id,
-                    agent_run=agent_run,
-                    action="fail",
-                    reason=incomplete_workflow_error,
-                    result_prefix=result,
-                    tool_calls_count=tool_calls_count,
-                    turns_used=turns_used,
-                    session_id=session_id,
-                )
-                if updated_run is None:
+                    if updated_run is None:
+                        return
+                    self.logger.warning(
+                        "Agent run %s marked as failed: incomplete step workflow on session end",
+                        agent_run_id,
+                    )
                     return
-                self.logger.warning(
-                    "Agent run %s marked as failed: incomplete step workflow on session end",
-                    agent_run_id,
-                )
-                return
 
-            # Guard: agent exited cleanly but did nothing — treat as error
-            if tool_calls_count == 0 and turns_used == 0:
-                updated_run = self._terminate_agent_run(
-                    run_id=agent_run_id,
-                    agent_run=agent_run,
-                    action="fail",
-                    reason=_format_no_activity_error(result),
-                    result_prefix=result,
-                    tool_calls_count=tool_calls_count,
-                    turns_used=turns_used,
-                    session_id=session_id,
-                )
-                if updated_run is None:
+                # Guard: agent exited cleanly but did nothing — treat as error
+                if tool_calls_count == 0 and turns_used == 0:
+                    updated_run = self._terminate_agent_run(
+                        run_id=agent_run_id,
+                        agent_run=agent_run,
+                        action="fail",
+                        reason=_format_no_activity_error(result),
+                        result_prefix=result,
+                        tool_calls_count=tool_calls_count,
+                        turns_used=turns_used,
+                        session_id=session_id,
+                    )
+                    if updated_run is None:
+                        return
+                    self.logger.warning(
+                        "Agent run %s marked as failed: no activity detected (0 tool calls, 0 turns)",
+                        agent_run_id,
+                    )
                     return
-                self.logger.warning(
-                    "Agent run %s marked as failed: no activity detected (0 tool calls, 0 turns)",
-                    agent_run_id,
-                )
-                return
 
             # Mark as success
             updated_run = self._terminate_agent_run(
@@ -793,6 +803,30 @@ class SessionCoordinator:
 
         except Exception as e:
             self.logger.error("Failed to complete agent run %s: %s", agent_run_id, e)
+
+    def _closed_task_result(self, agent_run: Any) -> str | None:
+        """Return a canonical result suffix when the run's bound task is closed."""
+        task_id = getattr(agent_run, "task_id", None)
+        if self._task_manager is None or not isinstance(task_id, str) or not task_id:
+            return None
+        try:
+            task = self._task_manager.get_task(task_id)
+        except Exception as e:
+            self.logger.warning(
+                "Failed to load bound task %s while completing agent run %s: %s",
+                task_id,
+                getattr(agent_run, "id", "<unknown>"),
+                e,
+            )
+            return None
+        if task.closed_at is None:
+            return None
+        task_ref = f"#{task.seq_num}" if task.seq_num is not None else task.id[:8]
+        return (
+            "Task completion: "
+            f"task={task_ref}; closed_at={task.closed_at.isoformat()}; "
+            f"commit_sha={task.closed_commit_sha or '<none>'}"
+        )
 
     def _agent_run_notification_status(
         self,
