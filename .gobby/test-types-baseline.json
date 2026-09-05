@@ -761,16 +761,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/agents/watchdog/test_codex_reader.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 46,
-      "message": "Argument 2 to \"_write\" has incompatible type \"list[dict[str, object]]\"; expected \"list[dict[str, object] | str]\"",
-      "occurrences": 1,
-      "path": "tests/agents/watchdog/test_codex_reader.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/agents/watchdog/test_droid_reader.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 155,
