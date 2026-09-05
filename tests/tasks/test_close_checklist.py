@@ -16,6 +16,7 @@ from gobby.tasks.transcript_evidence import (
     TranscriptEvidence,
     TranscriptValidationRun,
     TranscriptValidationSegment,
+    merge_transcript_evidence,
 )
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
@@ -88,6 +89,75 @@ def test_no_edit_task_skips_validation_for_any_category() -> None:
 
     assert gate.status == "skipped"
     assert gate.details["skip_reason"] == "no-edit"
+
+
+@pytest.mark.parametrize("category,has_edits", [("manual", True), ("code", False)])
+@pytest.mark.parametrize("outcome", ["success", "failure", "unknown"])
+def test_exempt_review_retains_command_evidence(
+    category: str, has_edits: bool, outcome: str
+) -> None:
+    evidence = TranscriptEvidence(
+        validation_runs=(_run(1, categories=("format",), command="npx prettier --check web"),),
+        command_runs=(_run(2, outcome=outcome, categories=(), command="npm ci"),),
+        sessions=("session-1",),
+    )
+    gate = evaluate_validation_commands(
+        task_category=category, evidence=evidence, has_attributed_edits=has_edits
+    )
+    assert gate.status == "skipped"
+    assert gate.details["sessions"] == ["session-1"]
+    assert gate.details["latest_runs"][0]["command"] == "npx prettier --check web"
+    if outcome == "unknown":
+        assert len(gate.details["latest_runs"]) == 1
+        assert {"command": "npm ci", "reason": "unknown outcome"} in gate.details["uncredited_runs"]
+    else:
+        run = gate.details["latest_runs"][1]
+        assert (run["core_command"], run["category"], run["outcome"]) == ("npm ci", None, outcome)
+    assert "test" not in gate.details["latest_outcomes"]
+
+
+@pytest.mark.parametrize("category", ["code", "config"])
+def test_uncategorized_success_never_satisfies_required_validation(category: str) -> None:
+    gate = evaluate_validation_commands(
+        task_category=category,
+        evidence=TranscriptEvidence(command_runs=(_run(1, categories=(), command="npm ci"),)),
+        has_attributed_edits=True,
+    )
+    assert gate.status == "failed"
+    assert gate.details["latest_outcomes"] == {}
+
+
+@pytest.mark.parametrize("rerun", [False, True])
+def test_review_only_commands_keep_merge_freshness_and_wrapper_diagnostics(rerun: bool) -> None:
+    owner = TranscriptEvidence(command_runs=(_run(1, categories=(), command="npm ci"),))
+    later = TranscriptEvidence(
+        command_runs=(
+            _run(3, categories=(), command="npm ci; echo done"),
+            _run(4, categories=(), command="unrecognized-check", outcome="unknown"),
+        ),
+        edits=(replace(_edit(2), session_id="session-2"),),
+    )
+    if rerun:
+        later = replace(
+            later, command_runs=(*later.command_runs, _run(5, categories=(), command="npm ci"))
+        )
+    evidence = merge_transcript_evidence(owner, later)
+    gate = evaluate_validation_commands(
+        task_category="manual", evidence=evidence, has_attributed_edits=True
+    )
+    assert gate.status == "skipped"
+    assert {"command": "npm ci", "reason": "stale after a later task edit"} in gate.details[
+        "uncredited_runs"
+    ]
+    assert {"command": "unrecognized-check", "reason": "unknown outcome"} in gate.details[
+        "uncredited_runs"
+    ]
+    wrapped = next(run for run in gate.details["latest_runs"] if run["wrapped"])
+    assert wrapped["command"] == "npm ci; echo done"
+    assert wrapped["core_command"] is None
+    assert any(item["reason"] == "wrapped" for item in gate.details["uncredited_runs"])
+    credited = [run for run in gate.details["latest_runs"] if not run["wrapped"]]
+    assert [run["core_command"] for run in credited] == (["npm ci"] if rerun else [])
 
 
 def test_config_accepts_any_clean_validation_command() -> None:

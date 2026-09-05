@@ -35,13 +35,18 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as notifications
 from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
+from gobby.sessions.machine_scope import RemoteSessionOwnershipError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, Task, TaskHasOpenChildrenError
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
 from gobby.tasks.tdd_evidence import TddEvidenceResult
-from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
+from gobby.tasks.transcript_evidence import (
+    TranscriptEvidence,
+    TranscriptEvidenceUnavailable,
+    TranscriptValidationRun,
+)
 from gobby.tasks.validation import TaskValidator
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
@@ -279,6 +284,11 @@ async def test_empty_task_edit_entry_allows_no_edit_research_close() -> None:
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
         patch.object(lifecycle, "collect_commit_diff_text", return_value=""),
+        patch.object(
+            lifecycle,
+            "_derive_close_transcript_evidence",
+            AsyncMock(return_value=TranscriptEvidence()),
+        ),
         patch.object(lifecycle, "evaluate_criteria_review", review),
     ):
         evaluation = await _evaluate_close(
@@ -295,6 +305,72 @@ async def test_empty_task_edit_entry_allows_no_edit_research_close() -> None:
     assert evaluation.had_attributed_edits is False
     assert evaluation.commit_shas == []
     review.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "failure", "missing", "unavailable", "remote"])
+async def test_manual_close_supplies_available_command_evidence_to_review(outcome: str) -> None:
+    task = replace(_task(criteria="npm ci and focused Prettier check succeed."), category="manual")
+    ctx = _ctx(task, validator=object())
+    ctx.session_var_manager = cast(
+        SessionVariableManager,
+        SimpleNamespace(get_variables=lambda _session_id: {"task_edited_files": {task.id: []}}),
+    )
+    evidence = _successful_transcript(task, command="npx prettier --check web")
+    run = replace(evidence.validation_runs[0], categories=("format",))
+    install = replace(run, command="npm ci", categories=(), order=run.order + 1)
+    if outcome == "failure":
+        install = replace(install, outcome="failure", exit_code=1)
+    evidence = replace(evidence, validation_runs=(run,), command_runs=(install,))
+    if outcome == "missing":
+        evidence = TranscriptEvidence(sessions=(task.claimed_by_session_id or "",))
+    derive = AsyncMock(return_value=evidence)
+    if outcome == "unavailable":
+        derive.side_effect = TranscriptEvidenceUnavailable(
+            "Transcript missing", source="codex", attempted_paths=("/missing.jsonl",)
+        )
+    elif outcome == "remote":
+        derive.side_effect = RemoteSessionOwnershipError("Transcript belongs to another machine")
+    review = AsyncMock(
+        return_value=ValidationResult(can_close=False, error_type="agentic_review_required")
+    )
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(lifecycle, "collect_commit_diff_text", return_value=""),
+        patch.object(lifecycle, "_derive_close_transcript_evidence", derive),
+        patch.object(lifecycle, "active_validation_backoff") as backoff,
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="Restored dependencies.",
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+        )
+    derive.assert_awaited_once()
+    backoff.assert_not_called()
+    review.assert_awaited_once()
+    assert evaluation.error == "agentic_review_required"
+    assert next(gate for gate in evaluation.gates if gate.item == 10).status == "skipped"
+    facts = review.call_args.kwargs["checklist_facts"]["validation_commands"]
+    assert facts == evaluation.extra["validation_commands"]
+    if outcome in {"success", "failure"}:
+        assert [(item["core_command"], item["outcome"]) for item in facts["latest_runs"]] == [
+            ("npx prettier --check web", "success"),
+            ("npm ci", outcome),
+        ]
+    else:
+        assert facts["latest_runs"] == []
+        if outcome == "unavailable":
+            assert "Transcript missing" in facts["degraded_capabilities"][0]
+        elif outcome == "remote":
+            assert "another machine" in facts["degraded_capabilities"][0]
 
 
 @pytest.mark.asyncio
@@ -320,6 +396,11 @@ async def test_no_work_disposition_skips_delivery_gates_but_runs_review() -> Non
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
         patch.object(lifecycle, "collect_commit_diff_text", return_value=""),
+        patch.object(
+            lifecycle,
+            "_derive_close_transcript_evidence",
+            AsyncMock(return_value=TranscriptEvidence()),
+        ),
         patch.object(lifecycle, "evaluate_criteria_review", review),
     ):
         evaluation = await _evaluate_close(

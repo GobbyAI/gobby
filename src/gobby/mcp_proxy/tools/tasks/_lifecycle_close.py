@@ -63,6 +63,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._task_scope import evaluate_task_scope
+from gobby.sessions.machine_scope import RemoteSessionOwnershipError
 from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.acceptance_artifacts import (
@@ -555,7 +556,8 @@ async def _evaluate_close(
         ),
         item=10,
     )
-    if command_gate.status != "skipped":
+    commands_required = command_gate.status != "skipped"
+    if commands_required:
         backoff = active_validation_backoff(task, ctx)
         if backoff is not None:
             return evaluation.fail(
@@ -565,6 +567,7 @@ async def _evaluate_close(
                 backoff.message or "Validation infrastructure is unavailable.",
                 extra=backoff.extra,
             )
+    if commands_required or (task.validation_criteria and not task.is_escalated):
         try:
             transcript = await _derive_close_transcript_evidence(
                 ctx,
@@ -575,23 +578,34 @@ async def _evaluate_close(
                 task_edited_files=evaluation.edited_paths,
                 repo_path=repo_path,
             )
-        except TranscriptEvidenceUnavailable as exc:
-            infra = record_validation_infrastructure_failure(
-                task,
-                ctx,
-                resolved_id=resolved_id,
-                message=(
-                    f"Task-close transcript evidence is unavailable: {exc}. "
-                    f"Attempted paths: {', '.join(exc.attempted_paths) or 'none'}."
-                ),
-                error_type="validation_evidence_unavailable",
+        except (TranscriptEvidenceUnavailable, RemoteSessionOwnershipError) as exc:
+            if commands_required and isinstance(exc, RemoteSessionOwnershipError):
+                raise
+            attempted_paths = (
+                exc.attempted_paths if isinstance(exc, TranscriptEvidenceUnavailable) else ()
             )
-            return evaluation.fail(
-                10,
-                "validation_commands",
-                infra.error_type or "validation_evidence_unavailable",
-                infra.message or str(exc),
-                extra=infra.extra,
+            message = (
+                f"Task-close transcript evidence is unavailable: {exc}. "
+                f"Attempted paths: {', '.join(attempted_paths) or 'none'}."
+            )
+            if commands_required:
+                infra = record_validation_infrastructure_failure(
+                    task,
+                    ctx,
+                    resolved_id=resolved_id,
+                    message=message,
+                    error_type="validation_evidence_unavailable",
+                )
+                return evaluation.fail(
+                    10,
+                    "validation_commands",
+                    infra.error_type or "validation_evidence_unavailable",
+                    infra.message or str(exc),
+                    extra=infra.extra,
+                )
+            transcript = TranscriptEvidence(
+                attempted_paths=tuple(attempted_paths),
+                degraded_capabilities=(message,),
             )
         evaluation.transcript_evidence = transcript.summary()
         command_gate = replace(
