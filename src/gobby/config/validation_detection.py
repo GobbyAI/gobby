@@ -272,6 +272,15 @@ def builtin_validation_matchers() -> list[ValidationCommandMatcher]:
             required_args_all=["--baseline", "--fail-on-new"],
             non_executing_args_any=_NON_EXECUTING_VALIDATION_ARGS,
         ),
+        ValidationCommandMatcher(
+            id="gobby-test-types-suppressions",
+            label="Gobby Python suppression ratchet",
+            languages=["python"],
+            categories=["type_check"],
+            prefixes=["gobby test-types suppressions"],
+            required_args_all=["--baseline"],
+            non_executing_args_any=_NON_EXECUTING_VALIDATION_ARGS,
+        ),
         _matcher(
             "python-format-check",
             "Python format checks",

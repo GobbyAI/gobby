@@ -97,6 +97,32 @@ def test_test_types_ratchet_rejects_wrapped_commands_missing_required_flags(
     assert classify_validation_command(command) is None
 
 
+def test_test_types_suppression_ratchet_requires_baseline() -> None:
+    commands = [
+        "gobby test-types suppressions . --baseline suppressions.json",
+        "uv run gobby test-types suppressions . --baseline suppressions.json",
+    ]
+
+    matches = [classify_validation_command(command) for command in commands]
+
+    assert all(match is not None for match in matches)
+    assert [match.matcher_id for match in matches if match is not None] == [
+        "gobby-test-types-suppressions",
+        "gobby-test-types-suppressions",
+    ]
+    assert [match.categories for match in matches if match is not None] == [
+        ("type_check",),
+        ("type_check",),
+    ]
+    assert classify_validation_command("gobby test-types suppressions .") is None
+    assert (
+        classify_validation_command(
+            "gobby test-types suppressions . --baseline suppressions.json --help"
+        )
+        is None
+    )
+
+
 @pytest.mark.parametrize(
     "command",
     [

@@ -1102,6 +1102,17 @@ class TestAgentRunCompletion:
             closed_in_session_id=CHILD_SESSION_ID,
             closed_commit_sha="abc1234",
         )
+        closed_task = task_manager.get_task(task.id)
+        assert closed_task.closed_at is not None
+        completion_suffix = (
+            "Task completion: "
+            f"task=#{closed_task.seq_num}; closed_at={closed_task.closed_at.isoformat()}; "
+            "commit_sha=abc1234"
+        )
+        supplied_summary = (
+            "close_task was refused; the task is not definitively closed."
+            f"\n\n{completion_suffix}"
+        )
 
         run_manager = LocalAgentRunManager(temp_db)
         run = run_manager.create(
@@ -1123,7 +1134,7 @@ class TestAgentRunCompletion:
         session = SimpleNamespace(
             id=CHILD_SESSION_ID,
             agent_run_id=run.id,
-            summary_markdown="close_task was refused; the task is not definitively closed.",
+            summary_markdown=supplied_summary,
             tool_call_count=7,
             turn_count=3,
         )
@@ -1131,18 +1142,12 @@ class TestAgentRunCompletion:
         with patch.object(coordinator, "_notify_agent_completion", notification):
             coordinator.complete_agent_run(session)
 
-        closed_task = task_manager.get_task(task.id)
         updated = run_manager.get(run.id)
-        assert closed_task.closed_at is not None
         assert updated is not None
         assert updated.status == "success"
         assert updated.error is None
-        assert updated.result is not None
-        assert updated.result.endswith(
-            "Task completion: "
-            f"task=#{closed_task.seq_num}; closed_at={closed_task.closed_at.isoformat()}; "
-            "commit_sha=abc1234"
-        )
+        assert updated.result == supplied_summary
+        assert updated.result.count(completion_suffix) == 1
         notification.assert_called_once_with(run.id, "success")
 
     def test_complete_agent_run_allows_completed_step_workflow(
