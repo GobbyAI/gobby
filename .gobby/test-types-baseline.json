@@ -7141,16 +7141,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/servers/test_servers_sessions_routes.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 910,
-      "message": "\"Callable[[MutableMapping[str, Any], Callable[[], Awaitable[MutableMapping[str, Any]]], Callable[[MutableMapping[str, Any]], Awaitable[None]]], Awaitable[None]]\" has no attribute \"state\"",
-      "occurrences": 2,
-      "path": "tests/servers/test_servers_sessions_routes.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/servers/test_session_control.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 374,
