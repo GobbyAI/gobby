@@ -7,6 +7,7 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
 
+from gobby.config.tasks import TaskValidationConfig
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import SubmittedCloseReview
@@ -132,6 +133,19 @@ async def launch_close_review(
         prior_requirements=prior_requirements,
         coordinator_owned_pending=evaluation.extra.get("coordinator_owned_pending") is True,
     )
+    prompt_limit = (ctx.validation_config or TaskValidationConfig()).close_review_prompt_max_chars
+    if len(prompt) > prompt_limit:
+        message = (
+            f"Task-close validator prompt is {len(prompt)} characters, exceeding the configured "
+            f"limit of {prompt_limit}. Reduce oversized close evidence before retrying. "
+            "No validator was launched; the task remains open."
+        )
+        return {
+            **_finish_launch_error(store, review, message),
+            "error": "agentic_review_prompt_too_large",
+            "prompt_chars": len(prompt),
+            "prompt_limit": prompt_limit,
+        }
     try:
         launch = await registry.call(
             "spawn_agent",
@@ -183,12 +197,16 @@ async def launch_close_review(
         "review_fingerprint": running.review_fingerprint,
         "deterministic_evidence_fingerprint": running.evidence_fingerprint,
         "review_status": running.status,
-        "prompt_chars": evaluation.extra.get("prompt_chars"),
-        "prompt_limit": evaluation.extra.get("prompt_limit"),
+        "prompt_chars": len(prompt),
+        "prompt_limit": prompt_limit,
         "manifest_count": evaluation.extra.get("manifest_count"),
         "excerpt_chars": evaluation.extra.get("excerpt_chars"),
         "criteria_review_duration_ms": evaluation.extra.get("criteria_review_duration_ms"),
-        "validation_commands": validation_commands,
+        **(
+            {"validation_commands": validation_commands}
+            if close_arguments.get("response_detail") == "diagnostic"
+            else {}
+        ),
     }
 
 

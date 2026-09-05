@@ -135,7 +135,8 @@ async def test_launch_prompt_carries_gate10_validation_facts(
         ],
     }
 
-    result = await launch_close_review(ctx, evaluation=evaluation, close_arguments=_arguments())
+    arguments = {**_arguments(), "response_detail": "diagnostic"}
+    result = await launch_close_review(ctx, evaluation=evaluation, close_arguments=arguments)
 
     launch_prompt = registry.call.await_args.args[1]["prompt"]
     assert "validation_commands=" in launch_prompt
@@ -143,6 +144,47 @@ async def test_launch_prompt_carries_gate10_validation_facts(
     assert "gate 10's authoritative transcript record" in launch_prompt
     assert result["validation_commands"] == evaluation.extra["validation_commands"]
     assert result["validation_commands"]["uncredited_runs"][0]["reason"] == "wrapped"
+
+
+@pytest.mark.asyncio
+async def test_launch_refuses_actual_prompt_over_limit_without_spawning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="launching", run_id=None))
+    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    config = TaskValidationConfig()
+    ctx = _ctx(registry=registry, validation_config=config)
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+    evaluation = _evaluation()
+    evaluation.extra["validation_commands"] = {
+        "latest_runs": ["x" * config.close_review_prompt_max_chars]
+    }
+
+    result = await launch_close_review(ctx, evaluation=evaluation, close_arguments=_arguments())
+
+    registry.call.assert_not_awaited()
+    assert store.finished_status == "error"
+    assert result["closed"] is False
+    assert result["error"] == "agentic_review_prompt_too_large"
+    assert result["prompt_chars"] > result["prompt_limit"]
+    assert "validation_commands" not in result
+
+
+@pytest.mark.asyncio
+async def test_pending_concise_response_keeps_commands_only_in_validator_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="launching", run_id=None))
+    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    ctx = _ctx(registry=registry)
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+    evaluation = _evaluation()
+    evaluation.extra["validation_commands"] = {"latest_runs": [{"command": "npm ci"}]}
+
+    result = await launch_close_review(ctx, evaluation=evaluation, close_arguments=_arguments())
+
+    assert "validation_commands" not in result
+    assert "npm ci" in registry.call.await_args.args[1]["prompt"]
 
 
 @pytest.mark.asyncio
