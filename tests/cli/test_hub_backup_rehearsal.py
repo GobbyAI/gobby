@@ -96,7 +96,7 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> RehearsalHarness:
         (
             ("postgres", 5432, 60894, "/var/lib/postgresql"),
             ("qdrant", 6333, 6339, "/qdrant/storage"),
-            ("falkordb", 6379, 16390, "/data"),
+            ("falkordb", 6379, 16390, "/var/lib/falkordb/data"),
         ),
         start=1,
     ):
@@ -227,6 +227,17 @@ def test_profile_rejects_unowned_docker_state(stack: RehearsalHarness, failure: 
     else:
         record["Config"] = None
     with pytest.raises(click.ClickException, match="Rehearsal|rehearsal"):
+        rehearsal.load_rehearsal_profile(stack.database_url)
+    assert all(command[1] in {"container", "volume", "ps"} for command in stack.calls)
+    stack.connect.assert_not_called()
+
+
+def test_profile_rejects_falkordb_mount_outside_the_image_storage_directory(
+    stack: RehearsalHarness,
+) -> None:
+    identity = stack.data["services"]["falkordb"]["container_id"]
+    stack.containers[identity]["Mounts"][0]["Destination"] = "/data"
+    with pytest.raises(click.ClickException, match="Rehearsal data volume does not match"):
         rehearsal.load_rehearsal_profile(stack.database_url)
     assert all(command[1] in {"container", "volume", "ps"} for command in stack.calls)
     stack.connect.assert_not_called()

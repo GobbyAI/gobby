@@ -32,7 +32,11 @@ from gobby.utils.env import is_test_protect_enabled
 PROFILE_ENV = "GOBBY_HUB_REHEARSAL_PROFILE"
 LABEL_PREFIX = "ai.gobby.rehearsal."
 _ROLES = {"postgres": 5432, "qdrant": 6333, "falkordb": 6379}
-_MOUNTS = {"postgres": "/var/lib/postgresql", "qdrant": "/qdrant/storage", "falkordb": "/data"}
+_MOUNTS = {
+    "postgres": "/var/lib/postgresql",
+    "qdrant": "/qdrant/storage",
+    "falkordb": "/var/lib/falkordb/data",
+}
 _SHARED_PORTS = {5432, 6333, 6334, 6379, 16379, *range(60887, 60893), *range(60990, 61000)}
 _LOOPBACK = {"127.0.0.1", "::1"}
 
