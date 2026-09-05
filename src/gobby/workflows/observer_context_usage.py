@@ -1,10 +1,4 @@
-"""Context-pressure observer for compact guidance.
-
-Known model windows use percentage pressure bands with an absolute soft cap.
-Sessions without a usable window retain the absolute-token fallback. Each band
-is announced once per context epoch, and a successful ``set_handoff`` silences
-the remaining epoch.
-"""
+"""Configurable context-pressure guidance and handoff enforcement state."""
 
 from __future__ import annotations
 
@@ -17,19 +11,27 @@ from gobby.sessions.handoff import HANDOFF_DISPATCH_GATE_VARIABLE
 
 logger = logging.getLogger(__name__)
 
-FALLBACK_SOFT_CONTEXT_TOKENS = 128_000
-FALLBACK_STRONG_CONTEXT_TOKENS = 256_000
-ABSOLUTE_SOFT_CONTEXT_TOKENS = 200_000
-DEFAULT_SOFT_CONTEXT_RATIO = 0.40
-DEFAULT_STRONG_CONTEXT_RATIO = 0.70
-LARGE_CONTEXT_SOFT_RATIO = 0.30
-LARGE_CONTEXT_STRONG_RATIO = 0.40
-LARGE_CONTEXT_WINDOW = 1_000_000
+DEFAULT_WARN_TOKENS = 128_000
+DEFAULT_BLOCK_TOKENS = 256_000
+DEFAULT_WARN_EVERY_TOOL_CALLS = 5
 UNKNOWN_USAGE_TURN_FALLBACK = 10
 
 HANDOFF_RESULT_VARIABLE = HANDOFF_DISPATCH_GATE_VARIABLE
-HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE = "context_compact_highest_announced_threshold"
 PRESSURE_BAND_VARIABLE = "context_compact_mid_turn_pressure_band"
+TOOL_CALLS_SINCE_NUDGE_VARIABLE = "context_compact_tool_calls_since_nudge"
+BLOCK_MESSAGE_VARIABLE = "context_compact_block_message"
+HANDOFF_UNAVAILABLE_VARIABLE = "context_compact_handoff_unavailable"
+UNKNOWN_ANNOUNCED_VARIABLE = "context_compact_unknown_announced"
+
+_NON_RETRYABLE_HANDOFF_ERROR_CODES = frozenset(
+    {
+        "terminal_target_unavailable",
+        "terminal_target_not_live",
+        "unsupported_session_type",
+        "no_compaction_command",
+        "interrupt_observation_unavailable",
+    }
+)
 
 UNKNOWN_USAGE_MESSAGE = (
     "Context usage has been unknown for 10 non-plan turns. "
@@ -52,30 +54,41 @@ class _SessionManager(Protocol):
     def get(self, session_id: str) -> _SessionValue | None: ...
 
 
+class _ContextHandoffConfig(Protocol):
+    warn_tokens: int
+    block_tokens: int
+    small_window_tokens: int
+    small_window_warn_ratio: float
+    small_window_block_ratio: float
+    warn_every_tool_calls: int
+
+
 def detect_context_compact_guidance(
     variables: dict[str, Any],
     session_id: str,
     session_manager: _SessionManager | None,
+    config: _ContextHandoffConfig | None = None,
 ) -> None:
     """Populate compact guidance variables for turn_start evaluation."""
     variables["context_compact_guidance_kind"] = ""
     variables["context_compact_guidance_message"] = ""
 
     gate = _handoff_gate(variables)
-    retry_guidance: str | None = None
     if gate == "pending" or variables.get("pending_context_reset") is True:
         _reset_epoch_state(variables)
-    elif gate == "failed":
+        return
+    if gate == "failed":
         result = variables.get(HANDOFF_RESULT_VARIABLE)
         if isinstance(result, dict) and isinstance(result.get("retry_guidance"), str):
-            retry_guidance = result["retry_guidance"]
+            variables["context_compact_guidance_kind"] = "failed"
+            variables["context_compact_guidance_message"] = result["retry_guidance"]
+        if isinstance(result, dict) and result.get("delivery_failed") is True:
+            return
         variables[HANDOFF_RESULT_VARIABLE] = None
+        return
 
     if _is_plan_mode(variables):
-        return
-    if retry_guidance:
-        variables["context_compact_guidance_kind"] = "failed"
-        variables["context_compact_guidance_message"] = retry_guidance
+        _write_band(variables, "none", None, None)
         return
 
     turn_seq = _next_turn_seq(variables)
@@ -92,21 +105,28 @@ def detect_context_compact_guidance(
     session = _load_session(session_manager, session_id)
     used = _used_tokens_from_session(session)
     if used is None:
-        if turns_since_compact >= UNKNOWN_USAGE_TURN_FALLBACK:
-            _set_guidance(variables, "unknown", UNKNOWN_USAGE_MESSAGE)
+        _write_band(variables, "none", None, None)
+        if (
+            turns_since_compact >= UNKNOWN_USAGE_TURN_FALLBACK
+            and variables.get(UNKNOWN_ANNOUNCED_VARIABLE) is not True
+        ):
+            variables["context_compact_guidance_kind"] = "unknown"
+            variables["context_compact_guidance_message"] = UNKNOWN_USAGE_MESSAGE
+            variables[UNKNOWN_ANNOUNCED_VARIABLE] = True
         return
 
-    soft_threshold, strong_threshold = _thresholds_from_session(session)
-    band = _pressure_band(used, soft_threshold, strong_threshold)
-    variables[PRESSURE_BAND_VARIABLE] = band
+    window = _int_or_none(getattr(session, "context_window", None)) if session else None
+    warn_threshold, block_threshold, _every = _thresholds(config, window)
+    band = _pressure_band(used, warn_threshold, block_threshold)
+    if variables.get(HANDOFF_UNAVAILABLE_VARIABLE) is True and band == "block":
+        band = "warn"
+    _write_band(variables, band, used, (warn_threshold, block_threshold))
     if band == "none":
         return
-
-    if band == "strong":
-        _set_guidance(variables, "strong", _strong_message(used))
-        return
-
-    _set_guidance(variables, "soft", _soft_message(used))
+    variables["context_compact_guidance_kind"] = band
+    variables["context_compact_guidance_message"] = _guidance_message(
+        band, used, warn_threshold, block_threshold
+    )
 
 
 def detect_mid_turn_context_compact_guidance(
@@ -114,6 +134,7 @@ def detect_mid_turn_context_compact_guidance(
     variables: dict[str, Any],
     session_id: str,
     session_manager: _SessionManager | None,
+    config: _ContextHandoffConfig | None = None,
 ) -> None:
     """Populate compact guidance for an after_tool event under context pressure."""
     variables["context_compact_guidance_kind"] = ""
@@ -121,31 +142,57 @@ def detect_mid_turn_context_compact_guidance(
 
     _record_handoff_result(event, variables)
 
-    if variables.get("pending_context_reset") is True or _is_plan_mode(variables):
-        variables[PRESSURE_BAND_VARIABLE] = "none"
-        return
-
     gate = _handoff_gate(variables)
-    if gate == "pending":
+    if (
+        variables.get("pending_context_reset") is True
+        or _is_plan_mode(variables)
+        or gate == "pending"
+    ):
+        _write_band(variables, "none", None, None)
+        variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] = 0
         return
 
     session = _load_session(session_manager, session_id)
     used = _used_tokens_from_session(session)
     if used is None:
+        _write_band(variables, "none", None, None)
         return
 
-    soft_threshold, strong_threshold = _thresholds_from_session(session)
-    band = _pressure_band(used, soft_threshold, strong_threshold)
-    variables[PRESSURE_BAND_VARIABLE] = band
+    window = _int_or_none(getattr(session, "context_window", None)) if session else None
+    warn_threshold, block_threshold, every = _thresholds(config, window)
+    previous_band = str(variables.get(PRESSURE_BAND_VARIABLE) or "none")
+    band = _pressure_band(used, warn_threshold, block_threshold)
+    message: str | None = None
+
+    result = variables.get(HANDOFF_RESULT_VARIABLE)
+    delivery_failed = isinstance(result, dict) and result.get("delivery_failed") is True
+    if gate == "failed" and isinstance(result, dict) and result.get("compacted") is False:
+        if not delivery_failed:
+            error_code = result.get("error_code")
+            if isinstance(error_code, str) and error_code in _NON_RETRYABLE_HANDOFF_ERROR_CODES:
+                variables[HANDOFF_UNAVAILABLE_VARIABLE] = True
+                band = "warn" if band == "block" else band
+            message = _failed_handoff_message(used, variables)
+            variables[HANDOFF_RESULT_VARIABLE] = None
+    if variables.get(HANDOFF_UNAVAILABLE_VARIABLE) is True and band == "block":
+        band = "warn"
+
+    _write_band(variables, band, used, (warn_threshold, block_threshold))
     if band == "none":
+        variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] = 0
         return
 
-    if gate == "failed":
-        _set_guidance(variables, band, _failed_handoff_message(used, variables))
+    counter = (_int_or_none(variables.get(TOOL_CALLS_SINCE_NUDGE_VARIABLE), default=0) or 0) + 1
+    variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] = counter
+    band_rose = (previous_band, band) in {("none", "warn"), ("none", "block"), ("warn", "block")}
+    announce = band_rose or counter >= every or band == "block" or message is not None
+    if not announce:
         return
-
-    message = _strong_message(used) if band == "strong" else _soft_message(used)
-    _set_guidance(variables, band, message)
+    variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] = 0
+    variables["context_compact_guidance_kind"] = band
+    variables["context_compact_guidance_message"] = message or _guidance_message(
+        band, used, warn_threshold, block_threshold
+    )
 
 
 def _record_handoff_result(event: HookEvent, variables: dict[str, Any]) -> None:
@@ -199,9 +246,11 @@ def _record_handoff_result(event: HookEvent, variables: dict[str, Any]) -> None:
     compacted = payload.get("compacted")
     if isinstance(compacted, bool):
         reason = payload.get("reason")
+        error_code = payload.get("error_code")
         variables[HANDOFF_RESULT_VARIABLE] = {
             "compacted": compacted,
             "reason": reason if isinstance(reason, str) and reason else None,
+            "error_code": error_code if isinstance(error_code, str) and error_code else None,
         }
         return
 
@@ -251,7 +300,10 @@ def _clear_attempt_is_pending(payload: dict[str, Any]) -> bool:
 
 def _reset_epoch_state(variables: dict[str, Any]) -> None:
     variables[PRESSURE_BAND_VARIABLE] = "none"
-    variables[HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE] = "none"
+    variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] = 0
+    variables[BLOCK_MESSAGE_VARIABLE] = ""
+    variables[HANDOFF_UNAVAILABLE_VARIABLE] = False
+    variables[UNKNOWN_ANNOUNCED_VARIABLE] = False
     variables[HANDOFF_RESULT_VARIABLE] = None
 
 
@@ -277,32 +329,38 @@ def _used_tokens_from_session(session: _SessionValue | None) -> int | None:
     return used
 
 
-def _thresholds_from_session(session: _SessionValue | None) -> tuple[int, int]:
-    """Return soft and strong token thresholds for the session's model window."""
-    if session is None:
-        return FALLBACK_SOFT_CONTEXT_TOKENS, FALLBACK_STRONG_CONTEXT_TOKENS
-    window = _int_or_none(getattr(session, "context_window", None))
-    if window is None or window <= 0:
-        return FALLBACK_SOFT_CONTEXT_TOKENS, FALLBACK_STRONG_CONTEXT_TOKENS
-    if window >= LARGE_CONTEXT_WINDOW:
-        soft_ratio, strong_ratio = LARGE_CONTEXT_SOFT_RATIO, LARGE_CONTEXT_STRONG_RATIO
-    else:
-        soft_ratio, strong_ratio = DEFAULT_SOFT_CONTEXT_RATIO, DEFAULT_STRONG_CONTEXT_RATIO
-    soft_threshold = min(round(window * soft_ratio), ABSOLUTE_SOFT_CONTEXT_TOKENS)
-    return soft_threshold, round(window * strong_ratio)
+def _thresholds(
+    config: _ContextHandoffConfig | None,
+    window: int | None,
+) -> tuple[int, int, int]:
+    """Return warn, block, and repeat cadence for the current window class."""
+    warn_tokens = _positive_int(getattr(config, "warn_tokens", None), DEFAULT_WARN_TOKENS)
+    block_tokens = _positive_int(getattr(config, "block_tokens", None), DEFAULT_BLOCK_TOKENS)
+    small_window_tokens = _positive_int(
+        getattr(config, "small_window_tokens", None), DEFAULT_BLOCK_TOKENS
+    )
+    every = _positive_int(
+        getattr(config, "warn_every_tool_calls", None), DEFAULT_WARN_EVERY_TOOL_CALLS
+    )
+    if window is None or window <= 0 or window >= small_window_tokens:
+        return warn_tokens, block_tokens, every
+    warn_ratio = _positive_float(getattr(config, "small_window_warn_ratio", None), 0.40)
+    block_ratio = _positive_float(getattr(config, "small_window_block_ratio", None), 0.80)
+    return round(window * warn_ratio), round(window * block_ratio), every
 
 
-def _set_guidance(
+def _write_band(
     variables: dict[str, Any],
-    kind: str,
-    message: str,
+    band: str,
+    used: int | None,
+    thresholds: tuple[int, int] | None,
 ) -> None:
-    highest = str(variables.get(HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE) or "none")
-    if _pressure_band_rank(kind) <= _pressure_band_rank(highest):
-        return
-    variables["context_compact_guidance_kind"] = kind
-    variables["context_compact_guidance_message"] = message
-    variables[HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE] = kind
+    variables[PRESSURE_BAND_VARIABLE] = band
+    variables[BLOCK_MESSAGE_VARIABLE] = (
+        _block_message(used, *thresholds)
+        if band == "block" and used is not None and thresholds is not None
+        else ""
+    )
 
 
 def _is_plan_mode(variables: dict[str, Any]) -> bool:
@@ -323,29 +381,32 @@ def _next_turn_seq(variables: dict[str, Any]) -> int:
     return current
 
 
-def _pressure_band(used: int, soft_threshold: int, strong_threshold: int) -> str:
-    if used >= strong_threshold:
-        return "strong"
-    if used >= soft_threshold:
-        return "soft"
+def _pressure_band(used: int, warn_threshold: int, block_threshold: int) -> str:
+    if used >= block_threshold:
+        return "block"
+    if used >= warn_threshold:
+        return "warn"
     return "none"
 
 
-def _pressure_band_rank(band: str) -> int:
-    return {"none": -1, "unknown": 0, "soft": 1, "strong": 2}.get(band, -1)
-
-
-def _soft_message(used: int) -> str:
+def _guidance_message(band: str, used: int, warn: int, block: int) -> str:
+    if band == "block":
+        return _block_message(used, warn, block)
     return (
-        f"Context is {_format_tokens(used)} tokens. Consider gobby-sessions:set_handoff "
-        "with a concise structured handoff at the next pause."
+        f"Context is {_format_tokens(used)} tokens (warn {_format_tokens(warn)}; "
+        f"block {_format_tokens(block)}). Prepare a concise structured handoff. "
+        "This warning repeats every turn and at the configured tool-call cadence."
     )
 
 
-def _strong_message(used: int) -> str:
+def _block_message(used: int, warn: int, block: int) -> str:
     return (
-        f"Context is {_format_tokens(used)} tokens. Call gobby-sessions:set_handoff now, "
-        "before any other tool call."
+        f"Context is {_format_tokens(used)} tokens (warn {_format_tokens(warn)}; "
+        f"block {_format_tokens(block)}). Tool use is blocked until a handoff compacts "
+        'the session. Call get_tool_schema(server_name="gobby-sessions", '
+        'tool_name="set_handoff"), then gobby-sessions:set_handoff with '
+        "gobby_feedback when this project is surveyed; use gobby_feedback=[] when there "
+        "is nothing to report."
     )
 
 
@@ -370,3 +431,18 @@ def _int_or_none(value: Any, default: int | None = None) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _positive_int(value: Any, default: int) -> int:
+    parsed = _int_or_none(value)
+    return parsed if parsed is not None and parsed > 0 else default
+
+
+def _positive_float(value: Any, default: float) -> float:
+    if isinstance(value, bool) or value is None:
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default

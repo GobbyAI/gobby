@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -17,9 +20,19 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
     register_terminal_tools,
 )
 from gobby.sessions.handoff import HandoffAttemptState
+from gobby.sessions.handoff import stage_handoff_attempt as persist_handoff_attempt
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.isolated_checkout import write_project_marker
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
+
+MACHINE_ID = "30000000-0000-4000-8000-000000000003"
 
 
 class _TestRegistry(InternalToolRegistry):
@@ -28,6 +41,91 @@ class _TestRegistry(InternalToolRegistry):
     def get_tool(self, name: str) -> Callable[..., Any] | None:
         tool = self._tools.get(name)
         return tool.func if tool else None
+
+
+def _persistent_session(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    *,
+    project_name: str = "gobby",
+    session_type: str = "terminal",
+) -> tuple[SessionManager, str]:
+    checkout = tmp_path / f"{project_name}-{uuid4().hex}"
+    checkout.mkdir()
+    project_id = str(uuid4())
+    write_project_marker(checkout, project_id=project_id, name=project_name)
+    project = LocalProjectManager(temp_db).create(
+        name=project_name,
+        repo_path=str(checkout),
+        project_id=project_id,
+    )
+    LocalMachineManager(temp_db).upsert_seen(MACHINE_ID, TEST_USER_ID)
+    manager = SessionManager(temp_db)
+    with patch("gobby.utils.machine_id._cached_machine_id", MACHINE_ID):
+        session_id = manager.register_session(
+            external_id=f"terminal-{uuid4().hex}",
+            machine_id=MACHINE_ID,
+            source="codex",
+            project_id=project.id,
+            project_path=str(checkout),
+            terminal_context={"tmux_pane": "%12"},
+        )
+    assert session_id
+    if session_type != "terminal":
+        temp_db.execute(
+            "UPDATE sessions SET session_type = %s WHERE id = %s",
+            (session_type, session_id),
+        )
+        manager = SessionManager(temp_db)
+    return manager, session_id
+
+
+def _feedback_registry(
+    temp_db: HubDatabase,
+    manager: SessionManager,
+    *,
+    survey: str = "gobby",
+    web_chat_session_registry: Any | None = None,
+) -> _TestRegistry:
+    registry = _TestRegistry(name="test", description="test")
+    register_terminal_tools(
+        registry,
+        manager,
+        temp_db,
+        web_chat_session_registry=web_chat_session_registry,
+        config_resolver=lambda: SimpleNamespace(session_feedback=SimpleNamespace(survey=survey)),
+    )
+    return registry
+
+
+def _feedback_observation(**overrides: object) -> dict[str, object]:
+    observation: dict[str, object] = {
+        "source": "gobby-sessions:set_handoff",
+        "kind": "friction",
+        "evidence": "The handoff needed an extra retry.",
+        "impact": "One extra round trip.",
+        "frequency": "once",
+    }
+    observation.update(overrides)
+    return observation
+
+
+def _feedback_row_count(temp_db: HubDatabase, session_id: str) -> int:
+    row = temp_db.fetchone(
+        "SELECT COUNT(*) AS count FROM session_feedback WHERE session_id = %s",
+        (session_id,),
+    )
+    assert row is not None
+    return int(row["count"])
+
+
+def _handoff_row_count(temp_db: HubDatabase, session_id: str) -> int:
+    row = temp_db.fetchone(
+        "SELECT COUNT(*) AS count FROM session_handoffs WHERE session_id = %s",
+        (session_id,),
+    )
+    assert row is not None
+    return int(row["count"])
 
 
 class TestResolveTmuxTarget:
@@ -676,3 +774,315 @@ class TestRegisterTerminalTools:
         assert result["success"] is False
         assert result["error_code"] == "no_live_pane_or_transcript"
         assert result["transcript_error"] == "missing_transcript_path"
+
+
+class TestSetHandoffFeedback:
+    """Inline survey capture owned by set_handoff."""
+
+    def test_feedback_required_returns_without_staging(
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        manager, session_id = _persistent_session(temp_db, tmp_path)
+        set_handoff = _feedback_registry(temp_db, manager).get_tool("set_handoff")
+        assert set_handoff is not None
+
+        with session_context_for_test(session_id):
+            result = asyncio.run(set_handoff(current_state="Ready", next_steps=["Continue"]))
+
+        assert result["success"] is False
+        assert result["error_code"] == "feedback_required"
+        assert _handoff_row_count(temp_db, session_id) == 0
+        assert _feedback_row_count(temp_db, session_id) == 0
+
+    def test_empty_feedback_marks_epoch_and_stages(
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        manager, session_id = _persistent_session(temp_db, tmp_path)
+        set_handoff = _feedback_registry(temp_db, manager).get_tool("set_handoff")
+        assert set_handoff is not None
+        pane = MagicMock(backend="tmux", target="%12")
+        pane.snapshot = AsyncMock(return_value="ready")
+
+        with (
+            session_context_for_test(session_id),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._resolve_pane_io",
+                return_value=(pane, None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._interrupt_observer",
+                return_value=(None, None),
+            ),
+        ):
+            result = asyncio.run(
+                set_handoff(
+                    current_state="Ready",
+                    next_steps=["Continue"],
+                    gobby_feedback=[],
+                )
+            )
+
+        assert result["handoff_staged"] is True
+        assert result["feedback_recorded"] == 0
+        assert _feedback_row_count(temp_db, session_id) == 0
+        assert (
+            SessionVariableManager(temp_db).get_variables(session_id)[
+                "_gobby_feedback_epoch_reviewed"
+            ]
+            is True
+        )
+
+    def test_invalid_feedback_has_no_side_effects(
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        manager, session_id = _persistent_session(temp_db, tmp_path)
+        set_handoff = _feedback_registry(temp_db, manager).get_tool("set_handoff")
+        assert set_handoff is not None
+
+        with session_context_for_test(session_id):
+            result = asyncio.run(
+                set_handoff(
+                    current_state="Ready",
+                    next_steps=["Continue"],
+                    gobby_feedback=[_feedback_observation(source="close_task")],
+                )
+            )
+
+        assert result["success"] is False
+        assert result["error_code"] == "invalid_feedback"
+        assert _handoff_row_count(temp_db, session_id) == 0
+        assert _feedback_row_count(temp_db, session_id) == 0
+
+    def test_valid_feedback_is_written_and_flagged_before_staging(
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        manager, session_id = _persistent_session(temp_db, tmp_path)
+        set_handoff = _feedback_registry(temp_db, manager).get_tool("set_handoff")
+        assert set_handoff is not None
+        pane = MagicMock(backend="tmux", target="%12")
+        pane.snapshot = AsyncMock(return_value="ready")
+        reviewed_at_stage: list[bool] = []
+
+        def checking_stage(*args: Any, **kwargs: Any) -> HandoffAttemptState:
+            reviewed_at_stage.append(
+                SessionVariableManager(temp_db)
+                .get_variables(session_id)
+                .get("_gobby_feedback_epoch_reviewed")
+                is True
+            )
+            return persist_handoff_attempt(*args, **kwargs)
+
+        with (
+            session_context_for_test(session_id),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._resolve_pane_io",
+                return_value=(pane, None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._interrupt_observer",
+                return_value=(None, None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.stage_handoff_attempt",
+                side_effect=checking_stage,
+            ),
+        ):
+            result = asyncio.run(
+                set_handoff(
+                    current_state="Ready",
+                    next_steps=["Continue"],
+                    gobby_feedback=[_feedback_observation()],
+                )
+            )
+
+        assert result["feedback_recorded"] == 1
+        assert reviewed_at_stage == [True]
+        assert _feedback_row_count(temp_db, session_id) == 1
+
+    def test_staging_failure_retry_does_not_duplicate_feedback(
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        manager, session_id = _persistent_session(temp_db, tmp_path)
+        set_handoff = _feedback_registry(temp_db, manager).get_tool("set_handoff")
+        assert set_handoff is not None
+        pane = MagicMock(backend="tmux", target="%12")
+        pane.snapshot = AsyncMock(return_value="ready")
+        attempts = 0
+
+        def fail_once(*args: Any, **kwargs: Any) -> HandoffAttemptState:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("forced staging failure")
+            return persist_handoff_attempt(*args, **kwargs)
+
+        with (
+            session_context_for_test(session_id),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._resolve_pane_io",
+                return_value=(pane, None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._interrupt_observer",
+                return_value=(None, None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.stage_handoff_attempt",
+                side_effect=fail_once,
+            ),
+        ):
+            first = asyncio.run(
+                set_handoff(
+                    current_state="Ready",
+                    next_steps=["Continue"],
+                    gobby_feedback=[_feedback_observation()],
+                )
+            )
+            second = asyncio.run(
+                set_handoff(
+                    current_state="Ready",
+                    next_steps=["Continue"],
+                    gobby_feedback=[_feedback_observation()],
+                )
+            )
+
+        assert first["error_code"] == "staging_failed"
+        assert first["feedback_recorded"] == 1
+        assert second["handoff_staged"] is True
+        assert second["feedback_skipped"] == "already_surveyed"
+        assert _feedback_row_count(temp_db, session_id) == 1
+
+    @pytest.mark.parametrize(
+        ("project_name", "survey"),
+        [("gobby", "off"), ("other-project", "gobby")],
+    )
+    def test_inactive_survey_makes_feedback_optional(
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+        project_name: str,
+        survey: str,
+    ) -> None:
+        manager, session_id = _persistent_session(
+            temp_db,
+            tmp_path,
+            project_name=project_name,
+        )
+        set_handoff = _feedback_registry(temp_db, manager, survey=survey).get_tool("set_handoff")
+        assert set_handoff is not None
+        pane = MagicMock(backend="tmux", target="%12")
+        pane.snapshot = AsyncMock(return_value="ready")
+
+        with (
+            session_context_for_test(session_id),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._resolve_pane_io",
+                return_value=(pane, None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._interrupt_observer",
+                return_value=(None, None),
+            ),
+        ):
+            result = asyncio.run(set_handoff(current_state="Ready", next_steps=["Continue"]))
+
+        assert result["handoff_staged"] is True
+        assert result["feedback_skipped"] == "not_required"
+
+    def test_already_reviewed_skips_supplied_feedback(
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        manager, session_id = _persistent_session(temp_db, tmp_path)
+        SessionVariableManager(temp_db).merge_variables(
+            session_id,
+            {"_gobby_feedback_epoch_reviewed": True},
+        )
+        set_handoff = _feedback_registry(temp_db, manager).get_tool("set_handoff")
+        assert set_handoff is not None
+        pane = MagicMock(backend="tmux", target="%12")
+        pane.snapshot = AsyncMock(return_value="ready")
+
+        with (
+            session_context_for_test(session_id),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._resolve_pane_io",
+                return_value=(pane, None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._interrupt_observer",
+                return_value=(None, None),
+            ),
+        ):
+            result = asyncio.run(
+                set_handoff(
+                    current_state="Ready",
+                    next_steps=["Continue"],
+                    gobby_feedback=[_feedback_observation(source="close_task")],
+                )
+            )
+
+        assert result["handoff_staged"] is True
+        assert result["feedback_skipped"] == "already_surveyed"
+        assert _feedback_row_count(temp_db, session_id) == 0
+
+    def test_web_chat_compaction_rearms_feedback_epoch(
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        manager, session_id = _persistent_session(
+            temp_db,
+            tmp_path,
+            session_type="web_chat",
+        )
+        web_chat_registry = MagicMock()
+
+        async def compact_session(
+            _target: str,
+            *,
+            handoff_attempt_id: str,
+        ) -> dict[str, Any]:
+            assert handoff_attempt_id
+            SessionVariableManager(temp_db).merge_variables(
+                session_id,
+                {"_gobby_feedback_epoch_reviewed": False},
+            )
+            return {"compacted": True}
+
+        web_chat_registry.compact_session = AsyncMock(side_effect=compact_session)
+        set_handoff = _feedback_registry(
+            temp_db,
+            manager,
+            web_chat_session_registry=web_chat_registry,
+        ).get_tool("set_handoff")
+        assert set_handoff is not None
+
+        with session_context_for_test(session_id):
+            result = asyncio.run(
+                set_handoff(
+                    current_state="Ready",
+                    next_steps=["Continue"],
+                    gobby_feedback=[],
+                )
+            )
+
+        assert result["compacted"] is True
+        assert result["feedback_recorded"] == 0
+        assert (
+            SessionVariableManager(temp_db).get_variables(session_id)[
+                "_gobby_feedback_epoch_reviewed"
+            ]
+            is False
+        )

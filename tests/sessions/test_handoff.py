@@ -14,6 +14,7 @@ import pytest
 from psycopg.errors import CheckViolation
 
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+from gobby.mcp_proxy.tools.sessions._handoff import FEEDBACK_OBSERVATION_INPUT_SCHEMA
 from gobby.sessions.clear_continuation import (
     CLEAR_ATTEMPT_VARIABLE,
     clear_failed_attempt,
@@ -176,7 +177,7 @@ def test_optional_handoff_and_feedback_entries_reject_blanks() -> None:
         normalize_feedback_observations(
             [
                 {
-                    "source": "agent",
+                    "source": "agent:test-agent",
                     "kind": "friction",
                     "evidence": "evidence",
                     "impact": "impact",
@@ -189,7 +190,7 @@ def test_optional_handoff_and_feedback_entries_reject_blanks() -> None:
 
 def _observation(**overrides: object) -> dict[str, object]:
     base: dict[str, object] = {
-        "source": "agent",
+        "source": "agent:test-agent",
         "kind": "friction",
         "evidence": "evidence",
         "impact": "impact",
@@ -209,6 +210,31 @@ def _feedback_task(**overrides: object) -> Task:
     }
     values.update(overrides)
     return cast(Task, SimpleNamespace(**values))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "gobby-tasks:close_task",
+        "rule:x",
+        "hook:PostToolUse",
+        "cli:gobby restart",
+        "binary:gcode",
+        "src/gobby/hooks/x.py",
+        "docs/guides/sessions.md",
+    ],
+)
+def test_feedback_source_accepts_gobby_surfaces(source: str) -> None:
+    assert normalize_feedback_observations([_observation(source=source)])[0].source == source
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["agent", "close_task", "session #11210", "my-app:api", "app/models.py", "tool:x"],
+)
+def test_feedback_source_rejects_ambiguous_or_non_gobby_sources(source: str) -> None:
+    with pytest.raises(ValueError, match=r"observations\[0\]\.source must name a Gobby surface"):
+        normalize_feedback_observations([_observation(source=source)])
 
 
 def _register_spawn_chain(
@@ -451,14 +477,14 @@ def test_feedback_batch_writes_one_row_per_observation_and_empty_is_noop(
     observations = normalize_feedback_observations(
         [
             {
-                "source": "agent",
+                "source": "agent:test-agent",
                 "kind": "friction",
                 "evidence": "The tool required a duplicate retry.",
                 "impact": "Added one round trip.",
                 "frequency": "once",
             },
             {
-                "source": "agent",
+                "source": "agent:test-agent",
                 "kind": "useful",
                 "evidence": "The schema gate returned an exact repair.",
                 "impact": "Prevented a malformed call.",
@@ -467,7 +493,7 @@ def test_feedback_batch_writes_one_row_per_observation_and_empty_is_noop(
                 "disposition": "noted",
             },
             {
-                "source": "agent",
+                "source": "agent:test-agent",
                 "kind": "other",
                 "kind_other_label": "doc-drift",
                 "evidence": "The guide contradicted the tool schema.",
@@ -813,7 +839,7 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
     assert schema is not None
     assert schema.input_schema["required"] == ["current_state", "next_steps"]
     properties = schema.input_schema["properties"]
-    assert "gobby_feedback" not in properties
+    assert properties["gobby_feedback"]["items"] is FEEDBACK_OBSERVATION_INPUT_SCHEMA
     assert tuple(properties) == (
         "current_state",
         "next_steps",
@@ -825,6 +851,7 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
         "notes",
         "references",
         "clear_session",
+        "gobby_feedback",
     )
     assert properties["current_state"]["minLength"] == 1
     assert properties["next_steps"]["minItems"] == 1
@@ -837,6 +864,10 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
     assert (
         "claimed or closed by this session or by a spawned descendant session"
         in disposition_description
+    )
+    assert (
+        "gobby-<server>:<tool>"
+        in FEEDBACK_OBSERVATION_INPUT_SCHEMA["properties"]["source"]["description"]
     )
 
     with session_context_for_test(session.id):
@@ -854,6 +885,24 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
         }
         renamed = await registry.call("set_title", {"title": "Manual title"})
         assert renamed["title"] == "Manual title"
+
+
+@pytest.mark.asyncio
+async def test_feedback_tool_rejects_non_gobby_source(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    session = _registered_session(session_manager)
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+
+    with session_context_for_test(session.id):
+        result = await registry.call(
+            "feedback", {"observations": [_observation(source="close_task")]}
+        )
+
+    assert result["success"] is False
+    assert result["error_code"] == "invalid_feedback"
+    assert "must name a Gobby surface" in result["error"]
 
 
 @pytest.mark.asyncio

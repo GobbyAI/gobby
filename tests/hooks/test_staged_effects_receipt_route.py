@@ -1,6 +1,6 @@
 """Full-route regression for on_receipt staged effects (#21424).
 
-Drives the real ``review-gobby-session-feedback-before-handoff`` gate over the
+Drives the real ``review-closed-task-memories-before-handoff`` gate over the
 production path end to end: an HTTP POST to ``/api/hooks/execute``, the real
 ``ClaudeCodeAdapter`` and ``HookManager``, ``run_adapter_hook`` on the bounded
 adapter executor, rule evaluation on the isolated ``WorkflowEvaluationRuntime``
@@ -53,12 +53,13 @@ from tests.servers.conftest import authenticate_test_server
 pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_SESSION_FEEDBACK_RULES = (
-    REPO_ROOT / "src/gobby/install/shared/workflows/rules/session-feedback/session-feedback.yaml"
+_MEMORY_LIFECYCLE_RULES = (
+    REPO_ROOT / "src/gobby/install/shared/workflows/rules/memory-lifecycle/"
+    "review-task-memories-after-close.yaml"
 )
 
-RULE_NAME = "review-gobby-session-feedback-before-handoff"
-ACK_VARIABLE = "_gobby_feedback_epoch_reviewed"
+RULE_NAME = "review-closed-task-memories-before-handoff"
+ACK_VARIABLE = "_memory_review_stop_delivered"
 
 # Pre-seeded by the postgres fixture; sessions.machine_id carries an FK.
 TEST_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
@@ -89,7 +90,7 @@ def receipts_db(temp_db: HubDatabase) -> HubDatabase:
     # Guard: the whole test is vacuous if the bundled gate is renamed or moved,
     # so pin that the named rule really landed and is live.
     row = RuleDefinitionManager(temp_db).get_by_name(RULE_NAME)
-    assert row is not None, f"{RULE_NAME} not synced from {_SESSION_FEEDBACK_RULES}"
+    assert row is not None, f"{RULE_NAME} not synced from {_MEMORY_LIFECYCLE_RULES}"
     assert row.enabled is True
     return temp_db
 
@@ -253,7 +254,7 @@ def test_delivered_gate_clears_itself_once_its_receipt_is_acknowledged(
     variables = SessionVariableManager(receipts_db)
     variables.merge_variables(
         session_id,
-        {"_gobby_feedback_survey_active": True, "task_claimed": True},
+        {"_memory_pending_task_reviews": [{"task_ref": "#42"}]},
     )
 
     body = _post_set_handoff(hook_client, session_id, f"n-{uuid4()}")
@@ -306,7 +307,7 @@ def test_one_sessions_staged_gate_never_reaches_another_session(
     _create_session(receipts_db, blocked_session)
     variables.merge_variables(
         blocked_session,
-        {"_gobby_feedback_survey_active": True, "task_claimed": True},
+        {"_memory_pending_task_reviews": [{"task_ref": "#42"}]},
     )
 
     # This one already acknowledged the survey, so the gate cannot fire for it
@@ -346,8 +347,7 @@ def test_route_stages_nothing_when_the_gate_does_not_fire(
     SessionVariableManager(receipts_db).merge_variables(
         session_id,
         {
-            "_gobby_feedback_survey_active": True,
-            "task_claimed": True,
+            "_memory_pending_task_reviews": [{"task_ref": "#42"}],
             ACK_VARIABLE: True,
         },
     )

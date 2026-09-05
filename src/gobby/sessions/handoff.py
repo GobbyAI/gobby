@@ -32,7 +32,24 @@ _OPTIONAL_FEEDBACK_FIELDS = ("suggestion", "disposition")
 FEEDBACK_KINDS = ("friction", "bug", "noise", "surprise", "missing-affordance", "useful", "other")
 FEEDBACK_FREQUENCIES = ("once", "repeated", "always")
 FEEDBACK_DISPOSITIONS = ("worked-around", "filed-task", "fixed", "escalated", "noted")
+FEEDBACK_SOURCE_SURFACES = (
+    "rule",
+    "hook",
+    "skill",
+    "workflow",
+    "agent",
+    "pipeline",
+    "prompt",
+    "cli",
+    "binary",
+    "daemon",
+    "ui",
+    "docs",
+    "config",
+)
 FEEDBACK_TASK_REF_RE = re.compile(r"#(\d+)")
+_FEEDBACK_MCP_SOURCE_RE = re.compile(r"^gobby-[a-z0-9-]+:[a-z_][a-z0-9_]*$")
+_FEEDBACK_REPOSITORY_PREFIXES = ("src/gobby/", "crates/", "web/src/", "docs/")
 _FEEDBACK_SESSION_REF_RE = re.compile(
     r"(?:\b[\w.-]+-S#\d+\b|(?<![\w#])#\d+\b|"
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
@@ -190,9 +207,13 @@ def normalize_feedback_observations(
                     "'fixed' requires a task claimed or closed by this session or by a "
                     "spawned descendant session",
                 )
+        source = validate_feedback_source(
+            _nonblank(raw.get("source"), f"observations[{index}].source"),
+            field=f"observations[{index}].source",
+        )
         normalized.append(
             FeedbackObservation(
-                source=_nonblank(raw.get("source"), f"observations[{index}].source"),
+                source=source,
                 kind=kind,
                 evidence=evidence,
                 impact=_nonblank(raw.get("impact"), f"observations[{index}].impact"),
@@ -203,6 +224,26 @@ def normalize_feedback_observations(
             )
         )
     return normalized
+
+
+def validate_feedback_source(source: str, *, field: str = "source") -> str:
+    """Validate that feedback names an unambiguous Gobby-owned surface."""
+    if _FEEDBACK_MCP_SOURCE_RE.fullmatch(source):
+        return source
+    surface, separator, name = source.partition(":")
+    if separator and surface in FEEDBACK_SOURCE_SURFACES and bool(name.strip()):
+        return source
+    if any(
+        source.startswith(prefix) and len(source) > len(prefix)
+        for prefix in _FEEDBACK_REPOSITORY_PREFIXES
+    ):
+        return source
+    surfaces = ", ".join(FEEDBACK_SOURCE_SURFACES)
+    raise ValueError(
+        f"{field} must name a Gobby surface: gobby-<server>:<tool>; "
+        f"<surface>:<name> where surface is one of {surfaces}; or a repository path "
+        "starting with src/gobby/, crates/, web/src/, or docs/"
+    )
 
 
 def _raise_disposition_error(index: int, detail: str) -> Never:

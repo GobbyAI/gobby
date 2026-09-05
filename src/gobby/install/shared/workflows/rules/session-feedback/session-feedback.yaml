@@ -31,52 +31,6 @@ rules:
         variable: _gobby_feedback_epoch_reviewed
         value: true
 
-  review-gobby-session-feedback-before-handoff:
-    description: "Request one bounded Gobby-experience survey before set_handoff"
-    event: before_tool
-    enabled: true
-    priority: 2
-    when: >
-      variables.get('_gobby_feedback_survey_active')
-      and event.data.get('mcp_server') == 'gobby-sessions'
-      and event.data.get('mcp_tool') == 'set_handoff'
-      and (
-        variables.get('task_claimed')
-        or not variables.get('session_task')
-      )
-      and not variables.get('_gobby_feedback_epoch_reviewed')
-    effects:
-      - type: block
-        delivery: on_receipt
-        mcp_tools:
-          - "gobby-sessions:set_handoff"
-        acknowledge_variable: _gobby_feedback_epoch_reviewed
-        reason: |
-          Before handing off, perform one bounded Gobby-experience survey using
-          only first-hand evidence from this context epoch. Call
-          `gobby-sessions:feedback` with at most 3 observations. Required
-          fields: source, kind (friction | bug | noise | surprise |
-          missing-affordance | useful | other), evidence, impact, frequency
-          (once | repeated | always). Optional: suggestion, disposition
-          (worked-around | filed-task | fixed | escalated | noted). kind
-          'other' requires kind_other_label and is only for observations no
-          listed kind fits. Most epochs should send `observations: []`; that
-          is valid and writes no rows.
-
-          This survey is about Gobby (the daemon, rules, tools, and harness),
-          not the current repository's product. Concrete defects in the current
-          repo remain Found Work, as does an actionable Gobby defect you observed.
-          'fixed' means you created the task claimed and closed it, or it remains
-          claimed and in progress; put its #N ref in evidence. 'escalated' means
-          you handed it to its active owner via send_message; put the owner session
-          ref in evidence. 'filed-task' is rung 3 only: the #N task carries
-          needs-decision or clean-window and its description explains why rungs 1
-          and 2 do not apply. An unlabeled or unclaimed filing is shirked found
-          work: the stop gate blocks on it and the nightly digest flags it. Every
-          other disposition for a defect is shirked. Then retry
-          `gobby-sessions:set_handoff` without duplicating the same
-          observations in `gobby_feedback`.
-
   review-gobby-session-feedback-on-stop:
     description: "Request one bounded Gobby-experience survey after completed work"
     event: turn_end
@@ -92,13 +46,20 @@ rules:
         acknowledge_variable: _gobby_feedback_epoch_reviewed
         reason: |
           Perform one bounded Gobby-experience survey using only first-hand
-          evidence from this session. Call `gobby-sessions:feedback` with at
-          most 3 observations: source, kind (friction | bug | noise | surprise
+          evidence from this session. Submit through `gobby-sessions:feedback`,
+          or inline through `gobby-sessions:set_handoff(gobby_feedback=...)`, with
+          at most 3 observations: source, kind (friction | bug | noise | surprise
           | missing-affordance | useful | other; 'other' needs
           kind_other_label), evidence, impact, frequency (once | repeated |
           always); optional suggestion and disposition (worked-around |
           filed-task | fixed | escalated | noted). Most sessions should send
-          `observations: []`; that is valid and writes no rows.
+          `observations: []` through feedback or `gobby_feedback: []` inline;
+          either is valid and writes no rows.
+
+          source must name a Gobby surface: gobby-<server>:<tool>;
+          <surface>:<name> where surface is rule, hook, skill, workflow, agent,
+          pipeline, prompt, cli, binary, daemon, ui, docs, or config; or a path
+          starting with src/gobby/, crates/, web/src/, or docs/.
 
           This survey is about Gobby, not the current repository's product.
           Concrete defects in the current repo remain Found Work, as does an

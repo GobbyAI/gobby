@@ -27,6 +27,12 @@ rules:
         variable: context_compact_mid_turn_pressure_band
         value: "none"
       - type: set_variable
+        variable: context_compact_tool_calls_since_nudge
+        value: 0
+      - type: set_variable
+        variable: context_compact_block_message
+        value: ""
+      - type: set_variable
         variable: gobby_plan_consider_shown
         value: false
       - type: set_variable

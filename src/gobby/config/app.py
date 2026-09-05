@@ -60,6 +60,7 @@ from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
     ChatHistoryConfig,
+    ContextHandoffConfig,
     MemoryUsefulnessConfig,
     MessageTrackingConfig,
     SessionFeedbackConfig,
@@ -359,6 +360,10 @@ class DaemonConfig(BaseModel):
     session_feedback: SessionFeedbackConfig = Field(
         default_factory=SessionFeedbackConfig,
         description="Gobby-experience survey capture configuration",
+    )
+    context_handoff: ContextHandoffConfig = Field(
+        default_factory=ContextHandoffConfig,
+        description="Context-pressure handoff thresholds and warning cadence",
     )
     metrics: MetricsConfig = Field(
         default_factory=MetricsConfig,

@@ -185,6 +185,14 @@ not only by declarative rules:
 | `found_work_shirk_confirmed` | Set alongside `found_work_shirk_alerted`: `true` when the LLM confirmed the deferral, `false` when the alert rested on the fast-path verdict alone |
 | `baseline_dirty_files` | Initialized from the first rule evaluation's git status |
 | `session_edited_files` | Updated by tool observers as the session edits files |
+| `context_compact_guidance_kind` | Current observer guidance kind: unknown, warn, block, failed, or empty |
+| `context_compact_guidance_message` | Turn-start or after-tool context-pressure guidance text |
+| `context_compact_mid_turn_pressure_band` | Current enforcement band: none, warn, or block |
+| `context_compact_tool_calls_since_nudge` | Above-warning tool calls since the last mid-turn nudge |
+| `context_compact_block_message` | Self-contained block reason while the pressure band is block |
+| `context_compact_handoff_unavailable` | Caps the current epoch at warn after a non-retryable compaction failure |
+| `context_compact_unknown_announced` | Records the once-per-epoch unknown-usage fallback |
+| `turns_since_compact` | Non-plan turns elapsed since the last compact boundary |
 
 Task-close validation reads command outcomes directly from the claiming and
 closing session transcripts. It does not project validation evidence into
@@ -467,4 +475,4 @@ gobby variables set <name> <value> --session <ID>
 - [Rules](./rules.md) — Rules that read and write variables
 - [Agents](./agents.md) — Agent selectors that control variable loading
 
-_Last verified: 2026-08-14_
+_Last verified: 2026-09-04_

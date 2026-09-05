@@ -472,6 +472,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 variables,
                 session_id,
                 self._session_manager,
+                config=getattr(self._config_resolver(), "context_handoff", None),
             )
 
         # Plan mode detection on the semantic start-of-turn boundary
@@ -491,6 +492,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 variables,
                 session_id,
                 self._session_manager,
+                config=getattr(self._config_resolver(), "context_handoff", None),
             )
 
         return failures

@@ -424,7 +424,20 @@ session_lifecycle:
   transcript_processing_interval_minutes: 5
   transcript_processing_batch_size: 10
   transcript_archive_dir: ~/.gobby/session_transcripts
+
+context_handoff:
+  warn_tokens: 128000
+  block_tokens: 256000
+  small_window_tokens: 256000
+  small_window_warn_ratio: 0.40
+  small_window_block_ratio: 0.80
+  warn_every_tool_calls: 5
 ```
+
+Context windows strictly below `context_handoff.small_window_tokens` use the
+configured warn and block ratios. Larger windows and sessions without a known
+window use the absolute token thresholds. Warnings repeat at every turn start
+and after each configured number of tool calls while pressure remains elevated.
 
 ### Tasks And Workflows
 
@@ -739,4 +752,4 @@ or global scope, `enabled: true`, and that secret parameters resolve
 - [search.md](./search.md) - Search and embedding behavior
 - [webhooks-and-plugins.md](./webhooks-and-plugins.md) - Extension development
 
-_Last verified: 2026-08-30_
+_Last verified: 2026-09-04_

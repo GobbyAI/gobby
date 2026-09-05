@@ -160,5 +160,7 @@ class TestPreserveContextOnCompact:
         }
 
         assert assignments["context_compact_mid_turn_pressure_band"] == "none"
+        assert assignments["context_compact_tool_calls_since_nudge"] == 0
+        assert assignments["context_compact_block_message"] == ""
         assert "context_compact_handoff_result" not in assignments
         assert "context_compact_highest_announced_threshold" not in assignments

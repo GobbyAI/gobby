@@ -6,13 +6,14 @@ Contains session-related Pydantic config models:
 - MessageTrackingConfig: Session message tracking settings
 - SessionLifecycleConfig: Session lifecycle management settings
 - SessionFeedbackConfig: Gobby-experience survey capture settings
+- ContextHandoffConfig: Context-pressure handoff thresholds and cadence
 
 Extracted from app.py using Strangler Fig pattern for code decomposition.
 """
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from gobby.config.feature_base import FeatureDefaultConfig, FeatureProfile
 
@@ -22,6 +23,7 @@ __all__ = [
     "MessageTrackingConfig",
     "SessionLifecycleConfig",
     "SessionFeedbackConfig",
+    "ContextHandoffConfig",
     "FeedbackReviewConfig",
 ]
 
@@ -245,3 +247,50 @@ class SessionFeedbackConfig(BaseModel):
         default_factory=FeedbackReviewConfig,
         description="Scheduled review loop that distills unreviewed feedback rows",
     )
+
+
+class ContextHandoffConfig(BaseModel):
+    """Context-pressure handoff thresholds and warning cadence."""
+
+    warn_tokens: int = Field(
+        default=128_000,
+        gt=0,
+        description="Warning threshold for large and unknown context windows",
+    )
+    block_tokens: int = Field(
+        default=256_000,
+        gt=0,
+        description="Tool-block threshold for large and unknown context windows",
+    )
+    small_window_tokens: int = Field(
+        default=256_000,
+        gt=0,
+        description="Windows below this size use the small-window ratio thresholds",
+    )
+    small_window_warn_ratio: float = Field(
+        default=0.40,
+        gt=0,
+        le=1,
+        description="Warning threshold ratio for small context windows",
+    )
+    small_window_block_ratio: float = Field(
+        default=0.80,
+        gt=0,
+        le=1,
+        description="Tool-block threshold ratio for small context windows",
+    )
+    warn_every_tool_calls: int = Field(
+        default=5,
+        ge=1,
+        description="Tool calls between repeated context-pressure warnings",
+    )
+
+    @model_validator(mode="after")
+    def validate_threshold_order(self) -> "ContextHandoffConfig":
+        if self.block_tokens < self.warn_tokens:
+            raise ValueError("block_tokens must be greater than or equal to warn_tokens")
+        if self.small_window_block_ratio <= self.small_window_warn_ratio:
+            raise ValueError(
+                "small_window_block_ratio must be greater than small_window_warn_ratio"
+            )
+        return self

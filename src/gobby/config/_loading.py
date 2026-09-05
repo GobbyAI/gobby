@@ -352,8 +352,12 @@ def export_config_to_yaml(config: DaemonConfig, config_file: str | None = None) 
     # Block writes to production config during tests
     if is_test_protect_enabled():
         real_gobby_home = Path("~/.gobby").expanduser().resolve()
+        managed_test_sandbox = real_gobby_home / "run" / "sandbox"
         try:
-            if config_path.resolve().is_relative_to(real_gobby_home):
+            resolved_config_path = config_path.resolve()
+            if resolved_config_path.is_relative_to(
+                real_gobby_home
+            ) and not resolved_config_path.is_relative_to(managed_test_sandbox):
                 raise RuntimeError(
                     f"export_config_to_yaml() would write to production path "
                     f"{config_path} during tests."

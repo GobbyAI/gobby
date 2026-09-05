@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -19,6 +20,7 @@ pytestmark = pytest.mark.unit
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 RULE_NAME = "block-tools-after-handoff-compact"
+LIMIT_RULE_NAME = "require-handoff-at-context-limit"
 RETRY_RULE_NAME = "retry-terminal-handoff-after-delivery-failure"
 NUDGE_RULE_NAMES = (
     "nudge-compact-on-context-pressure",
@@ -60,17 +62,43 @@ def session_manager() -> Any:
 
 @pytest.fixture
 def handler(temp_db: HubDatabase, session_manager: Any) -> WorkflowHookHandler:
+    return _make_handler(temp_db, session_manager)
+
+
+def _context_handoff_config(**overrides: Any) -> SimpleNamespace:
+    values = {
+        "warn_tokens": 128_000,
+        "block_tokens": 256_000,
+        "small_window_tokens": 256_000,
+        "small_window_warn_ratio": 0.40,
+        "small_window_block_ratio": 0.80,
+        "warn_every_tool_calls": 5,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _make_handler(
+    temp_db: HubDatabase,
+    session_manager: Any,
+    *,
+    context_handoff: SimpleNamespace | None = None,
+) -> WorkflowHookHandler:
     """Load the bundled pending-compaction and context-nudge rules."""
     sync_bundled_rules(temp_db, get_bundled_rules_path())
     with temp_db.transaction() as conn:
         conn.execute("UPDATE rule_definitions SET source = 'installed', enabled = FALSE")
         conn.execute(
-            "UPDATE rule_definitions SET enabled = TRUE WHERE name IN (%s, %s, %s, %s)",
-            (RULE_NAME, RETRY_RULE_NAME, *NUDGE_RULE_NAMES),
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name IN (%s, %s, %s, %s, %s)",
+            (RULE_NAME, LIMIT_RULE_NAME, RETRY_RULE_NAME, *NUDGE_RULE_NAMES),
         )
     return WorkflowHookHandler(
         rule_engine=RuleEngine(temp_db),
         session_manager=session_manager,
+        config=SimpleNamespace(
+            workflow=SimpleNamespace(enabled=True, timeout=5.0),
+            context_handoff=context_handoff or _context_handoff_config(),
+        ),
     )
 
 
@@ -79,11 +107,12 @@ def _event(
     *,
     data: dict[str, Any] | None = None,
     session_type: str = "terminal",
+    source: SessionSource = SessionSource.CLAUDE,
 ) -> HookEvent:
     return HookEvent(
         event_type=event_type,
         session_id="provider-session",
-        source=SessionSource.CLAUDE,
+        source=source,
         timestamp=datetime.now(UTC),
         data=data or {},
         metadata={
@@ -121,43 +150,67 @@ def _set_handoff_event(
     )
 
 
-def _arbitrary_tool_event(*, session_type: str = "terminal") -> HookEvent:
+def _arbitrary_tool_event(
+    *,
+    session_type: str = "terminal",
+    source: SessionSource = SessionSource.CLAUDE,
+    tool_name: str = "Bash",
+    mcp_server: str | None = None,
+    mcp_tool: str | None = None,
+) -> HookEvent:
+    data: dict[str, Any] = {"tool_name": tool_name, "tool_input": {"command": "pwd"}}
+    if mcp_server is not None:
+        data["mcp_server"] = mcp_server
+    if mcp_tool is not None:
+        data["mcp_tool"] = mcp_tool
     return _event(
         HookEventType.BEFORE_TOOL,
         session_type=session_type,
-        data={"tool_name": "Bash", "tool_input": {"command": "pwd"}},
+        source=source,
+        data=data,
     )
 
 
-def _arbitrary_after_tool_event() -> HookEvent:
+def _arbitrary_after_tool_event(
+    *,
+    session_type: str = "terminal",
+    source: SessionSource = SessionSource.CLAUDE,
+) -> HookEvent:
     return _event(
         HookEventType.AFTER_TOOL,
+        session_type=session_type,
+        source=source,
         data={"tool_name": "Read", "tool_input": {"file_path": "/repo/a.py"}},
     )
 
 
 @pytest.mark.asyncio
-async def test_nudge_fires_once_per_threshold_crossing_with_real_engine(
+async def test_warn_nudge_repeats_every_configured_tool_count_and_turn_start(
     handler: WorkflowHookHandler,
     temp_db: HubDatabase,
     session_manager: Any,
 ) -> None:
+    session_manager.session.context_window = 1_000_000
     session_manager.session.context_used_tokens = 100_000
 
-    soft = await handler._evaluate_rules(_event(HookEventType.BEFORE_AGENT))
-    repeated_soft = await handler._evaluate_rules(_arbitrary_after_tool_event())
+    below = await handler._evaluate_rules(_event(HookEventType.BEFORE_AGENT))
     session_manager.session.context_used_tokens = 150_000
-    strong = await handler._evaluate_rules(_arbitrary_after_tool_event())
-    repeated_strong = await handler._evaluate_rules(_arbitrary_after_tool_event())
+    first_turn = await handler._evaluate_rules(_event(HookEventType.BEFORE_AGENT))
+    first_tool = await handler._evaluate_rules(_arbitrary_after_tool_event())
+    middle_tools = [await handler._evaluate_rules(_arbitrary_after_tool_event()) for _ in range(3)]
+    cadence_tool = await handler._evaluate_rules(_arbitrary_after_tool_event())
+    next_turn = await handler._evaluate_rules(_event(HookEventType.BEFORE_AGENT))
     stored = SessionVariableManager(temp_db).get_variables(SESSION_ID)
 
-    assert "Context is 100k tokens" in (soft.context or "")
-    assert EFFECT_COPY in (soft.context or "")
-    assert repeated_soft.context is None
-    assert "Context is 150k tokens" in (strong.context or "")
-    assert EFFECT_COPY in (strong.context or "")
-    assert repeated_strong.context is None
-    assert stored["context_compact_highest_announced_threshold"] == "strong"
+    assert below.context is None
+    assert "Context is 150k tokens" in (first_turn.context or "")
+    assert EFFECT_COPY in (first_turn.context or "")
+    assert first_tool.context is None
+    assert all(response.context is None for response in middle_tools)
+    assert "Context is 150k tokens" in (cadence_tool.context or "")
+    assert "Context is 150k tokens" in (next_turn.context or "")
+    assert stored["context_compact_mid_turn_pressure_band"] == "warn"
+    assert stored["context_compact_tool_calls_since_nudge"] == 0
 
 
 @pytest.mark.asyncio
@@ -185,8 +238,9 @@ async def test_handoff_marker_suppresses_nudges_and_blocks_tools_until_turn_star
     assert BLOCK_REASON in (before_tool.reason or "")
     assert turn_end.context is None
     assert stored_pending["context_compact_handoff_result"]["delivery_pending"] is True
-    assert "Context is 150k tokens" in (successor_start.context or "")
+    assert successor_start.context is None
     assert stored_successor["context_compact_handoff_result"] is None
+    assert stored_successor["context_compact_mid_turn_pressure_band"] == "none"
 
 
 @pytest.mark.asyncio
@@ -360,3 +414,192 @@ async def test_background_delivery_failure_blocks_until_set_handoff_retry(
     assert blocked.decision == "block"
     assert "Retry gobby-sessions:set_handoff" in (blocked.reason or "")
     assert retry.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_context_limit_blocks_bash_with_self_contained_handoff_sequence(
+    handler: WorkflowHookHandler,
+    session_manager: Any,
+) -> None:
+    session_manager.session.context_window = 1_000_000
+    session_manager.session.context_used_tokens = 256_000
+
+    pressure = await handler._evaluate_rules(_arbitrary_after_tool_event())
+    blocked = await handler._evaluate_rules(_arbitrary_tool_event())
+
+    assert "Context is 256k tokens" in (pressure.context or "")
+    assert blocked.decision == "block"
+    assert "256k" in (blocked.reason or "")
+    assert "get_tool_schema" in (blocked.reason or "")
+    assert "set_handoff" in (blocked.reason or "")
+
+
+@pytest.mark.parametrize(
+    "tool_event",
+    [
+        pytest.param(
+            {"mcp_server": "gobby-sessions", "mcp_tool": "set_handoff"},
+            id="set-handoff",
+        ),
+        pytest.param(
+            {"mcp_server": "gobby-sessions", "mcp_tool": "feedback"},
+            id="feedback",
+        ),
+        pytest.param(
+            {"mcp_server": "gobby-sessions", "mcp_tool": "get_handoff"},
+            id="get-handoff",
+        ),
+        pytest.param(
+            {"mcp_server": "gobby-memory", "mcp_tool": "review_task_memories"},
+            id="review-task-memories",
+        ),
+        pytest.param(
+            {"mcp_server": "gobby-agents", "mcp_tool": "end_agent_run"},
+            id="end-agent-run",
+        ),
+        pytest.param({"tool_name": "get_tool_schema"}, id="bare-get-tool-schema"),
+        pytest.param({"tool_name": "list_tools"}, id="bare-list-tools"),
+        pytest.param(
+            {"tool_name": "mcp__gobby__get_tool_schema"},
+            id="proxy-get-tool-schema",
+        ),
+        pytest.param({"tool_name": "mcp__gobby__list_tools"}, id="proxy-list-tools"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_context_limit_allows_handoff_prerequisite_tools(
+    handler: WorkflowHookHandler,
+    session_manager: Any,
+    tool_event: dict[str, str],
+) -> None:
+    session_manager.session.context_window = 1_000_000
+    session_manager.session.context_used_tokens = 256_000
+    await handler._evaluate_rules(_arbitrary_after_tool_event())
+
+    allowed = await handler._evaluate_rules(
+        _arbitrary_tool_event(
+            tool_name=tool_event.get("tool_name", "Bash"),
+            mcp_server=tool_event.get("mcp_server"),
+            mcp_tool=tool_event.get("mcp_tool"),
+        )
+    )
+
+    assert allowed.decision == "allow"
+
+
+@pytest.mark.parametrize(
+    ("plan_mode", "session_type", "source"),
+    [
+        pytest.param(True, "terminal", SessionSource.CLAUDE, id="plan-mode"),
+        pytest.param(False, "web_chat", SessionSource.CLAUDE, id="web-chat"),
+        pytest.param(False, "terminal", SessionSource.PIPELINE, id="pipeline"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_context_limit_skips_exempt_session_modes_and_sources(
+    handler: WorkflowHookHandler,
+    temp_db: HubDatabase,
+    session_manager: Any,
+    plan_mode: bool,
+    session_type: str,
+    source: SessionSource,
+) -> None:
+    session_manager.session.context_window = 1_000_000
+    session_manager.session.context_used_tokens = 300_000
+    if plan_mode:
+        SessionVariableManager(temp_db).merge_variables(SESSION_ID, {"plan_mode": True})
+
+    pressure = await handler._evaluate_rules(
+        _arbitrary_after_tool_event(session_type=session_type, source=source)
+    )
+    allowed = await handler._evaluate_rules(
+        _arbitrary_tool_event(session_type=session_type, source=source)
+    )
+
+    assert allowed.decision == "allow"
+    if plan_mode:
+        assert pressure.context is None
+
+
+@pytest.mark.asyncio
+async def test_context_limit_lifts_after_compaction_lifecycle_and_lower_usage(
+    handler: WorkflowHookHandler,
+    temp_db: HubDatabase,
+    session_manager: Any,
+) -> None:
+    session_manager.session.context_window = 1_000_000
+    session_manager.session.context_used_tokens = 300_000
+    await handler._evaluate_rules(_arbitrary_after_tool_event())
+    assert (await handler._evaluate_rules(_arbitrary_tool_event())).decision == "block"
+
+    await handler._evaluate_rules(_set_handoff_event({"success": True, "result": STAGED_RESULT}))
+    await handler._evaluate_rules(_event(HookEventType.PRE_COMPACT))
+    await handler._evaluate_rules(_event(HookEventType.SESSION_START, data={"source": "compact"}))
+    await handler._evaluate_rules(_event(HookEventType.BEFORE_AGENT))
+    session_manager.session.context_used_tokens = 120_000
+    await handler._evaluate_rules(_arbitrary_after_tool_event())
+    allowed = await handler._evaluate_rules(_arbitrary_tool_event())
+    stored = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+
+    assert allowed.decision == "allow"
+    assert stored["context_compact_mid_turn_pressure_band"] == "none"
+    assert stored["context_compact_block_message"] == ""
+
+
+@pytest.mark.asyncio
+async def test_context_limit_uses_live_config_override(
+    temp_db: HubDatabase,
+    session_manager: Any,
+) -> None:
+    configured = _make_handler(
+        temp_db,
+        session_manager,
+        context_handoff=_context_handoff_config(
+            warn_tokens=10_000,
+            block_tokens=20_000,
+            small_window_tokens=300_000,
+            small_window_warn_ratio=0.25,
+            small_window_block_ratio=0.50,
+            warn_every_tool_calls=2,
+        ),
+    )
+    session_manager.session.context_window = 400_000
+    session_manager.session.context_used_tokens = 20_000
+
+    await configured._evaluate_rules(_arbitrary_after_tool_event())
+    blocked = await configured._evaluate_rules(_arbitrary_tool_event())
+
+    assert blocked.decision == "block"
+    assert "20k" in (blocked.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_non_retryable_handoff_failure_downgrades_block_to_warning(
+    handler: WorkflowHookHandler,
+    temp_db: HubDatabase,
+    session_manager: Any,
+) -> None:
+    session_manager.session.context_window = 1_000_000
+    session_manager.session.context_used_tokens = 300_000
+    await handler._evaluate_rules(_arbitrary_after_tool_event())
+    assert (await handler._evaluate_rules(_arbitrary_tool_event())).decision == "block"
+
+    failed = await handler._evaluate_rules(
+        _set_handoff_event(
+            {
+                "success": True,
+                "result": {
+                    "compacted": False,
+                    "reason": "No live terminal target is available.",
+                    "error_code": "terminal_target_unavailable",
+                },
+            }
+        )
+    )
+    allowed = await handler._evaluate_rules(_arbitrary_tool_event())
+    stored = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+
+    assert "set_handoff could not compact" in (failed.context or "")
+    assert allowed.decision == "allow"
+    assert stored["context_compact_mid_turn_pressure_band"] == "warn"
+    assert stored["context_compact_handoff_unavailable"] is True
