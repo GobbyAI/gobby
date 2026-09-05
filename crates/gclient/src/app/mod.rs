@@ -386,6 +386,16 @@ impl Workspace {
                     "attachment is not live",
                 ));
             }
+            if matches!(
+                pane.control,
+                ControlState::LeaseLost | ControlState::UncertainReadOnly
+            ) {
+                return Err(DaemonError::new(
+                    403,
+                    "read_only",
+                    "pane requires explicit control recovery",
+                ));
+            }
             if pane.pending_input.is_some() {
                 return Err(DaemonError::new(
                     409,
@@ -757,7 +767,7 @@ impl<D: Daemon> Workspace<D> {
     pub fn pane_by_attachment(&self, attachment_id: &str) -> Option<&Pane> {
         self.panes
             .values()
-            .find(|pane| pane.is_live() && pane.attachment_id() == attachment_id)
+            .find(|pane| !attachment_id.is_empty() && pane.attachment_id() == attachment_id)
     }
 
     pub fn replace_frame_source(

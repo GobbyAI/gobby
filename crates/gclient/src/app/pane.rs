@@ -250,6 +250,9 @@ impl Pane {
     }
 
     pub(super) fn install_frame_source(&mut self, source: PaneFrameSource) {
+        if let AttachState::Attached { transport, .. } = &mut self.attach {
+            *transport = source.transport();
+        }
         self.frame_source = Some(source);
         self.fallback_in_flight = false;
     }
