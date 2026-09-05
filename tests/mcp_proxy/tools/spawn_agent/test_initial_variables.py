@@ -861,6 +861,30 @@ class TestSpawnAgentStepVariables:
         ) in spawn_request.prompt
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("task_assignment", ["request", "initial_variables"])
+    async def test_task_assigned_spawn_includes_parent_reply_guidance(
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        db: Any,
+        mock_runner: MagicMock,
+        repo_root: Path,
+        task_assignment: Literal["request", "initial_variables"],
+    ) -> None:
+        (*_, spawn_request) = await self._spawn_bundled_developer_agent(
+            isolated_checkout_factory=isolated_checkout_factory,
+            db=db,
+            mock_runner=mock_runner,
+            repo_root=repo_root,
+            agent_name="backend-developer",
+            task_assignment=task_assignment,
+        )
+
+        assert "task_blocker message ends this run after delivery" in spawn_request.prompt
+        assert "parent respawns you with the answer, reusing the worktree" in spawn_request.prompt
+        assert "use message_type=message" in spawn_request.prompt
+        assert "reply arrives in a later tool result" in spawn_request.prompt
+
+    @pytest.mark.asyncio
     async def test_initial_variable_task_assignment_starts_step_workflow(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,

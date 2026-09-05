@@ -283,6 +283,13 @@ or `all`. Pass `target_id` for every target except `all`; `session` accepts a
 session ref, `agent` an agent run id, `project` a project id/name, and `build`
 a build run id, build input ref, or root task ref.
 
+## Blocked Child Communication
+
+Sending the parent a `task_blocker` message ends the child run after delivery;
+the parent respawns the child with the answer, reusing the worktree. For a question
+that needs a reply while the child run stays alive, use `message_type=message`; the
+reply arrives in a later tool result.
+
 Spawn requests can pass `agent`, `task_id`, isolation fields, provider/model
 overrides, reasoning fields, runtime limits, parent session, and project path.
 `dispatch_batch` uses the same spawn machinery for multiple task suggestions.
