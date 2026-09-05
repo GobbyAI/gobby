@@ -19,6 +19,7 @@ from psycopg.conninfo import make_conninfo
 
 from gobby import __version__
 from gobby.cli import postgres_bootstrap as _bootstrap
+from gobby.cli.hub_backup.rehearsal import load_rehearsal_profile
 from gobby.cli.installers.docker_guard import ensure_docker_allowed
 from gobby.cli.installers.postgres import (
     DEFAULT_POSTGRES_DB,
@@ -291,6 +292,8 @@ def _verify_dump_with_pg_restore(
     dump_path: Path,
     container: str = _POSTGRES_CONTAINER,
 ) -> None:
+    if rehearsal := load_rehearsal_profile():
+        container = rehearsal.services["postgres"].container_id
     if not dump_path.is_file():
         raise click.ClickException(f"PostgreSQL dump was not created: {dump_path}")
     command = ["docker", "exec", "-i", container, "pg_restore", "--list"]
@@ -351,6 +354,9 @@ def _resolve_database_url(gobby_home: Path) -> str:
 
 
 def _managed_postgres_container(database_url: str) -> str:
+    rehearsal = load_rehearsal_profile(database_url)
+    if rehearsal is not None:
+        return rehearsal.services["postgres"].container_id
     parsed = urlparse(database_url)
     host = (parsed.hostname or "").lower()
     try:

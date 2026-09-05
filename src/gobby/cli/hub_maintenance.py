@@ -16,6 +16,7 @@ from psycopg import ProgrammingError
 from psycopg.conninfo import conninfo_to_dict
 
 from gobby.cli.hub_backup.cli import _start_daemon
+from gobby.cli.hub_backup.rehearsal import load_rehearsal_profile
 from gobby.cli.postgres_backup import _resolve_database_url as _resolve_backup_database_url
 from gobby.cli.utils_shutdown import stop_daemon
 from gobby.paths import get_gobby_home
@@ -211,6 +212,8 @@ def _stop_daemon_before_fence(database_url: str) -> None:
     (#19437). The fence must only ever go up over a quiesced hub.
     """
     _require_rehearsal_database(database_url)
+    if load_rehearsal_profile(database_url) is not None:
+        return
     if not stop_daemon(shutdown_source="cli_hub_maintenance"):
         raise click.ClickException(
             "Could not stop the running daemon; refusing to open a maintenance "
@@ -220,6 +223,8 @@ def _stop_daemon_before_fence(database_url: str) -> None:
 
 def _require_rehearsal_database(database_url: str) -> None:
     """Under GOBBY_TEST_PROTECT, refuse every hub touch except the rehearsal database."""
+    if load_rehearsal_profile(database_url) is not None:
+        return
     if not is_test_protect_enabled():
         return
     try:
