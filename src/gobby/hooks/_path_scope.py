@@ -107,6 +107,8 @@ def paths_may_touch_project(
             return True
         if project_root is not None and _is_relative_to(path, project_root):
             return True
+        if project_root is not None and _shares_git_repository(path, project_root):
+            return True
         if project_root is None and not _is_known_external_path(path):
             return True
     return False
@@ -222,11 +224,7 @@ def _resolve_base_dir(path: Any) -> Path | None:
 
 
 def _is_known_external_path(path: Path) -> bool:
-    return (
-        _is_gobby_home_path(path)
-        or _is_agent_state_home_path(path)
-        or _is_temp_agent_scratchpad_path(path)
-    )
+    return _is_gobby_home_path(path) or _is_agent_state_home_path(path) or _is_temp_path(path)
 
 
 def _is_gobby_home_path(path: Path) -> bool:
@@ -245,8 +243,12 @@ def _temp_scratchpad_roots() -> frozenset[Path]:
     return frozenset(root.resolve(strict=False) for root in roots)
 
 
+def _is_temp_path(path: Path) -> bool:
+    return any(_is_relative_to(path, root) for root in _temp_scratchpad_roots())
+
+
 def _is_temp_agent_scratchpad_path(path: Path) -> bool:
-    if not any(_is_relative_to(path, root) for root in _temp_scratchpad_roots()):
+    if not _is_temp_path(path):
         return False
 
     for part in path.parts:
