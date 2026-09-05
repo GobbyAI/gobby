@@ -49,6 +49,25 @@ For Rust work, do not run bare `cargo test` or workspace-wide
 `cargo test --no-default-features`. Use focused commands such as
 `cargo test -p <package>` or `cargo test <name> -p <package>`.
 
+## Managed-agent terminal validation
+
+On macOS, Gobby-managed agents launched through SRT may create Unix sockets
+inside their canonical current-run temp directory, including nested directories.
+Use `CLAUDE_CODE_TMPDIR` (or the run's `TMPDIR`) for short, unique fixture paths;
+check the encoded socket-path length and clean up owned processes and files.
+Another run's directory and symlink escapes do not receive this grant. Operator
+socket grants remain separate; `allowAllUnixSockets` stays false.
+
+Linux and WSL2 retain SRT's Unix-socket restrictions. Directory creation and
+writes inside the run temp directory remain permitted on both platforms.
+Web-chat launches do not receive the managed-agent socket grant.
+
+For Gobby terminal work, follow `docs/guides/gterminal-development-guide.md`:
+Guard H groups 2, 3, and 6, runtime-contract tests, and external terminal attach
+can require live socket operations. Report policy-denied or skipped cases as
+**UNVALIDATED**, with the command and reason. The coordinator must obtain a
+passing run on the required platform before counting that coverage as complete.
+
 ## Test Changes
 
 Add or update tests when behavior changes. Skipping tests is acceptable only for

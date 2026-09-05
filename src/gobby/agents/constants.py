@@ -133,8 +133,11 @@ def get_terminal_env_vars(
         Dict of environment variable name to value.
     """
     from gobby.agents.spawn_cache_policy import build_spawn_cache_env
+    from gobby.utils.daemon_url import daemon_url
 
     env = {
+        # Resolve before sandboxing hides the operator bootstrap credentials.
+        "GOBBY_DAEMON_URL": daemon_url(),
         GOBBY_SESSION_ID: session_id,
         GOBBY_AGENT_RUN_ID: agent_run_id,
         GOBBY_PROJECT_ID: project_id,
@@ -173,6 +176,7 @@ def get_terminal_env_vars(
 
 # List of all environment variable names for documentation
 ALL_TERMINAL_ENV_VARS = [
+    "GOBBY_DAEMON_URL",
     GOBBY_SESSION_ID,
     GOBBY_PARENT_SESSION_ID,
     GOBBY_AGENT_RUN_ID,

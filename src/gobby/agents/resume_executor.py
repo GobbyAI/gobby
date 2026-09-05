@@ -28,7 +28,10 @@ from gobby.agents.resume_metadata import (
 from gobby.agents.sandbox import coerce_sandbox_config
 from gobby.agents.sandbox_resolvers import get_sandbox_resolver
 from gobby.agents.spawn import prepare_terminal_resume
-from gobby.agents.spawn_executor_support import schedule_codex_prompt_delivery
+from gobby.agents.spawn_executor_support import (
+    _codex_runtime_config_overrides,
+    schedule_codex_prompt_delivery,
+)
 from gobby.agents.spawners.command_builder import build_cli_command
 from gobby.agents.srt_runtime import (
     SandboxLaunch,
@@ -310,6 +313,7 @@ async def resume_agent_run(
                 websocket_port=websocket_port,
                 api_base=_resume_api_base(provider, env),
                 env=env,
+                allow_run_unix_sockets=True,
             )
         except (OSError, ValueError, SrtRuntimeError) as exc:
             error = f"resume_sandbox_failed_closed:{type(exc).__name__}:{exc}"
@@ -344,6 +348,23 @@ async def resume_agent_run(
             ]
         )
     )
+    if provider == "codex":
+        # The successor has a new run ID, capability, and sandbox temp root.
+        # Replaying the original environment would bind MCP to its ended run.
+        config_overrides = [
+            override
+            for override in config_overrides
+            if not override.partition("=")[0].startswith(
+                (
+                    "mcp_servers.gobby.env.",
+                    "mcp_servers.gobby.env_vars",
+                    "shell_environment_policy.set.",
+                )
+            )
+        ]
+        config_overrides.extend(
+            _codex_runtime_config_overrides(launch.provider_env.get("TMPDIR"), env)
+        )
     command, _cmd_env = build_cli_command(
         cli=provider,
         # Claude appends its prompt after the MCP flags below; Codex receives

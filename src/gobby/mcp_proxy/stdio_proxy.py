@@ -103,9 +103,11 @@ class DaemonProxy:
         port: int,
         deps_factory: Callable[[], DaemonProxyDependencies] | None = None,
         startup_task: asyncio.Task[None] | None = None,
+        *,
+        base_url: str | None = None,
     ):
         self.port = port
-        self.base_url = f"http://127.0.0.1:{port}"
+        self.base_url = base_url or f"http://127.0.0.1:{port}"
         self._deps_factory = deps_factory or default_daemon_proxy_dependencies
         self._project_id: str | None = self._deps_factory().read_project_id()
         # GOBBY_SESSION_ID is sessions.id. Provider CLI ids (GROK_SESSION_ID and

@@ -286,6 +286,9 @@ async def test_srt_resume_executes_resolved_provider_target(
     assert command[command.index("--") + 1] == target
     assert spawn_kwargs["auth_cli"] == "claude"
     prepare_sandbox.assert_awaited_once()
+    assert prepare_sandbox.await_args is not None
+    assert prepare_sandbox.await_args.kwargs["allow_run_unix_sockets"] is True
+    assert prepare_sandbox.await_args.kwargs["run_id"] == str(_SUCCESSOR_ID)
 
 
 @pytest.mark.asyncio
@@ -504,13 +507,38 @@ async def test_resume_never_replays_stored_secret_overrides(
     metadata = _resume_metadata()
     metadata["config_overrides"] = [
         legacy_token_override,
+        'mcp_servers.gobby.env.GOBBY_AGENT_RUN_ID="old-run"',
+        'mcp_servers.gobby.env.TMPDIR="/old-tmp"',
+        'shell_environment_policy.set.TMPDIR="/old-tmp"',
+        'shell_environment_policy.set.GOBBY_DAEMON_URL="http://127.0.0.1:1"',
         'mcp_servers.gobby.command="uv"',
     ]
+    metadata["sandbox_config"] = {"enabled": True, "backend": "srt"}
     runner = _runner()
     spawner = MagicMock()
     spawner.spawn.return_value = _spawn_result()
     finalize = AsyncMock()
-    _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+    prepare = _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+    prepare.return_value.env_vars.update(
+        {
+            "GOBBY_DAEMON_URL": "http://127.0.0.1:31579",
+            "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/fresh/grant.json",
+            "GOBBY_AGENT_API_TOKEN": "fresh-capability",
+        }
+    )
+    prepare_sandbox = AsyncMock(
+        return_value=SandboxLaunch(
+            backend="srt",
+            enforced=True,
+            provider_env={"TMPDIR": "/fresh-tmp"},
+            provider_executable="/managed/codex",
+            policy_path="/fresh/policy.json",
+            violation_path="/fresh/violations.jsonl",
+            node_path="/managed/node",
+            runner_path="/managed/runner.mjs",
+        )
+    )
+    monkeypatch.setattr(resume_executor, "prepare_sandbox_launch", prepare_sandbox)
     build_cli = MagicMock(return_value=(["codex", "resume"], {}))
     monkeypatch.setattr(resume_executor, "build_cli_command", build_cli)
 
@@ -526,6 +554,23 @@ async def test_resume_never_replays_stored_secret_overrides(
     assert 'mcp_servers.gobby.command="uv"' in overrides
     assert legacy_token_override not in overrides
     assert "stale-capability" not in repr(build_cli.call_args)
+    assert "fresh-capability" not in repr(build_cli.call_args)
+    assert "old-run" not in repr(overrides)
+    assert "/old-tmp" not in repr(overrides)
+    assert 'http://127.0.0.1:1"' not in repr(overrides)
+    assert 'mcp_servers.gobby.env.TMPDIR="/fresh-tmp"' in overrides
+    assert 'shell_environment_policy.set.TMPDIR="/fresh-tmp"' in overrides
+    assert runner._test_runtime.last_request.env["TMPDIR"] == "/fresh-tmp"
+    assert prepare_sandbox.await_args is not None
+    assert prepare_sandbox.await_args.kwargs["allow_run_unix_sockets"] is True
+    assert prepare_sandbox.await_args.kwargs["run_id"] == str(_SUCCESSOR_ID)
+    assert f'mcp_servers.gobby.env.GOBBY_AGENT_RUN_ID="{_SUCCESSOR_ID}"' in overrides
+    assert 'mcp_servers.gobby.env.GOBBY_DAEMON_URL="http://127.0.0.1:31579"' in overrides
+    assert 'shell_environment_policy.set.GOBBY_DAEMON_URL="http://127.0.0.1:31579"' in overrides
+    assert (
+        'mcp_servers.gobby.env.GOBBY_MANAGED_EXECUTION_BOOTSTRAP="/fresh/grant.json"' in overrides
+    )
+    assert 'mcp_servers.gobby.env_vars=["GOBBY_AGENT_API_TOKEN"]' in overrides
 
 
 @pytest.mark.parametrize(

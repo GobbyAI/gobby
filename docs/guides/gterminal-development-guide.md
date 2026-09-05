@@ -108,7 +108,38 @@ default it had justified.
   `src/gobby/servers/websocket/terminal_ws.py::_handle_terminal_resize` for native
   rows. Rendering tmux rows through gterm is the gclient epic's to solve.
 
-## Guard set G
+## Sandboxed validation by operating system
+
+Managed-agent SRT launches on macOS permit Unix sockets beneath the canonical
+current-run temp directory. Use `CLAUDE_CODE_TMPDIR` or the run's `TMPDIR`, with
+short unique fixture names and an encoded path shorter than 104 bytes. Fixtures
+own cleanup of their hosts, tmux servers, sockets, and temporary files, including
+setup failures. The grant includes nested directories but excludes other runs
+and symlink escapes. Separate operator grants remain intact and
+`allowAllUnixSockets` remains false.
+
+Linux and WSL2 receive no additional Unix-socket grant. Run-local directory
+creation and writes remain allowed on both platforms. This change applies to
+managed agents; web-chat socket permissions are separate.
+
+The current follow-on plan, `.gobby/plans/herdr-client-completion.md`, defines
+Guard H. Socket-dependent validation includes group 2 (Rust terminal tests),
+group 3 (Python terminal/runtime and websocket contracts), and group 6 (terminal
+client stack e2e), plus `tests/e2e/test_external_terminal_attach.py`.
+`tests/terminals/test_runtime_contract.py` belongs to group 3. Group 7 compares
+host PID sets around groups 2, 3, and 6; record owned tmux processes too.
+
+Coordinators must record the OS, provider, agent run/session IDs, checkout/commit,
+generated policy and canonical temp path, exact commands, result counts, and
+process sets before and after. Mark every skipped or policy-denied case
+**UNVALIDATED**, including its reason; it does not satisfy required coverage.
+When validation must run inside a spawned macOS Codex agent, use that managed
+run with isolated test state, database schema, and ports. A parent-shell result
+does not substitute for it. Policy changes also require actual socket
+bind/listen/connect inside the grant, denial outside it (another run and symlink
+escapes), and Linux/WSL directory-write and socket-restriction evidence.
+
+## Guard set G (foundation history)
 
 Every leaf of the landing epic closes against this set, run from the `0.5.0-test`
 root with `DATABASE_URL` pointed at the isolated test hub

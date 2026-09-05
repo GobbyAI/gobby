@@ -128,10 +128,12 @@ class DaemonProxy(_DaemonProxy):
         self,
         port: int,
         *,
+        base_url: str | None = None,
         startup_task: asyncio.Task[None] | None = None,
     ):
         super().__init__(
             port,
+            base_url=base_url,
             deps_factory=_proxy_dependencies,
             startup_task=startup_task,
         )

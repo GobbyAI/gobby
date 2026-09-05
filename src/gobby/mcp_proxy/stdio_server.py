@@ -20,6 +20,7 @@ from gobby.mcp_proxy.registries import setup_internal_registries as _setup_inter
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
 from gobby.mcp_proxy.stdio_results import _strip_none
 from gobby.mcp_proxy.stdio_tools import register_proxy_tools as _register_proxy_tools
+from gobby.utils.daemon_url import resolve_daemon_url
 from gobby.utils.version import get_version
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class ProxyFactory(Protocol):
         self,
         port: int,
         *,
+        base_url: str | None = None,
         startup_task: asyncio.Task[None] | None = None,
     ) -> DaemonProxy: ...
 
@@ -107,6 +109,7 @@ def create_stdio_mcp_server(
     # The dial port is a pre-database bootstrap fact; the DB-backed config
     # projection carries only the default port and must not decide it.
     bootstrap = effective_deps.load_bootstrap()
+    dial_url = resolve_daemon_url(bootstrap=bootstrap)
     runtime = effective_deps.runtime_factory()
     config = None
     try:
@@ -128,10 +131,11 @@ def create_stdio_mcp_server(
     )
 
     if startup_task is None:
-        proxy = effective_deps.proxy_factory(bootstrap.daemon_port)
+        proxy = effective_deps.proxy_factory(bootstrap.daemon_port, base_url=dial_url)
     else:
         proxy = effective_deps.proxy_factory(
             bootstrap.daemon_port,
+            base_url=dial_url,
             startup_task=startup_task,
         )
 
