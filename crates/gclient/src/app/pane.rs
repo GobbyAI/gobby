@@ -2,6 +2,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::frame_source::{FrameSource, PaneFrameSource, ScriptedFrameSource, Transport};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PaneId(pub u32);
 
@@ -13,7 +15,7 @@ pub enum ControlState {
     UncertainReadOnly,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Pane {
     pub id: PaneId,
     pub terminal_id: String,
@@ -37,6 +39,8 @@ pub struct Pane {
     pub search_buffer: String,
     pub copy_search: bool,
     pub fragment: Option<FragmentAcc>,
+    pub(super) frame_source: Option<PaneFrameSource>,
+    pub(super) fallback_in_flight: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -51,12 +55,15 @@ impl Pane {
         backend: impl Into<String>,
         epoch: impl Into<String>,
     ) -> Self {
+        let epoch = epoch.into();
+        let mut frame_source = ScriptedFrameSource::new(Transport::Direct);
+        frame_source.set_welcome_epoch(epoch.clone());
         Self {
             id,
             terminal_id: terminal_id.into(),
             backend: backend.into(),
             attachment_id: uuid::Uuid::new_v4().to_string(),
-            expected_host_epoch: epoch.into(),
+            expected_host_epoch: epoch,
             control: ControlState::Observe,
             lease_generation: 0,
             take_back: false,
@@ -74,7 +81,20 @@ impl Pane {
             search_buffer: String::new(),
             copy_search: false,
             fragment: None,
+            frame_source: Some(PaneFrameSource::Scripted(frame_source)),
+            fallback_in_flight: false,
         }
+    }
+
+    pub(super) fn new_detached(
+        id: PaneId,
+        terminal_id: impl Into<String>,
+        backend: impl Into<String>,
+        epoch: impl Into<String>,
+    ) -> Self {
+        let mut pane = Self::new(id, terminal_id, backend, epoch);
+        pane.frame_source = None;
+        pane
     }
 
     pub fn is_observe(&self) -> bool {
@@ -147,5 +167,34 @@ impl Pane {
 
     pub fn writable(&self) -> bool {
         self.live && self.control == ControlState::Held
+    }
+
+    pub fn frame_source(&self) -> Option<&PaneFrameSource> {
+        self.frame_source.as_ref()
+    }
+
+    pub fn transport(&self) -> Option<Transport> {
+        self.frame_source.as_ref().map(FrameSource::transport)
+    }
+
+    pub fn scripted_source(&self) -> Option<&ScriptedFrameSource> {
+        self.frame_source
+            .as_ref()
+            .and_then(PaneFrameSource::scripted)
+    }
+
+    pub(super) fn scripted_source_mut(&mut self) -> Option<&mut ScriptedFrameSource> {
+        self.frame_source
+            .as_mut()
+            .and_then(PaneFrameSource::scripted_mut)
+    }
+
+    pub(super) fn take_frame_source(&mut self) -> Option<PaneFrameSource> {
+        self.frame_source.take()
+    }
+
+    pub(super) fn install_frame_source(&mut self, source: PaneFrameSource) {
+        self.frame_source = Some(source);
+        self.fallback_in_flight = false;
     }
 }
