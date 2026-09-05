@@ -96,9 +96,10 @@ def test_srt_managed_run_socket_boundary(monkeypatch: pytest.MonkeyPatch) -> Non
         assert max(len(os.fsencode(path)) for path in paths) < 104
         script = workspace / "probe.py"
         script.write_text(
-            """import errno, json, socket, sys
+            """import errno, json, os, socket, sys
 from pathlib import Path
 root, other, outside, escape = map(Path, sys.argv[1:])
+assert Path(os.environ['TMPDIR']) == root, (os.environ['TMPDIR'], str(root))
 (root / 'n' / 'nested').mkdir(parents=True)
 (root / 'n' / 'nested' / 'written').write_text('ok')
 (other / 'written').write_text('ok')
@@ -140,7 +141,7 @@ print(json.dumps(results))
                 ],
             ),
             cwd=workspace,
-            env=os.environ.copy(),
+            env={**os.environ, **launch.provider_env},
             capture_output=True,
             text=True,
             check=False,
@@ -255,12 +256,12 @@ def test_srt_runner_preserves_tty_masks_credentials_and_forwards_terminal_signal
 import fs from "node:fs";
 const append = (signal) => fs.appendFileSync("events.jsonl", JSON.stringify({signal}) + "\\n");
 try {
-  fs.writeFileSync(`${process.env.TMPDIR}/gobby-srt-temp`, "temp");
   fs.writeFileSync("ready.json", JSON.stringify({
     stdin: process.stdin.isTTY,
     stdout: process.stdout.isTTY,
     credential: process.env.OPENAI_API_KEY,
     tmpdir: process.env.TMPDIR,
+    claudeTmpdir: process.env.CLAUDE_CODE_TMPDIR ?? null,
     srtTmp: process.env.GOBBY_SRT_TMPDIR ?? null,
   }));
 } catch (error) {
@@ -315,9 +316,8 @@ setInterval(() => {}, 1000);
         assert ready_payload["stdin"] is True
         assert ready_payload["stdout"] is True
         assert ready_payload["credential"] != credential
-        # sandbox-runtime may pin the child TMPDIR itself (wrapped.env); the
-        # runner-internal socket dir must never leak into the child either way.
-        assert ready_payload["tmpdir"]
+        assert ready_payload["tmpdir"] == launch.provider_env["TMPDIR"]
+        assert ready_payload["claudeTmpdir"] == os.environ.get("CLAUDE_CODE_TMPDIR")
         assert ready_payload["tmpdir"] != launch.provider_env["GOBBY_SRT_TMPDIR"]
         assert ready_payload["srtTmp"] is None
         for name in ("SIGWINCH", "SIGINT", "SIGHUP", "SIGTERM"):
@@ -327,8 +327,12 @@ setInterval(() => {}, 1000);
     finally:
         os.close(master)
         if process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
+            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=5)
 
     observed = [
         json.loads(line)["signal"] for line in events.read_text(encoding="utf-8").splitlines()
